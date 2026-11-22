@@ -1,11 +1,12 @@
 ---
 id: TASK-34975
 title: Qualify integrated Console response rules and document evidence
-status: Done
+status: In Progress
 assignee:
 - '@codex'
+- '@claude'
 created_date: 2026-10-04 05:56
-updated_date: 2026-10-31 23:43
+updated_date: 2026-11-22 15:25
 labels: []
 dependencies:
 - TASK-34806
@@ -74,6 +75,7 @@ R2 required UI4 pending approval qualification: ADR required: no; ADR path: back
 2026-10-29 recovery refinement: ADR required: no new ADR; existing ADR126/232/239 and installed portrait contracts apply. The affected rerun proves the same pure Canvas CHECK must be available during the fixed installed v76 RENAME as well as portrait ALTER; move existing exact-catalog schema access to each authenticated installed migration step, retiring it before post-step validation. Current hybrid restore also omits exact installed v83/v84 Primary catalogs and embedded stamps; compose only those immutable catalogs with the two already supported Subscription index variants, preserving all historical variants and v2/v3 admission. Preserve original authorizer, cancellation, transaction rollback, SQL budgets and timeouts. Correct the two independent review test findings, retain actual-authorizer and finally retirement witnesses, enroll bounded v76 and integrated UI journeys in existing required processes without removing or reordering inherited targets, and measure the unchanged caps. Request focused independent review only for newly discovered hybrid admission and expanded installed-step scope; retain all prior failed evidence and open AC until final-head proof.
 2026-10-31 backlog integration on dev1609dc6: preserve existing ADR097/126/227/232/239 (ADR required: no new ADR; reason: current-owner integration and qualification only). Keep historical34-source/hosted/provider receipts separate. Current local evidence:142 CI/census contracts and30 migration/rollback checks passed, plus2 trace/callback controls;3 Goal setup cases are unqualified on Windows because unchanged GoalBindingRef requires a POSIX path. Four mounted response-rule journeys reached learning/repair but failed after direct store.close_session bypassed the current screen close owner, leaving a stale composer session. Replace only that test setup action with the actual screen close handler, assert closure, and rerun the affected mounted cases without relaxing deadlines/assertions. Then rebase to the actual predecessor merge, verify source conservation, obtain final independent review, and merge under the explicit hosted-CI waiver. No full sweep or live paid-provider replay.
 2026-11-11 current-dev UAT follow-up: reproduce the saved-tab close failure while a stock context presentation read owns its native handle. Trace the actual pending read and test close through the runtime after its normal bounded wait. Register the read with the existing runtime observer and reject new reads after the session close fence. Qualify the held-read, real UI close/resume and existing preparation lifetime controls. ADR required: no new ADR. ADR paths: backlog/decisions/126-complete-local-backup-and-recovery.md and backlog/decisions/232-console-learned-response-rules.md. Reason: enforce the existing close ownership and finite native read contract without changing schema, permission or timing policy.
+2026-11-22 port of PR #3493 onto dev 8a55555798 (branch fu/r20-ctxclose): cherry-pick 099fae0518, cf5cbafd5b and 500b3bf711 with -x. In Tests/UI/test_console_response_rules.py keep dev's TASK-39166 bounded waits and Stop pointer check, and add the PR's try/finally release and isolated rule activation. Check that every name the context-presentation fence and observer use still exists on dev. Show the held-read regression red with the source change reverted and green with it. Run the context-presentation, response-rule, close/resume and preparation-read tests, preflight and the size ratchets. Check that the console.md paragraph and the QA README still match dev. The ACs stay as they are.
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
