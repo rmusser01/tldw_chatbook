@@ -40,6 +40,25 @@ def require_participant_coverage(
 _installed_repositories = weakref.WeakSet()
 
 
+def _held(name):
+    """Bind a ``held_connections`` function lazily (it imports storage admission)."""
+
+    def call(*args, **kwargs):
+        from . import held_connections
+
+        return getattr(held_connections, name)(*args, **kwargs)
+
+    call.__name__ = name
+    return call
+
+
+# TASK-40608 D1: the DB layer reaches the held-handle owner through here.
+hold_operation_connection = _held("hold_operation_connection")
+owned_call_entered = _held("owned_call_entered")
+owned_call_left = _held("owned_call_left")
+retire_held_connections = _held("retire_held_connections")
+
+
 def run_finite_local_worker(function, /, *args, **kwargs):
     """Retire only installed file-backed caches acquired by this finite worker.
 
@@ -146,6 +165,10 @@ def retire_current_thread_caches(pause) -> None:
             _retire_service_thread_cache(repository, declaration.thread_cache)
         else:
             getattr(type(repository), declaration.closer)(repository)
+    # TASK-40608 D1: owned calls keep their Console handles open on Windows.
+    # The pause owner closes the idle ones here; one still in use stays
+    # visible to pause.drain() and is closed by a later call.
+    retire_held_connections()
 
 
 def _retire_service_thread_cache(repository, thread_cache):
@@ -172,6 +195,7 @@ def close_settled_core_cache(repository):
         return True
     from . import storage_admission as storage
 
+    retire_held_connections(repository)  # idle owned-call handles (TASK-40608)
     participant = repository_participant(repository)
     with storage._lock:
         if (

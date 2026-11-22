@@ -18,6 +18,10 @@ async def retire_agent_runs_db(database: Any) -> bool:
         return True
     stock = type(database) is AgentRunsDB and not database.is_memory_db
     try:
+        if stock:
+            from ..Backup_Recovery.held_connections import retire_held_connections
+
+            retire_held_connections(database)  # idle owned-call handles
         if stock and not await asyncio.to_thread(database.close_idle_connections):
             return False
         database.close()

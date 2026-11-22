@@ -288,6 +288,42 @@ def _validate_ancestry_record(root: Path, parent: int, record: dict) -> None:
         raise ValueError("invalid_bootstrap_ancestry")
 
 
+#: TASK-40608 D1, Windows only: ``storage_admission`` installs its
+#: ``_control_snapshot`` here when it loads. This module stays an import leaf,
+#: so it is handed the function instead of importing its owner.
+_control_snapshot = None
+
+
+def _snapshot_on_windows(kind: str):
+    """Serve a control-record reader from the live hold's verified snapshot.
+
+    POSIX keeps the plain reader (its checks are cheap). On Windows the
+    installed snapshot function decides, per call, whether the previous result
+    is still exactly what the files hold; until one is installed the reader
+    runs unchanged.
+    """
+
+    def decorate(function):
+        if os.name != "nt":
+            return function
+
+        @functools.wraps(function)
+        def reader(root, **options):
+            snapshot = _control_snapshot
+            if snapshot is None:
+                return function(root, **options)
+            return snapshot(
+                root,
+                (kind, tuple(sorted(options.items()))),
+                lambda: function(root, **options),
+            )
+
+        return reader
+
+    return decorate
+
+
+@_snapshot_on_windows("records")
 def _control_records(
     root: Path, *, activation: bool = True
 ) -> tuple[list[dict], list[dict], list[dict]]:
@@ -410,6 +446,7 @@ def _registry_read_lock(parent: int):
         os.close(fd)
 
 
+@_snapshot_on_windows("registry")
 def _registry(root: Path) -> dict | None:
     authority = root / "admission"
     try:

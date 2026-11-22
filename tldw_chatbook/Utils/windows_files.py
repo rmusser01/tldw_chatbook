@@ -601,7 +601,13 @@ class _Native:
                     info.volume,
                     (info.index_high << 32) | info.index_low,
                 )
-            self.ntfs(handle)
+            if parent is None:
+                self.ntfs(handle)
+            # A name opened below a parent handle is on that parent's volume:
+            # the only way off it is a reparse point, which info() refused
+            # above. Every parent handle here came from this module, so its
+            # volume was already checked as local NTFS when its own chain was
+            # opened from the drive root (TASK-40608 D1).
             return handle.value
         except BaseException:
             if _metadata_record is None:
@@ -834,6 +840,98 @@ def _borrow_pin(drive, parts):
     return None
 
 
+def pinned_start(path):
+    """Find the deepest held pin that is ``path`` or one of its ancestors.
+
+    Args:
+        path: An absolute local folder path.
+
+    Returns:
+        ``(pin path, components below the drive root, release generation)``,
+        or None when no held pin covers ``path``. The components use the pin's
+        exact spelling; another spelling of the same folder is not covered.
+    """
+    if not _pins:
+        return None
+    try:
+        drive, parts = _split_local(path)
+    except ValueError:
+        return None
+    with _pin_lock:
+        for depth in range(len(parts), 0, -1):
+            pin = _pins.get(_pin_key(drive, parts[:depth]))
+            if pin is not None and not pin.released and pin.handle is not None:
+                covered = tuple(parts[:depth])
+                return drive + "\\" + "\\".join(covered), covered, _pin_generation
+    return None
+
+
+def is_pinned_root(path) -> bool:
+    """Whether ``path`` is itself a folder this process currently holds pinned."""
+    if not _pins:
+        return False
+    try:
+        drive, parts = _split_local(path)
+    except ValueError:
+        return False
+    with _pin_lock:
+        pin = _pins.get(_pin_key(drive, parts))
+        return pin is not None and not pin.released and pin.handle is not None
+
+
+def _reopen_exact_pin(path):
+    """Open a pinned folder itself through its pin; None when ``path`` is no pin.
+
+    The pin handle names the folder by file ID, so no folder above it is
+    opened. ``OpenFileById`` makes a new file object: sharing the pin's own
+    one (``DuplicateHandle``) would share its directory enumeration state.
+    """
+    try:
+        drive, parts = _split_local(path)
+    except ValueError:
+        return None
+    key = _pin_key(drive, parts)
+    with _pin_lock:
+        pin = _pins.get(key)
+        if pin is None or pin.released or pin.handle is None:
+            return None
+        pin.borrowers += 1
+    try:
+        native = _native()
+        before = native.info(pin.handle)
+        descriptor = _FileIdDescriptor(
+            C.sizeof(_FileIdDescriptor),
+            0,
+            (C.c_uint64 * 2)((before.index_high << 32) | before.index_low, 0),
+        )
+        value = native.kernel.OpenFileById(
+            pin.handle,
+            C.byref(descriptor),
+            _READ_CONTROL | _READ_ATTRIBUTES | _SYNCHRONIZE | 1 | 0x20,
+            _SHARE_ALL,
+            None,
+            0x02000000 | 0x00200000 | 0x80000000,
+        )
+        if value in {None, C.c_void_p(-1).value}:
+            return None  # the caller walks the path as before
+        try:
+            after = native.info(value)
+            if (
+                (before.volume, before.index_high, before.index_low)
+                != (after.volume, after.index_high, after.index_low)
+                or not after.attributes & _DIRECTORY
+            ):
+                raise OSError(errno.ESTALE, "windows_reopen_identity_changed")
+        except BaseException:
+            native.kernel.CloseHandle(value)
+            raise
+        return value
+    except OSError:
+        return None
+    finally:
+        _return_pin(pin)
+
+
 def _return_pin(pin):
     with _pin_lock:
         pin.borrowers -= 1
@@ -947,6 +1045,22 @@ class WindowsOS:
 
     def open(self, path, flags, mode=0o777, *, dir_fd=None):
         native = _native()
+        if (
+            dir_fd is None
+            and _pins
+            and flags & self.O_DIRECTORY
+            and not flags & (3 | _os.O_CREAT | _os.O_TRUNC)
+        ):
+            # A read-only open of a pinned folder itself needs no walk.
+            handle = _reopen_exact_pin(path)
+            if handle is not None:
+                try:
+                    return native.crt.open_osfhandle(
+                        handle, (flags & _os.O_APPEND) | _os.O_BINARY
+                    )
+                except BaseException:
+                    native.kernel.CloseHandle(handle)
+                    raise
         with _parent(path, dir_fd) as (parent, leaf):
             if leaf is None:
                 if not flags & self.O_DIRECTORY or flags & (_os.O_CREAT | _os.O_TRUNC):
@@ -1471,6 +1585,37 @@ class WindowsLocks:
             if error in {32, 33, 158}:
                 raise BlockingIOError(errno.EAGAIN, "windows_lock_busy")
             raise C.WinError(error)
+
+
+def volume_read_only(path) -> bool:
+    """Whether the local NTFS volume holding ``path`` is mounted read-only.
+
+    Read-only is a property of the volume, and this layer refuses reparse
+    points, so the drive root answers for every path on the drive.
+
+    Args:
+        path: An absolute local drive path; it does not have to exist.
+
+    Returns:
+        True when the volume has ``FILE_READ_ONLY_VOLUME`` set.
+
+    Raises:
+        OSError: If the drive root cannot be opened or is not local NTFS.
+        ValueError: If ``path`` is not an absolute local drive path.
+    """
+    drive, _ = _split_local(path)
+    native = _native()
+    handle = native.open_handle("\\??\\" + drive + "\\", directory=True)
+    try:
+        filesystem, flags = C.create_unicode_buffer(32), _U32()
+        native.check(
+            native.kernel.GetVolumeInformationByHandleW(
+                handle, None, 0, None, None, C.byref(flags), filesystem, len(filesystem)
+            )
+        )
+        return bool(flags.value & 0x80000)  # FILE_READ_ONLY_VOLUME
+    finally:
+        native.kernel.CloseHandle(handle)
 
 
 def native_identity(fd: int) -> dict[str, str | int]:
