@@ -1216,6 +1216,11 @@ MINIMUM_FILES = 2452
 # count.
 MINIMUM_FILES = 2453
 
+# TASK-33910.49 / TASK-33910.50 (2026-11-22, port of PR #3431): append three
+# Roleplay workbench width nodes and the Generate-whole-then-Blank concept-row
+# node at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2457
+
 
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.

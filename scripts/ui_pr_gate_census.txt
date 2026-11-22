@@ -3601,3 +3601,8 @@ Tests/UI/test_console_send_admission_off_pump.py::test_an_image_only_enter_never
 # on no lane before. Serially with the lane's flags at load 30-32: 1 passed in
 # 13.3 s. Appended at the tail.
 Tests/UI/test_console_response_rules.py::test_actual_stop_after_generation_cancels_rule_check
+
+Tests/UI/test_personas_workbench.py::TestWorkbenchShell::test_workbench_panes_and_library_controls_fit_at_width
+Tests/UI/test_personas_workbench.py::TestWorkbenchShell::test_workbench_panes_fit_at_every_width_from_80_to_220
+Tests/UI/test_personas_workbench.py::TestWorkbenchShell::test_compact_cut_off_is_the_widest_width_the_minimums_cannot_fill
+Tests/UI/test_personas_generation_wiring.py::test_blank_after_generate_whole_character_closes_the_concept_row
