@@ -1,0 +1,40 @@
+---
+id: TASK-38931
+title: Report skill and extension context costs and observed session usage
+status: To Do
+created_date: 2026-11-05 16:08
+updated_date: 2026-11-22 15:51
+labels:
+- console
+- skills
+- diagnostics
+priority: high
+references:
+- https://uxplanet.org/anthropic-just-shipped-claude-2-0-bbb46a9c1383
+documentation:
+- Docs/Architecture/tool-catalog.md
+- Docs/Architecture/console.md
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Help users understand which advertised skills and tool definitions consume the current conversation's input budget and which skills they have actually used during the observed session. Make setup costs explainable before users decide what to disable.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 A read-only diagnostic report separates advertised skill/catalog costs from full skill bodies loaded during the observed run and other tool-schema costs, without counting the same contribution twice.
+- [ ] #2 Costs use the prepared request's accounting where attribution exists; estimates, unavailable attribution, and the snapshot's age are explicitly labeled, with totals reconciled to the existing context breakdown.
+- [ ] #3 Each observable skill's invocation count and last observed use have an explicit session/observation window; missing history is reported as unknown rather than never used.
+- [ ] #4 Duplicate or conflicting invocation names and unavailable or disabled components have actionable explanations linked to their existing management surface.
+- [ ] #5 The report never automatically disables components, triggers model calls, expands path/provider authority, or exposes hidden instruction bodies outside the authorized Next Send preview.
+- [ ] #6 Targeted checks cover advertised-but-unused skills, invoked skills, ambiguous cost attribution, catalog changes, and workspace/session switching without stale results.
+<!-- AC:END -->
+
+## Definition of Done
+<!-- DOD:BEGIN -->
+- [ ] #1 Implementation planning records ADR required: yes/no, ADR path, and reason; any required new or amended ADR is accepted and linked before implementation begins.
+- [ ] #2 Automated tests (unit + integration) cover any new logic, the linter and formatter pass, and `./scripts/preflight.sh` passes, per CLAUDE.md's Definition of Done.
+- [ ] #3 Relevant user guidance and living Architecture documentation describe the delivered behavior and its limits.
+<!-- DOD:END -->
