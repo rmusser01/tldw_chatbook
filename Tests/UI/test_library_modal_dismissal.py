@@ -438,7 +438,7 @@ LIBRARY_MODAL_CONTRACTS = (
         "#cancel",
         _assert_none,
         Path,
-        # The picker returns its location made absolute (not resolved): C:	mp on Windows.
+        # The picker returns its location made absolute (not resolved): C:\tmp on Windows.
         _assert_exact(Path("/tmp").absolute()),
         None,
         _FOCUS_POSTCONDITION,

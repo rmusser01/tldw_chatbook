@@ -368,6 +368,64 @@ def test_root_creation_directory_sync_failure_is_activation_failed(
     assert stat.S_IMODE(platform_os.stat(root).st_mode) == 0o700
 
 
+@pytest.mark.parametrize("error", [None, errno.EIO, errno.EINVAL])
+def test_windows_directory_barrier_flushes_through_the_native_facade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: int | None
+) -> None:
+    # Simulates Windows on any host, so POSIX CI covers the nt branch: stdlib
+    # os.open refuses a directory there, which failed every receipt store.
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Utils import file_durability, platform_files
+
+    events: list[str] = []
+
+    def stdlib_open(*_args: object) -> int:
+        raise PermissionError(errno.EACCES, "Access is denied")
+
+    def native_open(path: Path, flags: int) -> int:
+        assert (path, flags) == (tmp_path, 0b111)
+        events.append("open")
+        return 57
+
+    def flush(descriptor: int) -> None:
+        assert descriptor == 57
+        events.append("flush")
+        if error is not None:
+            raise OSError(error, "native_directory_flush_failed")
+
+    def close(descriptor: int) -> None:
+        assert descriptor == 57
+        events.append("close")
+
+    monkeypatch.setattr(
+        receipt_store_module,
+        "os",
+        SimpleNamespace(name="nt", O_RDONLY=0, open=stdlib_open, close=close),
+    )
+    monkeypatch.setattr(
+        platform_files,
+        "os",
+        SimpleNamespace(
+            O_RDONLY=0b001,
+            O_DIRECTORY=0b010,
+            O_NOFOLLOW=0b100,
+            open=native_open,
+            close=close,
+        ),
+    )
+    monkeypatch.setattr(file_durability, "flush_directory", flush)
+
+    if error is None:
+        ToolPackReceiptStore._fsync_directory(tmp_path)
+    else:
+        # The barrier is mandatory (TASK-26069): no errno counts as success.
+        with pytest.raises(OSError) as raised:
+            ToolPackReceiptStore._fsync_directory(tmp_path)
+        assert raised.value.errno == error
+    assert events == ["open", "flush", "close"]
+
+
 def test_capacity_enforces_projection_actual_and_committed_files(
     tmp_path: Path,
 ) -> None:
