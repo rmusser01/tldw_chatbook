@@ -166,6 +166,15 @@ async def _until(pilot, predicate, what) -> None:
 
 
 def _painted_in(host, widget) -> str:
+    """What the terminal shows in ``widget``'s region, or "" mid-batch.
+
+    Textual recomposes inside ``App.batch_update`` and displays nothing until
+    the batch ends, but the compositor can still be read in between: a
+    background reload's receipt recompose read there had lost its "Import
+    once" heading and "Import completed." line, a frame no user ever sees.
+    """
+    if host._batch_count:  # noqa: SLF001 - no public "frame displayed" signal
+        return ""
     region = widget.region
     strips = list(host.screen._compositor.render_strips())
     rows = (
