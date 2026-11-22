@@ -45,6 +45,11 @@ if TYPE_CHECKING:
 # its owner so separate DB handles share the original anchor without a cache.
 _CLOCK_OWNER_ID = uuid4().hex
 
+# TASK-33621.153 (owner decision 2026-11-12): a chain paused with one of these
+# codes waits for the user, and that wait does not count against its elapsed
+# limit. The Ask compaction trigger's code (console_fleet_wake) is the only one.
+_CLOCK_HOLD_REASONS = frozenset({"compaction_ask"})
+
 # Failed durable settlement must deny the same runtime's sibling work, including
 # through another handle. Only identities live here; recovery remains durable.
 _UNCONFIRMED_STARTS: dict[tuple[str, str, str], tuple[str | None, object]] = {}
@@ -299,6 +304,15 @@ class AutomaticWorkLedger:
                         root_id,
                     ),
                 )
+                # So is the end of a clock hold: its moved anchors stay with the
+                # stamp kept above, so a refused first retry neither counts the
+                # hold nor excludes it twice. A clock that had not started before
+                # this admission stays unstarted.
+                conn.execute(
+                    "UPDATE automatic_work_chains SET started_at=?, deadline_at=? "
+                    "WHERE id=? AND started_at IS NOT NULL",
+                    (observed["started_at"], observed["deadline_at"], root_id),
+                )
                 refusal = exc
                 reason = str(exc)
                 status = (
@@ -322,6 +336,7 @@ class AutomaticWorkLedger:
                     "review_boundary_unavailable",
                     "workflow_authority_changed",
                 }:
+                    self._leave_clock_hold(conn, root_id, reason)
                     conn.execute(
                         "UPDATE automatic_work_chains SET status=?, pause_reason=? "
                         "WHERE id=? AND status!='review_required'",
@@ -386,6 +401,10 @@ class AutomaticWorkLedger:
             raise AutomaticWorkRefused("clock_unknown")
         if now < chain["last_observed_at"]:
             raise AutomaticWorkRefused("clock_reversed")
+        if self._clock_held(chain):
+            # Admission ends a hold: the user lifted it, or other work in this
+            # allowance runs. Either way the clock counts from here.
+            chain = self._end_clock_hold(conn, chain, now, monotonic)
         if effective.wall_seconds == 0:
             raise AutomaticWorkRefused("wall_budget")
         workflow = conn.execute(
@@ -422,12 +441,12 @@ class AutomaticWorkLedger:
                 >= effective.wall_seconds
             ):
                 raise AutomaticWorkRefused("wall_budget")
-        elif snapshot.started_at is not None:
+        elif chain["started_at"] is not None:
             started_monotonic = chain["started_monotonic"]
             if chain["clock_owner_id"] != _CLOCK_OWNER_ID:
                 # Re-anchor an unambiguous recovered chain to this process,
                 # carrying forward elapsed wall time and the original deadline.
-                started_monotonic = monotonic - (now - snapshot.started_at)
+                started_monotonic = monotonic - (now - chain["started_at"])
                 conn.execute(
                     "UPDATE automatic_work_chains SET clock_owner_id=?, started_monotonic=? WHERE id=?",
                     (_CLOCK_OWNER_ID, started_monotonic, chain_id),
@@ -436,9 +455,9 @@ class AutomaticWorkLedger:
                 raise AutomaticWorkRefused("clock_unknown")
             if monotonic < started_monotonic:
                 raise AutomaticWorkRefused("clock_reversed")
-            elapsed_now = max(now, snapshot.started_at + monotonic - started_monotonic)
+            elapsed_now = max(now, chain["started_at"] + monotonic - started_monotonic)
             deadline = min(
-                snapshot.deadline_at, snapshot.started_at + effective.wall_seconds
+                chain["deadline_at"], chain["started_at"] + effective.wall_seconds
             )
             if elapsed_now >= deadline:
                 raise AutomaticWorkRefused("wall_budget")
@@ -457,6 +476,111 @@ class AutomaticWorkLedger:
             "UPDATE automatic_work_chains SET status='active', pause_reason=NULL WHERE id=?",
             (chain_id,),
         )
+
+    @staticmethod
+    def _clock_held(chain: sqlite3.Row) -> bool:
+        return (
+            chain["status"] == "paused" and chain["pause_reason"] in _CLOCK_HOLD_REASONS
+        )
+
+    def _begin_clock_hold(self, conn: sqlite3.Connection, root: sqlite3.Row) -> None:
+        """Stamp a hold's start durably, folding the elapsed time into the wall anchors.
+
+        ``last_observed_at`` is the stamp: nothing else moves it while the chain
+        is held, because any admission in the allowance ends the hold first.
+        Elapsed time is the larger of the wall and monotonic readings, as the
+        admission check counts it, so a slow wall clock before the hold is not
+        forgotten when the hold ends.
+
+        Args:
+            conn: The open automatic-work transaction.
+            root: The allowance root's row, read in that transaction.
+        """
+        now, monotonic = self._wall_clock(), self._monotonic_clock()
+        if not math.isfinite(now) or now < root["last_observed_at"]:
+            # Keep the anchors and stamp: the hold is measured from the last
+            # admission's stamp, and the next admission refuses only if the
+            # clock is still unknown or behind it then.
+            return
+        started_at, deadline_at = root["started_at"], root["deadline_at"]
+        if started_at is not None and deadline_at is not None:
+            elapsed = now - started_at
+            anchor = root["started_monotonic"]
+            if (
+                root["clock_owner_id"] == _CLOCK_OWNER_ID
+                and anchor is not None
+                and math.isfinite(anchor)
+                and math.isfinite(monotonic)
+                and monotonic >= anchor
+            ):
+                elapsed = max(elapsed, monotonic - anchor)
+            shift = now - elapsed - started_at
+            started_at, deadline_at = started_at + shift, deadline_at + shift
+        conn.execute(
+            "UPDATE automatic_work_chains SET started_at=?, deadline_at=?, last_observed_at=? WHERE id=?",
+            (started_at, deadline_at, now, root["id"]),
+        )
+
+    def _end_clock_hold(
+        self,
+        conn: sqlite3.Connection,
+        root: sqlite3.Row,
+        now: float,
+        monotonic: float,
+    ) -> sqlite3.Row:
+        """Move the wall anchors past a hold and re-anchor the monotonic clock here.
+
+        The hold is measured from its stamp to ``now`` on the wall clock, which
+        survives a restart. Elapsed running time is unchanged by it, whatever
+        either clock did during the hold (a sleep, a forward step, a new
+        process); the monotonic anchor restarts from that elapsed time. The
+        stamp moves to ``now``, so two ends never exclude the same interval.
+
+        Args:
+            conn: The open automatic-work transaction.
+            root: The held allowance root's row.
+            now: A finite wall reading no earlier than the stamp.
+            monotonic: A finite monotonic reading taken with ``now``.
+
+        Returns:
+            The root's row after the update.
+        """
+        held = now - root["last_observed_at"]
+        if root["started_at"] is None or root["deadline_at"] is None:
+            conn.execute(
+                "UPDATE automatic_work_chains SET last_observed_at=? WHERE id=?",
+                (now, root["id"]),
+            )
+        else:
+            started_at = root["started_at"] + held
+            conn.execute(
+                "UPDATE automatic_work_chains SET started_at=?, deadline_at=?, last_observed_at=?, "
+                "clock_owner_id=?, started_monotonic=? WHERE id=?",
+                (
+                    started_at,
+                    root["deadline_at"] + held,
+                    now,
+                    _CLOCK_OWNER_ID,
+                    monotonic - (now - started_at),
+                    root["id"],
+                ),
+            )
+        return self._chain(conn, root["id"])
+
+    def _leave_clock_hold(
+        self, conn: sqlite3.Connection, root_id: str, reason: str
+    ) -> None:
+        """End a hold that another pause code is about to replace."""
+        root = self._chain(conn, root_id)
+        if reason in _CLOCK_HOLD_REASONS or not self._clock_held(root):
+            return
+        now, monotonic = self._wall_clock(), self._monotonic_clock()
+        if (
+            math.isfinite(now)
+            and math.isfinite(monotonic)
+            and now >= root["last_observed_at"]
+        ):
+            self._end_clock_hold(conn, root, now, monotonic)
 
     def _start_automatic(self, conn: sqlite3.Connection, chain_id: str) -> None:
         chain = self._allowance_chain(conn, chain_id)
@@ -736,7 +860,19 @@ class AutomaticWorkLedger:
         ):
             raise ValueError("pause reason must be a bounded reason code")
         with self.transaction() as conn:
-            root_id = self._allowance_chain(conn, chain_id)["id"]
+            root = self._allowance_chain(conn, chain_id)
+            root_id = root["id"]
+            if root["status"] != "review_required":
+                # TASK-33621.153: entering a hold stops the clock; replacing it
+                # with another pause starts the clock again.
+                if (
+                    reason in _CLOCK_HOLD_REASONS
+                    and not review_required
+                    and not self._clock_held(root)
+                ):
+                    self._begin_clock_hold(conn, root)
+                else:
+                    self._leave_clock_hold(conn, root_id, reason)
             conn.execute(
                 "UPDATE automatic_work_chains SET status=?, pause_reason=? "
                 "WHERE id=? AND status!='review_required'",
