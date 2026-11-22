@@ -861,7 +861,9 @@ async def test_a_long_preparation_paints_still_preparing_until_it_ends(
             chip = composer.query_one("#console-voice-status", Static)
 
             await pilot.click("#console-dictation")
-            painted = await _wait_for_painted(chip, pilot, "Still preparing")
+            # The whole note, not its prefix: the first frame with the new text
+            # can still be clipped to the old chip width until it re-lays out.
+            painted = await _wait_for_painted(chip, pilot, _STILL_PREPARING)
             await pilot.pause()
 
             assert painted == f"◐ {_STILL_PREPARING}", painted
