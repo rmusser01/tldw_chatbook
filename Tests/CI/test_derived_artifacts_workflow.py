@@ -633,10 +633,12 @@ def test_task34975_close_drain_target_runs_just_before_the_pr3023_witnesses():
 
 
 # TASK-42342 (2026-11-22): the held prompt mix-in reads that Close must drain,
-# a controller-owned read the runtime never observed. Its own group, just
-# before TASK-34975's, so that group's slice above stays exact.
+# a controller-owned read the runtime never observed, and a controller read
+# started during Close's hook drain. Its own group, just before TASK-34975's,
+# so that group's slice above stays exact.
 _TASK42342_CLOSE_DRAIN_TARGETS = (
     "Tests/Chat/test_console_context_presentation_current.py::test_session_close_drains_a_prompt_mixin_read_and_refuses_a_new_one",
+    "Tests/Chat/test_console_context_presentation_current.py::test_session_close_drains_a_controller_read_issued_during_its_hook_drain",
 )
 
 

@@ -244,7 +244,8 @@ async def test_session_close_drains_a_prompt_mixin_read_and_refuses_a_new_one(
     entered, drain_entered = asyncio.Event(), asyncio.Event()
     release = threading.Event()
     loop = asyncio.get_running_loop()
-    calls, registered, held = [], [], []
+    main = threading.get_ident()
+    calls, registered, held, released = [], [], [], []
     if kind == "snapshot":
         target, name = prompts, "fetch_mixin_snapshot"
         refusal = MixinSourceChangedError
@@ -267,7 +268,8 @@ async def test_session_close_drains_a_prompt_mixin_read_and_refuses_a_new_one(
         calls.append(threading.get_ident())
         if len(calls) == 1:
             loop.call_soon_threadsafe(entered.set)
-            assert release.wait(20)
+            if calls[0] != main:  # inline on the loop, waiting would hang it
+                assert release.wait(20)
         return original(*args, **kwargs)
 
     original_observe = runtime_producer_lifetime._observe_locked
@@ -284,7 +286,14 @@ async def test_session_close_drains_a_prompt_mixin_read_and_refuses_a_new_one(
             drain_entered.set()
         return await original_drain(reads, selected_session)
 
+    original_release = controller.release_session_close_fences
+
+    def record_release(ticket):
+        released.append(ticket.session_id)
+        return original_release(ticket)
+
     monkeypatch.setattr(target, name, hold_first)
+    monkeypatch.setattr(controller, "release_session_close_fences", record_release)
     monkeypatch.setattr(runtime_producer_lifetime, "_observe_locked", record_registration)
     monkeypatch.setattr(
         console_preparation_reads, "drain_preparation_reads", observe_drain
@@ -294,6 +303,7 @@ async def test_session_close_drains_a_prompt_mixin_read_and_refuses_a_new_one(
     try:
         async with asyncio.timeout(15):
             await entered.wait()
+            assert calls[0] != main, "the mix-in read ran on the event loop"
             (read,) = controller._preparation_reads
             # The runtime bound before this read existed, so it never saw it.
             assert read not in runtime._preparation_reads
@@ -322,6 +332,8 @@ async def test_session_close_drains_a_prompt_mixin_read_and_refuses_a_new_one(
                 await issuing
         assert all(session.id != session_id for session in store.sessions())
         assert not controller._preparation_reads and not runtime._preparation_reads
+        # The cancelled issuer left ``pending``, so the drained close released.
+        assert released == [session_id]
     finally:
         release.set()
         await asyncio.gather(issuing, return_exceptions=True)
@@ -331,6 +343,108 @@ async def test_session_close_drains_a_prompt_mixin_read_and_refuses_a_new_one(
         prompts.close_connection()
         database.close()
 
+
+@pytest.mark.asyncio
+async def test_session_close_drains_a_controller_read_issued_during_its_hook_drain(
+    tmp_path, monkeypatch
+):
+    """TASK-42342: a controller read can register after Close's first read drain.
+
+    The Console browser's page read is app-scoped (``session_id=None``), so no
+    session fence refuses it, and finalize still refuses while it runs.
+    """
+    from Tests.Chat.test_console_first_send_atomicity import _controller
+    from tldw_chatbook.Chat import console_preparation_reads
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    database, store, controller, _gateway = _controller(tmp_path)
+    runtime = ConsoleRuntime(app=None)
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
+    session_id = "session-1"
+    entered, drain_entered = asyncio.Event(), asyncio.Event()
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+    main = threading.get_ident()
+    late, released, threads = [], [], []
+
+    def browser_read():
+        # console_browser_read's native page read, held on its worker thread.
+        threads.append(threading.get_ident())
+        loop.call_soon_threadsafe(entered.set)
+        if threads[0] != main:  # inline on the loop, waiting would hang it
+            assert release.wait(20)
+        return "page"
+
+    original_hooks = runtime.close_hooks_v2
+
+    async def close_hooks_v2(selected=None):
+        if selected == session_id and not late:
+            late.append(
+                asyncio.create_task(
+                    console_preparation_reads.run_preparation_read(
+                        browser_read,
+                        creator=controller,
+                        session_id=None,
+                        reads=controller._preparation_reads,
+                        observers=(runtime._preparation_reads,),
+                        require_current=lambda: None,
+                    )
+                )
+            )
+            await entered.wait()
+        return await original_hooks(selected)
+
+    original_drain = console_preparation_reads.drain_preparation_reads
+
+    async def observe_drain(reads, selected_session=None):
+        if selected_session == session_id and any(
+            read.callback is browser_read for read in reads
+        ):
+            drain_entered.set()
+        return await original_drain(reads, selected_session)
+
+    original_release = controller.release_session_close_fences
+
+    def record_release(ticket):
+        released.append(ticket.session_id)
+        return original_release(ticket)
+
+    monkeypatch.setattr(runtime, "close_hooks_v2", close_hooks_v2)
+    monkeypatch.setattr(
+        console_preparation_reads, "drain_preparation_reads", observe_drain
+    )
+    monkeypatch.setattr(controller, "release_session_close_fences", record_release)
+    close = asyncio.create_task(
+        runtime.close_session(
+            session_id,
+            expected_revision=controller.lifecycle_impact(session_id=session_id).revision,
+            timeout_seconds=0.01,
+        )
+    )
+    try:
+        async with asyncio.timeout(15):
+            await entered.wait()
+            (read,) = controller._preparation_reads
+            assert threads[0] != main, "the browser read ran on the event loop"
+            assert read.callback is browser_read and read.session_id is None
+            draining = asyncio.create_task(drain_entered.wait())
+            await asyncio.wait({close, draining}, return_when=asyncio.FIRST_COMPLETED)
+            draining.cancel()
+            assert not close.done(), close.cancelled() or close.exception()
+            assert not read.retired.done()
+            assert any(session.id == session_id for session in store.sessions())
+            release.set()
+            await close
+            assert await late[0] == "page"
+        assert all(session.id != session_id for session in store.sessions())
+        assert not controller._preparation_reads and not runtime._preparation_reads
+        assert released == [session_id]
+    finally:
+        release.set()
+        await asyncio.gather(close, *late, return_exceptions=True)
+        await runtime.dispose()
+        database.close()
 
 @pytest.mark.asyncio
 async def test_custom_context_reader_keeps_issuing_thread_and_live_result(
