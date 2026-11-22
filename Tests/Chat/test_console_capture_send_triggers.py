@@ -442,3 +442,32 @@ async def test_a_voice_send_after_an_image_result_traces_what_was_sent(harness):
     assert len(calls) == 1
     recorded = calls[0].capture.request["messages_payload"]
     assert recorded[:3] == sent[0][:3], recorded
+
+
+@pytest.mark.asyncio
+async def test_a_typed_send_after_a_promoted_voice_turn_is_traced(harness):
+    """TASK-33621.159: a voice turn must not lock Capture On out of the chat.
+
+    The promoted voice call's id is derived (UUIDv5, from the promotion id).
+    The next typed send's completed-turn witness names that call as its
+    origin, and the witness validated call ids as UUIDv4 revision refs, so
+    every later Capture-On send was refused before the provider was contacted.
+    """
+    first, sent, _system = await _send(harness, "hello")
+    _assert_answered(harness, first, sent)
+    _sent, _provenance, outcome, imports = await _voice_send(harness, "and you?")
+    assert outcome._commit is not None, "the voice pair was not committed"
+    assert len(imports) == 1
+    assert not isinstance(imports[0], Exception), repr(imports[0])
+
+    following, sent, _system = await _send(harness, "thanks")
+
+    _assert_answered(harness, following, sent)
+    assert sent[0] == [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "answer"},
+        {"role": "user", "content": "and you?"},
+        {"role": "assistant", "content": "answer"},
+        {"role": "user", "content": "thanks"},
+    ]
+    assert harness.failures == []
