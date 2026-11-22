@@ -3994,9 +3994,28 @@ Tests/UI/test_console_library_auto_outcome.py::test_a_timed_out_send_says_why_an
 # TASK-33620.7, TASK-33620.15.25 (2026-11-21): the staged-evidence sessions
 # file, on no lane before (3 of 26 red on dev dc371f0842: its reply wait
 # counted footers a sourceless reply no longer mounts, and one revision
-# expectation predated the press's move to the received route). 26 passed in
-# 54.1 s and 78.6 s serially with the lane's flags (load 18-19), 56.6 s under
-# the plain command. The typing-after-Enter node: 1 passed in 12.9 s with the
-# lane's flags (load 11).
-Tests/UI/test_console_staged_evidence_sessions.py
+# expectation predated the press's move to the received route), as nineteen
+# node entries at the tail, one per test function. The whole file runs 54-79 s
+# serially with the lane's flags (load 18-19), over the 30 s per-file budget;
+# each function takes at most 16.8 s. The typing-after-Enter node: 1 passed
+# in 12.9 s with the lane's flags (load 11).
+Tests/UI/test_console_staged_evidence_sessions.py::test_runtime_keeps_staged_evidence_and_its_receipt_per_chat
+Tests/UI/test_console_staged_evidence_sessions.py::test_runtime_redraws_on_a_chat_switch_only_when_evidence_is_shown
+Tests/UI/test_console_staged_evidence_sessions.py::test_a_send_in_one_chat_leaves_another_chats_staging_alone
+Tests/UI/test_console_staged_evidence_sessions.py::test_a_temporary_chats_send_shows_its_staged_sources_on_its_reply
+Tests/UI/test_console_staged_evidence_sessions.py::test_staged_evidence_follows_one_turn_and_one_chat
+Tests/UI/test_console_staged_evidence_sessions.py::test_unstage_on_a_strip_with_nothing_staged_hides_it
+Tests/UI/test_console_staged_evidence_sessions.py::test_unstage_on_a_stale_strip_redraws_every_staged_surface
+Tests/UI/test_console_staged_evidence_sessions.py::test_a_retried_reply_drops_the_sources_line_its_retry_did_not_send
+Tests/UI/test_console_staged_evidence_sessions.py::test_a_restored_reply_carries_no_session_only_source_count
+Tests/UI/test_console_staged_evidence_sessions.py::test_a_failing_reply_source_count_never_costs_the_send
+Tests/UI/test_console_staged_evidence_sessions.py::test_a_failing_staged_evidence_redraw_never_reaches_the_view_pump
+Tests/UI/test_console_staged_evidence_sessions.py::test_cold_staging_binds_first_activation_without_read_or_view
+Tests/UI/test_console_staged_evidence_sessions.py::test_cold_staging_ignores_none_activation_and_preserves_keyed_state
+Tests/UI/test_console_staged_evidence_sessions.py::test_successful_close_retires_exact_staging_immediately
+Tests/UI/test_console_staged_evidence_sessions.py::test_unfinished_close_keeps_exact_staging
+Tests/UI/test_console_staged_evidence_sessions.py::test_close_retires_staging_before_cancellation_redelivery
+Tests/UI/test_console_staged_evidence_sessions.py::test_accepted_sources_are_attached_when_prerequisite_refuses_before_contact
+Tests/UI/test_console_staged_evidence_sessions.py::test_accepted_source_run_receipt_uses_attached_vocabulary
+Tests/UI/test_console_staged_evidence_sessions.py::test_original_stock_handler_accepts_b_without_consuming_a_staging
 Tests/UI/test_console_received_intent_feedback.py::test_keys_typed_onto_the_shown_draft_after_enter_keep_the_send
