@@ -24695,7 +24695,7 @@ class LibraryScreen(BaseAppScreen):
         selectors = {
             LIBRARY_ROW_BROWSE_PROMPTS: "#library-prompts-filter",
             LIBRARY_ROW_BROWSE_SKILLS: f"#{LIBRARY_SKILLS_FILTER_ID}",
-            LIBRARY_ROW_BROWSE_COLLECTIONS: "#library-collection-name-input",
+            LIBRARY_ROW_BROWSE_COLLECTIONS: "#library-collections-filter",
             LIBRARY_ROW_BROWSE_SEARCH: "#library-rag-query-input",
             LIBRARY_ROW_INGEST_MEDIA: "#library-ingest-path",
             LIBRARY_ROW_INGEST_EXPORT: "#library-export-name",

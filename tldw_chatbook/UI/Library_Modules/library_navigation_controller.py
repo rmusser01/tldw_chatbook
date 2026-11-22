@@ -21,6 +21,10 @@ from ...Constants import (
     LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR,
 )
 from ...Library.library_shell_state import (
+    LIBRARY_ROW_ARTIFACTS_ALL,
+    LIBRARY_ROW_ARTIFACTS_CHATBOOKS,
+    LIBRARY_ROW_ARTIFACTS_DREAMS,
+    LIBRARY_ROW_ARTIFACTS_REPORTS,
     LIBRARY_ROW_BROWSE_COLLECTIONS,
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
@@ -35,6 +39,10 @@ from ...Library.library_shell_state import (
 )
 from .screen_constants import LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS
 
+#: Review r11n I-2: the list routes' one more check runs just after the
+#: list-entry arm's own expiry timer (same instant, earlier deadline).
+_RECHECK_AFTER_ARM_SECONDS = LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS + 0.1
+
 #: The list canvases a resume lands through the list-entry channel, as a
 #: rail press onto them does (Collections arms it on a non-rail entry too).
 _LIST_ENTRY_ROWS = frozenset(
@@ -48,22 +56,31 @@ _LIST_ENTRY_ROWS = frozenset(
     }
 )
 
-#: Review r11n I-2/M-4: each route's own entry control when no row or
-#: remembered control takes focus -- a list's filter while its rows load,
-#: an ordinary canvas's first field. The ordinary rows mirror
-#: ``LibraryScreen._focus_library_ordinary_canvas_entry``'s table, which acts
-#: only in the canvas-only stage; Media asks its own empty-list owner.
+#: Review r11n I-2/M-4: a route's own entry control, tried before the
+#: route's own rail row when nothing else landed -- a list's filter while
+#: its rows load, an ordinary canvas's first field. The ordinary rows are
+#: copied from ``LibraryScreen._focus_library_ordinary_canvas_entry``
+#: (canvas-only stage) with two deliberate differences (r11n2 N-1, N-5):
+#: Collections is not copied -- like Media it asks its own arrival owner in
+#: ``_land_route_entry`` -- and that method's study hand-off branch is not
+#: mirrored: its one control, ``#library-open-study``, opens Study outside
+#: Library on Enter, so those rows land their own rail row instead.
+#: ``test_every_route_entry_selector_resolves_on_its_route`` guards it.
 _ROUTE_ENTRY_SELECTORS = {
     LIBRARY_ROW_BROWSE_NOTES: "#library-notes-filter",
     LIBRARY_ROW_BROWSE_CONVERSATIONS: "#library-conversations-filter",
     LIBRARY_ROW_BROWSE_PROMPTS: "#library-prompts-filter",
     LIBRARY_ROW_BROWSE_SKILLS: "#library-skills-filter",
-    LIBRARY_ROW_BROWSE_COLLECTIONS: "#library-collection-name-input",
     LIBRARY_ROW_BROWSE_SEARCH: "#library-rag-query-input",
     LIBRARY_ROW_INGEST_MEDIA: "#library-ingest-path",
     LIBRARY_ROW_INGEST_EXPORT: "#library-export-name",
     LIBRARY_ROW_CREATE_PROMPT: "#library-prompt-name",
     LIBRARY_ROW_CREATE_SKILL: "#library-skill-name",
+    # Review r11n2 N-2: Artifacts' items list (``focus_items``' target).
+    LIBRARY_ROW_ARTIFACTS_ALL: "#library-artifacts-list",
+    LIBRARY_ROW_ARTIFACTS_CHATBOOKS: "#library-artifacts-list",
+    LIBRARY_ROW_ARTIFACTS_REPORTS: "#library-artifacts-list",
+    LIBRARY_ROW_ARTIFACTS_DREAMS: "#library-artifacts-list",
     # The hub: where Esc from Ingest lands (``_focus_library_hub_entry``).
     "": "#library-hub-action-import",
 }
@@ -233,7 +250,8 @@ class LibraryNavigationController:
         the nav bar's first tab, where a blind Enter leaves Library, and the
         list-entry expiry never took it back. The screen suppresses that
         auto-focus (Settings' TASK-33007.11 shape); this lands the route
-        where arriving on it would, writing focus once, at that target.
+        where arriving on it would, and ``_land_content_focus_if_unfocused``
+        covers what that leaves on None.
         """
         screen = self.screen
         row = screen._library_selected_row_id
@@ -242,7 +260,7 @@ class LibraryNavigationController:
         if files:
             # Review r11n I-1: Folder files' own landing (its remembered
             # control, else Search, else Choose folder), never the toggle.
-            screen._restore_library_notes_authority_focus("files")
+            self._land_files_authority()
         elif region == "import":
             # Review R0 M-7: the progress region, never Cancel import.
             self._land_route_entry("#note-import-body")
@@ -255,8 +273,7 @@ class LibraryNavigationController:
             # Review r11n I-2: rows that arrive after the arm's window end it
             # with nothing landed (it lands from None on Notes only).
             screen.set_timer(
-                LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS + 0.1,
-                self._land_content_focus_if_unfocused,
+                _RECHECK_AFTER_ARM_SECONDS, self._land_content_focus_if_unfocused
             )
         elif not row:
             self._land_route_entry()
@@ -270,6 +287,11 @@ class LibraryNavigationController:
         row = screen._library_selected_row_id
         if selector is None and row == LIBRARY_ROW_BROWSE_MEDIA:
             target = screen._library_media_empty_list_fallback_target()
+        elif selector is None and row == LIBRARY_ROW_BROWSE_COLLECTIONS:
+            # Review r11n2 N-1: Collections' own arrival owner.
+            collections = screen._collections_controller
+            found = screen.query(collections._library_collections_empty_entry_target())
+            target = found.first() if found else None
         else:
             selector = selector or _ROUTE_ENTRY_SELECTORS.get(row)
             found = screen.query(selector) if selector else ()
@@ -281,10 +303,26 @@ class LibraryNavigationController:
         screen.set_focus(target, scroll_visible=False)
         return True
 
+    def _land_files_authority(self) -> bool:
+        """Folder files' own focus restore, marked as the app's (r11n2 N-4)."""
+        screen = self.screen
+        if not screen._restore_library_notes_authority_focus("files"):
+            return False
+        screen._library_notes_programmatic_focus_target = screen.focused
+        return True
+
     def _land_content_focus_if_unfocused(self) -> None:
-        """The last resort when nothing landed: the route's entry control,
-        else the first content control -- which is Textual's first focusable
-        (the nav bar) only when the content holds nothing focusable at all.
+        """The last resort when nothing landed, for the resume and its re-check.
+
+        In order: Folder files' own restore, or the route's entry control;
+        then the route's OWN rail row, where a blind Enter re-selects the
+        route it is already on and keeps its state (review r11n2) -- except
+        over an open prompt or note, which that fresh-entry press closes
+        (probed: a clean prompt went editor -> list), so the open item's
+        name field lands instead; and only when neither is focusable (the
+        hub has no row; at narrow widths a reader hides the rail), the first
+        control under ``#screen-content`` -- rail chrome when the rail shows,
+        and Textual's first focusable (the nav bar) when nothing there is.
         """
         screen = self.screen
         if (
@@ -295,9 +333,18 @@ class LibraryNavigationController:
         ):
             return
         if screen._file_notes_active():
-            if screen._restore_library_notes_authority_focus("files"):
+            if self._land_files_authority():
                 return
         elif self._land_route_entry():
+            return
+        row = screen._library_selected_row_id
+        if row == LIBRARY_ROW_BROWSE_PROMPTS and screen._prompts_state.view != "list":
+            own = "#library-prompt-name"
+        elif row == LIBRARY_ROW_BROWSE_NOTES and screen._notes_state.view == "editor":
+            own = "#library-note-title"
+        else:
+            own = f"#library-row-{row}" if row else None
+        if own and self._land_route_entry(own):
             return
         target = screen._first_focusable_in_content()
         if target is not None:

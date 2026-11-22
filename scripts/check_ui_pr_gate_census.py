@@ -1314,7 +1314,14 @@ MINIMUM_FILES = 2520
 #   bulk_keyword_per_note.py (per-note commits under a ready Sync v2 profile:
 #   three production-CSS Library boots over a real ChaChaNotes database),
 #   appended at the tail: 2480 -> 2481.
-MINIMUM_FILES = 2481
+# - PR #3423 nav-home fix round 3 (2026-11-22): Tests/UI/test_library_resume_
+#   focus_every_route.py (a Library resuming over nothing focused lands its
+#   entry or its own rail row, on every rail row the shell builds and the
+#   hub: production-CSS Library boots over a real ChaChaNotes database) is
+#   about 55-60 s whole, over the 30 s per-file budget, so its nine tests go
+#   in by node id at the tail (the route walk split four ways, about 7-10 s
+#   each): 2481 -> 2490.
+MINIMUM_FILES = 2490
 
 
 MINIMUM_FILES = 2038

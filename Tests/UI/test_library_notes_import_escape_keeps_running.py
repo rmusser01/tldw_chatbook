@@ -757,6 +757,8 @@ async def test_f1_closing_over_unfocused_folder_files_lands_its_arrival_target(
     Review r11n I-1: the resume landing's last resort was the first content
     control, Notes' "Database" source toggle, where a blind Enter leaves
     Folder files. With no folder linked, arrival lands Choose folder.
+    Review r11n2 N-4: that landing is the app's move, so it records no user
+    focus intent (which would veto Notes' own deferred restores).
     """
     profile = _Profile(tmp_path, monkeypatch)
     host = profile.host()
@@ -774,6 +776,7 @@ async def test_f1_closing_over_unfocused_folder_files_lands_its_arrival_target(
             )
             await pilot.pause()
             await _clear_focus(screen, pilot)
+            intent = screen._notes_state.focus_intent_generation
             await _f1_shortcuts(host, screen, pilot)
             await _until(
                 pilot,
@@ -784,6 +787,8 @@ async def test_f1_closing_over_unfocused_folder_files_lands_its_arrival_target(
                 ),
             )
             assert screen._file_notes_active()
+            await pilot.pause()
+            assert screen._notes_state.focus_intent_generation == intent
     finally:
         profile.close()
 
