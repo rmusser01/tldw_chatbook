@@ -6129,7 +6129,9 @@ class ConsoleRuntime:
             except asyncio.CancelledError:
                 cancel_requested = True
         # Again with no await before finalize: app-scoped reads can start meanwhile.
-        cancel_requested |= await drain_preparation_reads(getattr(controller, "_preparation_reads", set()), session_id)
+        cancel_requested |= await drain_preparation_reads(
+            getattr(controller, "_preparation_reads", set()), session_id
+        )
         closed = controller.finalize_session_close(ticket)
         self._staged_evidence.pop(ticket.session_id, None)
         hook_drain_succeeded = hook_engine is None or not hook_engine.cleanup_pending

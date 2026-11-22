@@ -446,6 +446,7 @@ async def test_session_close_drains_a_controller_read_issued_during_its_hook_dra
         await runtime.dispose()
         database.close()
 
+
 @pytest.mark.asyncio
 async def test_custom_context_reader_keeps_issuing_thread_and_live_result(
     tmp_path, monkeypatch
