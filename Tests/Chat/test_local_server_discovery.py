@@ -4734,6 +4734,21 @@ _NO_V1_BASES["google-api_base_url"] += (
         "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
     ),
 )
+#: TASK-42153 (owner decision 2026-11-21, "153 - yes"): QwenCloud's China host
+#: reads as its own host, so its bare host or ``/compatible-mode`` saves the
+#: documented path at once (it saved ``<host>/v1``, which the next save then
+#: rewrote); Cohere's old host already saved bare and still does.
+_NO_V1_BASES["qwencloud-api_base_url"] += tuple(
+    (typed, "https://dashscope.aliyuncs.com/compatible-mode/v1", "https://dashscope.aliyuncs.com/compatible-mode/v1/responses")
+    for typed in (
+        "https://dashscope.aliyuncs.com/compatible-mode",
+        "https://dashscope.aliyuncs.com/compatible-mode/",
+        "https://dashscope.aliyuncs.com",
+    )
+)
+_NO_V1_BASES["cohere-api_base_url"] += (
+    ("https://api.cohere.ai", "https://api.cohere.ai", "https://api.cohere.ai/v2/chat"),
+)
 
 
 @pytest.mark.parametrize(
@@ -4755,12 +4770,14 @@ def test_a_cloud_base_without_v1_saves_a_base_its_adapter_posts_under(
     the adapter posts to its own route on it. Review r17cu-rev1: an own-host
     prefix such as Groq's ``/openai`` still saves the documented path (it saved
     ``/openai`` and posted ``/openai/chat/completions``), and a bare host under
-    DeepSeek's key that is not DeepSeek's still gets ``/v1``."""
+    DeepSeek's key that is not DeepSeek's still gets ``/v1``. TASK-42153: a
+    save is stable, so saving what was saved writes it unchanged."""
     from tldw_chatbook.Chat.provider_setup_persistence import persisted_endpoint_for_key
 
     for typed, expected, posted in _NO_V1_BASES[case]:
         saved = persisted_endpoint_for_key(dispatch, "api_base_url", typed)
         assert saved == expected, (case, typed, saved)
+        assert persisted_endpoint_for_key(dispatch, "api_base_url", saved) == saved, (case, typed)
         sent = _cloud_world(monkeypatch, _cloud_config(table, key, extra, saved))
 
         try:
@@ -4860,21 +4877,40 @@ _V1_APPENDED_TAILS = {
     provider: ("/responses" if provider == "qwencloud" else "/models", "/chat/completions")
     for provider in _V1_APPENDED
 }
+#: TASK-42153 (owner decision 2026-11-21, "153 - yes"): the same shapes on
+#: QwenCloud's China host and Cohere's old host, documented path on the host typed.
+_V1_APPENDED_OTHER_HOSTS = {
+    "qwencloud": (
+        "https://dashscope.aliyuncs.com/v1",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1/responses",
+    ),
+    "cohere": ("https://api.cohere.ai/v1", "https://api.cohere.ai", "https://api.cohere.ai/v2/chat"),
+}
+#: Save rows by case: each provider's own host, then ``<provider>-other-host``.
+_V1_APPENDED_SAVE_ROWS = {
+    **{provider: (provider, *row) for provider, row in _V1_APPENDED.items()},
+    **{f"{provider}-other-host": (provider, *row) for provider, row in _V1_APPENDED_OTHER_HOSTS.items()},
+}
 
 
 @pytest.mark.parametrize(
-    ("provider", "tail"),
-    [(provider, tail) for provider in sorted(_V1_APPENDED) for tail in ("", *_V1_APPENDED_TAILS[provider])],
+    ("case", "tail"),
+    [
+        (case, tail)
+        for case, row in sorted(_V1_APPENDED_SAVE_ROWS.items())
+        for tail in ("", *_V1_APPENDED_TAILS[row[0]])
+    ],
 )
-def test_a_base_saved_with_v1_appended_saves_its_documented_base(provider, tail, monkeypatch):
+def test_a_base_saved_with_v1_appended_saves_its_documented_base(case, tail, monkeypatch):
     """TASK-42019 (and TASK-42002's rule for a save): typing Cohere's
     ``https://api.cohere.com/v1`` saved ``/v1`` and the adapter posted
     ``/v1/v2/chat``. Each shape TASK-42002 migrates, with or without a pasted
     tail, saves as the documented base, and the adapter posts its own route
-    under it."""
+    under it. TASK-42153: so do QwenCloud's China host and Cohere's old host."""
     from tldw_chatbook.Chat.provider_setup_persistence import persisted_endpoint_for_key
 
-    typed, documented, posted = _V1_APPENDED[provider]
+    provider, typed, documented, posted = _V1_APPENDED_SAVE_ROWS[case]
     typed += tail
     assert persisted_endpoint_for_key(provider, "api_base_url", typed) == documented
     sent = _cloud_world(monkeypatch, _cloud_config(("api_settings", provider), "api_base_url", {}, documented))
@@ -4905,6 +4941,13 @@ _V1_APPENDED_LOAD_ROWS = {
     # Review rev2 of the round-18 hotfix: a save kept a typed port, so a
     # ported shape is rewritten end to end too, its port kept.
     "groq-v1-appended-port": ("groq", "api_base_url", "https://api.groq.com:443/v1", "https://api.groq.com:443/openai/v1"),
+    # TASK-42153: QwenCloud's China host and Cohere's old host, tails and a port too.
+    **{
+        f"{provider}-other-host-v1-appended{tail.replace('/', '-')}": (provider, "api_base_url", row[0] + tail, row[1])
+        for provider, row in _V1_APPENDED_OTHER_HOSTS.items()
+        for tail in ("", *_V1_APPENDED_TAILS[provider])
+    },
+    "cohere-other-host-v1-appended-port": ("cohere", "api_base_url", "https://api.cohere.ai:443/v1", "https://api.cohere.ai:443"),
     **{
         case: (provider, key, value, value)
         for case, (provider, key, value) in {
@@ -4912,13 +4955,17 @@ _V1_APPENDED_LOAD_ROWS = {
             "google-v1": ("google", "api_base_url", "https://generativelanguage.googleapis.com/v1"),
             "google-gateway": ("google", "api_base_url", "https://litellm.corp/gemini/v1beta/v1"),
             "groq-gateway": ("groq", "api_base_url", "https://litellm.corp/v1"),
-            "qwencloud-china-host": ("qwencloud", "api_base_url", "https://dashscope.aliyuncs.com/v1"),
+            "qwencloud-other-region-host": ("qwencloud", "api_base_url", "https://dashscope-us.aliyuncs.com/v1"),
+            "cohere-gateway": ("cohere", "api_base_url", "https://litellm.corp/cohere/v1"),
             "deepseek-v1": ("deepseek", "api_base_url", "https://api.deepseek.com/v1"),
             "custom": ("custom", "api_url", "http://127.0.0.1:8080/v1"),
             "preset-own-host-v1": ("fireworks", "api_base_url", "https://api.fireworks.ai/v1"),
             "cohere-query": ("cohere", "api_base_url", "https://api.cohere.com/v1?key=secret-42002"),
             "openrouter-user-info": ("openrouter", "api_base_url", "https://u:secret-42002@openrouter.ai/v1"),
             "qwencloud-v1-models": ("qwencloud", "api_base_url", "https://dashscope-intl.aliyuncs.com/v1/models"),
+            "qwencloud-other-host-v1-models": ("qwencloud", "api_base_url", "https://dashscope.aliyuncs.com/v1/models"),
+            "cohere-other-host-query": ("cohere", "api_base_url", "https://api.cohere.ai/v1?key=secret-42002"),
+            "qwencloud-other-host-user-info": ("qwencloud", "api_base_url", "https://u:secret-42002@dashscope.aliyuncs.com/v1"),
         }.items()
     },
 }
@@ -4966,42 +5013,70 @@ def test_config_load_migrates_a_base_saved_with_v1_appended_once(case, tmp_path,
     assert rewrites and all(expected in line for line in rewrites)
 
 
-def test_config_migration_2_agrees_with_the_endpoint_contracts_rule():
+def test_config_migrations_2_and_3_agree_with_the_endpoint_contracts_rule():
     """Round-18 hotfix of TASK-42002: config is kernel and may not import the
     endpoint contract, so migration 2 keeps its own frozen copy of the shapes.
     Its table is the contract's, and on every shape (both schemes, with no
     port, the scheme's default port or another, and with each tail a save
     drops or refuses) and every control above it rewrites exactly what
     ``v1_appended_documented_base`` rewrites, to the same base, so a change to
-    either rule fails here instead of drifting (review rev1)."""
+    either rule fails here instead of drifting (review rev1). TASK-42153: the
+    migrations run as a v1 config's load runs them (2, then 3), over every
+    ``_V1_APPENDED_OTHER_HOSTS`` host too (QwenCloud's China host, Cohere's
+    old host), read from the contract's table."""
     from urllib.parse import urlsplit
 
-    from tldw_chatbook.config import _V1_APPENDED_SHAPES, _migrate_v1_appended_provider_bases
-    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
-        _V1_APPENDED_PATHS,
-        v1_appended_documented_base,
-    )
+    from tldw_chatbook import config as config_mod
+    from tldw_chatbook.Provider_Contract import provider_endpoint_contract as contract
 
-    assert _V1_APPENDED_SHAPES == {key: "/" + "/".join(path) for key, path in _V1_APPENDED_PATHS.items()}
+    assert config_mod._V1_APPENDED_SHAPES == {
+        key: "/" + "/".join(path) for key, path in contract._V1_APPENDED_PATHS.items()
+    }
+    assert config_mod._V1_APPENDED_OTHER_HOSTS == contract._V1_APPENDED_OTHER_HOSTS
+    hosts = {(provider, urlsplit(row[0]).hostname) for provider, row in _V1_APPENDED.items()}
+    hosts |= set(contract._V1_APPENDED_OTHER_HOSTS.items())
     rows = {(provider, stored) for provider, _key, stored, _expected in _V1_APPENDED_LOAD_ROWS.values()}
     rows |= {(p, "http://" + s.removeprefix("https://")) for p, s in rows if s.startswith("https://")}
     rows |= {
-        (provider, f"{scheme}://{urlsplit(_V1_APPENDED[provider][0]).hostname}{port}{shape}{tail}")
-        for provider, shape in _V1_APPENDED_SHAPES.items()
+        (provider, f"{scheme}://{host}{port}{config_mod._V1_APPENDED_SHAPES[provider]}{tail}")
+        for provider, host in hosts
         for scheme, default_port in (("https", ":443"), ("http", ":80"))
         for port in ("", default_port, ":8443")
         for tail in ("", "/chat/completions", "/models", "/responses", "/embeddings", "/chat")
     }
     disagreements = []
     for provider, stored in sorted(rows):
-        config = {"api_settings": {provider: {"api_base_url": stored}}}
-        migrated = _migrate_v1_appended_provider_bases(config)["api_settings"][provider]["api_base_url"]
-        if migrated != (expected := v1_appended_documented_base(provider, stored) or stored):
+        config = {"config_schema_version": 1, "api_settings": {provider: {"api_base_url": stored}}}
+        migrated = config_mod.migrate_config_forward(config)[0]["api_settings"][provider]["api_base_url"]
+        if migrated != (expected := contract.v1_appended_documented_base(provider, stored) or stored):
             disagreements.append((provider, stored, migrated, expected))
     assert not disagreements
 
 
-@pytest.mark.parametrize("version", [2, 1])
+@pytest.mark.parametrize("provider", sorted(_V1_APPENDED_OTHER_HOSTS))
+def test_a_config_already_at_schema_2_still_migrates_the_added_hosts(provider, tmp_path, monkeypatch):
+    """TASK-42153: a config migration 2's boot write stamped, or one created
+    from the v2 template, never runs migration 2 again, so the added hosts
+    are migration 3: a v2 config holding one is rewritten on load and saved
+    once, stamped 3."""
+    stored, documented, _posted = _V1_APPENDED_OTHER_HOSTS[provider]
+    path = tmp_path / "config.toml"
+    path.write_text(
+        toml.dumps({"config_schema_version": 2, "api_settings": {provider: {"api_base_url": stored}}}),
+        encoding="utf-8",
+    )
+    config_mod = select_config_source(monkeypatch, path)
+
+    loaded = config_mod.load_settings(force_reload=True)["api_settings"][provider]["api_base_url"]
+    first = config_mod.migrate_config_file_if_needed()
+    second = config_mod.migrate_config_file_if_needed()
+
+    written = tomllib.loads(path.read_text(encoding="utf-8"))
+    assert (loaded, first is not None, second) == (documented, True, None)
+    assert (written["api_settings"][provider]["api_base_url"], written["config_schema_version"]) == (documented, 3)
+
+
+@pytest.mark.parametrize("version", [3, 2, 1])
 def test_the_boot_migration_step_takes_no_lock_for_a_config_with_nothing_to_rewrite(
     version, tmp_path, monkeypatch
 ):
@@ -5888,6 +5963,40 @@ def test_an_env_key_still_outranks_a_still_encrypted_slot_key(
     assert settings["api_settings"][provider]["api_key"] == slot_key
     if provider != "google":
         assert settings[f"{provider}_api"]["api_key"] == "env-key-0000"
+
+
+@pytest.mark.parametrize("slot_key", ["absent", "still-encrypted"])
+def test_a_hugging_face_send_without_a_usable_saved_key_goes_out_keyless(slot_key, tmp_path, monkeypatch):
+    """TASK-42134 (owner decision 2026-11-21, "134 - no"): a Hugging Face send
+    is never refused for want of a key. With no saved key at all, or one still
+    encrypted (a locked session), ``chat_api_call`` sends the request with no
+    ``Authorization`` header (public Inference API or an unsecured TGI), and
+    never the ciphertext."""
+    import requests
+
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+    from tldw_chatbook.Provider_Contract import ChatAPIError
+
+    monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+    table = {"model": "m"} if slot_key == "absent" else {"model": "m", "api_key": _ciphertext("slot-key-0000")}
+    path = tmp_path / "config.toml"
+    path.write_text(toml.dumps({"api_settings": {"huggingface": table}}), encoding="utf-8")
+    settings = select_config_source(monkeypatch, path).load_settings(force_reload=True)
+    assert settings["api_settings"]["huggingface"].get("api_key") == table.get("api_key")
+    _cloud_world(monkeypatch, settings)
+    stub, wire = requests.Session.send, []
+
+    def recording(session, request, **kwargs):
+        wire.append({name.lower(): value for name, value in request.headers.items()})
+        return stub(session, request, **kwargs)
+
+    monkeypatch.setattr(requests.Session, "send", recording)
+
+    with pytest.raises(ChatAPIError):  # the stub answers 400
+        chat_api_call("huggingface", [{"role": "user", "content": "x"}], model="m", streaming=False)
+
+    assert wire, "the send was refused"
+    assert [headers for headers in wire if "authorization" in headers or "enc:" in str(headers)] == []
 
 
 def test_a_legacy_only_custom_2_key_reads_the_same_in_readiness_and_every_send(

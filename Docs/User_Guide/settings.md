@@ -299,7 +299,10 @@ own `[api_settings.<provider>]` table, so it stays the key in use if you set
 the env var later; a save of other rows alone copies nothing. A key of the
 provider's own that is still encrypted keeps the older key out, as for
 Custom 2: the provider is not ready, because its saved key is still
-encrypted, and nothing sends the older key. No other `[API]`
+encrypted, and nothing sends the older key. A Hugging Face send is not
+refused, by design: while its saved key is still encrypted the provider reads
+as not ready, but a send made anyway goes out with no key, as it does when no
+key is saved (for the public Inference API or an unsecured TGI endpoint). No other `[API]`
 key is shown in that row or copied. Once a save records "no credential"
 (**Clear**) or an **Env var** for the provider, its `[API]` key is no longer
 shown or copied, and chats and summaries no longer send it. The MCP server's
@@ -411,15 +414,24 @@ gateway's (`…/gemini/v1beta`). On the provider's own host, the bare host or
 the start of its documented path is completed to that path: Groq's
 `https://api.groq.com` or `https://api.groq.com/openai` is saved as
 `…/openai/v1`, and Google's `https://generativelanguage.googleapis.com` as
-`…/v1beta`. On any other host a bare address gets `/v1`, except under Cohere,
+`…/v1beta`. QwenCloud's China host counts as its own: `https://dashscope.aliyuncs.com`
+or `…/compatible-mode` is saved as `…/compatible-mode/v1`. On any other host a bare address gets `/v1`, except under Cohere,
 whose adapter adds its own `/v2/chat`. An earlier version saved some of these
-addresses with `/v1` added; on the provider's own host the app rewrites them
-to the documented address once when it loads your config, and **s** saves
-them that way too: Google's `…/v1beta/v1` becomes `…/v1beta`, Cohere's
-`https://api.cohere.com/v1` the bare host, and Groq's, OpenRouter's and
-QwenCloud's `<host>/v1` become `…/openai/v1`, `…/api/v1` and
-`…/compatible-mode/v1`, with or without a pasted `/chat/completions` or
-`/models` after them (QwenCloud: `/responses` or `/chat/completions`), and a port you typed is kept.
+addresses with `/v1` added. The app rewrites these once when it loads your
+config, and **s** saves them that way too:
+
+- Google's `https://generativelanguage.googleapis.com/v1beta/v1` becomes `…/v1beta`.
+- Cohere's `https://api.cohere.com/v1`, and `https://api.cohere.ai/v1` on its
+  older host, become the bare host.
+- Groq's `https://api.groq.com/v1` becomes `…/openai/v1`.
+- OpenRouter's `https://openrouter.ai/v1` becomes `…/api/v1`.
+- QwenCloud's `https://dashscope-intl.aliyuncs.com/v1`, and
+  `https://dashscope.aliyuncs.com/v1` on its China host, become
+  `…/compatible-mode/v1` on the same host.
+
+Each is rewritten with or without a pasted `/chat/completions` or `/models`
+after it (QwenCloud: `/responses` or `/chat/completions`), and the host and any
+port you typed are kept.
 Loading rewrites only the address as an earlier version saved it; one you edited by
 hand (capital letters in the host, a trailing slash) is rewritten the next time you
 save a change to that provider with **s** (change any of its fields, the Endpoint
