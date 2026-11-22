@@ -199,6 +199,16 @@ def _footer(host, screen) -> str:
     return _painted_in(host, found.first()) if found else ""
 
 
+def _footer_lacks(host, screen, text: str) -> bool:
+    """A negative footer check that holds only on a painted frame.
+
+    Mid-batch ``_footer`` reads "", which lacks everything: a bare ``not in``
+    would pass there without reading the footer at all.
+    """
+    painted = _footer(host, screen)
+    return bool(painted) and text not in painted
+
+
 def _shown(screen, selector: str) -> bool:
     found = screen.query(selector)
     return bool(found) and bool(found.first().display)
@@ -311,7 +321,7 @@ async def test_escape_during_an_import_keeps_it_running(
                 lambda: _footer(host, screen).startswith("esc back to notes |"),
                 lambda: f"the running import's footer, painted {_footer(host, screen)!r}",
             )
-            assert "esc cancel" not in _footer(host, screen)
+            assert _footer_lacks(host, screen, "esc cancel"), _footer(host, screen)
             shortcuts = await _f1_shortcuts(host, screen, pilot)
             assert ("esc", "back to notes") in shortcuts, shortcuts
             assert ("esc", "cancel") not in shortcuts, shortcuts
@@ -391,7 +401,7 @@ async def test_escape_during_an_import_keeps_it_running(
             await _until(
                 pilot,
                 lambda: getattr(screen.focused, "id", None) == "note-import-body"
-                and "enter cancel import" not in _footer(host, screen),
+                and _footer_lacks(host, screen, "enter cancel import"),
                 lambda: (
                     "Shift+Tab back to the progress region, chip gone: "
                     f"focus={getattr(screen.focused, 'id', None)!r} "
