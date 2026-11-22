@@ -6407,6 +6407,9 @@ class LibraryNotesController:
             if self._import_review_owns_the_pane() != owned_before:
                 self._sync_library_notes_reader_layout_from_shell()
             _sync_library_canvas(self, "notes")
+            # The import tier's Esc chip reads this phase: re-derive it here, as
+            # the lasting-sync publish does, not only when focus happens to move.
+            self._apply_library_notes_footer_context()
     def _refresh_after_library_note_import(self) -> None:
         """Refresh local list/count and folder tree after execution settles.
 

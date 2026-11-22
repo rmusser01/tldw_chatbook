@@ -63,6 +63,7 @@ from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
@@ -515,4 +516,79 @@ async def test_cancel_import_still_cancels_and_escape_still_cancels_a_running_ch
     finally:
         check.release.set()
         write.release.set()
+        profile.close()
+
+
+async def test_a_check_started_with_focus_outside_the_import_says_esc_cancel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The running check's footer follows its phase, not a focus move.
+
+    UI Fast Lane 30 (run 45018779351): the test above timed out on a
+    CHECKING import whose footer still read ``esc back to notes``. The import
+    publish re-derived no footer; ``esc cancel`` arrived only when the
+    check's recompose removed the focused control and Textual's focus reset
+    refreshed the screen. With focus outside the import -- here on the Items
+    pane grip, where that reset parks it -- the footer said Escape goes back
+    to Notes while Escape cancelled the check.
+    """
+    profile = _Profile(tmp_path, monkeypatch)
+    check = _Gate()
+    host = profile.host()
+    try:
+        async with host.run_test(size=SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            controller = screen._library_note_import_controller
+            controller._plan_selection = check.wrap(  # noqa: SLF001 - hold the check
+                controller._plan_selection  # noqa: SLF001
+            )
+            await _open_import_once_on_the_folder(host, screen, pilot, profile.folder)
+            # Folder recognition and every queued post-recompose focus restore
+            # land first, so moving focus to the grip is the last focus move.
+            # (Where that restore lands varies: one run here ended on None.)
+            await _until(
+                pilot,
+                lambda: not any(
+                    worker.group == "library_note_import_recognition"
+                    and not worker.is_finished
+                    for worker in host.workers
+                )
+                and not any(
+                    widget.has_pending_recompose_callback
+                    for widget in screen.query("*")
+                    if isinstance(widget, PostRecomposeCallback)
+                ),
+                "the selection to settle",
+            )
+            grip = screen.query_one("#library-browse-items-grip")
+            screen.set_focus(grip)
+
+            await _press(host, screen, pilot, "#note-import-check")
+            await _until(pilot, check.entered.is_set, "the check to start")
+            await _until(
+                pilot,
+                lambda: controller.snapshot.phase is NoteImportPhase.CHECKING
+                and "esc cancel" in _footer(host, screen),
+                lambda: (
+                    "the running check's footer with focus on "
+                    f"{getattr(screen.focused, 'id', None)!r}, painted "
+                    f"{_footer(host, screen)!r}"
+                ),
+            )
+            assert screen.focused is grip, "a focus move refreshed the footer"
+            await pilot.press("escape")
+            await _until(
+                pilot,
+                lambda: controller.snapshot.phase is NoteImportPhase.SELECT
+                and _footer(host, screen).startswith("esc back to notes |"),
+                lambda: (
+                    "Escape to cancel the check and the footer to follow, "
+                    f"phase={controller.snapshot.phase} "
+                    f"painted {_footer(host, screen)!r}"
+                ),
+            )
+            assert screen._notes_state.view == "import"
+    finally:
+        check.release.set()
         profile.close()
