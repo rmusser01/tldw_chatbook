@@ -847,11 +847,11 @@ jobs:
     # (the item list's mounted file, Tests/UI/test_roleplay_item_list_app.py).
     # Roleplay frame B2b (TASK-33910.4, owner decision 2026-10-31): a third admission lane, because on PR #3334's run 41169081459 lane 2 with these suites hit its 35-min cap at 99% (about 17 CI-min for 211 mounted tests, ~485 s serial locally). One more runner per PR (ADR-103 note, 2026-10-31).
     # TASK-33620.15.61 puts two mounted Console MCP catalog files (bootstrap_profile,
-    # 22 tests) after the Skills import file, ahead of the Roleplay suites. Tests/conftest.py
-    # runs a GC pass after every Tests/UI test, and behind the Roleplay heap their
-    # teardown grew from 2.4 s to 51 s a file. Ahead of it, they took 69 s and the step
-    # 582 s; last, 162 s and 650 s (pytest 9, load 4-7). Behind the Skills file, 73 s
-    # of the step's 735 s (load 9-24).
+    # 22 tests) after the Skills import file, ahead of the Roleplay suites. Appended
+    # after the theme node before TASK-42144 bounded its parse cache, each file's
+    # per-test gc teardown grew from 2.4 s to 51 s (162 s against 69 s). Re-timed
+    # 2026-11-22 (serial, load 8-37): 93 s of the step's 1122 s here, 114 s of 1131 s
+    # at the tail; 101 s in CI run 44944358256.
     #
     # Same runner, install line, cap and --timeout=300 as
     # pr-fast-lane-admission-2, and its own pytest process and bootstrap
@@ -888,8 +888,8 @@ jobs:
       # compaction-hold file (module bootstrap_profile, 12 tests, 77 s serial),
       # both at load 22-27. This lane ran a median 16.3 / max 21.3 of its 35 min
       # over 56 runs from 2026-11-20 to 2026-11-22.
-      # TASK-33620.15.61's two mounted Console MCP catalog files follow it,
-      # ahead of the Roleplay suites, for the same reason (the job's note).
+      # TASK-33620.15.61's two mounted Console MCP catalog files follow it
+      # (the job's note).
       - name: Run admission-sensitive suites 3
         run: |
           pytest \
@@ -1781,8 +1781,8 @@ jobs:
       # sandboxed, follow the config participant lifetimes; timings in the
       # task's notes.
       # TASK-33620.15.61's four sandboxed Console MCP catalog files (30 tests,
-      # about 18.5 s in this step) join the sandboxed block after the Skills
-      # recovery controls file.
+      # about 18 s in this step, 22 s in CI) join the sandboxed block after the
+      # Skills recovery controls file.
       # test_closed_loop_pending_submit_is_emergency_detachment: deselected
       # 2026-11-12: red on dev e0186fa10a (console_send_diagnostic ContextVar
       # token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.

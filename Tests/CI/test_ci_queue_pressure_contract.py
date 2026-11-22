@@ -721,9 +721,10 @@ RECOVERED_SUITES_TARGETS = (
     # TASK-33620.15.61: the Console's MCP catalog reuse key and its refusals,
     # the store fingerprints, the run-start anchor and the off-loop fingerprint
     # check (TASK-33620.15.1, TASK-33620.15.38), on no PR lane before.
-    # Sandboxed, 30 tests, 18.5 s in this step at load 5-7 (the step 715 s);
-    # pr-fast-lane, their siblings' home, has no minutes left. The two mounted
-    # files are bootstrap_profile and run in ADMISSION_3_TARGETS.
+    # Sandboxed, 30 tests, about 18 s in this step (serial, load 8-37; the step
+    # 1565 s), 22 s in CI; pr-fast-lane, their siblings' home, has no minutes
+    # left. The two mounted files are bootstrap_profile and run in
+    # ADMISSION_3_TARGETS.
     "Tests/Chat/test_console_run_start_reuse_key.py",
     "Tests/MCP/test_catalog_fingerprint.py",
     "Tests/Chat/test_console_run_start_anchor.py",
@@ -1154,10 +1155,10 @@ ADMISSION_3_TARGETS = (
     "Tests/Skills/test_skills_import.py",
     # TASK-33620.15.61: the mounted Console MCP catalog reuse and anchor files
     # (TASK-33620.15.1, TASK-33620.15.38; bootstrap_profile, 11 tests each),
-    # on no PR lane before. Ahead of the Roleplay files for the same reason:
-    # before them they took 69 s and the step 582 s; after them, 162 s (their
-    # teardown 2.4 s -> 51 s a file) and the step 650 s (load 4-7, pytest 9).
-    # Behind the Skills file, 73 s of the step's 735 s (load 9-24).
+    # on no PR lane before. Ahead of the Roleplay files: before TASK-42144
+    # bounded the theme node's parse cache, at the tail their teardown grew
+    # 2.4 s -> 51 s a file. Re-timed 2026-11-22 (serial, load 8-37): 93 s of
+    # the step's 1122 s here, 114 s of 1131 s at the tail.
     "Tests/UI/test_console_mcp_catalog_reuse.py",
     "Tests/UI/test_console_mcp_catalog_anchor.py",
     # Roleplay frame B2b (TASK-33910.4, owner decision D7, 2026-10-26): the
