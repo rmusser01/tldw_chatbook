@@ -319,6 +319,10 @@ def _read_regular_archive(path: Path) -> bytes:
 
         if identity(before) != identity(after) or identity(after) != identity(current):
             raise ToolPackError("import", "archive_invalid")
+        # Both are fstat, so on Windows both report ChangeTime: a write to the
+        # open file during the read still moves it.
+        if os.name == "nt" and before.st_ctime_ns != after.st_ctime_ns:
+            raise ToolPackError("import", "archive_invalid")
         return b"".join(chunks)
     except ToolPackError:
         raise

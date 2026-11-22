@@ -451,6 +451,20 @@ class _StatView:
         return getattr(self._real, name)
 
 
+class _OsView:
+    """The importer's ``os`` with selected attributes replaced.
+
+    Installed on the importer module only, so no other thread's ``os`` calls
+    are seen or changed.
+    """
+
+    def __init__(self, **overrides: object) -> None:
+        self.__dict__.update(overrides)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(os, name)
+
+
 def test_inspects_a_valid_archive_on_every_platform(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -552,17 +566,16 @@ def test_path_identity_must_match_the_descriptor_that_was_read(
     # on every platform: Windows refuses that test's os.replace of an open file.
     archive, _tool_value = _valid_archive(tmp_path)
     raw = archive.read_bytes()
-    real_stat = importer_module.os.stat
     calls: list[tuple[object, bool]] = []
 
     def drifted_stat(path: object, *, follow_symlinks: bool = True) -> object:
         calls.append((path, follow_symlinks))
-        real = real_stat(path, follow_symlinks=follow_symlinks)
+        real = os.stat(path, follow_symlinks=follow_symlinks)
         if field is None:
             return real
         return _StatView(real, **{field: getattr(real, field) + 1})
 
-    monkeypatch.setattr(importer_module.os, "stat", drifted_stat)
+    monkeypatch.setattr(importer_module, "os", _OsView(stat=drifted_stat))
 
     if field is None:
         assert importer_module._read_regular_archive(archive) == raw
@@ -579,13 +592,12 @@ def test_windows_identity_ignores_st_ctime_but_posix_compares_it(
 ) -> None:
     archive, _tool_value = _valid_archive(tmp_path)
     raw = archive.read_bytes()
-    real_stat = importer_module.os.stat
 
     def ctime_shifted_stat(path: object, *, follow_symlinks: bool = True) -> object:
-        real = real_stat(path, follow_symlinks=follow_symlinks)
+        real = os.stat(path, follow_symlinks=follow_symlinks)
         return _StatView(real, st_ctime_ns=real.st_ctime_ns + 1)
 
-    monkeypatch.setattr(importer_module.os, "stat", ctime_shifted_stat)
+    monkeypatch.setattr(importer_module, "os", _OsView(stat=ctime_shifted_stat))
 
     if os.name == "nt":
         # Windows stat's st_ctime is CreationTime while fstat's is ChangeTime,
@@ -620,26 +632,40 @@ def test_posix_host_without_o_nofollow_refuses_before_opening(
 class _WindowsOsView:
     """``os`` as the importer sees it on native Windows, simulated on any host.
 
-    There is no ``O_NOFOLLOW``, and ``fstat`` reports ChangeTime as
+    There is no ``O_NOFOLLOW``; ``O_BINARY`` exists and ``open`` insists on it
+    (the CRT reads in text mode without it). ``fstat`` reports ChangeTime as
     ``st_ctime`` while ``stat`` reports CreationTime. Both report the same
     ``st_birthtime_ns`` (POSIX hosts lack it; a constant stands in).
+    ``change_drift`` moves fstat's ChangeTime after the first call, as a write
+    during the read would.
     """
 
     name = "nt"
+    O_BINARY = getattr(os, "O_BINARY", 0x8000)  # Windows' value elsewhere
 
-    def __init__(self, birthtime_drift: int) -> None:
+    def __init__(self, birthtime_drift: int = 0, change_drift: int = 0) -> None:
         self._drift = birthtime_drift
+        self._change_drift = change_drift
+        self._fstats = 0
 
     def __getattr__(self, name: str) -> object:
         if name == "O_NOFOLLOW":
             raise AttributeError(name)
         return getattr(os, name)
 
+    def open(self, path: object, flags: int, *args: object) -> int:
+        assert flags & self.O_BINARY, "the archive was opened without O_BINARY"
+        if not hasattr(os, "O_BINARY"):
+            flags &= ~self.O_BINARY  # not a flag this host knows
+        return os.open(path, flags, *args)
+
     def fstat(self, descriptor: int) -> _StatView:
         real = os.fstat(descriptor)
+        self._fstats += 1
+        drift = self._change_drift if self._fstats > 1 else 0
         return _StatView(
             real,
-            st_ctime_ns=real.st_ctime_ns + 1,
+            st_ctime_ns=real.st_ctime_ns + 1 + drift,
             st_birthtime_ns=getattr(real, "st_birthtime_ns", 0),
         )
 
@@ -650,19 +676,27 @@ class _WindowsOsView:
         )
 
 
-@pytest.mark.parametrize("birthtime_drift", [0, 1], ids=["same-file", "drifted"])
+@pytest.mark.parametrize(
+    ("birthtime_drift", "change_drift"),
+    [(0, 0), (1, 0), (0, 1)],
+    ids=["same-file", "drifted", "changed-during-read"],
+)
 def test_windows_os_semantics_read_the_archive_and_keep_the_identity_check(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     birthtime_drift: int,
+    change_drift: int,
 ) -> None:
-    # Runs the nt branches on POSIX CI too, which the tests above reach only on
-    # a Windows host.
+    # Runs the nt branches on any host, so POSIX runs of this file (laned in
+    # dreams-tracking, round 21) cover them; the tests above reach them only
+    # on a Windows host.
     archive, _tool_value = _valid_archive(tmp_path)
     raw = archive.read_bytes()
-    monkeypatch.setattr(importer_module, "os", _WindowsOsView(birthtime_drift))
+    monkeypatch.setattr(
+        importer_module, "os", _WindowsOsView(birthtime_drift, change_drift)
+    )
 
-    if birthtime_drift == 0:
+    if birthtime_drift == change_drift == 0:
         assert importer_module._read_regular_archive(archive) == raw
     else:
         with pytest.raises(ToolPackError) as raised:

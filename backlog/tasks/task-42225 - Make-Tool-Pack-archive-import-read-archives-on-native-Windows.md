@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-21 13:30
-updated_date: 2026-11-22 18:56
+updated_date: 2026-11-22 20:03
 labels:
 - tool-packs
 - windows
@@ -36,6 +36,7 @@ The receipt store's separate Windows failure (C1) is handled in PR #3684 and is 
 - [x] #3 A path whose identity differs from the descriptor that was read is refused with `archive_invalid` on every platform, and the test proves the identity comparison is reached
 - [x] #4 The new regression tests are not platform-skipped
 - [x] #5 Against `dev` on Windows, the touched test files show no new failures, and the 25 archive-reader tests pass across repeated runs (one also needs PR #3684's receipt store)
+- [x] #6 On native Windows, an archive written in place during the read (fstat's ChangeTime moves between the two descriptor reads) is refused with `archive_invalid` (added 2026-11-22 from the port's review)
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -92,10 +93,15 @@ So `O_BINARY` ships in the same change. The triage's C4 makes the same fix in `p
 **`./scripts/preflight.sh`** on the original branch (python3.13.3, Windows): every check passes except "Canvas Mermaid generated assets".
 - That check fails on a clean `dev` worktree too: there it reports "use the pinned Python build version". In this worktree, `core.autocrlf=true` gives `canvas_shell.css` CRLF, so it reports an integrity mismatch first.
 - This change touches none of its inputs.
+
 **Port (2026-11-22).** PR #3689's branch was 141+ commits behind `dev` with red CI, so its two commits (e6ef34e017, a18bddc9c8) were cherry-picked with `-x` onto `fu/r21-archive` from `dev` ddd3c02052. The Windows evidence above is from the original branch on `dev` e5626ea043; it was not re-run on this port, which changes none of the code it measured. `dev` ddd3c02052 still has all three defects in `_read_regular_archive`.
-- **New test** `test_windows_os_semantics_read_the_archive_and_keep_the_identity_check` (in `test_import_safety.py`) runs the `nt` branches on any host. It swaps the importer's module-level `os` for a view with `name == "nt"`, no `O_NOFOLLOW`, and `fstat`/`stat` that disagree on `st_ctime` but agree on `st_birthtime_ns`. The twelve tests above only reach those branches on a Windows host. The view cannot model CRT text mode, so `O_BINARY` stays covered by the Windows-only reads above.
+- **New test** `test_windows_os_semantics_read_the_archive_and_keep_the_identity_check` (in `test_import_safety.py`) runs the `nt` branches on any host. It swaps the importer's module-level `os` for a view with `name == "nt"`, no `O_NOFOLLOW`, and `fstat`/`stat` that disagree on `st_ctime` but agree on `st_birthtime_ns`. The twelve tests above only reach those branches on a Windows host. The view cannot model CRT text mode, so the Windows-only reads above still cover the bytes. The view's `open` does pin the flag: it asserts `O_BINARY` is set, then strips it where the host has no such flag.
 - **Red/green on macOS** (CPython 3.12.11): with `dev`'s importer the `same-file` case fails with `archive_invalid` (C2). With C2 and `O_BINARY` but `st_ctime_ns` kept in the `nt` identity, it fails the same way (C3). With an `nt` identity that drops the time field, the `drifted` case fails with DID NOT RAISE. With the port, both cases pass.
 - The twelve original tests pass on macOS both with and without the importer change (72 of 72 in the three files), so on POSIX they guard only the unchanged POSIX branch.
-- Whole `Tests/Tool_Packs` on macOS: 425 passed, 9 failed. The 9 fail identically on `dev` ddd3c02052; 4 are TASK-42191's targets, 5 are its directory-fsync family.
-- Still no PR CI lane runs `Tests/Tool_Packs`.
+- Whole `Tests/Tool_Packs` on macOS, on this branch stacked on TASK-42191's port, `-n 4`: 435 passed, 0 failed.
+- `Tests/Tool_Packs` is laned in `dreams-tracking` (round 21 lanes commit).
+- **Review fixes (2026-11-22).**
+  - **O_BINARY pin:** red with `O_BINARY` dropped from the importer (3 of 3 cases: "the archive was opened without O_BINARY").
+  - **Module-scoped `stat`:** the two cherry-picked identity tests now replace `stat` on the importer's own `os` view, not the global `os.stat`, keeping their assertions.
+  - **AC #6 hardening:** on `nt` the reader also compares fstat's `st_ctime_ns` before and after the read. The new `changed-during-read` case failed with DID NOT RAISE before the change and passes after it. `test_import_safety.py` is 50 of 50.
 <!-- SECTION:NOTES:END -->
