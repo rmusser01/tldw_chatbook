@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-21 13:30
-updated_date: 2026-11-21 13:50
+updated_date: 2026-11-22 18:56
 labels:
 - tool-packs
 - windows
@@ -87,9 +87,15 @@ So `O_BINARY` ships in the same change. The triage's C4 makes the same fix in `p
 **Not covered.**
 - No Linux run: this host has no WSL or Docker, and no PR CI lane runs `Tests/Tool_Packs`. The POSIX branches were checked by reading the code only.
 - Symlink rejection on Windows was not live-tested, because this host cannot create symlinks.
-- Inspect → import → remove end to end with the real receipt store still waits on PR #3684.
+- Inspect → import → remove end to end with the real receipt store still waits on PR #3684 (ported 2026-11-22 as `fu/r21-receipt`).
 
-**`./scripts/preflight.sh`** (python3.13.3, Windows): every check passes except "Canvas Mermaid generated assets".
+**`./scripts/preflight.sh`** on the original branch (python3.13.3, Windows): every check passes except "Canvas Mermaid generated assets".
 - That check fails on a clean `dev` worktree too: there it reports "use the pinned Python build version". In this worktree, `core.autocrlf=true` gives `canvas_shell.css` CRLF, so it reports an integrity mismatch first.
 - This change touches none of its inputs.
+**Port (2026-11-22).** PR #3689's branch was 141+ commits behind `dev` with red CI, so its two commits (e6ef34e017, a18bddc9c8) were cherry-picked with `-x` onto `fu/r21-archive` from `dev` ddd3c02052. The Windows evidence above is from the original branch on `dev` e5626ea043; it was not re-run on this port, which changes none of the code it measured. `dev` ddd3c02052 still has all three defects in `_read_regular_archive`.
+- **New test** `test_windows_os_semantics_read_the_archive_and_keep_the_identity_check` (in `test_import_safety.py`) runs the `nt` branches on any host. It swaps the importer's module-level `os` for a view with `name == "nt"`, no `O_NOFOLLOW`, and `fstat`/`stat` that disagree on `st_ctime` but agree on `st_birthtime_ns`. The twelve tests above only reach those branches on a Windows host. The view cannot model CRT text mode, so `O_BINARY` stays covered by the Windows-only reads above.
+- **Red/green on macOS** (CPython 3.12.11): with `dev`'s importer the `same-file` case fails with `archive_invalid` (C2). With C2 and `O_BINARY` but `st_ctime_ns` kept in the `nt` identity, it fails the same way (C3). With an `nt` identity that drops the time field, the `drifted` case fails with DID NOT RAISE. With the port, both cases pass.
+- The twelve original tests pass on macOS both with and without the importer change (72 of 72 in the three files), so on POSIX they guard only the unchanged POSIX branch.
+- Whole `Tests/Tool_Packs` on macOS: 425 passed, 9 failed. The 9 fail identically on `dev` ddd3c02052; 4 are TASK-42191's targets, 5 are its directory-fsync family.
+- Still no PR CI lane runs `Tests/Tool_Packs`.
 <!-- SECTION:NOTES:END -->

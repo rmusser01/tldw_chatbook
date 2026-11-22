@@ -617,6 +617,59 @@ def test_posix_host_without_o_nofollow_refuses_before_opening(
     assert raised.value.category == "archive_invalid"
 
 
+class _WindowsOsView:
+    """``os`` as the importer sees it on native Windows, simulated on any host.
+
+    There is no ``O_NOFOLLOW``, and ``fstat`` reports ChangeTime as
+    ``st_ctime`` while ``stat`` reports CreationTime. Both report the same
+    ``st_birthtime_ns`` (POSIX hosts lack it; a constant stands in).
+    """
+
+    name = "nt"
+
+    def __init__(self, birthtime_drift: int) -> None:
+        self._drift = birthtime_drift
+
+    def __getattr__(self, name: str) -> object:
+        if name == "O_NOFOLLOW":
+            raise AttributeError(name)
+        return getattr(os, name)
+
+    def fstat(self, descriptor: int) -> _StatView:
+        real = os.fstat(descriptor)
+        return _StatView(
+            real,
+            st_ctime_ns=real.st_ctime_ns + 1,
+            st_birthtime_ns=getattr(real, "st_birthtime_ns", 0),
+        )
+
+    def stat(self, path: object, *, follow_symlinks: bool = True) -> _StatView:
+        real = os.stat(path, follow_symlinks=follow_symlinks)
+        return _StatView(
+            real, st_birthtime_ns=getattr(real, "st_birthtime_ns", 0) + self._drift
+        )
+
+
+@pytest.mark.parametrize("birthtime_drift", [0, 1], ids=["same-file", "drifted"])
+def test_windows_os_semantics_read_the_archive_and_keep_the_identity_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    birthtime_drift: int,
+) -> None:
+    # Runs the nt branches on POSIX CI too, which the tests above reach only on
+    # a Windows host.
+    archive, _tool_value = _valid_archive(tmp_path)
+    raw = archive.read_bytes()
+    monkeypatch.setattr(importer_module, "os", _WindowsOsView(birthtime_drift))
+
+    if birthtime_drift == 0:
+        assert importer_module._read_regular_archive(archive) == raw
+    else:
+        with pytest.raises(ToolPackError) as raised:
+            importer_module._read_regular_archive(archive)
+        assert raised.value.category == "archive_invalid"
+
+
 @pytest.mark.parametrize("raw", [b"{", b'{"schema_version":99}'])
 def test_invalid_store_bytes_are_unchanged_and_legacy_recovery_is_never_called(
     tmp_path: Path,
