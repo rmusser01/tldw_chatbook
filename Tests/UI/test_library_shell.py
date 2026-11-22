@@ -25268,8 +25268,10 @@ async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
         # The coordinator records the conflict before the UI applies the save outcome.
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_note_session.snapshot.in_conflict
-            and screen.query_one("#library-note-conflict-region").display,
+            lambda: (
+                screen._library_note_session.snapshot.in_conflict
+                and screen.query_one("#library-note-conflict-region").display
+            ),
             message="Conflict geometry state never appeared.",
         )
     elif state == "delete-confirmation":
@@ -34891,8 +34893,10 @@ async def test_library_note_escape_hierarchy_cannot_bypass_conflict() -> None:
         # The coordinator records the conflict before the UI applies the save outcome.
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_note_session.snapshot.in_conflict
-            and screen.query_one("#library-note-conflict-region").display,
+            lambda: (
+                screen._library_note_session.snapshot.in_conflict
+                and screen.query_one("#library-note-conflict-region").display
+            ),
             message="Visible Save did not surface the expected conflict.",
         )
 
@@ -35042,7 +35046,7 @@ async def test_library_note_pilot_conflict_can_originate_from_every_region(
             message=lambda: (
                 f"{origin} did not surface its save conflict (in_conflict="
                 f"{bool(screen._library_note_session.snapshot and screen._library_note_session.snapshot.in_conflict)!r}, "
-                f"region_displayed={screen.query_one('#library-note-conflict-region').display!r})."
+                f"region_displayed={bool(screen.query('#library-note-conflict-region')) and screen.query_one('#library-note-conflict-region').display!r})."
             ),
         )
 
