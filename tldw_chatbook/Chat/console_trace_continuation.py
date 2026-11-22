@@ -1109,7 +1109,7 @@ def validate_completed_tool_turn(
     # establish that ownership. The output is bounded by the removed span.
     rows = cursor.execute(
         """SELECT n.sequence, c.owner_id, c.segment_id, c.turn_id, c.run_id,
-                      c.policy_id, c.route_identity, c.call_sequence
+                      c.policy_id, c.route_identity, c.call_sequence, c.call_id
                  FROM console_trace_surface_nodes n
                  LEFT JOIN console_trace_surface_replacements r ON r.replacement_node_id = n.node_id
                       AND r.segment_id = n.segment_id
@@ -1129,6 +1129,13 @@ def validate_completed_tool_turn(
             plan.end_sequence,
         ),
     ).fetchall()
+    redispatched = (
+        _redispatched_head_call(
+            self, cursor, rows, origin, origin_head, origin_event_sequence
+        )
+        if restoring_source
+        else None
+    )
     if tuple(row[0] for row in rows) != tuple(
         sorted({sequence for sequence, _ in suffix} | replay_continuations)
     ) or any(
@@ -1137,7 +1144,7 @@ def validate_completed_tool_turn(
             owner_id,
             segment_id,
             terminal.turn_id,
-            chain_terminal.run_id,
+            row[4] if row[8] == redispatched else chain_terminal.run_id,
             terminal.policy_id,
         )
         or (
@@ -1183,6 +1190,37 @@ def validate_completed_tool_turn(
         for row in foreign
     ):
         raise ValueError("completed_tool_turn_lineage")
+
+
+def _redispatched_head_call(
+    self, cursor, rows, origin, origin_head, origin_event_sequence
+):
+    """The earlier failed first call whose turn row a Retry reused (TASK-33621.6).
+
+    The trace card's Retry answers in a second run of the same turn, and
+    that run reuses the turn's own surface row, appended under the first
+    call of the earlier run. Only that one row may name the earlier run, and
+    only when the run is an earlier first-call run of the same turn whose
+    every call ended in error, so nothing it sent was answered.
+    """
+    head = next((row for row in rows if row[0] == origin_head.sequence), None)
+    if head is None or head[4] == origin.run_id or head[7] != 0:
+        return None
+    calls = cursor.execute(
+        """SELECT c.state, (SELECT MAX(e.sequence) FROM console_trace_events e
+                                WHERE e.call_id = c.call_id
+                                  AND e.event_type = 'call_boundary')
+                 FROM console_trace_calls c
+                WHERE c.owner_id = ? AND c.segment_id = ? AND c.turn_id = ?
+                  AND c.run_id = ?""",
+        (origin.owner_id, origin.segment_id, origin.turn_id, head[4]),
+    ).fetchall()
+    if not calls or any(
+        state != "error" or sequence is None or sequence >= origin_event_sequence
+        for state, sequence in calls
+    ):
+        return None
+    return head[8]
 
 
 def completed_tool_turn_parent(

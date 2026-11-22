@@ -313,8 +313,9 @@ async def test_retry_anyway_redispatches_a_genuine_unknown_delivery(
         await _send(h, DRAFT)
         await _until(
             h.pilot,
-            lambda: h.store.dispatch_recovery_for_presentation(h.session.id)
-            is not None,
+            lambda: (
+                h.store.dispatch_recovery_for_presentation(h.session.id) is not None
+            ),
             timeout=30.0,
             what=f"no unknown-delivery owner: {h.controller.run_state}",
         )
@@ -343,18 +344,47 @@ async def test_retry_anyway_redispatches_a_genuine_unknown_delivery(
         assert "delivery status is unknown" not in visible_text(h)
 
 
+def select_a_mixin(h, monkeypatch) -> None:
+    """Select one literal mix-in through the app's real mix-in service."""
+    from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+    from tldw_chatbook.Chat.console_prompt_mixins import (
+        MixinPreferences,
+        MixinSelection,
+    )
+
+    scope = Scope()
+    scope.release.set()
+    scope.records[A.record_uuid]["prompt_definition"]["body"] = "body A"
+    monkeypatch.setattr(h.controller.app, "prompt_scope_service", scope, raising=False)
+    service = h.controller.prompt_mixin_service()
+    service.replace_preferences(
+        h.session.id,
+        expected_revision=service.preferences(h.session.id).revision,
+        value=MixinPreferences(entries=(MixinSelection(A, True, "A", "before"),)),
+    )
+
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mixin", "regenerate"),
+    [(False, True), (True, True), (True, False)],
+    ids=["no-mixin-regenerate", "mixin-regenerate", "mixin-next-turn"],
+)
 async def test_a_recovered_retry_keeps_regenerate_and_the_next_turn_captured(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, mixin, regenerate
 ):
-    """.6 AC#2 with #3346's mix-in attempts: the recovered turn stays usable.
+    """.6 AC#2: a turn recovered by Retry stays usable with capture on.
 
-    The Retry's run is a second run of the turn's one mix-in attempt, which
-    keeps its first trace call. Regenerating that reply and sending the next
-    turn must both still work with capture on.
+    Retry answers in a second run of the turn's one mix-in attempt, which
+    keeps its first (failed) trace call. With a mix-in selected, the next
+    turn's trace admission must still prove the recovered answer: through
+    the attempt binding after Regenerate (an operational replacement), and
+    through the turn's surface lineage either way.
     """
     async with _mounted_console(tmp_path, monkeypatch, (160, 52)) as h:
+        if mixin:
+            select_a_mixin(h, monkeypatch)
+            await h.pilot.pause(0.3)
         posts: list[str] = []
         callout = await paused_after_429(h, monkeypatch, "refused", posts)
         await press(h, callout, "retry")
@@ -364,12 +394,13 @@ async def test_a_recovered_retry_keeps_regenerate_and_the_next_turn_captured(
             timeout=30.0,
             what=f"the retry did not complete: {h.controller.run_state}",
         )
-        reply = [
-            m
-            for m in h.store.messages_for_session(h.session.id)
-            if m.role is ConsoleMessageRole.ASSISTANT
-        ][-1]
-        assert (await h.controller.regenerate_message(reply.id)).accepted
+        if regenerate:
+            reply = [
+                m
+                for m in h.store.messages_for_session(h.session.id)
+                if m.role is ConsoleMessageRole.ASSISTANT
+            ][-1]
+            assert (await h.controller.regenerate_message(reply.id)).accepted
         await _send(h, "Name another color")
         await _until(
             h.pilot,
@@ -378,7 +409,8 @@ async def test_a_recovered_retry_keeps_regenerate_and_the_next_turn_captured(
             what=f"the next turn did not complete: {h.controller.run_state}",
         )
 
-        assert len(posts) == 4, posts  # 429, Retry, regenerate, next turn
+        # 429, Retry, [Regenerate,] next turn: the next turn was sent.
+        assert len(posts) == (4 if regenerate else 3), posts
         with h.database.transaction() as cursor:
             states = [
                 row[0]
@@ -386,9 +418,71 @@ async def test_a_recovered_retry_keeps_regenerate_and_the_next_turn_captured(
                     "SELECT state FROM console_trace_calls ORDER BY created_at"
                 ).fetchall()
             ]
-            replaced = cursor.execute(
-                "SELECT COUNT(*) FROM console_prompt_mixin_attempts "
-                "WHERE replaces_attempt_id IS NOT NULL"
-            ).fetchone()[0]
+            attempts = cursor.execute(
+                "SELECT replaces_attempt_id IS NOT NULL, expected_item_count "
+                "FROM console_prompt_mixin_attempts ORDER BY rowid"
+            ).fetchall()
+        # The next turn was captured: its call is the third, complete.
         assert states == ["error", "complete", "complete"], states
-        assert replaced == 1
+        assert sum(row[0] for row in attempts) == int(regenerate)
+        assert {row[1] for row in attempts} == {int(mixin)}, attempts
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("forged", ["call_left_open", "first_call_answered"])
+async def test_a_recovered_retry_is_not_proved_unless_its_earlier_run_all_failed(
+    tmp_path, monkeypatch, forged
+):
+    """Negative controls for the lineage rule above: only an all-error run counts.
+
+    The recovered turn's row may name its earlier run only when every call
+    of that run ended in error. A call of that run left open (reserved,
+    never settled: delivery unknown), or a first call that was answered,
+    must keep the next captured turn from proving the recovered answer, so
+    it stops on the trace card. Both states are forged after the Retry.
+    """
+    async with _mounted_console(tmp_path, monkeypatch, (160, 52)) as h:
+        select_a_mixin(h, monkeypatch)
+        await h.pilot.pause(0.3)
+        posts: list[str] = []
+        callout = await paused_after_429(h, monkeypatch, "refused", posts)
+        await press(h, callout, "retry")
+        await _until(
+            h.pilot,
+            lambda: h.controller.run_state.status is ConsoleRunStatus.COMPLETED,
+            timeout=30.0,
+            what=f"the retry did not complete: {h.controller.run_state}",
+        )
+        with h.database.transaction() as cursor:
+            first = cursor.execute(
+                "SELECT owner_id, segment_id, turn_id, run_id, policy_id, call_id "
+                "FROM console_trace_calls WHERE state='error'"
+            ).fetchone()
+            if forged == "call_left_open":
+                ConsoleTraceRepository().reserve_call(
+                    cursor,
+                    owner_id=first[0],
+                    segment_id=first[1],
+                    turn_id=first[2],
+                    run_id=first[3],
+                    call_sequence=1,
+                    idempotency_key="u06-open-call",
+                    policy_id=first[4],
+                )
+            else:
+                for guard in ("lifecycle", "terminal", "immutable", "set_once"):
+                    cursor.execute(f"DROP TRIGGER console_trace_calls_{guard}_guard")
+                cursor.execute(
+                    "UPDATE console_trace_calls SET state='complete', "
+                    "outcome='complete', response_started_at=settled_at "
+                    "WHERE call_id=?",
+                    (first[5],),
+                )
+        await _send(h, "Name another color")
+        await _until(
+            h.pilot,
+            lambda: h.controller.run_state.status is ConsoleRunStatus.BLOCKED,
+            timeout=30.0,
+            what=f"the next turn was not stopped: {h.controller.run_state}",
+        )
+        assert len(posts) == 2, posts  # the next turn was not sent

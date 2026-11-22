@@ -833,7 +833,13 @@ def test_mixin_indexes_service_real_lookup_and_message_cleanup_without_statistic
 
 @pytest.mark.parametrize(
     "second",
-    ["redispatch", "same_run_tool_call", "other_turn", "attempt_missing"],
+    [
+        "redispatch",
+        "same_run_tool_call",
+        "other_turn",
+        "attempt_missing",
+        "later_bound_elsewhere",
+    ],
 )
 def test_a_redispatched_attempt_keeps_its_first_trace_call(
     make_database, tmp_path, second
@@ -869,7 +875,8 @@ def test_a_redispatched_attempt_keeps_its_first_trace_call(
         policy = repository.ensure_policy(cursor, _policy())
 
         def reserve(run_id, sequence, turn_id="user"):
-            return repository.reserve_call(
+            # As the trace factory does: reserve, then record the call boundary.
+            call_id = repository.reserve_call(
                 cursor,
                 owner_id=owner.owner_id,
                 segment_id=segment.segment_id,
@@ -879,6 +886,15 @@ def test_a_redispatched_attempt_keeps_its_first_trace_call(
                 idempotency_key=f"{run_id}:{sequence}:{turn_id}",
                 policy_id=policy.policy_id,
             ).call_id
+            tail = repository.get_event_tail(cursor, segment.segment_id)
+            repository.append_event(
+                cursor,
+                segment_id=segment.segment_id,
+                sequence=0 if tail is None else tail.sequence + 1,
+                event_type="call_boundary",
+                call_id=call_id,
+            )
+            return call_id
 
         first = reserve("run-1", 0)
         bind = dict(conversation_id=cid, user_message_id="user")
@@ -898,6 +914,19 @@ def test_a_redispatched_attempt_keeps_its_first_trace_call(
                 )
             elif second == "same_run_tool_call":
                 later = reserve("run-1", 1)
+            elif second == "later_bound_elsewhere":
+                # Another attempt's own traced run is not this attempt's
+                # re-dispatch (forged directly: no flow writes it today).
+                later = reserve("run-2", 0)
+                cursor.execute(
+                    "DROP TRIGGER console_prompt_mixin_attempt_anchor_insert"
+                )
+                cursor.execute(
+                    "INSERT INTO console_prompt_mixin_attempts(conversation_id,"
+                    "attempt_id,schema_version,user_message_id,trace_call_id,"
+                    "expected_item_count) VALUES(?,'other',1,'user',?,0)",
+                    (cid, later),
+                )
             else:
                 later = reserve("run-2", 0, turn_id="another-turn")
             with pytest.raises(MixinSnapshotUnavailableError) as refused:

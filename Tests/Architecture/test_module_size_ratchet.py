@@ -1405,6 +1405,10 @@ _BUDGETS: dict[str, int] = {
     # Rebased onto dev a6df4d8d48 (2026-11-19): 6739 -> 6766, exact measurement.
     # 2026-11-23, port onto dev b31e3e9241: re-measured, dev's file is still
     # 6,739, so the row stays 6,766 (dev's 6,739 + the branch's 27).
+    # 2026-11-21, TASK-33621.6 review (owner rule 2026-10-04: a fix over a size
+    # ratchet raises the row): 6739 -> 6749 (+10), exact measurement. The
+    # replacement proof accepts the binding a Retry's re-dispatch keeps
+    # (DB/console_prompt_mixins.redispatches_bound_call).
     "tldw_chatbook/Chat/console_trace_service.py": 6774,
     # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
