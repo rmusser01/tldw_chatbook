@@ -610,6 +610,13 @@ def _restore_folder_pins() -> None:
         logger.info("profile folder pins not restored; error_type={}", type(error).__name__)
 
 
+#: Called (off the coordinator lock) when a local pause begins, so owners of
+#: idle helpers outside storage can end them before backup or restore work
+#: starts (TASK-40608: the spare workspace tool worker). A listener must not
+#: take storage and must not raise; a failure is ignored, the pause proceeds.
+_pause_listeners: list = []
+
+
 def _begin_local_pause() -> _LocalPause:
     global _pause
     with _changed:
@@ -629,6 +636,11 @@ def _begin_local_pause() -> _LocalPause:
     # Native handle closes stay off the coordinator lock; the pause owner only
     # starts backup or restore work after this returns.
     _release_folder_pins()
+    for listener in tuple(_pause_listeners):
+        try:
+            listener()
+        except Exception:  # noqa: BLE001 - see _pause_listeners
+            pass
     return pause
 
 
@@ -1126,6 +1138,43 @@ class _Evidence:
         )
 
 
+_observing_now = threading.local()
+
+
+@contextmanager
+def fresh_observation():
+    """Read every evidence input now on this thread, with no observation window.
+
+    For a read that decides whether a provider may be reached after a
+    restore (``LLM_Calls.recovery_review._history``: the OpenAI reconnect
+    review, recording its approval, and its per-request gate). Inside the
+    window a record deleted or rewritten by anything but this process's own
+    writers stays invisible for up to a second, and all three accepted an
+    activation record that had just been removed (TASK-40608, found
+    2026-11-22 by ``Tests/Backup_Recovery/test_activation_openai_reconnect.py``).
+    Here ``_current_stamps`` observes each input and ``_control_snapshot``
+    reads the files, as POSIX always does.
+
+    Every other caller of the paired witnesses keeps the window (owner
+    decision O3): observing them on every gate cost a Console turn 4-6 s on
+    Windows (README 7.7 -> 11.5 s, approved edit 8.1 -> 14.6 s, measured
+    2026-11-22).
+    """
+    depth = getattr(_observing_now, "depth", 0)
+    _observing_now.depth = depth + 1
+    try:
+        yield
+    finally:
+        _observing_now.depth = depth
+
+
+def _observation_window() -> float:
+    """The evidence observation window for this thread now (0: observe now)."""
+    if getattr(_observing_now, "depth", 0):
+        return 0.0
+    return _EVIDENCE_OBSERVATION_SECONDS
+
+
 def _current_stamps(entry: _Evidence) -> tuple:
     """Observe the inputs of ``entry`` now, or reuse a recent matching observation.
 
@@ -1133,9 +1182,10 @@ def _current_stamps(entry: _Evidence) -> tuple:
     Otherwise an observation that matched the published stamps is reused until
     the window ends, so a change made by another process (a permission or owner
     change, or new record bytes) is seen within that window. The window starts
-    when the matching observation began, never when it finished.
+    when the matching observation began, never when it finished. Inside
+    ``fresh_observation`` there is no window.
     """
-    window = _EVIDENCE_OBSERVATION_SECONDS
+    window = _observation_window()
     if not window:
         return entry.observe()
     started = time.monotonic()
@@ -1260,7 +1310,7 @@ def _control_snapshot(root: Path, key: tuple, read):
         key: The reader and its options.
         read: The unmodified reader. Its exceptions are never kept.
     """
-    if not _EVIDENCE_OBSERVATION_SECONDS or not _EVIDENCE_REUSE:
+    if not _observation_window() or not _EVIDENCE_REUSE:
         return read()
     selector = str(effective_config_path())
     with _lock:

@@ -89,20 +89,22 @@ def _select_default_base_data_dir(conventional: Path) -> Path:
 
 
 #: Windows (TASK-40608 D1, owner decision O3): (settings, posture, path,
-#: time.monotonic()) of the last positive off-loop config posture check. One
-#: immutable tuple, replaced whole, so any thread may read it.
+#: time.monotonic()) of the last positive config posture check. One immutable
+#: tuple, replaced whole, so any thread may read it.
 _posture_held = None
 _POSTURE_HELD_SECONDS = 1.0
 
 
 def posture_holds(config_path: Path, settings, posture: tuple, observe) -> bool:
-    """Whether the config path still has ``posture``, for callers off the UI loop.
+    """Whether the config path still has ``posture``.
 
     Each check stats every component of the config path. Worker threads made
-    one per warm settings read, several thousand per Console turn, and on
-    Windows every component costs a file open. There one positive check now
-    covers all threads for a second; a rebuild or a write installs a new
-    settings object, which never matches. Other platforms check every time.
+    one per warm settings read, several thousand per Console turn, and the UI
+    loop one per batch of callbacks (the 0.2 s Console tick alone: 1.3 s of
+    UI-thread time across two turns). On Windows every component costs a file
+    open, so there one positive check covers all threads for a second; a
+    rebuild or a write installs a new settings object, which never matches.
+    Other platforms check every time.
 
     Args:
         config_path: The config path the warm hit is for.

@@ -259,7 +259,18 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #: about 1,500 to 2,300 more lines. Counted right at ``_ui_ready`` with no
 #: settle, one tree read 80 and 93 in two runs, so that count is not
 #: comparable from one run to the next.
-MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 90
+#: 2026-11-21 (TASK-40608): raised 90 -> 224 by owner decision ("Warm up after
+#: UI ready", answered in the TASK-40608 work session that day; ADR-097
+#: exception ledger). A first message in a project chat with local tools
+#: still imported 102 application modules plus anyio and cryptography after
+#: every listed step (about 0.5-0.7 s on Windows, inside the send): the
+#: remote-binding status read, the personal-context, plugin and project-index
+#: services, trace capture and the agent's local tool dispatch. They are now
+#: the last block of the list. Counted from app + chat this census reads
+#: 224: the 104 new entries bring 134 modules here, more than the 102
+#: measured live, because the census starts before the screen routes. Pinned
+#: exactly, no slack; the rule for every other entry is unchanged.
+MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 224
 
 _CENSUS_SCRIPT = """
 import json

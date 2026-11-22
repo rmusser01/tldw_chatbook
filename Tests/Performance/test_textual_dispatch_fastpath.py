@@ -55,6 +55,10 @@ UPSTREAM_SOURCE = {
         textual_callback._count_parameters,
         "645475a994d72349717663a6f72456b3b8eb540dca0ebffcf28cde8bf988b9e9",
     ),
+    "Widget._check_refresh": (
+        fastpath.upstream("check_refresh"),
+        "ad1c8196be9747bff64e8e37a934439fcfd8160ed02c5127660989428d5711a6",
+    ),
     "_MessagePumpMeta.__new__": (
         _MessagePumpMeta.__new__,
         "c261e963e7ae4079096492e203b2abdab876c6f2996aff1920d8b7bd88f5b442",
@@ -373,6 +377,52 @@ def test_a_handler_added_and_deleted_on_a_pump_class_is_seen():
     assert by_convention() == []
 
 
+# --- idle refresh check -----------------------------------------------------
+
+
+class _Flags:
+    """Stands in for a widget: upstream is replaced by a recorder."""
+
+    _layout_required = _repaint_required = False
+    _scroll_required = _refresh_styles_required = False
+
+
+@pytest.mark.parametrize(
+    "flag",
+    [None, "_layout_required", "_repaint_required", "_scroll_required", "_refresh_styles_required"],
+)
+def test_the_idle_check_calls_upstream_exactly_when_a_refresh_flag_is_set(monkeypatch, flag):
+    from textual.widget import Widget
+
+    calls = []
+    fast = Widget._check_refresh
+    cell = next(
+        cell for cell in fast.__closure__ if cell.cell_contents is fastpath.upstream("check_refresh")
+    )
+    monkeypatch.setattr(cell, "cell_contents", calls.append)
+    widget = _Flags()
+    if flag is not None:
+        setattr(widget, flag, True)
+    fast(widget)
+    assert calls == ([] if flag is None else [widget])
+
+
+def test_upstream_idle_check_reads_only_the_four_flags():
+    """The early exit is only right while upstream acts on these flags alone."""
+    source = inspect.getsource(fastpath.upstream("check_refresh"))
+    acted_on = sorted(
+        line.strip()[len("if self.") : -1]
+        for line in source.splitlines()
+        if line.strip().startswith("if self._") and line.strip().endswith("_required:")
+    )
+    assert acted_on == [
+        "_layout_required",
+        "_refresh_styles_required",
+        "_repaint_required",
+        "_scroll_required",
+    ]
+
+
 # --- the running app ----------------------------------------------------------
 
 
@@ -410,3 +460,8 @@ async def test_messages_callbacks_and_the_pilot_barrier_still_work():
         assert app.events.count("ping") == 1
         assert app.events.count("pressed") == 1
         assert await pilot._wait_for_screen()
+        # A refresh requested after the fast idle check is still painted.
+        child = app.query_one("#child")
+        child.update("changed")
+        await pilot.pause()
+        assert not child._repaint_required and not child._layout_required

@@ -27,6 +27,23 @@ from tldw_chatbook.Backup_Recovery import config_participants
 pytestmark = pytest.mark.bootstrap_profile
 
 
+@pytest.fixture(autouse=True)
+def check_posture_on_every_hit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Select the per-hit posture check these tests are about.
+
+    On Windows one positive check covers every thread for a second
+    (TASK-40608, ADR-126 2026-11-21 note); the window's own tests below set
+    it back.
+
+    Args:
+        monkeypatch: Sets the Windows posture window to zero.
+    """
+    from tldw_chatbook.Backup_Recovery import profile_paths
+
+    monkeypatch.setattr(profile_paths, "_POSTURE_HELD_SECONDS", 0.0)
+    monkeypatch.setattr(profile_paths, "_posture_held", None)
+
+
 @pytest.fixture
 def operation_counter(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
     """Count entries into the admission handshake without disabling it.
@@ -447,6 +464,54 @@ async def test_a_config_file_replaced_between_loop_batches_is_not_served_warm(
         assert config_module.load_settings() is marker
     finally:
         if path.is_symlink() or path.exists():
+            path.unlink()
+        os.replace(backup, path)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the posture window is Windows-only")
+def test_the_windows_posture_window_shares_one_stamp_then_expires(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Inside the window hits share one stamp; after it a replaced file is a miss.
+
+    Args:
+        monkeypatch: Counts stamps, sets the window, marks the guarded rebuild.
+        tmp_path: pytest fixture; holds the swapped-out original.
+    """
+    import time
+
+    from tldw_chatbook.Backup_Recovery import profile_paths
+
+    _warm_settings()
+    path = config_module._get_effective_config_path()
+    if not path.exists():
+        pytest.skip("no config file to swap in this environment")
+    monkeypatch.setattr(profile_paths, "_POSTURE_HELD_SECONDS", 0.5)
+    real_posture = config_module._config_file_posture
+    stamps = [0]
+
+    def counted(config_path: Path) -> tuple:
+        stamps[0] += 1
+        return real_posture(config_path)
+
+    monkeypatch.setattr(config_module, "_config_file_posture", counted)
+    warm = [config_module.load_settings() for _ in range(5)]
+    assert stamps[0] == 1, f"5 warm hits inside the window stamped {stamps[0]} times"
+
+    marker: dict = {"guarded": True}
+    monkeypatch.setattr(config_module, "_load_settings_guarded", lambda **kwargs: marker)
+    original = path.read_bytes()
+    target = tmp_path / "elsewhere.toml"
+    target.write_bytes(original)
+    backup = tmp_path / "original.toml"
+    os.replace(path, backup)
+    try:
+        os.replace(target, path)
+        assert config_module.load_settings() is warm[0]  # still inside the window
+        time.sleep(0.6)
+        assert config_module.load_settings() is marker
+    finally:
+        if path.exists():
             path.unlink()
         os.replace(backup, path)
 

@@ -26129,3 +26129,34 @@ and keep the first run and repeat beside the instrumented comparison.
 **Incident.** AC #5 asked that every "load-independent" count column of the rail-switch probes be identical row for row, base against head, at n=6. The mount, unmount and full-update counts vary from run to run on every arm (mostly between two shapes; one full-update count took 2, 3 or 4), so the rule failed base against base. I then ticked the AC by swapping the base and judging varying columns "by the shapes seen". Review called it what it was, a criterion narrowed after the result was known, and the tick was withdrawn. The owner chose a dated amendment, written down before any new run: a new base (dev `45b1949ca3`, the chain's base after a rebase), n=12, and the modal tuple for varying columns. That run failed on two rows. In each, the head's mode was the base's second shape (8:4 against 4:8; 7:5 against 4:8; a post-hoc Fisher test gave p 0.22 and 0.41). The owner waived the AC.
 
 **What to do.** Before a timing or count comparison runs, run an uncounted pilot of the base arm at the planned n, and see which columns vary base against base. Two runs are not enough: a row that splits 10:2 shows the same shape on both runs 72% of the time. Then write the judging rule, with the n it needs, into the AC, and judge with that rule unchanged. Count how many rows the rule judges. A modal rule at n=12 passes a near-50:50 row with no change only about 70% of the time, and over this probe's nine varying rows an unchanged head would pass all nine only about 17% of the time. To tell a real change in shape frequency from noise, use a frequency test (Fisher) sized for the change that matters: against a 2:1 -> 1:2 swap it has about 26% power at n=12, 66% at n=30 and 90% at about n=50 per arm, before any correction for testing several rows. Either way, fix the rule before the data exists. If a result fails, record it as failed and let the owner decide; never re-read the rule until it passes.
+
+## Under `-I`, a subprocess runs the checkout its environment names, not yours (TASK-40608, 2026-11-21)
+
+**Incident.** The measurement environment's `.pth` pointed at an older worktree. The test process put the worktree under test first on `sys.path`, so the app ran the right code, but every `python -I -m tldw_chatbook.Tools.workspace_tool_worker` it started ignored that and imported the older checkout. A day of journey runs and worker tests exercised another branch's worker, and a change to the worker would have looked untested or, worse, tested.
+
+**What to do.** Give each worktree its own environment whose `.pth` names that worktree, and assert the worker's `__file__` is under the checkout before trusting a real-subprocess result (`test_real_isolated_subprocess_executes_this_worktree_vertical_slice` does).
+
+## A timing run without bytecode measures the compiler (TASK-40608, 2026-11-21)
+
+**Incident.** The runners passed `-B` to keep worktrees clean. A snapshot worktree had 27 `.pyc` files for 3,024 modules, so every run from it compiled the whole app from source; the work tree had 1,739, many stale. First-turn import cost (278 modules) and every start-up were inflated by an amount that changed with which files had been edited.
+
+**What to do.** Run `python -I -m compileall -q tldw_chatbook` in a worktree before timing it, and again after edits. An installed app has bytecode; a timing without it is not the user's timing.
+
+## A harness that polls on a fixed sleep multiplies what it measures (TASK-40608, 2026-11-21)
+
+**Incident.** The journey waits with `pilot.pause(0.05)`. Each pause posts one callback to every mounted widget and waits for all of them: 24 ms per pass on the Console's 557 widgets, 5.5 ms with the hidden ones removed. The turn is CPU-bound, so the test's own polling took about a third of it and stretched everything else by about (1 + pass cost / 0.05 s). The app's background warm-up is also off under pytest (`TLDW_SCREEN_PREIMPORT`), so the journey's first turn imported 278 modules that a session open for a few seconds has already loaded. Neither cost exists for a user, and both were being optimised as if they did.
+
+**What to do.** Before optimising against a UI journey, run it once with the settle pass skipped and once with the warm-up finished first. The differences are the harness's share; report them beside the result.
+
+## "No regression" is a claim about the files that were run (TASK-40608, 2026-11-22)
+
+**Incident.** A commit that keeps Console database handles open on Windows was reported as "166 test files compared with clean dev, no regression". The 166 were chosen by guessing which files touched the change. Comparing 324 more found 68 tests that passed on dev and failed on the branch: about fifty pinned the per-operation close in files nobody had thought of (`Tests/Chat/test_console_chat_controller.py`, the character display checks, the trace runtime), two exposed a credential-filter memo that served a result computed under a replaced filter, and one was a module-count ratchet. The helpers those tests share are imported by further files that were still not run.
+
+**What to do.** Choose the files by search, not by guess: grep the test tree for every helper, counter and module attribute the change affects (`registered_connection_count`, `worker_leases`, `_retired`, `_EVIDENCE_REUSE`) and for the modules it edits, and run all of them on both trees. Then say how many files were compared and how they were chosen. If a behaviour change breaks tests in files you did not expect, assume there are more and change the default the tests see, not the tests one by one.
+
+## A memo's key must cover everything the computation reads at call time (TASK-40608, 2026-11-22)
+
+**Incident.** The credential filter's result memo was keyed by filter version and known values. The filter function itself is looked up in a module table at call time, and one test replays a pre-upgrade trace by pointing the current version's entry at the older, weaker filter. The memo then served the weaker filter's "unchanged" after the table was restored, and a bare `sk_live_` key reached a capture unmasked. The memo's own tests passed; a test in another file caught it.
+
+**What to do.** List what the computation reads when it runs, not what its inputs were when the object was built. Anything looked up late (a registry entry, a module global a test can replace) goes into the entry and is compared by identity on a hit.
+

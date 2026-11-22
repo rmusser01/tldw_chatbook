@@ -2458,3 +2458,20 @@ def reset_visual_identity_decode_memos():
     yield
     for reset in resets:
         reset()
+
+
+@pytest.fixture(autouse=True)
+def _retire_spare_workspace_worker():
+    """End the idle workspace tool worker a test may have left running.
+
+    TASK-40608: after a real local tool call the executor keeps one idle
+    ``python -I -m`` worker for the next call. It must not outlive the test
+    that started it (on Windows it keeps a temporary interpreter's folder in
+    use). Looked up through sys.modules so tests that never load the executor
+    pay nothing.
+    """
+    yield
+    module = sys.modules.get("tldw_chatbook.Tools.workspace_tool_executor")
+    retire = getattr(module, "retire_spare_worker", None) if module is not None else None
+    if callable(retire):
+        retire()

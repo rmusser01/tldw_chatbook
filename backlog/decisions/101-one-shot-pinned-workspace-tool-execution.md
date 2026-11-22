@@ -124,6 +124,23 @@ state; otherwise it would become an alternate unpinned execution path.
 - New local path frontends must route through the pinned executor rather than
   call the path cores directly.
 
+## 2026-11-21 note (TASK-40608, owner-approved): one idle worker is started ahead of the call
+
+Status: **approved by the owner on 2026-11-21** ("Keep one spare").
+
+**Why.** Every local tool call started its own `python -I -m` worker. Alone that is about 0.15 s on Windows; inside a Console turn each call's worker took 0.33-0.52 s from launch to output, two or three times per turn.
+
+**What changed.** After a call takes or starts its worker, `workspace_tool_executor` starts the next one in the background with the same command and environment and keeps it idle. The worker reads its whole request from stdin before it does anything, so the idle process is the same process, started earlier. Nothing else moves:
+
+- Each process still serves exactly one request and exits. The one-shot rule, the pinned root, the job object or process group, the cleanup supervisor and the cleanup proof are unchanged and are applied to the taken process exactly as to a new one.
+- A spare is taken only when it was started with exactly this call's command and environment and is still running. Anything else starts a worker as before.
+- No spare is started before a first valid request for that environment has been dispatched, so a refused request still reaches no worker and starts none.
+- The spare is ended at interpreter exit, when storage pauses for a backup or restore (`storage_admission._pause_listeners`), and when a call needs another environment. If the app dies, the spare reads end-of-file and exits.
+- A test that replaces `subprocess.Popen` sees every spawn: no spare is started or taken through a replacement. `_SPARE_WORKERS = False` selects the per-call start.
+- The worker now times its exchange from the request's arrival, not from process start.
+
+**Measured** (Windows 10, 2026-11-21, three interleaved journey pairs): launch to output per call 0.33-0.52 s before, 0.30-0.39 s after in two pairs (0.37-0.66 s in the third, on a loaded machine). The gain is the interpreter start, about 0.1 s per call after the first.
+
 ## Links
 
 - [TASK-19637](../tasks/task-19637%20-%20Atomically-pin-local-tool-workspace-execution.md)

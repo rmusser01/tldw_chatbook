@@ -23,9 +23,11 @@ import weakref
 
 from . import storage_admission as storage
 
-#: Whether an owned call's new handle is held. Tests of the per-call close pin
-#: this to False.
-_HOLD_OPERATION_CONNECTIONS = os.name == "nt"
+#: Pins whether an owned call's new handle is held: True or False decides it
+#: outright (tests of one rule or the other); None asks ``_holding``.
+_HOLD_OPERATION_CONNECTIONS: bool | None = None
+#: Environment override for ``_holding``, in either direction, on Windows.
+HOLD_ENVIRONMENT_VARIABLE = "TLDW_HOLD_DB_CONNECTIONS"
 #: Above this many held handles an owned call closes its handle as before.
 _HELD_CONNECTIONS_MAX = 96
 #: Guards the two tables below. Taken before the storage coordinator lock,
@@ -37,6 +39,32 @@ _held_connections: dict[
 ] = {}
 #: (thread ident, id(store)) -> depth of owned calls running there now.
 _owned_calls: dict[tuple[int, int], int] = {}
+
+
+def _holding() -> bool:
+    """Whether an owned call's new handle is held in this process now.
+
+    On by default on Windows; never on POSIX. Off under pytest
+    (``PYTEST_CURRENT_TEST``, the signal the screen pre-importer,
+    ``Utils/optional_deps.py`` and ``Metrics/metrics_logger.py`` already gate
+    on): a large part of the suite pins that a finite operation closes the
+    handle it opened and releases its storage lease, which stays the contract
+    on POSIX and, on Windows, for every other store, a paused profile and the
+    cap. With handles held those tests fail on Windows only, by design and
+    not by defect (68 of them in the first 324 files compared with dev on
+    2026-11-22). ``TLDW_HOLD_DB_CONNECTIONS`` overrides in either direction:
+    ``"1"`` turns holding on under pytest (this feature's own tests and the
+    TASK-40608 journey), ``"0"`` turns it off in the app.
+    """
+    pinned = _HOLD_OPERATION_CONNECTIONS
+    if pinned is not None:
+        return pinned
+    if os.name != "nt":
+        return False
+    override = os.environ.get(HOLD_ENVIRONMENT_VARIABLE)
+    if override is not None:
+        return override.strip().lower() not in ("", "0", "false", "no")
+    return "PYTEST_CURRENT_TEST" not in os.environ
 
 
 def _held_store_types() -> tuple[type, ...]:
@@ -74,7 +102,7 @@ def owned_call_entered(database: object) -> tuple[int, int] | None:
     Returns:
         The token for ``owned_call_left``, or None where handles are not held.
     """
-    if not _HOLD_OPERATION_CONNECTIONS:
+    if not _holding():
         return None
     token = (threading.get_ident(), id(database))
     with _HELD_LOCK:
@@ -102,7 +130,7 @@ def hold_operation_connection(database: object, connection: sqlite3.Connection) 
         as before (other platform, other store, paused storage, or the cap).
     """
     if (
-        not _HOLD_OPERATION_CONNECTIONS
+        not _holding()
         or type(database) not in _held_store_types()
         or getattr(database, "is_memory_db", True)
     ):
