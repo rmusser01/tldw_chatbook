@@ -3646,10 +3646,8 @@ Tests/UI/test_console_stop_during_failed_commit.py::test_stop_during_a_card_retr
 # shell regions 44 passed in 202.6 s, edge rails 16 passed in 80.4 s, over the
 # 30 s per-entry budget, so one node per test function (2.5-17.8 s), split by
 # parameter where a function passes 30 s (region geometry 103 s, live resize
-# 32.4 s). Appended at the tail, except
-# test_exact_100_workspace_state_matrix_is_contained: it fails about 1 run in
-# 4 at base too (a first-paint transcript hit on a detached empty-state
-# Static), so it stays out of the lane until that oracle is fixed.
+# 32.4 s). Appended at the tail. The state-matrix function joins last (13.9 s,
+# load 24), once its first-paint oracle waited for a painted layout.
 Tests/UI/test_console_shell_regions.py::test_fresh_console_composes_saved_rail_label_style
 Tests/UI/test_console_shell_regions.py::test_console_pilot_uses_the_exact_production_css_stack
 Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-shell-hittable-hittable-hittable-size0]
@@ -3697,3 +3695,4 @@ Tests/UI/test_console_edge_rail_geometry.py::test_collapsed_handle_focus_is_non_
 Tests/UI/test_console_edge_rail_geometry.py::test_focus_paint_clears_when_focus_becomes_none
 Tests/UI/test_console_edge_rail_geometry.py::test_native_widget_blur_repaints_the_actual_focus_successor
 Tests/UI/test_console_edge_rail_geometry.py::test_rapid_focus_transfer_keeps_only_the_current_edge_painted
+Tests/UI/test_console_shell_regions.py::test_exact_100_workspace_state_matrix_is_contained

@@ -442,6 +442,21 @@ True, let it query `WorkflowLibrary`. A callback deferred this way must check
 after each await, since Textual cancels them only at the screen's own Unmount, after
 its children are gone.
 
+**At mount it can run inside the startup batch (TASK-42416, 2026-11-23).** A
+"first paint" oracle in `test_exact_100_workspace_state_matrix_is_contained` was
+queued with `call_after_refresh` and failed about 1 run in 4. A probe found it
+running with `app._batch_count == 1` and layout pending in all 64 runs.
+- Textual holds `batch_update` while the app starts. Inside it, `Screen._on_idle`
+  runs callbacks without checking for pending layout, and `App._display` paints
+  nothing.
+- So the oracle read regions from an in-batch ScreenResume/Resize reflow that no
+  frame showed. It saw a detached `#console-empty-body` at the transcript centre,
+  or a rail handle taller than a squeezed grid.
+
+To inspect the first painted geometry, subscribe to `screen_layout_refresh_signal`
+and act on the first publish where `app._batch_count == 0`. A signal callback's
+exceptions are only logged, so store them and re-raise from the test body.
+
 ## A pane whose content just fits flips its scrollbar on focus — reserve the gutter
 
 **TASK-33007.6, 2026-10-04.** Folding the rarely used Providers & Models controls

@@ -4,7 +4,7 @@ title: "The Console edge-focus restyle tests click the Inspect rail open control
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-22 21:17
-updated_date: 2026-11-23 02:45
+updated_date: 2026-11-23 03:34
 labels:
 - follow-up
 - ci
@@ -80,18 +80,24 @@ TASK-41632 fixed the same kind of fixed-wait flake in the `_open_console_inspect
 **Addition beyond the ACs: the two sibling files are now laned (coordinator decision, 2026-11-23).** Why: `test_console_shell_regions.py` and `test_console_edge_rail_geometry.py` ran in no lane (nothing in `.github/` or `scripts/` named them). Locally they failed 60/60 with `RecoveryRequired`, so the live-resize test was red at base and nobody saw it.
 
 - **Marker.** Both files now carry a module `pytestmark = pytest.mark.bootstrap_profile`, as the edge-focus file does with this harness. This replaces the temporary marker used for verification above.
-- **Placement.** Appended at the UI census tail: the census already holds `bootstrap_profile` files, the checker accepts the parameter ids, and `MINIMUM_FILES` is 2519 (2472 + 47). No re-deal or shard change.
+- **Placement.** Appended at the UI census tail: the census already holds `bootstrap_profile` files, the checker accepts the parameter ids, and `MINIMUM_FILES` is 2520 (2472 + 48). No re-deal or shard change.
 - **Measurement.** Serial with the UI lane's flags (`-p no:xdist --timeout=180 --durations=0`) at load 32-33:
   - shell regions: 44 passed in 202.6 s;
   - edge rails: 16 passed in 80.4 s.
 - **Granularity.** Both files run over the 30 s per-entry budget, so there is one node per test function. `test_region_geometry_is_stable` (103.1 s, 30 cases) and `test_exact_100_live_resize_preserves_workspace_and_interaction_state` (32.4 s) are split by parameter.
-- **One function left out.** `test_exact_100_workspace_state_matrix_is_contained` (17.8 s) is not laned. It fails about 1 run in 4, on base and branch alike: 3/12 runs on each.
-  - Its `hide_setup_overlay=False` first-paint oracle hit a detached `#console-empty-body` Static: `native transcript is not painted at (39, 16)`, with `ancestors == []`.
-  - It is a proposed follow-up: fix that oracle, then lane it.
+- **The state-matrix flake, fixed and laned (coordinator decision).** `test_exact_100_workspace_state_matrix_is_contained` failed about 1 run in 4, on base too: 3/12, 3/12 and 6/16 runs.
+  - **Cause: test timing, not a product race.** Its first-paint oracle ran from `screen.call_after_refresh`, and that fired inside Textual's startup `batch_update`. A probe logged `batch=1` and pending layout at all 64 oracle runs.
+  - **Why that matters.** Inside a batch, `Screen._on_idle` runs queued callbacks without checking for pending layout, and `App._display` paints nothing. So the oracle read regions from an in-batch reflow (ScreenResume or Resize) that no frame ever showed.
+  - **The two failures it produced.** One was a detached `#console-empty-body` at the transcript centre (the empty panel recomposed after that reflow). The other was the context handle escaping a squeezed grid. A captured failing run published `grid=Region(0, 5, 100, 20)`, content 18 rows, beside the 20-row handle; normally the grid is 22 rows with content 20.
+  - **Fix (test only).** The oracle now subscribes to `screen_layout_refresh_signal` and runs on the first publish outside a batch, the first frame actually painted. The queued visibility syncs are still held until it has run, and every assertion is unchanged. Errors are recorded because a signal callback's exceptions are only logged. The test body waits for the oracle on a 15 s deadline, then re-raises any error.
+  - **Red.** A temporary edit (reverted) squeezed the grid by two rows (status chips held at 3 rows) for the rest of the startup batch only, undone when the batch ends. The old oracle failed 2/2 runs (3 of 4 cases each) with `console-context-rail-handle escapes workspace content: child=Region(x=0, y=6, width=13, height=20), grid=Region(x=0, y=6, width=100, height=18)`, the natural failure word for word.
+  - **Green and negative control.** Under the same squeeze the new oracle passed 3/3 runs. With the squeeze kept into painted frames it failed 3 of 4 cases with the same message, so it still catches a painted escape.
+  - **Rate.** 0 failures in 28 runs (112 cases), 4 at a time, load 37-43. Before: about 1 in 4 runs.
+  - **Laned.** It joined the census tail as one function node (13.9 s serial at load 24), and the "left out" comment is removed.
 - **Soak.** Four serial copies of the 47 laned entries ran at once: 4 × 56 tests, 224/224 passed, load 22-37 (about 5:00 each).
 - **Mixed process.** The new entries, followed in the same process by the round-21 sandboxed tail entries, gave 77 passed. The one failure was the matrix function above.
 - **Checks.** Tests/CI at -n 4 and preflight pass.
-- **Per-entry charges** (local serial seconds, setup + call + teardown, load 32-33), 47 entries, 232.1 s in all:
+- **Per-entry charges** (local serial seconds, setup + call + teardown, load 32-33 unless noted), 48 entries, 246.0 s in all:
   - `test_console_shell_regions.py::test_fresh_console_composes_saved_rail_label_style`: 11.5 s
   - `test_console_shell_regions.py::test_console_pilot_uses_the_exact_production_css_stack`: 3.9 s
   - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-shell-hittable-hittable-hittable-size0]`: 4.0 s
@@ -139,13 +145,14 @@ TASK-41632 fixed the same kind of fixed-wait flake in the `_open_console_inspect
   - `test_console_edge_rail_geometry.py::test_focus_paint_clears_when_focus_becomes_none`: 10.6 s
   - `test_console_edge_rail_geometry.py::test_native_widget_blur_repaints_the_actual_focus_successor`: 3.1 s
   - `test_console_edge_rail_geometry.py::test_rapid_focus_transfer_keeps_only_the_current_edge_painted`: 3.1 s
+  - `test_console_shell_regions.py::test_exact_100_workspace_state_matrix_is_contained`: 13.9 s (load 24, after its fix)
 
-**Lesson:** a "re-shown overlay" variant was added to `backlog/docs/lessons-testing-evidence.md` (Pilot clicks section).
+**Lesson:** a "re-shown overlay" variant was added to `backlog/docs/lessons-testing-evidence.md` (Pilot clicks section). A "startup batch" recurrence was added to the `call_after_refresh` entry in `backlog/docs/lessons-textual.md`.
 
 **Files:**
 - `Tests/UI/test_console_shell_regions.py`
 - `Tests/UI/test_console_edge_focus_restyle_scope.py`
 - `Tests/UI/test_console_edge_rail_geometry.py`
-- `backlog/docs/lessons-testing-evidence.md`
+- `backlog/docs/lessons-testing-evidence.md`, `backlog/docs/lessons-textual.md`
 - `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py` (lane addition)
 <!-- SECTION:NOTES:END -->

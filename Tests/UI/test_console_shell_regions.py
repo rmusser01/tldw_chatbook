@@ -598,32 +598,53 @@ async def test_exact_100_workspace_state_matrix_is_contained(
     }
     save_spy = Mock()
     pre_sync_observations = []
+    first_paint_errors: list[BaseException] = []
     queued_first_sync_states = []
     original_sync = ChatScreen._sync_console_rail_visibility_if_changed
 
     def sync_after_first_paint_assertions(screen, rail_state):
-        """Inspect the first compositor geometry, then delegate normal sync."""
-        if pre_sync_observations:
+        """Inspect the first painted geometry, then delegate normal sync."""
+        if pre_sync_observations or first_paint_errors:
             return original_sync(screen, rail_state)
 
         queued_first_sync_states.append(rail_state)
         if len(queued_first_sync_states) == 1:
 
-            def assert_first_paint_then_delegate_sync():
-                """Run after layout but before any queued visibility sync."""
-                setup_modal = screen.query_one("#console-setup-modal")
-                assert setup_modal.display is False
-                _assert_workspace_state_is_contained(
-                    screen,
-                    expected_displayed=expected_displayed,
-                    default_context_only=stored_left_open and not stored_right_open,
-                )
-                pre_sync_observations.append(True)
+            def assert_first_paint_then_delegate_sync(_screen) -> None:
+                """Run on the first painted layout, before any queued visibility sync.
+
+                TASK-42416: this used to run from ``call_after_refresh``. That
+                fired inside Textual's startup ``batch_update``, with layout
+                still pending and no frame painted, so it read regions from an
+                earlier reflow against newer styles and DOM: a detached
+                ``#console-empty-body`` at the transcript centre, or a rail
+                handle taller than the grid's content. The layout signal
+                fires right after a reflow, and outside a batch that reflow
+                is the frame the user sees.
+                """
+                if pre_sync_observations or first_paint_errors:
+                    return
+                if screen.app._batch_count:
+                    return
+                try:
+                    setup_modal = screen.query_one("#console-setup-modal")
+                    assert setup_modal.display is False
+                    _assert_workspace_state_is_contained(
+                        screen,
+                        expected_displayed=expected_displayed,
+                        default_context_only=stored_left_open and not stored_right_open,
+                    )
+                except Exception as error:  # a signal callback's errors are only logged
+                    first_paint_errors.append(error)
+                else:
+                    pre_sync_observations.append(True)
                 for queued_state in queued_first_sync_states:
                     original_sync(screen, queued_state)
                 queued_first_sync_states.clear()
 
-            screen.call_after_refresh(assert_first_paint_then_delegate_sync)
+            screen.screen_layout_refresh_signal.subscribe(
+                screen, assert_first_paint_then_delegate_sync, immediate=True
+            )
         return None
 
     monkeypatch.setattr(ChatScreen, "_save_console_rail_preferences", save_spy)
@@ -639,6 +660,12 @@ async def test_exact_100_workspace_state_matrix_is_contained(
         hide_setup_overlay=False,
     ) as pilot:
         screen = pilot.app.screen
+        deadline = time.monotonic() + 15.0
+        while not (pre_sync_observations or first_paint_errors):
+            assert time.monotonic() < deadline, "no painted layout reached the oracle"
+            await pilot.pause(0.01)
+        if first_paint_errors:
+            raise first_paint_errors[0]
         assert pre_sync_observations == [True]
         assert screen.query_one("#console-setup-modal").display is False
 
