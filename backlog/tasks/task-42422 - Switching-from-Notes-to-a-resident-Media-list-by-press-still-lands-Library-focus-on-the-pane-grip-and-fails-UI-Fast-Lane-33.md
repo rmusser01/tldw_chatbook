@@ -160,16 +160,19 @@ It is a product race, not test timing: the arm is gone and focus stays on the gr
   - **Why this option and not the reviewer's alternative** (the running half only for the empty-list fallback):
     - The alternative would still read the Screen's lock for the fallback. So an empty-list landing would still wait out a whole-screen recompose, which is the same scope change.
     - It would also drop the running check for rows. Rows under an ancestor whose lock is held but not yet torn down (a contended `batch()`) are about to be pruned.
-    - Rows and controls a whole-screen recompose has mounted belong to that recompose and are final. Only a later, queued repaint replaces them, and the queued half still catches that. So the Screen is the one ancestor whose running lock gives no useful signal.
+    - Rows and controls a whole-screen recompose has mounted belong to that recompose and are final. Only a later, queued repaint replaces them, and the queued half still catches that.
+    - Third review correction: the real reason the Screen's lock can be skipped is that every entry attempt (`call_after_refresh`, the compose re-request, `set_timer` callbacks via `call_next`) runs on the LibraryScreen's own message pump, so none can run while the screen recomposes. A probe saw zero attempts during a whole-screen mount on the screen's pump, and one tick (all old children pruning) for a worker-driven one. Both designs behave the same in practice; this one matches dev at screen level.
     - Excluding it restores the scope the mixin flag had (the Screen never carried `recompose_in_flight`). Every canvas and container below it keeps the mixin-free running check.
   - **New test `test_list_entry_lands_on_mounted_rows_while_the_screen_lock_is_held`.** It holds `screen.lock` as a running screen recompose would, with the Media rows mounted, re-arms the entry and checks where focus lands within 1.5 s.
     - At 5d4293e160: 6 of 6 red, focus None.
     - With the fix: green, focus on `library-media-row-0`.
+    - It holds the lock from a foreign task, a state a real screen recompose does not expose (see the correction above); it pins the exclusion, not a reachable race.
 - **The retry cap is a named constant.** `LIBRARY_LIST_ENTRY_FOCUS_EXPIRY_RETRIES = round(1.0 / LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS)` (20) lives in `UI/Library_Modules/screen_constants.py`, and `_expire_library_list_entry_focus` uses it as its default.
   - **New test `test_notes_window_close_lands_anyway_after_its_retry_cap`.** It patches the filter to always read as replaced, then checks that the expiry runs exactly cap + 1 times, lands on `#library-notes-filter`, disarms, and schedules nothing more.
     - Green 6 of 6.
     - Red under temporary source edits: without the decrement, the window never closed after 287-288 calls (2 of 2); with `>= 0` (off by one), 22 calls instead of 21 (2 of 2).
 - **Docs.** The helper docstring and the lesson say the Screen's lock is not read, and why.
+- **Third review ("ready to merge").** The ratchet is exact. TASK-41909's flake (`test_programmatic_media_row_restore_keeps_reader_until_user_keys`) is not made more likely: an A/B of 80 repeats a side at `-n 4`, run side by side, failed 1 of 80 on this branch and 4 of 80 on dev 2f7790873a's product code, all with the same "original Media entry/publication owners to retire" timeout. The docstring, lesson and these notes now give the pump reason above rather than an unreachable wait.
 - **Runs** (final tree):
   - Whole touched file (22 tests), 20 runs at `-n 4`: 440 passed in 12 min 16 s, load 19-52.
   - 5 serial runs with `-p no:xdist --timeout=180`: 109 passed, 1 failed (load 12-22). The failure was `test_programmatic_media_row_restore_keeps_reader_until_user_keys[r1]` ("the original Media entry/publication owners to retire"). It is a known load flake that TASK-41909 tracks (10-15% under load, seen in round 16, before this task). On rerun it passed 12 of 12 serial and 16 of 16 at `-n 4`.

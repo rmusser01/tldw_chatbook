@@ -905,8 +905,8 @@ def _library_entry_target_replaced(widget: Widget) -> bool:
     every widget, so this needs no mixin. A rebuilt canvas mounts its toolbar
     or filter before its rows, and focus put on a replaced widget falls to
     Textual's reset, which parks it on a pane grip. The Screen's own lock is
-    not read: rows a whole-screen recompose has mounted are final, and
-    waiting for the whole screen could outlast the entry window.
+    not read: entry attempts run on the screen's own message pump, so they
+    never interleave with its recompose, and the old flag never covered it.
     """
     return getattr(widget, "_pruning", False) or any(
         getattr(node, "_recompose_required", False)
