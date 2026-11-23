@@ -2145,6 +2145,29 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             _release_profile_startups(test_data_dir)
 
 
+@pytest.fixture
+def sandbox_emergency_stop_path(isolate_test_environment, tmp_path, monkeypatch):
+    """Give a per-test-sandbox agent run a readable emergency-stop file.
+
+    TASK-33620.1.12: every agent run reads the emergency stop before each tool
+    call, through ``emergency_stop.default_emergency_stop_path()``. In the
+    per-test sandbox that path's guarded config read refuses
+    (``RecoveryRequired: raw_source_selection_changed``) and the read fails
+    SAFE, so every agent tool call of such a test is refused. This points the
+    stop at the test's own data directory instead (absent means clear), as the
+    scheduler's stop tests do. A ``bootstrap_profile`` test is left alone: its
+    profile admits the real read. Opt in per module; Tests/Agents opts in all.
+    """
+    data_dir = Path(isolate_test_environment)
+    if not data_dir.is_relative_to(tmp_path):
+        return None
+    from tldw_chatbook import emergency_stop
+
+    path = data_dir / "emergency_stop.json"
+    monkeypatch.setattr(emergency_stop, "default_emergency_stop_path", lambda: path)
+    return path
+
+
 def _release_profile_startups(profile_dir: Path) -> None:
     """Release the startup admissions of one test's own fresh profile.
 

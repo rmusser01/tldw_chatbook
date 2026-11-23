@@ -1176,7 +1176,11 @@ _BUDGETS: dict[str, int] = {
     # carried #3295 review fix: a light plan never reaches the compact
     # find/load fallback); 2026-11-23, ported onto dev b31e3e9241 (round
     # 24): dev's 7,696 plus 2, exact measurement 7,698.
-    "tldw_chatbook/Agents/agent_service.py": 7698,
+    # 2026-11-23, TASK-33620.1.12 (owner decision: the emergency stop holds an
+    # in-flight run's tool calls; owner rule: raise by the change's own
+    # lines): 7698 -> 7744 (+46) -- the run's fail-safe stop probe, its
+    # path cache and its LoopDeps wiring.
+    "tldw_chatbook/Agents/agent_service.py": 7744,
     # 2026-10-31, PR #3259: explicit user size-limit waiver. Pin the
     # actual current-base N-32 file-body F6 integration at 9,541 lines.
     # TASK-36513, 2026-11-03 (size waiver per the burn-down brief: re-pin at
@@ -1479,7 +1483,11 @@ _BUDGETS: dict[str, int] = {
     # reasoning checkpoint keeps the delivered reply (AC#2, AC#3).
     # 2026-11-23, port onto dev b31e3e9241: re-measured, dev's file is still
     # 3,961, so the row stays 4,069 (dev's 3,961 + the branch's 108).
-    "tldw_chatbook/Agents/agent_runtime.py": 4069,
+    # 2026-11-23, TASK-33620.1.12 (owner decision: the emergency stop holds an
+    # in-flight run's tool calls; owner rule: raise by the change's own
+    # lines): 4069 -> 4120 (+51), exact measurement. The loop's stop probe,
+    # its batch hold before review and its per-call hold at dispatch.
+    "tldw_chatbook/Agents/agent_runtime.py": 4120,
     # 2026-11-20, TASK-42014 (owner rule: raise by the change's own lines):
     # 6108 -> 6110 (+2) -- the credential buttons carry the class their
     # press handler selects, so a press a recompose forwards still runs it.

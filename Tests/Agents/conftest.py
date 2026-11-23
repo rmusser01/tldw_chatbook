@@ -20,6 +20,16 @@ from tldw_chatbook.Agents import agent_service
 from Tests.Internal_Prompts.conftest import scratch_config  # noqa: F401
 
 
+@pytest.fixture(autouse=True)
+def _agents_sandbox_emergency_stop(sandbox_emergency_stop_path):
+    """TASK-33620.1.12: every agent run here reads the emergency stop.
+
+    See ``sandbox_emergency_stop_path`` in Tests/conftest.py: without it a
+    per-test-sandbox run refuses every tool call, because the stop's path
+    cannot be resolved there and the read fails safe.
+    """
+
+
 def pin_agent_settings(monkeypatch, **overrides):
     """Serve these `[agents]` keys for this test; all others keep defaults.
 

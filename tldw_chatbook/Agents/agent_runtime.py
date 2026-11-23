@@ -703,6 +703,13 @@ class LoopDeps:
     # supplies the restore call identity outside model-controlled arguments.
     search_archived_conversations: Callable[[dict], ToolResult] | None = None
     request_conversation_restore: Callable[..., ToolResult] | None = None
+    # TASK-33620.1.12: the emergency stop's refusal for this run's tool calls,
+    # or ``None`` while the stop is clear. AgentService reads the stop file on
+    # the run's worker thread; this loop only asks, before a batch is
+    # reviewed and again before each call executes. A probe that raises holds
+    # the call (fail safe). ``None`` (the default) wires no stop at all.
+    # Appended to preserve the positional constructor slots above.
+    emergency_stop_refusal: Callable[[], str | None] | None = None
 
 
 def _continuation_calls_match(
@@ -1868,6 +1875,32 @@ def _continuation_error(state: LoopState, reason: str) -> RunOutcome:
         field_states=continuation_reason_states(reason, failed_store),
     )
     return _loop_outcome(state, RUN_ERROR)
+
+
+def _emergency_stop_refusal(state: LoopState) -> str | None:
+    """The emergency stop's refusal while it holds tool calls, else ``None``.
+
+    TASK-33620.1.12 (owner decision 2026-11-23): while the stop is active an
+    in-flight run's tool calls are refused, whatever provider owns the tool.
+    The read is the service's (this loop does no I/O). A probe that raises, or
+    answers with something other than a refusal string, holds the call: for
+    an emergency stop, doubt refuses, as the send and scheduler gates do.
+    """
+    probe = state.deps.emergency_stop_refusal
+    if probe is None:
+        return None
+    try:
+        refusal = probe()
+    except Exception:  # noqa: BLE001 -- doubt holds the call (fail safe)
+        logger.warning("emergency-stop probe raised; holding the tool call")
+        refusal = ""
+    if refusal is None:
+        return None
+    if isinstance(refusal, str) and refusal:
+        return refusal
+    from .tool_refusals import emergency_stop_tool_refusal
+
+    return emergency_stop_tool_refusal("stop state unavailable")
 
 
 def _account_denial(
@@ -3099,7 +3132,15 @@ def _phase_prepare(state: LoopState) -> RunOutcome | object | None:
     state.load_batch_exclusive = load_call_count == 1 and len(calls) == 1
     scope_refusals: dict[int, str] = {}
     scoped_calls = []
+    # TASK-33620.1.12: an active emergency stop refuses the whole batch here,
+    # before preparation, hooks, the guard and the approval review, so no
+    # approval card is raised for a call that could never run.
+    # `_dispatch_call` asks again before each call executes.
+    held = _emergency_stop_refusal(state)
     for call in calls:
+        if held is not None:
+            scope_refusals[id(call)] = held
+            continue
         try:
             deps.validate_tool_call(call)
             scoped_calls.append(call)
@@ -3586,6 +3627,16 @@ def _dispatch_call(state: LoopState, call: ToolCall) -> RunOutcome | None:
             verdict = "Tool outside goal scope."
     if state.restoring_batch and call.name in MESSAGE_TOOL_NAMES:
         verdict = "ERROR: restored_pending"
+    if verdict == "proceed":
+        # TASK-33620.1.12: THE choke point for the emergency stop. Every tool
+        # call of every run (built-in, local, MCP, the shell tool, sub-agent
+        # spawns and the runtime's own tools) passes here on its way to
+        # `_execute_call`. Asked again per call: a stop that landed while an
+        # approval card was open, or while an earlier call in this batch ran,
+        # still refuses this one. A call already executing is not touched.
+        held = _emergency_stop_refusal(state)
+        if held is not None:
+            verdict = held
     if state.continuation_checkpoint is not None and verdict != "proceed":
         return _settle_continuation_refusal(
             state, call, verdict, review_decision, automatic

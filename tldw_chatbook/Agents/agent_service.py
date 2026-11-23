@@ -36,6 +36,8 @@ FutureTimeoutError = _futures.TimeoutError
 
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
     from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
     from tldw_chatbook.Workspaces.worktree_activity import WorktreeActivityClaim
@@ -2648,6 +2650,9 @@ class AgentService:
         self._on_step = on_step
         self._on_tool_activity = on_tool_activity
         self._on_resolved_target = on_resolved_target
+        # TASK-33620.1.12: the emergency stop's file, resolved on the first
+        # tool call (a worker thread) and kept for this service's runs.
+        self._emergency_stop_path: Path | None = None
         self.skill_runner = skill_runner
         # task-3 (skills-foundation): per-run authorization + reader for the
         # skill_file runtime tool. `None` (the default, and every caller
@@ -3499,6 +3504,44 @@ class AgentService:
             if flag is not None:
                 flag.set()
         return None
+
+    def _emergency_stop_refusal(self) -> str | None:
+        """The emergency stop's refusal for a tool call, or ``None``.
+
+        TASK-33620.1.12: every run's ``LoopDeps.emergency_stop_refusal``. The
+        loop asks before a batch is reviewed and again before each call
+        executes. It runs on the run's worker thread, never the UI loop, so
+        it reads the stop file itself, the read the send and scheduler gates
+        make. FAIL-SAFE like them: an unreadable or corrupt file reads as
+        active (``read_emergency_stop``), and a stop path that cannot be
+        resolved holds the call too.
+
+        Returns:
+            The refusal naming the stop and its reason while it is active,
+            otherwise ``None``.
+        """
+        # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+        from tldw_chatbook import emergency_stop
+
+        from .tool_refusals import emergency_stop_tool_refusal
+
+        try:
+            path = self._emergency_stop_path
+            if path is None:
+                path = emergency_stop.default_emergency_stop_path()
+                self._emergency_stop_path = path
+            state = emergency_stop.read_emergency_stop(path)
+        except Exception as exc:  # noqa: BLE001 -- doubt holds the call
+            # The type only: a path-resolution error's message names the data dir.
+            logger.warning(
+                "emergency-stop read for a tool call failed (error_type={}); "
+                "holding the call",
+                type(exc).__name__,
+            )
+            return emergency_stop_tool_refusal("stop state unavailable")
+        if not state.active:
+            return None
+        return emergency_stop_tool_refusal(state.reason)
 
     def _primary_redirect_pending(self, run_id: str) -> bool:
         """True between redirect_primary and the drain that consumes it."""
@@ -6815,6 +6858,9 @@ class AgentService:
                 if self._post_tool_call is not None
                 else None
             ),
+            # TASK-33620.1.12: every run (primary, child, goal and workflow
+            # alike) holds its tool calls while the emergency stop is active.
+            emergency_stop_refusal=self._emergency_stop_refusal,
             search_archived_conversations=(
                 recovery_search if agent_kind == AGENT_KIND_PRIMARY else None
             ),

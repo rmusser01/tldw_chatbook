@@ -50,9 +50,10 @@ CLEAR_ARGUMENTS = frozenset({"clear", "off", "resume"})
 #: What every Console surface says while the stop holds new work.
 HELD_COPY = EmergencyStopState(active=True).visible_copy()
 
+#: TASK-33620.1.12: an in-flight run's tool calls are held too.
 ACTIVATED_NOTICE = (
-    "Emergency stop ACTIVE — new runs and scheduled dispatches are held. "
-    "Run /emergency-stop clear to resume."
+    "Emergency stop ACTIVE — new runs, scheduled dispatches and agent tool "
+    "calls are held. Run /emergency-stop clear to resume."
 )
 CLEARED_NOTICE = "Emergency stop cleared — new work may start."
 
@@ -171,8 +172,9 @@ def still_held(screen: Any) -> bool:
 async def run_command(screen: Any, parse: Any) -> bool:
     """``/emergency-stop [clear|<reason>]``: the global stop (TASK-26004).
 
-    Holds all NEW agent runs and scheduled dispatches; in-flight work is
-    untouched, and the state survives a restart. ``clear``/``off``/``resume``
+    Holds all NEW agent runs and scheduled dispatches, and every tool call of
+    a run already going (TASK-33620.1.12); a call already executing finishes.
+    The state survives a restart. ``clear``/``off``/``resume``
     lifts it. The screen's view changes with the file, so the header, strip
     and Send show the hold until it is cleared (TASK-33620.1). The path
     lookup and the fsynced write run off the UI loop.

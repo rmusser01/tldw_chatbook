@@ -1,9 +1,11 @@
 # emergency_stop.py
 """TASK-26004: a single global emergency-stop sentinel.
 
-One durable switch, several readers (agent sends, scheduled dispatch). It
-stops NEW work from STARTING while leaving in-flight runs untouched, it
-survives a restart (a small JSON file), and it is deliberately FAIL-SAFE:
+One durable switch, several readers (agent sends, scheduled dispatch, and
+since TASK-33620.1.12 every agent tool call). It stops NEW work from
+STARTING, and an in-flight run's tool calls are refused while it holds (a
+call already executing finishes). It survives a restart (a small JSON file),
+and it is deliberately FAIL-SAFE:
 if the read itself errors, the system treats it as STOPPED rather than
 proceeding -- for an emergency stop, halting on doubt is the safe direction.
 """

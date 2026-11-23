@@ -335,6 +335,8 @@ def _run_saves(monkeypatch, hub, tmp_path, answers):
     return rounds, results, approvals
 
 
+# TASK-33620.1.12: a real agent run, whose tool calls read the emergency stop.
+@pytest.mark.usefixtures("sandbox_emergency_stop_path")
 def test_every_runtime_save_call_is_answered_by_its_own_card_row(monkeypatch, hub, tmp_path):
     rounds, results, approvals = _run_saves(
         monkeypatch, hub, tmp_path, {"a": "approve_once", "b": "approve_once", "c": "approve_once"}
@@ -345,6 +347,8 @@ def test_every_runtime_save_call_is_answered_by_its_own_card_row(monkeypatch, hu
     assert [json.loads(r)["status"] for r in results] == ["saved", "saved", "saved"]
 
 
+# TASK-33620.1.12: a real agent run, whose tool calls read the emergency stop.
+@pytest.mark.usefixtures("sandbox_emergency_stop_path")
 def test_a_denied_row_is_not_carried_by_its_approved_sibling(monkeypatch, hub, tmp_path):
     rounds, results, _approvals = _run_saves(
         monkeypatch, hub, tmp_path, {"a": "approve_once", "b": "deny", "c": "deny"}
