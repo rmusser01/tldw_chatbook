@@ -14019,6 +14019,33 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         self._session_or_raise(session_id)
         return self._active_leaf_by_session.get(session_id)
 
+    def local_command_anchor_leaf(self, session_id: str) -> str | None:
+        """The row a raw command is filed under: the leaf, past unsaved System rows.
+
+        TASK-33620.1.10: a refusal or notice is a System row that is never
+        saved. As the active leaf it left a raw command no saved row to anchor
+        to, and the command was refused ("could not persist this command
+        locally"), e.g. the next one after an emergency stop's refusal. Saved
+        replies already thread past such rows (``_nearest_persisted_ancestor_id``).
+        An unsaved user or assistant row (a reply still in flight) is returned
+        as it is, so the command is refused rather than filed under the turn
+        before it. ``None`` means no row above the leaf is saved: the start.
+        """
+        nodes = self._nodes_by_session.get(session_id, {})
+        current = self.active_leaf(session_id)
+        visited: set[str] = set()
+        while current is not None and current not in visited:
+            visited.add(current)
+            node = nodes.get(current)
+            if (
+                node is None
+                or node.persisted_message_id is not None
+                or node.role is not ConsoleMessageRole.SYSTEM
+            ):
+                return current
+            current = self._native_parent_by_message.get(current)
+        return None
+
     def set_active_path_before(self, session_id: str, message_id: str) -> bool:
         """Position a session immediately before one root user message.
 

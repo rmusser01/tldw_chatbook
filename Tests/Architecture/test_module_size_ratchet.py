@@ -391,7 +391,10 @@ _BUDGETS: dict[str, int] = {
     # exact measurement (under dev's row of 22,244, so the row comes down).
     # 2026-11-23, port onto dev b31e3e9241: re-measured, dev's file is still
     # 22,231, so the row stays 22,242 (dev's 22,231 + the branch's 11).
-    "tldw_chatbook/Chat/console_chat_store.py": 22242,
+    # 2026-11-23, TASK-33620.1.10 (owner rule: raise by the change's own lines):
+    # 22244 -> 22258, a raw command anchors past unsaved System rows.
+    # 2026-11-24 rebase onto dev 9fa2bf1b1d: exact measurement.
+    "tldw_chatbook/Chat/console_chat_store.py": 22269,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).

@@ -932,3 +932,208 @@ def test_local_command_terminal_persistence_failures_never_block_marker(
     assert errors == ["Raw CLI persistence was incomplete."]
     assert "secret-command" not in errors[0]
     assert str(tmp_path) not in errors[0]
+
+
+# --- TASK-33620.1.10: a raw command after an unsaved row ---------------------
+#
+# Live 2026-11-23: during an emergency stop a raw command was refused with a
+# System row (owner decision C); after Clear the next one was refused again,
+# "Raw CLI could not persist this command locally". The raw path anchors a
+# command to the chat's active leaf and needs that row's saved id, but a
+# refusal's System row and a finished command's own marker are never saved.
+# So the stop's refusal, or any earlier raw command, blocked the next one.
+# These drive the real store with the anchor pair the Console wiring passes.
+
+_STOP = (
+    "Emergency stop is active: new runs and scheduled dispatches are held. "
+    "Run /emergency-stop clear to resume."
+)
+
+
+def _wired_anchor(store: ConsoleChatStore) -> tuple[Any, Any]:
+    """The anchor pair ``wiring`` gives the raw controller for this store."""
+    from tldw_chatbook.UI.Console_Modules import wiring
+
+    pair = getattr(wiring, "raw_cli_anchor_callables", None)
+    if pair is not None:
+        return pair(store)
+    return store.active_leaf, store.persisted_message_id_for_session_node
+
+
+def _saved_chat(tmp_path: Path) -> tuple[ConsoleChatStore, Any, str, str]:
+    chat_db = CharactersRAGDB(tmp_path / "chat.db", client_id="raw-cli-anchor")
+    store = ConsoleChatStore(persistence=ChatPersistenceService(chat_db))
+    session = store.create_session(session_id="native-session-1", title="Saved")
+    conversation = store.persist_session_if_needed(session.id)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q1", persist=True)
+    answer = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="a1", persist=True
+    )
+    assert conversation and answer.persisted_message_id
+    return store, session, conversation, answer.persisted_message_id
+
+
+def _store_controller(
+    tmp_path: Path,
+    store: ConsoleChatStore,
+    runs_db: AgentRunsDB,
+    runtime: _Runtime,
+    *,
+    run_log: bool = True,
+) -> tuple[ConsoleRawCliController, list[Any], list[str]]:
+    workers: list[Any] = []
+    errors: list[str] = []
+
+    def system_row(session_id: str, message: str) -> None:
+        # As the Console does: a refusal is an unsaved System row.
+        errors.append(message)
+        store.append_message(session_id, role=ConsoleMessageRole.SYSTEM, content=message)
+
+    active_leaf_anchor, persisted_leaf_anchor = _wired_anchor(store)
+    controller = ConsoleRawCliController(
+        raw_cli_runtime=lambda: runtime,
+        active_session_id=lambda: "native-session-1",
+        persist_session_if_needed=store.persist_session_if_needed,
+        active_leaf_anchor=active_leaf_anchor,
+        persisted_leaf_anchor=persisted_leaf_anchor,
+        selected_local_root=lambda _session_id: tmp_path,
+        private_scratch_root=lambda _session_id: tmp_path,
+        refusal_stash_bank={},
+        accepts_raw_cli_refusal_callbacks=lambda: True,
+        restore_stash=lambda _session_id, _stash: True,
+        append_local_error=system_row,
+        append_store_marker=store.append_message,
+        update_store_marker=lambda *_args, **_fields: None,
+        agent_runs_db=lambda: runs_db,
+        run_log_access=lambda: (tmp_path / "app-data") if run_log else None,
+        start_worker=lambda work, **_kwargs: workers.append(work),
+        marshal_to_ui=lambda callback, *args: callback(*args),
+    )
+    return controller, workers, errors
+
+
+def _resumed(runs_db: AgentRunsDB, conversation: str, transcript: list) -> list[str]:
+    blocks = ConsoleAgentBridge(
+        agent_runs_db=runs_db, store=None, provider_gateway=None
+    ).resume_marker_messages(conversation)
+    return [
+        "raw" if message.raw_cli_presentation is not None else message.content
+        for message in inject_resume_agent_markers(transcript, blocks)
+    ]
+
+
+def _saved_rows(store: ConsoleChatStore, session_id: str) -> list[ConsoleChatMessage]:
+    """The transcript a reopened chat starts from: its saved rows only."""
+    return [
+        message
+        for message in store.messages_for_session(session_id)
+        if message.persisted_message_id is not None
+    ]
+
+
+@pytest.mark.parametrize("run_log", ["available", "unavailable"])
+def test_two_raw_commands_in_a_row_both_run_and_persist(
+    tmp_path: Path, run_log: str
+) -> None:
+    """TASK-33620.1.10: two in a row.
+
+    A command's own marker never becomes the leaf (a TOOL marker is display
+    only), so with a working run log two in a row already ran. Live on dev the
+    scratch profile's run log was disabled, and the first command's "Raw CLI
+    persistence was incomplete." System row became the unsaved leaf, so the
+    second was refused.
+    """
+    store, session, conversation, answer = _saved_chat(tmp_path)
+    runs_db = AgentRunsDB(tmp_path / "agent-runs.db")
+    runtime = _Runtime(tmp_path)
+    controller, workers, errors = _store_controller(
+        tmp_path, store, runs_db, runtime, run_log=run_log == "available"
+    )
+
+    for _ in range(2):
+        assert controller.start_user_command(_stash())
+        workers.pop()()
+
+    incomplete = "Raw CLI persistence was incomplete."
+    assert errors == ([] if run_log == "available" else [incomplete, incomplete]), errors
+    assert runtime.calls == 2, "the second raw command in a row did not run"
+    runs = runs_db.list_runs(conversation, agent_kind="local_command")
+    assert [run["assistant_message_id"] for run in runs] == [answer, answer]
+    # Reopened, both outputs follow the answer they were typed after.
+    rows = _saved_rows(store, session.id)
+    assert _resumed(runs_db, conversation, rows) == ["q1", "a1", "raw", "raw"]
+
+
+def test_a_raw_command_refused_by_the_stop_runs_and_persists_after_clear(
+    tmp_path: Path,
+) -> None:
+    """TASK-33620.1 decision C: refused during the stop, run after Clear."""
+    store, session, conversation, answer = _saved_chat(tmp_path)
+    runs_db = AgentRunsDB(tmp_path / "agent-runs.db")
+    runtime = _Runtime(tmp_path)
+    controller, workers, errors = _store_controller(tmp_path, store, runs_db, runtime)
+    held = [True]
+    controller._emergency_stop_refusal = lambda: _STOP if held[0] else ""
+
+    assert controller.start_user_command(_stash()) is False
+    assert workers == [] and errors == [_STOP]
+    held[0] = False  # Clear.
+    assert controller.start_user_command(_stash())
+    workers.pop()()
+
+    assert errors == [_STOP], errors
+    assert runtime.calls == 1, "the command refused by the stop did not run after Clear"
+    (run,) = runs_db.list_runs(conversation, agent_kind="local_command")
+    assert run["assistant_message_id"] == answer
+    assert run["status"] == "done"
+    rows = _saved_rows(store, session.id)
+    assert _resumed(runs_db, conversation, rows) == ["q1", "a1", "raw"]
+
+
+def test_a_raw_command_anchors_to_the_newest_saved_turn_on_its_path(
+    tmp_path: Path,
+) -> None:
+    """Negative controls: never an older turn, never a turn still being saved.
+
+    The second command follows a later saved exchange that was sent after the
+    first command (its user row's tree parent is that command's unsaved
+    marker), then a System row. It must anchor to the later answer, not to the
+    first one. And while an answer is still unsaved (a reply in flight), a raw
+    command is refused rather than filed under the user row before it.
+    """
+    store, session, conversation, first_answer = _saved_chat(tmp_path)
+    runs_db = AgentRunsDB(tmp_path / "agent-runs.db")
+    runtime = _Runtime(tmp_path)
+    controller, workers, errors = _store_controller(tmp_path, store, runs_db, runtime)
+
+    assert controller.start_user_command(_stash())
+    workers.pop()()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q2", persist=True)
+    later = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="a2", persist=True
+    )
+    store.append_message(session.id, role=ConsoleMessageRole.SYSTEM, content="a notice")
+    assert controller.start_user_command(_stash())
+    workers.pop()()
+
+    runs = sorted(
+        runs_db.list_runs(conversation, agent_kind="local_command"),
+        key=lambda run: run["created_at"],
+    )
+    assert [run["assistant_message_id"] for run in runs] == [
+        first_answer,
+        later.persisted_message_id,
+    ], errors
+    rows = _saved_rows(store, session.id)
+    assert _resumed(runs_db, conversation, rows) == ["q1", "a1", "raw", "q2", "a2", "raw"]
+
+    # A reply still in flight: its row is not saved yet, so there is no right
+    # turn to file the command under. Refused, as before, never under q3.
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q3", persist=True)
+    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    errors.clear()
+    assert controller.start_user_command(_stash())
+    workers.pop()()
+    assert runtime.calls == 2
+    assert errors and "could not persist" in errors[0], errors
+    assert len(runs_db.list_runs(conversation, agent_kind="local_command")) == 2

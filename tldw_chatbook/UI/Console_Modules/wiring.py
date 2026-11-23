@@ -1262,6 +1262,12 @@ def _raw_cli_persisted_leaf_anchor(
     return store.persisted_message_id_for_session_node(session_id, native_leaf_id)
 
 
+def raw_cli_anchor_callables(store: Any) -> tuple[Any, Any]:
+    """The raw controller's anchor pair: the leaf past unsaved System rows,
+    and that row's saved id (TASK-33620.1.10)."""
+    return store.local_command_anchor_leaf, store.persisted_message_id_for_session_node
+
+
 def _raw_cli_persist_session_if_needed(
     screen: Any,
     session_id: str,
@@ -3065,6 +3071,7 @@ def build_console_controllers(
     screen._terminal = _DeferredConsoleTerminalController(screen)
     raw_runtime = screen._console_runtime()
     raw_store = screen._ensure_console_chat_store()
+    raw_anchor_leaf, raw_persisted_anchor = raw_cli_anchor_callables(raw_store)
     screen._raw_cli = ConsoleRawCliController(
         raw_cli_runtime=lambda: screen.app_instance.raw_cli_runtime,
         # TASK-33620.1, owner decision 2026-11-23: the stop holds raw CLI too.
@@ -3072,8 +3079,8 @@ def build_console_controllers(
         native_source=raw_runtime.raw_cli_source,
         active_session_id=lambda: str(raw_store.ensure_session().id),
         persist_session_if_needed=(raw_store.persist_session_if_needed),
-        active_leaf_anchor=(raw_store.active_leaf),
-        persisted_leaf_anchor=(raw_store.persisted_message_id_for_session_node),
+        active_leaf_anchor=raw_anchor_leaf,
+        persisted_leaf_anchor=raw_persisted_anchor,
         selected_local_root=(
             lambda session_id: _selected_console_local_root(screen, session_id)
         ),
