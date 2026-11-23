@@ -1383,7 +1383,10 @@ MINIMUM_FILES = 2526
 # - PR #3423 review r11n4 N4-1 (2026-11-22): that file's pin for the re-check
 #   staying on its own route (one Library boot, about 4 s), at the tail:
 #   2562 -> 2563.
-MINIMUM_FILES = 2563
+# - PR #3423 rebase 16 (2026-11-23): that file's pin for a Media list entry
+#   landing on its already-focused row (one Library boot, about 4 s), at the
+#   tail: 2563 -> 2564.
+MINIMUM_FILES = 2564
 
 
 MINIMUM_FILES = 2038

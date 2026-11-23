@@ -460,6 +460,54 @@ async def test_artifacts_never_syncs_a_page_into_a_shell_being_removed(
         profile.close()
 
 
+# --- a Media entry landing on its already-focused row (rebase 16) ----------
+
+
+async def test_a_media_entry_landing_on_its_focused_row_leaves_no_mark(
+    tmp_path: Path,
+) -> None:
+    """Landing the row that already has focus marks no programmatic target.
+
+    Rebase 16: dev's TASK-42422 test timed out waiting for
+    ``_library_notes_programmatic_focus_target`` to retire (head 7/10, dev
+    1/10). Two list-entry landings reached Media's row 0; the second marked
+    it as the app's own focus after the first had already landed, and a
+    ``set_focus`` onto the focused row sends no focus event, so nothing ever
+    consumed that mark. Dev's restore path already skips the already-focused
+    case (``test_programmatic_media_restore_releases_only_its_failed_focus_
+    marker``); the list entry now does too.
+    """
+    from Tests.UI.test_library_rail_switch_keeps_reader_and_note import (
+        _host as _media_host,
+    )
+    from Tests.UI.test_library_shell import _wait_for_selector
+
+    host, profile = _media_host(tmp_path)
+    try:
+        async with host.run_test(size=SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _press(host, screen, pilot, "#library-row-browse-media")
+            row = await _wait_for_selector(screen, pilot, "#library-media-row-0")
+            await _until(
+                pilot,
+                lambda: not screen._library_pending_list_entry_focus,
+                "Media's own arrival to settle",
+            )
+            screen.set_focus(row, scroll_visible=False)
+            await pilot.pause()
+            assert screen.focused is row, screen.focused
+            screen._arm_library_list_entry_focus()
+            screen._focus_library_list_entry()  # the second landing of the race
+            await pilot.pause()
+            assert screen.focused is row, screen.focused
+            mark = screen._library_notes_programmatic_focus_target
+            assert mark is None, mark
+            screen._disarm_library_list_entry_focus()
+    finally:
+        profile.db.close_connection()
+
+
 # --- the copied entry table, and every route ------------------------------
 
 

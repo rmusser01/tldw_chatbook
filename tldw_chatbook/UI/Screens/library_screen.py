@@ -11198,10 +11198,10 @@ class LibraryScreen(BaseAppScreen):
                 ),
                 target,
             )
-        if row_class == "library-media-row":
-            # Initial entry focus is system-owned just like a viewer return;
-            # it must not be mistaken for user row selection by
-            # ``on_descendant_focus`` and activate the Reader before Enter.
+        if row_class == "library-media-row" and self.focused is not target:
+            # Initial entry focus is system-owned just like a viewer return, not
+            # a user row selection that activates the Reader before Enter. Never
+            # on a row already focused: no focus event would consume the mark.
             self._library_notes_programmatic_focus_target = target
         self.set_focus(target, scroll_visible=False)
         if self.focused is not target:
