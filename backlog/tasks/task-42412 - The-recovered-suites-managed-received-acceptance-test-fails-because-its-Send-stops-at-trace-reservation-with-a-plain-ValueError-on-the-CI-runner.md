@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-22 21:17
-updated_date: 2026-11-23 04:28
+updated_date: 2026-11-23 05:33
 labels:
 - follow-up
 - ci
@@ -48,6 +48,7 @@ So raising the bound would not help. 767c15cffb (2026-11-19) already turned `set
 - [x] #2 The root cause is fixed in product code, or, if the refusal is correct behaviour for that state, the test sets up the state the reservation needs; the notes say which and why
 - [x] #3 A reproduction that fails the test before the change (a temporary slowdown or fault injection, reverted) passes after it
 - [x] #4 The test passes in the recovered-suites job in at least three consecutive PR runs after the change, or in a local run of the job's step under parallel load
+- [x] #5 Review found a second cause in the same test: under load its backend switch (`handle_runtime_backend_changed("local")`) fails fast with `FolderConflictError` ("database is locked") while creating the agent-lessons folder during the startup Actor Pack recovery. The lock holder is proven, the contention is fixed in product code, a forced lock hold fails before the fix and passes after it, and the test passes 20 times under heavy load
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -81,11 +82,35 @@ Fixed in the test (AC#2's second branch). The refusal is correct behaviour for t
 - Whole step, three more runs on clean source, all serial (runs 3 and 4 kept their full output):
   - Run 3 (load 23-35): 2006 passed, 1 skipped in 1220.75 s; this test took 24.6 s.
   - Run 4, with the 10-run neighbourhood soak going in parallel (load 16-37): 2006 passed, 1 skipped in 1532.69 s. The parallel soak passed 10/10 again (180/180).
-  - Run 2, alongside the first soak (load 24-46): 2 failed, 2004 passed. The two failures were this test and `Tests/Library/test_library_ingest_runner.py::test_real_pool_worker_exit_is_reported_for_owning_generation`. This test failed in under 12.2 s (it is missing from the 5 slowest durations, whose cutoff was 12.24 s), so this is not the 120 s `settle(entered)` hang fixed here. The step script kept only the last 15 lines, so the failure text was lost, and the run did not recur in runs 3 and 4 or in 20 soak runs. Cause unknown.
+  - Run 2, alongside the first soak (load 24-46): 2 failed, 2004 passed. The two failures were this test and `Tests/Library/test_library_ingest_runner.py::test_real_pool_worker_exit_is_reported_for_owning_generation`. This test failed in under 12.2 s (it is missing from the 5 slowest durations, whose cutoff was 12.24 s), so this is not the 120 s `settle(entered)` hang fixed here. The step script kept only the last 15 lines, so the failure text was lost, and the run did not recur in runs 3 and 4 or in 20 soak runs. Likely cause, found by review: the agent-lessons seed race fixed under AC#5 below. That race fails the test at the backend switch, about 12 s into the child, and the reviewer's failing calls took about that long.
 
 Out of scope here (proposed as follow-ups):
 - Add the trace refusal codes the send diagnostic does not know (`surface_replacement_checkpoint_unavailable` and others) to `_TRACE_FAILURE_CATEGORIES`.
 - Check whether an agent's next call after a failed first call should be refused by trace reservation.
 
 Files: `Tests/Performance/test_console_managed_received_acceptance.py` (one wait, 8 lines); `backlog/docs/lessons-testing-evidence.md` (one entry).
+
+**Second cause, found by review (AC#5).** Under heavy load (16 busy loops plus 3 lanes, load 31-78), review saw 6 of 91 runs fail fast at `assert await app.handle_runtime_backend_changed("local") is True` (script line 662). The error was `FolderConflictError("Folder changed during mutation.", reason="busy")` from `sqlite3.OperationalError: database is locked`. The chain is `handle_runtime_backend_changed` -> `_wire_notes_sync_services` (`app_service_wiring.py:649`) -> `initialize_agent_lessons_folder` (`Notes/agent_lessons.py:337`) -> `LocalNoteFolderRepository.create_folder(cursor=...)` INSERT. The failure comes before the emergency-stop wait, so it was on base too, and it is a product defect: a user's backend switch during startup recovery fails the same way.
+- *The holder.* A temporary probe logged every ChaChaNotes transaction begin and end (per connection, thread and caller), plus the SQLite code at the failure. It caught a natural failure on base code (1 failure in the roughly 21 runs before the fix was applied, at load 20-50; times in seconds since the child started):
+  - 12.4551: the UI thread's DEFERRED transaction begins at `agent_lessons.py:270` and reads.
+  - 12.4600: the startup Actor Pack recovery thread (`asyncio_0`, `ensure_actor_pack_recovery` -> `PersonaBuddyLibrary.ensure_builtin` -> `publish_review`) runs `BEGIN IMMEDIATE` at `Persona_Buddy/library.py:247` to insert its `buddy_profiles` row.
+  - 12.4676: the recovery commits.
+  - 12.4719: the UI thread's INSERT fails with `SQLITE_BUSY_SNAPSHOT` (517).
+  The reviewer's thread dumps were taken in the error handler, after the recovery thread had already moved on to `persona_visual_participants.files`.
+- *Why neither the busy handler nor the retry absorbs it.* The seed reads and then writes in a DEFERRED transaction. If another connection committed after the read, SQLite returns SQLITE_BUSY_SNAPSHOT (517); if it still holds the write lock, it returns SQLITE_BUSY (5). Both come back at once, and SQLite never calls the busy handler on a read-to-write upgrade, so the 15 s `busy_timeout` never applies. This is a refusal, not a hold longer than the timeout. `_retry_owned_contention` would retry 517, but only for a transaction the repository owns, and here `create_folder` ran in the caller's transaction (`cursor=` passed).
+- *Fix (product).* `initialize_agent_lessons_folder` opens its transaction with `db.transaction(immediate=True)`. The write lock is taken before the first read and waits on the busy timeout, which is the repo's existing rule for read-then-write transactions (`TransactionContextManager` docstring; TASK-34000.28's `BEGIN IMMEDIATE` in the folder repository). Both callers (the local seed on backend change, and `NotesOrganizationSyncService.initialize_agent_lessons_seed`) get it. The recovery's own write transaction is a few milliseconds, so the wait is short.
+- *Red/green, with forced contention.* Two new tests in `Tests/Notes/test_agent_lessons_seed.py`:
+  - `test_seed_waits_for_a_writer_another_connection_holds`: another connection holds `BEGIN IMMEDIATE` for 1 s. Base: `AssertionError: FolderConflictError('Folder changed during mutation.')`, SQLite code 5 (SQLITE_BUSY) while the holder was alive.
+  - `test_seed_survives_a_write_committed_between_its_read_and_its_write`: another connection commits a `buddy_profiles` row between the seed's read and its write, the captured order. Base: the same assertion, code 517.
+  - With the fix, both pass. The seed file ran 16 passed.
+  - A 6 s env-gated hold inside `publish_review` did not overlap the backend switch in unloaded runs (2/2 passed at base), so it is not used as evidence. It was reverted.
+- *Soak.* All on fixed code, serial per lane, with the step flags, all passing:
+  - 16 busy loops + 3 lanes: 30/30 at load 18-38.
+  - 24 busy loops + 3 plain lanes x 15: 45/45 at 1-min load 38-62.
+  - 2 probe lanes x 10 at the same time: 20/20, with no `FolderConflictError` and no folder-mutation error logged. The probe's timings of the seed's `BEGIN IMMEDIATE` (2-64 ms) cannot be attributed to the lock, since they also include connection setup and scheduling; the forced-hold tests above are the proof that the seed now waits.
+  - Note: a second startup caller, `_deferred_wire_notes_sync_services` (`app_service_wiring.py:1988`), runs the same seed, and the shared fix covers it.
+- *Whole "Run the recovered suites" step* at bc8ba15f47, serial with the CI flags (`--storage-lease-guard --timeout=180 --tb=short`) and full output kept: 2006 passed, 1 skipped, 1 deselected in 1048.14 s, load 46 falling to 11. This test took 11.84 s.
+- *Covering tests* (`-n 4`): the seed file plus the Sync_Interop/Agents/Notes files that import `agent_lessons` ran 156 passed, 2 failed. The 2 (`test_notes_organization_app_wiring.py::test_real_per_user_notes_owner_rolls_back_mutation_and_intent_together` and `test_agent_runtime_preparation.py::test_agent_lessons_guidance_recomputes_from_each_effective_schema_set`) fail with `RecoveryRequired: raw_source_selection_changed`, the known local trap, and fail the same way with base `agent_lessons.py`.
+- *Lane.* `Tests/Notes/test_agent_lessons_seed.py` is in no PR lane, only the nightly whole-tree run. It was left unlaned because the recovered-suites step is at its time cap and the lanes workflow is another session's. The managed test, which is laned, exercises the integration path.
+- Files: `tldw_chatbook/Notes/agent_lessons.py` (immediate transaction + comment), `Tests/Notes/test_agent_lessons_seed.py` (two tests), `Tests/Performance/test_console_managed_received_acceptance.py` (`settle()` takes a label, and the stop-read wait fails as `managed_received_emergency_stop_read_timeout`, since `refresh()` logs a failed read only at DEBUG), `backlog/docs/lessons-testing-evidence.md` (one new entry, and the first entry corrected).
 <!-- SECTION:NOTES:END -->
