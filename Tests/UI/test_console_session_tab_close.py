@@ -254,6 +254,21 @@ def _record_notifications(app) -> list[tuple[str, str]]:
     return notes
 
 
+async def _await_answerable_view(pilot, controller) -> None:
+    """Wait until a round armed now would pass its arm-time liveness check.
+
+    Here controller.app is a never-run TldwCli, so that check (TASK-41637)
+    rests on the view alone, and ``_mounted_console`` returns before the
+    attach reconciliation makes the view answerable. A round armed in that gap
+    settles ``cancelled`` at its first poll, although the reconciliation then
+    mounts its parked card (TASK-42481). Arm only once this has passed.
+    """
+
+    assert await _settle(
+        pilot, lambda: not controller._approval_view_is_detached()
+    ), "the Console view never became answerable"
+
+
 def _parked_decision_notice(notes: list[tuple[str, str]]) -> bool:
     """True once a background tab's round has told the user it is waiting.
 
@@ -814,10 +829,15 @@ def _assert_surviving_creation_is_live(controller, pending):
 
 
 async def _arm_pending_round(
-    controller, kind: str, session_id: str, *, surviving_child=False
+    pilot, controller, kind: str, session_id: str, *, surviving_child=False
 ):
-    """Arm a real blocking round without executing the proposed tool."""
+    """Arm a real blocking round without executing the proposed tool.
 
+    Every arm first waits for an answerable view (TASK-42481), so no journey
+    can arm a round its arm-time liveness check would fail closed.
+    """
+
+    await _await_answerable_view(pilot, controller)
     actor = None
     if kind == "chat_create":
         if surviving_child:
@@ -960,7 +980,9 @@ async def _verify_background_pending_close_names_consequences_and_cancels_only_i
                 if kind == "chat_create":
                     controller._active_assistant_message_ids[doomed.id] = assistant.id
                 notes = _record_notifications(app)
-                round_task = await _arm_pending_round(controller, kind, doomed.id)
+                round_task = await _arm_pending_round(
+                    pilot, controller, kind, doomed.id
+                )
 
                 async def waiting_run(
                     controller=controller,
@@ -1097,9 +1119,15 @@ async def _verify_background_pending_close_releases_round_without_an_active_turn
                 doomed = controller.new_session(title="Pending decision")
                 controller.switch_session(keeper)
                 notes = _record_notifications(app)
-                sibling = await _arm_pending_round(controller, "question", keeper)
+                sibling = await _arm_pending_round(
+                    pilot, controller, "question", keeper
+                )
                 pending = await _arm_pending_round(
-                    controller, kind, doomed.id, surviving_child=kind == "chat_create"
+                    pilot,
+                    controller,
+                    kind,
+                    doomed.id,
+                    surviving_child=kind == "chat_create",
                 )
                 try:
                     read_ids = (
@@ -1138,8 +1166,10 @@ async def _verify_background_pending_close_releases_round_without_an_active_turn
                     # the Close dialog covers the view. Here controller.app is a
                     # never-run TldwCli, so the round's arm-time liveness check
                     # (TASK-41637) rests on the view alone, and a check that
-                    # lands under the dialog fails the round closed. A running
-                    # app never does, see:
+                    # lands under the dialog fails the round closed. The card
+                    # proves the check ran only because the rounds armed on an
+                    # answerable view: a remount also mounts a parked card
+                    # (TASK-42481). A running app never fails closed, see:
                     # test_running_app_round_stays_pending_while_no_view_can_answer
                     assert await _settle(
                         pilot,
@@ -1218,7 +1248,7 @@ async def _verify_chat_create_enrichment_cannot_arm_after_its_session_closes(
                 controller, "_enrich_chat_create_confirm_payload", paused_enrichment
             )
             pending = await _arm_pending_round(
-                controller, "chat_create", doomed.id, surviving_child=True
+                pilot, controller, "chat_create", doomed.id, surviving_child=True
             )
             try:
                 assert await _settle(pilot, entered.is_set)
