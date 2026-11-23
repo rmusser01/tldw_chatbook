@@ -1,10 +1,11 @@
 ---
 id: TASK-42467
 title: "Four Console tab-switch composer tests are red on dev: three because the send double rejects a keyword the product now passes, and one whose sync-pass worker gets a Mock"
-status: To Do
-assignee: []
+status: Done
+assignee:
+- '@claude'
 created_date: 2026-11-23 06:38
-updated_date: 2026-11-23 07:09
+updated_date: 2026-11-23 20:59
 labels:
 - follow-up
 - console
@@ -34,8 +35,33 @@ Only `test_running_harness_retires_actual_borrowed_database_connections` from th
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each of the four nodes has a recorded cause: test-double drift after a named product commit, or a product defect
-- [ ] #2 Drift is repaired in the tests (the doubles accept what the product passes), with each test's assertions kept; a product defect is fixed in product code with a test shown red first
-- [ ] #3 The four nodes pass, alone and in a `-n 4` run of the file
-- [ ] #4 The file's green nodes run in a PR lane, with their serial time under the lane's flags recorded in the notes
+- [x] #1 Each of the four nodes has a recorded cause: test-double drift after a named product commit, or a product defect
+- [x] #2 Drift is repaired in the tests (the doubles accept what the product passes), with each test's assertions kept; a product defect is fixed in product code with a test shown red first
+- [x] #3 The four nodes pass, alone and in a `-n 4` run of the file
+- [x] #4 The file's green nodes run in a PR lane, with their serial time under the lane's flags recorded in the notes
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. The three TypeError nodes: confirm the Send reaches `_record_dispatch`'s double with `_captured_inputs` (added to the call by 077e5bfa09) and let the double accept that keyword, by name, recording what it did before.
+2. The `[False]` node: confirm `request_console_repaint` hands `run_worker` the sync method itself since d043e22438, and make the test expect that object; keep every other assertion.
+3. Run the four nodes alone and in a `-n 4` run of the file.
+4. Lane the file's green nodes (all but TASK-35830's five) as node-id entries at the UI census tail, timed serially with the UI lane's flags.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Causes (AC#1): all four are test-double drift; no product defect.**
+- `test_enter_after_a_tab_click_during_a_sync_pass_sends_to_the_clicked_chat`, `test_a_switch_during_a_sync_pass_binds_the_composer_at_once[browser]` and `test_keys_typed_after_a_second_quick_tab_click_go_to_that_tab`: drift after 077e5bfa09 (2026-10-31, "Reconcile Console Send custody and feedback with current owners"). That commit made `chat_screen.py`'s send pass `_captured_inputs=received_inputs` to `_dispatch_console_draft_send` whenever the Send captured its inputs (`chat_screen.py:18430-18433` at base). The product dispatcher (`composer_run_controls._dispatch_console_draft_send`) declares that keyword; the file's `_record_dispatch` double did not, so the Send raised `TypeError` inside the UI action and the tests waited out the send-acknowledgement wait.
+- `test_an_activation_that_loses_authority_after_switching_asks_for_a_repaint[False]`: drift after d043e22438 (2026-11-05, "Fix native Console sync coroutine worker admission"). `request_console_repaint` (`UI/Console_Modules/session.py`) now hands `run_worker` the sync method itself, which the worker calls, instead of a coroutine made by calling it. The test still expected `run_worker("sync pass", ...)`, the Mock's return value; the recorded call carried the Mock.
+
+**Fix (AC#2, tests only).** `_record_dispatch`'s double accepts `_captured_inputs=None` by name (it records what it did before, the session and the draft). The repaint test expects `((screen._sync_native_console_chat_ui,), {"exclusive": True, "group": "console-sync"})`. Every assertion is unchanged.
+
+**Red/green (AC#3).** At base the four nodes failed in a `-n 4` run of the file (9 failed, 18 passed; the other five are TASK-35830's). After the fix, each node alone passed (7.4, 7.7, 7.7 and 3.4 s), and the file at `-n 4` gave 22 passed, 5 failed: only TASK-35830's five setup-assertion reds (the four `test_send_refuses_and_keeps_the_draft_when_the_composer_is_bound_elsewhere` cases and `test_send_refuses_when_the_composer_chat_is_off_screen_after_two_switches`), which this task leaves to TASK-35830.
+
+**Lane (AC#4).** Only `test_running_harness_retires_actual_borrowed_database_connections` was censused. The other 13 green test functions join the UI census tail as node ids (all their parameter cases); TASK-35830's two red functions stay out. Serially with the UI lane's flags (`-p no:xdist --timeout=180 --durations=0`) the 13 entries (21 tests) took 233.7 s at load 58-77 (setup+call+teardown per entry: workspace switch paths 52.9 s, strip buttons 30.1 s, sync-pass binds 26.2 s, lost click 22.6 s, second quick click 17.4 s, two waiting clicks 13.5 s, session tab keyboard 12.9 s, Enter after click 12.6 s, held activation keys 12.3 s, Redirect refusal 10.9 s, tab click highlight 10.6 s, and under 0.01 s each for the two stub tests). The census floor is the measured entry count (shared with TASK-42469's two entries).
+
+**Files.** `Tests/UI/test_console_tab_switch_binds_composer.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
+<!-- SECTION:NOTES:END -->

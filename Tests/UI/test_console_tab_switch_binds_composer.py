@@ -174,7 +174,7 @@ def _record_dispatch(console) -> list[tuple[str | None, str]]:
     """Record the chat each send is dispatched to, instead of sending it."""
     dispatched: list[tuple[str | None, str]] = []
 
-    async def dispatch(draft, stash=None, *, session_id=None):
+    async def dispatch(draft, stash=None, *, session_id=None, _captured_inputs=None):
         dispatched.append((session_id, draft))
         return True
 
@@ -845,7 +845,13 @@ async def test_an_activation_that_loses_authority_after_switching_asks_for_a_rep
         "pass started": (
             []
             if pass_running
-            else [(("sync pass",), {"exclusive": True, "group": "console-sync"})]
+            # The sync method itself: the worker calls it (d043e22438).
+            else [
+                (
+                    (screen._sync_native_console_chat_ui,),
+                    {"exclusive": True, "group": "console-sync"},
+                )
+            ]
         ),
     }
 
