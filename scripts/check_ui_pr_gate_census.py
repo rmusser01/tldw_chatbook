@@ -1306,22 +1306,22 @@ MINIMUM_FILES = 2520
 #   Library boot at 120x36 over a real ChaChaNotes database and the real import
 #   executor, ~10-12 s alone at load ~17, with and without the w1b plugin; kept
 #   out of its ~10 s sibling so neither nears the budget): 935 -> 936.
-# Rebased 2026-11-22 onto dev ddd3c02052 (2457 entries, floor 2457): the
+# Rebased 2026-11-22 onto dev 2f7790873a (2472 entries, floor 2472): the
 # polish-1b entries above, then PR #3423's 3 review-fix pins, stay
 # appended at the tail, so no existing slot moves; the floor is the
-# measured entry count: 2457 + 23 = 2480.
+# measured entry count: 2472 + 23 = 2495.
 # - PR #3423 re-review N-1/N-2/N-3 (2026-11-06): Tests/UI/test_library_notes_
 #   bulk_keyword_per_note.py (per-note commits under a ready Sync v2 profile:
 #   three production-CSS Library boots over a real ChaChaNotes database),
-#   appended at the tail: 2480 -> 2481.
+#   appended at the tail: 2495 -> 2496.
 # - PR #3423 nav-home fix round 3 (2026-11-22): Tests/UI/test_library_resume_
 #   focus_every_route.py (a Library resuming over nothing focused lands its
 #   entry or its own rail row, on every rail row the shell builds and the
 #   hub: production-CSS Library boots over a real ChaChaNotes database) is
 #   about 55-60 s whole, over the 30 s per-file budget, so its nine tests go
 #   in by node id at the tail (the route walk split four ways, about 7-10 s
-#   each): 2481 -> 2490.
-MINIMUM_FILES = 2490
+#   each): 2496 -> 2505.
+MINIMUM_FILES = 2505
 
 
 MINIMUM_FILES = 2038
