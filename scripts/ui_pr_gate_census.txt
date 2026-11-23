@@ -4003,3 +4003,8 @@ Tests/UI/test_console_compaction_hold_flow.py::test_a_default_agent_chat_reads_r
 Tests/UI/test_console_compaction_forecast.py::test_a_prefill_or_staged_image_is_counted_and_never_reads_a_false_ready
 Tests/UI/test_console_compaction_forecast.py::test_history_images_count_at_the_send_estimate_and_make_it_may
 Tests/UI/test_console_compaction_forecast.py::test_an_unmodelled_memory_shape_counts_its_turns_in_full
+# TASK-33621.4 delta review (2026-11-22): an agent chat's tool cost counts
+# (native schemas and fenced prompt text), unmeasured or stale tools may pause,
+# and a prompt that leaves no room reads "Next send won't fit". 7 cases in
+# 24.9 s serially, plain flags, load ~8.
+Tests/UI/test_console_compaction_forecast.py::test_an_agent_chats_tool_cost_counts_and_is_never_a_false_ready
