@@ -32,6 +32,11 @@ from tldw_chatbook.Chat.console_display_state import (
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.console_rail_state import ConsoleRailState
 from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsSummaryState
+from tldw_chatbook.Chat.provider_test_evidence import shared_connection_evidence
+from tldw_chatbook.LLM_Calls.anthropic_subscription import (
+    subscription_credential_status,
+    subscription_readiness_revision,
+)
 from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
 from tldw_chatbook.UI.Console_Modules.rail_section_layout import outer_hint_required
 from tldw_chatbook.UI.Console_Modules.right_rail import ConsoleInspectorRail
@@ -441,11 +446,23 @@ async def _wait_for_inspector_quiet(
     means, on two polls in a row: the rail open with nothing scheduled on it
     or its sections, the owner-pass count unchanged and past
     ``owner_passes_after`` (so the awaited pass has run), attach reconciled,
-    no Console sync running, requested or scheduled, no credential first pass
-    or config retry owed, and no worker left (TASK-42148's signal, widened).
+    no Console sync running, requested or scheduled, no config retry owed, no
+    app worker left (TASK-42148's signal, widened), and the credential poll
+    settled: the background credential read has completed and the poll has
+    committed the gate it would read now. A first read that settles later
+    bumps the revision, and the poll then re-syncs every owner.
     """
 
+    def credential_gate() -> tuple[object, ...]:
+        # The poll's own pre-gate (ChatScreen._poll_console_credential_readiness).
+        return (
+            subscription_credential_status(background=True),
+            subscription_readiness_revision(),
+            getattr(shared_connection_evidence(lambda: screen.app), "version", 0),
+        )
+
     def pending() -> list[str]:
+        gate = credential_gate()
         flags = (
             ("rail closed", not rail.display),
             ("outer reconcile scheduled", rail._outer_reconcile_scheduled),
@@ -456,7 +473,8 @@ async def _wait_for_inspector_quiet(
                 "control-bar sync scheduled",
                 getattr(screen, "_console_control_bar_sync_scheduled", False),
             ),
-            ("credential first pass", screen._console_credential_pre_gate is None),
+            ("credential read", gate[0] == "pending"),
+            ("credential poll pass", screen._console_credential_pre_gate != gate),
             ("config retry", bool(getattr(screen, "_console_config_retries", None))),
             ("owner pass", rail._outer_owner_reconcile_count <= owner_passes_after),
         )
@@ -471,13 +489,16 @@ async def _wait_for_inspector_quiet(
         )
 
     deadline = time.monotonic() + 15.0
-    quiet_polls, passes = 0, rail._outer_owner_reconcile_count
+    quiet_polls, previous = 0, rail._outer_owner_reconcile_count
     while quiet_polls < 2:
-        if time.monotonic() > deadline:
-            raise AssertionError(f"Inspector still busy: {pending()}")
-        stable = rail._outer_owner_reconcile_count == passes
         passes = rail._outer_owner_reconcile_count
-        quiet_polls = quiet_polls + 1 if stable and not pending() else 0
+        busy = pending()
+        if passes != previous:
+            busy.append(f"owner passes still changing ({previous}->{passes})")
+        if time.monotonic() > deadline:
+            raise AssertionError(f"Inspector still busy: {busy}")
+        previous = passes
+        quiet_polls = 0 if busy else quiet_polls + 1
         await pilot.pause(0.05)
 
 
@@ -2173,6 +2194,9 @@ async def test_chat_screen_inspector_mutation_paths_delegate_one_owner_request(
                 "#console-staged-context-tray", ConsoleStagedContextTray
             )
             owner._on_reconcile = observe_outer
+            # TASK-42474: only the quiet wait protects this case; a Console sync
+            # after startup (a credential pass on a connection-evidence version
+            # bump) would still sync the other owners for this launch.
             screen._pending_console_launch_context = ConsoleLiveWorkLaunch.from_values(
                 source="owner-path", title="Sources ChatScreen probe"
             )
