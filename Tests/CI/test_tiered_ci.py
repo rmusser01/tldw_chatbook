@@ -39,20 +39,57 @@ def test_explicit_sources_select_their_tests_and_unconditional_smoke():
         "pyproject.toml",
         "requirements.txt",
         ".github/workflows/derived-artifacts.yml",
+        "requirements-dev.txt",
+        "setup.py",
         "Tests/conftest.py",
+        "Tests/UI/conftest.py",
         "Tests/private_profile.py",
+        "Tests/Chat/hooks_v2_owned_rig.py",
         "scripts/ci/tier_policy.py",
         "tldw_chatbook/DB/migrations/123.sql",
+    ],
+)
+def test_ci_build_schema_and_shared_test_inputs_require_broad(path):
+    """TASK-42521: only inputs that can break CI itself, or the schema, stay broad."""
+    assert policy.select_changes([("M", path)], ROOT)["full"]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
         "tldw_chatbook/Backup_Recovery/new.py",
         "tldw_chatbook/Utils/path_validation.py",
         "tldw_chatbook/MCP/permissions.py",
         "Docs/QA/fixture.json",
+        "Docs/User_Guide/console/agent-runs-and-tools.md",
         "backlog/docs/input.md",
+        "scripts/ui_pr_gate_census.txt",
         "unknown.py",
     ],
 )
-def test_shared_security_and_unknown_changes_require_broad(path):
-    assert policy.select_changes([("M", path)], ROOT)["full"]
+def test_other_changes_run_sanity_checks_only(path):
+    """TASK-42521: the nightly and release runs are the broad gates for these."""
+    plan = policy.select_changes([("M", path)], ROOT)
+    assert not plan["full"]
+    assert plan["targets"] == sorted(policy.BASE_TESTS)
+
+
+def test_changed_test_files_run_in_the_light_tier():
+    plan = policy.select_changes(
+        [
+            ("M", "Tests/Agents/test_native_legacy_hooks.py"),
+            ("A", "Tests/Backup_Recovery/test_startup_unlock.py"),
+            ("M", "Tests/CI/test_tiered_ci.py"),
+            ("D", "Tests/UI/test_retired.py"),
+        ],
+        ROOT,
+    )
+    assert not plan["full"]
+    # Tests/CI runs whole in the light job, and a deleted file has nothing to run.
+    assert set(plan["targets"]) == set(policy.BASE_TESTS) | {
+        "Tests/Agents/test_native_legacy_hooks.py",
+        "Tests/Backup_Recovery/test_startup_unlock.py",
+    }
 
 
 @pytest.mark.parametrize("status", ["D", "R100", "T", "U"])
@@ -319,13 +356,18 @@ def test_reusable_suite_has_a_distinct_concurrency_group():
         "tldw_chatbook/Widgets/credential_dialog.py",
     ],
 )
-def test_high_risk_names_override_known_subsystems(path):
-    assert policy.select_changes([("M", path)], ROOT)["full"]
+def test_sensitive_names_get_their_subsystem_smoke_not_broad_ci(path):
+    """TASK-42521 (owner): sensitive paths no longer force the broad run on the PR."""
+    plan = policy.select_changes([("M", path)], ROOT)
+    assert not plan["full"]
+    subsystem = next(k for k in policy.SUBSYSTEM_TESTS if path.startswith(k))
+    assert set(policy.SUBSYSTEM_TESTS[subsystem]) <= set(plan["targets"])
 
 
-def test_new_modules_and_deleted_task_records_remain_broad():
-    assert policy.select_changes([("A", "tldw_chatbook/Chat/new.py")], ROOT)["full"]
-    assert policy.select_changes([("D", "backlog/tasks/task-1.md")], ROOT)["full"]
+def test_new_modules_are_light_but_removed_application_files_stay_broad():
+    assert not policy.select_changes([("A", "tldw_chatbook/Chat/new.py")], ROOT)["full"]
+    assert not policy.select_changes([("D", "backlog/tasks/task-1.md")], ROOT)["full"]
+    assert policy.select_changes([("D", "tldw_chatbook/Chat/old.py")], ROOT)["full"]
 
 
 @pytest.mark.parametrize("nightly,full_label", [(True, False), (False, True)])

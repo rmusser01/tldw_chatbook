@@ -1,4 +1,11 @@
-"""Select reviewed dev checks; unknown or high-risk changes retain broad CI."""
+"""Select dev PR checks: sanity checks by default, broad CI for CI-shaping inputs.
+
+Owner decision (TASK-42521, 2026-11-23): a dev PR runs sanity checks (preflight,
+Tests/CI, the smoke set, its own changed test files and its subsystem's smoke
+tests) and merges; the nightly full run on dev and the release run into main
+are the broad gates. Only inputs that can break CI itself, or the schema, keep
+the full run on the PR.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +16,6 @@ from pathlib import Path
 import subprocess
 
 # Representative subsystem checks; broader integration feedback moves to nightly.
-# Shared inputs and authority/storage changes below never use this map.
 SUBSYSTEM_TESTS = {
     "tldw_chatbook/Chat/": [
         "Tests/Chat/test_chat_functions.py::test_chat_api_handler_matrix_strips_or_preserves_ephemeral_marker",
@@ -26,26 +32,9 @@ SUBSYSTEM_TESTS = {
     ],
     "tldw_chatbook/css/": ["Tests/UI/test_design_token_governance.py"],
 }
-HIGH_RISK_NAMES = (
-    "approval",
-    "permission",
-    "authority",
-    "credential",
-    "encrypt",
-    "recovery",
-    "migration",
-    "storage",
-    "workspace",
-    "instruction",
-    "agent_bridge",
-    "settings",
-    "sync",
-    "replica",
-    "reconcil",
-    "executor",
-    "journal",
-    "file_notes",
-)
+# What CI runs, how every suite starts, what gets installed, and the schema.
+FULL_PREFIXES = (".github/", "scripts/ci/", "tldw_chatbook/DB/migrations/")
+FULL_FILES = {"pyproject.toml", "setup.py", "setup.cfg"}
 BASE_TESTS = [
     "Tests/test_smoke.py",
     "Tests/MCP/test_approval_timeout_policy.py",
@@ -53,15 +42,33 @@ BASE_TESTS = [
 ]
 
 
+def _full_reason(status: str, path: str) -> str | None:
+    """Why this change needs the broad run on the PR itself, or None."""
+    name = Path(path).name
+    if (
+        path.startswith(FULL_PREFIXES)
+        or path in FULL_FILES
+        or re.fullmatch(r"requirements[^/]*\.txt", path)
+    ):
+        return f"CI, build or schema input: {path}"
+    if (
+        path.startswith("Tests/")
+        and name.endswith(".py")
+        and not name.startswith("test_")
+    ):
+        # conftest.py, private_profile.py, shared helpers: every suite can import them.
+        return f"Shared test infrastructure: {path}"
+    if status not in {"A", "M", "D"}:
+        return f"Structural change: {path}"
+    if status == "D" and path.startswith("tldw_chatbook/"):
+        # A removed module can break any importer, and no sanity check imports them all.
+        return f"Removed application file: {path}"
+    return None
+
+
 def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
-    """Return broad fallback or a nonempty, deterministic affected-test list."""
+    """Return the broad fallback or a nonempty, deterministic sanity-check list."""
     targets = set(BASE_TESTS)
-    known_tests = {
-        target
-        for tests in SUBSYSTEM_TESTS.values()
-        for target in tests
-        if "::" not in target
-    }
     if not changes:
         return {
             "full": True,
@@ -69,40 +76,31 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
             "reason": "No trustworthy change range",
         }
     for status, path in changes:
-        if status not in {"A", "M"}:
-            return {
-                "full": True,
-                "targets": BASE_TESTS,
-                "reason": f"Structural change: {path}",
-            }
-        subsystem = next((key for key in SUBSYSTEM_TESTS if path.startswith(key)), None)
-        high_risk = any(name in path.lower() for name in HIGH_RISK_NAMES)
-        if (
-            subsystem
-            and status == "M"
-            and not high_risk
-            and Path(path).suffix in {".py", ".tcss"}
-        ):
-            targets.update(SUBSYSTEM_TESTS[subsystem])
-        elif path in known_tests and not high_risk:
-            targets.add(path)
-        elif path.startswith("backlog/tasks/") and path.endswith(".md"):
-            # The unconditional preflight checks task IDs/files; runtime inputs
-            # elsewhere under backlog/ and Docs/ remain broad.
+        reason = _full_reason(status, path)
+        if reason:
+            return {"full": True, "targets": BASE_TESTS, "reason": reason}
+        if status == "D":
             continue
-        else:
-            return {
-                "full": True,
-                "targets": BASE_TESTS,
-                "reason": f"Unclassified or shared input: {path}",
-            }
+        name = Path(path).name
+        if (
+            path.startswith("Tests/")
+            and name.startswith("test_")
+            and name.endswith(".py")
+        ):
+            if not path.startswith("Tests/CI/"):  # the light job runs Tests/CI whole
+                targets.add(path)
+            continue
+        subsystem = next((key for key in SUBSYSTEM_TESTS if path.startswith(key)), None)
+        if subsystem and Path(path).suffix in {".py", ".tcss"}:
+            targets.update(SUBSYSTEM_TESTS[subsystem])
+        # Docs, backlog, census files and other sources: preflight + smoke only.
     for target in targets:
         if not (root / target.split("::", 1)[0]).is_file():
             raise ValueError(f"Selected test does not exist: {target}")
     return {
         "full": False,
         "targets": sorted(targets),
-        "reason": "Reviewed source/test map",
+        "reason": "Sanity checks; nightly and release runs are the broad gates",
     }
 
 

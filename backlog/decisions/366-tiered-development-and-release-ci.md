@@ -1,6 +1,6 @@
 # ADR-366: Tiered development and release CI
 
-Status: Proposed; activation requires live qualification
+Status: Accepted; activated by the owner on 2026-11-23 (`CI_TIERED_ENABLED=true`), selection amended by TASK-42521
 Date: 2026-11-13
 Task: TASK-41564
 Amends: ADR-103
@@ -41,3 +41,21 @@ Weekly-only regression delays attribution across many changes; nightly bounds th
 ## Renumbering provenance
 
 Renumbered from ADR-360 on 2026-11-18 after dev908e9840 brought in the older beautifulsoup4 decision (Date2026-10-11); this policy was drafted on 2026-11-13. The current sweep covered1090refs,393decision trees,1143distinct decision blobs and55worktrees. The highest filename/header claim was365, so366 follows the canonical highest-plus-one rule without backfilling. Policy semantics and the older merged decision remain unchanged. Evidence: /tmp/tldw-light-ci-policy-adr-reservation-sweep.json.
+
+## Amendment: sanity-check selection (2026-11-23, TASK-42521)
+
+**Why.** The owner enabled `CI_TIERED_ENABLED` on 2026-11-23. The intent was rapid dev merges after sanity checks, with the nightly full run on dev and the release run into main as the broad gates. The selection above defeated that intent. It treated any path outside a five-entry map as broad: every test file, `Docs/` page and `backlog/docs` file, and every path whose name contained one of 18 sensitive words. Replayed over the last 60 dev merges at b31e3e9241, only 5 would have run light. Meanwhile a starved runner pool held each 62-job PR run for hours.
+
+**Decision.** A dev PR runs light unless it changes an input that can break CI itself, or the schema. These keep the broad run:
+- `.github/` and `scripts/ci/`;
+- `pyproject.toml`, `setup.py`, `setup.cfg` and `requirements*.txt`;
+- `tldw_chatbook/DB/migrations/`;
+- any non-`test_*.py` Python file under `Tests/`, such as conftest, the profile harness or shared rigs;
+- a deleted application file;
+- a type-changed or unmerged path;
+- an empty change range;
+- the `ci:full` label.
+
+Everything else runs preflight, `Tests/CI`, the smoke set, the PR's own changed `test_*.py` files and its subsystem's smoke nodes. Each file runs in its own pytest process, because bootstrap_profile and sandboxed suites must not share one (TASK-32873). The light job's cap is 30 minutes. Sensitive path names (security, storage, recovery, instructions and the rest) no longer force broad runs on the PR. They rely on review, the PR's own tests, the nightly run and the release run. This supersedes the "absence means broad" and sensitive-name rules above. Unset the variable to restore broad dev PR gating.
+
+**Cost accepted.** A regression in an integration the PR's own tests don't reach can land on dev. It is caught the next morning, when the 09:17 UTC nightly runs, or at release, and attributed across one day's merges.

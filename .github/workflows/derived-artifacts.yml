@@ -276,7 +276,8 @@ jobs:
     needs: [preflight]
     if: needs.preflight.outputs.light == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # TASK-42521: the light tier now also runs the PR's own changed test files.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -287,7 +288,7 @@ jobs:
         with:
           node-version: '24'
       - name: Install smoke dependencies
-        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2 hypothesis
       - name: Run CI contracts and selected smoke tests
         env:
           CI_TEST_TARGETS: ${{ needs.preflight.outputs.targets }}
@@ -301,8 +302,18 @@ jobs:
               for t in targets
           ):
               raise SystemExit('Refusing missing or invalid test selection')
-          subprocess.run([sys.executable, '-m', 'pytest', '-p', 'asyncio', '-p', 'pytest_timeout',
-                          'Tests/CI', *targets, '--timeout=180', '--tb=short'], check=True)
+          # One pytest process per file: bootstrap_profile and sandboxed suites
+          # must not share a process (TASK-32873). Exit 5 = nothing collected.
+          files = {}
+          for target in ['Tests/CI', *targets]:
+              files.setdefault(target.split('::', 1)[0], []).append(target)
+          failed = [
+              path for path, nodes in files.items()
+              if subprocess.run([sys.executable, '-m', 'pytest', '-p', 'asyncio', '-p', 'pytest_timeout',
+                                 *nodes, '--timeout=300', '--tb=short']).returncode not in (0, 5)
+          ]
+          if failed:
+              raise SystemExit('Failed: ' + ', '.join(failed))
           PYTEST
 
   release-qualification:
