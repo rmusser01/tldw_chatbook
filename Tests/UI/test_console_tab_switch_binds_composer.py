@@ -182,6 +182,20 @@ def _record_dispatch(console) -> list[tuple[str | None, str]]:
     return dispatched
 
 
+async def _until_key_lands(pilot, landed) -> None:
+    """Wait (bounded) for a key sent through the driver to land somewhere.
+
+    ``pilot.pause()`` returns once the process looks idle, and a CPU-starved
+    runner looks idle before the Key reaches the composer (TASK-42467: the
+    draft still lacked the typed "y" in 2 of 8 loaded `-n 4` runs). The caller
+    still asserts where the key went; a key that never lands fails there,
+    after 10 s.
+    """
+    deadline = asyncio.get_running_loop().time() + 10.0
+    while not landed() and asyncio.get_running_loop().time() < deadline:
+        await pilot.pause(0.01)
+
+
 def _record_notices(console) -> list[str]:
     notices: list[str] = []
     real = console.app_instance.notify
@@ -433,7 +447,9 @@ async def test_pressing_a_session_tab_leaves_the_keyboard_in_the_composer():
         await pilot.pause()
         focused = console.app.focused
         press(host, "y", "y")
-        await pilot.pause()
+        await _until_key_lands(
+            pilot, lambda: composer.draft_text() != B_LEFTOVER or bool(traces)
+        )
         assert {
             "focused": getattr(focused, "id", focused),
             "trace opened": traces,
@@ -762,7 +778,9 @@ async def test_pressing_tab_strip_buttons_leaves_the_keyboard_in_the_composer(
         await pilot.pause()
         focused = console.app.focused
         press(host, "y", "y")
-        await pilot.pause()
+        await _until_key_lands(
+            pilot, lambda: composer.draft_text() != B_LEFTOVER or bool(traces)
+        )
         assert {
             "focused": getattr(focused, "id", focused),
             "trace opened": traces,
