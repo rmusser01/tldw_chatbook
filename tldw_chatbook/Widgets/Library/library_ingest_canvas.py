@@ -1319,6 +1319,9 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
         # the children -- a rebuilt ``Select`` re-reads this cache so the
         # populated list survives every re-render without a re-query.
         self._chunk_template_names: list[str] = []
+        # TASK-41723: each form field still owing its mount echo, with the
+        # value it was composed with. See ``_stop_form_field_echo``.
+        self._form_field_echoes: dict[Input, str] = {}
 
     def sync_state(self, state: LibraryIngestCanvasState) -> None:
         """Rebuild only the mounted ingest canvas from a complete snapshot.
@@ -1806,8 +1809,16 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
             id=f"type-group-{group}",
         )
 
+    def _form_field(self, value: str, **kwargs: Any) -> Input:
+        """An ``Input`` whose mount echo ``_stop_form_field_echo`` will drop."""
+        field = Input(value=value, **kwargs)
+        if value:  # an empty value is the default, so it is never announced
+            self._form_field_echoes[field] = value
+        return field
+
     def compose(self) -> ComposeResult:
         state = self.state
+        self._form_field_echoes = {}
         yield Static(
             state.header,
             id="library-ingest-header",
@@ -1855,8 +1866,8 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
             classes="library-ingest-field-label",
             markup=False,
         )
-        yield Input(
-            value=state.form.path,
+        yield self._form_field(
+            state.form.path,
             placeholder="Path to a local file or a URL…",
             id="library-ingest-path",
             classes="library-ingest-field",
@@ -1945,8 +1956,8 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                     classes="library-ingest-field-label",
                     markup=False,
                 )
-                yield Input(
-                    value=state.form.title,
+                yield self._form_field(
+                    state.form.title,
                     placeholder="Defaults to source name",
                     id="library-ingest-title",
                     classes="library-ingest-field",
@@ -1958,8 +1969,8 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                     classes="library-ingest-field-label",
                     markup=False,
                 )
-                yield Input(
-                    value=state.form.author,
+                yield self._form_field(
+                    state.form.author,
                     placeholder="e.g. Ada Lovelace",
                     id="library-ingest-author",
                     classes="library-ingest-field",
@@ -1971,8 +1982,8 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                     classes="library-ingest-field-label",
                     markup=False,
                 )
-                yield Input(
-                    value=state.form.keywords,
+                yield self._form_field(
+                    state.form.keywords,
                     placeholder="comma-separated",
                     id="library-ingest-keywords",
                     classes="library-ingest-field",
@@ -2248,6 +2259,23 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
             for detail in self.query(f"#{INGEST_TOOLING_FOLD_ID}"):
                 if isinstance(detail, Collapsible):
                     detail.collapsed = False
+
+    @on(Input.Changed)
+    def _stop_form_field_echo(self, event: Input.Changed) -> None:
+        """Keep a form field's announcement of its composed value from the screen.
+
+        TASK-41723: an ``Input`` composed with a non-empty ``value=`` posts a
+        ``Changed`` for it, always its first. The screen dropped that echo only
+        while it still matched the form, so one delivered after the form
+        changed read as an edit: in CI, a pre-check result's rebuild delivered
+        it after Start's submit had cleared path and title, which put the
+        submitted file back. Only the first message is checked: a later one
+        equal to the composed value is the user's (Clear empties the path
+        without a message, then the same path can be typed again).
+        """
+        echo = self._form_field_echoes.pop(event.input, None)
+        if echo is not None and event.value == echo:
+            event.stop()
 
     @on(Checkbox.Changed)
     @on(Select.Changed)
