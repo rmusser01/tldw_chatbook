@@ -60,6 +60,7 @@ import json
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import asdict, replace
+from functools import partial
 from datetime import datetime
 from pathlib import Path
 
@@ -373,10 +374,10 @@ class TrajectoryScreen(ModalScreen[None]):
         #: Tail-follow: True while the reader is at the bottom; scrolling
         #: up suspends it, ``f`` re-enables.
         self._follow = True
-        #: Tail scrolls queued but not landed. Until they land the table's
+        #: Ledger scrolls queued but not landed. Until they land the table's
         #: scroll position is mid-change (a re-render resets it to the top),
         #: so it says nothing about where the reader is.
-        self._tail_scrolls_pending = 0
+        self._scrolls_pending = 0
         self._turns: tuple[TrajectoryTurn, ...] = snapshot.turns
         self._turn_numbers = _number_logical_turns(self._turns)
         self._collapsed: set[str] = set()
@@ -804,6 +805,7 @@ class TrajectoryScreen(ModalScreen[None]):
         # they may have scrolled up since: re-read it before the re-render
         # resets the scroll, or the tail scroll below snaps them back.
         self._sync_follow_from_scroll()
+        reading = self._top_row()
         selected_key = self._cursor_key()
         self._snapshot = snapshot
         self._turns = snapshot.turns
@@ -861,10 +863,26 @@ class TrajectoryScreen(ModalScreen[None]):
         self._refresh_hints()
         self._refresh_state()
         if self._follow:
-            self._queue_tail_scroll()
+            self._queue_ledger_scroll()
+        else:
+            # A paused reader keeps the row they had at the top: the re-render
+            # reset the scroll and restores only the cursor. A row that is
+            # gone keeps the old offset, which the table clamps to its bounds.
+            key, top = reading
+            if key in self._visible_keys:
+                top = self._visible_keys.index(key)
+            self._queue_ledger_scroll(top)
 
-    def _queue_tail_scroll(self) -> None:
-        """Scroll to the newest row once the table has re-laid out.
+    def _top_row(self) -> tuple[str | None, int]:
+        """The key and index of the ledger row at the top of the view."""
+        try:
+            top = int(self.query_one("#trajectory-table", DataTable).scroll_y)
+        except Exception:  # noqa: BLE001 - pre-mount refresh
+            return None, 0
+        return (self._visible_keys[top] if top < len(self._visible_keys) else None), top
+
+    def _queue_ledger_scroll(self, row: int | None = None) -> None:
+        """Scroll the ledger to ``row`` (the newest row when None) once laid out.
 
         The re-render resets scroll geometry; scrolling must land after the
         table re-lays out, not at the stale range.
@@ -873,13 +891,14 @@ class TrajectoryScreen(ModalScreen[None]):
             table = self.query_one("#trajectory-table", DataTable)
         except Exception:  # noqa: BLE001 - pre-mount refresh
             return
+        scroll = table.scroll_end if row is None else partial(table.scroll_to, y=row)
         if table.call_after_refresh(
-            table.scroll_end, animate=False, on_complete=self._tail_scroll_landed
+            scroll, animate=False, on_complete=self._ledger_scroll_landed
         ):
-            self._tail_scrolls_pending += 1
+            self._scrolls_pending += 1
 
-    def _tail_scroll_landed(self) -> None:
-        self._tail_scrolls_pending = max(0, self._tail_scrolls_pending - 1)
+    def _ledger_scroll_landed(self) -> None:
+        self._scrolls_pending = max(0, self._scrolls_pending - 1)
 
     def _sync_follow_from_scroll(self) -> None:
         """Suspend follow while the reader is off the bottom edge.
@@ -893,7 +912,7 @@ class TrajectoryScreen(ModalScreen[None]):
             table = self.query_one("#trajectory-table", DataTable)
         except Exception:  # noqa: BLE001 - pre-mount refresh
             return
-        if table.max_scroll_y <= 0 or self._tail_scrolls_pending:
+        if table.max_scroll_y <= 0 or self._scrolls_pending:
             return
         following = table.scroll_y >= table.max_scroll_y - 1
         if following != self._follow:
@@ -903,7 +922,7 @@ class TrajectoryScreen(ModalScreen[None]):
     def action_resume_follow(self) -> None:
         """Re-enable tail-follow and jump to the newest records (``f``)."""
         self._follow = True
-        self._queue_tail_scroll()
+        self._queue_ledger_scroll()
         self._refresh_state()
 
     def _title_text(self) -> str:

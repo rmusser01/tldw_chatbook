@@ -23,6 +23,7 @@ import threading
 from dataclasses import dataclass
 from types import SimpleNamespace
 
+import pytest
 from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widgets import DataTable, Static
@@ -272,13 +273,11 @@ async def test_scrolling_up_suspends_follow_until_f_resumes(wait_for_condition):
         assert screen._follow is False
 
         # New records arrive while reading: no tail jump, even once every
-        # queued tail scroll has had its chance to land.
+        # queued ledger scroll has had its chance to land.
         state["turns"] = 61
         state["revision"] += 1
         screen._poll_revision()
-        await until(
-            lambda: table.row_count == 61 * 3 and not screen._tail_scrolls_pending
-        )
+        await until(lambda: table.row_count == 61 * 3 and not screen._scrolls_pending)
         assert screen._follow is False
         assert table.scroll_y == 0  # reading position preserved
 
@@ -333,9 +332,7 @@ async def test_a_reader_scroll_during_a_live_rebuild_is_not_snapped_back(
         finally:
             release.set()
 
-        await until(
-            lambda: table.row_count == 61 * 3 and not screen._tail_scrolls_pending
-        )
+        await until(lambda: table.row_count == 61 * 3 and not screen._scrolls_pending)
         assert table.scroll_y == 0, "the rebuild snapped the reader back to the tail"
         assert screen._follow is False
 
@@ -366,11 +363,58 @@ async def test_back_to_back_live_rebuilds_keep_following_the_tail(wait_for_condi
         screen._apply_live_snapshot(snapshot_with_turns(62))
         assert screen._follow is True
 
-        await until(
-            lambda: table.row_count == 62 * 3 and not screen._tail_scrolls_pending
-        )
+        await until(lambda: table.row_count == 62 * 3 and not screen._scrolls_pending)
         assert screen._follow is True
         assert table.scroll_y == table.max_scroll_y
+
+
+@pytest.mark.parametrize("turns", [60, 260], ids=["appended", "newest-page-slides"])
+async def test_a_paused_reader_keeps_their_place_across_a_live_rebuild(
+    turns, wait_for_condition
+):
+    """A rebuild while paused leaves the reader on the rows they were reading.
+
+    The re-render's ``DataTable.clear()`` resets the scroll and only the
+    cursor row came back, so a reader who had scrolled away from the cursor
+    was thrown back to it (TASK-42414). Past the newest page (500 records)
+    a new turn also drops rows off the top, so the place is a row, not an
+    offset.
+    """
+
+    async def until(condition):
+        await wait_for_condition(condition, timeout=10.0, interval=0.01)
+
+    state = {"revision": 3, "turns": turns}
+    builder = lambda: snapshot_with_turns(state["turns"])  # noqa: E731
+    app = TrajectoryHostApp(
+        snapshot_with_turns(turns), lambda: state["revision"], builder
+    )
+    async with app.run_test():
+        screen = app.screen_instance
+        table = screen.query_one("#trajectory-table", DataTable)
+        await until(lambda: table.max_scroll_y > 0 and not screen._scrolls_pending)
+
+        # The reader scrolls to the middle without moving the cursor.
+        table.scroll_to(y=40, animate=False)
+        await until(lambda: table.scroll_y == 40)
+        screen._sync_follow_from_scroll()
+        assert screen._follow is False
+        reading = screen._visible_keys[40]
+        assert table.cursor_row != 40
+
+        state["turns"] = turns + 1
+        state["revision"] += 1
+        screen._poll_revision()
+        await until(
+            lambda: (
+                screen._total_records == (turns + 1) * 2 and not screen._scrolls_pending
+            )
+        )
+        top = int(table.scroll_y)
+        assert screen._visible_keys[top] == reading, (
+            f"the reader's top row {reading} now shows {screen._visible_keys[top]}"
+        )
+        assert screen._follow is False
 
 
 async def test_unchanged_revision_does_not_rebuild():
