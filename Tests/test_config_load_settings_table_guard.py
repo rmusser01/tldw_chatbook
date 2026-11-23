@@ -709,7 +709,8 @@ def test_propagation_follows_imports_not_names():
 # (Tests/test_provider_registry.py) checks those sections against the records.
 # Review round 1: a section includes its leading comment lines and inner blank
 # lines (house style), and the generated block's header no longer names a file.
-_TEMPLATE_SHA256 = "1e0e65b440d79e854117af4c1fe550b2aadd652e5a3d5b0d59c0a50fe9fc6714"
+# TASK-42482: a commented moved-HOME Keychain opt-in line under auth_source.
+_TEMPLATE_SHA256 = "0758e29c359c37ba64f0c12ca02020db2f943a5c8b4b9e5306b56941bca6a2cc"
 _TEMPLATE_RELATIVE = "tldw_chatbook/Config_Files/default_config.toml"
 
 

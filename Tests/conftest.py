@@ -13,7 +13,8 @@ from Tests import real_profile_guard as _real_profile_guard
 
 # TASK-33665: refuse writes to the real tldw profile before anything else runs.
 # Environment redirection below is the first line; this guard is the backstop.
-# TASK-42482: it also refuses any spawn of the Claude Code Keychain lookup.
+# TASK-42482: it also refuses the Claude Code Keychain lookup (the spawn shapes
+# its module docstring lists).
 _real_profile_guard.install()
 
 _TEST_CONFIG_ROOT_ENV = "TLDW_TEST_CONFIG_ROOT"

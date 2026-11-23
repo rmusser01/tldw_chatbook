@@ -34,6 +34,8 @@ from pathlib import Path
 from threading import Lock, Thread
 from typing import Any, Literal
 
+from loguru import logger
+
 #: Claude Code's credential file. Chatbook only ever reads it.
 DEFAULT_CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
 
@@ -64,9 +66,14 @@ AUTH_SOURCE_SUBSCRIPTION = "claude_subscription"
 
 #: TASK-42482 (owner decision 2026-11-23): ``[api_settings.anthropic]
 #: allow_keychain_with_moved_home = true`` lets a moved HOME read the Keychain
-#: item, for a user who chose the subscription. Off by default; read from
-#: config only, never from the environment, so no child process inherits it.
+#: item, for a user who chose the subscription. Off by default and read from
+#: config only. A child process inherits HOME, ``XDG_*`` and
+#: ``TLDW_CONFIG_PATH`` and so reads the same config file: tests and their
+#: children stay off the Keychain because their HOME is moved and no sandbox
+#: or test config carries this key (pinned in ``Tests/test_network_guard.py``).
 KEYCHAIN_WITH_MOVED_HOME_SETTING = "allow_keychain_with_moved_home"
+#: The last non-boolean opt-in value warned about, so each is warned once.
+_OPT_IN_WARNED_FOR: object = None
 
 #: Copy for AC#2 — chatbook never refreshes; the owning tool does.
 STALE_CREDENTIAL_MESSAGE = (
@@ -333,23 +340,33 @@ def _moved_home_keychain_allowed() -> bool:
     """Whether the user let a moved HOME read the Keychain (TASK-42482).
 
     Only ``[api_settings.anthropic] allow_keychain_with_moved_home = true``
-    together with ``auth_source = "claude_subscription"`` does. It is read
-    through ``load_settings``; a config that cannot be read counts as off.
+    together with the saved ``auth_source = "claude_subscription"`` does. It
+    is read through ``load_settings``; a config that cannot be read counts as
+    off. A value that is not a boolean (``"true"``, ``1``) is off too, and is
+    warned about once per value, naming only its type.
 
     Returns:
         ``True`` only for that explicit opt-in.
     """
+    global _OPT_IN_WARNED_FOR
     try:
         from tldw_chatbook.config import load_settings
 
         anthropic = (load_settings().get("api_settings") or {}).get("anthropic")
     except Exception:  # noqa: BLE001 - an unreadable config never opts in
         return False
-    return (
-        isinstance(anthropic, Mapping)
-        and anthropic.get(KEYCHAIN_WITH_MOVED_HOME_SETTING) is True
-        and anthropic_auth_source(anthropic) == AUTH_SOURCE_SUBSCRIPTION
-    )
+    if not isinstance(anthropic, Mapping):
+        return False
+    value = anthropic.get(KEYCHAIN_WITH_MOVED_HOME_SETTING)
+    if value is not None and not isinstance(value, bool) and value != _OPT_IN_WARNED_FOR:
+        _OPT_IN_WARNED_FOR = value
+        logger.warning(
+            "[api_settings.anthropic] {} has type {}, not the boolean true, so "
+            "the Keychain is still not read under a moved HOME.",
+            KEYCHAIN_WITH_MOVED_HOME_SETTING,
+            type(value).__name__,
+        )
+    return value is True and anthropic_auth_source(anthropic) == AUTH_SOURCE_SUBSCRIPTION
 
 
 def _keychain_credential_raw() -> str | None:

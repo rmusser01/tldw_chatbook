@@ -45,16 +45,25 @@ Known limits:
   ``ATTACH``/``VACUUM INTO`` targets, which never pass ``sqlite3.connect``,
   are invisible.
 
-TASK-42482: the same hook refuses, and records, any spawn of the Claude Code
-Keychain lookup (``security find-generic-password ... "Claude Code-credentials"``),
-which queries the real OS Keychain whatever HOME says. A test that turns on
-``[api_settings.anthropic] allow_keychain_with_moved_home`` without faking
-``run`` fails here instead of reading the owner's Keychain. Only that lookup:
-other ``security`` commands, such as the native-credential harness's
-``list-keychains`` against a throwaway keychain, still run. Children that load
-no conftest are covered by the product instead: it reads the Keychain under a
-moved HOME only with that opt-in, which lives in config and never in the
-environment.
+TASK-42482: the same hook refuses, and records, the Claude Code Keychain lookup
+(``security find-generic-password ... "Claude Code-credentials"``), which
+queries the real OS Keychain whatever HOME says, so a test that turns on the
+product's moved-HOME Keychain opt-in without faking ``run`` fails here instead
+of reading the owner's Keychain. It sees the ``subprocess.Popen`` (so also
+``shell=True``, ``os.popen`` and asyncio subprocesses), ``os.posix_spawn``
+(and ``posix_spawnp``), ``os.exec*`` and ``os.system`` events, and matches the
+whole command line, executable included, case-insensitively, on the words
+``find-generic-password`` and ``Code-credentials``. Global options, quoting, an
+escaped space and a renamed or ``executable=`` binary therefore all count.
+Other ``security`` commands, such as the native-credential harness's
+``list-keychains`` against a throwaway keychain, still run. Limit:
+``os.spawn*`` on POSIX forks first and execs in the child, so the exec is
+refused there (nothing runs) but the record stays in the child and does not
+fail the parent's test. A child that loads no conftest has no guard at all:
+it inherits HOME, ``XDG_*`` and ``TLDW_CONFIG_PATH``, so it reads the same
+config file as its parent. It stays off the Keychain only through the moved
+HOME and because no sandbox or test config carries the opt-in, which
+``Tests/test_network_guard.py`` pins.
 """
 
 from __future__ import annotations
@@ -62,7 +71,6 @@ from __future__ import annotations
 import atexit
 import json
 import os
-import re
 import shutil
 import signal
 import sys
@@ -108,17 +116,15 @@ _PATH_EVENTS = {
 _ENTRY_ARGS = frozenset(
     {("os.remove", 0), ("os.rmdir", 0), ("os.rename", 0), ("shutil.move", 0)}
 )
-#: TASK-42482: the product's Keychain lookup, as one command line.
-_KEYCHAIN_LOOKUP = re.compile(
-    r"(?:^|[\s/])security\s+find-generic-password\b.*Claude Code-credentials"
-)
-#: Spawn events -> the position of their argv (or command string).
+#: TASK-42482: the fixed words of the product's Keychain lookup, lower case.
+_KEYCHAIN_LOOKUP_WORDS = ("find-generic-password", "code-credentials")
+#: Spawn events -> the positions of their program and argv (or command string).
 _SPAWN_EVENTS = {
-    "subprocess.Popen": 1,
-    "os.posix_spawn": 1,
-    "os.exec": 1,
-    "os.spawn": 2,
-    "os.system": 0,
+    "subprocess.Popen": (0, 1),
+    "os.posix_spawn": (0, 1),
+    "os.exec": (0, 1),
+    "os.spawn": (1, 2),
+    "os.system": (0,),
 }
 _violations: list[str] = []
 _worker_violations: list[str] = []
@@ -300,16 +306,19 @@ def _refuse(event: str, path: str) -> None:
 
 def _keychain_lookup(event: str, args: tuple) -> str | None:
     """Return the command line when a spawn event is the Keychain lookup."""
-    position = _SPAWN_EVENTS.get(event)
-    if position is None or position >= len(args):
-        return None
-    argv = args[position]
-    words = [argv] if isinstance(argv, (str, bytes, os.PathLike)) else argv or ()
+    words: list[object] = []
     try:
+        for position in _SPAWN_EVENTS.get(event, ()):
+            value = args[position] if position < len(args) else None
+            if isinstance(value, (str, bytes, os.PathLike)):
+                words.append(value)
+            elif value is not None:
+                words.extend(value)
         command = " ".join(os.fsdecode(word) for word in words)
     except (TypeError, ValueError):
         return None
-    return command if _KEYCHAIN_LOOKUP.search(command) else None
+    folded = command.lower()
+    return command if all(word in folded for word in _KEYCHAIN_LOOKUP_WORDS) else None
 
 
 def _refuse_keychain_lookup(event: str, command: str) -> None:
