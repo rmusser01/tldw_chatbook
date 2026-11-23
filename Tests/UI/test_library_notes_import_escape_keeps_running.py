@@ -719,10 +719,13 @@ async def test_f1_closing_over_an_unfocused_list_lands_its_entry(
 
     Before the fix, Conversations (like Media, Skills, Collections, Ingest
     and New note) ended on ``nav-home`` when F1 closed over nothing focused.
-    The one tolerated miss is the pane grip: the resume's own list reload can
+    The entry row lands while the list-entry window is open; a page that
+    reconciles after it (seen once in 40 loaded runs, round 3) gets the
+    re-check's landing instead, the list's filter (review r11n I-2). The one
+    other tolerated miss is the pane grip: the resume's own list reload can
     replace the row just focused, and Textual's reset parks focus there --
     the list-entry channel outside Notes does not take that back (seen once
-    in 26 loaded runs).
+    in 26 loaded runs). Without the landing it ends on None or ``nav-home``.
     """
     profile = _Profile(tmp_path, monkeypatch)
     host = profile.host()
@@ -744,7 +747,8 @@ async def test_f1_closing_over_an_unfocused_list_lands_its_entry(
                 pilot,
                 lambda: screen.focused is not None
                 and (
-                    screen.focused.id == "library-conversation-row-0"
+                    screen.focused.id
+                    in {"library-conversation-row-0", "library-conversations-filter"}
                     or screen.focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)
                 ),
                 lambda: (
