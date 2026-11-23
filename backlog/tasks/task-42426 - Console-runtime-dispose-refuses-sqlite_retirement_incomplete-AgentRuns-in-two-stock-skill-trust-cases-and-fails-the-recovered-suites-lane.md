@@ -1,11 +1,11 @@
 ---
 id: TASK-42426
 title: "Console runtime dispose refuses sqlite_retirement_incomplete:AgentRuns in two stock skill-trust cases and fails the recovered-suites lane"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-22 22:10
-updated_date: 2026-11-23 04:16
+updated_date: 2026-11-23 04:52
 labels:
 - follow-up
 - ci
@@ -46,7 +46,7 @@ Both cases pass locally at the base.
 - [x] #1 The holder of the AgentRuns connection when these disposes refuse is identified and recorded in the notes
 - [x] #2 If the holder found in AC#1 has an owner that can settle it, it is settled before the dispose, so retirement succeeds, shown with a test that fails before the change (a temporary delay in the holder, reverted). If the refusal is correct for that holder (genuinely foreign or unsettled, as ADR-225 requires), the test settles the holder itself or asserts the refusal; the notes say which
 - [x] #3 Both cases pass, as AC#2 leaves them, in repeated runs of the file under parallel load (at least 20 runs, or a soak recorded in the notes)
-- [ ] #4 Once a Console view's runtime has begun disposing, a render of that view starts no new AgentRuns read (sub-agent badge count or run history) and keeps showing the values it already has; a test shows a render after dispose starts schedules no read, red without the guard and green with it
+- [x] #4 Once a Console view's runtime has begun disposing, a render of that view starts no new AgentRuns read (sub-agent badge count or run history) and keeps showing the values it already has; a test shows a render after dispose starts schedules no read, red without the guard and green with it
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -86,9 +86,28 @@ Both cases pass locally at the base.
 - No size ratchet lists the test file.
 - The recovered-suites step (CI flags `-p no:xdist --storage-lease-guard --timeout=180`): 2004 passed, 2 failed, 1 skipped in 24:41 (load 34-46). Every one of this file's 14 lane cases passed. Neither failure is in this file, and both are outside this diff:
   - `Tests/Library/test_library_ingest_runner.py::test_real_pool_worker_exit_is_reported_for_owning_generation` fails at base with the same flags.
-  - `Tests/Performance/test_console_managed_received_acceptance.py::test_received_managed_demand_uses_one_catalog_and_real_cold_initializer` failed with `managed_received_prerequisite_timeout` after a `phase=trace_reservation` ValueError. That is TASK-42412's open flake. It is a separate child script that never imports this file. On this branch it failed 2 more times in 3 serial runs (load about 29) and passed 8 of 8 run 4 at a time; at base it passed 8 of 8.
+  - `Tests/Performance/test_console_managed_received_acceptance.py::test_received_managed_demand_uses_one_catalog_and_real_cold_initializer` failed with `managed_received_prerequisite_timeout` after a `phase=trace_reservation` ValueError, which is TASK-42412's open flake. It is a separate child script that never imports this file, so this diff cannot reach it. On this branch it failed 3 of 4 serial runs (the lane plus three runs alone) and passed 8 of 8 when run 4 at a time. Base runs (4 serial at load 15-20, 4 run 4 at a time at load about 33) all passed. Run modes and loads differ, so these counts are data, not an A/B.
   - Also outside the lane: this file's `send_enter` and `send_button` cases fail at base with the same command (`'types.SimpleNamespace' object has no attribute 'session'`, then `Cold Send did not reach original configuration SQL`). This change does not touch their path.
 
-**For TASK-34661 (not verified).** On the app's real quit path, `settle_view_and_dispose` cancels the count worker. The cancelled worker keeps its old refresh time, so a render during the dispose could start a fresh count read that races the retire. Quit would then log `SQLite retirement incomplete at quit: AgentRuns`. This change does not touch that product path, and it was not reproduced here.
+**AC#4: product guard (review follow-up).**
+- **The race.** The app's quit route (`settle_view_and_dispose`) cancels the view's count worker. A cancelled count keeps its old refresh time, because `state["at"]` is set only on success. The view stays live while `runtime.dispose()` retires AgentRuns, so a render could start a fresh read that races the retire, and quit would log `SQLite retirement incomplete at quit: AgentRuns`. The test had the same gap between its wait and the retire.
+- **The guard.** `ConsoleAgentController._agent_runs_reads_closed()` reads the view's own runtime through the screen's `_console_runtime` resolver; it never resolves a new runtime. It returns true once `_disposed` has latched, which `_dispose_owned` does before its first await. While it is true:
+  - `_console_subagent_counts_for_rows` returns the counts it already has, on the file-backed AgentRuns path;
+  - `_presentation_historical_snapshot` returns its last value, or the stale rows it kept;
+  - neither schedules a read. Memory and custom bridges are unchanged.
+- **What it does not cover.** Reads already in flight at the latch still run, so the test-side wait stays.
+- **Test.** `Tests/UI/test_console_browser_quit_fence.py::test_disposing_runtime_admits_no_new_view_agent_runs_read[counts|history]` sits in an existing whole-file UI census entry, so the census needs no edit. It starts the read, cancels its worker the way quit's drain does, and waits for the read to retire. Then it latches `_disposed`, renders three times, and asserts there is no new worker and only one read.
+  - Without the guard: 2 failed with `assert (2 == 1)`, from a second `_load_subagent_counts` or `_load_historical_presentation` task.
+  - With the guard: 2 passed.
+  - Serial time with the UI lane flags (`-p no:xdist --timeout=180 --durations=0`): 2 passed in 2.62 s (1.27 s of it setup) at load 28.
+- **TASK-34661 cross-reference.** This guard closes the quit-path race: a render during dispose can no longer start a view AgentRuns read after quit's drain has cancelled the count. TASK-34661's own file is not edited.
+- **Covering runs.**
+  - The quit fence, refresh-read batching, historical-read cancellation and count host-shutdown files: 30 passed (`-n 4`).
+  - Soak of the touched tests (both stock cases and both new parameters), 4 parallel loops × 5 rounds = 20 rounds: 80 of 80 passed at load 17-29.
+  - `test_console_agent_rail.py`, `test_console_agent_controller.py` and `test_console_fleet_historical_detail.py` fail locally with the known `RecoveryRequired: raw_source_selection_changed` trap. I ran them under a temporary `bootstrap_profile` marker, since reverted. Under the marker the branch failed 12 tests and base 13, 10 of them the same. The rest were full-log probe tests in `test_console_agent_rail.py` that change from run to run (two more branch runs of that file failed 11 and 9). None of them involves disposal.
+  - `test_subagent_badge_primary_token.py::test_real_badge_count_work_tracks_subagents_not_primary_publication[child]` fails the same way at base (a `TypeError` in its repaint double).
+- **Ratchets.** The module-size, screen-size, worker-group inventory and chat code-identity ratchets: 278 passed, run serially. `agent.py` has no size row.
+- **Sweep (nothing changed).** 31 test files mount an app with `run_test` and call `runtime.dispose()` directly; 15 of them run in a PR lane. The task's 140-run CI scan found this refusal only in the two stock cases. With the guard, a render after the latch starts no read, so only a read already in flight at the latch can still race a direct dispose.
+- **Lane on the follow-up commit:** 2006 passed, 1 skipped in 24:17 (load at the end 20-45), no failures. The ingest-runner and managed-received tests that failed on the first lane run both passed this time.
 
-**Files.** `Tests/Performance/test_console_skill_trust_stock_owned.py`; a lesson in `backlog/docs/lessons-backlog-hygiene.md`: in zsh, `"$F[case]"` subscripts the variable, so a soak's node ids came out empty and pytest collected the whole tree.
+**Files.** `Tests/Performance/test_console_skill_trust_stock_owned.py` (the settle wait), `tldw_chatbook/UI/Console_Modules/agent.py` (the guard), `Tests/UI/test_console_browser_quit_fence.py` (the render-after-dispose test). Lessons: `backlog/docs/lessons-testing-evidence.md` records this incident (wait, do not cancel), and `backlog/docs/lessons-backlog-hygiene.md` records the zsh trap (`"$F[case]"` subscripts the variable, so a soak's node ids came out empty and pytest collected the whole tree).

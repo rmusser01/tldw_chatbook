@@ -889,6 +889,7 @@ pytest got no node ids and collected the whole tree. A two-case round then
 ran for 11 minutes before it was noticed at "[1%]". Write parametrized ids
 in full (`N='file.py::test[case]'`) or brace them (`"${F}[case]"`), and check
 that the first run's header reports the number of items you expect.
+
 ## ADR numbers collide across concurrent branches — re-verify at merge time
 
 **What happened.** 2026-08-20, two independent sessions in the same window: the
