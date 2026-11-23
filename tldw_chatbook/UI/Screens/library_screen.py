@@ -982,9 +982,9 @@ class _Forward:
     members; the screen and its tests keep the private names. Each access
     resolves ``_x`` afresh, so a patch of the private name, on the instance or
     the class, reaches callers of either name from then on. A callback taken
-    before the patch keeps the method it took: the controller hands eight on
-    (``call_next``, three ``call_after_refresh``, two ``partial``, two
-    ``then=``), so a test must patch ``_x`` before that callback is scheduled.
+    before the patch (through ``call_next``, ``call_after_refresh``,
+    ``functools.partial`` or ``then=``) keeps the method it took, so a test
+    must patch ``_x`` before that callback is scheduled.
     Patch and autospec the private name, not the public one:
     ``create_autospec`` keeps ``self`` in a ``_Forward`` member's signature,
     and ``monkeypatch``'s undo of the public name leaves an instance

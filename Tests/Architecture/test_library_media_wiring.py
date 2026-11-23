@@ -1607,7 +1607,11 @@ def test_library_screen_implements_the_media_service_protocols() -> None:
                 or parameters(getattr(protocol, name))
                 != parameters(getattr(LibraryScreen, private))
             ):
-                drift.append(f"{protocol_name}.{name}: signature differs")
+                drift.append(
+                    f"{protocol_name}.{name}: signature differs: protocol "
+                    f"{inspect.signature(getattr(protocol, name))} vs screen "
+                    f"{inspect.signature(getattr(LibraryScreen, private))}"
+                )
     assert not drift, f"LibraryScreen does not implement the media host: {drift}"
 
 
