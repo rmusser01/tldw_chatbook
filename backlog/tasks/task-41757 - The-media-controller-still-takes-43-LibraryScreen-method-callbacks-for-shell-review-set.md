@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-18 16:14
-updated_date: '2026-11-22 21:45'
+updated_date: '2026-11-23 02:28'
 labels:
 - follow-up
 - architecture-review-2026-10-25
@@ -58,59 +58,97 @@ Owner ruling 2026-11-22: the screen implements protocols; no separate service ob
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Code commit `9d1b0d1c6e` on base `8a55555798` (dev, 2026-11-22). Evidence and scripts: `.worktrees/_arch-sdd/scratchpad/p4ms/`.
+Code commit `9d1b0d1c6e`, then fix round 1 (commits listed in the report), on base `8a55555798` (dev, 2026-11-22).
 
-**What changed.** The 43 screen-method callbacks are gone from `LibraryMediaController(...)`. `LibraryMediaHost` now extends four typed `Protocol`s in `library_media_controller.py`: `LibraryShellServices` (26 members), `LibraryReviewSetServices` (11), `LibraryReaderLayoutSync` (4) and `LibraryWorkspaceDepthServices` (2). The controller calls them on the host it already holds. Each of its 43 group-(a) binding properties keeps its private name, so the moved bodies stay byte-for-byte, and now returns `self._screen.<public member>` instead of a stored callable. None of the 43 was dropped as "no longer needed": `_MEDIA_CONTROLLER_BOUND_NAMES`, the AST census of names the moved bodies use, still lists all 43, so each one became a protocol member.
+Evidence and scripts are in the coordinator's local scratch folder, `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/_arch-sdd/scratchpad/p4ms/`. It is not in the repo. File names below are relative to it.
+
+**What changed.** The 43 screen-method callbacks are gone from `LibraryMediaController(...)`.
+- `LibraryMediaHost` now extends four typed `Protocol`s in `library_media_controller.py`:
+  - `LibraryShellServices` (26 members)
+  - `LibraryReviewSetServices` (11)
+  - `LibraryReaderLayoutSync` (4)
+  - `LibraryWorkspaceDepthServices` (2)
+- The controller calls them on the host it already holds.
+- Each of its 43 group-(a) binding properties keeps its private name, so the moved bodies stay byte-for-byte. Each now returns `self._screen.<public member>` instead of a stored callable.
+- None of the 43 was dropped as "no longer needed": `_MEDIA_CONTROLLER_BOUND_NAMES`, the AST census of names the moved bodies use, still lists all 43, so each one became a protocol member.
 
 **AC #3: `LibraryScreen` implements all four new protocols** (structurally; it does not subclass them). Owner ruling, 2026-11-22: "**The screen implements protocols.** Extend the existing `LibraryMediaHost` pattern: replace the 43 callbacks with a few typed `Protocol`s ... that `LibraryScreen` implements, and have the controller call them on the host object it already receives. The controller still holds the screen object; that is accepted. Do not build separate service objects." That is R4's named cost: the controller keeps a screen object, by the owner's decision.
 
-**Public names.** Two members were already public: `action_library_narrow_stage_return` and `request_library_reader_layout_refresh`. The other 41 are one block of class-level names at the end of `LibraryScreen`, each bound to the existing private method (`select_library_rail_row = _select_library_rail_row`). They are not wrappers, and the private names stay.
+**Public names.** Two members were already public: `action_library_narrow_stage_return` and `request_library_reader_layout_refresh`. The other 41 are one block at the end of `LibraryScreen`, `x = _Forward("_x")`.
+- **`_Forward`.** A module-level non-data descriptor in `library_screen.py`. It reads `getattr(obj, "_x")` on every access (fix round 1, review M5). So a patch of the private name, on the instance or the class, reaches the media controller as it did through the old lambdas. Patching the public name on an instance also works, because the descriptor has no `__set__`.
+- **Why the first version changed.** It bound `x = _x` when the class body ran. A test that patched `_x` then missed the controller's calls: four tests needed retargets, and a future test asserting a negative would have passed without checking anything. With `_Forward` those four tests are back to their base text.
+- **No methods added.** The private names stay, and no method was added.
 - **Why not a full rename.** At base, the 41 private names have 765 references in about 130 test files (`_select_library_rail_row` alone has 202 in 43 files) and about 250 in source outside the screen. Several are resolved by shared dispatchers on either the screen or a forwarding controller:
   - `canvas_sync._sync_library_canvas` calls `screen._sync_library_{notes,prompts,skills}_reader_layout_from_shell()` and probes `getattr(_screen, "_focus_library_list_entry_if_current", None)`;
   - `library_browse_route_swap` calls `screen._library_entry_route_key()`;
   - `library_notes_sync_attention` probes `getattr(host, "_run_library_service_call")`.
 
   If the screen's method were renamed, those `getattr`-default and `except Exception` paths would silently skip the screen leg, unless every forwarding controller also gained the public name.
-- **Budget.** The coordinator's method-names ruling allows keeping the private name when the size budget allows it. It does: the `_BUDGETS` row falls 32828 -> 32753 lines, and the method count holds at 1288, because the aliases are assignments, not methods.
-- **Patches.** Because the public names are bound when the class body runs, a patch of the private name does not reach the media controller. The block's comment says so.
-- **Follow-up.** Proposed: move the remaining callers to the public names and drop the private ones.
+- **Budget.** The coordinator's method-names ruling allows keeping the private name when the size budget allows it, and it does (AC #4).
+- **Follow-up.** Proposed: move the remaining callers to the public names and drop the private names and `_Forward`. Forwarding takes away the silent-skip hazard, so this is now cleanup, not a fix.
 
-**Name collision found on the first head run.** As a protocol member, `register_footer_shortcuts` shadowed `BaseAppScreen.register_footer_shortcuts(*, source, shortcuts)`: every Library mount raised `TypeError`, and 785 covering tests went red. The member is now `register_library_footer_shortcuts`. The conformance test checks every class in `LibraryScreen.__mro__[1:]`; it had checked only Textual's `Screen`. The lesson is recorded in `lessons-testing-evidence.md`.
+**Name collision found on the first head run.** As a protocol member, `register_footer_shortcuts` shadowed `BaseAppScreen.register_footer_shortcuts(*, source, shortcuts)`: every Library mount raised `TypeError`, and 785 covering tests went red. The member is now `register_library_footer_shortcuts`. The conformance test checks every class in `LibraryScreen.__mro__[1:]`; it had checked only Textual's `Screen`. The lesson is in `lessons-testing-evidence.md`.
 
 **AC #2.** The guard is `test_no_media_controller_argument_calls_a_screen_method` in `Tests/Architecture/test_library_media_wiring.py`.
-- It fails on a constructor keyword whose value is a lambda calling `self.<name>(...)`, a `partial` of `self.<method>`, or a bound `self.<method>`. Methods include the alias names. The 30 accessor and setter lambdas pass.
+- **What it flags.** Anywhere inside a keyword's value:
+  - a call of `self.<name>(...)` (a lambda's body included);
+  - any `self.<name>` that is a method of `LibraryScreen`, its own or inherited, resolved on the real class (fix round 1, review M1).
+- It also flags a `**` expansion, which it cannot review.
+- The 30 accessor and setter lambdas pass.
 - Red at base, naming all 43 (`red-guard-base.log`).
-- Negative controls at head, each reverted (`negctl.txt`): a lambda to `self._safe_text`, `functools.partial(self._safe_text)`, a bound `self.select_library_rail_row`, and a lambda to the public `self.focus_library_control`. Each went red naming its keyword.
+- **Negative controls at head**, each reverted, each red naming its keyword (`negctl.txt`, `fr1-negctl.txt`):
+  - a lambda to `self._safe_text`;
+  - `functools.partial(self._safe_text)`;
+  - a bound `self.select_library_rail_row`;
+  - a lambda to the public `self.focus_library_control`;
+  - `self.notify`;
+  - `functools.partial(self.notify, severity="warning")`;
+  - `**{"safe_text": self._safe_text}`;
+  - `staticmethod(self._safe_text)`;
+  - `(self._safe_text if True else None)`.
 
-Two more tests guard the protocols:
-- **`test_library_screen_implements_the_media_service_protocols`** pins the 43 members by protocol. It checks that each resolves on `LibraryScreen` with the same descriptor kind and parameter list (names, kinds, defaults) and shadows nothing inherited. It is red at base. Negative controls: dropping the `safe_text` alias ("missing on LibraryScreen"), a changed protocol default ("signature differs"), and the `register_footer_shortcuts` name ("shadows ['BaseAppScreen']").
-- **`test_media_controller_takes_a_typed_host_instead_of_the_screen`** now accepts the service members as host reads, and still goes red on a planted `self._screen._safe_text`.
+Three more tests guard the protocols:
+- **`test_library_screen_implements_the_media_service_protocols`** pins the 43 members by protocol. For each one it checks:
+  - that the public name is a `_Forward` to its own mapped private method (M2);
+  - that that method has the declared descriptor kind, the declared sync or async kind (M3), and the declared parameter list (names, kinds, defaults);
+  - that the member shadows nothing inherited.
+
+  It is red at base. Negative controls, each red:
+  - dropping an alias ("missing on LibraryScreen");
+  - a changed protocol default ("signature differs");
+  - the `register_footer_shortcuts` name ("shadows ['BaseAppScreen']");
+  - `focus_library_rail_action` forwarding to `_focus_library_control` ("does not forward");
+  - the protocol declaring the async `review_set_picker_worker` sync ("signature differs").
+- **`test_a_patched_private_screen_method_reaches_the_media_controller`** (instance and class, M5). For all 43 members, it patches the private name on a bare `LibraryScreen` instance, or on the class, then checks two things: that the controller's group-(a) property hands back the patch, and that calling it reaches the patch.
+  - Red with the first version's `x = _x` block: 41 members each way.
+  - Red for a controller property wired to a sibling member (M2's controller side).
+- **`test_media_controller_takes_a_typed_host_instead_of_the_screen`** accepts the service members as host reads, and still goes red on a planted `self._screen._safe_text`.
 
 **AC #4.**
-- `_LIBRARY_INIT_LAMBDAS`: 397 -> 354 (-43).
-- `_LIBRARY_UNBOUND_TEST_CALLS`: unchanged at 511, since no call on the class or binding was added or removed.
-- `LibraryScreen` `_BUDGETS` row: 32828/1288 -> 32753/1288.
-- `library_media_controller.py` module-size row: 11085 -> 11136 (+51: the protocols +125, the host's bases +1, the parameters and stored callables -89, prose +14), with a dated comment.
+- `_LIBRARY_INIT_LAMBDAS`: 397 -> 354 (-43), and it stayed 354 in fix round 1.
+- `_LIBRARY_UNBOUND_TEST_CALLS`: unchanged at 511.
+- `LibraryScreen` `_BUDGETS` row: 32828/1288 -> 32753/1288, then 32766/1288 in fix round 1 (+16 for `_Forward`, -2 for one-line forwards, -1 comment). Still 62 under base.
+- `library_media_controller.py` module-size row: 11085 -> 11136, then 11140 in fix round 1 (M4's docstring fix), each with a dated comment. The first change was +51: the protocols +125, the host's bases +1, the parameters and stored callables -89, prose +14.
 
-**AC #5: retargets.** Each is on the same screen object with the same arguments and assertions. Each was red at head before the change and green at base, and is green after it:
-1. `Tests/UI/test_library_media_render_fixes.py::test_dismiss_receipt_paints_undo_at_the_items_pane_width`: `screen._review_dismiss_receipt_name = ...` -> `screen.review_dismiss_receipt_name = ...`.
-2. `Tests/UI/test_library_rail_switch_keeps_reader_and_note.py::test_controller_hosted_media_sync_re_requests_an_armed_list_entry_focus`: `monkeypatch.setattr(screen, "_focus_library_list_entry_if_current", ...)` -> `"focus_library_list_entry_if_current"`.
-3. `Tests/UI/test_library_review_round_t21116.py::test_routine_snapshot_midswap_still_runs_the_projection_follow_up`: `original_arm = screen._arm_library_list_entry_focus` and `screen._arm_library_list_entry_focus = spy_arm` -> the public name (2 lines).
-4. `Tests/UI/test_library_shell.py::test_library_resize_geometry_rejects_transient_without_polling`: the one retarget that is more than a rename.
-   - The test is parametrized over receivers. The media param's receiver (the controller) reaches the allocation check through the public member, but the screen's own syncs call the private name.
-   - So the patched attribute follows the receiver (`"library_adaptive_reader_allocation_is_current" if media else "_library_adaptive_reader_allocation_is_current"`), with the same object, the same Mock and the same assertion.
+**AC #5.** No test is retargeted. Fix round 1 reverted the first version's four retargets, and the four tests pass in their base form:
+- `test_library_media_render_fixes.py::test_dismiss_receipt_paints_undo_at_the_items_pane_width`
+- `test_library_rail_switch_keeps_reader_and_note.py::test_controller_hosted_media_sync_re_requests_an_armed_list_entry_focus`
+- `test_library_review_round_t21116.py::test_routine_snapshot_midswap_still_runs_the_projection_follow_up`
+- `test_library_shell.py::test_library_resize_geometry_rejects_transient_without_polling` (3 params)
 
 **Test evidence** (all through `run.sh`, xdist `-n 4` unless noted).
-- **Covering set:** the 133 test files outside `Tests/Architecture` that name a converted callback or the media controller.
-  - Head before the collision fix: 2557 failed and 13 errors (785 the `TypeError` above; most of the rest the local RecoveryRequired).
-  - Head after the fix, on those 2570 ids: 1145 failed and 4 errors.
-  - Base on those 1149: 1144 failed too. Of the 5 that failed only at head, 4 are retargeted above, and `test_artifacts_dreams_rows.py::test_enabled_dreams_with_no_rows_renders_none_yet` passed on its rerun.
-- **The 1144 fail-at-both ids under a temporary `@private_profile_test` marker** (`tempmark2.py`; files restored and diff verified): head 110 failed and 4 errors; base 111 failed and 4 errors.
-  - The 7 ids that differ each flip on both sides across two reruns per side (`tm-rerun.log`).
-  - The common failures' messages match, apart from log-order noise.
+- **Covering set:** the 133 test files outside `Tests/Architecture` that name a converted callback or the media controller (`covering.txt`).
+  - First version, head before the collision fix: 2557 failed and 13 errors (785 the `TypeError` above; most of the rest the local RecoveryRequired).
+  - After the fix, head on those 2570 ids: 1145 failed and 4 errors. Base on those 1149: 1144 failed too (`base-v2-failed-ids.txt`).
+  - Fix round 1, the full set at head: 1146 failed, 3851 passed, 4 errors (`fr1-head-covering.log.gz`). The ids that fail at both sides are the same 1144. The 6 that failed only at head passed when the 6 were rerun together (5 of 6 on the first rerun, all 6 on the second).
+- **The 1144 fail-at-both ids under a temporary `@private_profile_test` marker** (`tempmark2.py`; files restored and the diff verified):
+  - First version: head 110 failed and 4 errors; base 111 failed and 4 errors. The 7 ids that differ each flip on both sides across two reruns per side (`tm-rerun.log`). The common failures' messages match, apart from log-order noise.
+  - Fix round 1, head, under a heavier load: 116 failed and 4 errors (`fr1-head-tm.log.gz`).
+    - 17 ids differ from the first version's base run: 11 failed only at head, 6 only at base.
+    - Rerun twice per side (`fr1-tm-rerun.log`), every id that failed at head also failed at base, and the rest passed on both sides.
   - `test_programmatic_media_row_restore_keeps_reader_until_user_keys` fails 2 of 3 runs on each side.
-- **`Tests/Architecture`, serial:** 1494 passed and 5 skipped (base 1492 plus the 2 new tests).
-- **Static checks:** `preflight.sh` (Python 3.12) passed; `ruff check --select F` is clean on the changed files, with no new B/ASYNC/PLE findings per file; `Tests/lint/ruff_gate.py` passes.
+- **`Tests/Architecture`, serial:** 1496 passed and 5 skipped (`fr1-head-arch.log`). Base is 1492; the difference is the conformance test, the AC #2 guard and the probe test's two params.
+- **Static checks:** `preflight.sh` (Python 3.12) passed. `ruff check --select F` is clean on the changed files, with no new B/ASYNC/PLE findings per file.
 
 **Files:**
 - `tldw_chatbook/UI/Library_Modules/library_media_controller.py`
@@ -118,7 +156,6 @@ Two more tests guard the protocols:
 - `Tests/Architecture/test_library_media_wiring.py`
 - `Tests/Architecture/test_screen_size_ratchet.py`
 - `Tests/Architecture/test_library_modules_size_ratchet.py`
-- the four retargeted `Tests/UI` files above
 - `backlog/docs/lessons-testing-evidence.md`
 
 No User Guide change: behaviour is unchanged.
