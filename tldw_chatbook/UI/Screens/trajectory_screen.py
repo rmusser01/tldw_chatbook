@@ -995,7 +995,9 @@ class TrajectoryScreen(ModalScreen[None]):
             # A reader scroll since this was queued outranks the tail.
             if tail and epoch == self._scroll_epoch:
                 table.scroll_end(
-                    animate=False, immediate=True, on_complete=self._ledger_scroll_landed
+                    animate=False,
+                    immediate=True,
+                    on_complete=self._ledger_scroll_landed,
                 )
             else:
                 self._scroll_to_reading_row(

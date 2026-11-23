@@ -640,7 +640,9 @@ async def test_a_reader_scroll_while_a_tail_scroll_is_queued_keeps_the_reader(
     def hold(table, callback, *args, **kwargs):
         if released:  # a released callback that queues another passes
             return MessagePump.call_after_refresh(table, callback, *args, **kwargs)
-        held.append(partial(MessagePump.call_after_refresh, table, callback, *args, **kwargs))
+        held.append(
+            partial(MessagePump.call_after_refresh, table, callback, *args, **kwargs)
+        )
         return True
 
     if origin == "open":  # the first render queues its tail scroll at mount

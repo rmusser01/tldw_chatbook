@@ -969,8 +969,10 @@ async def test_inspector_scroll_survives_same_event_refresh_and_resets_on_change
         # `end` is a deferred, animated scroll_end: read the place it settles
         # on, not one it passes through (TASK-42460).
         await wait_for_condition(
-            lambda: inspector.max_scroll_y > 0
-            and inspector.scroll_y == inspector.max_scroll_y,
+            lambda: (
+                inspector.max_scroll_y > 0
+                and inspector.scroll_y == inspector.max_scroll_y
+            ),
             timeout=10.0,
             interval=0.01,
         )
