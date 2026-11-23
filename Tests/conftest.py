@@ -13,6 +13,8 @@ from Tests import real_profile_guard as _real_profile_guard
 
 # TASK-33665: refuse writes to the real tldw profile before anything else runs.
 # Environment redirection below is the first line; this guard is the backstop.
+# TASK-42482: it also refuses the Claude Code Keychain lookup (the spawn shapes
+# its module docstring lists).
 _real_profile_guard.install()
 
 _TEST_CONFIG_ROOT_ENV = "TLDW_TEST_CONFIG_ROOT"
@@ -1513,7 +1515,8 @@ def _shutdown_prompts_interop_if_loaded():
 
 @pytest.fixture(autouse=True)
 def refuse_real_profile_writes():
-    """Fail a test whose code tried to write the real tldw profile (TASK-33665).
+    """Fail a test that tried to write the real tldw profile (TASK-33665) or
+    spawn the Claude Code Keychain lookup (TASK-42482).
 
     The guard raises at the write, but production code often catches broad
     exceptions; the recorded refusal still fails the test here.
@@ -1522,8 +1525,9 @@ def refuse_real_profile_writes():
     violations = _real_profile_guard.take_violations()
     if violations:
         pytest.fail(
-            "Wrote to the real tldw profile (a refusal may come from an "
-            "earlier test's late thread):\n" + "\n".join(violations),
+            "Wrote to the real tldw profile or spawned the real Keychain lookup "
+            "(a refusal may come from an earlier test's late thread):\n"
+            + "\n".join(violations),
             pytrace=False,
         )
 

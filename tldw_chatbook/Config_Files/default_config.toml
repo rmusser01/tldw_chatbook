@@ -680,6 +680,8 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     # when it expires, log in with Claude Code again. Whether subscription use
     # from a third-party client fits Anthropic's terms is YOUR call.
     # auth_source = "api_key"
+    # With a moved HOME, true lets "claude_subscription" read the macOS Keychain anyway.
+    # allow_keychain_with_moved_home = false
     model = "claude-sonnet-5"
     temperature = 0.7
     top_p = 1.0 # Anthropic uses top_p (represented as topp in UI)
