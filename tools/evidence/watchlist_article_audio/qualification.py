@@ -7,6 +7,7 @@ owned by a killable process; no microphone fallback is permitted.
 
 import argparse
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import hashlib
 import json
@@ -27,10 +28,12 @@ import warnings
 
 import numpy as np
 from scipy.signal import butter, correlate, resample_poly, sosfiltfilt
+from wasapi_packets import MAX_POLL_GAP_S, content_span, drain_recorder, quiet_window
 
 RATE = 48000
 BLOCK = 480
 STOP_BOUND_S = 1.5
+TAIL_TOLERANCE_S = 0.020
 STATS = re.compile(
     rb"^\s*(\d+(?:\.\d+)?)\s+(?:M-A|A-V):\s*[+-]?(?:\d+(?:\.\d+)?|nan)\s+fd=\s*\d+\s+aq="
 )
@@ -247,7 +250,10 @@ def _count_capture_warning(metrics: dict, message) -> None:
 
 
 def _capture_worker(
-    connection, duration_s: float, capture_buffer_frames: int = BLOCK
+    connection,
+    duration_s: float,
+    capture_buffer_frames: int = BLOCK,
+    capture_clock: str = "legacy",
 ) -> None:
     """Capture only the exact render loopback; emit sanitized numerical telemetry."""
     output = open(os.devnull, "w")
@@ -284,6 +290,11 @@ def _capture_worker(
             with loopback.recorder(
                 samplerate=RATE, channels=2, blocksize=capture_buffer_frames
             ) as recorder:
+                if capture_clock == "wasapi-packet":
+                    drain_recorder(
+                        connection, recorder, duration_s, capture_buffer_frames
+                    )
+                    return
                 try:
                     actual_frames = int(recorder.buffersize)
                 except Exception:
@@ -459,11 +470,25 @@ def observed_playing(
     )
 
 
-def bookmark_alignment(frame: int | None, source_end_s: float | None) -> dict:
+def bookmark_alignment(
+    frame: int | None,
+    source_end_s: float | None,
+    *,
+    content_duration_s: float | None = None,
+) -> dict:
     """Compare saved progress with independently captured stopped content."""
     if frame is None or source_end_s is None or not math.isfinite(source_end_s):
         return {"bookmark_alignment": "unqualified", "bookmark_end_error_s": None}
     error = frame / RATE - source_end_s
+    if (
+        content_duration_s is not None
+        and source_end_s > content_duration_s - TAIL_TOLERANCE_S
+    ):
+        return {
+            "bookmark_alignment": "unqualified",
+            "bookmark_end_error_s": error,
+            "bookmark_alignment_reason": "stop_at_logical_eof",
+        }
     return {
         "bookmark_alignment": "pass" if abs(error) <= 0.250 else "fail",
         "bookmark_end_error_s": error,
@@ -509,6 +534,21 @@ def artifact_receipt(wav: Path, content_frames: int) -> dict:
     }
 
 
+def _match_packets(packets, source):
+    metrics = {}
+    span = content_span(packets, metrics)
+    if span is None:
+        return None, metrics
+    data, qpc_start = span
+    matcher = {}
+    match = measure_match(data, source, diagnostics=matcher)
+    metrics.update(matcher)
+    if match is not None:
+        match["capture_onset_qpc_s"] = qpc_start + match["capture_onset_s"]
+        match["capture_end_qpc_s"] = qpc_start + match["capture_end_s"]
+    return match, metrics
+
+
 def run_case(
     executable: Path,
     wav: Path,
@@ -519,10 +559,14 @@ def run_case(
     stop_after: float | None = None,
     padded: bool = False,
     capture_buffer_frames: int = BLOCK,
+    capture_clock: str = "legacy",
 ) -> dict:
     """Measure one bounded native run; all raw samples/output are disposable."""
     if capture_buffer_frames not in (480, 4800):
         raise ValueError("capture_buffer_frames_must_be_480_or_4800")
+    if capture_clock not in ("legacy", "wasapi-packet"):
+        raise ValueError("unknown_capture_clock")
+    packet_mode = capture_clock == "wasapi-packet"
     result = {
         "launched": False,
         "generation": generation,
@@ -537,6 +581,7 @@ def run_case(
         "capture_lifetime_s": 45 if padded else 12,
         "max_capture_blocks": 4500 if padded else 1800,
         "capture_buffer_frames": capture_buffer_frames,
+        "capture_clock": capture_clock,
         "capture_started": False,
         "diagnostics": {
             "live_matcher_calls": 0,
@@ -555,12 +600,24 @@ def run_case(
     receiver, sender = context.Pipe(duplex=False)
     capture = context.Process(
         target=_capture_worker,
-        args=(sender, result["capture_lifetime_s"], capture_buffer_frames),
+        args=(
+            sender,
+            result["capture_lifetime_s"],
+            capture_buffer_frames,
+            capture_clock,
+        )
+        if packet_mode
+        else (sender, result["capture_lifetime_s"], capture_buffer_frames),
         daemon=True,
     )
     process = None
     reader = None
     blocks = []
+    packets = []
+    polls = []
+    packet_frames = 0
+    live_executor = None
+    live_future = None
     observations = deque(maxlen=256)
     stop_at = None
     exited_at = None
@@ -583,6 +640,9 @@ def run_case(
             return result
         if len(ready) > 2:
             result["diagnostics"]["capture_configuration"] = ready[2]
+        polls.append(ready[1])
+        if packet_mode and padded and stop_after is not None:
+            live_executor = ThreadPoolExecutor(max_workers=1)
         # Independent pre-launch baseline; no output names or samples are saved.
         baseline_until = time.perf_counter() + 0.35
         deadline = (
@@ -597,6 +657,22 @@ def run_case(
                 if message[0] == "error":
                     result["reason"] = message[1]
                     return result
+                if message[0] == "packets":
+                    _, stamp, batch, worker_metrics = message
+                    metrics = result["diagnostics"]
+                    metrics["worker"] = worker_metrics
+                    metrics["receive_backlog_max_s"] = max(
+                        metrics["receive_backlog_max_s"], time.perf_counter() - stamp
+                    )
+                    polls.append(stamp)
+                    packets.extend(batch)
+                    packet_frames += sum(len(packet.data) for packet in batch)
+                    if (
+                        len(polls) > 10000
+                        or packet_frames > RATE * result["capture_lifetime_s"]
+                    ):
+                        result["reason"] = "capture_bound_exceeded"
+                        return result
                 if message[0] == "block":
                     metrics = result["diagnostics"]
                     received_at = time.perf_counter()
@@ -646,8 +722,43 @@ def run_case(
                 )
                 reader.start()
             if process is not None:
+                if live_executor is not None and playing_at is None:
+                    if live_future is not None and live_future.done():
+                        match, live_metrics = live_future.result()
+                        live_future = None
+                        metrics = result["diagnostics"]
+                        metrics["live_matcher_last"] = live_metrics
+                        metrics["live_matcher_max_s"] = max(
+                            metrics["live_matcher_max_s"],
+                            live_metrics.get("duration_s", 0),
+                        )
+                        if match is not None:
+                            playing_at = time.perf_counter()
+                            result.update(
+                                playing_observed_at_s=playing_at,
+                                playing_startup_wait_s=playing_at - launched_at,
+                                playing_source_position_s=match["end_source_s"],
+                            )
+                            deadline = playing_at + len(source) / RATE + 0.25 + 6
+                    if (
+                        live_future is None
+                        and playing_at is None
+                        and len(packets) > last_checked_blocks
+                    ):
+                        last_checked_blocks = len(packets)
+                        recent = [
+                            packet
+                            for packet in packets[-32:]
+                            if packet.start_s >= max(launched_at, now - 0.20)
+                        ]
+                        if recent:
+                            live_future = live_executor.submit(
+                                _match_packets, recent, source
+                            )
+                            result["diagnostics"]["live_matcher_calls"] += 1
                 if (
                     padded
+                    and not packet_mode
                     and playing_at is None
                     and len(blocks) - last_checked_blocks >= 4
                 ):
@@ -677,6 +788,7 @@ def run_case(
                 if (
                     padded
                     and playing_at is None
+                    and (not packet_mode or stop_after is not None)
                     and time.perf_counter() >= playing_ready_deadline
                     and process.poll() is None
                 ):
@@ -685,6 +797,7 @@ def run_case(
                 if (
                     stop_after is not None
                     and stop_at is None
+                    and (not packet_mode or process.poll() is None)
                     and stop_is_due(
                         now_s=time.perf_counter(),
                         launched_at_s=launched_at,
@@ -722,32 +835,102 @@ def run_case(
         else:
             result["reason"] = (
                 "playing_ready_timeout"
-                if padded and playing_at is None
+                if padded
+                and playing_at is None
+                and (not packet_mode or stop_after is not None)
                 else "playback_deadline"
             )
             if result["reason"] == "playback_deadline":
                 result["process_exit"] = "fail"
-        if not blocks:
-            result["reason"] = "no_loopback_samples"
-            return result
-        baseline = [data for stamp, data in blocks if stamp <= launched_at]
-        result["baseline_blocks"] = len(baseline)
-        if not baseline:
-            result["reason"] = "baseline_unobserved"
-            return result
-        baseline_rms = float(np.sqrt(np.mean(np.concatenate(baseline) ** 2)))
-        result["baseline_rms"] = baseline_rms
-        if baseline_rms > 0.0002:
-            result["reason"] = "noisy_baseline"
-            result["endpoint_loopback"] = "fail"
-            return result
-        captured = np.concatenate([data for _, data in blocks])
-        final_metrics = {}
-        measurement = measure_match(captured, source, diagnostics=final_metrics)
+        if packet_mode:
+            result.update(
+                capture_packets=len(packets),
+                capture_frames=packet_frames,
+                capture_poll_observations=len(polls),
+            )
+            if launched_at is None:
+                result.setdefault("reason", "player_not_launched")
+                return result
+            config = result["diagnostics"]["capture_configuration"]
+            max_gap = min(MAX_POLL_GAP_S, config["actual_buffer_frames"] / RATE)
+            packet_period = config["device_period_s"]
+            baseline = quiet_window(
+                packets,
+                polls,
+                ready[1],
+                launched_at,
+                max_gap_s=max_gap,
+                drain_delay_s=packet_period,
+            )
+            result["baseline_monitor"] = baseline
+            result["baseline_rms"] = baseline["rms"]
+            if baseline["status"] != "pass":
+                result["reason"] = (
+                    "noisy_baseline"
+                    if baseline["status"] == "fail"
+                    else "baseline_unobserved"
+                )
+                result["endpoint_loopback"] = baseline["status"]
+                return result
+            if exited_at is not None and polls[-1] < exited_at + 0.4:
+                result["reason"] = "capture_monitor_ended_early"
+                return result
+            playback_packets = [
+                packet for packet in packets if packet.end_s > launched_at
+            ]
+            measurement, final_metrics = _match_packets(playback_packets, source)
+            if stop_at is not None and exited_at is not None:
+                post = quiet_window(
+                    packets,
+                    polls,
+                    stop_at + 0.2,
+                    exited_at + 0.45,
+                    max_gap_s=max_gap,
+                    drain_delay_s=packet_period,
+                )
+                result["post_stop_monitor"] = post
+                result["post_stop_silence"] = post["status"]
+                result["post_stop_rms"] = post["rms"]
+                if post["status"] == "pass" and (
+                    measurement is not None
+                    or not any(np.any(packet.data) for packet in playback_packets)
+                ):
+                    last_active = max(
+                        (
+                            packet.end_s
+                            for packet in playback_packets
+                            if np.sqrt(np.mean(packet.data**2)) >= 0.0002
+                        ),
+                        default=stop_at,
+                    )
+                    result["last_signal_after_stop_s"] = max(0, last_active - stop_at)
+                    result["post_stop_latency"] = (
+                        "pass"
+                        if result["last_signal_after_stop_s"] <= STOP_BOUND_S
+                        else "fail"
+                    )
+        else:
+            if not blocks:
+                result["reason"] = "no_loopback_samples"
+                return result
+            baseline = [data for stamp, data in blocks if stamp <= launched_at]
+            result["baseline_blocks"] = len(baseline)
+            if not baseline:
+                result["reason"] = "baseline_unobserved"
+                return result
+            baseline_rms = float(np.sqrt(np.mean(np.concatenate(baseline) ** 2)))
+            result["baseline_rms"] = baseline_rms
+            if baseline_rms > 0.0002:
+                result["reason"] = "noisy_baseline"
+                result["endpoint_loopback"] = "fail"
+                return result
+            captured = np.concatenate([data for _, data in blocks])
+            final_metrics = {}
+            measurement = measure_match(captured, source, diagnostics=final_metrics)
         result["diagnostics"]["final_matcher"] = final_metrics
         result["capture_blocks"] = len(blocks)
         result["observation_count_retained"] = len(observations)
-        if stop_at is not None:
+        if stop_at is not None and not packet_mode:
             post = [
                 (stamp, data)
                 for stamp, data in blocks
@@ -783,7 +966,9 @@ def run_case(
         if stop_after is not None:
             result.update(
                 bookmark_alignment(
-                    result.get("saved_bookmark_frame"), measurement["end_source_s"]
+                    result.get("saved_bookmark_frame"),
+                    measurement["end_source_s"],
+                    content_duration_s=len(source) / RATE if packet_mode else None,
                 )
             )
         error = measurement["start_source_s"] - offset
@@ -792,11 +977,16 @@ def run_case(
         remaining = len(source) / RATE - measurement["end_source_s"]
         result["missing_tail_s"] = remaining
         if stop_after is None:
-            result["tail_coverage"] = "pass" if abs(remaining) <= 0.020 else "fail"
+            result["tail_coverage"] = (
+                "pass" if abs(remaining) <= TAIL_TOLERANCE_S else "fail"
+            )
         # Map a matched sample to its acquisition block, independent of launch.
-        onset_sample = round(measurement["capture_onset_s"] * RATE)
-        onset_block = min(onset_sample // BLOCK, len(blocks) - 1)
-        onset_wall = blocks[onset_block][0] - (BLOCK - onset_sample % BLOCK) / RATE
+        if packet_mode:
+            onset_wall = measurement["capture_onset_qpc_s"]
+        else:
+            onset_sample = round(measurement["capture_onset_s"] * RATE)
+            onset_block = min(onset_sample // BLOCK, len(blocks) - 1)
+            onset_wall = blocks[onset_block][0] - (BLOCK - onset_sample % BLOCK) / RATE
         end_wall = (
             onset_wall + measurement["capture_end_s"] - measurement["capture_onset_s"]
         )
@@ -824,6 +1014,8 @@ def run_case(
         result["error_type"] = type(error).__name__
         return result
     finally:
+        if live_executor is not None:
+            live_executor.shutdown(wait=False, cancel_futures=True)
         errors = result.setdefault("cleanup_errors", [])
 
         def cleanup(phase, operation, default=None):
@@ -891,12 +1083,14 @@ def run_matrix(
     repeat: int,
     runs: list[dict] | None = None,
     capture_buffer_frames: int = BLOCK,
+    capture_clock: str = "legacy",
 ) -> list[dict]:
     """Reuse three stable artifacts; a resume consumes its confirmed Stop frame."""
     if (
         tail_padding_ms not in (0, 250)
         or repeat not in (1, 2, 3)
         or capture_buffer_frames not in (480, 4800)
+        or capture_clock not in ("legacy", "wasapi-packet")
     ):
         raise ValueError("invalid_matrix_settings")
     artifacts = {}
@@ -927,6 +1121,7 @@ def run_matrix(
             ("stop_playing", 2.5, 0.0, 0.700),
         ]
     runs = [] if runs is None else runs
+    clock_args = {"capture_clock": capture_clock} if capture_clock != "legacy" else {}
     for round_number in range(1, repeat + 1):
         for name, duration, offset, stop_after in cases:
             source, wav, artifact = artifacts[duration]
@@ -940,6 +1135,7 @@ def run_matrix(
                 stop_after=stop_after,
                 padded=bool(tail_padding_ms),
                 capture_buffer_frames=capture_buffer_frames,
+                **clock_args,
             )
             run.update(
                 artifact,
@@ -964,6 +1160,7 @@ def run_matrix(
                 and 0 <= frame < len(source)
                 and run.get("player_reaped") is True
                 and run.get("capture_reaped") is True
+                and not _capture_quality_unqualified(run)
                 and all(
                     run.get(key) == "pass"
                     for key in (
@@ -987,6 +1184,7 @@ def run_matrix(
                     stop_after=None,
                     padded=True,
                     capture_buffer_frames=capture_buffer_frames,
+                    **clock_args,
                 )
             else:
                 resume = {
@@ -1012,14 +1210,19 @@ def run_matrix(
     return runs
 
 
+def _capture_quality_unqualified(run: dict) -> bool:
+    worker = run.get("diagnostics", {}).get("worker", {})
+    return (
+        worker.get("discontinuity_count", 0) > 0
+        or worker.get("timestamp_error_count", 0) > 0
+    )
+
+
 def native_result(runs: list[dict]) -> str:
     """Every required case counts; unmatched cases and missing cleanup cannot pass."""
     required = []
     for run in runs:
-        if (
-            run.get("diagnostics", {}).get("worker", {}).get("discontinuity_count", 0)
-            > 0
-        ):
+        if _capture_quality_unqualified(run):
             required.append("unqualified")
         if run.get("cleanup_errors"):
             required.append("fail")
@@ -1105,6 +1308,9 @@ def main() -> int:
     parser.add_argument(
         "--capture-buffer-frames", type=int, choices=(480, 4800), default=480
     )
+    parser.add_argument(
+        "--capture-clock", choices=("legacy", "wasapi-packet"), default="legacy"
+    )
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     clock = time.get_clock_info("perf_counter")
@@ -1136,6 +1342,7 @@ def main() -> int:
         "tail_padding_ms": args.tail_padding_ms,
         "repeat": args.repeat,
         "capture_buffer_frames": args.capture_buffer_frames,
+        "capture_clock": args.capture_clock,
         "logical_eof": "no_content_or_exact_content_eof_requires_later_service_no_audio_run",
     }
     try:
@@ -1151,6 +1358,7 @@ def main() -> int:
                     repeat=args.repeat,
                     runs=receipt["runs"],
                     capture_buffer_frames=args.capture_buffer_frames,
+                    capture_clock=args.capture_clock,
                 )
             native = native_result(receipt["runs"])
             if platform.system() in receipt["native_platforms"]:
