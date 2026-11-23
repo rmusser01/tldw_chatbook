@@ -37,6 +37,9 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_INGEST_EXPORT,
     LIBRARY_ROW_INGEST_MEDIA,
 )
+from ...Widgets.Library.library_adaptive_reader_shell import (
+    LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
+)
 from .screen_constants import LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS
 
 #: Review r11n I-2: the list routes' one more check runs just after the
@@ -325,10 +328,16 @@ class LibraryNavigationController:
         and Textual's first focusable (the nav bar) when nothing there is.
         """
         screen = self.screen
+        focused = screen.focused
+        # r11n4 load flake: a reload removing the landed entry lets Textual's
+        # reset park focus on a pane grip; one no click or Tab chose is None.
+        parked = focused is not None and focused.has_class(
+            LIBRARY_ADAPTIVE_READER_GRIP_CLASS
+        ) and focused is not screen._library_input_focus
         if (
             not screen.is_attached
             or screen.app.screen is not screen
-            or screen.focused is not None
+            or (focused is not None and not parked)
             or screen._library_pending_list_entry_focus
         ):
             return

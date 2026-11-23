@@ -645,6 +645,45 @@ async def test_a_check_started_with_focus_outside_the_import_says_esc_cancel(
         profile.close()
 
 
+async def test_a_notes_list_entry_arm_keeps_a_grip_the_user_clicked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only Textual's reset onto a grip is cleared by an arm, never a click's.
+
+    r11n4 load flake: the running-check footer pin above failed once with
+    focus on None. A Notes list-entry arm clears a focused pane grip as
+    Textual's reset (TASK-41129), and it did so for the grip the user had
+    clicked too; any arm in that window reproduced the red exactly.
+    """
+    profile = _Profile(tmp_path, monkeypatch)
+    host = profile.host()
+    try:
+        async with host.run_test(size=SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _press(host, screen, pilot, "#library-row-browse-notes")
+            await _until(
+                pilot,
+                lambda: _shown(screen, "#library-browse-items-grip"),
+                "the Notes Items pane grip",
+            )
+            await pilot.pause()
+            screen._disarm_library_list_entry_focus()
+            grip = screen.query_one("#library-browse-items-grip")
+            screen._library_input_focus = grip  # what a click on it records
+            screen.set_focus(grip)
+            screen._arm_library_list_entry_focus()
+            assert screen.focused is grip, screen.focused
+            screen._disarm_library_list_entry_focus()
+            screen._library_input_focus = None  # Textual's reset, no click
+            screen.set_focus(grip)
+            screen._arm_library_list_entry_focus()
+            assert screen.focused is None, screen.focused
+            screen._disarm_library_list_entry_focus()
+    finally:
+        profile.close()
+
+
 async def test_f1_closing_over_an_unfocused_import_keeps_focus_in_library(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

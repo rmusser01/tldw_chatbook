@@ -58,6 +58,25 @@ def _focused_id(screen) -> str | None:
     return getattr(screen.focused, "id", None)
 
 
+async def _select(screen, pilot, row: str) -> None:
+    """Select ``row`` on the screen's own message pump, as a rail press does.
+
+    Awaiting ``_select_library_rail_row`` from the test task ran its
+    whole-screen recompose beside one the screen's pump started, and Textual
+    raised ``DuplicateIds`` on ``screen-content`` (r11n4 load flake).
+    """
+    done = asyncio.Event()
+
+    async def select() -> None:
+        try:
+            await screen._select_library_rail_row(row)
+        finally:
+            done.set()
+
+    screen.call_next(select)
+    await _until(pilot, done.is_set, f"{row or '(hub)'} to be selected")
+
+
 # --- the hub: dev's landing-sync restore (review r11n2 N-3) -----------------
 
 
@@ -260,7 +279,7 @@ async def test_the_last_resort_moves_past_an_entry_being_removed(
         async with host.run_test(size=SIZE) as pilot:
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
-            await screen._select_library_rail_row("browse-conversations")
+            await _select(screen, pilot, "browse-conversations")
             await _until(
                 pilot,
                 lambda: bool(screen.query("#library-conversations-filter")),
@@ -277,6 +296,43 @@ async def test_the_last_resort_moves_past_an_entry_being_removed(
                 entry._pruning = False
             landed = _focused_id(screen)
             assert landed == "library-row-browse-conversations", landed
+    finally:
+        profile.close()
+
+
+async def test_the_re_check_takes_focus_back_from_a_reset_parked_grip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A grip Textual's reset parked focus on is no landing; a clicked one is.
+
+    r11n4 load flake: Media's resume landed its empty-page Import, the
+    page's reload removed it, and Textual's reset parked focus on the Library
+    pane grip, where the re-check stood down because focus was not None.
+    """
+    profile = _Profile(tmp_path, monkeypatch)
+    host = profile.host()
+    try:
+        async with host.run_test(size=SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _select(screen, pilot, "browse-media")
+            await _until(
+                pilot,
+                lambda: bool(screen.query("#library-browse-library-grip")),
+                "Media's Library pane grip",
+            )
+            await pilot.pause()
+            screen._disarm_library_list_entry_focus()
+            grip = screen.query_one("#library-browse-library-grip")
+            controller = screen._navigation_controller
+            screen.set_focus(grip)  # what Textual's reset does
+            controller._land_content_focus_if_unfocused()
+            landed = _focused_id(screen)
+            assert landed == "library-media-empty-import", landed
+            screen._library_input_focus = grip  # what a click on it records
+            screen.set_focus(grip)
+            controller._land_content_focus_if_unfocused()
+            assert screen.focused is grip, _focused_id(screen)
     finally:
         profile.close()
 
@@ -302,7 +358,7 @@ async def test_every_route_entry_selector_resolves_on_its_route(
             await _wait_for_library_shell(screen, pilot)
             controller = screen._navigation_controller
             for row, selector in table.items():
-                await screen._select_library_rail_row(row)
+                await _select(screen, pilot, row)
                 await _until(
                     pilot, lambda row=row: screen._library_selected_row_id == row, row
                 )
@@ -430,7 +486,7 @@ async def _walk_routes(tmp_path, monkeypatch, group: int) -> list[str]:
             # The source of truth must stay covered by this table too.
             assert set(rows) <= set(_DECLARED_ENTRY), set(rows) - set(_DECLARED_ENTRY)
             for row in rows[group :: len(_GROUPS)]:
-                await screen._select_library_rail_row(row)
+                await _select(screen, pilot, row)
                 await _until(
                     pilot, lambda row=row: screen._library_selected_row_id == row, row
                 )

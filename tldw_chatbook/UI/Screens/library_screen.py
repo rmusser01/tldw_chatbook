@@ -10587,12 +10587,12 @@ class LibraryScreen(BaseAppScreen):
         focused = self.focused
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
-            and focused is not None
+            and focused not in (None, self._library_input_focus)
             and focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)
         ):
             # TASK-41129 review: a Notes repaint that removed the focused
-            # control (Create, Add from files, Refresh) left Textual's reset
-            # on a pane grip. Clear it, so that reset's queued focus event is
+            # control left Textual's reset on a pane grip (one no click or Tab
+            # chose: r11n4). Clear it, so that reset's queued focus event is
             # stale rather than a user move that revokes this arm.
             self.set_focus(None)
         # Same reason PR #1410's review stopped the settle timer below: a
