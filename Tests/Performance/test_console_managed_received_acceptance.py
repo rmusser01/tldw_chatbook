@@ -251,15 +251,13 @@ async def exercise():
         controller = store = session = screen = None
         sent = False
 
-        async def settle(predicate):
+        async def settle(predicate, label="managed_received_prerequisite_timeout"):
             # A hang bound too: settle(entered.is_set), the wait for the
             # controlled read after the Send, took over 10 s on GitHub runners
             # (4 recovered-suites runs, 2026-11-18/19).
             deadline = time.monotonic() + CUSTODY_HANG_BOUND
             while not predicate():
-                assert time.monotonic() < deadline, (
-                    "managed_received_prerequisite_timeout"
-                )
+                assert time.monotonic() < deadline, label
                 await asyncio.sleep(0.005)
 
         def phase(name):
@@ -696,7 +694,9 @@ async def exercise():
                 # dispatch (by design), which never reaches the held builder.
                 await settle(
                     lambda: getattr(screen, "_console_emergency_stop_path", None)
-                    is not None
+                    is not None,
+                    # refresh() logs a failed read at DEBUG only; name this wait.
+                    "managed_received_emergency_stop_read_timeout",
                 )
                 session = store.ensure_session()
                 composer = screen._console_composer_or_none()
