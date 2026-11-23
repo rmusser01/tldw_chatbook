@@ -289,32 +289,12 @@ jobs:
           node-version: '24'
       - name: Install smoke dependencies
         run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2 hypothesis
+      # TASK-42521: one pytest process per file, the console-p0-gate install
+      # set and the lanes' plugin/timeout flags (scripts/ci/run_light.py).
       - name: Run CI contracts and selected smoke tests
         env:
           CI_TEST_TARGETS: ${{ needs.preflight.outputs.targets }}
-          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
-        run: |
-          python - <<'PYTEST'
-          import json, os, subprocess, sys
-          targets = json.loads(os.environ['CI_TEST_TARGETS'])
-          if not isinstance(targets, list) or not targets or not all(
-              isinstance(t, str) and t.startswith('Tests/') and '..' not in t.split('/')
-              for t in targets
-          ):
-              raise SystemExit('Refusing missing or invalid test selection')
-          # One pytest process per file: bootstrap_profile and sandboxed suites
-          # must not share a process (TASK-32873). Exit 5 = nothing collected.
-          files = {}
-          for target in ['Tests/CI', *targets]:
-              files.setdefault(target.split('::', 1)[0], []).append(target)
-          failed = [
-              path for path, nodes in files.items()
-              if subprocess.run([sys.executable, '-m', 'pytest', '-p', 'asyncio', '-p', 'pytest_timeout',
-                                 *nodes, '--timeout=300', '--tb=short']).returncode not in (0, 5)
-          ]
-          if failed:
-              raise SystemExit('Failed: ' + ', '.join(failed))
-          PYTEST
+        run: python scripts/ci/run_light.py
 
   release-qualification:
     name: Release candidate qualification

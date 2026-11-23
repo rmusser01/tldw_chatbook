@@ -47,6 +47,19 @@ def test_explicit_sources_select_their_tests_and_unconditional_smoke():
         "Tests/Chat/hooks_v2_owned_rig.py",
         "scripts/ci/tier_policy.py",
         "tldw_chatbook/DB/migrations/123.sql",
+        # TASK-42521 review: schema outside DB/migrations, packages, pytest config,
+        # guard data and the files no PR lane runs whole.
+        "tldw_chatbook/Plugins/migrations/001.sql",
+        "tldw_chatbook/Scheduling/db/schedules_db.py",
+        "tldw_chatbook/DB/Client_Media_DB_v2.py",
+        "packages/tldw_profile_core/src/tldw_profile_core/paths.py",
+        "packages/tldw_profile_core/tests/test_paths.py",
+        "Tests/UI/pytest.ini",
+        "tox.ini",
+        "Tests/Architecture/allowlist.tsv",
+        "Tests/Performance/boot_budget_snapshots/console.txt",
+        "Tests/UI/test_library_shell.py",
+        "Tests/Backup_Recovery/test_response_rules_restore.py",
     ],
 )
 def test_ci_build_schema_and_shared_test_inputs_require_broad(path):
@@ -74,22 +87,76 @@ def test_other_changes_run_sanity_checks_only(path):
     assert plan["targets"] == sorted(policy.BASE_TESTS)
 
 
-def test_changed_test_files_run_in_the_light_tier():
+def _tree(tmp_path, files):
+    """A synthetic checkout: the smoke set, the subsystem smoke files and `files`."""
+    for rel in [*policy.BASE_TESTS, *files]:
+        path = tmp_path / rel.split("::", 1)[0]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.write_text(files.get(rel, "") if isinstance(files, dict) else "")
+    for tests in policy.SUBSYSTEM_TESTS.values():
+        for target in tests:
+            path = tmp_path / target.split("::", 1)[0]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch()
+    return tmp_path
+
+
+def test_changed_test_files_run_in_the_light_tier(tmp_path):
+    root = _tree(
+        tmp_path,
+        [
+            "Tests/Agents/test_a.py",
+            "Tests/Backup_Recovery/test_b.py",
+            "Tests/CI/test_c.py",
+        ],
+    )
     plan = policy.select_changes(
         [
-            ("M", "Tests/Agents/test_native_legacy_hooks.py"),
-            ("A", "Tests/Backup_Recovery/test_startup_unlock.py"),
-            ("M", "Tests/CI/test_tiered_ci.py"),
+            ("M", "Tests/Agents/test_a.py"),
+            ("A", "Tests/Backup_Recovery/test_b.py"),
+            ("M", "Tests/CI/test_c.py"),
             ("D", "Tests/UI/test_retired.py"),
         ],
-        ROOT,
+        root,
     )
     assert not plan["full"]
     # Tests/CI runs whole in the light job, and a deleted file has nothing to run.
     assert set(plan["targets"]) == set(policy.BASE_TESTS) | {
-        "Tests/Agents/test_native_legacy_hooks.py",
-        "Tests/Backup_Recovery/test_startup_unlock.py",
+        "Tests/Agents/test_a.py",
+        "Tests/Backup_Recovery/test_b.py",
     }
+
+
+def test_a_changed_test_file_is_not_narrowed_to_its_own_smoke_nodes(tmp_path):
+    """Review C1: pytest collapses `f f::node` to `f::node`, so the file must win."""
+    nav = "Tests/UI/test_screen_navigation.py"
+    plan = policy.select_changes(
+        [("M", "tldw_chatbook/UI/screen.py"), ("M", nav)], _tree(tmp_path, [nav])
+    )
+    assert nav in plan["targets"]
+    assert not [t for t in plan["targets"] if t.startswith(nav + "::")]
+
+
+def test_an_imported_test_module_brings_its_importers_or_goes_broad(tmp_path):
+    """Review I1: a test module other tests import is shared infrastructure."""
+    files = {"Tests/UI/test_shared.py": "", "Tests/UI/test_lonely.py": ""}
+    for n in range(policy.IMPORTER_CAP):
+        files[f"Tests/UI/test_user_{n}.py"] = (
+            "from Tests.UI.test_shared import harness\n"
+        )
+    root = _tree(tmp_path, files)
+    plan = policy.select_changes([("M", "Tests/UI/test_shared.py")], root)
+    assert not plan["full"]
+    assert {f"Tests/UI/test_user_{n}.py" for n in range(policy.IMPORTER_CAP)} <= set(
+        plan["targets"]
+    )
+    assert policy.select_changes([("D", "Tests/UI/test_shared.py")], root)["full"]
+    assert not policy.select_changes([("D", "Tests/UI/test_lonely.py")], root)["full"]
+    (root / "Tests/UI/test_one_more.py").write_text(
+        "from .test_shared import harness\n"
+    )
+    assert policy.select_changes([("M", "Tests/UI/test_shared.py")], root)["full"]
 
 
 @pytest.mark.parametrize("status", ["D", "R100", "T", "U"])
@@ -470,3 +537,76 @@ def test_shallow_checkout_fetches_only_the_missing_immutable_base(
     monkeypatch.chdir(shallow)
     assert policy.changed_paths(base, head) == [("M", "value.txt")]
     assert git("rev-parse", "--is-shallow-repository", cwd=shallow) == "true"
+
+
+runner_spec = importlib.util.spec_from_file_location(
+    "run_light", ROOT / "scripts/ci/run_light.py"
+)
+runner = importlib.util.module_from_spec(runner_spec)
+runner_spec.loader.exec_module(runner)
+
+
+def test_light_runner_gives_each_file_its_own_process_and_whole_files_win():
+    """TASK-42521 review C1/M4: grouping is by file, and `f` beats `f::node`."""
+    assert runner.plan(
+        [
+            "Tests/test_smoke.py",
+            "Tests/UI/test_nav.py::test_a",
+            "Tests/UI/test_nav.py::test_b",
+            "Tests/Chat/test_x.py::test_c",
+            "Tests/Chat/test_x.py",
+        ]
+    ) == [
+        ["Tests/CI"],
+        ["Tests/test_smoke.py"],
+        ["Tests/UI/test_nav.py::test_a", "Tests/UI/test_nav.py::test_b"],
+        ["Tests/Chat/test_x.py"],
+    ]
+
+
+@pytest.mark.parametrize("targets", [[], "Tests/x.py", ["../x.py"], ["Docs/x.py"], [3]])
+def test_light_runner_refuses_a_missing_or_invalid_selection(targets):
+    with pytest.raises(SystemExit, match="Refusing"):
+        runner.plan(targets)
+
+
+def test_light_runner_fails_on_any_red_file_and_warns_on_an_empty_one(
+    monkeypatch, capsys
+):
+    """Review M1/M4: exit 5 warns and passes; any other non-zero fails, all reported."""
+    codes = {"Tests/CI": 0, "Tests/a.py": 5, "Tests/b.py": 1, "Tests/c.py": 2}
+    calls = []
+
+    def fake_run(argv):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, codes[argv[3]])
+
+    monkeypatch.setenv(
+        "CI_TEST_TARGETS", json.dumps(["Tests/a.py", "Tests/b.py", "Tests/c.py"])
+    )
+    assert runner.main(run=fake_run) == 1
+    out = capsys.readouterr().out
+    assert "::warning::Tests/a.py collected no tests" in out
+    assert "Failed: Tests/b.py, Tests/c.py" in out
+    assert all(argv[-2:] == ["--timeout=180", "--tb=short"] for argv in calls)
+    monkeypatch.setenv("CI_TEST_TARGETS", json.dumps(["Tests/a.py"]))
+    assert runner.main(run=fake_run) == 0
+
+
+def test_light_job_runs_the_tested_runner_with_the_lanes_plugin_setup():
+    job = workflow("derived-artifacts.yml")["jobs"]["dev-light"]
+    step = next(
+        s
+        for s in job["steps"]
+        if s.get("name") == "Run CI contracts and selected smoke tests"
+    )
+    assert step["run"].strip() == "python scripts/ci/run_light.py"
+    assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD" not in step.get("env", {})
+
+
+def test_too_many_selected_files_go_broad(tmp_path):
+    """A light run is serial; more files than the cap would not fit its timeout."""
+    files = [f"Tests/UI/test_f{n}.py" for n in range(policy.LIGHT_FILE_CAP)]
+    root = _tree(tmp_path, files)
+    assert policy.select_changes([("M", f) for f in files], root)["full"]
+    assert not policy.select_changes([("M", f) for f in files[:-3]], root)["full"]

@@ -24,9 +24,9 @@ The owner set the variable on 2026-11-23 and chose to loosen the rule.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 A dev PR runs the full CI only when it changes CI, build, test-harness or schema inputs, deletes an application file, or carries `ci:full`; every other dev PR runs the light tier
-- [x] #2 The light tier runs preflight, `Tests/CI`, the smoke set, the PR's own changed test files and its subsystem's smoke nodes, each test file in its own pytest process
-- [x] #3 Replayed over the last 60 dev merges, most go light
+- [x] #1 A dev PR runs the full CI only when it changes CI, build, test-configuration, shared-test or schema inputs, deletes an application file, selects more test files than the light job can run, or carries `ci:full`; every other dev PR runs the light tier
+- [x] #2 The light tier runs preflight, `Tests/CI`, the smoke set, the PR's changed test files under `Tests/` and the test files importing them, and its subsystem's smoke nodes, each test file whole and in its own pytest process
+- [x] #3 Replayed over the last 60 dev merges, the light tier covers far more than the 5 the old rule allowed
 - [x] #4 ADR-366 records the activation and the amended selection rule
 <!-- AC:END -->
 
@@ -34,22 +34,43 @@ The owner set the variable on 2026-11-23 and chose to loosen the rule.
 
 <!-- SECTION:NOTES:BEGIN -->
 **What changed:**
-- **`scripts/ci/tier_policy.py`:** the old allowlist with a broad fallback is replaced by a short list of broad triggers:
-  - CI and build inputs: `.github/`, `scripts/ci/`, `pyproject.toml`, `setup.py`, `setup.cfg`, `requirements*.txt`.
-  - DB migrations.
-  - Non-`test_*.py` Python files under `Tests/`.
+- **`scripts/ci/tier_policy.py`:** the old allowlist with a broad fallback (and `HIGH_RISK_NAMES`) is replaced by broad triggers. The full list is in ADR-366's amendment:
+  - CI, build and pytest-config inputs, and `packages/`.
+  - Schema directories (`DB`, `db`, `migrations`).
+  - Shared test infrastructure: non-test Python under `Tests/`, Architecture/Performance data, and test modules imported by more than 8 files or deleted while imported.
+  - The two files no lane runs whole.
+  - More than 20 selected files.
   - Deleted application files.
-  - Type changes and unmerged paths.
-  - An empty change range.
+  - `ci:full`.
 
-  Changed `test_*.py` files outside `Tests/CI` become light targets; `Tests/CI` already runs whole. Docs, backlog and other sources add nothing beyond the smoke set and their subsystem's smoke nodes. `HIGH_RISK_NAMES` is gone.
-- **`derived-artifacts.yml` `dev-light`:** each selected file now runs in its own pytest process, because bootstrap_profile and sandboxed suites can't share one (TASK-32873). Every failure is reported, and exit 5 (nothing collected) passes. Other changes: a 300 s per-test timeout, a 30-minute job cap (was 15), and `hypothesis` added to the install.
-- **`Tests/CI/test_tiered_ci.py`:** the broad and light cases are re-pinned, and three tests are new or rewritten: one for changed test files, one for sensitive names, and one for deletions.
-- **ADR-366:** marked Accepted, with an amendment section covering the activation and the new rule.
+  Changed test files and their importers run light. A file selected whole drops its own smoke nodes.
+- **`scripts/ci/run_light.py`** (new; `dev-light` calls it): runs one pytest process per file, using the lanes' plugin autoload and `--timeout=180`. It reports every red file and warns when a file collects nothing. The job cap is 30 minutes (was 15), and `hypothesis` is installed as in console-p0-gate.
+- **`Tests/CI/test_tiered_ci.py`:** re-pins the broad and light cases and adds tests for:
+  - overlap (a whole file vs its own nodes);
+  - importers and the importer cap;
+  - the file cap;
+  - the runner's grouping, refusals and exit codes;
+  - the light job's wiring.
+- **ADR-366:** Accepted, with an amendment.
+
+**Review:** an independent local review found 1 Critical, 4 Important and 5 Minor issues, all fixed in the second commit:
+- **C1:** a changed file was narrowed to its own smoke nodes.
+- **I1:** imported `test_*.py` modules were treated as ordinary test files.
+- **I2:** schema changes outside `DB/migrations` went light.
+- **I3:** huge or deselect-listed files were selected whole.
+- **I4:** `packages/` was not covered.
+- **M1:** a test file that collected nothing passed silently.
+- **M2:** the light job's plugins and timeout differed from the lanes'.
+- **M3:** pytest config and guard data at depth went light.
+- **M4:** the runner had no tests.
+- **M5:** the ADR and task wording overstated the code.
+
+The label-trigger part of I3 is documented instead of adding `labeled` to the workflow, because any bot label would then start a full 62-job run.
 
 **Verification:**
-- `Tests/CI/test_tiered_ci.py` 57 passed, and `Tests/CI` passes in full.
-- Replay over the last 60 dev merges at b31e3e9241: the old rule sends 5 of 60 light, the new rule 37. Of the 23 still broad, 18 change a workflow (mostly lane additions) and 5 change shared test infrastructure. A light run selects up to 17 changed test files, median 6.
-- `Tests/CI` 1830 passed, 2 skipped (`-n 4`).
+- `Tests/CI` 1851 passed, 2 skipped (`-n 4`); `test_tiered_ci.py` 79 passed.
+- Replay over the last 60 dev merges at b31e3e9241: the old rule sends 5 light, the new rule 27.
+  - Of the 33 still broad, 18 change a workflow, 7 change a widely imported test module, 5 touch the two whole-file-excluded UI files, 2 change `Tests/conftest.py` and 1 changes Architecture data.
+  - A light run selects a median of 6 files, and the slowest selection took 26.5 s at load average about 40.
 - This PR itself runs broad, because it changes `.github/` and `scripts/ci/`.
 <!-- SECTION:NOTES:END -->
