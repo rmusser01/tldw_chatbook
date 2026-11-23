@@ -2816,3 +2816,18 @@ cancellation reaches its code as a `WorkerCancelled` exception, not a
   cancelled.
 - A test that two switches in a row stop the first read should assert the
   awaited worker's state, not only the outer one's.
+
+## `Pilot.pause()` can run the layout itself, so a `call_after_refresh` pass lands after your read (TASK-42460, 2026-11-23)
+
+**Incident.** `Tests/UI/test_trace_responsive.py::test_long_inspector_is_focusable_scrolls_to_painted_bottom_and_full_pane` read the Trace inspector's fold cue after one pause. It sometimes found the cue empty while `max_scroll_y > 0`: once at load 47, and 1 or 2 times in 32 at `-n 4`. A `call_after_refresh` pass and a 10 ms timer set the cue.
+- While a layout is pending, `Screen._on_idle` does not run queued callbacks. It resumes the update timer and returns. `_on_timer_update` then lays out and hands the callbacks to `call_next`.
+- When that timer is starved, `Pilot.pause()` ends by calling `screen._on_timer_update()` itself. The test then reads the new geometry before the queued pass has run.
+- A probe that held the update timer for 0.5 s failed the test 3 of 3, and a sibling at 100x30 too.
+- The same probe then failed the test's `end` step. Textual's `end` binding runs a deferred, animated `scroll_end`.
+- A sibling test failed 4 in 32 at load ~37. It read the inspector after `end`, and after a deferred `scroll_home`.
+
+**What to do.**
+- Set state that must match geometry in the layout that produces it. Subscribe to the screen's `screen_layout_refresh_signal` with `immediate=True` and read only cached values there. Skip a `Static.update` whose text is unchanged: an update lays out again, which publishes the signal again.
+- In a test, wait with a deadline for any scroll you did not apply with `immediate=True` (`end`, `scroll_home`, a focus reveal). One pause is not enough on a loaded host.
+- To force the inversion, pause the screen's update timer and swap `_Screen__update_timer` for an object whose `resume`, `pause` and `stop` do nothing. Restore it after a fixed time. A permanent hold also blocks every scroll queued behind a refresh, so the test cannot finish.
+- To hold one widget's queued work, patch its `call_after_refresh` to collect the calls. Let calls through once you release them, because a released callback can queue its next hop through the same patched attribute. The Trace re-render counts its scroll reset with `table.call_after_refresh(table.call_after_refresh, ...)`. TASK-42458's first test version collected that second hop after the release and never ran it, so `_scrolls_pending` never reached 0.
