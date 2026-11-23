@@ -1347,6 +1347,8 @@ MINIMUM_FILES = 2792
 # 2026-11-23: re-counted after rebasing onto dev 9418f179e3. The floor is the measured entry count.
 # 2026-11-23: re-counted after rebasing onto dev b31e3e9241. The floor is the measured entry count.
 MINIMUM_FILES = 2796
+# 2026-11-23: re-counted after rebasing onto dev b31e3e9241. The floor is the measured entry count.
+MINIMUM_FILES = 2800
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 
