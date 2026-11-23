@@ -50,6 +50,7 @@ as a fabricated "hittable" or "hidden" would misrepresent what the shell
 does today. "clipped" asserts both halves of that observed reality.
 """
 
+import time
 from contextlib import asynccontextmanager
 from unittest.mock import Mock
 
@@ -68,6 +69,11 @@ from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleTranscript
 from tldw_chatbook.Widgets.Console.console_rail_handle import ConsoleRailHandle
+
+# The real ChatScreen goes through config-participant admission, which the
+# per-test sandbox refuses (RecoveryRequired); keep the collection-time
+# profile, as the other mounted Console tests do (TASK-42416).
+pytestmark = pytest.mark.bootstrap_profile
 
 # (id, expected_at_160x45, expected_at_235x52, expected_at_120x30) where
 # expected is "hittable" | "hidden" | "clipped" -- pinned against the
@@ -125,9 +131,62 @@ async def make_console_pilot(*, size, app=None, hide_setup_overlay=True):
         # production auto-open. Hide only its covering overlay afterward so
         # hit-tests can inspect the underlying shell geometry.
         if hide_setup_overlay:
-            console.query_one("#console-setup-modal").display = False
+            # TASK-42416: every setup sync sets the overlay's display back to
+            # "blocking" and focuses its action, and mount-time syncs (the
+            # 4 Hz credential poll's first pass, the hooks refresh) can land
+            # after a one-off hide. The overlay then covered the rail handles
+            # and `pilot.click` returned False. Keep it hidden, and out of
+            # focus, through every later sync.
+            modal = console.query_one("#console-setup-modal")
+            sync_card_state = modal.sync_card_state
+
+            def sync_card_state_hidden(*args, **kwargs):
+                sync_card_state(*args, **kwargs)
+                modal.display = False
+
+            modal.sync_card_state = sync_card_state_hidden
+            modal.focus_primary_action = lambda: None
+            modal.display = False
             await pilot.pause()
         yield pilot
+
+
+async def click_inspect_rail_open(pilot, *, timeout: float = 15.0) -> None:
+    """Click the Inspect rail's open control once a click can reach it.
+
+    TASK-42416: waits until ``#console-inspector-rail-open`` is displayed, has
+    a region and is the widget at its click point (what ``pilot.click``
+    asserts), clicks it, then waits until the Inspect rail is displayed with a
+    region. The deadline only bounds a real failure (TASK-41632).
+    """
+    screen = pilot.app.screen
+    deadline = time.monotonic() + timeout
+    while True:
+        control = screen.query_one("#console-inspector-rail-open")
+        region = control.region
+        if (
+            control.display
+            and region.area
+            and pilot.app.get_widget_at(*region.offset)[0] is control
+        ):
+            break
+        if time.monotonic() > deadline:
+            # Name what a click there reaches instead (an overlay, say).
+            hit = pilot.app.get_widget_at(*region.offset)[0] if region.area else None
+            raise AssertionError(
+                f"Inspect rail open control never became clickable: "
+                f"display={control.display} region={region} hit={hit!r}"
+            )
+        await pilot.pause(0.01)
+    assert await pilot.click("#console-inspector-rail-open")
+    while True:
+        rail = screen.query_one("#console-right-rail")
+        if rail.display and rail.region.width > 0:
+            await pilot.pause()
+            return
+        if time.monotonic() > deadline:
+            raise AssertionError(f"Inspect rail never opened: region={rail.region}")
+        await pilot.pause(0.01)
 
 
 def _assert_workspace_state_is_contained(
@@ -541,32 +600,53 @@ async def test_exact_100_workspace_state_matrix_is_contained(
     }
     save_spy = Mock()
     pre_sync_observations = []
+    first_paint_errors: list[BaseException] = []
     queued_first_sync_states = []
     original_sync = ChatScreen._sync_console_rail_visibility_if_changed
 
     def sync_after_first_paint_assertions(screen, rail_state):
-        """Inspect the first compositor geometry, then delegate normal sync."""
-        if pre_sync_observations:
+        """Inspect the first painted geometry, then delegate normal sync."""
+        if pre_sync_observations or first_paint_errors:
             return original_sync(screen, rail_state)
 
         queued_first_sync_states.append(rail_state)
         if len(queued_first_sync_states) == 1:
 
-            def assert_first_paint_then_delegate_sync():
-                """Run after layout but before any queued visibility sync."""
-                setup_modal = screen.query_one("#console-setup-modal")
-                assert setup_modal.display is False
-                _assert_workspace_state_is_contained(
-                    screen,
-                    expected_displayed=expected_displayed,
-                    default_context_only=stored_left_open and not stored_right_open,
-                )
-                pre_sync_observations.append(True)
-                for queued_state in queued_first_sync_states:
-                    original_sync(screen, queued_state)
-                queued_first_sync_states.clear()
+            def assert_first_paint_then_delegate_sync(_screen) -> None:
+                """Run on the first painted layout, before any queued visibility sync.
 
-            screen.call_after_refresh(assert_first_paint_then_delegate_sync)
+                TASK-42416: this used to run from ``call_after_refresh``. That
+                fired inside Textual's startup ``batch_update``, with layout
+                still pending and no frame painted, so it read regions from an
+                earlier reflow against newer styles and DOM: a detached
+                ``#console-empty-body`` at the transcript centre, or a rail
+                handle taller than the grid's content. The layout signal
+                fires right after a reflow, and outside a batch that reflow
+                is the frame the user sees.
+                """
+                if pre_sync_observations or first_paint_errors:
+                    return
+                if screen.app._batch_count:
+                    return
+                try:
+                    setup_modal = screen.query_one("#console-setup-modal")
+                    assert setup_modal.display is False
+                    _assert_workspace_state_is_contained(
+                        screen,
+                        expected_displayed=expected_displayed,
+                        default_context_only=stored_left_open and not stored_right_open,
+                    )
+                    pre_sync_observations.append(True)
+                    for queued_state in queued_first_sync_states:
+                        original_sync(screen, queued_state)
+                except Exception as error:  # a signal callback's errors are only logged
+                    first_paint_errors.append(error)
+                finally:
+                    queued_first_sync_states.clear()
+
+            screen.screen_layout_refresh_signal.subscribe(
+                screen, assert_first_paint_then_delegate_sync, immediate=True
+            )
         return None
 
     monkeypatch.setattr(ChatScreen, "_save_console_rail_preferences", save_spy)
@@ -582,6 +662,12 @@ async def test_exact_100_workspace_state_matrix_is_contained(
         hide_setup_overlay=False,
     ) as pilot:
         screen = pilot.app.screen
+        deadline = time.monotonic() + 15.0
+        while not (pre_sync_observations or first_paint_errors):
+            assert time.monotonic() < deadline, "no painted layout reached the oracle"
+            await pilot.pause(0.01)
+        if first_paint_errors:
+            raise first_paint_errors[0]
         assert pre_sync_observations == [True]
         assert screen.query_one("#console-setup-modal").display is False
 
@@ -621,7 +707,11 @@ async def test_exact_100_live_resize_preserves_workspace_and_interaction_state(
     app = _build_test_app()
     _configure_native_ready_console(app)
 
-    async with make_console_pilot(size=(start_width, 30), app=app) as pilot:
+    # A ready provider shows no setup overlay; keep the harness from hiding
+    # one, so a resize that re-shows it fails here (TASK-42416).
+    async with make_console_pilot(
+        size=(start_width, 30), app=app, hide_setup_overlay=False
+    ) as pilot:
         screen = pilot.app.screen
         (
             selected_message_id,

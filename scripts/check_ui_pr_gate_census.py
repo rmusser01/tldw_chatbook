@@ -1231,6 +1231,11 @@ MINIMUM_FILES = 2457
 # functions as nodes (the file runs 114.1 s, over the 30 s per-entry budget)
 # at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2472
+# TASK-42416 (2026-11-23): append the Console shell-region and edge-rail
+# geometry files (no lane before; now bootstrap_profile) as 48 nodes at the
+# tail, one per test function, by parameter where a function ran over 30 s.
+# The floor is the measured entry count.
+MINIMUM_FILES = 2520
 
 
 MINIMUM_FILES = 2038
@@ -1255,6 +1260,8 @@ MINIMUM_FILES = 2461
 MINIMUM_FILES = 2476
 # 2026-11-21: re-counted after rebasing onto dev f864f00762. The floor is the measured entry count.
 MINIMUM_FILES = 2478
+# 2026-11-23: re-counted after rebasing onto dev fe8c87e3e2 (TASK-42416's 48 entries on dev's 2478). The floor is the measured entry count.
+MINIMUM_FILES = 2526
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 

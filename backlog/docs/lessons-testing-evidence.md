@@ -5567,6 +5567,20 @@ the product wrong. Then keep `pilot.click` as the negative control.
 `Tests/UI/test_settings_default_model_picker.py::test_a_click_below_an_open_list_lands_on_the_pressed_control_or_none`
 is the worked example.
 
+**Same trap, re-shown overlay variant (TASK-42416, 2026-11-23).** The Console
+edge-focus tests failed `assert await pilot.click("#console-inspector-rail-open")`
+in 9 CI jobs, and the task blamed a control with no region yet. Locally the
+control always had its region (150, 6, 10, 32) at the click. The real cause was
+the harness: `make_console_pilot` hid the setup overlay once, but every product
+setup sync sets the overlay's display back to "blocking", and the last
+mount-time sync (often the 4 Hz credential poll's first pass) landed only
+0.13-0.55 s before the click. One sync after the hide covered the control:
+still displayed, same region, but the hit-test found the overlay. A wait for display and region alone timed out.
+When `pilot.click` returns False, log what `get_widget_at` found at the
+control's point before you blame the layout. A harness that hides or changes
+product-owned state once must keep it that way through the product's later
+syncs (`Tests/UI/test_console_shell_regions.py::make_console_pilot`).
+
 ---
 
 ## A restored bounded reader needs a mount-time request re-kick
