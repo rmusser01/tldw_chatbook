@@ -2694,8 +2694,11 @@ class ConsoleComposerBar(Horizontal):
         normalized_send_label = send_label.strip() or "Send"
         self._send_label = normalized_send_label
         held = normalized_send_label == CONSOLE_EMERGENCY_STOP_SEND_LABEL
-        raw_cli_ready = self._raw_cli_prefix_typed and self.draft_text().startswith(
-            "! "
+        # Owner decision 2026-11-23 ("hold raw CLI too"): a held stop is Held.
+        raw_cli_ready = (
+            not held
+            and self._raw_cli_prefix_typed
+            and self.draft_text().startswith("! ")
         )
         effective_send_blocked = send_blocked and not raw_cli_ready
         send_ready = has_draft and not effective_send_blocked

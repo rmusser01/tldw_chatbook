@@ -390,6 +390,13 @@ def _displayed_console_composer_draft(screen: Any) -> str | None:
     return composer.draft_text() if composer is not None else None
 
 
+def _raw_cli_stop_refusal(screen: Any) -> str:
+    """The emergency stop's refusal for a raw CLI draft (lazy module load)."""
+    from .composer_run_controls import emergency_stop_raw_cli_refusal
+
+    return emergency_stop_raw_cli_refusal(screen)
+
+
 def receive_console_visible_intent(
     screen: Any, draft: str, session_id: str, stash: Any,
     *, _captured_inputs=None,
@@ -3060,6 +3067,8 @@ def build_console_controllers(
     raw_store = screen._ensure_console_chat_store()
     screen._raw_cli = ConsoleRawCliController(
         raw_cli_runtime=lambda: screen.app_instance.raw_cli_runtime,
+        # TASK-33620.1, owner decision 2026-11-23: the stop holds raw CLI too.
+        emergency_stop_refusal=lambda: _raw_cli_stop_refusal(screen),
         native_source=raw_runtime.raw_cli_source,
         active_session_id=lambda: str(raw_store.ensure_session().id),
         persist_session_if_needed=(raw_store.persist_session_if_needed),

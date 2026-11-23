@@ -212,6 +212,45 @@ def test_raw_cli_controller_captures_one_submission_snapshot_and_named_worker(
 
 
 @pytest.mark.bootstrap_profile
+def test_an_active_emergency_stop_holds_a_raw_command_and_clear_lets_it_run(
+    tmp_path: Path,
+) -> None:
+    """TASK-33620.1, owner decision 2026-11-23 ("hold raw CLI too").
+
+    The stop holds everything the composer can start. On dev a ``! `` draft
+    started its command during an active stop: the raw route runs before
+    the send gate. Now the command is refused with the stop's copy (naming
+    /emergency-stop clear) and the exact draft comes back; once the stop is
+    cleared the next raw command runs.
+    """
+    selected = tmp_path / "selected"
+    selected.mkdir()
+    runtime = _Runtime()
+    controller, restored, errors, workers, _selected, _scratch = _controller(
+        tmp_path, runtime, selected_root=selected
+    )
+    refusal = [
+        "Emergency stop is active: new runs and scheduled dispatches are held. "
+        "Run /emergency-stop clear to resume."
+    ]
+    controller._emergency_stop_refusal = lambda: refusal[0]
+    held = _stash("! printf held")
+
+    assert controller.start_user_command(held) is False
+    assert workers == [], "a raw command started during an active stop"
+    assert runtime.requests == []
+    assert restored == [("session-1", held)]
+    assert "/emergency-stop clear" in errors[0][1]
+
+    refusal[0] = ""  # Cleared.
+    assert controller.start_user_command(_stash("! printf resumed")) is True
+    assert len(workers) == 1
+    work, _options = workers[0]
+    work()
+    assert [request.command for request in runtime.requests] == ["printf resumed"]
+
+
+@pytest.mark.bootstrap_profile
 def test_raw_cli_anchor_resolves_the_leaf_captured_before_branch_switch(
     tmp_path: Path,
 ) -> None:

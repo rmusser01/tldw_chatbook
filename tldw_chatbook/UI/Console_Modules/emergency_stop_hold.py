@@ -168,6 +168,26 @@ def still_held(screen: Any) -> bool:
     return state.active
 
 
+def raw_cli_refusal(screen: Any) -> str:
+    """The stop's refusal copy for a raw CLI draft, or "" when it may run.
+
+    TASK-33620.1, owner decision 2026-11-23 ("hold raw CLI too"): the stop
+    holds everything the composer can start. A held view re-reads the file
+    first (a stop cleared elsewhere lets the command run); an unheld view
+    reads it too when its path is known, so a stop set elsewhere holds.
+    """
+    if held(screen):
+        return screen._console_emergency_stop_copy if still_held(screen) else ""
+    path = getattr(screen, "_console_emergency_stop_path", None)
+    if path is None:
+        return ""
+    state = read_emergency_stop(path)  # Never raises: an unreadable file holds.
+    if not state.active:
+        return ""
+    note_state(screen, path, state)
+    return screen._console_emergency_stop_copy or HELD_COPY
+
+
 async def run_command(screen: Any, parse: Any) -> bool:
     """``/emergency-stop [clear|<reason>]``: the global stop (TASK-26004).
 

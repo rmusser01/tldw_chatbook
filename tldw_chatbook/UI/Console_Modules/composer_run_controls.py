@@ -709,6 +709,13 @@ def emergency_stop_still_held(screen: Any) -> bool:
     return emergency_stop_hold.still_held(screen)
 
 
+def emergency_stop_raw_cli_refusal(screen: Any) -> str:
+    """The stop's refusal for a raw CLI draft, else "" (``raw_cli_refusal``)."""
+    from . import emergency_stop_hold
+
+    return emergency_stop_hold.raw_cli_refusal(screen)
+
+
 def schedule_emergency_stop_refresh(screen: Any) -> None:
     """Re-read the stop off the UI loop once the arriving Console has painted."""
 

@@ -249,8 +249,12 @@ class ConsoleRawCliController:
         notify: Callable[[str, str], Any] = lambda _text, _severity: None,
         authority_changed: Callable[[], Any] = lambda: None,
         native_source: Any = None,
+        emergency_stop_refusal: Callable[[], str] = lambda: "",
     ) -> None:
         self._native_source = native_source
+        #: TASK-33620.1, owner decision 2026-11-23 ("hold raw CLI too"): the
+        #: emergency stop's refusal copy while it holds, else "".
+        self._emergency_stop_refusal = emergency_stop_refusal
         self._native_attached = native_source is not None
         self._raw_cli_runtime = raw_cli_runtime
         self._active_session_id = active_session_id
@@ -339,6 +343,9 @@ class ConsoleRawCliController:
         if classified.kind != "raw":
             return False
         session_id = self._active_session_id()
+        held = self._emergency_stop_refusal()
+        if held:
+            return self._refuse(session_id, stash, held)
         if not classified.text.strip():
             return self._refuse(session_id, stash, _EMPTY_REFUSAL)
 

@@ -548,3 +548,58 @@ async def test_a_held_send_names_the_stop_over_any_other_blocker(other) -> None:
         reason = composer.query_one("#console-send-disabled-reason", Static)
         assert str(reason.content) == SEND_HOLD, (other, reason.content)
         assert not composer.has_class("console-composer-setup-blocked")
+
+
+@pytest.mark.asyncio
+async def test_a_raw_cli_draft_reads_held_while_the_stop_is_active() -> None:
+    """TASK-33620.1, owner decision 2026-11-23 ("hold raw CLI too").
+
+    A physically typed ``! `` draft took its raw-command presentation even
+    while the stop held, so Send read "Run"/"Arm…"/"Locked" and stayed live.
+    Held means held: the button reads "Held" and its tooltip names the stop.
+    """
+    from textual.app import App, ComposeResult
+    from textual.events import Key
+
+    class _Composer(App[None]):
+        def compose(self) -> ComposeResult:
+            yield ConsoleComposerBar(id="console-native-composer")
+
+    app = _Composer()
+    async with app.run_test(size=(160, 8)) as pilot:
+        composer = app.query_one(ConsoleComposerBar)
+        assert composer.handle_console_key(Key("exclamation_mark", "!")) is True
+        assert composer.handle_console_key(Key("space", " ")) is True
+        composer.insert_pasted_text("printf held")
+        assert composer.draft_text() == "! printf held"
+        composer.sync_action_state(
+            has_draft=True,
+            run_active=False,
+            can_save_chatbook=False,
+            send_blocked=True,
+            queue_blocked_reason=SEND_HOLD,
+            send_label="Held",
+        )
+        await pilot.pause()
+        send = composer.query_one("#console-send-message", Button)
+        assert str(send.label) == "Held", send.label
+        assert send.disabled
+        assert str(send.tooltip) == HELD_TOOLTIP
+
+
+@pytest.mark.asyncio
+async def test_the_console_wires_the_stop_into_raw_commands(
+    tmp_path, persisted_stop: Path
+) -> None:
+    """The real Console's raw-command controller asks the stop, and Clear lifts it."""
+    app, _gateway = _console_app(tmp_path)
+    async with app.run_test(size=(160, 45), notifications=True) as pilot:
+        chat = await _reach_console(app, pilot, "explore_home")
+        assert await _until(pilot, lambda: "Held" in _header_status(chat))
+        refusal = chat._raw_cli._emergency_stop_refusal()
+        assert "/emergency-stop clear" in refusal, refusal
+        await _click_strip_clear(chat, pilot)
+        assert await _until(pilot, lambda: "Held" not in _header_status(chat))
+        assert chat._raw_cli._emergency_stop_refusal() == ""
+    assert not read_emergency_stop(persisted_stop).active
+
