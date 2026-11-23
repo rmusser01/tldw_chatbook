@@ -38,7 +38,7 @@ No CI failure has been seen for any of these. This is hardening against the fail
 - `test_inspector_section_collapse_still_runs_the_full_reconcile`
 - `test_scroll_cost_probe_still_detects_pre_split_routing`
 
-The scheduler-capture tests patch `call_after_refresh` and expect their own request to be the first scheduled, so a startup sync still scheduling a pass breaks them. The no-owner-pass halves (the geometry-only test's asserts at about lines 1542-1546, and the pure-scroll test's unchanged owner-pass count at about line 3233) need a variant of the wait without the `owner_passes_after` threshold: they assert that no owner pass happens, so the wait must not require one.
+The scheduler-capture tests patch `call_after_refresh` and expect their own request to be the first scheduled, so a startup sync still scheduling a pass breaks them. The no-owner-pass halves (the geometry-only test's asserts at about lines 1542-1546, and the pure-scroll test's unchanged owner-pass count at about line 3232) need a variant of the wait without the `owner_passes_after` threshold: they assert that no owner pass happens, so the wait must not require one.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

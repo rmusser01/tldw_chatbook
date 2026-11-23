@@ -33,10 +33,9 @@ from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.console_rail_state import ConsoleRailState
 from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsSummaryState
 from tldw_chatbook.Chat.provider_test_evidence import shared_connection_evidence
-from tldw_chatbook.LLM_Calls.anthropic_subscription import (
-    subscription_credential_status,
-    subscription_readiness_revision,
-)
+# Looked up at call time, as the poll does (chat_screen.py), so a test that
+# replaces these names on the module is seen by the wait too.
+from tldw_chatbook.LLM_Calls import anthropic_subscription
 from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
 from tldw_chatbook.UI.Console_Modules.rail_section_layout import outer_hint_required
 from tldw_chatbook.UI.Console_Modules.right_rail import ConsoleInspectorRail
@@ -450,14 +449,15 @@ async def _wait_for_inspector_quiet(
     app worker left (TASK-42148's signal, widened), and the credential poll
     settled: the background credential read has completed and the poll has
     committed the gate it would read now. A first read that settles later
-    bumps the revision, and the poll then re-syncs every owner.
+    bumps the revision, and the poll then re-syncs the settings summary and
+    the run inspector.
     """
 
     def credential_gate() -> tuple[object, ...]:
         # The poll's own pre-gate (ChatScreen._poll_console_credential_readiness).
         return (
-            subscription_credential_status(background=True),
-            subscription_readiness_revision(),
+            anthropic_subscription.subscription_credential_status(background=True),
+            anthropic_subscription.subscription_readiness_revision(),
             getattr(shared_connection_evidence(lambda: screen.app), "version", 0),
         )
 
@@ -495,7 +495,7 @@ async def _wait_for_inspector_quiet(
         busy = pending()
         if passes != previous:
             busy.append(f"owner passes still changing ({previous}->{passes})")
-        if time.monotonic() > deadline:
+        if busy and time.monotonic() > deadline:
             raise AssertionError(f"Inspector still busy: {busy}")
         previous = passes
         quiet_polls = 0 if busy else quiet_polls + 1
