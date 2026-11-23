@@ -4015,3 +4015,10 @@ Tests/UI/test_console_compaction_forecast.py::test_stored_tool_costs_round_trip_
 Tests/UI/test_console_raw_cli_send.py::test_an_active_emergency_stop_holds_a_raw_command_and_clear_lets_it_run
 Tests/UI/test_console_emergency_stop_hold.py::test_a_raw_cli_draft_reads_held_while_the_stop_is_active
 Tests/UI/test_console_emergency_stop_hold.py::test_the_console_wires_the_stop_into_raw_commands
+# TASK-33621.4 / TASK-33620.1 second delta review (2026-11-23): saved tool
+# costs merge across app instances and stay per test; a raw command is held
+# while the stop's state is unknown (arrival pending or failed).
+Tests/UI/test_console_compaction_forecast.py::test_a_save_keeps_another_app_instances_larger_figures
+Tests/UI/test_console_compaction_forecast.py::test_every_ui_test_saves_tool_costs_to_its_own_file
+Tests/UI/test_console_emergency_stop_hold.py::test_a_raw_command_before_the_arrival_read_lands_is_held
+Tests/UI/test_console_emergency_stop_hold.py::test_a_raw_command_after_a_failed_arrival_read_is_held_until_a_reread
