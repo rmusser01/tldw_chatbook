@@ -1272,6 +1272,9 @@ MINIMUM_FILES = 2529
 # red on dev unseen until this task's control-bar retry, at the tail (about 6.1 s
 # serial with the lane's flags). The floor is the measured entry count.
 MINIMUM_FILES = 2530
+# TASK-36952.4 (2026-11-23): append the media controller's stand-in host file at
+# the tail, after rebasing onto dev cf30a398f0 (2530). The floor is the measured entry count.
+MINIMUM_FILES = 2531
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 

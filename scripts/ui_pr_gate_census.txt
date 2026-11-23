@@ -3701,3 +3701,7 @@ Tests/UI/test_console_subscription_readiness.py::test_console_reads_the_credenti
 Tests/UI/test_personas_subscription_readiness.py::test_handoff_poll_reads_the_credential_only_while_the_subscription_is_chosen
 Tests/UI/test_console_credential_poll_gate.py
 Tests/UI/test_console_endpoint_discovery.py::test_shared_evidence_change_refreshes_the_console_once
+# TASK-36952.4 (2026-11-23): the media controller built on a stand-in host and
+# driven directly, its host protocol's members checked against the stand-in.
+# One whole file, eight cases, 1.9 s serially with the lane's flags at load 7.5.
+Tests/UI/test_library_media_controller_stand_in_host.py
