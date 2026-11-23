@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import functools
+import hashlib
+import json
+import os
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -52,6 +58,7 @@ from ...Widgets.Console.console_context_controls import (
     ConsoleContextControlState,
     build_console_context_control_state,
     COMPACTION_CANNOT_FIT_COPY,
+    COMPACTION_MAY_NOT_FIT_COPY,
     COMPACTION_MAY_PAUSE_COPY,
     compaction_forecast_rows,
     compaction_may_pause_reason,
@@ -181,6 +188,64 @@ def _build_console_inspector_exchanges_loader(
     return _exchanges_loader
 
 
+#: Owner decision 2026-11-23 ("persist across restarts"): the largest measured
+#: agent tool cost per tool configuration, in the profile's data folder. Keys
+#: are digests of the configuration signature, never its config content.
+_TOOL_COST_FILE = "console_agent_tool_costs.json"
+_TOOL_COST_LIMIT = 32
+
+
+def _tool_cost_key(signature: str) -> str:
+    return hashlib.sha256(signature.encode("utf-8")).hexdigest()[:32]
+
+
+def _tool_cost_path() -> Path:
+    from ...config import get_user_data_dir
+    from ...Utils.path_validation import safe_join_path
+
+    return safe_join_path(get_user_data_dir(), _TOOL_COST_FILE)
+
+
+def load_console_tool_costs(path: Path | None = None) -> dict[str, int]:
+    """Read the stored costs (off the UI loop); anything malformed reads empty.
+
+    Args:
+        path: The file; the profile's data folder by default.
+
+    Returns:
+        Digest -> tokens, oldest first, at most ``_TOOL_COST_LIMIT`` rows.
+    """
+    try:
+        data = json.loads((path or _tool_cost_path()).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    current = isinstance(data, dict) and data.get("version") == 1
+    rows = data.get("costs") if current else None
+    costs: dict[str, int] = {}
+    for row in rows if isinstance(rows, list) else ():
+        if (
+            isinstance(row, list)
+            and len(row) == 2
+            and isinstance(row[0], str)
+            and type(row[1]) is int
+            and row[1] >= 0
+        ):
+            costs[row[0]] = row[1]
+    return dict(list(costs.items())[-_TOOL_COST_LIMIT:])
+
+
+def save_console_tool_costs(
+    costs: Mapping[str, int], path: Path | None = None
+) -> None:
+    """Write ``costs`` (off the UI loop), replacing the file atomically."""
+    target = path or _tool_cost_path()
+    kept = list(costs.items())[-_TOOL_COST_LIMIT:]
+    rows = [[key, int(value)] for key, value in kept]
+    temporary = target.with_name(f"{target.name}.tmp")
+    temporary.write_text(json.dumps({"version": 1, "costs": rows}), encoding="utf-8")
+    os.replace(temporary, target)
+
+
 def _forecast_history_images(messages: Sequence[Any], memory: Any) -> int:
     """Image parts on the turns the compaction forecast counts.
 
@@ -297,6 +362,11 @@ class ConsoleContextSpendController:
         self._console_compaction_forecast_cache = None
         #: Review D2: session -> (accounting, tool signature, tool tokens).
         self._console_tool_overhead_seen: dict[str, tuple[Any, str, int]] = {}
+        #: Owner decision 2026-11-23: persisted costs (None = not read yet).
+        self._console_tool_costs_disk: dict[str, int] | None = None
+        self._console_tool_costs_pending: dict[str, int] = {}
+        self._console_tool_costs_busy = False
+        self._console_tool_costs_dirty = False
         self._console_settled_spend_cache = None
         self._console_cost_projection_tokens_cache = None
         self._last_console_context_control_state = None
@@ -671,6 +741,7 @@ class ConsoleContextSpendController:
             estimate,
             controller=controller,
         )
+        static_mandatory = mandatory
         if "tools" in causes:
             # Review B1/D1/D2 (2026-11-22): the agent's tool cost as prepared
             # requests carried it; never previewed here (permission reads).
@@ -678,7 +749,7 @@ class ConsoleContextSpendController:
             if tools is None:
                 causes = tuple("tools-unknown" if c == "tools" else c for c in causes)
             elif mandatory is not None:
-                mandatory += tools
+                static_mandatory, mandatory = mandatory, mandatory + tools
         caps = spend.model_token_caps_for_display(self._screen, settings)
         causes = (*causes, *history_causes, *(() if caps is not None else ("limits",)))
         unavailable = ""
@@ -708,6 +779,16 @@ class ConsoleContextSpendController:
             provider_output_cap_tokens=caps[1] if caps is not None else None,
             forecast_unavailable_reason=unavailable,
         )
+        ceiling = state.safe_input_ceiling_tokens
+        if (
+            state.compaction_cannot_fit
+            and static_mandatory is not None
+            and ceiling is not None
+            and static_mandatory < ceiling
+        ):
+            # Review 2026-11-23: only an estimated tool cost tips it over, and
+            # the send's planner may carry fewer tools: "may not fit".
+            state = replace(state, compaction_fit_uncertain=True)
         trigger = state.compaction_trigger_tokens
         over = (
             estimated_history is not None
@@ -753,7 +834,7 @@ class ConsoleContextSpendController:
         Returns:
             Tokens, or None when nothing measured the current configuration.
         """
-        signature = self._console_tool_signature(settings)
+        signature = self._console_tool_signature(settings, session_id)
         seen = self._console_tool_overhead_seen
         if accounting is not None:
             cost = sum(
@@ -768,16 +849,106 @@ class ConsoleContextSpendController:
                     cost = max(cost, entry[2])
                 seen[session_id] = (accounting, signature, cost)
         known = [cost for _acct, sig, cost in seen.values() if sig == signature]
-        return max(known) if known else None
+        # Owner decision 2026-11-23 ("persist across restarts"): the largest
+        # figure per configuration is kept on disk, read and written off the
+        # UI loop; until the read lands (or if it fails) only this run counts.
+        key = _tool_cost_key(signature)
+        stored = self._console_tool_costs_stored()
+        best = max(known, default=None)
+        if best is not None and best > stored.get(key, -1):
+            self._console_store_tool_cost(key, best)
+        if key in stored:
+            best = max(best or 0, stored[key])
+        return best
 
-    def _console_tool_signature(self, settings: ConsoleSessionSettings) -> str:
-        """What decides the agent's tool set, from in-memory settings only."""
-        import json
+    def _console_tool_costs_stored(self) -> dict[str, int]:
+        """The persisted costs, or {} while their off-loop read is pending."""
+        if self._console_tool_costs_disk is None:
+            self._console_tool_costs_io("load")
+            return {}
+        return self._console_tool_costs_disk
 
+    def _console_store_tool_cost(self, key: str, cost: int) -> None:
+        """Keep ``cost`` for ``key`` (LRU-bounded) and save it off the loop."""
+        costs = self._console_tool_costs_disk
+        if costs is None:
+            self._console_tool_costs_pending[key] = cost
+            return
+        costs.pop(key, None)
+        costs[key] = cost
+        while len(costs) > _TOOL_COST_LIMIT:
+            costs.pop(next(iter(costs)))
+        self._console_tool_costs_io("save")
+
+    def _console_tool_costs_io(self, kind: str) -> None:
+        """Run one read or write of the stored costs off the UI loop.
+
+        Fail-open: any error reads as "nothing stored" and drops the write.
+        One operation at a time; a save asked for meanwhile runs after it.
+        """
+        if self._console_tool_costs_busy:
+            self._console_tool_costs_dirty |= kind == "save"
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # No loop (a bare test double): this run's figures only.
+        snapshot = dict(self._console_tool_costs_disk or {})
+        work = (
+            load_console_tool_costs
+            if kind == "load"
+            else functools.partial(save_console_tool_costs, costs=snapshot)
+        )
+        self._console_tool_costs_busy = True
+        future = loop.run_in_executor(None, work)
+
+        def landed(done: Any) -> None:
+            self._console_tool_costs_busy = False
+            try:
+                result = done.result()
+            except Exception:  # noqa: BLE001 - fail open: nothing stored
+                result = {}
+            if kind == "load":
+                loaded = dict(result or {})
+                loaded.update(self._console_tool_costs_pending)
+                self._console_tool_costs_dirty |= bool(
+                    self._console_tool_costs_pending
+                )
+                self._console_tool_costs_pending.clear()
+                self._console_tool_costs_disk = loaded
+                with contextlib.suppress(Exception):
+                    self._refresh_settings_summary()
+            if self._console_tool_costs_dirty:
+                self._console_tool_costs_dirty = False
+                self._console_tool_costs_io("save")
+
+        future.add_done_callback(landed)
+
+    def _console_tool_signature(
+        self, settings: ConsoleSessionSettings, session_id: str | None = None
+    ) -> str:
+        """What decides the agent's tool set, from in-memory state only.
+
+        Config sections, plus two in-memory runtime facts (review 2026-11-23):
+        an armed raw shell and the conversation's assistant Library access.
+        The MCP kill switch and hub servers need a store read; see
+        TASK-33621.4.4.
+        """
         config = spend._screen_readiness_config(self._screen)
         config = config if isinstance(config, Mapping) else {}
         console = config.get("console")
         console = console if isinstance(console, Mapping) else {}
+        raw_armed = None
+        with contextlib.suppress(Exception):
+            raw_armed = bool(self._screen.app_instance.raw_cli_runtime.armed)
+        library = None
+        if session_id is not None:
+            with contextlib.suppress(Exception):
+                library = str(
+                    self._ensure_console_chat_store()
+                    .session_library_policy_candidate(session_id)
+                    .assistant_access
+                )
         return json.dumps(
             [
                 settings.provider,
@@ -788,6 +959,8 @@ class ConsoleContextSpendController:
                     key: console.get(key)
                     for key in ("agent_runtime", "local_tools_enabled")
                 },
+                raw_armed,
+                library,
             ],
             sort_keys=True,
             default=str,
@@ -962,7 +1135,11 @@ class ConsoleContextSpendController:
         if state is None:
             return ""
         if state.compaction_cannot_fit:
-            return COMPACTION_CANNOT_FIT_COPY
+            return (
+                COMPACTION_MAY_NOT_FIT_COPY
+                if state.compaction_fit_uncertain
+                else COMPACTION_CANNOT_FIT_COPY
+            )
         return COMPACTION_MAY_PAUSE_COPY if state.forecast_high_context else ""
 
     def _build_console_settings_summary_state(self) -> ConsoleSettingsSummaryState:

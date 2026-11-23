@@ -70,6 +70,16 @@ COMPACTION_MAY_PAUSE_COPY = "May pause to compact"
 #: Review follow-up 2 (2026-11-22): the same surfaces when the static input
 #: alone leaves no conversation capacity, so the send is refused.
 COMPACTION_CANNOT_FIT_COPY = "Next send won't fit"
+#: Review 2026-11-23: the same, when only an estimated tool cost (remembered or
+#: borrowed from an earlier send) tips it over; the send may carry fewer tools.
+COMPACTION_MAY_NOT_FIT_COPY = "Next send may not fit"
+#: Owner decision 2026-11-23 ("short badge word"): the header badge below the
+#: single-pane width, where the long words do not fit.
+COMPACTION_BADGE_SHORT = {
+    COMPACTION_MAY_PAUSE_COPY: "May pause",
+    COMPACTION_MAY_NOT_FIT_COPY: "May not fit",
+    COMPACTION_CANNOT_FIT_COPY: "Blocked",
+}
 
 #: Review S1 (2026-11-22): what each inexact cause names in the tooltip.
 _MAY_PAUSE_CAUSES = {
@@ -256,6 +266,8 @@ class ConsoleContextControlState:
     #: No exact forecast, and the estimated history is over the displayed
     #: trigger: the next send may pause (COMPACTION_MAY_PAUSE_COPY).
     forecast_high_context: bool = False
+    #: Cannot-fit depends on an estimated tool cost: the static input alone fits.
+    compaction_fit_uncertain: bool = False
 
     @property
     def compaction_pause_forecast(self) -> CompactionPauseForecast | None:
@@ -755,15 +767,27 @@ def build_console_context_cost_state(
     # TASK-33621.4 AC#3: lead with it, so a clipped strip still shows it.
     forecast = getattr(context, "compaction_pause_forecast", None)
     if getattr(context, "compaction_cannot_fit", False):
-        context_part = f"{COMPACTION_CANNOT_FIT_COPY} · {context_part}"
-        compact_part = f"{COMPACTION_CANNOT_FIT_COPY} · {compact_part}"
+        uncertain = getattr(context, "compaction_fit_uncertain", False)
+        lead = COMPACTION_MAY_NOT_FIT_COPY if uncertain else COMPACTION_CANNOT_FIT_COPY
+        context_part = f"{lead} · {context_part}"
+        compact_part = f"{lead} · {compact_part}"
+        ceiling = format_context_tokens(context.safe_input_ceiling_tokens)
         compaction_line += (
-            f" {COMPACTION_CANNOT_FIT_COPY}: the system prompt, tools and attached "
-            f"context need more than the "
-            f"{format_context_tokens(context.safe_input_ceiling_tokens)} tokens the "
-            "model's context window leaves for a request, so compacting older turns "
-            "cannot make room. Remove attached sources or tools, or lower Max tokens "
-            "in Chat settings ▸ Model and generation (Ctrl+O)."
+            (
+                f" {lead}: with the agent's tools as an earlier send carried them, "
+                f"the system prompt, tools and attached context need more than the "
+                f"{ceiling} tokens the model's context window leaves for a request. "
+                "The send may carry fewer tools and fit; if not, it is refused. "
+            )
+            if uncertain
+            else (
+                f" {lead}: the system prompt, tools and attached context need more "
+                f"than the {ceiling} tokens the model's context window leaves for a "
+                "request, so compacting older turns cannot make room. "
+            )
+        ) + (
+            "Remove attached sources or tools, or lower Max tokens in Chat settings "
+            "▸ Model and generation (Ctrl+O)."
         )
     elif forecast is not None:
         context_part = f"{COMPACTION_PAUSE_FORECAST_COPY} · {context_part}"

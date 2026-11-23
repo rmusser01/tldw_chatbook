@@ -183,14 +183,18 @@ line and the Context chip say so, in one of two ways:
   The pause is likely but not certain. The header badge, the Run line and
   the Context chip read **May pause to compact**, and the tooltip gives the
   estimated history and names what was estimated. Below the trigger such a
-  chat simply reads **Ready**. Until a send has measured the tools (after
-  the app starts, or after you change the model, a tool gate or MCP
-  settings), the trigger is not known, so an agent chat with any history
-  reads **May pause to compact**.
-- **Next send won't fit** when the system prompt, tools and attached context
-  alone leave no room for the conversation. The send would be refused before
+  chat simply reads **Ready**. The measured figure is kept across restarts
+  for each combination of model and tool settings. Until a send has measured
+  the tools for the current combination (for example after you change the
+  model, a tool gate, MCP settings, the raw shell's arming or the chat's
+  Library access), the trigger is not known, so an agent chat with any
+  history reads **May pause to compact**.
+- **Next send won't fit** when the system prompt and attached context alone
+  leave no room for the conversation. The send would be refused before
   anything is sent, so the badge, the Run line and the Context chip say so
-  instead of Ready; the tooltip says what to remove.
+  instead of Ready; the tooltip says what to remove. **Next send may not
+  fit** when only the agent's tools, as an earlier send carried them, tip it
+  over: the send may carry fewer tools and fit.
 
 Either way you approve before anything is summarized: the send that reaches
 the trigger is held on the card described above. While a message is held, the badge

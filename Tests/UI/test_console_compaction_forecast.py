@@ -15,6 +15,9 @@ exact future-send parity for dynamic inputs.
 
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
+
 import pytest
 
 from tldw_chatbook.Chat.console_chat_models import (
@@ -55,6 +58,18 @@ from tldw_chatbook.Widgets.Console.console_workbench_state import (
 )
 
 pytestmark = pytest.mark.bootstrap_profile
+
+
+@pytest.fixture(autouse=True)
+def _tool_cost_file(monkeypatch, tmp_path):
+    """Each test persists agent tool costs to its own file (owner decision B,
+    2026-11-23); the shared bootstrap profile's data folder is never used."""
+    from tldw_chatbook.UI.Console_Modules import context_spend
+
+    path = tmp_path / "console_agent_tool_costs.json"
+    if hasattr(context_spend, "_tool_cost_path"):
+        monkeypatch.setattr(context_spend, "_tool_cost_path", lambda: path)
+    return path
 
 _COST = ConsoleCostState(
     label="$0.00", compact_label="$0.00", tooltip="", alert=False, cold=False
@@ -349,10 +364,14 @@ async def test_automatic_forecast_matches_real_preflight_with_overhead_and_cap(
         "E-custom-fenced",
         "C3-stale-gate",
         "cannot-fit",
+        "may-not-fit",
+        "compact-keeps-max",
+        "B-persisted",
+        "raw-armed-signature",
     ],
 )
 async def test_an_agent_chats_tool_cost_counts_and_is_never_a_false_ready(
-    request, monkeypatch, tmp_path, case
+    request, monkeypatch, tmp_path, case, _tool_cost_file
 ):
     """Review D1-D3 and follow-ups 1-2 (2026-11-22), against the real check.
 
@@ -598,7 +617,7 @@ async def test_an_agent_chats_tool_cost_counts_and_is_never_a_false_ready(
                 assert hold is not None and hold.trigger_tokens == 3996
                 assert stale.forecast_high_context, "a stale tool figure read Ready"
                 assert "not measured yet" in stale.forecast_unavailable_reason
-            else:
+            elif case == "cannot-fit":
                 # Probe D: a system prompt that leaves no room. The send is
                 # refused ("cannot make room"); dev's display read Ready.
                 await set_prompt(10496)
@@ -606,9 +625,117 @@ async def test_an_agent_chats_tool_cost_counts_and_is_never_a_false_ready(
                 hold, alert = await real_check(None)
                 assert hold is None and alert is not None, (hold, alert)
                 assert getattr(full, "compaction_cannot_fit", False), "read Ready"
+                assert not getattr(full, "compaction_fit_uncertain", False)
                 shown = build_console_context_cost_state(full, _COST)
                 assert shown.label.startswith("Next send won't fit · "), shown.label
                 assert "compacting older turns cannot make room" in shown.tooltip
+                # The note the header, Inspect and run chip read, for this state.
+                console._context_spend._last_console_context_control_state = full
+                assert console._context_spend.compaction_forecast_note() == (
+                    "Next send won't fit"
+                )
+            elif case == "may-not-fit":
+                # Review 2026-11-23: the static input alone fits (8,004 of
+                # 10,000); only the remembered 2,004 tool tokens tip it over,
+                # and the send may carry fewer tools. Hedged, not firm.
+                await set_prompt(8000)
+                await real_check(native(2000))
+                tight = await displayed()
+                assert tight.compaction_cannot_fit
+                assert getattr(tight, "compaction_fit_uncertain", False), "firm"
+                shown = build_console_context_cost_state(tight, _COST)
+                assert shown.label.startswith("Next send may not fit · "), shown.label
+                assert "may carry fewer tools" in shown.tooltip
+                console._context_spend._last_console_context_control_state = tight
+                assert console._context_spend.compaction_forecast_note() == (
+                    "Next send may not fit"
+                )
+            elif case == "compact-keeps-max":
+                # Review 2026-11-23: a later request without the tools (as a
+                # /compact summary is) must not lower the remembered figure.
+                # Persistence is held off here so only that guard keeps it.
+                spend_owner = console._context_spend
+                spend_owner._console_tool_costs_disk = {}
+                monkeypatch.setattr(
+                    spend_owner, "_console_tool_costs_io", lambda _kind: None
+                )
+                monkeypatch.setattr(
+                    spend_owner, "_console_store_tool_cost", lambda *_args: None
+                )
+                await real_check(native(2000))
+                measured = await displayed()
+                assert measured.compaction_trigger_tokens == 3996
+                await real_check(ToolSurfacePreview(tools=()))
+                after = await displayed()
+                assert after.compaction_trigger_tokens == 3996, (
+                    "a request without tools lowered the remembered cost",
+                    after.compaction_trigger_tokens,
+                )
+            elif case == "B-persisted":
+                # Owner decision B (2026-11-23): persisted per configuration,
+                # reloaded off the loop after a restart and used; another
+                # configuration does not use it; a corrupt file is ignored.
+                spend_owner = console._context_spend
+
+                async def settled(predicate) -> None:
+                    for _ in range(100):
+                        if predicate():
+                            return
+                        await pilot.pause(0.05)
+                    assert predicate()
+
+                hold, _alert = await real_check(native(2000))
+                await displayed()
+                await settled(lambda: _tool_cost_file.exists())
+                await settled(lambda: not spend_owner._console_tool_costs_busy)
+                assert json.loads(_tool_cost_file.read_text())["costs"][0][1] == 2004
+
+                def restart() -> None:
+                    controller._context_accounting_by_session.clear()
+                    remembered().clear()
+                    spend_owner._console_tool_costs_disk = None
+
+                restart()
+                first = await displayed()  # the read is still in flight
+                assert first.forecast_high_context
+                await settled(lambda: spend_owner._console_tool_costs_disk is not None)
+                reloaded = await displayed()
+                assert reloaded.compaction_trigger_tokens == hold.trigger_tokens == 3996
+                assert reloaded.request_overhead_tokens == 3000 + 2004
+                # Another configuration: the stored figure is not used.
+                assert config_module.save_settings_to_cli_config(
+                    {"tools": {"read_file_enabled": True}}
+                )
+                try:
+                    app.app_config = config_module.load_settings(force_reload=True)
+                    other = await displayed()
+                finally:
+                    assert config_module.save_settings_to_cli_config(
+                        {"tools": {"read_file_enabled": False}}
+                    )
+                    app.app_config = config_module.load_settings(force_reload=True)
+                assert other.request_overhead_tokens == 3000
+                assert "not measured yet" in other.forecast_unavailable_reason
+                # A corrupt file reads as nothing stored: unmeasured, no crash.
+                _tool_cost_file.write_text("{not json")
+                restart()
+                await displayed()
+                await settled(lambda: spend_owner._console_tool_costs_disk is not None)
+                corrupt = await displayed()
+                assert spend_owner._console_tool_costs_disk == {}
+                assert corrupt.request_overhead_tokens == 3000
+                assert corrupt.forecast_high_context
+            else:
+                # Review 2026-11-23: an armed raw shell grows the light tool
+                # set, so it is part of the tool configuration.
+                spend_owner = console._context_spend
+                settings = controller.store.session_settings(session.id)
+                before = spend_owner._console_tool_signature(settings, session.id)
+                monkeypatch.setattr(
+                    app, "raw_cli_runtime", SimpleNamespace(armed=True), raising=False
+                )
+                armed = spend_owner._console_tool_signature(settings, session.id)
+                assert armed != before
             assert adapter_calls == []
     finally:
         if console is not None:
@@ -1100,6 +1227,28 @@ def test_an_unmodelled_memory_shape_counts_its_turns_in_full(
     assert _forecast_inputs(controller, effective) == expected
 
 
+def test_stored_tool_costs_round_trip_bounded_and_fail_open(tmp_path) -> None:
+    """Owner decision B (2026-11-23): the persisted agent tool costs."""
+    from tldw_chatbook.UI.Console_Modules import context_spend
+
+    path = tmp_path / "costs.json"
+    assert context_spend.load_console_tool_costs(path) == {}  # missing
+    costs = {f"key-{n}": n for n in range(40)}
+    context_spend.save_console_tool_costs(costs, path)
+    loaded = context_spend.load_console_tool_costs(path)
+    assert list(loaded) == [f"key-{n}" for n in range(8, 40)]  # newest 32
+    assert loaded["key-39"] == 39
+    for corrupt in (
+        "{not json",
+        json.dumps({"version": 2, "costs": [["a", 1]]}),
+        json.dumps({"version": 1, "costs": [["a", True], ["b", -1], ["c", "9"]]}),
+    ):
+        path.write_text(corrupt)
+        assert context_spend.load_console_tool_costs(path) == {}
+    # Keys are digests: no config content reaches the file.
+    assert len(context_spend._tool_cost_key('[{"api_key": "secret"}]')) == 32
+
+
 def test_cold_forecast_does_not_read_history_or_count(monkeypatch) -> None:
     from tldw_chatbook.UI.Console_Modules.context_spend import (
         ConsoleContextSpendController,
@@ -1214,8 +1363,26 @@ def test_an_agent_chat_reads_ready_below_the_trigger_and_may_pause_above() -> No
         badge(compaction_forecast_note=may_pause, blocked_turn="compaction ask")
         == "Blocked"
     )
-    # Single-pane widths drop the readiness word because it overruns the row.
-    assert badge(compaction_forecast_note=may_pause, readiness_word="") == ""
+    # Owner decision 2026-11-23 ("short badge word"): below the single-pane
+    # width, where no readiness word fits, the badge used to fall back to
+    # "Ready" for every note. Now a short word, and "Blocked" for won't fit.
+    assert badge(compaction_forecast_note=may_pause, readiness_word="") == "May pause"
+    assert (
+        badge(compaction_forecast_note="Next send may not fit", readiness_word="")
+        == "May not fit"
+    )
+    narrow = build_console_workbench_state(
+        control_state=_control_state(),
+        readiness_word="",
+        compaction_forecast_note="Next send won't fit",
+    ).header
+    assert (narrow.status, narrow.status_label) == ("blocked", "Blocked")
+    wide = build_console_workbench_state(
+        control_state=_control_state(),
+        readiness_word="Ready",
+        compaction_forecast_note="Next send won't fit",
+    ).header
+    assert (wide.status, wide.status_label) == ("blocked", "Next send won't fit")
     from tldw_chatbook.Widgets.Console import console_workbench_state as workbench
 
     assert (
