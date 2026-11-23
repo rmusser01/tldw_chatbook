@@ -19,7 +19,7 @@ import shutil
 import sqlite3
 import uuid
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -34,6 +34,8 @@ from Tests.Notes.sqlite_contention_support import (
     CONTENTION_IDS,
     CONTENTION_MODES,
     held_off,
+    write_committed_between_read_and_write,
+    write_lock_held_elsewhere,
 )
 from Tests.Sync_Interop import test_note_organization_receipt_finalization as receipts
 from Tests.Sync_Interop import test_notes_organization_legacy_inventory as inventory
@@ -112,7 +114,9 @@ _CLEANUPS: list[Callable[[], object]] = []
 
 
 @pytest.fixture(autouse=True)
-def _close_case_stores() -> Iterator[None]:
+def _close_case_stores(db: CharactersRAGDB) -> Iterator[None]:
+    """Close what a case opened while ``db`` is still open (requesting it
+    makes this teardown run first)."""
     yield
     while _CLEANUPS:
         _CLEANUPS.pop()()
@@ -828,7 +832,7 @@ def _citation_owner_acknowledge(db, tmp_path):
     )
 
 
-def _legacy_service(db, tmp_path, count: int, batch_size: int = 100):
+def _legacy_service(db, tmp_path, count: int, batch_size: int = 100, **options):
     conversation_id, message_ids = legacy_citations._conversation_with_messages(
         db, count
     )
@@ -840,6 +844,7 @@ def _legacy_service(db, tmp_path, count: int, batch_size: int = 100):
         sidecar_path=sidecar,
         fingerprint_codec=legacy_citations.CODEC,
         batch_size=batch_size,
+        **options,
     )
     return service, conversation_id, message_ids, sidecar
 
@@ -851,6 +856,43 @@ def _citation_legacy_batch(db, tmp_path):
         lambda: results.append(service.migrate_next_batch(conversation_id)),
         lambda: results[0].state is LegacyMigrationState.COMPLETE,
     )
+
+
+def _legacy_cutover(order):
+    """``migrate_next_batch``'s cutover, its second transaction.
+
+    The table's own contention lands on the call's first read-then-write
+    transaction (the batch claim), so this case forces ``order`` again from
+    the ``before_cutover_hook``, which runs between the two.
+    """
+
+    def case(db, tmp_path):
+        stack = ExitStack()
+        _CLEANUPS.append(stack.close)
+        forced: list = []
+        service, conversation_id, _, _ = _legacy_service(
+            db,
+            tmp_path,
+            2,
+            before_cutover_hook=lambda: forced.append(stack.enter_context(order(db))),
+        )
+        results: list = []
+        return (
+            lambda: results.append(service.migrate_next_batch(conversation_id)),
+            lambda: (
+                results[0].state is LegacyMigrationState.COMPLETE
+                and held_off(order, forced[0])
+            ),
+        )
+
+    case.__name__ = f"_citation_legacy_cutover_{order.__name__.split('_')[1]}"
+    return case
+
+
+_citation_legacy_cutover_committed = _legacy_cutover(
+    write_committed_between_read_and_write
+)
+_citation_legacy_cutover_lock = _legacy_cutover(write_lock_held_elsewhere)
 
 
 def _diverging_service(db, tmp_path):
@@ -1116,6 +1158,8 @@ CASES: tuple[Case, ...] = (
     _citation_owner_apply,
     _citation_owner_acknowledge,
     _citation_legacy_batch,
+    _citation_legacy_cutover_committed,
+    _citation_legacy_cutover_lock,
     _citation_legacy_diverge,
     _citation_legacy_refuse_first,
     _citation_legacy_retry,

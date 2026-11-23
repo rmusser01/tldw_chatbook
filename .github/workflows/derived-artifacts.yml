@@ -1466,9 +1466,10 @@ jobs:
     # at load 14-18, 54 took 138-140 s at load 37-64 and all 55 188 s at load
     # 71-92; at 2.6x the quiet time (~3.7 min) the job keeps ~6.5 min headroom.
     # TASK-34000.84 (2026-11-23): the ChaChaNotes read-then-write contention
-    # table (sandboxed, so before Tool_Packs; 119 tests, 113.8 s serially at
-    # load 38-39) forces a committed write and a held write lock into every
-    # fixed site.
+    # table (sandboxed, so before Tool_Packs; 125 tests, 123.3 s serially at
+    # load 55-58, 74.0 s for 121 of them at load 30-34) forces a committed
+    # write and a held write lock into every fixed site. The whole step with
+    # the 121: 875 tests, 741.8 s at load 30-48.
     name: Dreams tracking tests and unlaned riders
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
