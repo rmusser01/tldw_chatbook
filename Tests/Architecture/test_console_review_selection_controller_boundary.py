@@ -45,6 +45,7 @@ _, LIVE_SCREEN_LINE_CEILING, LIVE_SCREEN_METHOD_CEILING = _SCREEN_SIZE_BUDGETS[
 #: Re-pinned 2026-11-24 with the row (rebased onto dev 75bac413f5).
 #: Re-pinned 2026-11-25 with the row (rebased onto dev 1b9e3f8a55).
 #: Re-pinned 2026-11-21 with the row (rebased onto dev dc371f0842).
+#: Re-pinned 2026-11-22 with the row (rebased onto dev 2f7790873a).
 LIVE_RATCHET_ROW = ("ChatScreen", 24_632, 742)
 MAX_DELEGATE_LINES = 5
 
