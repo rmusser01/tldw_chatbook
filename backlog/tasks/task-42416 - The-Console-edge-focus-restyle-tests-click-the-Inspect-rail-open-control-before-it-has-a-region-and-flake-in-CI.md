@@ -4,7 +4,7 @@ title: "The Console edge-focus restyle tests click the Inspect rail open control
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-22 21:17
-updated_date: 2026-11-23 03:34
+updated_date: 2026-11-23 03:50
 labels:
 - follow-up
 - ci
@@ -80,7 +80,7 @@ TASK-41632 fixed the same kind of fixed-wait flake in the `_open_console_inspect
 **Addition beyond the ACs: the two sibling files are now laned (coordinator decision, 2026-11-23).** Why: `test_console_shell_regions.py` and `test_console_edge_rail_geometry.py` ran in no lane (nothing in `.github/` or `scripts/` named them). Locally they failed 60/60 with `RecoveryRequired`, so the live-resize test was red at base and nobody saw it.
 
 - **Marker.** Both files now carry a module `pytestmark = pytest.mark.bootstrap_profile`, as the edge-focus file does with this harness. This replaces the temporary marker used for verification above.
-- **Placement.** Appended at the UI census tail: the census already holds `bootstrap_profile` files, the checker accepts the parameter ids, and `MINIMUM_FILES` is 2520 (2472 + 48). No re-deal or shard change.
+- **Placement.** Appended at the UI census tail: the census already holds `bootstrap_profile` files, the checker accepts the parameter ids, and `MINIMUM_FILES` is set to the new entry count. No re-deal or shard change.
 - **Measurement.** Serial with the UI lane's flags (`-p no:xdist --timeout=180 --durations=0`) at load 32-33:
   - shell regions: 44 passed in 202.6 s;
   - edge rails: 16 passed in 80.4 s.
@@ -146,6 +146,17 @@ TASK-41632 fixed the same kind of fixed-wait flake in the `_open_console_inspect
   - `test_console_edge_rail_geometry.py::test_native_widget_blur_repaints_the_actual_focus_successor`: 3.1 s
   - `test_console_edge_rail_geometry.py::test_rapid_focus_transfer_keeps_only_the_current_edge_painted`: 3.1 s
   - `test_console_shell_regions.py::test_exact_100_workspace_state_matrix_is_contained`: 13.9 s (load 24, after its fix)
+
+**Review round ("With fixes", 2026-11-23):**
+- The census floor is no longer pinned in these notes.
+- `click_inspect_rail_open`'s timeout now names the widget its click point reaches. Under the reverted overlay delay it reported `hit=ConsoleSetupModal(id='console-setup-modal', ...)`.
+- The state matrix's replayed visibility syncs now run inside the same `try` that records errors, since `Signal.publish` only logs exceptions.
+- The census comment's per-entry times now match the measured charges (2.5-14.5 s).
+- `test_exact_100_live_resize_preserves_workspace_and_interaction_state` (ready provider) now passes `hide_setup_overlay=False`, so a resize that re-shows the overlay fails there. It ran green in 8 runs (4 at -n 4, then 4 serial copies at once, together with the state matrix: 32/32 cases).
+- After the fixes:
+  - three geometry files at -n 4: 62 passed;
+  - Tests/CI at -n 4: 1823 passed, 2 skipped;
+  - census checker OK; preflight passed.
 
 **Lesson:** a "re-shown overlay" variant was added to `backlog/docs/lessons-testing-evidence.md` (Pilot clicks section). A "startup batch" recurrence was added to the `call_after_refresh` entry in `backlog/docs/lessons-textual.md`.
 

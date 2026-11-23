@@ -5572,9 +5572,9 @@ edge-focus tests failed `assert await pilot.click("#console-inspector-rail-open"
 in 9 CI jobs, and the task blamed a control with no region yet. Locally the
 control always had its region (150, 6, 10, 32) at the click. The real cause was
 the harness: `make_console_pilot` hid the setup overlay once, but every product
-setup sync sets the overlay's display back to "blocking", and the 4 Hz
-credential poll's first pass landed only 0.13-0.55 s before the hide. One sync
-after the hide covered the control: still displayed, same region, but the
+setup sync sets the overlay's display back to "blocking", and the last
+mount-time sync (often the 4 Hz credential poll's first pass) landed only
+0.13-0.55 s before the click. One sync after the hide covered the control: still displayed, same region, but the
 hit-test found the overlay. A wait for display and region alone timed out.
 When `pilot.click` returns False, log what `get_widget_at` found at the
 control's point before you blame the layout. A harness that hides or changes

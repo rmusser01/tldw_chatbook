@@ -3644,7 +3644,8 @@ Tests/UI/test_console_stop_during_failed_commit.py::test_stop_during_a_card_retr
 # ran in no lane; the edge-rail live-resize test was red at base unseen. Both
 # are now bootstrap_profile. Serially with the lane's flags at load 32-33:
 # shell regions 44 passed in 202.6 s, edge rails 16 passed in 80.4 s, over the
-# 30 s per-entry budget, so one node per test function (2.5-17.8 s), split by
+# 30 s per-entry budget, so one node per test function (2.5-14.5 s each, 246.0 s
+# for all 48 entries, setup + call + teardown), split by
 # parameter where a function passes 30 s (region geometry 103 s, live resize
 # 32.4 s). Appended at the tail. The state-matrix function joins last (13.9 s,
 # load 24), once its first-paint oracle waited for a painted layout.
