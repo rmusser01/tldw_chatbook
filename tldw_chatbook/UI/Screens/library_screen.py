@@ -532,6 +532,7 @@ from .study_scope_models import (
 
 if TYPE_CHECKING:
     # Type-only: the shared modal owns the runtime acquisition-plan import.
+    from ...Library.review_set_service import ReviewSetService
     from ...Library.review_set_state import ReviewProgress
     from ...Model_Artifacts.acquisition import PreflightReport
     from ...Notes.note_import_executor import NoteImportExecutor
@@ -975,12 +976,19 @@ _LIBRARY_SYNC_ROOTS_ENTER_LABELS = {
 
 
 class _Forward:
-    """A public ``LibraryScreen`` name that reads its private member when used.
+    """A public ``LibraryScreen`` name that reads its private member on access.
 
     TASK-41757: the media controller calls the screen's public protocol
-    members; the screen and its tests keep the private names. Resolving on
-    each access means a patch of the private name, on the instance or the
-    class, reaches callers of either name.
+    members; the screen and its tests keep the private names. Each access
+    resolves ``_x`` afresh, so a patch of the private name, on the instance or
+    the class, reaches callers of either name from then on. A callback taken
+    before the patch keeps the method it took: the controller hands eight on
+    (``call_next``, three ``call_after_refresh``, two ``partial``, two
+    ``then=``), so a test must patch ``_x`` before that callback is scheduled.
+    Patch and autospec the private name, not the public one:
+    ``create_autospec`` keeps ``self`` in a ``_Forward`` member's signature,
+    and ``monkeypatch``'s undo of the public name leaves an instance
+    attribute that shadows later patches of ``_x``.
     """
 
     def __init__(self, name: str) -> None:
@@ -29542,7 +29550,7 @@ class LibraryScreen(BaseAppScreen):
     def action_library_media_prev_item(self) -> None:
         return self._media_controller.action_library_media_prev_item()
 
-    def _review_set_service(self):
+    def _review_set_service(self) -> ReviewSetService | None:
         """Return the review-set service, or ``None`` when storage is absent.
 
         Lazily built from the app's Library collections DB and cached on the
@@ -29926,7 +29934,7 @@ class LibraryScreen(BaseAppScreen):
     def action_library_media_toggle_reviewed(self) -> None:
         return self._media_controller.action_library_media_toggle_reviewed()
 
-    def _toggle_reviewed_unguarded(self, service) -> None:
+    def _toggle_reviewed_unguarded(self, service: ReviewSetService) -> None:
         """The toggle body; storage exceptions are the caller's to surface."""
         review_set = service.get_active_review_set()
         if review_set is None:
@@ -32632,7 +32640,7 @@ class LibraryScreen(BaseAppScreen):
     # TASK-41757 (owner ruling 2026-11-22, "the screen implements protocols"):
     # the media controller's host protocols (`LibraryMediaHost` and the four it
     # extends, `library_media_controller.py`). The `action_`/`request_` members
-    # are already public; these 41 forward to the methods above at call time
+    # are already public; these 41 forward to the methods above on each access
     # (`_Forward`), so a patch of a private name reaches the media controller.
     acknowledge_library_destination_change = _Forward("_acknowledge_library_destination_change")
     active_review_set_banner = _Forward("_active_review_set_banner")

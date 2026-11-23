@@ -641,8 +641,9 @@ the host's member under the private name the moved bodies spell. No
 constructor argument calls a screen method any more; the remaining ones are
 single-field accessors and setters. Every read through the host is a
 framework service or a member of those protocols. The screen's public names
-forward to its private methods at call time, so a test's patch of the
-private name reaches this controller too.
+resolve its private methods on each access, so a test's patch of the private
+name reaches this controller too; a callback taken before the patch keeps
+the method it took.
 """
 from __future__ import annotations
 

@@ -1557,8 +1557,11 @@ def test_library_screen_implements_the_media_service_protocols() -> None:
     its own private method (fix round 1, review M2: a member wired to a
     sibling with the same parameters would pass a signature check), and that
     method has the kind of attribute (plain, static or class method), the
-    sync or async kind (M3) and the parameters (names, kinds, defaults) the
-    protocol declares. No member shadows one ``LibraryScreen`` inherits
+    sync or async kind (M3), the parameters (names, kinds, defaults,
+    annotations) and the return annotation the protocol declares. Review
+    round 2 (N3) added the annotations: static checkers read the forwarded
+    names as ``Any``, so this is where the types are compared. No member
+    shadows one ``LibraryScreen`` inherits
     (``BaseAppScreen.register_footer_shortcuts`` takes the shortcuts, so the
     screen's own no-argument registration is ``register_library_footer_
     shortcuts``).
@@ -1572,11 +1575,13 @@ def test_library_screen_implements_the_media_service_protocols() -> None:
     )
     assert sum(map(len, members.values())) == 43
 
-    def parameters(function: object) -> list[tuple[str, object, object]]:
+    def parameters(function: object) -> list[tuple[object, ...]]:
+        # Both modules postpone annotations, so they compare as source strings.
+        signature = inspect.signature(function)
         return [
-            (parameter.name, parameter.kind, parameter.default)
-            for parameter in inspect.signature(function).parameters.values()
-        ]
+            (parameter.name, parameter.kind, parameter.default, parameter.annotation)
+            for parameter in signature.parameters.values()
+        ] + [("return", signature.return_annotation)]
 
     drift = []
     for protocol_name, names in sorted(members.items()):
