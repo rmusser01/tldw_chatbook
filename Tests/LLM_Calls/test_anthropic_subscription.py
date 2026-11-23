@@ -347,6 +347,7 @@ def test_keychain_reader_nonzero_returncode_is_none(monkeypatch):
     import tldw_chatbook.LLM_Calls.anthropic_subscription as sub
     monkeypatch.setattr(sub, "_KEYCHAIN_CACHE", None, raising=False)
     monkeypatch.setattr(sub.sys, "platform", "darwin")
+    monkeypatch.setattr(sub, "_home_is_account_home", lambda: True)
     class _P:
         returncode = 44
         stdout = ""
@@ -359,6 +360,7 @@ def test_keychain_reader_is_memoized(monkeypatch):
     import tldw_chatbook.LLM_Calls.anthropic_subscription as sub
     monkeypatch.setattr(sub, "_KEYCHAIN_CACHE", None, raising=False)
     monkeypatch.setattr(sub.sys, "platform", "darwin")
+    monkeypatch.setattr(sub, "_home_is_account_home", lambda: True)
     calls = {"n": 0}
     class _P:
         returncode = 0
@@ -371,6 +373,40 @@ def test_keychain_reader_is_memoized(monkeypatch):
     second = sub._keychain_credential_raw()
     assert first == second
     assert calls["n"] == 1, "second read within TTL must be served from the memo"
+
+
+@pytest.mark.parametrize("home", ["account", "link", "moved", "missing"])
+def test_keychain_is_read_only_while_home_is_the_accounts_own(monkeypatch, tmp_path, home):
+    """TASK-42477: a moved HOME (the test sandbox, a scratch profile) never reads it.
+
+    The Keychain belongs to the login account whatever HOME says; only a HOME
+    that is the account's own directory (a symlink to it counts) may read it.
+    """
+    from types import SimpleNamespace
+
+    pwd = pytest.importorskip("pwd")
+    import tldw_chatbook.LLM_Calls.anthropic_subscription as sub
+
+    account = tmp_path / "account"
+    account.mkdir()
+    (tmp_path / "moved").mkdir()
+    (tmp_path / "link").symlink_to(account)
+    monkeypatch.setattr(pwd, "getpwuid", lambda _uid: SimpleNamespace(pw_dir=str(account)))
+    monkeypatch.setenv("HOME", str(tmp_path / home))
+    monkeypatch.setattr(sub, "_KEYCHAIN_CACHE", None, raising=False)
+    monkeypatch.setattr(sub, "sys", SimpleNamespace(platform="darwin"))
+    calls = []
+
+    def _run(command, **_kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout='{"claudeAiOauth": {"accessToken": "t"}}')
+
+    monkeypatch.setattr(sub.subprocess, "run", _run)
+    read = sub._keychain_credential_raw()
+
+    own = home in ("account", "link")
+    assert (read is not None) is own
+    assert len(calls) == (1 if own else 0)
 
 
 # --- TASK-26022 live-verify follow-ups: Claude Code identity (OAuth gate) ---

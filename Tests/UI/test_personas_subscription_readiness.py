@@ -61,6 +61,8 @@ def credential_io(monkeypatch, tmp_path):
     monkeypatch.setattr(subscription, "_KEYCHAIN_CACHE", None)
     monkeypatch.setattr(subscription, "DEFAULT_CREDENTIALS_PATH", path)
     monkeypatch.setattr(subscription, "sys", SimpleNamespace(platform="darwin"))
+    # TASK-42477: the Keychain is read only under the account's own HOME.
+    monkeypatch.setattr(subscription, "_home_is_account_home", lambda: True)
     monkeypatch.setattr(
         subscription,
         "time",

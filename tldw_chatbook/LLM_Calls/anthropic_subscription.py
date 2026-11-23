@@ -24,6 +24,7 @@ before the task closes.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -70,7 +71,8 @@ STALE_CREDENTIAL_MESSAGE = (
 MISSING_CREDENTIAL_MESSAGE = (
     'auth_source is "claude_subscription" but no Claude Code credential was '
     "found (checked ~/.claude/.credentials.json and, on macOS, the login "
-    'Keychain item "Claude Code-credentials"). Log in with Claude Code first '
+    'Keychain item "Claude Code-credentials", which is read only while HOME '
+    "is your account's home folder). Log in with Claude Code first "
     "(and unlock your Keychain if prompted), or set [api_settings.anthropic] "
     'auth_source back to "api_key".'
 )
@@ -299,18 +301,40 @@ def _parse_oauth_json(
     )
 
 
+def _home_is_account_home() -> bool:
+    """Whether HOME is the login account's own home, not a moved profile.
+
+    The Keychain belongs to the login account and ignores HOME. A process whose
+    HOME was moved (the test suite's sandbox, a scratch profile) would still
+    read the real account's token, so the Keychain is read only here
+    (TASK-42477). The credential file already follows HOME.
+
+    Returns:
+        ``True`` only when HOME and the password database's home are the same
+        directory; ``False`` when either cannot be resolved.
+    """
+    try:
+        import pwd
+
+        return os.path.samefile(Path.home(), pwd.getpwuid(os.getuid()).pw_dir)
+    except (ImportError, KeyError, OSError, RuntimeError):
+        return False
+
+
 def _keychain_credential_raw() -> str | None:
     """Return Claude Code's Keychain credential JSON on macOS, else ``None``.
 
     Read-only: shells out to ``security find-generic-password -w``. Any failure
     (non-macOS, item absent, ``security`` unavailable) yields ``None`` so the
-    caller falls through to today's no-credential behavior (AC#6).
+    caller falls through to today's no-credential behavior (AC#6). So does a
+    moved HOME (``_home_is_account_home``): a sandboxed profile never borrows
+    the real account's credential.
 
     Returns:
         The raw JSON string stored under ``KEYCHAIN_SERVICE``, or ``None``.
     """
     global _KEYCHAIN_CACHE
-    if sys.platform != "darwin":
+    if sys.platform != "darwin" or not _home_is_account_home():
         return None
     with _KEYCHAIN_LOCK:
         cached = _KEYCHAIN_CACHE

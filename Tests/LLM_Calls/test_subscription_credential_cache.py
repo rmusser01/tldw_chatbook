@@ -15,6 +15,8 @@ from tldw_chatbook.LLM_Calls import anthropic_subscription as subscription
 def keychain(monkeypatch):
     monkeypatch.setattr(subscription, "sys", SimpleNamespace(platform="darwin"))
     monkeypatch.setattr(subscription, "_KEYCHAIN_CACHE", None)
+    # TASK-42477: the Keychain is read only under the account's own HOME.
+    monkeypatch.setattr(subscription, "_home_is_account_home", lambda: True)
 
 
 def test_timeout_is_cached_from_completion_and_retried_after_ttl(keychain, monkeypatch):
