@@ -26627,3 +26627,8 @@ and keep the first run and repeat beside the instrumented comparison.
 
 **What to do.** List what the computation reads when it runs, not what its inputs were when the object was built. Anything looked up late (a registry entry, a module global a test can replace) goes into the entry and is compared by identity on a hit.
 
+## A single-threaded microbenchmark does not price a call inside a busy turn (TASK-40608, 2026-11-22)
+
+**Incident.** A test pinned the NTFS volume query on the file being examined, and the branch had stopped running it below a checked parent. Timed alone, the query cost 7 us against 2,500 us for one checked `stat`, so it was restored on every native open and committed as free. The Console journey was not re-run. It went from about 11 s per turn to 55-68 s: a turn has several busy threads, and each of the two calls gives up the interpreter lock, on every folder of every path. The regression sat in a commit for half a day and was found only when the journey was timed for another reason.
+
+**What to do.** Time a change to a hot path in the journey that made the path hot, before committing it; a microbenchmark only says the call is cheap when nothing else wants the interpreter. Count calls as well as microseconds: this one was "7 us" a few thousand times per turn, each with a lock hand-off.
