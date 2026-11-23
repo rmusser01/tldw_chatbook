@@ -4,6 +4,7 @@ title: >-
   Fix dev-tip test harness drift in console suites
 status: To Do
 assignee: []
+updated_date: '2026-11-23 07:09'
 created_date: '2026-09-11 10:00'
 labels:
   - console
@@ -55,6 +56,8 @@ Filed so the board records that these pre-date the rail-UX arc and are
 not its regressions; whoever picks this up decides per-test whether the
 test or the code moved (the mount-order ones look like the tests
 predating the rail redesign's section order).
+
+2026-11-23 (round-22 filing): this list's `test_console_inspector_navigation.py` entries now live in TASK-24705 (responsive hide/reveal handoff) and TASK-42462 (staged owner sync cue, the file's four intermittent reds and its lane). The `test_console_agent_controller.py` `test_agent_bridge_is_*` entry is covered by TASK-42469, whose AC#3 names that file's consistent failures under a bootstrap mark.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

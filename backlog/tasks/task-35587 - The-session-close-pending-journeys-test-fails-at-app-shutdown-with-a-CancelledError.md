@@ -3,7 +3,7 @@ id: TASK-35587
 title: The session-close pending journeys test fails at app shutdown with a CancelledError
 status: In Progress
 created_date: 2026-10-19 03:53
-updated_date: '2026-10-19 14:50'
+updated_date: '2026-11-23 07:09'
 assignee:
 - '@claude'
 labels:
@@ -50,6 +50,8 @@ Locally on dev 69771c1811 the test passed 5 of 5 sequential runs (75-107 s each)
 Fix and pin (AC #3): PR #3167 (TASK-34982). Its test_stopping_the_paint_timer_mid_removal_still_removes_the_row fails on dev with this task's CancelledError at run_test shutdown.
 
 AC #2 is open: 20 consecutive pull-request runs of test_session_close_pending_journeys (UI Fast Lane (8), Console P0 gate) after #3167 merges.
+
+2026-11-23 (round-22 filing): CI history and timing. Across every attempt of the 321 Derived Artifacts runs created from 2026-11-19 06:00Z to 2026-11-23 06:00Z, the UI Fast Lane job that runs this file completed 157 times. The first page of nine runs' job lists (44662627953, 44871429295, 44909027257, 44922739689, 44929982891, 44954395594, 44977790794, 45016281720, 45034674868) returned Server Error at 100 jobs per page and was re-read at 30 per page; it held 13 more completed jobs. This test failed in 29 of them, and every one was `child failure: AssertionError: closing the background tab answered the viewed tab`. That is TASK-42424's cause (round 22); its fix is in the tests and was not on the branches that failed. The 26 failures found on the first read fall between 2026-11-20 09:06Z and 2026-11-23 05:46Z; the three found on the re-read are run 44909027257 attempt 2 (job 136862152801) and run 45016281720 attempts 2 and 3 (jobs 137190507806, 137216650072). None was a timeout: the test's call time was about 30-84 s (the first 26 failures' median 48 s, passing runs median 50 s) against the lane's 180 s `--timeout`. Locally, TASK-42424's implementer measured about 131 s serially at load 52, so the headroom is much smaller on a loaded machine. TASK-42426's third review saw one more local failure at load 26-50 whose reason was not captured; the test passed 3 times after. AC#2's 20 consecutive pull-request runs should be counted from TASK-42424's merge. A failure with another message, or a call time near 180 s, is new evidence for this task.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
