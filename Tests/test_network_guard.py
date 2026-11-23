@@ -659,14 +659,15 @@ def test_loopback_only_mode_refuses_a_remote_name_lookup(
     assert _drain_expecting() == (("socket.getaddrinfo", "remote.example.test:443"),)
 
 
-# --- TASK-42477: no test reads the real login Keychain -----------------------
+# --- TASK-42477: no test spawns `security` against the real Keychain --------
 #
 # On macOS `read_claude_code_credential()` falls back to `/usr/bin/security
-# find-generic-password -s "Claude Code-credentials" -w`, which reads the login
-# account's Keychain whatever HOME is, and returns its token. The Console's
-# credential poll reaches it through `subscription_credential_status(
-# background=True)`, so every mounted Console did, in pytest and in the plain
-# Python children `Tests/Performance` runs (no conftest patch reaches those).
+# find-generic-password -s "Claude Code-credentials" -w`, a query of the real
+# OS Keychain service that a moved HOME did not stop (what it returns under a
+# moved HOME was never established: every measured spawn was refused). The
+# Console's credential poll reaches it through `subscription_credential_status(
+# background=True)`, so every mounted Console spawned it, in pytest and in the
+# plain Python children `Tests/Performance` runs (no conftest patch reaches those).
 # The product now reads the Keychain only while HOME is the account's own home;
 # both checks force the darwin branch so they bite on Linux CI too, and refuse
 # a `security` spawn rather than run it.

@@ -227,8 +227,6 @@ async def test_streaming_control_responds_and_readiness_refreshes_after_slow_rea
     monkeypatch.setattr(subscription, "_KEYCHAIN_CACHE", None)
     monkeypatch.setattr(subscription, "DEFAULT_CREDENTIALS_PATH", path)
     monkeypatch.setattr(subscription, "sys", SimpleNamespace(platform="darwin"))
-    # TASK-42477: the Keychain is read only under the account's own HOME.
-    monkeypatch.setattr(subscription, "_home_is_account_home", lambda: True)
     entered = threading.Event()
     release = threading.Event()
     readers = []
@@ -253,6 +251,10 @@ async def test_streaming_control_responds_and_readiness_refreshes_after_slow_rea
 
     monkeypatch.setattr(Path, "read_text", gated_file)
     monkeypatch.setattr(subscription.subprocess, "run", security)
+    # TASK-42477: the Keychain is read only under the account's own HOME. Set
+    # after the fake `run`, so monkeypatch's reverse undo never leaves the real
+    # `run` in place while this says "home".
+    monkeypatch.setattr(subscription, "_home_is_account_home", lambda: True)
     app = ModalHarness()
     app.app_config = {
         "api_settings": {"anthropic": {"auth_source": "claude_subscription"}}

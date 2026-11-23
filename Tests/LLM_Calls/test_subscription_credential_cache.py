@@ -15,8 +15,6 @@ from tldw_chatbook.LLM_Calls import anthropic_subscription as subscription
 def keychain(monkeypatch):
     monkeypatch.setattr(subscription, "sys", SimpleNamespace(platform="darwin"))
     monkeypatch.setattr(subscription, "_KEYCHAIN_CACHE", None)
-    # TASK-42477: the Keychain is read only under the account's own HOME.
-    monkeypatch.setattr(subscription, "_home_is_account_home", lambda: True)
 
 
 def test_timeout_is_cached_from_completion_and_retried_after_ttl(keychain, monkeypatch):
@@ -34,6 +32,10 @@ def test_timeout_is_cached_from_completion_and_retried_after_ttl(keychain, monke
         raise subprocess.TimeoutExpired(command, kwargs["timeout"])
 
     monkeypatch.setattr(subscription.subprocess, "run", timeout)
+    # TASK-42477: the Keychain is read only under the account's own HOME. Set
+    # after the fake `run`, so monkeypatch's reverse undo never leaves the real
+    # `run` in place while this says "home".
+    monkeypatch.setattr(subscription, "_home_is_account_home", lambda: True)
     assert subscription._keychain_credential_raw() is None
     now[0] += 4.9
     assert subscription._keychain_credential_raw() is None
@@ -60,6 +62,10 @@ def test_concurrent_keychain_reads_share_one_process(keychain, monkeypatch):
         return subscription._keychain_credential_raw()
 
     monkeypatch.setattr(subscription.subprocess, "run", read)
+    # TASK-42477: the Keychain is read only under the account's own HOME. Set
+    # after the fake `run`, so monkeypatch's reverse undo never leaves the real
+    # `run` in place while this says "home".
+    monkeypatch.setattr(subscription, "_home_is_account_home", lambda: True)
     with ThreadPoolExecutor(max_workers=8) as pool:
         futures = [pool.submit(concurrent_read) for _ in range(8)]
         try:

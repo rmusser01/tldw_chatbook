@@ -304,10 +304,11 @@ def _parse_oauth_json(
 def _home_is_account_home() -> bool:
     """Whether HOME is the login account's own home, not a moved profile.
 
-    The Keychain belongs to the login account and ignores HOME. A process whose
-    HOME was moved (the test suite's sandbox, a scratch profile) would still
-    read the real account's token, so the Keychain is read only here
-    (TASK-42477). The credential file already follows HOME.
+    Moving HOME does not stop ``security`` from querying the real OS Keychain
+    service. TASK-42477 measured the test sandbox and a scratch profile
+    spawning it with a moved HOME; what it returns there (the token, nothing,
+    a block or a prompt) was not established. So the Keychain is read only
+    here. The credential file already follows HOME.
 
     Returns:
         ``True`` only when HOME and the password database's home are the same
@@ -327,8 +328,8 @@ def _keychain_credential_raw() -> str | None:
     Read-only: shells out to ``security find-generic-password -w``. Any failure
     (non-macOS, item absent, ``security`` unavailable) yields ``None`` so the
     caller falls through to today's no-credential behavior (AC#6). So does a
-    moved HOME (``_home_is_account_home``): a sandboxed profile never borrows
-    the real account's credential.
+    moved HOME (``_home_is_account_home``): a sandboxed profile never queries
+    the real Keychain.
 
     Returns:
         The raw JSON string stored under ``KEYCHAIN_SERVICE``, or ``None``.
