@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-12 19:36
-updated_date: '2026-11-15 19:40'
+updated_date: '2026-11-23 07:09'
 labels:
 - follow-up
 - tests
@@ -161,3 +161,5 @@ Close this task when those land and the lanes' first CI runs are read.
 Still open:
 - AC#2: the stock skill-trust `[send_enter]` / `[send_button]` cases stay red; TASK-34563.35 implements that behaviour.
 - AC#1's CI half: no CI run of these lanes has finished. The round-14 PR runs that carry them (for example fu/r14-testinfra, 43698643389 and 43742729513) are still queued, and the last completed derived-artifacts run that was not cancelled is dev ecad404bd4 (2026-11-15 00:58Z), from before the lanes landed.
+
+- 2026-11-23 (round-22 filing): `Tests/Wizards/test_first_run_subscription_readiness.py::test_late_credential_completion_does_not_repaint_inactive_step[hide]` failed once with TimeoutError in recovered-suites (run 45079706962, job 137389095024, fu/r21-catlanes, 2026-11-23 00:33Z); the 11 later runs passed.

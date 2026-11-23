@@ -5,6 +5,7 @@ title: >-
   under host load
 status: To Do
 assignee: []
+updated_date: '2026-11-23 06:38'
 created_date: '2026-09-08 22:42'
 labels:
   - tests
@@ -49,3 +50,11 @@ moved between runs on the identical tree:
 All three of the first group pass in isolation on the branch
 (`3 passed` in one run), which is AC#2's disagreement in its cleanest form:
 same file, same tree, three runs, three different failing-name sets.
+
+2026-11-23 (round-22 filing): TASK-42422's covering runs found
+`test_library_prompt_pager_first_and_filter_failure_states[size1]` failing on a
+compositor geometry check, not on focus: 5 of 10 runs on its branch and 4 of 10
+with 3c2b0313d4's `library_screen.py`. The `[size0]` case is already in the
+moving list above. Only one node of this file
+(`test_type_filter_survives_its_canvas_being_replaced_mid_recompose`) is in the UI
+census, so these flakes report nowhere.

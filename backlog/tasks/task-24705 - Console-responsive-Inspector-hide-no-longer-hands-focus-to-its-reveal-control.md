@@ -5,6 +5,7 @@ title: >-
   control
 status: To Do
 assignee: []
+updated_date: '2026-11-23 06:38'
 created_date: '2026-08-30'
 labels:
   - console
@@ -91,3 +92,11 @@ separately rather than folding in here:
   without_resuming`
 - `test_console_right_rail.py::test_authority_focus_f1_preserves_literal_
   rich_markup`
+
+2026-11-23 (round-22 filing): still red. TASK-42415's covering runs, under a temporary
+`bootstrap_profile` mark (the file otherwise fails every case locally on the
+`RecoveryRequired` trap), found this test and
+`test_staged_owner_sync_drives_ten_eleven_ten_cue_and_clamp` timing out every
+time at plain dev 2f7790873a. The file still runs in no PR lane. TASK-42462 now
+covers the file's other reds (that one included) and its lane; this node stays
+here.
