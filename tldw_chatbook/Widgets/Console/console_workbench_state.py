@@ -206,7 +206,10 @@ def build_console_workbench_state(
                     if compaction_pause_expected and readiness_word and not blocker
                     else compaction_forecast_note
                     if compaction_forecast_note and readiness_word and not blocker
-                    # Owner decision 2026-11-23: narrow widths get a short word.
+                    # Owner decision 2026-11-23: narrow widths get a short word,
+                    # a definite pause too (review 2026-11-23).
+                    else COMPACTION_BADGE_SHORT[COMPACTION_PAUSE_FORECAST_COPY]
+                    if compaction_pause_expected and not blocker
                     else COMPACTION_BADGE_SHORT.get(compaction_forecast_note, "")
                     if compaction_forecast_note and not blocker
                     else readiness_word

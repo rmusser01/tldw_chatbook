@@ -76,6 +76,7 @@ COMPACTION_MAY_NOT_FIT_COPY = "Next send may not fit"
 #: Owner decision 2026-11-23 ("short badge word"): the header badge below the
 #: single-pane width, where the long words do not fit.
 COMPACTION_BADGE_SHORT = {
+    COMPACTION_PAUSE_FORECAST_COPY: "Pauses",
     COMPACTION_MAY_PAUSE_COPY: "May pause",
     COMPACTION_MAY_NOT_FIT_COPY: "May not fit",
     COMPACTION_CANNOT_FIT_COPY: "Blocked",

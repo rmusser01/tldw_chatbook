@@ -1542,8 +1542,17 @@ def test_the_header_badge_says_the_next_send_pauses() -> None:
     assert badge(compaction_pause_expected=True, blocked_turn="compaction ask") == (
         "Blocked"
     )
-    # Single-pane widths drop the readiness word because it overruns the row.
-    assert badge(compaction_pause_expected=True, readiness_word="") == ""
+    # Review 2026-11-23 (blocking 2): single-pane widths pass no readiness
+    # word, and a definite pause read "Ready" there. It gets a short word too.
+    assert badge(compaction_pause_expected=True, readiness_word="") == "Pauses"
+    assert (
+        badge(
+            compaction_pause_expected=True,
+            readiness_word="",
+            provider_blocker_copy="Set up a provider",
+        )
+        != "Pauses"
+    )
 
 
 def test_both_compaction_run_lines_fit_the_inspect_rail_whole() -> None:

@@ -47,8 +47,8 @@ Top to bottom:
   below the trigger the badge keeps the readiness word. **Next send won't
   fit** says the system prompt, tools and attached context leave no room.
   Below 84 columns, where the word does not fit, the badge reads **Ready**,
-  **Blocked** (also when the next send won't fit), or a short **May pause**
-  or **May not fit**.
+  **Blocked** (also when the next send won't fit), or a short **Pauses**,
+  **May pause** or **May not fit**.
 - **Control bar** — one row of buttons: **New tab**, **Settings**, **⚓**
   (hook permissions), **Context rail**, **Search Library**, **Help**.
   (**Save as Chatbook** lives in the composer's **Menu** button, left of
