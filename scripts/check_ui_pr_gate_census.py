@@ -1321,7 +1321,10 @@ MINIMUM_FILES = 2520
 #   about 55-60 s whole, over the 30 s per-file budget, so its nine tests go
 #   in by node id at the tail (the route walk split four ways, about 7-10 s
 #   each): 2496 -> 2505.
-MINIMUM_FILES = 2505
+# - PR #3423 review r11n3 N3-1 (2026-11-22): that file's pin for a refused
+#   entry write (one Library boot, about 3 s) goes in by node id at the tail:
+#   2505 -> 2506.
+MINIMUM_FILES = 2506
 
 
 MINIMUM_FILES = 2038

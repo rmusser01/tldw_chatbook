@@ -742,14 +742,34 @@ async def test_f1_closing_over_an_unfocused_list_lands_its_entry(
             )
             await pilot.pause()
             await _clear_focus(screen, pilot)
+            arms: list[object] = []
+            arm = screen._arm_library_list_entry_focus
+
+            def counted_arm(*args, **kwargs):
+                arms.append(args)
+                return arm(*args, **kwargs)
+
+            monkeypatch.setattr(screen, "_arm_library_list_entry_focus", counted_arm)
             await _f1_shortcuts(host, screen, pilot)
+            await _until(
+                pilot,
+                lambda: arms or screen.focused is not None,
+                "the resume to arm the list entry or land",
+            )
+            # Review r11n3 N3-2: the resume took the list-entry branch, so a
+            # filter landing below is its re-check after the window, never a
+            # last resort standing in for a missing branch.
+            assert arms, f"no list-entry arm; focus {screen.focused!r}"
             await _until(
                 pilot,
                 lambda: screen.focused is not None
                 and (
                     screen.focused.id
                     in {"library-conversation-row-0", "library-conversations-filter"}
-                    or screen.focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)
+                    or (
+                        screen.focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)
+                        and getattr(screen.focused, "pane", None) == "items"
+                    )
                 ),
                 lambda: (
                     "F1's close to land the Conversations entry row, found "

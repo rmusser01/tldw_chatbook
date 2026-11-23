@@ -301,7 +301,7 @@ class LibraryNavigationController:
         # Marked like the list-entry channel's own landings: never user intent.
         screen._library_notes_programmatic_focus_target = target
         screen.set_focus(target, scroll_visible=False)
-        return True
+        return screen.focused is target  # r11n3 N3-1: refused onto a pruning widget
 
     def _land_files_authority(self) -> bool:
         """Folder files' own focus restore, marked as the app's (r11n2 N-4)."""
@@ -309,17 +309,17 @@ class LibraryNavigationController:
         if not screen._restore_library_notes_authority_focus("files"):
             return False
         screen._library_notes_programmatic_focus_target = screen.focused
-        return True
+        return screen.focused is not None  # r11n3 N3-1: its write can be refused
 
     def _land_content_focus_if_unfocused(self) -> None:
         """The last resort when nothing landed, for the resume and its re-check.
 
         In order: Folder files' own restore, or the route's entry control;
         then the route's OWN rail row, where a blind Enter re-selects the
-        route it is already on and keeps its state (review r11n2) -- except
-        over an open prompt or note, which that fresh-entry press closes
-        (probed: a clean prompt went editor -> list), so the open item's
-        name field lands instead; and only when neither is focusable (the
+        same route: a fresh entry, which can close a transient sub-view, but
+        never leaves the route (r11n2, r11n3 N3-4) -- except over an open
+        prompt or note, which that press closes (a clean prompt: editor ->
+        list), so its name field lands instead; only when neither lands (the
         hub has no row; at narrow widths a reader hides the rail), the first
         control under ``#screen-content`` -- rail chrome when the rail shows,
         and Textual's first focusable (the nav bar) when nothing there is.

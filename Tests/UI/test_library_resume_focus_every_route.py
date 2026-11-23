@@ -242,6 +242,45 @@ async def test_the_last_resort_over_an_open_prompt_lands_its_name_not_the_rail(
         profile.close()
 
 
+# --- an entry a recompose is removing (review r11n3 N3-1) -----------------
+
+
+async def test_the_last_resort_moves_past_an_entry_being_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refused write onto the route's entry is no landing; the row lands.
+
+    ``BaseAppScreen.set_focus`` refuses a write onto a widget a recompose is
+    removing (``_pruning``). The last resort reported that write as landed
+    and stopped, so focus stayed on None for good.
+    """
+    profile = _Profile(tmp_path, monkeypatch)
+    host = profile.host()
+    try:
+        async with host.run_test(size=SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await screen._select_library_rail_row("browse-conversations")
+            await _until(
+                pilot,
+                lambda: bool(screen.query("#library-conversations-filter")),
+                "the Conversations filter",
+            )
+            await pilot.pause()
+            screen._disarm_library_list_entry_focus()
+            await _clear_focus(screen, pilot)
+            entry = screen.query_one("#library-conversations-filter")
+            entry._pruning = True  # what ``App._prune`` marks while removing it
+            try:
+                screen._navigation_controller._land_content_focus_if_unfocused()
+            finally:
+                entry._pruning = False
+            landed = _focused_id(screen)
+            assert landed == "library-row-browse-conversations", landed
+    finally:
+        profile.close()
+
+
 # --- the copied entry table, and every route ------------------------------
 
 
@@ -418,7 +457,13 @@ async def _walk_routes(tmp_path, monkeypatch, group: int) -> list[str]:
                 )
                 in_rail = rail is not None and rail in focused.ancestors_with_self
                 own_row = widget_id == f"library-row-{row}"
-                grip = focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)
+                # Review r11n3 N3-3: only a list's Items-pane grip (the round-2
+                # reload race); the Library ("Nav") pane grip is rail chrome.
+                grip = (
+                    focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)
+                    and getattr(focused, "pane", None) == "items"
+                    and row in library_navigation_controller._LIST_ENTRY_ROWS
+                )
                 name = row or "(hub)"
                 if not in_content:
                     misses.append(f"{name}: {widget_id!r} is outside Library")
