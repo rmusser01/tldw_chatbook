@@ -198,7 +198,9 @@ def absent_strict_roots(entries):
 
     TASK-34100.16.1 review v5r2: an absent root keeps refusing unless an
     enrolled directory already owns it (``effective_roots``). Naming these is
-    the only actionable part of that refusal; the result grants nothing.
+    the only actionable part of that refusal; the result grants nothing. A
+    deleted file root (``deleted_file_roots``, TASK-42115) refuses nothing, so
+    it is not named.
 
     Args:
         entries: Registry entry mappings, as ``bootstrap._registry`` returns.
@@ -210,10 +212,11 @@ def absent_strict_roots(entries):
     declared = tuple(
         dict.fromkeys(Path(root) for entry in entries for root in entry["roots"])
     )
+    deleted = deleted_file_roots(declared, entries)
     return tuple(
         root
         for root in effective_roots(declared, entries)
-        if not os.path.lexists(root)
+        if not os.path.lexists(root) and root not in deleted
     )
 
 
