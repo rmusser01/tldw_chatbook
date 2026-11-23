@@ -1362,12 +1362,15 @@ class TrajectoryScreen(ModalScreen[None]):
             len(self._matching_records()),
             self._total_records,
         )
-        if generation is not None:
-            self._loading = False
-            if self._retry_target == "render":
-                self._failure = None
-                self._retry_target = None
-                self._retry_in_flight = False
+        # Any render that lands has built the ledger, so a synchronous one (a
+        # key or a search while the first build runs in a worker) ends the
+        # load too; that worker's older build is then dropped as stale. (A
+        # retry in flight still reads RETRYING: that label comes first.)
+        self._loading = False
+        if generation is not None and self._retry_target == "render":
+            self._failure = None
+            self._retry_target = None
+            self._retry_in_flight = False
         self._refresh_state()
         if self.query_one("#trajectory-inspector", VerticalScroll).display:
             self._refresh_inspector()

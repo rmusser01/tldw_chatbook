@@ -534,8 +534,8 @@ async def test_navigating_while_a_live_trace_loads_keeps_the_cursor_in_view(
     """A key press that renders the ledger before the worker's render lands.
 
     That render is the first one, but the reader picked a row: the Trace
-    must show it, not open at the tail with the cursor off screen
-    (TASK-42414 review).
+    must show it, not open at the tail with the cursor off screen, and the
+    render ends the load (TASK-42414 review).
     """
 
     async def until(condition):
@@ -572,7 +572,12 @@ async def test_navigating_while_a_live_trace_loads_keeps_the_cursor_in_view(
             await until(lambda: table.row_count > 0)
         finally:
             release.set()
+        # The worker's build lands last (and is dropped as stale), so by then
+        # the load must be over: its LOADING label once stayed up for good.
         await until(lambda: worker_done.is_set() and not screen._scrolls_pending)
+        state_line = str(screen.query_one("#trajectory-state", Static).render())
+        assert "LOADING" not in state_line, state_line
+        assert screen._loading is False
 
         top = int(table.scroll_y)
         height = table.scrollable_content_region.height

@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-22 21:17
-updated_date: 2026-11-23 03:15
+updated_date: 2026-11-23 03:34
 labels:
 - follow-up
 - ci
@@ -50,6 +50,7 @@ Found during round 21 of the follow-up burn-down (2026-11-22). Checked on the ro
 6. Soak the file 20 times at -n 4 and 5 times serially with the UI lane flags; run covering tests, preflight, ruff F and the size ratchets; notes, ACs, Done.
 7. Added after review (coordinator decision): open a live Trace at the tail with follow engaged, and keep a paused reader's rows across a live rebuild, each with a test red at base; then repeat step 6.
 8. Review rev1 (coordinator decision, fix every finding): navigation during loading must not open at the tail; keep the reader's row through same-frame re-renders and a sliding page; record the known gap; then repeat step 6.
+9. Coordinator decision: a render that lands while the first worker build runs must end the LOADING state; then repeat step 6.
 
 ## Implementation Notes
 
@@ -93,7 +94,11 @@ Found during round 21 of the follow-up burn-down (2026-11-22). Checked on the ro
     - `test_a_paused_reader_on_the_oldest_rows_keeps_them[earlier-row-at-top|oldest-record-at-top]`, three rebuilds each: both red at 4483cbb4db (u10 → u11 on the first rebuild), green after.
     - Red in both cases with only the cursor row kept in the window; red in `earlier-row-at-top` with "Earlier events" used as the anchor.
   - **Known gap (not fixed).** A reader scroll that arrives while one of the screen's own deferred scrolls is in flight (one or two refresh hops after a live rebuild, an `f` or the open) is overridden when that scroll lands. The same window also delays the follow check for that scroll to the next poll tick. Closing it needs reader-input events from the DataTable (wheel, keys, scrollbar) rather than its scroll position. The User Guide no longer claims a scroll is kept "even when an update was already loading"; it says a scroll made at the very moment an update is drawn can be undone by it.
-  - **Found, not fixed (proposed to the coordinator).** Navigating or searching while a Trace over 1000 records is still building its ledger leaves the state line on "LOADING · Building trace ledger…" for good. The synchronous render never clears `_loading`, and the worker's later render is dropped as stale. A probe showed this at plain dev and at 4483cbb4db.
+  - **LOADING stuck after a render during loading** (found here; fixed on the coordinator's call). Navigating or searching while a Trace over 1000 records is still building its ledger left the state line on "LOADING · Building trace ledger…" for good. The synchronous render never cleared `_loading`, and the worker's later build is dropped as stale. A probe showed this at plain dev and at 4483cbb4db.
+    - Any render that lands now clears `_loading`, because it has built the ledger. The worker's older build stays dropped: the synchronous render already reflects the current snapshot, window and filters, so nothing in the stale build is still wanted.
+    - A retry in flight still reads RETRYING, since that label comes first, so clearing the flag during a live retry changes nothing visible. I removed a guard that only made that case explicit.
+    - The navigation test now waits for the worker to finish, then asserts no LOADING in the state line and `_loading` False. It was red 2 of 2 at 9393084fa5 (`LIVE · FOLLOWING · LOADING · Building trace ledger… · 1200 events`) and is green after.
+    - Its wait ends on the worker rather than on `_loading` alone, because `_loading` now clears at the synchronous render. A wait on it would end before the late, dropped build could be shown harmless.
 - **Tests (`Tests/UI/test_trajectory_live.py`, a whole-file census entry; no census edit).**
   - `test_scrolling_up_suspends_follow_until_f_resumes` waits on the table's geometry with a deadline (existing `wait_for_condition` fixture, 10 s / 10 ms) and keeps every follow and position assertion. Its own `scroll_end` is `immediate=True`.
     - A deferred one failed 3 of 25 soak runs, plus 2 of 12 in a hunt, at the "new records" check (`assert True is False`).
@@ -109,15 +114,16 @@ Found during round 21 of the follow-up burn-down (2026-11-22). Checked on the ro
 - **Siblings.**
   - I scanned the 84 failed Derived Artifacts runs from 2026-11-20 03:35Z to 2026-11-22 18:09Z (156 failed UI jobs in 71 runs). This node failed in 29 of those jobs, and no other Trace or trajectory node failed.
   - `test_trace_responsive.py`'s inspector `end` checks have a one-pause shape, but they assert `max_scroll_y > 0` first and never failed, so I left them unedited.
-- **Soak of the final file** (23 tests; load is on 18 CPUs).
-  - -n 4, 20 runs: 20/20, load 30-43.
-  - Serial with `-p no:xdist --timeout=180`, 5 runs: 5/5, 17-26 s per file at load 41-44. The 600-turn navigation test and the 260-turn tests roughly doubled the file's serial time; an earlier 18-test soak took 7.1-8.5 s at load ~30.
+- **Soak of the final file** (23 tests, with the LOADING fix; load is on 18 CPUs).
+  - -n 4, 20 runs: 20/20, load 33-37.
+  - Serial with `-p no:xdist --timeout=180`, 5 runs: 5/5, 10.8-16.7 s per file at load 34-39. The 600-turn navigation test and the 260-turn tests added several seconds; an earlier 18-test soak took 7.1-8.5 s at load ~30.
+  - Rev1 tree, before the LOADING fix: 20/20 at -n 4 (load 30-43), and 5/5 serial (17-26 s at load 41-44).
   - Before rev1 (18 tests): 20/20 at -n 4 (load 29-37), two concurrent loops of 10 runs 20/20 (load 26-32), and 5/5 serial.
 - **Checks.**
-  - Covering Trace, trajectory, modal and Console-trace files, final tree: 466 passed, 13 failed. Twelve of the 13 fail the same way at plain dev:
+  - Covering Trace, trajectory, modal and Console-trace files, final tree: 467 passed, 12 failed. All 12 fail the same way at plain dev:
     - the 3 no-lane Trace nodes (`test_trace_filters_navigation::test_live_insertion_before_selection_preserves_event_id_filters_and_viewport`, and `test_trajectory_timeline_integration`'s `test_click_outside_active_brush_atomically_clears_time_and_selects` and `test_timeline_renders_bars_for_timed_snapshot`);
     - 9 nodes in `test_console_tab_switch_binds_composer.py`, which stubs `open_trajectory_view`. It is the same failing set with the dev screen file.
-    - The 13th, `test_trace_responsive.py::test_long_inspector_is_focusable_scrolls_to_painted_bottom_and_full_pane`, failed once at load 47 (`'▼ more — scroll' in ''` at :225) and passed 4 of 4 serially. Repeated 32 times at -n 4: 1 and 0 failures with the dev screen file, 2 and 0 with the final one. It is a pre-existing flake in the inspector overflow cue, which code this task does not touch; I proposed it as a follow-up.
+    - In the rev1 run a 13th node, `test_trace_responsive.py::test_long_inspector_is_focusable_scrolls_to_painted_bottom_and_full_pane`, failed once at load 47 (`'▼ more — scroll' in ''` at :225) and passed 4 of 4 serially. Repeated 32 times at -n 4: 1 and 0 failures with the dev screen file, 2 and 0 with the final one. It is a pre-existing flake in the inspector overflow cue, which code this task does not touch; I proposed it as a follow-up.
   - Architecture size, timer-path and modal ratchets, run serially: 267 passed.
   - `ruff --select F` on the touched files, `Tests/lint/ruff_gate.py` and preflight: all pass.
 - **Docs.**
