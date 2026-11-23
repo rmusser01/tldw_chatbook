@@ -1,11 +1,11 @@
 ---
 id: TASK-42426
 title: "Console runtime dispose refuses sqlite_retirement_incomplete:AgentRuns in two stock skill-trust cases and fails the recovered-suites lane"
-status: Done
+status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-22 22:10
-updated_date: 2026-11-23 03:55
+updated_date: 2026-11-23 04:16
 labels:
 - follow-up
 - ci
@@ -46,6 +46,7 @@ Both cases pass locally at the base.
 - [x] #1 The holder of the AgentRuns connection when these disposes refuse is identified and recorded in the notes
 - [x] #2 If the holder found in AC#1 has an owner that can settle it, it is settled before the dispose, so retirement succeeds, shown with a test that fails before the change (a temporary delay in the holder, reverted). If the refusal is correct for that holder (genuinely foreign or unsettled, as ADR-225 requires), the test settles the holder itself or asserts the refusal; the notes say which
 - [x] #3 Both cases pass, as AC#2 leaves them, in repeated runs of the file under parallel load (at least 20 runs, or a soak recorded in the notes)
+- [ ] #4 Once a Console view's runtime has begun disposing, a render of that view starts no new AgentRuns read (sub-agent badge count or run history) and keeps showing the values it already has; a test shows a render after dispose starts schedules no read, red without the guard and green with it
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -55,6 +56,7 @@ Both cases pass locally at the base.
 3. Record the holder in the notes, then follow AC#2's branch: if the holder has an owner that can settle it before dispose, make that owner settle it (test red with a temporary delay in the holder, green after); if the refusal is correct for that holder under ADR-225, make the test settle the holder itself or assert the refusal. No foreign close, larger grace or suppression.
 4. Soak both cases (at least 20 runs of the file's two cases under parallel load), then run the recovered-suites step once with its CI flags.
 5. Preflight, ruff F, size ratchets for touched modules; notes, ACs, Done.
+6. Review follow-up (AC#4): guard the view's two AgentRuns readers (`_console_subagent_counts_for_rows`, `_presentation_historical_snapshot`) on the runtime's dispose latch, keep the test-side wait for reads already in flight, add a render-after-dispose test in a lane-run file (red without the guard, green with it), fix the TASK-42412 comparison in the notes, add a testing-evidence lesson, sweep other direct `runtime.dispose()` callers, then soak, run the lane, preflight, ratchets and ruff F.
 
 ## Implementation Notes
 
