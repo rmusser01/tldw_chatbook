@@ -829,10 +829,15 @@ def _assert_surviving_creation_is_live(controller, pending):
 
 
 async def _arm_pending_round(
-    controller, kind: str, session_id: str, *, surviving_child=False
+    pilot, controller, kind: str, session_id: str, *, surviving_child=False
 ):
-    """Arm a real blocking round without executing the proposed tool."""
+    """Arm a real blocking round without executing the proposed tool.
 
+    Every arm first waits for an answerable view (TASK-42481), so no journey
+    can arm a round its arm-time liveness check would fail closed.
+    """
+
+    await _await_answerable_view(pilot, controller)
     actor = None
     if kind == "chat_create":
         if surviving_child:
@@ -975,8 +980,9 @@ async def _verify_background_pending_close_names_consequences_and_cancels_only_i
                 if kind == "chat_create":
                     controller._active_assistant_message_ids[doomed.id] = assistant.id
                 notes = _record_notifications(app)
-                await _await_answerable_view(pilot, controller)
-                round_task = await _arm_pending_round(controller, kind, doomed.id)
+                round_task = await _arm_pending_round(
+                    pilot, controller, kind, doomed.id
+                )
 
                 async def waiting_run(
                     controller=controller,
@@ -1113,10 +1119,15 @@ async def _verify_background_pending_close_releases_round_without_an_active_turn
                 doomed = controller.new_session(title="Pending decision")
                 controller.switch_session(keeper)
                 notes = _record_notifications(app)
-                await _await_answerable_view(pilot, controller)
-                sibling = await _arm_pending_round(controller, "question", keeper)
+                sibling = await _arm_pending_round(
+                    pilot, controller, "question", keeper
+                )
                 pending = await _arm_pending_round(
-                    controller, kind, doomed.id, surviving_child=kind == "chat_create"
+                    pilot,
+                    controller,
+                    kind,
+                    doomed.id,
+                    surviving_child=kind == "chat_create",
                 )
                 try:
                     read_ids = (
@@ -1237,7 +1248,7 @@ async def _verify_chat_create_enrichment_cannot_arm_after_its_session_closes(
                 controller, "_enrich_chat_create_confirm_payload", paused_enrichment
             )
             pending = await _arm_pending_round(
-                controller, "chat_create", doomed.id, surviving_child=True
+                pilot, controller, "chat_create", doomed.id, surviving_child=True
             )
             try:
                 assert await _settle(pilot, entered.is_set)
