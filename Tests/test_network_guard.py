@@ -860,13 +860,21 @@ def test_no_test_or_default_config_turns_on_the_keychain_opt_in() -> None:
     from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
 
     here = Path(__file__).resolve()
+
+    def names_opt_in(path: Path) -> bool:
+        # A parallel test may delete a file under Tests/ mid-scan.
+        try:
+            return _OPT_IN.encode() in path.read_bytes()
+        except (FileNotFoundError, IsADirectoryError):
+            return False
+
     named = sorted(
         str(path.relative_to(_REPO_ROOT))
         for path in (_REPO_ROOT / "Tests").rglob("*")
         if path.is_file()
         and "__pycache__" not in path.parts
         and path.resolve() != here
-        and _OPT_IN.encode() in path.read_bytes()
+        and names_opt_in(path)
     )
 
     assert named == []

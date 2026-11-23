@@ -343,7 +343,7 @@ def _moved_home_keychain_allowed() -> bool:
     together with the saved ``auth_source = "claude_subscription"`` does. It
     is read through ``load_settings``; a config that cannot be read counts as
     off. A value that is not a boolean (``"true"``, ``1``) is off too, and is
-    warned about once per value, naming only its type.
+    warned about once each time the value changes, naming only its type.
 
     Returns:
         ``True`` only for that explicit opt-in.
