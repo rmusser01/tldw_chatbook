@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-22 21:17
-updated_date: 2026-11-23 01:42
+updated_date: 2026-11-23 02:27
 labels:
 - follow-up
 - ci
@@ -48,26 +48,63 @@ Found during round 21 of the follow-up burn-down (2026-11-22). Checked on the ro
 4. Show the old test red at :263 and the new one green under each temporary delay; show the new product test red with the fix's re-read removed.
 5. Siblings: grep the trajectory and trace tests for one-pause scroll reads and fix those with the same cause.
 6. Soak the file 20 times at -n 4 and 5 times serially with the UI lane flags; run covering tests, preflight, ruff F and the size ratchets; notes, ACs, Done.
+7. Added after review (coordinator decision): open a live Trace at the tail with follow engaged, and keep a paused reader's rows across a live rebuild, each with a test red at base; then repeat step 6.
 
 ## Implementation Notes
 
-**Verdict: both.** The CI red is test timing (a). A separate product race (b) also exists, and the old test could not see it. Both are fixed.
+**Verdict: both.** The CI red is test timing (a). A separate product race (b) also exists, and the old test could not see it. Both are fixed. On the coordinator's call, two more user-facing defects on the same screen are fixed in this branch (see "Follow-ups fixed here").
 
-- **(a) Test timing.** CI run 44973100546, job 137058700280 (UI Fast Lane (39)): `test_trajectory_live.py:263 assert True is False`, call time 0.24 s. No live rebuild can have run by line 263, because the revision has not changed since mount. The only queued `scroll_end` was the test's own, and it lands in FIFO order before the reader's `scroll_to(y=0)`. So one `pilot.pause()` returned before the reader's deferred scroll landed, or before the table had laid out its rows (`max_scroll_y` 0, so the sync returns early). The log cannot tell which of the two happened. Two temporary edits (both reverted) each turn the old test red at :263, 3 of 3 runs: one delays the reader's `y=0` scroll by 0.3 s in the table's `_scroll_to`; the other delays the ledger's first render by 0.4 s. The new test passes 3 of 3 under each. The old test is still red at :263 under the scroll delay with the product fix in place (2 of 2), so the test is a cause on its own.
-- **(b) Product race.** A probe at base held a live rebuild that a tick had started at the tail, scrolled the reader to y=0, then released it. The rebuild snapped the reader back to the tail (`scroll_y` 160 of 160, follow still on). `_apply_live_snapshot` used the follow flag sampled by the tick before the worker ran, and then queued `scroll_end`. The old test's "new records" step waited on `row_count > 123`, which the 180-row ledger already met. It therefore checked the position before the rebuild landed.
+- **(a) Test timing.**
+  - CI run 44973100546, job 137058700280 (UI Fast Lane (39)): `test_trajectory_live.py:263 assert True is False`, call time 0.24 s.
+  - No live rebuild can have run by :263, because the revision has not changed since mount.
+  - `Widget.scroll_end` is deferred (`call_after_refresh`). `DataTable.scroll_to` (a `ScrollView` override) applies at once.
+  - So either the table had not laid out its rows (`max_scroll_y` 0, and the sync returns early), or the one pause after the test's own `scroll_end` was too short. In the second case the reader's `scroll_to(y=0)` applied first, and the stale tail scroll landed in the next pause, before the check. The log cannot tell which.
+  - Controls (temporary edits, reverted):
+    - Ledger's first render delayed 0.4 s: old test red at :263, 3 of 3.
+    - Test's tail scroll held until the reader's scroll, then released: old test red at :263, 3 of 3 with both the dev and the final screen file. The new file passes 3 of 3 under the same hold.
+    - A first control delayed the reader's `y=0` scroll instead. It gave the same red, but a DataTable cannot delay that scroll; I kept the hold control as the faithful one.
+    - A plain 30 ms delay on every deferred table callback moved the landing past the check, and the old test passed 3 of 3.
+- **(b) Product race.**
+  - A probe at base held a live rebuild that a tick had started at the tail, scrolled the reader to y=0, then released it. The rebuild snapped the reader back to the tail (`scroll_y` 160 of 160, follow still on).
+  - `_apply_live_snapshot` used the follow flag sampled by the tick before the worker ran, and then queued `scroll_end`.
+  - The old test's "new records" step waited on `row_count > 123`, which the 180-row ledger already met, so it checked before the rebuild landed.
 - **Product fix (`UI/Screens/trajectory_screen.py`).**
   - `_apply_live_snapshot` re-reads follow from the scroll position before its re-render resets the scroll.
-  - Tail scrolls now go through `_queue_tail_scroll`, used by both live follow and `f`. It counts each scroll until `scroll_end`'s `on_complete` reports that it landed.
-  - `_sync_follow_from_scroll` skips while a tail scroll is pending, so the top-of-table position a re-render leaves behind is never read as the reader scrolling up.
-  - This count replaces `f`'s 1 s wall-clock grace and the `time` import. A renewed grace would not work: during streaming, each rebuild would renew it, and follow could never be suspended.
-- **Tests (`Tests/UI/test_trajectory_live.py`, already a whole-file census entry; no census edit).**
-  - `test_scrolling_up_suspends_follow_until_f_resumes` now waits on the table's geometry with a deadline, using the existing `wait_for_condition` fixture at 10 s / 10 ms: overflow, tail, the reader's scroll, the rebuild's 183 rows with no tail scroll in flight, and `f`'s tail. Every follow and position assertion is kept.
-  - New `test_a_reader_scroll_during_a_live_rebuild_is_not_snapped_back`: red 3 of 3 with the fix's re-read removed (`assert 160 == 0`), green with it.
-  - New `test_back_to_back_live_rebuilds_keep_following_the_tail`: red 3 of 3 with the pending-scroll skip removed (`_follow` False at :367), green with it.
-- **Siblings.** I scanned the 84 failed Derived Artifacts runs from 2026-11-20 03:35Z to 2026-11-22 18:09Z (156 failed UI jobs in 71 runs). This node failed in 29 of those jobs, and no other Trace or trajectory node failed. `test_trace_responsive.py`'s inspector `end` checks have the same one-pause shape, but they assert `max_scroll_y > 0` first and never failed, so I left them unedited. The file's other 12 tests are unedited.
-- **Soak.** The whole file at -n 4, 20 runs: 20/20, 15 passed each, load 30-44 on 18 CPUs. Serial with `-p no:xdist --timeout=180`, 5 runs: 5/5, 6.3-8.7 s per run, load 33-40. The file's serial time under load ~33 is about 7.5 s, two tests more than before.
+  - Every scroll the screen queues goes through `_queue_ledger_scroll(row)`: the tail for live follow, `f` and the open, or a row for the paused restore. It counts each one in `_scrolls_pending` until the scroll's `on_complete` reports it landed.
+  - `_sync_follow_from_scroll` skips while a scroll is pending, so the top-of-table position a re-render leaves behind is never read as the reader scrolling.
+  - The count replaces `f`'s 1 s wall-clock grace and the `time` import. A grace renewed on every rebuild would have made follow impossible to suspend while streaming.
+- **Follow-ups fixed here (coordinator decision).**
+  - **Follow engaged on open.** A live Trace on an overflowing conversation opened at the top while showing FOLLOWING. The first tick then paused it (probe: follow True and y 0 at open, follow False 1.2 s later).
+    - Now its first ledger render puts the cursor on the newest row and queues the counted tail scroll. It opens where the label says, consistent with the User Guide paragraph ("follows new events while you are at the bottom").
+    - The cursor moves too, so the first key press does not jump back to the top.
+    - Test: red at plain dev, at the first commit and at the second (`assert False is True`, :269/:270). With only the cursor move removed it is red on `cursor_row` (0 vs 179).
+  - **Paused reader keeps their rows.** `DataTable.clear()` reset the scroll and only the cursor row came back, so a paused reader who had scrolled away from the cursor was thrown back to it on every rebuild (probe: y=40 → 0).
+    - The rebuild now scrolls back to the row the reader had at the top, by row key, because past 500 records the newest page slides and a raw offset shifts. A row that is gone keeps the old offset, which the table clamps.
+    - Test, parametrized `appended` / `newest-page-slides`: red at plain dev and at the first commit (`assert 0 == 40`, shown with a temporary copy that read the pending count with `getattr`). Red 3 of 3 with the restore removed. With a raw-offset restore, `newest-page-slides` is red (`turn:t24` where `turn:t23` was).
+- **Tests (`Tests/UI/test_trajectory_live.py`, a whole-file census entry; no census edit).**
+  - `test_scrolling_up_suspends_follow_until_f_resumes` waits on the table's geometry with a deadline (existing `wait_for_condition` fixture, 10 s / 10 ms) and keeps every follow and position assertion. Its own `scroll_end` is `immediate=True`.
+    - A deferred one failed 3 of 25 soak runs, plus 2 of 12 in a hunt, at the "new records" check (`assert True is False`).
+    - An instrumented probe showed the test's `scroll_end` landing 14 ms after the reader's `scroll_to(0)`. The rebuild then read the reader at the bottom.
+    - The snap-back and back-to-back tests got the same change.
+  - New tests:
+    - `test_a_live_trace_opens_on_its_newest_events_and_keeps_following`
+    - `test_a_reader_scroll_during_a_live_rebuild_is_not_snapped_back` (red 3 of 3 without the re-read, `assert 160 == 0`)
+    - `test_back_to_back_live_rebuilds_keep_following_the_tail` (red 3 of 3 without the pending skip)
+    - `test_a_paused_reader_keeps_their_place_across_a_live_rebuild[appended|newest-page-slides]`
+  - The file's other 12 tests are unedited.
+- **Siblings.**
+  - I scanned the 84 failed Derived Artifacts runs from 2026-11-20 03:35Z to 2026-11-22 18:09Z (156 failed UI jobs in 71 runs). This node failed in 29 of those jobs, and no other Trace or trajectory node failed.
+  - `test_trace_responsive.py`'s inspector `end` checks have a one-pause shape, but they assert `max_scroll_y > 0` first and never failed, so I left them unedited.
+- **Soak of the final file** (18 tests; load is on 18 CPUs).
+  - -n 4, 20 runs: 20/20, load 29-37.
+  - Two concurrent -n 4 loops of 10 runs: 20/20, load 26-32.
+  - Serial with `-p no:xdist --timeout=180`, 5 runs: 5/5, 7.1-8.5 s per file.
 - **Checks.**
-  - Covering Trace/trajectory/modal files: 404 passed, 3 failed. The same 3 fail identically with the base screen file. They are in no PR lane: `test_trace_filters_navigation::test_live_insertion_before_selection_preserves_event_id_filters_and_viewport`, and `test_trajectory_timeline_integration`'s `test_click_outside_active_brush_atomically_clears_time_and_selects` and `test_timeline_renders_bars_for_timed_snapshot`.
-  - Architecture size, timer-path and modal ratchets (serial): 267 passed.
+  - Covering Trace, trajectory, modal and Console-trace files: 462 passed, 12 failed. All 12 fail the same way at plain dev:
+    - the 3 no-lane Trace nodes (`test_trace_filters_navigation::test_live_insertion_before_selection_preserves_event_id_filters_and_viewport`, and `test_trajectory_timeline_integration`'s `test_click_outside_active_brush_atomically_clears_time_and_selects` and `test_timeline_renders_bars_for_timed_snapshot`);
+    - 9 nodes in `test_console_tab_switch_binds_composer.py`, which stubs `open_trajectory_view`. It is the same failing set with the dev screen file.
+  - Architecture size, timer-path and modal ratchets, run serially: 267 passed.
   - `ruff --select F` on the touched files, `Tests/lint/ruff_gate.py` and preflight: all pass.
-- **Docs.** `Docs/User_Guide/console/chat-basics.md` gains a paragraph on live Trace follow, pause and `f`.
+- **Docs.**
+  - `Docs/User_Guide/console/chat-basics.md`: a paragraph on live Trace. It opens on the newest events, follows while you are at the bottom, pauses and keeps your rows when you scroll up, and resumes with `f`.
+  - `backlog/docs/lessons-textual.md`: `scroll_to` is immediate on a DataTable while `scroll_end` is deferred.

@@ -246,6 +246,40 @@ async def test_live_revision_change_appends_rows_and_follows_tail():
         assert "follow" in str(screen.query_one("#trajectory-hints").render())
 
 
+async def test_a_live_trace_opens_on_its_newest_events_and_keeps_following(
+    wait_for_condition,
+):
+    """A live Trace that overflows opens at the tail with follow engaged.
+
+    It used to open at the top while its state line read FOLLOWING, then
+    pause itself on the first poll tick (TASK-42414).
+    """
+
+    async def until(condition):
+        await wait_for_condition(condition, timeout=10.0, interval=0.01)
+
+    state = {"revision": 3, "turns": 60}
+    builder = lambda: snapshot_with_turns(state["turns"])  # noqa: E731
+    app = TrajectoryHostApp(snapshot_with_turns(60), lambda: state["revision"], builder)
+    async with app.run_test():
+        screen = app.screen_instance
+        table = screen.query_one("#trajectory-table", DataTable)
+        await until(lambda: table.max_scroll_y > 0)
+        # It reaches the tail, or a poll tick pauses it at the top.
+        await until(lambda: table.scroll_y == table.max_scroll_y or not screen._follow)
+        assert screen._follow is True
+        assert table.scroll_y == table.max_scroll_y
+        # The cursor opens on the newest row too, so the first key press
+        # moves from where the reader is instead of jumping to the top.
+        assert table.cursor_row == table.row_count - 1
+
+        await until(lambda: not screen._scrolls_pending)
+        screen._sync_follow_from_scroll()  # what the next poll tick does
+        assert screen._follow is True
+        state_line = str(screen.query_one("#trajectory-state", Static).render())
+        assert "LIVE · FOLLOWING" in state_line
+
+
 async def test_scrolling_up_suspends_follow_until_f_resumes(wait_for_condition):
     # 60 turns overflow any pilot viewport, so scrolling is real. A scroll
     # lands a refresh or more after it is asked for, and a loaded runner can
@@ -260,8 +294,11 @@ async def test_scrolling_up_suspends_follow_until_f_resumes(wait_for_condition):
     async with app.run_test() as pilot:
         screen = app.screen_instance
         table = screen.query_one("#trajectory-table", DataTable)
-        await until(lambda: table.max_scroll_y > 0)
-        table.scroll_end(animate=False)
+        # The Trace opens by scrolling itself to the tail; let that land first.
+        await until(lambda: table.max_scroll_y > 0 and not screen._scrolls_pending)
+        # Immediate: a DataTable applies scroll_to at once, so a deferred
+        # scroll_end could land after the reader's scroll below.
+        table.scroll_end(animate=False, immediate=True)
         await until(lambda: table.scroll_y == table.max_scroll_y)
         screen._sync_follow_from_scroll()
         assert screen._follow is True
@@ -315,8 +352,8 @@ async def test_a_reader_scroll_during_a_live_rebuild_is_not_snapped_back(
         screen = app.screen_instance
         table = screen.query_one("#trajectory-table", DataTable)
         try:
-            await until(lambda: table.max_scroll_y > 0)
-            table.scroll_end(animate=False)
+            await until(lambda: table.max_scroll_y > 0 and not screen._scrolls_pending)
+            table.scroll_end(animate=False, immediate=True)
             await until(lambda: table.scroll_y == table.max_scroll_y)
 
             # A new turn lands; the tick sees the reader at the tail and
@@ -353,8 +390,8 @@ async def test_back_to_back_live_rebuilds_keep_following_the_tail(wait_for_condi
     async with app.run_test():
         screen = app.screen_instance
         table = screen.query_one("#trajectory-table", DataTable)
-        await until(lambda: table.max_scroll_y > 0)
-        table.scroll_end(animate=False)
+        await until(lambda: table.max_scroll_y > 0 and not screen._scrolls_pending)
+        table.scroll_end(animate=False, immediate=True)
         await until(lambda: table.scroll_y == table.max_scroll_y)
         screen._sync_follow_from_scroll()
         assert screen._follow is True

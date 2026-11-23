@@ -1275,6 +1275,12 @@ class TrajectoryScreen(ModalScreen[None]):
                 self._refresh_hints()
             return
         table = self.query_one("#trajectory-table", DataTable)
+        # A live Trace opens following, so it opens on its newest row.
+        opens_following = (
+            not self._ledger_rendered
+            and self._snapshot_builder is not None
+            and self._follow
+        )
         previous_key = self._pending_restore_key
         self._pending_restore_key = None
         if previous_key is None and self._visible_keys:
@@ -1301,7 +1307,7 @@ class TrajectoryScreen(ModalScreen[None]):
                 if record_key in self._row_records:
                     self._row_records[record_key] = rec
         if self._visible_keys:
-            index = 0
+            index = len(self._visible_keys) - 1 if opens_following else 0
             if previous_key is not None:
                 try:
                     index = self._visible_keys.index(previous_key)
@@ -1313,6 +1319,8 @@ class TrajectoryScreen(ModalScreen[None]):
                 logger.debug(
                     "Trajectory cursor restore skipped: {}", type(exc).__name__
                 )
+        if opens_following:
+            self._queue_ledger_scroll()
         self._refresh_hints()
         self._sync_timeline_selection()
         self._filter_bar.update_counts(

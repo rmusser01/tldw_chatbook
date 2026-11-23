@@ -1024,11 +1024,12 @@ Transcript:
 | u | Open retained review reports for this chat |
 | Esc | Clear the selection; with nothing selected, return to the composer |
 
-A live Trace follows new events while you are at the bottom of its ledger
-(its state line reads "LIVE · FOLLOWING"). Scroll up and it pauses
-("PAUSED · f resume") and leaves you where you are, even when an update was
-already loading as you scrolled. Press **f** to jump to the newest events and
-follow again.
+A live Trace opens on its newest events, with the selection on the last row,
+and follows new events while you are at the bottom of its ledger (its state
+line reads "LIVE · FOLLOWING"). Scroll up and it pauses ("PAUSED · f resume")
+and leaves you where you are, even when an update was already loading as you
+scrolled, and new events arriving while you read do not move the rows you are
+reading. Press **f** to jump to the newest events and follow again.
 
 ## Related settings & docs
 
