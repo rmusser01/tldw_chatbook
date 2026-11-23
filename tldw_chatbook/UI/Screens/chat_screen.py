@@ -7151,7 +7151,9 @@ class ChatScreen(BaseAppScreen):
         self._console_environment_poll_timer: Any | None = None
         self._console_credential_poll_timer: Any | None = None
         self._console_credential_snapshot: tuple[int, str | None, int] | None = None
-        self._console_credential_pre_gate: tuple[str, int, int] | None = None
+        self._console_credential_pre_gate: tuple[str | None, int, int] | None = None
+        # TASK-42478: the active chat's last readiness used the Claude subscription.
+        self._console_subscription_selected = False
         # The six Console controllers -- their construction and every
         # named dependency they take -- moved verbatim to
         # `Console_Modules/wiring.py` (wave-4 console decomposition,
@@ -8902,6 +8904,7 @@ class ChatScreen(BaseAppScreen):
             app_config=app_config,
             connection_evidence=shared_connection_evidence(lambda: self.app),
         )
+        self._console_subscription_selected = readiness.subscription_status is not None
         model_warning = self._console_model_capability_warning(
             effective_settings.provider,
             selected_model,
@@ -10618,7 +10621,10 @@ class ChatScreen(BaseAppScreen):
             shared_connection_evidence(lambda: self.app), "version", 0
         )
         pre_gate = (
-            subscription_credential_status(background=True),
+            # TASK-42478: only a chat on the Claude subscription reads it.
+            subscription_credential_status(background=True)
+            if self._console_subscription_selected
+            else None,
             subscription_readiness_revision(),
             version,
         )

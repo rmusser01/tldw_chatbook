@@ -356,7 +356,8 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-19: re-measured after rebasing onto dev a6df4d8d48 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24592/743 -> 24563/743.
     #: 2026-11-21: re-measured after rebasing onto dev f864f00762 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24563/743 -> 24532/741.
     #: 2026-11-21: re-measured after rebasing onto dev fe84affafc (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24532/741 -> 24537/741.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24537, 741),
+    #: 2026-11-23, TASK-42478 (same rule, exact growth): the credential poll reads the Claude credential only while the active chat's readiness uses the subscription: +6 lines, no methods (24537 -> 24543).
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24543, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

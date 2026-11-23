@@ -43,6 +43,7 @@ def _screen(monkeypatch, *, status="ready"):
     screen._console_attach_reconciled = True
     screen._console_credential_snapshot = None
     screen._console_credential_pre_gate = None
+    screen._console_subscription_selected = True  # A chat on the subscription.
     screen._console_derivation_scope = contextlib.nullcontext
     builds = []
     screen._active_console_settings_readiness = lambda: (

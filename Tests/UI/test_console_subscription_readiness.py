@@ -3,6 +3,7 @@
 import asyncio
 import json
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -70,6 +71,77 @@ def expiring_credential(monkeypatch, tmp_path):
     if cache._worker is not None:
         cache._worker.join(timeout=3)
         assert not cache._worker.is_alive()
+
+
+@pytest.fixture
+def credential_reads(monkeypatch, tmp_path):
+    """Count every Claude credential read (TASK-42478); nothing real is read or run.
+
+    A read opens the credential file first. The file is absent here, so each
+    read then asks the Keychain, through a fake ``run`` as on a Mac whose
+    Claude Code login lives there. ``reads()`` is (file reads, spawns), and
+    ``lapse()`` moves the snapshot past its TTL with no edit.
+    """
+    path = tmp_path / "credential.json"
+    cache = subscription._SubscriptionReadinessCache()
+    state = SimpleNamespace(files=[], spawns=[], monotonic=0.0)
+    monkeypatch.setattr(subscription, "_SUBSCRIPTION_READINESS_CACHE", cache)
+    monkeypatch.setattr(subscription, "_KEYCHAIN_CACHE", None)
+    monkeypatch.setattr(subscription, "DEFAULT_CREDENTIALS_PATH", path)
+    monkeypatch.setattr(subscription, "sys", SimpleNamespace(platform="darwin"))
+    monkeypatch.setattr(
+        subscription,
+        "time",
+        SimpleNamespace(time=time.time, monotonic=lambda: state.monotonic),
+    )
+    original_read = Path.read_text
+
+    def read_text(target, *args, **kwargs):
+        if target == path:
+            state.files.append(target)
+        return original_read(target, *args, **kwargs)
+
+    def security(command, **kwargs):
+        state.spawns.append(command[0])
+        return SimpleNamespace(returncode=44, stdout="")
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    monkeypatch.setattr(subscription.subprocess, "run", security)
+    # After the fake `run`, so monkeypatch's undo never leaves the real `run`
+    # in place while this says "home" (TASK-42477).
+    monkeypatch.setattr(subscription, "_home_is_account_home", lambda: True)
+    state.reads = lambda: (len(state.files), len(state.spawns))
+
+    def lapse():
+        state.monotonic += subscription._KEYCHAIN_TTL_S + 1
+
+    state.lapse = lapse
+    yield state
+    if cache._worker is not None:
+        cache._worker.join(timeout=3)
+        assert not cache._worker.is_alive()
+
+
+async def wait_for_reads(credential_reads, count):
+    """Wait until ``count`` credential reads have read the file and asked the Keychain."""
+    try:
+        async with asyncio.timeout(3):
+            while min(credential_reads.reads()) < count:
+                await asyncio.sleep(0.01)
+    except TimeoutError:
+        pytest.fail(f"expected {count} credential reads, saw {credential_reads.reads()}")
+
+
+async def assert_poll_reads_nothing(credential_reads, polled, reads=(0, 0)):
+    """Let the 0.25 s poll commit its gate (``polled``), run two more ticks, lapse the
+    snapshot and run three more; the read count must stay ``reads``."""
+    async with asyncio.timeout(10):
+        while polled() is None:
+            await asyncio.sleep(0.01)
+    await asyncio.sleep(0.6)
+    credential_reads.lapse()
+    await asyncio.sleep(0.8)
+    assert credential_reads.reads() == reads
 
 
 async def _wait_for_status(widget, text):
@@ -362,3 +434,49 @@ async def test_console_send_unblocks_when_background_credential_read_finishes(
         if cache._worker is not None:
             cache._worker.join(timeout=3)
             assert not cache._worker.is_alive()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("start", ["other-provider", "api-key"])
+@private_profile_test
+async def test_console_reads_the_credential_only_while_its_chat_uses_the_subscription(
+    credential_reads, start, request
+):
+    """TASK-42478: no read for another provider or an API key; switching starts and stops it."""
+    app = _console_app()
+    anthropic = app.app_config["api_settings"].setdefault("anthropic", {})
+    host = _ConsoleFlowHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen
+        console._provider_readiness_app_config = lambda: app.app_config
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+
+        async def chat_on(provider, model, auth_source):
+            anthropic["auth_source"] = auth_source
+            store.replace_session_settings(
+                store.active_session_id,
+                ConsoleSessionSettings(provider=provider, model=model),
+            )
+            await console._sync_native_console_chat_ui()
+
+        if start == "api-key":
+            await chat_on("anthropic", "claude-sonnet-4-5", "api_key")
+        await assert_poll_reads_nothing(
+            credential_reads, lambda: console._console_credential_pre_gate
+        )
+
+        await chat_on("anthropic", "claude-sonnet-4-5", "claude_subscription")
+        await wait_for_reads(credential_reads, 1)
+        credential_reads.lapse()  # A lapsed snapshot is re-read with no edit.
+        await wait_for_reads(credential_reads, 2)
+
+        if start == "api-key":
+            await chat_on("anthropic", "claude-sonnet-4-5", "api_key")
+        else:
+            await chat_on("llama_cpp", "model-a", "claude_subscription")
+        await assert_poll_reads_nothing(
+            credential_reads,
+            lambda: console._console_credential_pre_gate,
+            reads=credential_reads.reads(),
+        )

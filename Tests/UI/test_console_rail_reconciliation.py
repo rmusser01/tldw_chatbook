@@ -454,9 +454,12 @@ async def _wait_for_inspector_quiet(
     """
 
     def credential_gate() -> tuple[object, ...]:
-        # The poll's own pre-gate (ChatScreen._poll_console_credential_readiness).
+        # The poll's own pre-gate (ChatScreen._poll_console_credential_readiness),
+        # which reads the credential only for a chat on the subscription (TASK-42478).
         return (
-            anthropic_subscription.subscription_credential_status(background=True),
+            anthropic_subscription.subscription_credential_status(background=True)
+            if screen._console_subscription_selected
+            else None,
             anthropic_subscription.subscription_readiness_revision(),
             getattr(shared_connection_evidence(lambda: screen.app), "version", 0),
         )
