@@ -9,6 +9,11 @@ from types import SimpleNamespace
 import pytest
 from textual.widgets import Button, Static
 
+from Tests.UI.test_console_subscription_readiness import (  # noqa: F401 - fixture
+    assert_poll_reads_nothing,
+    credential_reads,
+    wait_for_reads,
+)
 from Tests.UI.test_personas_workbench import (
     PersonasScreen,
     PersonasTestApp,
@@ -304,3 +309,41 @@ async def test_unmount_stops_handoff_refresh_before_credential_completion(
                 await asyncio.sleep(0.01)
         await pilot.pause(0.3)
         screen._poll_console_handoff_readiness()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("start", ["other-provider", "api-key"])
+async def test_handoff_poll_reads_the_credential_only_while_the_subscription_is_chosen(
+    handoff_app,
+    credential_reads,  # noqa: F811 - the fixture, imported above
+    start,
+):
+    """TASK-42478: no read for another provider or an API key; choosing the
+    subscription starts the poll's reads, and leaving it stops them."""
+    config = handoff_app.app_config
+    anthropic = config["api_settings"]["anthropic"]
+    anthropic["auth_source"] = "api_key"
+    if start == "other-provider":
+        config["chat_defaults"] = {"provider": "openai", "model": "gpt-4o"}
+    async with handoff_app.run_test(size=(160, 50)) as pilot:
+        screen = await _mounted(pilot)
+        await pilot.app.workers.wait_for_complete()
+
+        def polled():
+            return screen._console_handoff_readiness_gate
+
+        await assert_poll_reads_nothing(credential_reads, polled)
+
+        config["chat_defaults"] = {"provider": "anthropic", "model": "claude-sonnet-4-5"}
+        anthropic["auth_source"] = "claude_subscription"
+        await wait_for_reads(credential_reads, 1)
+        credential_reads.lapse()  # A lapsed snapshot is re-read with no edit.
+        await wait_for_reads(credential_reads, 2)
+
+        if start == "other-provider":
+            config["chat_defaults"] = {"provider": "openai", "model": "gpt-4o"}
+        else:
+            anthropic["auth_source"] = "api_key"
+        await assert_poll_reads_nothing(
+            credential_reads, polled, reads=credential_reads.reads()
+        )

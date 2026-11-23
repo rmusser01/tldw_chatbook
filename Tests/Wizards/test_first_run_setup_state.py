@@ -2476,17 +2476,28 @@ class TestProviderTrustChain:
         assert reached("sk-local") == identity  # a typed key was sent
         assert reached("") is None
 
+    @pytest.mark.parametrize("provider", ["anthropic", "Anthropic"])
     def test_a_subscription_table_spelled_otherwise_reads_as_readiness_reads_it(
-        self, monkeypatch
+        self, monkeypatch, provider
     ):
         """TASK-33008 review round 2: the subscription check read
         ``api_settings["anthropic"]`` itself, while readiness takes the first
         normalised match. ``[api_settings.Anthropic]`` was a subscription to
-        readiness and a missing key to the listing copy."""
+        readiness and a missing key to the listing copy.
+
+        TASK-42478 review: every check shares readiness's test. The listing
+        copy compared ``provider != "anthropic"`` unnormalised, and the send
+        read ``api_settings["anthropic"]`` and so asked for an API key."""
         from types import SimpleNamespace
 
         import tldw_chatbook.LLM_Calls.anthropic_subscription as subscription
-        from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+        from tldw_chatbook.Chat.provider_readiness import (
+            get_provider_readiness,
+            uses_claude_subscription,
+        )
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+        from tldw_chatbook.Provider_Contract import ChatConfigurationError
+        from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
         from tldw_chatbook.UI.Wizards import first_run_model_discovery
 
         monkeypatch.setattr(
@@ -2496,14 +2507,27 @@ class TestProviderTrustChain:
         app = SimpleNamespace(app_config=config)
         step = SimpleNamespace(wizard=SimpleNamespace(app_instance=app))
         keyless = setup_state.FirstRunProviderDraft(
-            "anthropic", "", setup_state.ProviderCredentialDraft("none", "", 0)
+            provider, "", setup_state.ProviderCredentialDraft("none", "", 0)
         )
+        settings = SettingsScreen.__new__(SettingsScreen)
+        settings.app_instance = app
 
-        readiness = get_provider_readiness("anthropic", config, environ={})
+        assert uses_claude_subscription(provider, config)
+        readiness = get_provider_readiness(provider, config, environ={})
         assert readiness.subscription_status == "ready"
         assert first_run_model_discovery.subscription_cannot_list(
             step, keyless, "connection_failed", "authentication"
         )
+        assert settings._provider_saved_auth_source(provider) == "claude_subscription"
+        # The send signs in with the subscription: no credential, so it stops
+        # with the subscription's message before any request.
+        monkeypatch.setattr(LLM_API_Calls, "load_settings", lambda *_a, **_k: config)
+        monkeypatch.setattr(
+            subscription, "read_claude_code_credential", lambda *_a, **_k: None
+        )
+        with pytest.raises(ChatConfigurationError) as refused:
+            LLM_API_Calls.chat_with_anthropic([{"role": "user", "content": "hi"}])
+        assert subscription.MISSING_CREDENTIAL_MESSAGE in str(refused.value)
 
     def test_provider_tells_a_listing_that_cannot_list_as_model_does(self):
         """TASK-33008 review round 2: a server with no model list read "Model

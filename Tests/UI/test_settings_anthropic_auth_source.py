@@ -12,12 +12,20 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Button, Input, Select, Static
 
+from Tests.UI.test_console_subscription_readiness import (  # noqa: F401 - fixture
+    assert_poll_reads_nothing,
+    credential_reads,
+    wait_for_reads,
+)
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
 )
 from Tests.UI.test_screen_navigation import _build_test_app
-from Tests.UI.test_settings_configuration_hub import _open_settings_category
+from Tests.UI.test_settings_configuration_hub import (
+    _open_settings_category,
+    _settle_settings_mount_storm,
+)
 from Tests.UI.test_settings_qwencloud_api_mode import _capture_atomic_writes
 from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Settings_Modules.providers_models_card import (
@@ -285,3 +293,47 @@ async def test_an_unsaved_subscription_choice_shows_in_the_credential_status():
         assert source == "subscription"
         # R1 #11: the Source word names the subscription; the help says how.
         assert "Claude Code" in help_line
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("start", ["other-provider", "api-key"])
+async def test_settings_reads_the_credential_only_while_the_subscription_is_chosen(
+    credential_reads,  # noqa: F811 - the fixture, imported above
+    start,
+):
+    """TASK-42478: Overview and Providers read nothing for another provider or an
+    API key; choosing the subscription starts the poll's reads, and leaving it
+    (another provider, or "API key" again) stops them."""
+    app = _anthropic_app(auth_source="api_key")
+    if start == "other-provider":
+        app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4o"}
+        app.app_config["api_settings"]["openai"] = {"api_key": "sk-other", "model": "gpt-4o"}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        def polled():
+            return screen._subscription_readiness_gate
+
+        await assert_poll_reads_nothing(credential_reads, polled)  # Overview
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        await assert_poll_reads_nothing(credential_reads, polled)
+
+        if start == "other-provider":
+            _switch_provider(screen, "anthropic")
+            await pilot.pause()
+        _choose(screen, "claude_subscription")
+        await wait_for_reads(credential_reads, 1)
+        credential_reads.lapse()  # A lapsed snapshot is re-read with no edit.
+        await wait_for_reads(credential_reads, 2)
+
+        if start == "other-provider":
+            _switch_provider(screen, "openai")
+        else:
+            _choose(screen, "api_key")
+        await pilot.pause()
+        await assert_poll_reads_nothing(
+            credential_reads, polled, reads=credential_reads.reads()
+        )

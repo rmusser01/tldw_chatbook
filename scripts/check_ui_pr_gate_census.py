@@ -1262,6 +1262,16 @@ MINIMUM_FILES = 2476
 MINIMUM_FILES = 2478
 # 2026-11-23: re-counted after rebasing onto dev fe8c87e3e2 (TASK-42416's 48 entries on dev's 2478). The floor is the measured entry count.
 MINIMUM_FILES = 2526
+# 2026-11-23, TASK-42478: two node ids at the tail, the Console's and Personas'
+# credential-read gates (each runs two cases). The floor is the measured entry count.
+MINIMUM_FILES = 2528
+# 2026-11-23, TASK-42478 review: the Console credential poll's gate tests, whole
+# file, at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2529
+# 2026-11-23, TASK-42478 second review: the mounted shared-evidence refresh test,
+# red on dev unseen until this task's control-bar retry, at the tail (about 6.1 s
+# serial with the lane's flags). The floor is the measured entry count.
+MINIMUM_FILES = 2530
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 

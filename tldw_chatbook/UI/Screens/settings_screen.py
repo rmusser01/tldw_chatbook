@@ -125,6 +125,7 @@ from ...Chat.provider_readiness import (
     provider_config_key,
     provider_credential_source,
     required_base_url_target,
+    uses_claude_subscription,
 )
 from ...Chat.provider_setup_persistence import (
     ProviderSetupDraft,
@@ -5260,7 +5261,10 @@ class SettingsScreen(BaseAppScreen):
                 resolve_effective_provider_model(self._chat_defaults()).provider or ""
             )
             if self._subscription_readiness_changed(
-                category, provider, self._provider_readiness_app_config
+                category,
+                provider,
+                self._provider_saved_auth_source(provider),
+                self._provider_readiness_app_config,
             ):
                 presentation = self._settings_overview_presentation()
                 for row in presentation.primary_rows:  # the test row with the Status
@@ -5278,6 +5282,7 @@ class SettingsScreen(BaseAppScreen):
         self,
         category: SettingsCategoryId,
         provider: str,
+        auth_source: str,
         readiness_config: Callable[[], Mapping[str, object]],
     ) -> bool:
         """Whether ``provider``'s subscription readiness changed since the last poll.
@@ -5285,6 +5290,8 @@ class SettingsScreen(BaseAppScreen):
         Args:
             category: The category polling (part of the memo's key).
             provider: The provider whose readiness the category shows.
+            auth_source: The Anthropic sign-in choice the category shows
+                (Overview the saved one, Providers its draft).
             readiness_config: Builds the config readiness resolves against;
                 called only when the cheap gate below has moved.
 
@@ -5299,6 +5306,7 @@ class SettingsScreen(BaseAppScreen):
         # transitions (chat_screen and the console settings modal gate on
         # the same revision).
         from ...LLM_Calls.anthropic_subscription import (
+            AUTH_SOURCE_SUBSCRIPTION,
             subscription_credential_status,
             subscription_readiness_revision,
         )
@@ -5306,8 +5314,11 @@ class SettingsScreen(BaseAppScreen):
         gate = (
             category.value,
             provider,
-            self._provider_auth_source_value(provider),
-            subscription_credential_status(background=True),
+            auth_source,
+            # TASK-42478: read only while the shown choice is the subscription.
+            subscription_credential_status(background=True)
+            if auth_source == AUTH_SOURCE_SUBSCRIPTION
+            else None,
             subscription_readiness_revision(),
             # TASK-33005.15: an evidence change elsewhere repaints the Status.
             getattr(shared_connection_evidence(lambda: self.app), "version", 0),
@@ -13388,11 +13399,11 @@ class SettingsScreen(BaseAppScreen):
 
     def _provider_saved_auth_source(self, provider: object) -> str:
         """Return the saved sign-in choice; only Anthropic has one (TASK-34201)."""
-        if provider_config_key(str(provider or "")) != "anthropic":
-            return _anthropic_auth_sources()[0]
-        from ...LLM_Calls.anthropic_subscription import anthropic_auth_source
-
-        return anthropic_auth_source(self._provider_config("anthropic"))
+        # Readiness's own test (TASK-42478 review), so the two cannot drift.
+        subscribed = uses_claude_subscription(
+            str(provider or ""), self._app_config_mapping()
+        )
+        return _anthropic_auth_sources()[1 if subscribed else 0]
 
     def _provider_auth_readiness_config(self, provider: object) -> Mapping[str, object]:
         """Return readiness config with Anthropic's unsaved sign-in choice applied.

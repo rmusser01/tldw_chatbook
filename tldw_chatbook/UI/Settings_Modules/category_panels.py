@@ -1367,6 +1367,7 @@ class ProvidersModelsPanel(SettingsCategoryPanel):
         if not screen._subscription_readiness_changed(
             self.category,
             provider,
+            screen._provider_auth_source_value(provider),
             lambda: screen._provider_auth_readiness_config(provider),
         ):
             return True

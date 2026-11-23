@@ -7340,20 +7340,24 @@ class PersonasScreen(BaseAppScreen):
         # background subscription snapshot goes stale/completes. Selection
         # syncs re-render directly; the poll only covers background
         # credential transitions (the Settings poll gates the same way).
+        from ...Chat.provider_readiness import uses_claude_subscription
         from ...LLM_Calls.anthropic_subscription import (
             subscription_credential_status,
             subscription_readiness_revision,
         )
 
-        chat_defaults = (
-            getattr(self.app_instance, "app_config", {}) or {}
-        ).get("chat_defaults") or {}
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        chat_defaults = app_config.get("chat_defaults") or {}
+        provider = chat_defaults.get("provider")
         gate = (
             self._console_action_allowed(),
             self.state.selected_entity_kind,
             header_inputs,
-            (chat_defaults.get("provider"), chat_defaults.get("model")),
-            subscription_credential_status(background=True),
+            (provider, chat_defaults.get("model")),
+            # TASK-42478: read only while the handoff's provider uses the subscription.
+            subscription_credential_status(background=True)
+            if uses_claude_subscription(provider, app_config)
+            else None,
             subscription_readiness_revision(),
         )
         if gate == self._console_handoff_readiness_gate:

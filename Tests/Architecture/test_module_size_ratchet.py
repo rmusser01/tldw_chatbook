@@ -414,7 +414,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-16, TASK-41114 review r15ac-rev2 (same rule): a persona Actor Pack
     # creation refused by the stuck import names it and shows the notice (+3,
     # 16,889 -> 16,892).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16892,
+    # 2026-11-23, TASK-42478 (same rule): the handoff poll reads the Claude
+    # credential only while its provider uses the subscription (+4, 16,892 ->
+    # 16,896).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16896,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
