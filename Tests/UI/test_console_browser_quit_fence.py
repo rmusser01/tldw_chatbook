@@ -256,3 +256,74 @@ async def test_approved_quit_cancels_browser_at_terminal_fence(
                 sort_keys=True,
             )
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("reader", ["counts", "history"])
+async def test_disposing_runtime_admits_no_new_view_agent_runs_read(
+    tmp_path, monkeypatch, reader
+):
+    """TASK-42426: once dispose latches, a render starts no AgentRuns read.
+
+    Quit drains (cancels) the view's reads before it disposes the runtime,
+    and a cancelled read keeps no fresh refresh time. The view stays live
+    while the runtime retires its AgentRuns file, so a render would start a
+    new read there and race that retirement.
+    """
+    from types import SimpleNamespace
+
+    from Tests.UI.test_console_refresh_read_batching import (
+        _agent,
+        _historical_bridge,
+    )
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    database = AgentRunsDB(tmp_path / "quit-reads.sqlite", "quit-reads")
+    entered, release, retired = threading.Event(), threading.Event(), threading.Event()
+    tasks = []
+    try:
+        bridge, _child = _historical_bridge(database)
+        agent, tasks = _agent(bridge)
+        reads = []
+        if reader == "counts":
+            name, owner = "count_subagents_by_conversation", database
+            rows = (SimpleNamespace(conversation_id="conv"),)
+
+            def render():
+                return agent._console_subagent_counts_for_rows(bridge, rows)
+
+            shown = {}
+        else:
+            name, owner = "_derive_historical_snapshot", bridge
+            render, shown = agent._console_agent_fleet_rows, ()
+        original = getattr(owner, name)
+
+        def held(*args, **kwargs):
+            reads.append(threading.get_ident())
+            entered.set()
+            try:
+                assert release.wait(5)
+                return original(*args, **kwargs)
+            finally:
+                retired.set()
+
+        monkeypatch.setattr(owner, name, held)
+        assert render() == shown
+        assert await asyncio.to_thread(entered.wait, 5)
+        # Quit's view drain cancels the read; it retires on its own thread.
+        tasks[0].cancel()
+        release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        assert await asyncio.to_thread(retired.wait, 5)
+        # Dispose latches before its first await, then retires AgentRuns.
+        agent._screen._console_runtime()._disposed = True
+        for _ in range(3):
+            assert render() == shown
+        assert len(tasks) == 1 and len(reads) == 1, (
+            "A render admitted a new AgentRuns read while the runtime disposed"
+        )
+    finally:
+        release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        database.close()

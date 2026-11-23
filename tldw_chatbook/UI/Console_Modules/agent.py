@@ -1165,6 +1165,18 @@ class ConsoleAgentController:
 
         return ensure_console_runtime(self.app_instance, view=screen)
 
+    def _agent_runs_reads_closed(self) -> bool:
+        """Whether this view's runtime has begun disposing (TASK-42426).
+
+        `_dispose_owned` latches `_disposed` before its first await and then
+        retires the AgentRuns file. The view stays live meanwhile, so a fresh
+        finite read started by a render would race that retirement. Reads
+        already in flight are not affected. Never resolves a new runtime.
+        """
+        resolver = getattr(self._screen, "_console_runtime", None)
+        runtime = resolver() if callable(resolver) else None
+        return getattr(runtime, "_disposed", False) is True
+
     @property
     def _console_agent_bridge(self) -> Any:
         """The runtime's Console agent bridge, or `None`."""
@@ -2625,6 +2637,9 @@ class ConsoleAgentController:
 
         database = getattr(bridge, "_db", None)
         if type(database) is AgentRunsDB and not database.is_memory_db:
+            if self._agent_runs_reads_closed():
+                state = self._console_subagent_counts_read.get(row_ids)
+                return state["values"] if state is not None else {}
             authority = getattr(self.app_instance, "chachanotes_db", None)
             query, query_definition, query_key, stock_query = (
                 self._subagent_count_query(bridge, database)
@@ -2805,8 +2820,11 @@ class ConsoleAgentController:
         ):
             self.release_historical_presentation()
             return bridge.historical_snapshot(conversation_id)
-        key = self._historical_presentation_key(bridge, conversation_id)
         state = self._console_historical_read
+        if self._agent_runs_reads_closed():
+            kept = state and (state["value"] or state.get("stale"))
+            return kept or AgentLiveSnapshot()
+        key = self._historical_presentation_key(bridge, conversation_id)
         if self._historical_reads_held:
             current = state is not None and state["key"] == key
             return (current and state["value"]) or AgentLiveSnapshot()
