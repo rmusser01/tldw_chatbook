@@ -152,3 +152,126 @@ async def test_a_refusal_inside_the_reservation_is_typed_not_established(
             signals=ConsoleProviderStreamSignals(),
         )
     assert caught.value.reservation_status == "not_established"
+
+
+@pytest.mark.asyncio
+async def test_a_refused_reservation_logs_the_refusal_and_its_code(
+    tmp_path, make_database, make_gateway
+) -> None:
+    """TASK-42471: the send diagnostic names the typed refusal and its code.
+
+    The cause walk recorded only the innermost exception, the plain
+    ``ValueError`` that ``TraceReservationRefused`` wraps, so the line never
+    said the Send was refused (and rolled back) at reservation.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderResolution,
+        ConsoleProviderStreamSignals,
+    )
+    from tldw_chatbook.Chat.console_send_diagnostics import send_diagnostic_scope
+    from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
+    from tldw_chatbook.Chat.console_trace_provenance import ConsoleTraceCaptureMode
+
+    database = make_database(tmp_path / "trace-logged.sqlite", "trace-logged")
+    conversation_id = database.add_conversation({"title": "logged refusal"})
+    _prior_id, prior = _saved_message(database, conversation_id, "prior")
+    ghost = SavedRevisionTraceProvenance(new_opaque_id())
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    semantic = _semantic_request(
+        [
+            {"role": "user", "content": "prior"},
+            {"role": "user", "content": "PRIVATE-DRAFT-42471"},
+        ],
+        [prior, ghost],
+        policy,
+    )
+    gateway = make_gateway(
+        trace_call_boundary_factory=ConsoleTraceBoundaryFactory(database)
+    )
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        model="test-model",
+        ready=True,
+        base_url="https://api.openai.com/v1",
+        execution_key="openai",
+        streaming=False,
+    )
+    request = gateway.prepare_chat_request(
+        resolution,
+        semantic,
+        route=ConsoleRequestRoute.FRESH,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+    records: list[dict[str, object]] = []
+    monitor = SimpleNamespace(
+        record_diagnostic=lambda _component, _event, **fields: records.append(fields)
+    )
+    async with send_diagnostic_scope("controller_submit", monitor):
+        with pytest.raises(TraceCallPersistenceError):
+            gateway._reserve_trace_call(
+                request,
+                resolution,
+                ConsoleRequestRoute.FRESH,
+                signals=ConsoleProviderStreamSignals(),
+            )
+    (failed,) = [
+        fields
+        for fields in records
+        if (fields.get("phase"), fields.get("status"))
+        == ("trace_reservation", "failed")
+    ]
+    assert failed["exception_type"] == "TraceReservationRefused"
+    assert failed["error_category"] == "trace_revision_unavailable"
+    assert "PRIVATE-DRAFT-42471" not in repr(records)
+    assert ghost.revision_id not in repr(records)
+
+
+def test_every_coded_trace_refusal_has_a_send_diagnostic_category() -> None:
+    """TASK-42471: a new refusal code cannot ship without a diagnostic category.
+
+    The category set knew 15 of the 86 codes these two modules raise, so
+    TASK-42412's CI failure logged only ``ValueError``/``validation``. The set
+    stays an exact, code-owned list (no token is ever derived from error
+    text); this scan is what keeps it complete. A ``ValueError`` whose
+    argument is not a literal fails here too, because nothing could check it.
+    """
+    import ast
+    from pathlib import Path
+
+    from tldw_chatbook.Chat import console_trace_runtime, console_trace_service
+    from tldw_chatbook.Chat.console_send_diagnostics import _TRACE_FAILURE_CATEGORIES
+
+    raised: set[str] = set()
+    unchecked: list[str] = []
+    for module in (console_trace_service, console_trace_runtime):
+        tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+        # Its one ValueError(field_name) is fed the literals scanned below.
+        exempt = {
+            id(node)
+            for function in ast.walk(tree)
+            if isinstance(function, ast.FunctionDef)
+            and function.name == "_required_string"
+            for node in ast.walk(function)
+        }
+        for node in ast.walk(tree):
+            if (
+                id(node) in exempt
+                or not isinstance(node, ast.Call)
+                or not isinstance(node.func, ast.Name)
+            ):
+                continue
+            if node.func.id == "ValueError":
+                arg = node.args[0] if len(node.args) == 1 else None
+            elif node.func.id == "_required_string":
+                arg = node.args[1] if len(node.args) == 2 else None
+            else:
+                continue
+            if isinstance(arg, ast.Constant) and type(arg.value) is str:
+                raised.add(arg.value)
+            else:
+                unchecked.append(f"{module.__name__}:{node.lineno}")
+    assert len(raised) > 80  # the scan found the codes, not nothing
+    assert unchecked == []
+    assert sorted(raised - _TRACE_FAILURE_CATEGORIES) == []

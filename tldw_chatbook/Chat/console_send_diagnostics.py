@@ -13,28 +13,110 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from uuid import uuid4
 
+from tldw_chatbook.Chat.console_trace_errors import (
+    TraceReservationRefused,
+    TraceSurfaceChangeRefused,
+)
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 
 _SEND_DIAGNOSTIC_EVENT_LIMIT = 64
+# Rolled-back refusals carry their code, so the cause walk stops at them.
+_TRACE_REFUSAL_TYPES = (TraceReservationRefused, TraceSurfaceChangeRefused)
 
 # Exact code-owned categories only; never derive a token from arbitrary error text.
+# Every literal refusal code raised in console_trace_service / console_trace_runtime
+# (TASK-42471; Tests/Chat/test_console_trace_missing_revision_diagnostic.py scans
+# both modules and fails on a code missing here).
 _TRACE_FAILURE_CATEGORIES = frozenset(
     {
-        "trace_provenance_unavailable",
-        "trace_policy_unavailable",
-        "trace_route_unavailable",
-        "trace_route_mismatch",
-        "trace_owner_unavailable",
-        "trace_prefill_unavailable",
-        "trace_turn_unavailable",
-        "trace_revision_unavailable",
-        "trace_primary_run_already_started",
-        "trace_fresh_turn_requires_owned_recovery",
-        "trace_tool_chain_unavailable",
-        "surface_provenance_mismatch",
-        "surface_prefix_mismatch",
-        "unsupported_surface_change",
+        "available_bundle_omission",
+        "completed_replay_checkpoint",
+        "completed_replay_disclosure",
+        "completed_replay_policy",
+        "completed_replay_terminal",
+        "completed_replay_value",
+        "completed_tool_turn_unavailable",
+        "continuation_trace_policy",
+        "continuation_trace_projection_changed",
+        "credential_source",
+        "duplicate_components",
+        "duplicate_handler_components",
+        "endpoint_identity",
+        "inherited_surface_head_unavailable",
+        "live_native_call",
+        "live_native_custody",
+        "live_native_history_append",
+        "live_native_history_lineage",
+        "live_native_history_prefix",
+        "live_native_owner",
+        "live_native_retry_surface",
+        "model_name",
+        "provider_name",
+        "rendered_system_slot_mismatch",
+        "rendered_system_slot_unavailable",
+        "replacement_chain_gap",
+        "replacement_component_domain",
+        "replacement_component_ordinal",
+        "replacement_predecessor_mismatch",
+        "replacement_range_mismatch",
+        "replacement_range_noncontiguous",
+        "replacement_range_order",
+        "replacement_value",
+        "request_header_component_invalid",
+        "request_header_component_unavailable",
+        "request_header_unavailable",
+        "request_route_unavailable",
+        "required_components",
+        "revision_owner_mismatch",
+        "rewritten_tail_unavailable",
         "semantic_revision_value_mismatch",
+        "surface_checkpoint_identity",
+        "surface_child_binding",
+        "surface_delta_alignment",
+        "surface_delta_identity",
+        "surface_delta_shape",
+        "surface_owner_mismatch",
+        "surface_predecessor_mismatch",
+        "surface_prefix_mismatch",
+        "surface_provenance_mismatch",
+        "surface_reference",
+        "surface_replacement_checkpoint_unavailable",
+        "surface_replacement_span",
+        "surface_replacement_target_inactive",
+        "surface_replacement_target_unavailable",
+        "surface_segment_unavailable",
+        "surface_value_unavailable",
+        "surface_values_unavailable",
+        "surface_verified_bundle",
+        "system_component_alignment",
+        "system_composition_invalid",
+        "system_composition_span",
+        "system_revision_span",
+        "system_revision_value_mismatch",
+        "tool_values_unavailable",
+        "trace_child_owner",
+        "trace_child_segment_unavailable",
+        "trace_current_transform_owner",
+        "trace_fresh_turn_requires_owned_recovery",
+        "trace_owner_unavailable",
+        "trace_policy_mismatch",
+        "trace_policy_unavailable",
+        "trace_prefill_unavailable",
+        "trace_primary_run_already_started",
+        "trace_provenance_unavailable",
+        "trace_recovery_owner",
+        "trace_recovery_reservation",
+        "trace_recovery_revision",
+        "trace_revision_unavailable",
+        "trace_route_mismatch",
+        "trace_route_unavailable",
+        "trace_tool_chain_source_mismatch",
+        "trace_tool_chain_unavailable",
+        "trace_turn_unavailable",
+        "unavailable_bundle_content",
+        "unavailable_bundle_reason",
+        "unsupported_surface_change",
+        "unsupported_surface_descriptor",
     }
 )
 
@@ -100,6 +182,18 @@ class SendDiagnostic:
         )
 
 
+def _trace_code(error: BaseException) -> str | None:
+    """Return a trace refusal's code-owned reason, never other error text."""
+    if (
+        type(error) in (ValueError, *_TRACE_REFUSAL_TYPES)
+        and len(error.args) == 1
+        and type(error.args[0]) is str
+        and error.args[0] in _TRACE_FAILURE_CATEGORIES
+    ):
+        return error.args[0]
+    return None
+
+
 _CURRENT: ContextVar[SendDiagnostic | None] = ContextVar(
     "console_send_diagnostic", default=None
 )
@@ -142,6 +236,8 @@ def record_send_stage(
             while id(cause) not in seen and len(seen) < 8:
                 if isinstance(cause, TimeoutError):
                     break  # asyncio timeouts chain an internal cancellation.
+                if type(cause) in _TRACE_REFUSAL_TYPES or _trace_code(cause):
+                    break  # TASK-42471: the refusal names the failure, not its cause.
                 seen.add(id(cause))
                 next_cause = cause.__cause__ or cause.__context__
                 if next_cause is None or id(next_cause) in seen:
@@ -159,13 +255,8 @@ def record_send_stage(
                 if isinstance(cause, (ValueError, TypeError))
                 else "internal"
             )
-            if (
-                type(cause) is ValueError
-                and len(cause.args) == 1
-                and type(cause.args[0]) is str
-                and cause.args[0] in _TRACE_FAILURE_CATEGORIES
-            ):
-                fields["error_category"] = cause.args[0]
+            if code := _trace_code(cause):
+                fields["error_category"] = code
             code = getattr(cause, "sqlite_errorcode", None)
             if isinstance(cause, sqlite3.Error) and type(code) is int:
                 fields["sqlite_code"] = code
