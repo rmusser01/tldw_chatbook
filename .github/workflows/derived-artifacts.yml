@@ -1466,7 +1466,7 @@ jobs:
     # 2.6x quiet-host factor for the additions (UI census note) it stays about
     # 7 min under the cap.
     # TASK-42412: the agent-lessons seed file (sandboxed, so before Tool_Packs;
-    # 16 tests, 12.5-12.8 s serially at load 11) pins the seed's write lock
+    # 17 tests, 10.9-12.8 s serially at load 11-13) pins the seed's write lock
     # against a concurrent writer. 15 PR runs to 2026-11-23 02:31Z took median
     # 8.4 / max 9.65 min of the 20; +~33 s at 2.6x keeps ~10 min headroom.
     name: Dreams tracking tests and unlaned riders
