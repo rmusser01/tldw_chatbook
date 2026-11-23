@@ -186,9 +186,12 @@ line and the Context chip say so, in one of two ways:
   chat simply reads **Ready**. The measured figure is kept across restarts
   for each combination of model and tool settings. Until a send has measured
   the tools for the current combination (for example after you change the
-  model, a tool gate, MCP settings, the raw shell's arming or the chat's
-  Library access), the trigger is not known, so an agent chat with any
-  history reads **May pause to compact**.
+  model, a tool gate, the `[mcp]` settings in config.toml, the raw shell's
+  arming, the chat's Library access or an `[internal_prompts]` override, or
+  after an app update), the trigger is not known, so an agent chat with any
+  history reads **May pause to compact**. Servers added or removed in the MCP
+  hub, and the MCP kill switch, do not count as a change: the figure from
+  the last send stands until the next send measures again.
 - **Next send won't fit** when the system prompt and attached context alone
   leave no room for the conversation. The send would be refused before
   anything is sent, so the badge, the Run line and the Context chip say so

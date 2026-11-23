@@ -11,7 +11,6 @@ import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import replace
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -187,62 +186,23 @@ def _build_console_inspector_exchanges_loader(
     return _exchanges_loader
 
 
-#: Owner decision 2026-11-23 ("persist across restarts"): the largest measured
-#: agent tool cost per tool configuration, in the profile's data folder. Keys
-#: are digests of the configuration signature, never its config content.
-_TOOL_COST_FILE = "console_agent_tool_costs.json"
-_TOOL_COST_LIMIT = 32
-
-
 def _tool_cost_key(signature: str) -> str:
+    """The saved figure's key: a digest, never the signature's config content."""
     return hashlib.sha256(signature.encode("utf-8")).hexdigest()[:32]
 
 
-def _tool_cost_path() -> Path:
-    from ...config import get_user_data_dir
-    from ...Utils.path_validation import safe_join_path
+def _tool_costs_job(kind: str, snapshot: dict[str, int]) -> dict[str, int] | None:
+    """One read or write of the saved agent tool costs, on a worker thread.
 
-    return safe_join_path(get_user_data_dir(), _TOOL_COST_FILE)
-
-
-def load_console_tool_costs(path: Path | None = None) -> dict[str, int]:
-    """Read the stored costs (off the UI loop); anything malformed reads empty.
-
-    Args:
-        path: The file; the profile's data folder by default.
-
-    Returns:
-        Digest -> tokens, oldest first, at most ``_TOOL_COST_LIMIT`` rows.
+    Owner decision 2026-11-23 ("persist across restarts"); the store module is
+    imported here, off the UI loop and off the boot path.
     """
-    try:
-        data = json.loads((path or _tool_cost_path()).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    current = isinstance(data, dict) and data.get("version") == 1
-    rows = data.get("costs") if current else None
-    costs: dict[str, int] = {}
-    for row in rows if isinstance(rows, list) else ():
-        if (
-            isinstance(row, list)
-            and len(row) == 2
-            and isinstance(row[0], str)
-            and type(row[1]) is int
-            and row[1] >= 0
-        ):
-            costs[row[0]] = row[1]
-    return dict(list(costs.items())[-_TOOL_COST_LIMIT:])
+    from ... import console_tool_costs
 
-
-def save_console_tool_costs(
-    costs: Mapping[str, int], path: Path | None = None
-) -> None:
-    """Write ``costs`` (off the UI loop), replacing the file atomically."""
-    from ...Utils.atomic_file_ops import atomic_write_text
-
-    kept = list(costs.items())[-_TOOL_COST_LIMIT:]
-    rows = [[key, int(value)] for key, value in kept]
-    payload = json.dumps({"version": 1, "costs": rows})
-    atomic_write_text(path or _tool_cost_path(), payload, private=True, privacy_safe_log=True)
+    if kind == "load":
+        return console_tool_costs.load_costs()
+    console_tool_costs.save_costs(snapshot)
+    return None
 
 
 def _forecast_history_images(messages: Sequence[Any], memory: Any) -> int:
@@ -873,9 +833,11 @@ class ConsoleContextSpendController:
         if costs is None:
             self._console_tool_costs_pending[key] = cost
             return
+        from ...console_tool_costs import LIMIT
+
         costs.pop(key, None)
         costs[key] = cost
-        while len(costs) > _TOOL_COST_LIMIT:
+        while len(costs) > LIMIT:
             costs.pop(next(iter(costs)))
         self._console_tool_costs_io("save")
 
@@ -893,11 +855,7 @@ class ConsoleContextSpendController:
         except RuntimeError:
             return  # No loop (a bare test double): this run's figures only.
         snapshot = dict(self._console_tool_costs_disk or {})
-        work = (
-            load_console_tool_costs
-            if kind == "load"
-            else functools.partial(save_console_tool_costs, costs=snapshot)
-        )
+        work = functools.partial(_tool_costs_job, kind, snapshot)
         self._console_tool_costs_busy = True
         future = loop.run_in_executor(None, work)
 
@@ -930,9 +888,14 @@ class ConsoleContextSpendController:
 
         Config sections, plus two in-memory runtime facts (review 2026-11-23):
         an armed raw shell and the conversation's assistant Library access.
-        The MCP kill switch and hub servers need a store read; see
-        TASK-33621.4.4.
+        The app version stands in for the built-in tool catalog and the
+        agent's default operating prompt, and ``[internal_prompts]`` for an
+        overridden one: a figure saved before an upgrade or an override can
+        be smaller than today's tools (review 2026-11-23). The MCP kill switch
+        and hub servers need a store read; see TASK-33621.4.4.
         """
+        import tldw_chatbook
+
         config = spend._screen_readiness_config(self._screen)
         config = config if isinstance(config, Mapping) else {}
         console = config.get("console")
@@ -960,6 +923,8 @@ class ConsoleContextSpendController:
                 },
                 raw_armed,
                 library,
+                getattr(tldw_chatbook, "__version__", None),
+                config.get("internal_prompts"),
             ],
             sort_keys=True,
             default=str,

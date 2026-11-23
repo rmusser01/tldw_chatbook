@@ -268,6 +268,26 @@ def _no_tiktoken_bpe_download(monkeypatch):
     token_counter.clear_estimate_cache()
 
 
+@pytest.fixture(autouse=True)
+def console_tool_cost_file(monkeypatch, tmp_path):
+    """Every UI test saves agent tool costs to its own file (TASK-33621.4).
+
+    The Console keeps the largest measured agent tool cost per configuration
+    in the profile's data folder (owner decision B, 2026-11-23). The
+    bootstrap-profile Console tests share one data folder per pytest process,
+    so without this a figure one test saved could be read by the next (review
+    2026-11-23). The store is a small top-level module, so patching it here
+    loads no Console code.
+    """
+    path = tmp_path / "console_agent_tool_costs.json"
+    try:
+        from tldw_chatbook import console_tool_costs
+    except ImportError:  # Older code has no saved costs to isolate.
+        return path
+    monkeypatch.setattr(console_tool_costs, "tool_cost_path", lambda: path)
+    return path
+
+
 @pytest_asyncio.fixture
 async def mock_app_config():
     """Provide a standard mock app configuration for tests."""

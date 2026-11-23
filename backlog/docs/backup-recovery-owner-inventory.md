@@ -791,7 +791,6 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Tools/web_tool_impls.py | _describe_image | open | 2 | unsupported | miscellaneous |
 | tldw_chatbook/Tools/web_tool_impls.py | _extract_pdf_text | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Chatbooks_Window_Improved.py | ChatbooksWindowImproved._scan_chatbooks | ZipFile | 1 | unsupported | miscellaneous |
-| tldw_chatbook/UI/Console_Modules/context_spend.py | save_console_tool_costs | atomic_write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Console_Modules/image.py | ConsoleImageController._h3_reference_from_snapshot | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Console_Modules/message.py | ConsoleMessageController._save_console_message_image._write_images_to_disk | mkdir | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Console_Modules/message.py | ConsoleMessageController._save_console_message_image._write_images_to_disk | write_bytes | 1 | unsupported | miscellaneous |
@@ -935,6 +934,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/app_entry.py | _generated_css_is_stale | open | 2 | unsupported | miscellaneous |
 | tldw_chatbook/app_entry.py | _generated_css_is_stale._sha256 | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/app_ingest_queue.py | _ingest_pool_real_stderr | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/console_tool_costs.py | save_costs | atomic_write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/app_entry.py | _load_css_build_manifest | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/app_entry.py | _save_css_build_manifest | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/app_entry.py | main_cli_runner | mkdir | 1 | unsupported | miscellaneous |

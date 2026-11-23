@@ -60,17 +60,6 @@ from tldw_chatbook.Widgets.Console.console_workbench_state import (
 pytestmark = pytest.mark.bootstrap_profile
 
 
-@pytest.fixture(autouse=True)
-def _tool_cost_file(monkeypatch, tmp_path):
-    """Each test persists agent tool costs to its own file (owner decision B,
-    2026-11-23); the shared bootstrap profile's data folder is never used."""
-    from tldw_chatbook.UI.Console_Modules import context_spend
-
-    path = tmp_path / "console_agent_tool_costs.json"
-    if hasattr(context_spend, "_tool_cost_path"):
-        monkeypatch.setattr(context_spend, "_tool_cost_path", lambda: path)
-    return path
-
 _COST = ConsoleCostState(
     label="$0.00", compact_label="$0.00", tooltip="", alert=False, cold=False
 )
@@ -368,10 +357,12 @@ async def test_automatic_forecast_matches_real_preflight_with_overhead_and_cap(
         "compact-keeps-max",
         "B-persisted",
         "raw-armed-signature",
+        "upgrade-figure",
+        "internal-prompt-figure",
     ],
 )
 async def test_an_agent_chats_tool_cost_counts_and_is_never_a_false_ready(
-    request, monkeypatch, tmp_path, case, _tool_cost_file
+    request, monkeypatch, tmp_path, case, console_tool_cost_file
 ):
     """Review D1-D3 and follow-ups 1-2 (2026-11-22), against the real check.
 
@@ -686,9 +677,9 @@ async def test_an_agent_chats_tool_cost_counts_and_is_never_a_false_ready(
 
                 hold, _alert = await real_check(native(2000))
                 await displayed()
-                await settled(lambda: _tool_cost_file.exists())
+                await settled(lambda: console_tool_cost_file.exists())
                 await settled(lambda: not spend_owner._console_tool_costs_busy)
-                assert json.loads(_tool_cost_file.read_text())["costs"][0][1] == 2004
+                assert json.loads(console_tool_cost_file.read_text())["costs"][0][1] == 2004
 
                 def restart() -> None:
                     controller._context_accounting_by_session.clear()
@@ -717,7 +708,7 @@ async def test_an_agent_chats_tool_cost_counts_and_is_never_a_false_ready(
                 assert other.request_overhead_tokens == 3000
                 assert "not measured yet" in other.forecast_unavailable_reason
                 # A corrupt file reads as nothing stored: unmeasured, no crash.
-                _tool_cost_file.write_text("{not json")
+                console_tool_cost_file.write_text("{not json")
                 restart()
                 await displayed()
                 await settled(lambda: spend_owner._console_tool_costs_disk is not None)
@@ -725,6 +716,42 @@ async def test_an_agent_chats_tool_cost_counts_and_is_never_a_false_ready(
                 assert spend_owner._console_tool_costs_disk == {}
                 assert corrupt.request_overhead_tokens == 3000
                 assert corrupt.forecast_high_context
+            elif case in ("upgrade-figure", "internal-prompt-figure"):
+                # Review 2026-11-23 (blocking 3): a figure saved by an older
+                # app version, or before the agent's operating prompt was
+                # overridden ([internal_prompts]), can be smaller than today's
+                # tools. It must not be used (dev's signature ignored both).
+                from tldw_chatbook.UI.Console_Modules import context_spend as cs
+
+                spend_owner = console._context_spend
+                settings = controller.store.session_settings(session.id)
+                key = cs._tool_cost_key(
+                    spend_owner._console_tool_signature(settings, session.id)
+                )
+                controller._context_accounting_by_session.clear()
+                remembered().clear()
+                spend_owner._console_tool_costs_disk = {key: 2004}
+                saved = await displayed()
+                assert saved.request_overhead_tokens == 3000 + 2004  # used as is
+                if case == "upgrade-figure":
+                    import tldw_chatbook
+
+                    monkeypatch.setattr(
+                        tldw_chatbook, "__version__", f"{tldw_chatbook.__version__}.1"
+                    )
+                else:
+                    overridden = dict(app.app_config)
+                    overridden["internal_prompts"] = {
+                        "agents.console_agent_operating": "longer " * 1500
+                    }
+                    monkeypatch.setattr(app, "app_config", overridden)
+                changed = await displayed()
+                assert changed.request_overhead_tokens == 3000, (
+                    "a figure saved under another app version or operating "
+                    "prompt was used",
+                    changed.request_overhead_tokens,
+                )
+                assert changed.forecast_high_context  # unmeasured: may pause
             else:
                 # Review 2026-11-23: an armed raw shell grows the light tool
                 # set, so it is part of the tool configuration.
@@ -1229,13 +1256,14 @@ def test_an_unmodelled_memory_shape_counts_its_turns_in_full(
 
 def test_stored_tool_costs_round_trip_bounded_and_fail_open(tmp_path) -> None:
     """Owner decision B (2026-11-23): the persisted agent tool costs."""
+    from tldw_chatbook import console_tool_costs as store
     from tldw_chatbook.UI.Console_Modules import context_spend
 
     path = tmp_path / "costs.json"
-    assert context_spend.load_console_tool_costs(path) == {}  # missing
+    assert store.load_costs(path) == {}  # missing
     costs = {f"key-{n}": n for n in range(40)}
-    context_spend.save_console_tool_costs(costs, path)
-    loaded = context_spend.load_console_tool_costs(path)
+    store.save_costs(costs, path)
+    loaded = store.load_costs(path)
     assert list(loaded) == [f"key-{n}" for n in range(8, 40)]  # newest 32
     assert loaded["key-39"] == 39
     for corrupt in (
@@ -1244,9 +1272,37 @@ def test_stored_tool_costs_round_trip_bounded_and_fail_open(tmp_path) -> None:
         json.dumps({"version": 1, "costs": [["a", True], ["b", -1], ["c", "9"]]}),
     ):
         path.write_text(corrupt)
-        assert context_spend.load_console_tool_costs(path) == {}
+        assert store.load_costs(path) == {}
     # Keys are digests: no config content reaches the file.
     assert len(context_spend._tool_cost_key('[{"api_key": "secret"}]')) == 32
+
+
+def test_a_save_keeps_another_app_instances_larger_figures(tmp_path) -> None:
+    """Review 2026-11-23: two app instances on one profile.
+
+    Each instance writes its whole in-memory copy, so the later write used to
+    drop or lower a figure the other had saved. A save re-reads the file and
+    keeps the larger figure per key; the saving instance's keys are newest.
+    """
+    from tldw_chatbook import console_tool_costs as store
+
+    path = tmp_path / "costs.json"
+    store.save_costs({"a": 500, "b": 100}, path)  # instance 1
+    store.save_costs({"a": 300, "c": 50}, path)  # instance 2, an older copy
+    loaded = store.load_costs(path)
+    assert loaded == {"b": 100, "a": 500, "c": 50}, loaded
+    assert list(loaded) == ["b", "a", "c"]
+
+
+def test_every_ui_test_saves_tool_costs_to_its_own_file(
+    console_tool_cost_file, tmp_path
+) -> None:
+    """Review 2026-11-23: the Console UI tests share one data folder per
+    process, so the shared UI fixture gives each test its own cost file."""
+    from tldw_chatbook import console_tool_costs as store
+
+    assert store.tool_cost_path() == console_tool_cost_file
+    assert tmp_path in console_tool_cost_file.parents
 
 
 def test_cold_forecast_does_not_read_history_or_count(monkeypatch) -> None:
