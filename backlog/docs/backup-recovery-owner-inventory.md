@@ -791,6 +791,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Tools/web_tool_impls.py | _describe_image | open | 2 | unsupported | miscellaneous |
 | tldw_chatbook/Tools/web_tool_impls.py | _extract_pdf_text | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Chatbooks_Window_Improved.py | ChatbooksWindowImproved._scan_chatbooks | ZipFile | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Console_Modules/context_spend.py | save_console_tool_costs | atomic_write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Console_Modules/image.py | ConsoleImageController._h3_reference_from_snapshot | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Console_Modules/message.py | ConsoleMessageController._save_console_message_image._write_images_to_disk | mkdir | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Console_Modules/message.py | ConsoleMessageController._save_console_message_image._write_images_to_disk | write_bytes | 1 | unsupported | miscellaneous |

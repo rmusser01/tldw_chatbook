@@ -7,7 +7,6 @@ import contextlib
 import functools
 import hashlib
 import json
-import os
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
@@ -238,12 +237,12 @@ def save_console_tool_costs(
     costs: Mapping[str, int], path: Path | None = None
 ) -> None:
     """Write ``costs`` (off the UI loop), replacing the file atomically."""
-    target = path or _tool_cost_path()
+    from ...Utils.atomic_file_ops import atomic_write_text
+
     kept = list(costs.items())[-_TOOL_COST_LIMIT:]
     rows = [[key, int(value)] for key, value in kept]
-    temporary = target.with_name(f"{target.name}.tmp")
-    temporary.write_text(json.dumps({"version": 1, "costs": rows}), encoding="utf-8")
-    os.replace(temporary, target)
+    payload = json.dumps({"version": 1, "costs": rows})
+    atomic_write_text(path or _tool_cost_path(), payload, private=True, privacy_safe_log=True)
 
 
 def _forecast_history_images(messages: Sequence[Any], memory: Any) -> int:
