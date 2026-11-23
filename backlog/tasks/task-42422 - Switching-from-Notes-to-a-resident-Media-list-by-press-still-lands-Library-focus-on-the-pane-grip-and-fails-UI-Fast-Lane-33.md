@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-22 22:10
-updated_date: '2026-11-23 04:57'
+updated_date: '2026-11-23 05:37'
 labels:
 - follow-up
 - ci
@@ -154,3 +154,27 @@ It is a product race, not test timing: the arm is gone and focus stays on the gr
 - **Checks.** Wiring: 44 passed. Ratchets: 291 passed. Preflight, `ruff --select F` and `ruff_gate.py` passed.
 - **Lane time** (serial, UI lane flags): the page-held case 9.4-10.1 s (load 17-31), the Prompts test 3.5 s and the Notes expiry test 2.8 s (load ~17). All are in a whole-file census entry, so the census is unchanged.
 - **Size.** `library_screen.py` 32842 -> 32857 lines (1288 methods); ratchet row raised by exactly that, with a dated note.
+
+**Re-review fixes (re-review of 5d4293e160, "ready to merge", two Minors).**
+- **The lock walk now stops below the Screen.** `_library_entry_target_replaced` reads every ancestor's `lock.is_locked` except a `Screen`'s; the queued check (`_recompose_required`) still covers every ancestor, as TASK-40293 had it.
+  - **Why this option and not the reviewer's alternative** (the running half only for the empty-list fallback):
+    - The alternative would still read the Screen's lock for the fallback. So an empty-list landing would still wait out a whole-screen recompose, which is the same scope change.
+    - It would also drop the running check for rows. Rows under an ancestor whose lock is held but not yet torn down (a contended `batch()`) are about to be pruned.
+    - Rows and controls a whole-screen recompose has mounted belong to that recompose and are final. Only a later, queued repaint replaces them, and the queued half still catches that. So the Screen is the one ancestor whose running lock gives no useful signal.
+    - Excluding it restores the scope the mixin flag had (the Screen never carried `recompose_in_flight`). Every canvas and container below it keeps the mixin-free running check.
+  - **New test `test_list_entry_lands_on_mounted_rows_while_the_screen_lock_is_held`.** It holds `screen.lock` as a running screen recompose would, with the Media rows mounted, re-arms the entry and checks where focus lands within 1.5 s.
+    - At 5d4293e160: 6 of 6 red, focus None.
+    - With the fix: green, focus on `library-media-row-0`.
+- **The retry cap is a named constant.** `LIBRARY_LIST_ENTRY_FOCUS_EXPIRY_RETRIES = round(1.0 / LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS)` (20) lives in `UI/Library_Modules/screen_constants.py`, and `_expire_library_list_entry_focus` uses it as its default.
+  - **New test `test_notes_window_close_lands_anyway_after_its_retry_cap`.** It patches the filter to always read as replaced, then checks that the expiry runs exactly cap + 1 times, lands on `#library-notes-filter`, disarms, and schedules nothing more.
+    - Green 6 of 6.
+    - Red under temporary source edits: without the decrement, the window never closed after 287-288 calls (2 of 2); with `>= 0` (off by one), 22 calls instead of 21 (2 of 2).
+- **Docs.** The helper docstring and the lesson say the Screen's lock is not read, and why.
+- **Runs** (final tree):
+  - Whole touched file (22 tests), 20 runs at `-n 4`: 440 passed in 12 min 16 s, load 19-52.
+  - 5 serial runs with `-p no:xdist --timeout=180`: 109 passed, 1 failed (load 12-22). The failure was `test_programmatic_media_row_restore_keeps_reader_until_user_keys[r1]` ("the original Media entry/publication owners to retire"). It is a known load flake that TASK-41909 tracks (10-15% under load, seen in round 16, before this task). On rerun it passed 12 of 12 serial and 16 of 16 at `-n 4`.
+- **Checks.**
+  - Ratchets plus Library wiring (serial): 335 passed.
+  - Preflight, `ruff check --select F` and `ruff_gate.py` passed.
+  - Size: `library_screen.py` 32857 -> 32866 lines (1288 methods); the ratchet row is raised by exactly that, with a dated note. `screen_constants.py` (+5) has no size row.
+- **Lane time** (serial, UI lane flags, load 12-22): screen-lock test 3.5-3.7 s, cap test 3.0-3.1 s. Both are in a whole-file census entry, so the census is unchanged.

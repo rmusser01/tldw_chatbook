@@ -69,6 +69,9 @@ from tldw_chatbook.Prompt_Management.prompt_scope_service import (
 from tldw_chatbook.UI.Library_Modules.library_media_browse_controller import (
     LibraryMediaBrowseController,
 )
+from tldw_chatbook.UI.Library_Modules.screen_constants import (
+    LIBRARY_LIST_ENTRY_FOCUS_EXPIRY_RETRIES,
+)
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.Widgets.Library import LIBRARY_ADAPTIVE_READER_GRIP_CLASS
 from tldw_chatbook.Widgets.Library.library_media_canvas import LibraryMediaRowScroll
@@ -1093,3 +1096,104 @@ async def test_notes_entry_window_close_waits_for_a_filter_being_repainted():
         await pilot.pause(0.5)  # a late reset would show here
         assert on_new_filter(), repr(screen.focused)
         assert not screen.focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)
+
+
+@pytest.mark.asyncio
+async def test_list_entry_lands_on_mounted_rows_while_the_screen_lock_is_held():
+    """Re-review of TASK-42422: the running-repaint check reads each
+    ancestor's lock but stops below the Screen. Rows a whole-screen recompose
+    has mounted are final, and waiting for the whole screen to mount could
+    outlast the entry window and leave focus unset. With the screen's lock
+    held and the Media rows mounted, a re-armed entry still lands on row 0.
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), notes=_two_notes(), media=_two_media_items()
+    )
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", None) == _FIRST_ROW["media"]
+            and not screen._library_pending_list_entry_focus,
+            message=lambda: f"Media entry never settled: {screen.focused!r}",
+        )
+        release_screen = asyncio.Event()
+
+        async def hold_screen_lock() -> None:
+            async with screen.lock:  # as a running screen recompose holds it
+                await release_screen.wait()
+
+        holder = asyncio.create_task(hold_screen_lock())
+        landed = None
+        try:
+            for _ in range(100):
+                if screen.lock.is_locked:
+                    break
+                await asyncio.sleep(0.01)
+            assert screen.lock.is_locked
+            screen.set_focus(None)
+            screen._arm_library_list_entry_focus()
+            for _ in range(150):  # 1.5 s, inside the 2 s window
+                if screen.focused is not None:
+                    break
+                await asyncio.sleep(0.01)
+            landed = screen.focused
+        finally:
+            release_screen.set()
+            await holder
+        assert getattr(landed, "id", None) == _FIRST_ROW["media"], repr(landed)
+
+
+@pytest.mark.asyncio
+async def test_notes_window_close_lands_anyway_after_its_retry_cap(monkeypatch):
+    """Re-review of TASK-42422: the window-close wait for a repainting Notes
+    filter is bounded. With the filter always reading as replaced, the
+    expiry retries ``LIBRARY_LIST_ENTRY_FOCUS_EXPIRY_RETRIES`` times, then
+    lands on the filter and disarms, and schedules nothing more.
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), notes=[], media=_two_media_items()
+    )
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", None) == "library-notes-filter"
+            and not screen._library_pending_list_entry_focus,
+            message=lambda: f"Notes entry never settled: {screen.focused!r}",
+        )
+        calls: list[int] = []
+        expire = type(screen)._expire_library_list_entry_focus
+
+        def counted_expire(self, *args):
+            calls.append(len(calls))
+            return expire(self, *args)
+
+        monkeypatch.setattr(
+            library_screen_module, "_library_entry_target_replaced", lambda _w: True
+        )
+        monkeypatch.setattr(
+            type(screen), "_expire_library_list_entry_focus", counted_expire
+        )
+        screen.set_focus(None)
+        screen._library_pending_list_entry_focus = True
+        screen._expire_library_list_entry_focus()
+        assert screen.focused is None  # waiting, not landed
+        cap = LIBRARY_LIST_ENTRY_FOCUS_EXPIRY_RETRIES
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen._library_pending_list_entry_focus,
+            message=lambda: f"The window never closed after {len(calls)} calls.",
+        )
+        assert len(calls) == cap + 1, calls
+        assert getattr(screen.focused, "id", None) == "library-notes-filter"
+        await pilot.pause(0.3)  # nothing left scheduled
+        assert len(calls) == cap + 1, calls

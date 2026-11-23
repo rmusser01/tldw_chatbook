@@ -192,6 +192,11 @@ LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS = 2.0
 #: it is racing is a canvas-level recompose, and every tick is dropped by the
 #: arm's own generation check once the user takes control.
 LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS = 0.05
+#: TASK-42422 review: the window-close landing waits this many retry ticks
+#: (about 1 s) for a Notes filter a repaint is replacing, then lands anyway.
+LIBRARY_LIST_ENTRY_FOCUS_EXPIRY_RETRIES = round(
+    1.0 / LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS
+)
 LIBRARY_NOTES_AUTOSAVE_SECONDS = 2.0
 #: TASK-34000.1 (review N-01): the debounce above re-arms on every keystroke,
 #: so one key every 1.2 s was never saved at all. A burst of unsaved typing

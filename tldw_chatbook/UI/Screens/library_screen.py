@@ -39,6 +39,7 @@ from textual.css.query import NoMatches, QueryError
 from textual.dom import DOMNode
 from textual.errors import NoWidget
 from textual.geometry import Region
+from textual.screen import Screen
 from textual.timer import Timer
 from textual.widget import Widget
 from textual.worker import Worker, get_current_worker
@@ -720,6 +721,7 @@ from ..Library_Modules.screen_constants import (
     LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS,
     LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS,
     LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS,
+    LIBRARY_LIST_ENTRY_FOCUS_EXPIRY_RETRIES,
     _LIBRARY_SLASH_CANVAS_FILTERS,
     LIBRARY_NOTES_AUTOSAVE_SECONDS,
     LIBRARY_NOTES_AUTOSAVE_MAX_WAIT_SECONDS,
@@ -902,11 +904,16 @@ def _library_entry_target_replaced(widget: Widget) -> bool:
     the new children, nested ones included, have mounted. The lock is on
     every widget, so this needs no mixin. A rebuilt canvas mounts its toolbar
     or filter before its rows, and focus put on a replaced widget falls to
-    Textual's reset, which parks it on a pane grip.
+    Textual's reset, which parks it on a pane grip. The Screen's own lock is
+    not read: rows a whole-screen recompose has mounted are final, and
+    waiting for the whole screen could outlast the entry window.
     """
     return getattr(widget, "_pruning", False) or any(
         getattr(node, "_recompose_required", False)
-        or getattr(getattr(node, "lock", None), "is_locked", False)
+        or (
+            not isinstance(node, Screen)
+            and getattr(getattr(node, "lock", None), "is_locked", False)
+        )
         for node in getattr(widget, "ancestors", ())
     )
 
@@ -10317,7 +10324,9 @@ class LibraryScreen(BaseAppScreen):
             LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS, _tick
         )
 
-    def _expire_library_list_entry_focus(self, retries: int = 20) -> None:
+    def _expire_library_list_entry_focus(
+        self, retries: int = LIBRARY_LIST_ENTRY_FOCUS_EXPIRY_RETRIES
+    ) -> None:
         """Close the settle window; a Notes entry still waiting lands first.
 
         TASK-41129: a Notes list that is still loading keeps the entry
