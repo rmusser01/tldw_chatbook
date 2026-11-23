@@ -12,9 +12,13 @@ explicit opt-in works.
 from __future__ import annotations
 
 import _socket
+import json
+import os
 import socket
+import subprocess
 import sys
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -653,3 +657,97 @@ def test_loopback_only_mode_refuses_a_remote_name_lookup(
 
     assert reached == ["localhost"]
     assert _drain_expecting() == (("socket.getaddrinfo", "remote.example.test:443"),)
+
+
+# --- TASK-42477: no test spawns `security` against the real Keychain --------
+#
+# On macOS `read_claude_code_credential()` falls back to `/usr/bin/security
+# find-generic-password -s "Claude Code-credentials" -w`, a query of the real
+# OS Keychain service that a moved HOME did not stop (what it returns under a
+# moved HOME was never established: every measured spawn was refused). The
+# Console's credential poll reaches it through `subscription_credential_status(
+# background=True)`, so every mounted Console spawned it, in pytest and in the
+# plain Python children `Tests/Performance` runs (no conftest patch reaches those).
+# The product now reads the Keychain only while HOME is the account's own home;
+# both checks force the darwin branch so they bite on Linux CI too, and refuse
+# a `security` spawn rather than run it.
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+_KEYCHAIN_CHILD = """
+import json, os, sys
+from types import SimpleNamespace
+
+spawned = []
+
+def refuse_security(event, args):
+    if event != "subprocess.Popen":
+        return
+    argv = [args[1]] if isinstance(args[1], (str, bytes)) else list(args[1] or [])
+    first = args[0] or (argv[0] if argv else "")
+    if os.path.basename(os.fsdecode(first)) == "security":
+        spawned.append([os.fsdecode(part) for part in argv])
+        raise PermissionError("refused: /usr/bin/security")
+
+sys.addaudithook(refuse_security)
+from tldw_chatbook.LLM_Calls import anthropic_subscription as subscription
+
+subscription.sys = SimpleNamespace(platform="darwin")
+subscription.read_claude_code_credential()
+cache = subscription._SubscriptionReadinessCache()
+cache.status()
+cache._worker.join(30)
+print(json.dumps(spawned))
+"""
+
+
+def test_a_sandboxed_home_never_runs_the_keychain_reader_in_process(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from types import SimpleNamespace
+
+    from tldw_chatbook.LLM_Calls import anthropic_subscription as subscription
+
+    spawned: list[list[str]] = []
+    real_run = subprocess.run
+
+    def run(args, *rest, **kwargs):
+        if args and os.path.basename(str(args[0])) == "security":
+            spawned.append([str(part) for part in args])
+            raise PermissionError("refused: /usr/bin/security")
+        return real_run(args, *rest, **kwargs)
+
+    cache = subscription._SubscriptionReadinessCache()
+    monkeypatch.setattr(subscription.subprocess, "run", run)
+    monkeypatch.setattr(subscription, "sys", SimpleNamespace(platform="darwin"))
+    monkeypatch.setattr(subscription, "_KEYCHAIN_CACHE", None)
+    monkeypatch.setattr(subscription, "_SUBSCRIPTION_READINESS_CACHE", cache)
+    monkeypatch.setattr(subscription, "DEFAULT_CREDENTIALS_PATH", tmp_path / "absent")
+
+    assert subscription.read_claude_code_credential() is None
+    assert subscription.subscription_credential_status(background=True) == "pending"
+    cache._worker.join(30)
+    assert subscription.subscription_credential_status(background=True) == "missing"
+    assert spawned == []
+
+
+def test_a_child_process_never_runs_the_keychain_reader(tmp_path: Path) -> None:
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join(
+            filter(None, (str(_REPO_ROOT), os.environ.get("PYTHONPATH")))
+        ),
+    }
+    env.pop("PYTEST_CURRENT_TEST", None)
+    result = subprocess.run(
+        [sys.executable, "-c", _KEYCHAIN_CHILD],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr[-4000:]
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == []

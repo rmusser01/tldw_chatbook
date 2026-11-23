@@ -146,7 +146,7 @@ def _call_anthropic(monkeypatch, tmp_path, auth_source, cred_kwargs=None, api_ke
             return _FakeResp()
     monkeypatch.setattr(mod, "create_pooled_default_session", lambda **kwargs: _Session())
 
-    result = mod.chat_with_anthropic(
+    mod.chat_with_anthropic(
         input_data=[{"role": "user", "content": "hi"}],
         model="claude-sonnet-5",
         api_key=api_key,
@@ -347,11 +347,16 @@ def test_keychain_reader_nonzero_returncode_is_none(monkeypatch):
     import tldw_chatbook.LLM_Calls.anthropic_subscription as sub
     monkeypatch.setattr(sub, "_KEYCHAIN_CACHE", None, raising=False)
     monkeypatch.setattr(sub.sys, "platform", "darwin")
+    calls = []
     class _P:
         returncode = 44
         stdout = ""
-    monkeypatch.setattr(sub.subprocess, "run", lambda *a, **k: _P())
+    monkeypatch.setattr(sub.subprocess, "run", lambda *a, **k: calls.append(a) or _P())
+    # TASK-42477: opt in to the account-home branch after the fake `run`, so
+    # monkeypatch's reverse undo never leaves the real `run` behind it.
+    monkeypatch.setattr(sub, "_home_is_account_home", lambda: True)
     assert sub._keychain_credential_raw() is None
+    assert len(calls) == 1, "the Keychain branch must reach the (fake) security call"
 
 
 def test_keychain_reader_is_memoized(monkeypatch):
@@ -367,10 +372,48 @@ def test_keychain_reader_is_memoized(monkeypatch):
         calls["n"] += 1
         return _P()
     monkeypatch.setattr(sub.subprocess, "run", _run)
+    monkeypatch.setattr(sub, "_home_is_account_home", lambda: True)
     first = sub._keychain_credential_raw()
     second = sub._keychain_credential_raw()
     assert first == second
     assert calls["n"] == 1, "second read within TTL must be served from the memo"
+
+
+@pytest.mark.parametrize("home", ["account", "link", "moved", "missing"])
+def test_keychain_is_read_only_while_home_is_the_accounts_own(monkeypatch, tmp_path, home):
+    """TASK-42477: a moved HOME (the test sandbox, a scratch profile) never queries it.
+
+    Moving HOME does not stop `security` from querying the real Keychain
+    service, so only a HOME that is the account's own directory (a symlink to
+    it counts) may run it. The fake `run` is set before HOME and the password
+    database, so monkeypatch's reverse undo never pairs the real `run` with a
+    HOME that reads as the account's.
+    """
+    from types import SimpleNamespace
+
+    pwd = pytest.importorskip("pwd")
+    import tldw_chatbook.LLM_Calls.anthropic_subscription as sub
+
+    account = tmp_path / "account"
+    account.mkdir()
+    (tmp_path / "moved").mkdir()
+    (tmp_path / "link").symlink_to(account)
+    calls = []
+
+    def _run(command, **_kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout='{"claudeAiOauth": {"accessToken": "t"}}')
+
+    monkeypatch.setattr(sub.subprocess, "run", _run)
+    monkeypatch.setattr(sub, "_KEYCHAIN_CACHE", None, raising=False)
+    monkeypatch.setattr(sub, "sys", SimpleNamespace(platform="darwin"))
+    monkeypatch.setattr(pwd, "getpwuid", lambda _uid: SimpleNamespace(pw_dir=str(account)))
+    monkeypatch.setenv("HOME", str(tmp_path / home))
+    read = sub._keychain_credential_raw()
+
+    own = home in ("account", "link")
+    assert (read is not None) is own
+    assert len(calls) == (1 if own else 0)
 
 
 # --- TASK-26022 live-verify follow-ups: Claude Code identity (OAuth gate) ---

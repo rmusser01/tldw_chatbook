@@ -14,7 +14,6 @@ from Tests.UI.test_personas_workbench import (
     PersonasTestApp,
     _install_conversation_db,
     _mounted,
-    character_handler_module,
     stub_characters,  # noqa: F401 - shared fixture
 )
 from tldw_chatbook.LLM_Calls import anthropic_subscription as subscription
@@ -103,6 +102,10 @@ def credential_io(monkeypatch, tmp_path):
 
     monkeypatch.setattr(Path, "read_text", gated_read)
     monkeypatch.setattr(subscription.subprocess, "run", security)
+    # TASK-42477: the Keychain is read only under the account's own HOME. Set
+    # after the fake `run`, so monkeypatch's reverse undo never leaves the real
+    # `run` in place while this says "home".
+    monkeypatch.setattr(subscription, "_home_is_account_home", lambda: True)
     yield state
     state.release.set()
     if cache._worker is not None:
