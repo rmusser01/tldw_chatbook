@@ -228,50 +228,124 @@ async def test_a_refused_reservation_logs_the_refusal_and_its_code(
     assert ghost.revision_id not in repr(records)
 
 
+#: Trace-module ValueErrors whose argument is not a literal code, and why each
+#: stays ``validation`` (TASK-42471). Any other non-literal argument fails the
+#: scan below, because nothing could check it.
+_UNCODED_TRACE_VALUE_ERRORS = {
+    # Fed literal field names; its callers' literals are scanned as codes.
+    ("console_trace_service", "_required_string"),
+    # Each raises the name of a malformed field of an internal record. Some
+    # callers pass the name through a variable, so no scan can prove it.
+    ("console_trace_maintenance", "_validate_utc_timestamp"),
+    ("console_trace_repository", "_validate_token"),
+    ("console_trace_repository", "_nonempty"),
+    ("console_trace_repository", "_json_object"),
+    ("console_trace_repository", "_canonical_json_value"),
+    # A constructor bound's name, taken from a literal (value, name) table.
+    ("console_trace_redaction", "__init__"),
+    ("console_trace_redaction", "redact_pii_value"),
+    ("console_trace_regex_worker", "__post_init__"),
+    # A legacy capture row's field, read back for display, not for a Send.
+    ("console_trace_projection", "_decode_legacy_row"),
+}
+
+
+def _trace_refusal_codes() -> tuple[set[str], list[str]]:
+    """Scan every Chat/console_trace_*.py for the codes its refusals raise.
+
+    Returns:
+        The code-shaped literals raised as ``ValueError``,
+        ``TraceReservationRefused`` or ``TraceSurfaceChangeRefused`` (and
+        ``_required_string``'s field names), and the raise sites whose
+        argument is neither a literal nor listed above.
+    """
+    import ast
+    import re
+    from pathlib import Path
+
+    from tldw_chatbook.Chat import console_send_diagnostics
+
+    token = re.compile(r"[a-z][a-z0-9_]*")
+    raisers = {"ValueError", "TraceReservationRefused", "TraceSurfaceChangeRefused"}
+    raised: set[str] = set()
+    unchecked: list[str] = []
+    chat = Path(console_send_diagnostics.__file__).parent
+    for path in sorted(chat.glob("console_trace_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        constants = {
+            target.id: node.value.value
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Constant)
+            and type(node.value.value) is str
+            for target in node.targets
+            if isinstance(target, ast.Name)
+        }
+
+        def scan(
+            node: ast.AST,
+            function: str,
+            stem: str = path.stem,
+            constants: dict[str, str] = constants,
+        ) -> None:
+            for child in ast.iter_child_nodes(node):
+                scan(
+                    child,
+                    child.name
+                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    else function,
+                )
+            if not isinstance(node, ast.Call) or not node.args:
+                return
+            callee = node.func
+            name = (
+                callee.id
+                if isinstance(callee, ast.Name)
+                else callee.attr
+                if isinstance(callee, ast.Attribute)
+                and isinstance(callee.value, ast.Name)
+                and callee.value.id == "builtins"
+                else None
+            )
+            if name == "_required_string" and len(node.args) == 2:
+                arg = node.args[1]
+            elif name in raisers:
+                arg = node.args[0] if len(node.args) == 1 else None
+            else:
+                return
+            if isinstance(arg, ast.JoinedStr):
+                return  # Formatted text is never a code.
+            # `code or "fallback"` (_rolled_back_refusal): the literal is a code.
+            values = arg.values if isinstance(arg, ast.BoolOp) else [arg]
+            literals = [
+                value.value
+                if isinstance(value, ast.Constant) and type(value.value) is str
+                else constants.get(value.id)
+                if isinstance(value, ast.Name)
+                else None
+                for value in values
+            ]
+            if any(literals) and (isinstance(arg, ast.BoolOp) or None not in literals):
+                # A prose literal cannot be a log token, so it stays `validation`.
+                raised.update(item for item in literals if item and token.fullmatch(item))
+            elif (stem, function) not in _UNCODED_TRACE_VALUE_ERRORS:
+                unchecked.append(f"{stem}:{node.lineno}")
+
+        scan(tree, "<module>")
+    return raised, unchecked
+
+
 def test_every_coded_trace_refusal_has_a_send_diagnostic_category() -> None:
     """TASK-42471: a new refusal code cannot ship without a diagnostic category.
 
-    The category set knew 15 of the 86 codes these two modules raise, so
+    The category set knew 15 of the 86 codes two trace modules raise, so
     TASK-42412's CI failure logged only ``ValueError``/``validation``. The set
     stays an exact, code-owned list (no token is ever derived from error
-    text); this scan is what keeps it complete. A ``ValueError`` whose
-    argument is not a literal fails here too, because nothing could check it.
+    text); this scan of every trace module is what keeps it complete.
     """
-    import ast
-    from pathlib import Path
-
-    from tldw_chatbook.Chat import console_trace_runtime, console_trace_service
     from tldw_chatbook.Chat.console_send_diagnostics import _TRACE_FAILURE_CATEGORIES
 
-    raised: set[str] = set()
-    unchecked: list[str] = []
-    for module in (console_trace_service, console_trace_runtime):
-        tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
-        # Its one ValueError(field_name) is fed the literals scanned below.
-        exempt = {
-            id(node)
-            for function in ast.walk(tree)
-            if isinstance(function, ast.FunctionDef)
-            and function.name == "_required_string"
-            for node in ast.walk(function)
-        }
-        for node in ast.walk(tree):
-            if (
-                id(node) in exempt
-                or not isinstance(node, ast.Call)
-                or not isinstance(node.func, ast.Name)
-            ):
-                continue
-            if node.func.id == "ValueError":
-                arg = node.args[0] if len(node.args) == 1 else None
-            elif node.func.id == "_required_string":
-                arg = node.args[1] if len(node.args) == 2 else None
-            else:
-                continue
-            if isinstance(arg, ast.Constant) and type(arg.value) is str:
-                raised.add(arg.value)
-            else:
-                unchecked.append(f"{module.__name__}:{node.lineno}")
-    assert len(raised) > 80  # the scan found the codes, not nothing
+    raised, unchecked = _trace_refusal_codes()
+    assert len(raised) >= 209  # measured 2026-11-23; the scan found the codes
     assert unchecked == []
     assert sorted(raised - _TRACE_FAILURE_CATEGORIES) == []
