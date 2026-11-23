@@ -881,6 +881,15 @@ refs agreeing exactly is the signature of a loop that never varied its
 input. Sanity-check with one ref you know differs
 (`git show "${b}:path" | grep VERSION` against two refs you expect to
 disagree).
+
+**Same trap, with brackets (TASK-42426, 2026-11-23).** A soak script built
+two pytest node ids as `"$F[runtime_dispose]"` and `"$F[runtime_replacement]"`.
+In zsh, `$F[...]` subscripts the scalar, so both expanded to an empty string.
+pytest got no node ids and collected the whole tree. A two-case round then
+ran for 11 minutes before it was noticed at "[1%]". Write parametrized ids
+in full (`N='file.py::test[case]'`) or brace them (`"${F}[case]"`), and check
+that the first run's header reports the number of items you expect.
+
 ## ADR numbers collide across concurrent branches — re-verify at merge time
 
 **What happened.** 2026-08-20, two independent sessions in the same window: the

@@ -412,6 +412,22 @@ async def exercise():
             assert time.monotonic() < deadline, 'stock_skill_control_prerequisite_timeout'
             await asyncio.sleep(.005)
 
+    async def settle_view_agent_runs_reads():
+        # TASK-42426: dispose refuses sqlite_retirement_incomplete:AgentRuns
+        # while the live view's finite AgentRuns read (the sub-agent badge
+        # count, or run history) holds a handle: ADR-225 counts no busy
+        # handle as closed. The app's only dispose route settles the view's
+        # workers first (settle_view_and_dispose); these cases dispose
+        # directly with the view live, so they wait for those reads to end.
+        # Waiting (not cancelling) keeps the count's 2 s refresh window fresh.
+        rows = capture_console_view_workers(
+            app, groups=frozenset({'console-subagent-counts', 'console-agent-history'})
+        )[-1]
+        tasks = {task for _worker, _node, task, _work in rows if not task.done()}
+        if tasks:
+            _done, pending = await asyncio.wait(tasks, timeout=10)
+            assert not pending, 'view_agent_runs_read_unsettled'
+
     async def physical_result(future):
         try:
             value = await asyncio.wait_for(asyncio.wrap_future(future, loop=loop), timeout=10)
@@ -490,6 +506,9 @@ async def exercise():
             assert late == {} and future.running() and not future.done()
             assert captured_reads[0] in runtime._preparation_reads
             facts['original_close_refuses_late_context_and_retains_exact_read'] = True
+            if case == 'runtime_dispose':
+                # Dispose is parked on the held setup read until release.
+                await settle_view_agent_runs_reads()
         # TASK-41319 (ADR-356 rule 4): these three cases kept their node ids
         # (the CI lane selects them by id) but now change current state, not a
         # helper's identity: the app's local-skills slot, its scope slot, and
@@ -546,6 +565,7 @@ async def exercise():
             facts['changed_helper_refused_without_foreign_execution'] = True
         if case == 'runtime_replacement':
             assert app.console_runtime is replacement and app._local_skill_trust_service is None
+            await settle_view_agent_runs_reads()
             await asyncio.wait_for(runtime.dispose(), timeout=10)
             assert app.console_runtime is replacement and runtime._disposed
             facts['replacement_Runtime_receives_no_stale_setup_or_cleanup'] = True
