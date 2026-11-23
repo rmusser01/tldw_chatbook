@@ -690,6 +690,14 @@ async def exercise():
                         and not screen._console_attach_reconcile_running
                     )
                 )
+                # TASK-42412: the received route also needs the Console's
+                # arrival read of the emergency stop. Until it lands,
+                # received_send_held() sends the draft down the ordinary
+                # dispatch (by design), which never reaches the held builder.
+                await settle(
+                    lambda: getattr(screen, "_console_emergency_stop_path", None)
+                    is not None
+                )
                 session = store.ensure_session()
                 composer = screen._console_composer_or_none()
                 draft = "Describe a local managed-skill availability check"
