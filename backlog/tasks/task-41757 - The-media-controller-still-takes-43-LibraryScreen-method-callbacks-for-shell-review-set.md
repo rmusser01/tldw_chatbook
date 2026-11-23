@@ -165,4 +165,6 @@ Three more tests guard the protocols:
 - `backlog/docs/lessons-testing-evidence.md`
 
 No User Guide change: behaviour is unchanged.
+
+**Rebase onto dev `82055f4750` (2026-11-23).** TASK-42422 had raised LibraryScreen's `_BUDGETS` row from 32828 to 32866 in a different part of the file. Both changes leave the method count at 1288, so this branch's three steps keep their deltas (-75, +13, +8) from the new start: 32866 -> 32791 -> 32804 -> 32812. The ratchet test confirms 32812 on the rebased head.
 <!-- SECTION:NOTES:END -->
