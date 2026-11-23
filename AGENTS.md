@@ -111,10 +111,10 @@ def _heavy_task(self):
 
 ### Adding Features
 
-**New LLM Provider**:
-1. Add to `LLM_Calls/` as `chat_with_<provider>()` (streaming form returns an SSE generator)
-2. Register in `Chat/Chat_Functions.py::API_CALL_HANDLERS` (+ `PROVIDER_PARAM_MAP` if params need projection)
-3. Add config section; raise `ChatConfigurationError` on missing keys
+**New LLM Provider** (full recipe: CLAUDE.md, "New LLM Provider"):
+1. Add a `ProviderRecord` to `ALL_RECORDS` in `provider_registry.py` (ADR-179)
+2. OpenAI-compatible preset: make the record `engine_driven` and add its `[api_settings.<key>]` section to `Config_Files/default_config.toml`; dispatch, readiness and the provider lists derive from the record (TASK-36946)
+3. Bespoke provider: write `chat_with_<provider>()` in `LLM_Calls/` (its streaming form returns an SSE generator), register it in `Chat/Chat_Functions.py::API_CALL_HANDLERS` / `PROVIDER_PARAM_MAP`, add its config section, and raise `ChatConfigurationError` on missing keys
 
 **New Screen/Destination**:
 1. Create a `BaseAppScreen` subclass in `UI/Screens/`
