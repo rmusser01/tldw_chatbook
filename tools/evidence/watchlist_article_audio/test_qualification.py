@@ -534,6 +534,20 @@ class ResolutionTests(unittest.TestCase):
 
 
 class BookmarkTests(unittest.TestCase):
+    def test_packet_stop_must_interrupt_original_content(self):
+        self.assertEqual(
+            bookmark_alignment(118800, 2.475, content_duration_s=2.5)[
+                "bookmark_alignment"
+            ],
+            "pass",
+        )
+        self.assertEqual(
+            bookmark_alignment(119520, 2.49, content_duration_s=2.5)[
+                "bookmark_alignment"
+            ],
+            "unqualified",
+        )
+
     def test_bookmark_must_align_with_independently_matched_stopped_end(self):
         self.assertEqual(bookmark_alignment(24000, 0.749)["bookmark_alignment"], "pass")
         self.assertAlmostEqual(
@@ -643,6 +657,8 @@ class MatrixTests(unittest.TestCase):
             {"saved_bookmark_frame": None, "bookmark": "unqualified"},
             {"saved_bookmark_frame": 120000},
             {"capture_reaped": False},
+            {"diagnostics": {"worker": {"timestamp_error_count": 1}}},
+            {"diagnostics": {"worker": {"discontinuity_count": 1}}},
         ]:
             calls = []
 
