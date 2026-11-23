@@ -169,6 +169,45 @@ def test_a_fresh_observation_sees_a_change_from_outside_at_once(
     assert fresh[0] == "refused", fresh
 
 
+def test_only_the_next_item_of_an_admitted_stream_uses_the_window(monkeypatch):
+    """A provider request is admitted by a read with no window; its items are not.
+
+    One full derivation per streamed item was 1.3 of this gate's 2.2 CPU
+    seconds in a two-turn Console journey (2026-11-23), and a real answer has
+    hundreds of items.
+    """
+    from tldw_chatbook.LLM_Calls import recovery_review
+
+    windows = []
+    monkeypatch.setattr(
+        recovery_review,
+        "_witnesses",
+        lambda path, lease: windows.append(storage._observation_window()) or (),
+    )
+    assert recovery_review._history("config", None) == ()
+    assert recovery_review._history("config", None, fresh=False) == ()
+    assert windows == [0.0, 1.0]
+
+    class Operation:
+        def __init__(self):
+            self.checks = []
+
+        def check(self, *, fresh=True):
+            self.checks.append(fresh)
+
+        def close(self):
+            self.checks.append("closed")
+
+    operation = Operation()
+    with recovery_review._using(operation):
+        pass
+    items = (item for item in ("first", "second"))
+    stream = recovery_review._OpenAIStream(items, "config", operation)
+    assert list(stream) == ["first", "second"]
+    # Request admission, two items, and the read that finds the stream exhausted.
+    assert operation.checks == [True, False, False, False, "closed"]
+
+
 def test_an_in_process_admission_write_ends_the_window_at_once(
     local_scope, settled, monkeypatch  # noqa: F811
 ):

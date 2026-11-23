@@ -238,18 +238,25 @@ def _selection(path, auth_source=None, *, resolve=False):
     return endpoint, auth_source, selection, secret
 
 
-def _history(path, lease):
-    """The paired witnesses for ``path``, read now.
+def _history(path, lease, *, fresh=True):
+    """The paired witnesses for ``path``, read now unless ``fresh`` is false.
 
     Every caller decides whether a provider may be reached: the reconnect
     review, recording its approval, and the per-request gate that compares
     this with what it read when the operation began. Inside the evidence
     observation window a pairing record removed or rewritten by anything but
     this process's writers stayed invisible for up to a second, and all three
-    then accepted damaged history (TASK-40608, found 2026-11-22). Two reads
-    per provider request; the Console's other gates keep the window.
+    then accepted damaged history (TASK-40608, found 2026-11-22). So each of
+    them reads with no window; the Console's other gates keep it.
+
+    ``fresh=False`` is for one caller: taking the next item of a response
+    stream whose request was already admitted by a fresh read. Nothing more
+    is sent there, and one full derivation per item was most of this gate's
+    cost in a turn.
     """
     try:
+        if not fresh:
+            return tuple(_witnesses(path, lease))
         with fresh_observation():
             return tuple(_witnesses(path, lease))
     except (OSError, ValueError, TypeError, RuntimeError, KeyError, AttributeError):
@@ -461,10 +468,10 @@ class _Operation:
             records.append(matches[0])
         return tuple(records)
 
-    def check(self):
+    def check(self, *, fresh=True):
         if self.closed or self.path != bootstrap.effective_config_path():
             raise ProviderReconnectRequired()
-        if _history(self.path, self.lease) != self.history:
+        if _history(self.path, self.lease, fresh=fresh) != self.history:
             raise ProviderReconnectRequired()
 
     def check_request(self, url, key):
@@ -518,8 +525,8 @@ _current = ContextVar("openai_connection", default=None)
 
 
 @contextmanager
-def _using(operation):
-    operation.check()
+def _using(operation, *, fresh=True):
+    operation.check(fresh=fresh)
     token = _current.set((operation, _identity()))
     try:
         yield operation
@@ -555,7 +562,7 @@ class _OpenAIStream(Iterator):
             if self.operation is None:
                 self.operation = _Operation(self.path)
             try:
-                with _using(self.operation):
+                with _using(self.operation, fresh=False):
                     value = next(self.iterator)
                 if self.close_requested.is_set():
                     self.close()
