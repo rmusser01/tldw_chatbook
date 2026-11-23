@@ -674,22 +674,112 @@ def test_an_importer_that_is_shared_infrastructure_goes_broad(tmp_path):
     assert policy.select_changes([("M", "Tests/UI/test_base.py")], root)["full"]
 
 
+def _lane_workflow(root, lanes, other=""):
+    """A workflow skeleton: PR lane jobs the required check needs, and a dev-only job."""
+    names = list(lanes)
+    body = "jobs:\n"
+    for name, steps in lanes.items():
+        body += f"  {name}:\n    steps:\n"
+        for run in steps:
+            body += "      - name: step\n        run: |\n          " + run + "\n"
+    body += (
+        "  library-shell-dev:\n    steps:\n      - run: |\n          " + other + "\n"
+    )
+    body += (
+        f"  derived-artifacts:\n    needs: [preflight, dev-light, {', '.join(names)}]\n"
+    )
+    path = root / ".github/workflows/derived-artifacts.yml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body)
+
+
 def test_a_file_the_lanes_run_only_by_node_runs_those_nodes(tmp_path):
     """Review N2: never run whole a file no PR lane runs whole; run its lane nodes."""
     root = _tree(tmp_path, ["Tests/UI/test_nodes.py", "Tests/UI/test_whole.py"])
-    lanes = root / ".github/workflows/derived-artifacts.yml"
-    lanes.parent.mkdir(parents=True)
-    lanes.write_text(
-        "pytest Tests/UI/test_nodes.py::test_a \\\n"
-        "  Tests/UI/test_nodes.py::test_b[case-1] \\\n"
-        "  Tests/UI/test_whole.py \\\n  Tests/UI/test_whole.py::test_c\n"
+    _lane_workflow(
+        root,
+        {
+            "pr-fast-lane": [
+                "pytest Tests/UI/test_nodes.py::test_a \\\n"
+                "            'Tests/UI/test_nodes.py::test_b[anthropic-200,000]' \\\n"
+                "            Tests/UI/test_whole.py Tests/UI/test_whole.py::test_c"
+            ]
+        },
     )
     nodes = policy.select_changes([("M", "Tests/UI/test_nodes.py")], root)
     assert not nodes["full"]
     assert {
         "Tests/UI/test_nodes.py::test_a",
-        "Tests/UI/test_nodes.py::test_b[case-1]",
+        "Tests/UI/test_nodes.py::test_b[anthropic-200,000]",
     } <= set(nodes["targets"])
     assert "Tests/UI/test_nodes.py" not in nodes["targets"]
     whole = policy.select_changes([("M", "Tests/UI/test_whole.py")], root)
     assert "Tests/UI/test_whole.py" in whole["targets"]
+
+
+def test_census_node_ids_are_read_as_whole_lines(tmp_path):
+    """Final review I1: a comma inside a parametrize id must not cut the node id."""
+    root = _tree(tmp_path, ["Tests/UI/test_disclosures.py"])
+    _lane_workflow(
+        root, {"ui-fast-lane": ["python scripts/check_ui_pr_gate_census.py --shard 1"]}
+    )
+    census = root / "scripts/ui_pr_gate_census.txt"
+    census.parent.mkdir(parents=True)
+    census.write_text(
+        "# header\n\nTests/UI/test_disclosures.py::test_reset[openai-32,000]\n"
+    )
+    plan = policy.select_changes([("M", "Tests/UI/test_disclosures.py")], root)
+    assert "Tests/UI/test_disclosures.py::test_reset[openai-32,000]" in plan["targets"]
+
+
+def test_every_real_census_entry_is_a_lane_target():
+    steps, _, _ = policy._lanes(ROOT)
+    census = [
+        line.strip()
+        for line in (ROOT / policy.UI_CENSUS).read_text().splitlines()
+        if line.strip().startswith("Tests/")
+    ]
+    assert census and all(entry in steps for entry in census)
+
+
+def test_nightly_only_deselected_and_split_files_go_broad(tmp_path):
+    """Final review I2 and the split-step Minor."""
+    files = [
+        "Tests/Backup_Recovery/test_slow.py",
+        "Tests/Chat/test_deselected.py",
+        "Tests/Chat/test_split.py",
+    ]
+    root = _tree(tmp_path, files)
+    _lane_workflow(
+        root,
+        {
+            "pr-fast-lane": [
+                "pytest Tests/Chat/test_deselected.py "
+                '"--deselect=Tests/Chat/test_deselected.py::test_known_red" '
+                "Tests/Chat/test_split.py::test_a",
+                "pytest Tests/Chat/test_split.py::test_b",
+            ]
+        },
+        other="pytest Tests/Backup_Recovery/test_slow.py -n 4",
+    )
+    for path in files:
+        assert policy.select_changes([("M", path)], root)["full"], path
+
+
+def test_schema_ddl_is_matched_case_sensitively(tmp_path):
+    """Final review Minor: ALTER TABLE and CREATE TRIGGER count; prose does not."""
+    root = _tree(tmp_path, [])
+    feature = root / "tldw_chatbook/Feature"
+    feature.mkdir(parents=True)
+    (feature / "keys.py").write_text('SQL = "ALTER TABLE meta ADD COLUMN k"\n')
+    (feature / "dictionary.py").write_text('SQL = "CREATE TRIGGER t AFTER INSERT"\n')
+    (feature / "notes.py").write_text("# we create table views for the user\n")
+    for name, full in [("keys.py", True), ("dictionary.py", True), ("notes.py", False)]:
+        plan = policy.select_changes([("M", f"tldw_chatbook/Feature/{name}")], root)
+        assert plan["full"] is full, name
+
+
+def test_a_deleted_data_file_runs_the_tests_that_read_it(tmp_path):
+    root = _tree(tmp_path, {"Tests/UI/test_reader.py": 'DATA = "gone.tsv"\n'})
+    plan = policy.select_changes([("D", "Tests/UI/gone.tsv")], root)
+    assert "Tests/UI/test_reader.py" in plan["targets"]

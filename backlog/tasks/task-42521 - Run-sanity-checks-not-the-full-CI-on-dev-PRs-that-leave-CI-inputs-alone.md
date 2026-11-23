@@ -73,13 +73,20 @@ The owner set the variable on 2026-11-23 and chose to loosen the rule.
   - files the lanes run only by node now run those nodes instead of the whole file;
   - tests for the importer-is-infrastructure branch;
   - the replay counts and the `ci:full` re-run note.
+- **Round 3 (final pass):** no Critical findings. Fixed in the fourth commit:
+  - **I1:** node ids containing commas were cut short. Census entries are now read as whole lines, and workflow steps as shell words.
+  - **I2:** push and nightly jobs counted as lanes, and `--deselect` was ignored. Lanes are now the jobs the required check needs. Files only other jobs run, files a lane deselects nodes from, and files split across lane steps go broad.
+  - **Minors:**
+    - uppercase DDL is matched case-sensitively;
+    - deleted data files select their readers;
+    - the ADR now says light runs only lane-listed nodes.
 - **The label trigger (part of I3):** documented instead of adding `labeled` to the workflow, since any bot label would then start a full 62-job run. The reviewer agreed.
 
 **Verification:**
-- `Tests/CI` 1857 passed, 2 skipped (`-n 4`); `test_tiered_ci.py` 84 passed.
+- `Tests/CI` 1862 passed, 2 skipped (`-n 4`); `test_tiered_ci.py` 89 passed.
 - **Replay** over the last 60 dev merges at b31e3e9241:
   - The old rule sends 5 light; the new rule sends 24.
   - Of the 36 still broad: 20 change CI or test configuration (mostly lane additions to the workflow), 10 change a widely imported test module, 5 touch the two whole-file-excluded files and 1 changes Architecture data.
-  - A light run selects a median of 5 files (max 13), and selection takes a median of 0.9 s (max 2.9 s).
+  - A light run selects a median of 5 files (max 13), and selection takes a median of 0.5 s (max 2.2 s).
 - This PR itself runs broad, because it changes `.github/` and `scripts/ci/`.
 <!-- SECTION:NOTES:END -->

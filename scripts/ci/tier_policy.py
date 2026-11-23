@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 from pathlib import Path
 import subprocess
 
@@ -53,13 +54,16 @@ IMPORTER_CAP = 8
 # The PR's own selected files (changed tests, importers, data readers): more
 # than this would not fit the light job's 30-minute cap run one by one.
 LIGHT_FILE_CAP = 20
-# Application code that creates or versions its own SQLite schema.
-SCHEMA_TEXT = re.compile(r"CREATE TABLE|user_version", re.IGNORECASE)
-# Where the PR lanes name their test files (whole, or by node id).
-LANE_FILES = (
-    ".github/workflows/derived-artifacts.yml",
-    "scripts/ui_pr_gate_census.txt",
+# Application code that creates, alters or versions its own SQLite schema
+# (uppercase DDL, as this codebase writes it; case-sensitive to skip prose).
+SCHEMA_TEXT = re.compile(
+    r"\b(?:ALTER TABLE|CREATE (?:TABLE|UNIQUE INDEX|INDEX|TRIGGER|VIEW|VIRTUAL TABLE))\b"
+    r"|\buser_version\b"
 )
+# The PR lanes: the jobs the required check needs, and the UI lane's census.
+LANE_WORKFLOW = ".github/workflows/derived-artifacts.yml"
+UI_CENSUS = "scripts/ui_pr_gate_census.txt"
+NOT_LANES = {"preflight", "dev-light", "release-qualification"}
 BASE_TESTS = [
     "Tests/test_smoke.py",
     "Tests/MCP/test_approval_timeout_policy.py",
@@ -132,13 +136,53 @@ def _importers(path: str, corpus: dict[str, str]) -> set[str]:
     return found
 
 
-def _lane_nodes(path: str, lanes: str) -> list[str]:
-    """The node ids the PR lanes run for a file they never run whole, else []."""
-    if re.search(rf"(?<![\w/.]){re.escape(path)}(?![\w/.:])", lanes):
-        return []
-    return sorted(
-        set(re.findall(rf"(?<![\w/.]){re.escape(path)}::[^\s\\\"',]+", lanes))
+def _tokens(text: str) -> list[str]:
+    """Shell words of a workflow step, comments dropped, quotes removed."""
+    text = re.sub(r"(?m)(^|\s)#.*$", r"\1", text).replace("\\\n", " ")
+    try:
+        return shlex.split(text)
+    except ValueError:  # an unbalanced quote outside a command
+        return [t.strip("\"'") for t in text.split()]
+
+
+def _lanes(root: Path) -> tuple[dict[str, set[str]], set[str], set[str]]:
+    """What the PR lanes run: target -> step ids, the ids they deselect, and the
+    targets other jobs (push to dev, nightly) name."""
+    path = root / LANE_WORKFLOW
+    workflow = path.read_text(errors="replace") if path.is_file() else ""
+    parts = re.split(r"(?m)^  ([A-Za-z0-9_-]+):[ \t]*\n", workflow)
+    jobs = dict(zip(parts[1::2], parts[2::2], strict=True))
+    needs = re.search(r"needs:\s*\[([^\]]*)\]", jobs.get("derived-artifacts", ""))
+    lane_jobs = (
+        {n.strip() for n in needs.group(1).split(",")} - NOT_LANES if needs else set()
     )
+    steps: dict[str, set[str]] = {}
+    deselected: set[str] = set()
+    other: set[str] = set()
+    for job, body in jobs.items():
+        for number, step in enumerate(re.split(r"(?m)^      - ", body)):
+            words = _tokens(step)
+            for previous, word in zip(["", *words], words, strict=False):
+                if job in lane_jobs and word.startswith("--deselect="):
+                    deselected.add(word.split("=", 1)[1])
+                elif job in lane_jobs and previous == "--deselect":
+                    deselected.add(word)
+                elif not word.startswith("Tests/") or previous == "--deselect":
+                    continue
+                elif job in lane_jobs:
+                    steps.setdefault(word, set()).add(f"{job}#{number}")
+                else:
+                    other.add(word)
+    census = root / UI_CENSUS
+    if census.is_file():
+        for line in census.read_text(errors="replace").splitlines():
+            if line.strip().startswith("Tests/"):
+                steps.setdefault(line.strip(), set()).add("ui-census")
+    return steps, deselected, other
+
+
+def _names(path: str, targets: set[str]) -> set[str]:
+    return {t for t in targets if t == path or t.startswith(path + "::")}
 
 
 def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
@@ -176,8 +220,8 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
                 return broad(f"Shared test module ({len(related)}+ importers): {path}")
             if status != "D":
                 own.add(path)
-        elif path.startswith("Tests/") and status != "D":
-            # Test data: the test files that name it read it.
+        elif path.startswith("Tests/"):
+            # Test data, changed or deleted: the test files that name it read it.
             name = Path(path).name
             related = {f for f, text in tests_corpus().items() if name in text}
         elif status == "D":
@@ -200,16 +244,31 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
     own = {f for f in own if not f.startswith("Tests/CI/")}  # Tests/CI runs whole
     if len(own) > LIGHT_FILE_CAP:
         return broad(f"{len(own)} test files exceed the light job's cap")
-    lanes = "\n".join(
-        (root / f).read_text(errors="replace")
-        for f in LANE_FILES
-        if (root / f).is_file()
-    )
-    # A file the lanes run only by node runs those same nodes here, never whole.
-    lane_nodes = {path: _lane_nodes(path, lanes) for path in own}
-    whole = {path for path, nodes in lane_nodes.items() if not nodes}
+    steps, deselected, other = _lanes(root)
+    lane_dirs = {
+        t
+        for t in steps
+        if "::" not in t and not t.endswith(".py") and (root / t).is_dir()
+    }
+    whole: set[str] = set()
+    for path in sorted(own):
+        named = _names(path, set(steps))
+        if _names(path, deselected):
+            return broad(f"Test file a PR lane runs with deselected nodes: {path}")
+        if not named and _names(path, other):
+            return broad(f"Test file only push or nightly jobs run: {path}")
+        if (
+            not named
+            or path in named
+            or any(path.startswith(d.rstrip("/") + "/") for d in lane_dirs)
+        ):
+            whole.add(path)  # run whole, as a lane does (or as no lane does yet)
+            continue
+        # The lanes run this file only by node: run those nodes, never the whole file.
+        if len(set().union(*(steps[t] for t in named))) > 1:
+            return broad(f"Test file split across PR lane steps: {path}")
+        targets |= named
     targets |= whole
-    targets.update(node for nodes in lane_nodes.values() for node in nodes)
     # A file selected whole must not be narrowed to its own smoke nodes
     # (pytest collapses `f f::n` to `f::n`).
     targets = {t for t in targets if "::" not in t or t.split("::", 1)[0] not in whole}
