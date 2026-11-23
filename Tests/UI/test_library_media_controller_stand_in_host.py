@@ -1,12 +1,23 @@
 """The media controller, built on a stand-in host and driven directly (TASK-36952.4).
 
 Owner ruling, 2026-11-23, on how TASK-36952 closes: "Add a direct test, then
-close". Every other media test goes through a mounted Library screen. Here
-``LibraryMediaController`` is built on a bare Textual screen defined below,
-which implements ``LibraryMediaHost``'s four shell-service protocols by
-recording each call, so the protocol is shown to be the controller's whole
-contract with its host. Production still builds the controller with the
-Library screen; this module never imports that screen.
+close". No other test runs ``LibraryMediaController``'s constructor on
+anything but the Library screen (a few skip it with ``object.__new__``). Here
+it is built on a bare Textual screen defined below, which implements
+``LibraryMediaHost``'s four shell-service protocols by recording each call.
+
+What this file shows: the stand-in supplies every member the protocol
+declares, each service with the protocol's sync or async kind, and one
+controller entry point per service protocol runs on it. What it cannot show
+is that the controller reads nothing else off its host, since the stand-in is
+a full ``Screen`` and only four entry points run. That half is
+``test_media_controller_takes_a_typed_host_instead_of_the_screen`` in
+``Tests/Architecture/test_library_media_wiring.py``, which checks that every
+host read in the controller is a protocol member. Together they show the
+protocol is the controller's whole contract with its host.
+
+Production still builds the controller with the Library screen; this module
+never imports that screen.
 """
 from __future__ import annotations
 
@@ -64,11 +75,18 @@ class _StandInHost(Screen):
     Each service records its call in ``calls`` and returns
     ``answers[name](*args, **kwargs)``, or None when no answer is set.
     ``shell_state`` backs the controller's accessor and setter keywords.
+    ``app_instance`` has only the attributes the driven entry points read: a
+    direct read of any other raises ``AttributeError``, and a
+    ``getattr(..., default)`` read gets its default, as on an app without it.
     """
 
     def __init__(self) -> None:
         super().__init__()
-        self.app_instance = Mock()
+        self.app_instance = Mock(
+            spec_set=("media_db", "notify", "open_chat_with_handoff", "workspace_registry_service"),
+            media_db=None,
+            workspace_registry_service=None,
+        )
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
         self.answers: dict[str, Any] = {}
         self.shell_state: dict[str, Any] = {"media_state": LibraryMediaState()}
@@ -212,8 +230,9 @@ async def test_the_stand_in_provides_every_member_of_the_host_protocol() -> None
     ``__protocol_attrs__`` is the set ``typing`` builds for a protocol over its
     whole MRO (``typing.get_protocol_members`` returns it from Python 3.13), so
     a member added to any of the four service protocols lands in it. Service
-    members must be the stand-in's own; the framework members may come from
-    Textual's ``Screen``.
+    members must be the stand-in's own, sync or async as the protocol declares
+    them (TASK-41757's conformance test checks the same kind on the Library
+    screen); the framework members may come from Textual's ``Screen``.
     """
     members = set(LibraryMediaHost.__protocol_attrs__)
     services = set().union(
@@ -225,6 +244,13 @@ async def test_the_stand_in_provides_every_member_of_the_host_protocol() -> None
             + [name for name in members - services if not hasattr(host, name)]
         )
     assert not missing, f"the stand-in host lacks LibraryMediaHost members: {missing}"
+    wrong_kind = sorted(
+        name
+        for name in services
+        if inspect.iscoroutinefunction(getattr(LibraryMediaHost, name))
+        != inspect.iscoroutinefunction(vars(_StandInHost)[name])
+    )
+    assert not wrong_kind, f"stand-in members not sync/async as the protocol declares: {wrong_kind}"
 
 
 async def test_shell_source_record_id_picks_the_cached_record_an_edit_rewrites() -> None:
@@ -290,7 +316,11 @@ async def test_a_shell_resize_runs_the_selected_routes_reader_layout_sync(
 
 
 async def test_workspace_depth_state_refuses_a_hand_off_the_workspace_blocks() -> None:
-    """Workspace depth: a blocked depth row refuses "Use in Console"."""
+    """Workspace depth: a blocked depth row refuses "Use in Console".
+
+    The refusal comes from the stand-in's depth row, before any link: the
+    app has no workspace registry, and the Reader keeps no link receipt.
+    """
     row = SimpleNamespace(
         item_type="media",
         item_id="7",
@@ -309,3 +339,4 @@ async def test_workspace_depth_state_refuses_a_hand_off_the_workspace_blocks() -
         row.recovery_copy, severity="warning", markup=False
     )
     host.app_instance.open_chat_with_handoff.assert_not_called()
+    assert host.shell_state["media_state"].link_receipt is None
