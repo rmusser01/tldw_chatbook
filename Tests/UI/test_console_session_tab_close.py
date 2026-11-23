@@ -254,6 +254,22 @@ def _record_notifications(app) -> list[tuple[str, str]]:
     return notes
 
 
+def _parked_decision_notice(notes: list[tuple[str, str]]) -> bool:
+    """True once a background tab's round has told the user it is waiting.
+
+    While Console stays visible, the park toast and the hidden-decision
+    notice are both sent only after the round's arm-time liveness check
+    passed (TASK-42424). Hiding Console announces every registered round,
+    checked or not.
+    """
+
+    return any(
+        marker in message
+        for message, _severity in notes
+        for marker in ("needs approval", "needs your answer", "needs confirmation")
+    )
+
+
 def _failure_toasts(notes: list[tuple[str, str]]) -> list[tuple[str, str]]:
     """Error and warning toasts: a close that worked, or a Stay, shows none."""
 
@@ -943,6 +959,7 @@ async def _verify_background_pending_close_names_consequences_and_cancels_only_i
                 controller._active_cancel_events[doomed.id] = threading.Event()
                 if kind == "chat_create":
                     controller._active_assistant_message_ids[doomed.id] = assistant.id
+                notes = _record_notifications(app)
                 round_task = await _arm_pending_round(controller, kind, doomed.id)
 
                 async def waiting_run(
@@ -979,6 +996,11 @@ async def _verify_background_pending_close_names_consequences_and_cancels_only_i
                             and doomed.id in controller._active_stream_tasks
                         ),
                     ), "the actual pending round and its owning run did not arm"
+                    # TASK-42424: a check that lands under the Close dialog would
+                    # settle the round as the close does, proving nothing.
+                    assert await _settle(
+                        pilot, lambda notes=notes: _parked_decision_notice(notes)
+                    ), "the closing tab's decision never told the user it waits"
                     await _show_tabs(console, pilot, {keeper, doomed.id})
                     assert (
                         controller.run_marker_for(doomed.id)
@@ -1074,6 +1096,7 @@ async def _verify_background_pending_close_releases_round_without_an_active_turn
                 keeper = store.active_session_id
                 doomed = controller.new_session(title="Pending decision")
                 controller.switch_session(keeper)
+                notes = _record_notifications(app)
                 sibling = await _arm_pending_round(controller, "question", keeper)
                 pending = await _arm_pending_round(
                     controller, kind, doomed.id, surviving_child=kind == "chat_create"
@@ -1111,6 +1134,28 @@ async def _verify_background_pending_close_releases_round_without_an_active_turn
                         _assert_surviving_creation_is_live(controller, pending)
                     assert doomed.id not in controller._active_cancel_events
                     assert doomed.id not in controller._active_assistant_message_ids
+                    # TASK-42424: wait for the viewed tab's question card before
+                    # the Close dialog covers the view. Here controller.app is a
+                    # never-run TldwCli, so the round's arm-time liveness check
+                    # (TASK-41637) rests on the view alone, and a check that
+                    # lands under the dialog fails the round closed. A running
+                    # app never does, see:
+                    # test_running_app_round_stays_pending_while_no_view_can_answer
+                    assert await _settle(
+                        pilot,
+                        lambda console=console, keeper=keeper: any(
+                            card.display
+                            and card._request_id
+                            and (card._payload or {}).get("session_id") == keeper
+                            for card in console.query("#chat-question-card")
+                        ),
+                    ), "the viewed tab's question card never mounted"
+                    assert not sibling.done(), "the viewed tab's question ended before Close"
+                    # Likewise the closing tab's round: settled by a check under
+                    # the dialog, it would pass below even if Close swept nothing.
+                    assert await _settle(
+                        pilot, lambda notes=notes: _parked_decision_notice(notes)
+                    ), "the closing tab's decision never told the user it waits"
                     await _show_tabs(console, pilot, {keeper, doomed.id})
                     await _click(pilot, f"#console-close-session-tab-{doomed.id}")
                     await _wait_for_confirmation(host)

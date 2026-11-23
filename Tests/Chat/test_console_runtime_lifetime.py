@@ -941,6 +941,40 @@ async def test_never_run_app_round_stays_pending_while_a_view_can_answer():
     assert box["decisions"].unresolved_keys == frozenset()
 
 
+@pytest.mark.asyncio
+async def test_running_app_round_stays_pending_while_no_view_can_answer():
+    """A running App's round waits even while another screen covers Console.
+
+    TASK-42424: a round armed while the Close dialog covers the view must not
+    fail closed, or closing one tab would settle the viewed tab's decision.
+    Only a never-run or exited App reads "no answerable view" as nobody left.
+    """
+    from textual.app import App
+
+    app = App()
+    async with app.run_test():
+        view = _View()
+        view.app = app  # the App's own screen is on top, not this view
+        controller, _store, viewed = _runtime_owned_controller(app, view)
+        assert controller._approval_view_is_detached()
+
+        worker, box = _request_round_in_thread(controller, viewed.id)
+        try:
+            assert await _wait_until(lambda: controller._pending_approval_rounds)
+            await asyncio.sleep(2.5 * controller._interrupt_host.POLL_SECONDS)
+            assert worker.is_alive(), "a running App's round settled unanswered"
+        finally:
+            for pending in list(controller._pending_approval_rounds):
+                controller.resolve_pending_approval(
+                    {"write_file": "deny"}, round_id=pending
+                )
+            await asyncio.to_thread(worker.join, 10)
+
+    assert not worker.is_alive()
+    assert box["decisions"] == {"write_file": "deny"}
+    assert box["decisions"].unresolved_keys == frozenset()
+
+
 async def _wait_until(condition, timeout: float = 5.0) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
