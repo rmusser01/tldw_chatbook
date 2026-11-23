@@ -127,18 +127,25 @@ async def _wait_for_right_rail_condition(
     description: str | Callable[[], str],
     timeout: float = 5.0,
     attempts: int | None = None,
+    stable_polls: int = 1,
 ) -> None:
-    """Bound asynchronous rail reconciliation by observable state and time."""
+    """Bound asynchronous rail reconciliation by observable state and time.
+
+    ``stable_polls`` above 1 waits for quiet: the predicate must hold on that
+    many consecutive polls, a ``pilot.pause`` apart (TASK-42415).
+    """
 
     deadline = time.monotonic() + timeout
     polls = 0
-    while time.monotonic() < deadline and (attempts is None or polls < attempts):
-        if predicate():
+    held = 0
+    while True:
+        held = held + 1 if predicate() else 0
+        if held >= stable_polls:
             return
+        if time.monotonic() >= deadline or (attempts is not None and polls >= attempts):
+            break
         polls += 1
         await pilot.pause(0.02)
-    if predicate():
-        return
     detail = description() if callable(description) else description
     pytest.fail(f"Timed out waiting for {detail}")
 
@@ -544,7 +551,11 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
 ):
     async with make_console_pilot(size=(terminal_width, 52)) as pilot:
         await pilot.click("#console-inspector-rail-open")
-        await pilot.pause(0.2)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: _right_rail_open(pilot),
+            description="the Inspect rail to open after its handle click",
+        )
         screen = pilot.app.screen
         rail = screen.query_one("#console-right-rail")
         live_root = rail.query_one("#console-live-work-section")
@@ -565,6 +576,41 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
             snapshot=lambda: {"status": acp_status}
         )
 
+        # TASK-42415: a swap requests its local and owner reconcile one refresh
+        # later (`call_after_refresh`). A readiness-to-readiness first swap
+        # leaves the geometry as it was, so a wait on geometry and the two
+        # flags alone passed before that request landed; one pause later CI
+        # found the owner pass still scheduled. Record each request with the
+        # owner-pass count it saw, and wait for a pass counted after it.
+        swap_reconcile_owner_counts: list[int] = []
+        original_swap_reconcile = screen._request_console_live_work_reconcile
+
+        def observe_swap_reconcile() -> None:
+            swap_reconcile_owner_counts.append(rail._outer_owner_reconcile_count)
+            original_swap_reconcile()
+
+        monkeypatch.setattr(
+            screen, "_request_console_live_work_reconcile", observe_swap_reconcile
+        )
+
+        def swap_reconcile_settled(requests: int) -> bool:
+            return (
+                len(swap_reconcile_owner_counts) == requests
+                and rail._outer_owner_reconcile_count > swap_reconcile_owner_counts[-1]
+            )
+
+        def rail_report() -> str:
+            return (
+                f"demand={bounded.desired_content_lines}, "
+                f"width={viewport.content_region.width}, "
+                f"viewport={viewport.content_region.height}, "
+                f"hint={bounded.hint.display}, "
+                f"local_scheduled={bounded._reconcile_scheduled}, "
+                f"outer_scheduled={rail._outer_reconcile_scheduled}, "
+                f"swap_reconcile_requests={swap_reconcile_owner_counts}, "
+                f"owner_passes={rail._outer_owner_reconcile_count}"
+            )
+
         if direction == "pending-to-readiness":
             screen._pending_console_launch_context = pending
             await screen._apply_console_live_work_card_swap()
@@ -574,7 +620,8 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
 
         def initial_geometry_is_stable() -> bool:
             return (
-                not bounded._reconcile_scheduled
+                swap_reconcile_settled(1)
+                and not bounded._reconcile_scheduled
                 and not rail._outer_reconcile_scheduled
                 and bounded.desired_content_lines == before_demand
                 and bounded.viewport.content_region.height
@@ -585,21 +632,8 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
         await _wait_for_right_rail_condition(
             pilot,
             initial_geometry_is_stable,
-            description=lambda: (
-                "initial Live Work widget geometry: "
-                f"demand={bounded.desired_content_lines}, "
-                f"width={viewport.content_region.width}, "
-                f"viewport={viewport.content_region.height}, "
-                f"hint={bounded.hint.display}"
-            ),
-        )
-        await pilot.pause()
-        assert initial_geometry_is_stable(), (
-            bounded.desired_content_lines,
-            viewport.content_region.width,
-            viewport.content_region.height,
-            bounded.hint.display,
-            rail._outer_reconcile_scheduled,
+            description=lambda: f"initial Live Work widget geometry: {rail_report()}",
+            stable_polls=2,
         )
 
         assert bounded.desired_content_lines == before_demand
@@ -632,6 +666,7 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
         def swapped_geometry_is_stable() -> bool:
             return (
                 order[:2] == ["local", "outer"]
+                and swap_reconcile_settled(2)
                 and not bounded._reconcile_scheduled
                 and not rail._outer_reconcile_scheduled
                 and rail._outer_owner_reconcile_count == baseline + 1
@@ -650,17 +685,12 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
             pilot,
             swapped_geometry_is_stable,
             description=lambda: (
-                "swapped Live Work widget geometry: "
-                f"demand={bounded.desired_content_lines}, "
-                f"width={viewport.content_region.width}, "
-                f"viewport={viewport.content_region.height}, "
-                f"hint={bounded.hint.display}, order={order}, "
-                "completed_owner_passes="
+                f"swapped Live Work widget geometry: {rail_report()}, "
+                f"order={order}, completed_owner_passes="
                 f"{rail._outer_owner_reconcile_count - baseline}"
             ),
+            stable_polls=2,
         )
-        await pilot.pause()
-        assert swapped_geometry_is_stable()
 
         assert order[:2] == ["local", "outer"]
         assert rail.query_one("#console-live-work-section") is live_root
