@@ -1296,7 +1296,9 @@ class InterruptRoundHost(InitialHookReviewMixin):
             # TASK-41637: a never-started or exited App cannot show a card, so with
             # no answerable view nobody can answer: fail closed. The view
             # condition exists because Console harnesses re-point controller.app
-            # at a never-run TldwCli beside a live view. A host without
+            # at a never-run TldwCli beside a live view. A modal over that view
+            # still fails such a round closed, so harness tests wait for its card
+            # or park notice before opening one (TASK-42424). A host without
             # is_running (mobile context) is live. An exit mid-wait is runtime
             # disposal's to settle.
             try:

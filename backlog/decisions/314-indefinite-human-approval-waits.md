@@ -116,6 +116,9 @@ never as a user Deny. Two kinds of host keep waiting as above:
 - any round while an answerable view exists. The view condition is not a claim
   that a non-running App can render a card: it accommodates test harnesses that
   re-point `controller.app` at a never-run `TldwCli` beside a live view.
+  A modal over that view (such as the Close dialog) still fails a harness
+  round closed. So harness tests wait for the round's card or park notice
+  before they open one (TASK-42424).
 
 Liveness is read once, at arm time. An App that exits mid-wait is settled by
 runtime disposal (the visit and shutdown fences). A per-poll read would also
