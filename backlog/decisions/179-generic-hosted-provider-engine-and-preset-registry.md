@@ -37,19 +37,17 @@ boundary of ADR-062/063.
 
 Adding an OpenAI-compatible hosted provider (an engine preset) is its
 `ProviderRecord` in `ALL_RECORDS` plus its `[api_settings.<key>]` section in
-`Config_Files/default_config.toml`, and no other product file. Everything else
-derives from the record: the dispatch handler and parameter map
-(TASK-36946.2); readiness, display name, continuation pairing, native-tools and
-auto-refresh membership, the setup form's key-page fallback, and the preset's
-`[providers]` model list, rendered from `seed_models` (TASK-36946.3). The
-template edit re-pins `_TEMPLATE_SHA256` in
-`Tests/test_config_load_settings_table_guard.py`, a byte guard on the whole
-template that any template change moves. Two kinds of preset still need data
-the record does not carry: a sourced key page is a `KEY_URLS` row (optional;
-without it the setup form shows the dashboard copy), and a per-account host
-(`base_url_required`) needs its setup and readiness copy (`BASE_URL_FIELDS`,
-`_BASE_URL_RECOVERY`) and a row in the `PROVIDERS_REQUIRING_BASE_URL_KEYS`
-test pin. Sensitive-request audit and cloud/local classification become
+`Config_Files/default_config.toml`, and no other file. Everything else derives
+from the record: the dispatch handler and parameter map (TASK-36946.2);
+readiness, display name, continuation pairing, native-tools and auto-refresh
+membership, the setup form's key-page fallback, a per-account host's setup and
+readiness wording (the `base_url_*` fields), and the preset's `[providers]`
+model list, rendered from `seed_models` (TASK-36946.3). The template's byte pin
+leaves engine-preset sections out, and
+`test_engine_preset_sections_mirror_their_records` checks each one against its
+record instead (owner ruling 2026-11-22). A sourced key page is an optional
+`KEY_URLS` row; without it the setup form shows the dashboard copy.
+Sensitive-request audit and cloud/local classification become
 registry-coverage tests instead of hand-typed literals. Related: ADR-002, ADR-012, ADR-020, ADR-062, ADR-063,
 ADR-343.
 

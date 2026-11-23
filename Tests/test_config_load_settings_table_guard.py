@@ -703,9 +703,36 @@ def test_propagation_follows_imports_not_names():
 # TASK-42002: a fresh config carries config schema version 2.
 # TASK-42153: and now version 3 (config migration 3).
 # TASK-36946.3: the engine presets' [providers] lines became one placeholder,
-# rendered from their registry records.
-_TEMPLATE_SHA256 = "b73d1cb4a7fa6cf8871929273a09ce3f06590c9c279d5f45f5f9bcd19b35e9f1"
+# rendered from their registry records. Owner ruling 2026-11-22: the hash also
+# leaves out every engine preset's [api_settings.<key>] section, so adding a
+# preset does not move it; test_engine_preset_sections_mirror_their_records
+# (Tests/test_provider_registry.py) checks those sections against the records.
+_TEMPLATE_SHA256 = "1a6502b357a8c47f926562176d9710cf8b69bc7b54cba9f6dc119609048df827"
 _TEMPLATE_RELATIVE = "tldw_chatbook/Config_Files/default_config.toml"
+
+
+def _without_engine_preset_sections(text: str) -> str:
+    """The template minus each engine preset's ``[api_settings.<key>]`` section.
+
+    A section is its header line, the non-blank lines under it and the blank
+    line that ends it. Which sections come from the registry, not a hand list;
+    each preset must have exactly one.
+    """
+    import re
+
+    from tldw_chatbook.provider_registry import ENGINE_RECORDS
+
+    for record in ENGINE_RECORDS:
+        if record.defaults_settings_section:  # custom-hosted reads [api_settings.custom]
+            continue
+        text, count = re.subn(
+            rf"(?m)^[ \t]*\[api_settings\.{re.escape(record.key)}\][^\n]*\n"
+            r"(?:[ \t]*\S[^\n]*\n)*(?:[ \t]*\n)?",
+            "",
+            text,
+        )
+        assert count == 1, f"{record.key}: {count} [api_settings] sections"
+    return text
 
 
 def test_default_config_template_bytes_are_unchanged():
@@ -713,7 +740,8 @@ def test_default_config_template_bytes_are_unchanged():
     from pathlib import Path
 
     data = (Path(__file__).resolve().parents[1] / _TEMPLATE_RELATIVE).read_bytes()
-    assert hashlib.sha256(data).hexdigest() == _TEMPLATE_SHA256
+    scoped = _without_engine_preset_sections(data.decode("utf-8"))
+    assert hashlib.sha256(scoped.encode("utf-8")).hexdigest() == _TEMPLATE_SHA256
 
 
 def test_config_toml_content_is_the_data_file_with_placeholders_resolved():

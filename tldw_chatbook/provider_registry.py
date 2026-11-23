@@ -284,6 +284,14 @@ class ProviderRecord:
     # ADR-179: the host is per-account (no default URL can ship), so a resolved
     # key alone does not make the provider ready -- a base URL must be set.
     base_url_required: bool = False
+    # A ``base_url_required`` preset's wording (TASK-36946.3): the setup form's
+    # field label and example URL, and the readiness copy while no URL is set --
+    # the reason, what to set, and how the path is handled.
+    base_url_label: str | None = None
+    base_url_example: str | None = None
+    base_url_missing_reason: str | None = None
+    base_url_setting: str | None = None
+    base_url_path_note: str | None = None
     # Hand-written (non-engine) providers that nonetheless checkpoint tool
     # continuations (moonshot, zai, deepseek); engine records qualify by
     # ``continuation_protocol`` alone.
@@ -300,6 +308,11 @@ DATABRICKS = ProviderRecord(
     api_key_env_candidates=("DATABRICKS_TOKEN",),
     default_base_url=None,  # workspace host is per-account; user-configured
     base_url_required=True,
+    base_url_label="Databricks workspace URL",
+    base_url_example="https://adb-1234567890123456.7.azuredatabricks.net",
+    base_url_missing_reason="Missing workspace URL",
+    base_url_setting="workspace host",
+    base_url_path_note="the /openai/v1 path is appended automatically.",
     native_tools=True,      # confirmed (or honestly disabled) at live gate (Task 14)
     reasoning_effort=False, # gateway model support varies; enable per-model later
     auto_refresh=True,
@@ -1362,6 +1375,11 @@ AZURE = ProviderRecord(
     api_key_env_candidates=("AZURE_OPENAI_API_KEY",),
     default_base_url=None,  # resource host is per-account; user-configured
     base_url_required=True,
+    base_url_label="Azure resource URL",
+    base_url_example="https://my-resource.openai.azure.com",
+    base_url_missing_reason="Missing resource URL",
+    base_url_setting="resource host",
+    base_url_path_note="the /openai/v1 path is appended automatically.",
     native_tools=True,
     reasoning_effort=False,
     auto_refresh=False,
@@ -1443,6 +1461,13 @@ CLOUDFLARE = ProviderRecord(
     api_key_env_candidates=("CLOUDFLARE_API_TOKEN",),
     default_base_url=None,  # the account id is in the path; user-configured
     base_url_required=True,
+    # The full Workers AI base, not the account URL: the record has no suffix to
+    # append (the endpoint contract completes a URL that stops at /accounts/<id>).
+    base_url_label="Workers AI base URL (ends in /ai/v1)",
+    base_url_example="https://api.cloudflare.com/client/v4/accounts/<account-id>/ai/v1",
+    base_url_missing_reason="Missing account URL",
+    base_url_setting="account URL",
+    base_url_path_note="use your account id from the Cloudflare dashboard.",
     native_tools=True,
     reasoning_effort=False,
     auto_refresh=False,

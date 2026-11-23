@@ -103,6 +103,25 @@ def test_identity_fields_match_config_tables():
     assert checked > 0
 
 
+def test_engine_preset_sections_mirror_their_records():
+    # Owner ruling 2026-11-22 (TASK-36946.3): the template byte pin leaves the
+    # engine presets' [api_settings.<key>] sections out, so this checks each one
+    # whole: exactly the record's settings_defaults plus its default base URL.
+    import tomllib
+
+    from tldw_chatbook.config import CONFIG_TOML_CONTENT
+
+    tables = tomllib.loads(CONFIG_TOML_CONTENT)["api_settings"]
+    for record in ENGINE_RECORDS:
+        if record.defaults_settings_section:  # custom-hosted reads [api_settings.custom]
+            continue
+        assert record.key in tables, f"no [api_settings.{record.key}] section"
+        expected = dict(record.settings_defaults)
+        if record.default_base_url:
+            expected["api_base_url"] = record.default_base_url
+        assert tables[record.key] == expected, record.key
+
+
 def test_engine_preset_model_lists_come_from_the_records():
     # TASK-36946.3: the template holds one placeholder for the engine presets'
     # [providers] lines; each list is its record's seed_models, in record order.
@@ -323,10 +342,15 @@ def test_readiness_key_sets_are_the_registry_derivations():
 def test_base_url_required_matches_records_without_a_default_url():
     from tldw_chatbook.provider_registry import PROVIDERS_REQUIRING_BASE_URL_KEYS
 
-    assert PROVIDERS_REQUIRING_BASE_URL_KEYS == {"azure", "cloudflare", "databricks"}
+    # The built-in per-account hosts stay; a new one joins through its record
+    # (TASK-36946.3), which also carries its setup and readiness wording.
+    assert {"azure", "cloudflare", "databricks"} <= PROVIDERS_REQUIRING_BASE_URL_KEYS
     for record in ALL_RECORDS:
         if record.base_url_required:
             assert record.engine_driven and record.default_base_url is None
+            assert record.base_url_label and record.base_url_setting, record.key
+            assert record.base_url_missing_reason and record.base_url_path_note, record.key
+            assert (record.base_url_example or "").startswith("https://"), record.key
 
 
 def test_default_api_key_env_var_is_the_record_field():

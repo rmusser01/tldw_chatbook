@@ -24,7 +24,11 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Literal
 
-from tldw_chatbook.provider_registry import PROVIDERS_REQUIRING_API_KEY_KEYS
+from tldw_chatbook.provider_registry import (
+    ALL_RECORDS,
+    PROVIDERS_REQUIRING_API_KEY_KEYS,
+    normalize_provider_config_key,
+)
 
 Locality = Literal["local", "cloud"]
 CheckKind = Literal["model_list", "authenticated", "none"]
@@ -54,19 +58,15 @@ KEY_URL_UNCONFIRMED: frozenset[str] = PROVIDERS_REQUIRING_API_KEY_KEYS.differenc
 
 #: Per-account base URLs (``provider_registry.PROVIDERS_REQUIRING_BASE_URL_KEYS``):
 #: the field's label and an example, shown above the key (review provider-05).
-#: Cloudflare's is the full Workers AI base, not the account URL: its record
-#: has no suffix to append (pre-merge review 2026-10-29; the endpoint contract
-#: completes a URL that stops at ``/accounts/<id>``).
+#: Both come from the record's ``base_url_label`` / ``base_url_example``, so a
+#: new per-account preset needs no edit here (TASK-36946.3).
 BASE_URL_FIELDS: dict[str, tuple[str, str]] = {
-    "azure": ("Azure resource URL", "https://my-resource.openai.azure.com"),
-    "databricks": (
-        "Databricks workspace URL",
-        "https://adb-1234567890123456.7.azuredatabricks.net",
-    ),
-    "cloudflare": (
-        "Workers AI base URL (ends in /ai/v1)",
-        "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai/v1",
-    ),
+    normalize_provider_config_key(record.key): (
+        record.base_url_label,
+        record.base_url_example,
+    )
+    for record in ALL_RECORDS
+    if record.base_url_required
 }
 
 #: The loopback ports each local engine listens on by default.

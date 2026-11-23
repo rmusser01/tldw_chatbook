@@ -38,6 +38,7 @@ from ..config import (
     resolve_provider_api_key as _valid_api_key,
 )
 from ..provider_registry import (  # noqa: F401 - names re-exported for readiness callers
+    ALL_RECORDS,
     KEYLESS_PROVIDER_KEYS,
     PROVIDERS_REQUIRING_API_KEY_KEYS,
     PROVIDERS_REQUIRING_BASE_URL_KEYS,
@@ -113,26 +114,18 @@ _STRICT_HOSTED_PROVIDER_KEYS = frozenset({"moonshot", "zai"})
 #: ``PROVIDERS_REQUIRING_BASE_URL_KEYS`` (imported above) derives from the
 #: records' ``base_url_required`` field.
 #: Blocking copy per :data:`PROVIDERS_REQUIRING_BASE_URL_KEYS` entry:
-#: (reason, what to set, example value, how the path is handled).
+#: (reason, what to set, example value, how the path is handled), from the
+#: record's base-URL wording so a new per-account preset needs no edit here
+#: (TASK-36946.3).
 _BASE_URL_RECOVERY = {
-    "databricks": (
-        "Missing workspace URL",
-        "workspace host",
-        "https://adb-1234567890123456.7.azuredatabricks.net",
-        "the /openai/v1 path is appended automatically.",
-    ),
-    "azure": (
-        "Missing resource URL",
-        "resource host",
-        "https://my-resource.openai.azure.com",
-        "the /openai/v1 path is appended automatically.",
-    ),
-    "cloudflare": (
-        "Missing account URL",
-        "account URL",
-        "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai/v1",
-        "use your account id from the Cloudflare dashboard.",
-    ),
+    normalize_provider_config_key(record.key): (
+        record.base_url_missing_reason,
+        record.base_url_setting,
+        record.base_url_example,
+        record.base_url_path_note,
+    )
+    for record in ALL_RECORDS
+    if record.base_url_required
 }
 #: Setting aliases that satisfy :data:`PROVIDERS_REQUIRING_BASE_URL_KEYS`,
 #: in the same precedence order ``provider_setup_persistence`` persists
