@@ -84,7 +84,7 @@ def credential_reads(monkeypatch, tmp_path):
     """
     path = tmp_path / "credential.json"
     cache = subscription._SubscriptionReadinessCache()
-    state = SimpleNamespace(files=[], spawns=[], monotonic=0.0)
+    state = SimpleNamespace(files=[], spawns=[], unexpected=[], monotonic=0.0)
     monkeypatch.setattr(subscription, "_SUBSCRIPTION_READINESS_CACHE", cache)
     monkeypatch.setattr(subscription, "_KEYCHAIN_CACHE", None)
     monkeypatch.setattr(subscription, "DEFAULT_CREDENTIALS_PATH", path)
@@ -102,6 +102,11 @@ def credential_reads(monkeypatch, tmp_path):
         return original_read(target, *args, **kwargs)
 
     def security(command, **kwargs):
+        # stdlib `subprocess.run` is patched process-wide: fake only the
+        # Keychain read, and fail anything else rather than fake it.
+        if command[0] != "/usr/bin/security":
+            state.unexpected.append(command)
+            pytest.fail(f"unexpected subprocess.run: {command!r}")
         state.spawns.append(command[0])
         return SimpleNamespace(returncode=44, stdout="")
 
@@ -120,6 +125,8 @@ def credential_reads(monkeypatch, tmp_path):
     if cache._worker is not None:
         cache._worker.join(timeout=3)
         assert not cache._worker.is_alive()
+    # A fail raised on a worker thread may never reach the test.
+    assert not state.unexpected, f"unexpected subprocess.run: {state.unexpected}"
 
 
 async def wait_for_reads(credential_reads, count):
