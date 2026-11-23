@@ -102,7 +102,9 @@ class LegacyNotesOrganizationInventory:
         while True:
             committed: tuple[str, str | None] | None = None
             outcome: InventoryRunResult | None = None
-            with self.repository.db.transaction() as cursor:
+            # TASK-34000.84: reads the checkpoint, then commits a bounded
+            # step -- write lock first (its one caller is enrollment).
+            with self.repository.db.transaction(immediate=True) as cursor:
                 checkpoint = self._checkpoint(cursor)
                 prerequisite = self._prerequisite_reason(cursor, checkpoint)
                 if prerequisite is not None:

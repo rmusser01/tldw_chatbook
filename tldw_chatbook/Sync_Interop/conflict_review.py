@@ -118,7 +118,8 @@ class SyncV2ConflictReviewService:
         from datetime import UTC, datetime
 
         now = datetime.now(UTC).isoformat()
-        with self.notes_repository.db.transaction() as cursor:
+        # TASK-34000.84: reads the review before it writes -- write lock first.
+        with self.notes_repository.db.transaction(immediate=True) as cursor:
             row = cursor.execute(
                 "SELECT domain, local_object_id, remote_object_id "
                 "FROM notes_organization_adoption_reviews WHERE review_id = ? "

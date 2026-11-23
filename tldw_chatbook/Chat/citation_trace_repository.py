@@ -2312,7 +2312,7 @@ class CitationTraceRepository:
         )
 
         validated = self._validate_artifact_owner_operation(operation)
-        with self.db.transaction() as cursor:
+        with self.db.transaction(immediate=True) as cursor:
             identity = self._require_active_write_cursor(cursor)
             if identity.profile_id != validated.binding.profile_id:
                 raise CitationPersistenceUnavailable("artifact_owner_profile_mismatch")
@@ -2535,7 +2535,7 @@ class CitationTraceRepository:
             )
         self.apply_artifact_owner_operation(validated)
         binding = validated.binding
-        with self.db.transaction() as cursor:
+        with self.db.transaction(immediate=True) as cursor:
             identity = self._require_active_write_cursor(cursor)
             self._acquire_artifact_owner_lock(cursor, identity.profile_id)
             receipt = cursor.execute(

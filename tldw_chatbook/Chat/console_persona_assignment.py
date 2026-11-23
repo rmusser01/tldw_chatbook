@@ -313,7 +313,8 @@ def prepare_buddy_persona_assignment(
             if unchanged:
                 return
             if conversation_id is not None:
-                with db.transaction():
+                # TASK-34000.84: version check, then write -- IMMEDIATE.
+                with db.transaction(immediate=True):
                     row = db.get_conversation_by_id(conversation_id)
                     if row is None or row["version"] != expected_row["version"]:
                         raise ValueError(

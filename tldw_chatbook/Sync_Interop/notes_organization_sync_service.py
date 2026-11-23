@@ -3,16 +3,23 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Sequence
+import sqlite3
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDBError
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.agent_lessons import (
     AgentLessonsSeedResult,
     initialize_agent_lessons_folder,
 )
-from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
+from tldw_chatbook.Notes.note_folder_repository import (
+    LocalNoteFolderRepository,
+    _raise_mutation_operational_error,
+    _raise_wrapped_repository_error,
+)
 from tldw_chatbook.Notes.notes_organization_repository import (
     NotesOrganizationRepository,
 )
@@ -26,6 +33,26 @@ from tldw_chatbook.Sync_Interop.notes_outbox_producer import NotesSyncV2OutboxPr
 from tldw_chatbook.Sync_Interop.sync_state import is_local_first_sync_profile_mode
 
 _RESOURCE_SYNC_ID_TABLES = ("keywords", "keyword_collections")
+
+
+@contextmanager
+def _folder_write_transaction(db: Any) -> Iterator[Any]:
+    """Open a folder mutation's transaction with the write lock first.
+
+    TASK-34000.28 / TASK-34000.84: each folder mutation here reads
+    (``_require_ready``, the effective-link check) before it writes, so it
+    takes the write lock up front (``BEGIN IMMEDIATE``) and waits on the busy
+    timeout. A lock held elsewhere past that timeout surfaces as the folder
+    tree's ``busy`` conflict ("The notes database was busy"), as the
+    repository's own mutations do, not as a raw OperationalError.
+    """
+    try:
+        with db.transaction(immediate=True) as cursor:
+            yield cursor
+    except sqlite3.OperationalError as exc:
+        _raise_mutation_operational_error(exc)
+    except CharactersRAGDBError as exc:
+        _raise_wrapped_repository_error(exc)
 
 
 class NotesOrganizationSyncService:
@@ -145,7 +172,7 @@ class NotesOrganizationSyncService:
         # TASK-34000.28 (N-24): read-then-write, so the write lock comes first;
         # a deferred snapshot dies with 517 when another connection's close
         # restarts the WAL (see ``LocalNoteFolderRepository``).
-        with self.notes_repository.db.transaction(immediate=True) as cursor:
+        with _folder_write_transaction(self.notes_repository.db) as cursor:
             self._require_ready(
                 cursor,
                 server_profile_id=server_profile_id,
@@ -200,7 +227,7 @@ class NotesOrganizationSyncService:
         dataset_id = self._dataset_id(profile)
         # TASK-34000.28 (N-24): the Move note / Add to folder chain under a
         # local-first profile -- write lock first, as in ``create_folder``.
-        with self.notes_repository.db.transaction(immediate=True) as cursor:
+        with _folder_write_transaction(self.notes_repository.db) as cursor:
             self._require_ready(
                 cursor,
                 server_profile_id=scope["server_profile_id"],
@@ -251,7 +278,7 @@ class NotesOrganizationSyncService:
             )
         dataset_id = self._dataset_id(profile)
         # TASK-34000.28 (N-24): Move note's second half -- write lock first.
-        with self.notes_repository.db.transaction(immediate=True) as cursor:
+        with _folder_write_transaction(self.notes_repository.db) as cursor:
             self._require_ready(
                 cursor,
                 server_profile_id=scope["server_profile_id"],
@@ -298,7 +325,7 @@ class NotesOrganizationSyncService:
         if profile is None:
             return mutate(**arguments)
         dataset_id = self._dataset_id(profile)
-        with self.notes_repository.db.transaction() as cursor:
+        with _folder_write_transaction(self.notes_repository.db) as cursor:
             self._require_ready(
                 cursor,
                 server_profile_id=scope["server_profile_id"],
@@ -433,7 +460,8 @@ class NotesOrganizationSyncService:
                     )
 
         if cursor is None:
-            with db.transaction() as owner_cursor:
+            # TASK-34000.84: ``mutate`` reads before it writes.
+            with db.transaction(immediate=True) as owner_cursor:
                 mutate(owner_cursor)
         else:
             mutate(cursor)
@@ -449,7 +477,7 @@ class NotesOrganizationSyncService:
         if profile is None:
             return db.add_keyword(keyword)
         dataset_id = self._dataset_id(profile)
-        with db.transaction() as cursor:
+        with db.transaction(immediate=True) as cursor:  # TASK-34000.84
             self._require_ready(
                 cursor,
                 server_profile_id=scope["server_profile_id"],
@@ -498,7 +526,7 @@ class NotesOrganizationSyncService:
         if profile is None:
             return bool(mutate(keyword_id, **arguments))
         dataset_id = self._dataset_id(profile)
-        with db.transaction() as cursor:
+        with db.transaction(immediate=True) as cursor:  # TASK-34000.84
             self._require_ready(
                 cursor,
                 server_profile_id=scope["server_profile_id"],
@@ -537,7 +565,7 @@ class NotesOrganizationSyncService:
         if profile is None:
             return db.add_keyword_collection(name, parent_id)
         dataset_id = self._dataset_id(profile)
-        with db.transaction() as cursor:
+        with db.transaction(immediate=True) as cursor:  # TASK-34000.84
             self._require_ready(
                 cursor,
                 server_profile_id=scope["server_profile_id"],
@@ -597,7 +625,7 @@ class NotesOrganizationSyncService:
         if profile is None:
             return bool(mutate(collection_id, **arguments))
         dataset_id = self._dataset_id(profile)
-        with db.transaction() as cursor:
+        with db.transaction(immediate=True) as cursor:  # TASK-34000.84
             self._require_ready(
                 cursor,
                 server_profile_id=scope["server_profile_id"],
@@ -658,7 +686,7 @@ class NotesOrganizationSyncService:
         if profile is None:
             return bool(mutate(collection_id, keyword_id))
         dataset_id = self._dataset_id(profile)
-        with db.transaction() as cursor:
+        with db.transaction(immediate=True) as cursor:  # TASK-34000.84
             self._require_ready(
                 cursor,
                 server_profile_id=scope["server_profile_id"],
@@ -991,7 +1019,7 @@ class NotesOrganizationSyncService:
         if action not in {"merge", "rename_local", "keep_local"}:
             raise ValueError("Unsupported Notes organization adoption action")
         db = self.notes_repository.db
-        with db.transaction() as cursor:
+        with db.transaction(immediate=True) as cursor:  # TASK-34000.84
             row = cursor.execute(
                 "SELECT review.*, receipt.receipt_id FROM "
                 "notes_organization_adoption_reviews AS review JOIN "
@@ -1100,7 +1128,7 @@ class NotesOrganizationSyncService:
             .fetchall()
         )
         for candidate in receipts:
-            with db.transaction() as cursor:
+            with db.transaction(immediate=True) as cursor:  # TASK-34000.84
                 receipt = cursor.execute(
                     "SELECT * FROM note_organization_receipts WHERE receipt_id = ?",
                     (str(candidate["receipt_id"]),),
@@ -1618,7 +1646,7 @@ class NotesOrganizationSyncService:
             else ("pulling" if state == "ready" else "initializing")
         )
         now = datetime.now(UTC).isoformat()
-        with self.notes_repository.db.transaction() as cursor:
+        with self.notes_repository.db.transaction(immediate=True) as cursor:
             existing = cursor.execute(
                 "SELECT * FROM notes_organization_sync_checkpoints WHERE "
                 "server_profile_id = ? AND dataset_id = ?",
@@ -1974,7 +2002,7 @@ class NotesOrganizationSyncService:
         dataset_id = str(profile.get("dataset_id") or "")
         if not dataset_id:
             raise ValueError("synchronized profile is missing dataset identity")
-        with self.notes_repository.db.transaction() as cursor:
+        with _folder_write_transaction(self.notes_repository.db) as cursor:
             self._require_ready(
                 cursor,
                 server_profile_id=server_profile_id,
@@ -2141,7 +2169,7 @@ class NotesOrganizationSyncService:
         if all(value is not None for value in base):
             return row
 
-        with self.notes_repository.db.transaction() as cursor:
+        with self.notes_repository.db.transaction(immediate=True) as cursor:
             current = cursor.execute(
                 "SELECT * FROM notes_organization_sync_intents "
                 "WHERE server_profile_id = ? AND dataset_id = ? AND intent_id = ? "
@@ -2282,7 +2310,7 @@ class NotesOrganizationSyncService:
             self.failure_injector("after_server_acknowledgement")
         acknowledged = 0
         now = _utc_now()
-        with self.notes_repository.db.transaction() as cursor:
+        with self.notes_repository.db.transaction(immediate=True) as cursor:
             for row in accepted_note_rows:
                 result = cursor.execute(
                     "UPDATE note_sync_publication_intents SET "

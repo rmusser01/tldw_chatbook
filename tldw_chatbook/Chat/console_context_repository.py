@@ -680,7 +680,7 @@ class ConsoleContextRepository:
                 or expected_memory_revision <= 0
             ):
                 raise ValueError("expected_memory_revision must be positive")
-        with self.db.transaction() as cursor:
+        with self.db.transaction(immediate=True) as cursor:
             if expected_memory_id is not None:
                 row = cursor.execute(
                     """
