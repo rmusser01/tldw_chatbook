@@ -100,6 +100,33 @@ async def _fresh_display(console):
     return projection
 
 
+def _isolate_checked_renders(monkeypatch) -> None:
+    """Hold the storage coordinator through each checked render in this task.
+
+    A checked display render declines a coordinator that another thread
+    holds, and leaves its work to the whole-sync replay in another task
+    (TASK-40968). Under CI load the holder was a DB connection's admission
+    on a worker thread (TASK-42425), and a test that reads its own task's
+    renders took that deferral for a cadence failure. Every other refusal,
+    an expired or moved display included, still declines.
+    """
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+    task = asyncio.current_task()
+    real = spend._run_checked_display_sync
+
+    def run(projection, sync, request_retry):
+        if asyncio.current_task() is not task:
+            return real(projection, sync, request_retry)
+        assert storage._lock.acquire(timeout=30), "storage coordinator stayed busy"
+        try:
+            return real(projection, sync, request_retry)
+        finally:
+            storage._lock.release()
+
+    monkeypatch.setattr(spend, "_run_checked_display_sync", run)
+
+
 @pytest.mark.asyncio
 async def test_run_start_rereads_an_expired_display_so_the_first_projection_pays_no_operation(
     monkeypatch,
@@ -123,6 +150,7 @@ async def test_run_start_rereads_an_expired_display_so_the_first_projection_pays
             await until(lambda: not projection.pending, timeout=30)
             assert projection.at == clock.now
 
+            _isolate_checked_renders(monkeypatch)
             result, ops = _project(console)
             assert result is True
             assert ops.main == 0, (
@@ -145,6 +173,7 @@ async def test_a_projection_rereads_an_aging_display_ahead_of_its_expiry(
             console._start_console_transcript_sync_timer()
             console._console_transcript_sync_timer.pause()
             await until(lambda: not projection.pending, timeout=30)
+            _isolate_checked_renders(monkeypatch)
 
             # Past half its life: the projection renders the current display
             # and starts the next read.
@@ -261,6 +290,9 @@ async def test_a_full_sync_slower_than_the_display_life_does_not_replay_itself(
                 return result
 
             console._sync_native_console_transcript = slow_transcript
+            # A busy storage coordinator must not refuse the FULL's projection or
+            # its rail step; an expired display still does.
+            _isolate_checked_renders(monkeypatch)
             console._console_control_bar_replay_whole_sync = False
             result = await console._sync_native_console_chat_ui()
             assert (
@@ -399,6 +431,7 @@ async def test_a_context_snapshot_published_during_a_run_projects_on_the_next_ti
                 ),
                 timeout=30,
             )
+            _isolate_checked_renders(monkeypatch)
             await timer._callback()
             assert published + 1 in seen, (
                 "no projection rendered the published snapshot by the next tick"
@@ -444,6 +477,8 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
             assert console._console_run_active(), "the held run ended during setup"
             timer.pause()
             owner = asyncio.current_task()
+            # A projection the coordinator refused would render in the replay's task.
+            _isolate_checked_renders(monkeypatch)
             calls: list[bool] = []
             projected_requests: list[int] = []
             real_project = console._sync_console_rail_and_controls
@@ -1869,18 +1904,21 @@ async def test_a_full_sync_asked_for_during_a_pause_runs_once_after_resume(
             # CORE can independently request another replay during this FULL.
             # Follow the replacement scheduled by resume and the old timer.
             launched = []
-            deferred_rail_reads = set()
-            sync_rail_visibility = config_sync.sync_console_rail_visibility
+            deferred_renders = set()  # FULLs that left their render to the replay.
 
-            def observe_rail_visibility(screen):
-                result = sync_rail_visibility(screen)
-                if result is False:
-                    deferred_rail_reads.add(asyncio.current_task())
-                return result
+            def observe_deferral(name):
+                render = getattr(config_sync, name)
 
-            monkeypatch.setattr(
-                config_sync, "sync_console_rail_visibility", observe_rail_visibility
-            )
+                def observed(screen, *args, **kwargs):
+                    result = render(screen, *args, **kwargs)
+                    if result is False:
+                        deferred_renders.add(asyncio.current_task())
+                    return result
+
+                monkeypatch.setattr(config_sync, name, observed)
+
+            observe_deferral("project_console_tick")
+            observe_deferral("sync_console_rail_visibility")
             replay = console._run_coalesced_control_bar_sync
             after_refresh = console.call_after_refresh
 
@@ -1917,9 +1955,10 @@ async def test_a_full_sync_asked_for_during_a_pause_runs_once_after_resume(
             )
             async with asyncio.timeout_at(resumed + 30):
                 if await worker.wait() is not True:
-                    # FULL already projected. Its later rail read can defer
-                    # independently while storage is busy.
-                    assert worker._task in deferred_rail_reads
+                    # Its projection or its later rail read can defer to the
+                    # replay while another thread holds the storage
+                    # coordinator (TASK-42425: a DB connection's admission).
+                    assert worker._task in deferred_renders
                     await until(
                         lambda: any(ok for when, ok in fulls if when >= started_at),
                         timeout=30,
@@ -1975,6 +2014,7 @@ async def test_a_control_bar_sync_builds_the_workspace_context_once(monkeypatch)
     async with host.run_test(size=(160, 45)) as pilot:
         console, _composer = await ready_console(host, pilot, gateway)
         await _sync_console_control_bar_now(console)
+        _isolate_checked_renders(monkeypatch)
         builds = []
         real = workspace.build_console_workspace_state
 
