@@ -582,7 +582,9 @@ _BUDGETS: dict[str, int] = {
     # `LibraryMediaHost` now extends, with their type-only imports (+125),
     # the host's bases (+1); the 43 callback parameters with their group
     # comment (-44) and their stored callables (-45) out; prose (+14).
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 11136,
+    # TASK-41757 fix round 1 (review M4): 11136 -> 11140 (+4), the R4
+    # paragraph's present-tense host claim corrected and the forwarding noted.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 11140,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only

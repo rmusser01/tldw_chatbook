@@ -617,7 +617,8 @@ multi-subsystem reader-pane dispatcher.
 Ruling R4 (the parent's AC #2): the constructor takes a ``LibraryMediaHost``
 (the Protocol above this class) instead of ``LibraryScreen``, and this
 module no longer imports ``LibraryScreen``, even for type checking. Every
-read through the host is one of the Protocol's framework services. The
+read through the host was then one of the Protocol's framework services
+(TASK-41757 added the four shell-service protocols below). The
 direct screen reaches became named dependencies: ``_library_media_unfiltered_total``'s
 four shell-state reads go through the ``_library_source_total`` shell
 helper; the TASK-38981 stage-pick landing reads the
@@ -638,7 +639,10 @@ four typed protocols (``LibraryShellServices``, ``LibraryReviewSetServices``,
 members ``LibraryScreen`` implements, and each group-(a) property returns
 the host's member under the private name the moved bodies spell. No
 constructor argument calls a screen method any more; the remaining ones are
-single-field accessors and setters.
+single-field accessors and setters. Every read through the host is a
+framework service or a member of those protocols. The screen's public names
+forward to its private methods at call time, so a test's patch of the
+private name reaches this controller too.
 """
 from __future__ import annotations
 

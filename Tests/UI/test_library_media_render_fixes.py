@@ -510,7 +510,7 @@ async def test_dismiss_receipt_paints_undo_at_the_items_pane_width():
     host = _host()
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_media_list(host, pilot)
-        screen.review_dismiss_receipt_name = lambda: "2 selected items"
+        screen._review_dismiss_receipt_name = lambda: "2 selected items"
         _sync_library_canvas(screen, "media")
         receipt = await _wait_for_selector(
             screen, pilot, "#library-media-review-dismiss-receipt"

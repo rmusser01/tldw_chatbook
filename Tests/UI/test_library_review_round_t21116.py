@@ -284,13 +284,13 @@ async def test_routine_snapshot_midswap_still_runs_the_projection_follow_up() ->
         await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
 
         armed: list[object] = []
-        original_arm = screen.arm_library_list_entry_focus
+        original_arm = screen._arm_library_list_entry_focus
 
         def spy_arm(*, media_return=None):
             armed.append(media_return)
             return original_arm(media_return=media_return)
 
-        screen.arm_library_list_entry_focus = spy_arm
+        screen._arm_library_list_entry_focus = spy_arm
 
         route_before: list[tuple] = []
 

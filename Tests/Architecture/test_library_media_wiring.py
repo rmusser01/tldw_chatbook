@@ -1533,20 +1533,38 @@ _MEDIA_SERVICE_MEMBERS: dict[str, frozenset[str]] = {
 }
 
 
+#: The screen method each member reaches, and the media controller property
+#: that reads it: the private name, except the two members that were already
+#: public and the footer registration (BaseAppScreen owns the public name).
+_MEDIA_SERVICE_PRIVATE_NAMES: dict[str, str] = {
+    member: (
+        member
+        if member.startswith(("action_", "request_"))
+        else "_register_footer_shortcuts"
+        if member == "register_library_footer_shortcuts"
+        else f"_{member}"
+    )
+    for members in _MEDIA_SERVICE_MEMBERS.values()
+    for member in members
+}
+
+
 @pytest.mark.unit
 def test_library_screen_implements_the_media_service_protocols() -> None:
     """TASK-41757 AC #3: ``LibraryScreen`` implements the host's shell services.
 
-    The member sets are pinned (43). Each member resolves on
-    ``LibraryScreen`` as the same kind of attribute (plain, static or class
-    method) with the same parameters, names, kinds and defaults, as the
-    protocol declares, and none shadows a member ``LibraryScreen`` inherits
+    The member sets are pinned (43). Each public member is a ``_Forward`` to
+    its own private method (fix round 1, review M2: a member wired to a
+    sibling with the same parameters would pass a signature check), and that
+    method has the kind of attribute (plain, static or class method), the
+    sync or async kind (M3) and the parameters (names, kinds, defaults) the
+    protocol declares. No member shadows one ``LibraryScreen`` inherits
     (``BaseAppScreen.register_footer_shortcuts`` takes the shortcuts, so the
     screen's own no-argument registration is ``register_library_footer_
     shortcuts``).
     """
     from tldw_chatbook.UI.Library_Modules import library_media_controller
-    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen, _Forward
 
     members = _media_service_members()
     assert {name: frozenset(names) for name, names in members.items()} == (
@@ -1564,46 +1582,89 @@ def test_library_screen_implements_the_media_service_protocols() -> None:
     for protocol_name, names in sorted(members.items()):
         protocol = getattr(library_media_controller, protocol_name)
         for name in sorted(names):
+            private = _MEDIA_SERVICE_PRIVATE_NAMES[name]
             declared = inspect.getattr_static(protocol, name)
-            implemented = inspect.getattr_static(LibraryScreen, name, None)
+            public = inspect.getattr_static(LibraryScreen, name, None)
+            implemented = inspect.getattr_static(LibraryScreen, private, None)
             inherited = [base.__qualname__ for base in LibraryScreen.__mro__[1:] if name in vars(base)]
             if inherited:
                 drift.append(f"{name}: shadows {inherited}")
-            elif implemented is None:
+            elif public is None or implemented is None:
                 drift.append(f"{name}: missing on LibraryScreen")
-            elif type(declared) is not type(implemented) or parameters(
-                getattr(protocol, name)
-            ) != parameters(getattr(LibraryScreen, name)):
+            elif private != name and not (
+                type(public) is _Forward and public.name == private
+            ):
+                drift.append(f"{name}: does not forward to {private}")
+            elif (
+                type(declared) is not type(implemented)
+                or inspect.iscoroutinefunction(getattr(protocol, name))
+                != inspect.iscoroutinefunction(getattr(LibraryScreen, private))
+                or parameters(getattr(protocol, name))
+                != parameters(getattr(LibraryScreen, private))
+            ):
                 drift.append(f"{protocol_name}.{name}: signature differs")
     assert not drift, f"LibraryScreen does not implement the media host: {drift}"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("where", ["instance", "class"])
+def test_a_patched_private_screen_method_reaches_the_media_controller(
+    where: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fix round 1, review M5: the media controller honours a private patch.
+
+    Tests patch the screen's private names, and the controller calls the
+    public ones. For each of the 43 members, a patch of the private name on
+    the screen instance, or on ``LibraryScreen``, is what the controller's
+    group-(a) property hands its moved bodies, and calling it reaches the
+    patch. With the public names bound when the class body runs (the first
+    version of this task), the controller kept calling the unpatched method.
+    """
+    from tldw_chatbook.UI.Library_Modules.library_media_controller import (
+        LibraryMediaController,
+    )
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    screen = object.__new__(LibraryScreen)
+    controller = object.__new__(LibraryMediaController)
+    controller._screen = screen
+    missed = []
+    for private in sorted(set(_MEDIA_SERVICE_PRIVATE_NAMES.values())):
+        calls: list[tuple[object, ...]] = []
+
+        def patch(*args: object, _calls: list = calls) -> None:
+            _calls.append(args)
+
+        monkeypatch.setattr(screen if where == "instance" else LibraryScreen, private, patch)
+        resolved = getattr(controller, private)
+        if resolved is not patch and getattr(resolved, "__func__", None) is not patch:
+            missed.append(private)
+            continue
+        resolved()
+        if not calls:
+            missed.append(private)
+    assert not missed, f"the media controller skips a {where} patch of: {missed}"
 
 
 @pytest.mark.unit
 def test_no_media_controller_argument_calls_a_screen_method() -> None:
     """TASK-41757 AC #2: the constructor takes no screen-method callback.
 
-    A callback is a keyword whose value is a lambda calling
-    ``self.<name>(...)``, a ``partial`` of ``self.<method>``, or a bound
-    ``self.<method>``; the host's shell-service protocols carry those calls
-    now. The single-field accessors (``lambda: self._x``) and setters
+    Flagged anywhere inside a keyword's value: a call of ``self.<name>(...)``
+    (a lambda's body included), and any ``self.<name>`` that is a method of
+    ``LibraryScreen``, its own or inherited (bare, in a ``partial``, in a
+    ``staticmethod``, in a conditional). Fix round 1 (review M1) resolves
+    methods on the real class, not its class body, so ``self.notify`` counts,
+    and flags a ``**`` expansion, which this check cannot read. The
+    single-field accessors (``lambda: self._x``) and setters
     (``lambda value: setattr(self, "_x", value)``) call no screen method.
     """
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
     tree = ast.parse(_LIBRARY_SCREEN_PATH.read_text(encoding="utf-8"))
     cls = next(
         node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "LibraryScreen"
     )
-    methods = {
-        node.name for node in cls.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-    methods |= {
-        target.id
-        for node in cls.body
-        if isinstance(node, ast.Assign)
-        and isinstance(node.value, ast.Name)
-        and node.value.id in methods
-        for target in node.targets
-        if isinstance(target, ast.Name)
-    }
     calls = [
         node
         for node in ast.walk(cls)
@@ -1620,23 +1681,23 @@ def test_no_media_controller_argument_calls_a_screen_method() -> None:
             and node.value.id == "self"
         )
 
+    def screen_method(name: str) -> bool:
+        try:
+            return callable(getattr(LibraryScreen, name))
+        except AttributeError:
+            return False
+
     callbacks = []
     for keyword in calls[0].keywords:
-        value = keyword.value
-        if isinstance(value, ast.Lambda):
-            hits = [
-                node.func
-                for node in ast.walk(value.body)
-                if isinstance(node, ast.Call) and screen_attribute(node.func)
-            ]
-        elif isinstance(value, ast.Call) and "partial" in (
-            getattr(value.func, "id", None),
-            getattr(value.func, "attr", None),
-        ):
-            hits = [arg for arg in value.args[:1] if screen_attribute(arg) and arg.attr in methods]
-        else:
-            hits = [value] if screen_attribute(value) and value.attr in methods else []
-        callbacks.extend(f"{keyword.arg}: self.{hit.attr}" for hit in hits)
+        if keyword.arg is None:
+            callbacks.append(f"**{ast.unparse(keyword.value)}: not reviewable")
+            continue
+        called = {id(node.func) for node in ast.walk(keyword.value) if isinstance(node, ast.Call)}
+        callbacks.extend(
+            f"{keyword.arg}: self.{node.attr}"
+            for node in ast.walk(keyword.value)
+            if screen_attribute(node) and (id(node) in called or screen_method(node.attr))
+        )
     assert not callbacks, (
         "media controller arguments call screen methods; add the call to the "
         f"host's shell-service protocols instead: {sorted(callbacks)}"

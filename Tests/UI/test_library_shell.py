@@ -6259,20 +6259,19 @@ def test_library_resize_geometry_rejects_transient_without_polling(
     screen = LibraryScreen(_build_test_app())
     shell = SimpleNamespace(region=SimpleNamespace(width=96))
     monkeypatch.setattr(screen, "query_one", Mock(return_value=shell))
-    media = sync_name == "_sync_library_media_reader_layout_from_shell"
-    # TASK-41757: the media controller reaches the check through its host's
-    # public protocol member; the screen's own syncs call the private name.
     monkeypatch.setattr(
         screen,
-        "library_adaptive_reader_allocation_is_current"
-        if media
-        else "_library_adaptive_reader_allocation_is_current",
+        "_library_adaptive_reader_allocation_is_current",
         Mock(return_value=False),
     )
     retry = Mock()
     monkeypatch.setattr(screen, "call_after_refresh", retry)
 
-    receiver = screen._media_controller if media else screen
+    receiver = (
+        screen._media_controller
+        if sync_name == "_sync_library_media_reader_layout_from_shell"
+        else screen
+    )
     getattr(receiver, sync_name)()
 
     retry.assert_not_called()

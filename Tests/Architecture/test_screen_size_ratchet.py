@@ -1553,7 +1553,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: the host's four shell-service protocols with a block of 41 public
     #: names, each an existing method (+51), under a 2-line note at the call:
     #: 32866 -> 32791 lines, 1288 methods (measured with ``_measure``).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32791, 1288),
+    #: TASK-41757 fix round 1 (review M5): the 41 public names forward to the
+    #: private methods at call time through a module-level ``_Forward``
+    #: descriptor (+16), on one line each (-2), under a 1-line-shorter
+    #: comment: 32791 -> 32804 lines, 1288 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32804, 1288),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

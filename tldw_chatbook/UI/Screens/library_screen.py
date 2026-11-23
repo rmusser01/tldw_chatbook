@@ -974,6 +974,22 @@ _LIBRARY_SYNC_ROOTS_ENTER_LABELS = {
 }
 
 
+class _Forward:
+    """A public ``LibraryScreen`` name that reads its private member when used.
+
+    TASK-41757: the media controller calls the screen's public protocol
+    members; the screen and its tests keep the private names. Resolving on
+    each access means a patch of the private name, on the instance or the
+    class, reaches callers of either name.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __get__(self, obj: Any, owner: type | None = None) -> Any:
+        return getattr(owner if obj is None else obj, self.name)
+
+
 class LibraryScreen(BaseAppScreen):
     """Source material, imports/exports, conversations, and Search/RAG entry."""
 
@@ -32616,53 +32632,50 @@ class LibraryScreen(BaseAppScreen):
     # TASK-41757 (owner ruling 2026-11-22, "the screen implements protocols"):
     # the media controller's host protocols (`LibraryMediaHost` and the four it
     # extends, `library_media_controller.py`). The `action_`/`request_` members
-    # are already public; these 41 are the methods above under public names.
-    # The private names stay for other callers, so a test that patches one
-    # does not reach the media controller, which calls the public name.
-    acknowledge_library_destination_change = _acknowledge_library_destination_change
-    active_review_set_banner = _active_review_set_banner
-    apply_library_open_item_surface = _apply_library_open_item_surface
-    arm_library_list_entry_focus = _arm_library_list_entry_focus
-    arm_stage_pick_landing = _arm_stage_pick_landing
-    cancel_pending_review_set_resume = _cancel_pending_review_set_resume
-    close_open_library_choice_strip = _close_open_library_choice_strip
-    disarm_library_list_entry_focus = _disarm_library_list_entry_focus
-    focus_library_control = _focus_library_control
-    focus_library_list_entry = _focus_library_list_entry
-    focus_library_list_entry_if_current = _focus_library_list_entry_if_current
-    focus_library_rail_action = _focus_library_rail_action
-    invalidate_library_workspace_depth_state = _invalidate_library_workspace_depth_state
-    land_stage_pick = _land_stage_pick
-    library_adaptive_reader_allocation_is_current = _library_adaptive_reader_allocation_is_current
-    library_entry_route_key = _library_entry_route_key
-    library_open_choice_strip = _library_open_choice_strip
-    library_source_total = _library_source_total
-    library_workspace_depth_state = _library_workspace_depth_state
-    notify_review_set = _notify_review_set
-    open_library_export_canvas = _open_library_export_canvas
-    open_library_item_by_id = _open_library_item_by_id
+    # are already public; these 41 forward to the methods above at call time
+    # (`_Forward`), so a patch of a private name reaches the media controller.
+    acknowledge_library_destination_change = _Forward("_acknowledge_library_destination_change")
+    active_review_set_banner = _Forward("_active_review_set_banner")
+    apply_library_open_item_surface = _Forward("_apply_library_open_item_surface")
+    arm_library_list_entry_focus = _Forward("_arm_library_list_entry_focus")
+    arm_stage_pick_landing = _Forward("_arm_stage_pick_landing")
+    cancel_pending_review_set_resume = _Forward("_cancel_pending_review_set_resume")
+    close_open_library_choice_strip = _Forward("_close_open_library_choice_strip")
+    disarm_library_list_entry_focus = _Forward("_disarm_library_list_entry_focus")
+    focus_library_control = _Forward("_focus_library_control")
+    focus_library_list_entry = _Forward("_focus_library_list_entry")
+    focus_library_list_entry_if_current = _Forward("_focus_library_list_entry_if_current")
+    focus_library_rail_action = _Forward("_focus_library_rail_action")
+    invalidate_library_workspace_depth_state = _Forward("_invalidate_library_workspace_depth_state")
+    land_stage_pick = _Forward("_land_stage_pick")
+    library_adaptive_reader_allocation_is_current = _Forward("_library_adaptive_reader_allocation_is_current")
+    library_entry_route_key = _Forward("_library_entry_route_key")
+    library_open_choice_strip = _Forward("_library_open_choice_strip")
+    library_source_total = _Forward("_library_source_total")
+    library_workspace_depth_state = _Forward("_library_workspace_depth_state")
+    notify_review_set = _Forward("_notify_review_set")
+    open_library_export_canvas = _Forward("_open_library_export_canvas")
+    open_library_item_by_id = _Forward("_open_library_item_by_id")
     # Not `register_footer_shortcuts`: BaseAppScreen's own takes the shortcuts.
-    register_library_footer_shortcuts = _register_footer_shortcuts
-    review_dismiss_receipt_name = _review_dismiss_receipt_name
-    review_dismiss_undo_worker = _review_dismiss_undo_worker
-    review_selected_worker = _review_selected_worker
-    review_set_picker_worker = _review_set_picker_worker
-    review_set_service = _review_set_service
-    review_these_worker = _review_these_worker
-    run_library_service_call = _run_library_service_call
-    safe_text = _safe_text
-    schedule_library_entry_reconcile = _schedule_library_entry_reconcile
-    select_library_rail_row = _select_library_rail_row
-    source_record_id = _source_record_id
-    sync_library_conversation_reader_layout_from_shell = (
-        _sync_library_conversation_reader_layout_from_shell
-    )
-    sync_library_notes_reader_layout_from_shell = _sync_library_notes_reader_layout_from_shell
-    sync_library_prompts_reader_layout_from_shell = _sync_library_prompts_reader_layout_from_shell
-    sync_library_skills_reader_layout_from_shell = _sync_library_skills_reader_layout_from_shell
-    toggle_reviewed_unguarded = _toggle_reviewed_unguarded
-    update_library_ingest_dynamic_regions = _update_library_ingest_dynamic_regions
-    walk_active_review_set = _walk_active_review_set
+    register_library_footer_shortcuts = _Forward("_register_footer_shortcuts")
+    review_dismiss_receipt_name = _Forward("_review_dismiss_receipt_name")
+    review_dismiss_undo_worker = _Forward("_review_dismiss_undo_worker")
+    review_selected_worker = _Forward("_review_selected_worker")
+    review_set_picker_worker = _Forward("_review_set_picker_worker")
+    review_set_service = _Forward("_review_set_service")
+    review_these_worker = _Forward("_review_these_worker")
+    run_library_service_call = _Forward("_run_library_service_call")
+    safe_text = _Forward("_safe_text")
+    schedule_library_entry_reconcile = _Forward("_schedule_library_entry_reconcile")
+    select_library_rail_row = _Forward("_select_library_rail_row")
+    source_record_id = _Forward("_source_record_id")
+    sync_library_conversation_reader_layout_from_shell = _Forward("_sync_library_conversation_reader_layout_from_shell")
+    sync_library_notes_reader_layout_from_shell = _Forward("_sync_library_notes_reader_layout_from_shell")
+    sync_library_prompts_reader_layout_from_shell = _Forward("_sync_library_prompts_reader_layout_from_shell")
+    sync_library_skills_reader_layout_from_shell = _Forward("_sync_library_skills_reader_layout_from_shell")
+    toggle_reviewed_unguarded = _Forward("_toggle_reviewed_unguarded")
+    update_library_ingest_dynamic_regions = _Forward("_update_library_ingest_dynamic_regions")
+    walk_active_review_set = _Forward("_walk_active_review_set")
 
 
 # task 8: classmethod dependency binding -- `_conversation_workspace_label`/
