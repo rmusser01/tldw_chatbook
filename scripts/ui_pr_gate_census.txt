@@ -4008,3 +4008,10 @@ Tests/UI/test_console_compaction_forecast.py::test_an_unmodelled_memory_shape_co
 # and a prompt that leaves no room reads "Next send won't fit". 7 cases in
 # 24.9 s serially, plain flags, load ~8.
 Tests/UI/test_console_compaction_forecast.py::test_an_agent_chats_tool_cost_counts_and_is_never_a_false_ready
+# TASK-33621.4 / TASK-33620.1 final delta review (2026-11-23): persisted agent
+# tool costs (round trip, bound, fail-open) and the stop holding raw CLI
+# drafts (controller refusal, Held label, real-Console wiring). Each under 6 s.
+Tests/UI/test_console_compaction_forecast.py::test_stored_tool_costs_round_trip_bounded_and_fail_open
+Tests/UI/test_console_raw_cli_send.py::test_an_active_emergency_stop_holds_a_raw_command_and_clear_lets_it_run
+Tests/UI/test_console_emergency_stop_hold.py::test_a_raw_cli_draft_reads_held_while_the_stop_is_active
+Tests/UI/test_console_emergency_stop_hold.py::test_the_console_wires_the_stop_into_raw_commands
