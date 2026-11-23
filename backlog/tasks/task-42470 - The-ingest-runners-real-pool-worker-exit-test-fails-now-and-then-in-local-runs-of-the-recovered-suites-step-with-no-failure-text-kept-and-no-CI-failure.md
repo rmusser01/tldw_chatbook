@@ -4,7 +4,7 @@ title: "The ingest runner's real-pool worker-exit test fails now and then in loc
 status: To Do
 assignee: []
 created_date: 2026-11-23 06:38
-updated_date: 2026-11-23 07:09
+updated_date: '2026-11-23 10:30'
 labels:
 - follow-up
 - library
@@ -26,6 +26,8 @@ Found during round 22 of the follow-up burn-down (2026-11-23), by TASK-42426's a
 **Why.** `Tests/Library/test_library_ingest_runner.py::test_real_pool_worker_exit_is_reported_for_owning_generation` (line 1796) runs in the required "PR lane (recovered suites)" job's "Run the recovered suites" step (`.github/workflows/derived-artifacts.yml`, where the file's entry is line 1856; flags `-p no:xdist --storage-lease-guard --timeout=180`). The test kills a real parse-pool worker (`pool.apply_async(os._exit, (17,))`, line 1841) and expects the job to fail as not permanent, with the pool and its generation released (lines 1843-1852). It failed in 2 of about 5 local runs of the whole step with CI's flags. TASK-42426 recorded it failing at base with the same flags (2004 passed, 2 failed, in 24:41 at load 34-46), and TASK-42412's second step run failed it too (load 24-46). It passed in the other runs. Neither implementer kept the failure text: TASK-42412's step script kept only the last 15 lines.
 
 **CI.** In a scan of every attempt of the Derived Artifacts runs created from 2026-11-19 06:00Z to 2026-11-23 06:00Z (321 runs; the first page of run 45080343651's job list returned Server Error in the scan and, re-read, holds one more passing attempt), the recovered-suites job completed at least 168 times (129 passed, 39 failed). This node failed in none of the 38 failed jobs whose logs were read, and it passed in every passing one. The failures there were the managed received acceptance test (TASK-42412), the stock skill-trust dispose cases (TASK-42426) and two other nodes. Alone, with CI's flags, it passed 5 of 5 at load about 51. So it is a local red under a loaded whole-step run, not yet a CI red; priority medium for that reason. Reproducing it may need the whole step, for example because other tests' pools or storage leases are still live when this worker exits; that is a guess.
+
+2026-11-23 (round-22 final gate, stack top a999508ae7 on dev fe8c87e3e2): the first failure text, from a whole recovered-suites step run serially with CI's flags (full log kept): `Tests/Library/test_library_ingest_runner.py:1861: assert app._ingest_parse_pool_retiring is False` failed with True, after `ERROR app_ingest_queue:_handle_broken_ingest_parse_pool:3971 - Library ingest parse pool failed: Library ingest parse-pool worker exited unexpectedly (generation 1)` and, 10 s later, `ERROR app_ingest_queue:_shutdown_workers:4166 - Error terminating the Library ingest parse pool. TimeoutError: Library ingest parse pool shutdown timed out.` The pool's shutdown timed out, so the retiring flag was still set when the test's 500-poll wait ended. The same step passed (2006) on the same stack an hour earlier.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
