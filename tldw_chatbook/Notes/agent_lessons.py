@@ -267,29 +267,21 @@ def initialize_agent_lessons_folder(
     from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
 
     folders = LocalNoteFolderRepository(db)
+    # TASK-42412: the UI loop calls this on every start and backend switch.
+    # The common seeded case only reads, so it must not wait for the write
+    # lock behind another writer.
     with db.transaction() as cursor:
-        state = cursor.execute(
-            "SELECT * FROM agent_lessons_seed_state WHERE profile_id = ? AND dataset_id = ?",
-            (normalized_profile, normalized_dataset),
-        ).fetchone()
-        if state is not None and state["state"] == "seeded":
-            folder_sync_id = (
-                str(state["folder_sync_id"])
-                if state["folder_sync_id"] is not None
-                else None
-            )
-            folder = (
-                cursor.execute(
-                    "SELECT id FROM note_folders WHERE sync_id = ?", (folder_sync_id,)
-                ).fetchone()
-                if folder_sync_id is not None
-                else None
-            )
-            return AgentLessonsSeedResult(
-                "already_seeded",
-                str(folder["id"]) if folder is not None else None,
-                folder_sync_id,
-            )
+        seeded = _seeded_result(cursor, normalized_profile, normalized_dataset)
+    if seeded is not None:
+        return seeded
+    # Read-then-write, so take the write lock first. A DEFERRED read cannot
+    # upgrade while another connection writes (the startup Actor Pack
+    # recovery, during a backend switch): SQLite returns SQLITE_BUSY at once,
+    # without the busy handler. IMMEDIATE waits on the busy timeout.
+    with db.transaction(immediate=True) as cursor:
+        seeded = _seeded_result(cursor, normalized_profile, normalized_dataset)
+        if seeded is not None:
+            return seeded
 
         exact = cursor.execute(
             "SELECT * FROM note_folders WHERE parent_id IS NULL AND deleted = 0 "
@@ -365,6 +357,33 @@ def initialize_agent_lessons_folder(
         return AgentLessonsSeedResult(
             "created" if created else "reused", str(exact["id"]), folder_sync_id
         )
+
+
+def _seeded_result(
+    cursor: Any, profile_id: str, dataset_id: str
+) -> AgentLessonsSeedResult | None:
+    """Return the ``already_seeded`` result, or None when the seed must run."""
+    state = cursor.execute(
+        "SELECT * FROM agent_lessons_seed_state WHERE profile_id = ? AND dataset_id = ?",
+        (profile_id, dataset_id),
+    ).fetchone()
+    if state is None or state["state"] != "seeded":
+        return None
+    folder_sync_id = (
+        str(state["folder_sync_id"]) if state["folder_sync_id"] is not None else None
+    )
+    folder = (
+        cursor.execute(
+            "SELECT id FROM note_folders WHERE sync_id = ?", (folder_sync_id,)
+        ).fetchone()
+        if folder_sync_id is not None
+        else None
+    )
+    return AgentLessonsSeedResult(
+        "already_seeded",
+        str(folder["id"]) if folder is not None else None,
+        folder_sync_id,
+    )
 
 
 def record_remote_agent_lessons_seed_evidence(

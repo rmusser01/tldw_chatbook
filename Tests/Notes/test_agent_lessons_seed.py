@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
+import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -542,3 +545,177 @@ def test_differently_spelled_remote_seed_requires_review(tmp_path: Path) -> None
         )
     finally:
         db.close_connection()
+
+
+def test_seed_waits_for_a_writer_another_connection_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """TASK-42412: the seed must wait for a concurrent writer, not fail.
+
+    A backend switch seeds this folder on the UI thread while the startup
+    Actor Pack recovery writes to the same database. The seed used to read in
+    a DEFERRED transaction and then write, and SQLite refuses that read-to-write
+    upgrade at once, without asking the busy handler, while another connection
+    holds the write lock.
+
+    The hold ends on events, not a clock: after the seed's folder write was
+    attempted (the old DEFERRED order), or shortly after the seed asked for
+    the write lock (the IMMEDIATE order, which then waits for this release).
+    """
+    db = _db(tmp_path / "held.sqlite")
+    main = threading.current_thread()
+    holding, asked, attempted = threading.Event(), threading.Event(), threading.Event()
+    create_folder = LocalNoteFolderRepository.create_folder
+    transaction = db.transaction
+
+    def tracked_transaction(*, immediate: bool = False):
+        if immediate and threading.current_thread() is main:
+            asked.set()
+        return transaction(immediate=immediate)
+
+    def attempt_create(self, **kwargs):
+        try:
+            return create_folder(self, **kwargs)
+        finally:
+            attempted.set()
+
+    def hold() -> None:
+        try:
+            with transaction(immediate=True):
+                holding.set()
+                for _ in range(500):  # bounded: 5 s
+                    if attempted.is_set():
+                        break
+                    if asked.is_set():
+                        attempted.wait(0.2)  # let the seed block on the lock
+                        break
+                    attempted.wait(0.01)
+        finally:
+            db.close_connection()
+
+    holder = threading.Thread(target=hold)
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(db, "transaction", tracked_transaction)
+            patch.setattr(LocalNoteFolderRepository, "create_folder", attempt_create)
+            holder.start()
+            assert holding.wait(10)
+            try:
+                outcome = initialize_agent_lessons_folder(
+                    db, scope_mode="local_only", profile_id="local", dataset_id="local"
+                )
+            except Exception as error:  # noqa: BLE001 - the assertion names it
+                outcome = error
+        assert LocalNoteFolderRepository.create_folder is create_folder
+        assert getattr(outcome, "status", None) == "created", repr(outcome)
+    finally:
+        # A setup error before start() must surface, not join's RuntimeError.
+        if holder.ident is not None:
+            holder.join(10)
+        db.close_connection()
+    assert not holder.is_alive()
+
+
+def test_seed_survives_a_write_committed_between_its_read_and_its_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """TASK-42412: the order captured under load (SQLITE_BUSY_SNAPSHOT, 517).
+
+    The recovery committed a ``buddy_profiles`` row 4 ms after the seed's
+    first read, and the seed's write then found its read snapshot stale.
+    """
+    db = _db(tmp_path / "raced.sqlite")
+    create_folder = LocalNoteFolderRepository.create_folder
+    writer_outcome: list[object] = []
+
+    def write_elsewhere() -> None:
+        try:
+            db.get_connection().execute("PRAGMA busy_timeout = 200")
+            with db.transaction(immediate=True) as cursor:
+                cursor.execute(
+                    "INSERT INTO buddy_profiles(id,name,source_key) VALUES (?,?,NULL)",
+                    (str(uuid.uuid4()), "raced"),
+                )
+            writer_outcome.append("committed")
+        except Exception as error:  # noqa: BLE001 - asserted below
+            writer_outcome.append(error)
+        finally:
+            db.close_connection()
+
+    def create_after_a_foreign_commit(self, **kwargs):
+        writer = threading.Thread(target=write_elsewhere)
+        writer.start()
+        writer.join(10)
+        return create_folder(self, **kwargs)
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                LocalNoteFolderRepository,
+                "create_folder",
+                create_after_a_foreign_commit,
+            )
+            try:
+                outcome = initialize_agent_lessons_folder(
+                    db, scope_mode="local_only", profile_id="local", dataset_id="local"
+                )
+            except Exception as error:  # noqa: BLE001 - the assertion names it
+                outcome = error
+        assert LocalNoteFolderRepository.create_folder is create_folder
+        # The foreign write either committed (it ran before the seed held the
+        # write lock) or was locked out by the seed; anything else means the
+        # race this test pins never happened.
+        assert len(writer_outcome) == 1
+        written = writer_outcome[0]
+        assert written == "committed" or (
+            type(written) is sqlite3.OperationalError
+            and str(written) == "database is locked"
+        ), repr(written)
+        assert getattr(outcome, "status", None) == "created", repr(outcome)
+    finally:
+        db.close_connection()
+
+
+def test_an_already_seeded_call_does_not_wait_for_another_writer(tmp_path: Path):
+    """TASK-42412 review: the seeded case only reads, on the UI loop.
+
+    Every start and backend switch after the first takes this path, so it must
+    not queue behind another connection's write lock (up to the 15 s busy
+    timeout).
+    """
+    db = _db(tmp_path / "seeded.sqlite")
+    holding, release = threading.Event(), threading.Event()
+
+    def hold() -> None:
+        try:
+            with db.transaction(immediate=True):
+                holding.set()
+                release.wait(2.0)
+        finally:
+            db.close_connection()
+
+    holder = threading.Thread(target=hold)
+    try:
+        first = initialize_agent_lessons_folder(
+            db, scope_mode="local_only", profile_id="local", dataset_id="local"
+        )
+        holder.start()
+        assert holding.wait(10)
+        started = time.monotonic()
+        try:
+            second = initialize_agent_lessons_folder(
+                db, scope_mode="local_only", profile_id="local", dataset_id="local"
+            )
+        finally:
+            waited = time.monotonic() - started
+            release.set()
+        assert first.status == "created"
+        assert second.status == "already_seeded"
+        assert second.folder_id == first.folder_id
+        assert waited < 0.5, f"seeded call waited {waited:.3f} s for the write lock"
+    finally:
+        # A setup error before start() must surface, not join's RuntimeError.
+        if holder.ident is not None:
+            holder.join(10)
+        db.close_connection()
+    assert not holder.is_alive()
