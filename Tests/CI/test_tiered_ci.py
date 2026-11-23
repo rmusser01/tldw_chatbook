@@ -783,3 +783,40 @@ def test_a_deleted_data_file_runs_the_tests_that_read_it(tmp_path):
     root = _tree(tmp_path, {"Tests/UI/test_reader.py": 'DATA = "gone.tsv"\n'})
     plan = policy.select_changes([("D", "Tests/UI/gone.tsv")], root)
     assert "Tests/UI/test_reader.py" in plan["targets"]
+
+
+def test_a_real_node_only_ui_file_runs_exactly_its_census_nodes():
+    """Final review: step names must not make `Tests/UI` a lane directory."""
+    path = "Tests/UI/test_settings_advanced_disclosures.py"
+    census = {
+        line.strip()
+        for line in (ROOT / policy.UI_CENSUS).read_text().splitlines()
+        if line.strip().startswith(path + "::")
+    }
+    plan = policy.select_changes([("M", path)], ROOT)
+    assert census and not plan["full"]
+    assert path not in plan["targets"]
+    assert {t for t in plan["targets"] if t.startswith(path)} == census
+
+
+def test_step_names_and_env_are_not_lane_targets(tmp_path):
+    root = _tree(tmp_path, ["Tests/UI/test_x.py"])
+    workflow = root / ".github/workflows/derived-artifacts.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text(
+        "jobs:\n  ui-fast-lane:\n    steps:\n"
+        "      - name: Run the gated Tests/UI slice\n"
+        "        env:\n          TARGET: Tests/UI\n"
+        "        run: |\n          echo ok  # Tests/UI in a comment\n"
+        "          pytest Tests/UI/test_x.py::test_a\n"
+        "  derived-artifacts:\n    needs: [preflight, ui-fast-lane]\n"
+    )
+    steps, _, _ = policy._lanes(root)
+    assert set(steps) == {"Tests/UI/test_x.py::test_a"}
+
+
+def test_the_plain_word_fallback_drops_quotes_from_deselects():
+    words = policy._run_words(
+        'name: x\n        run: |\n          pytest it\'s "--deselect=Tests/x.py::n"\n'
+    )
+    assert "--deselect=Tests/x.py::n" in words

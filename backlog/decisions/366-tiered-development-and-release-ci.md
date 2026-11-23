@@ -44,7 +44,7 @@ Renumbered from ADR-360 on 2026-11-18 after dev908e9840 brought in the older bea
 
 ## Amendment: sanity-check selection (2026-11-23, TASK-42521)
 
-**Why.** The owner enabled `CI_TIERED_ENABLED` on 2026-11-23. The intent was rapid dev merges after sanity checks, with the nightly full run on dev and the release run into main as the broad gates. The selection above defeated that intent. It treated any path outside a five-entry map as broad: every test file, `Docs/` page and `backlog/docs` file, and every path whose name contained one of 18 sensitive words. Replayed over the last 60 dev merges at b31e3e9241, only 5 would have run light; under this amendment 24 do. Meanwhile a starved runner pool held each 62-job PR run for hours.
+**Why.** The owner enabled `CI_TIERED_ENABLED` on 2026-11-23. The intent was rapid dev merges after sanity checks, with the nightly full run on dev and the release run into main as the broad gates. The selection above defeated that intent. It treated any path outside a five-entry map as broad: every test file, `Docs/` page and `backlog/docs` file, and every path whose name contained one of 18 sensitive words. Replayed over the last 60 dev merges at b31e3e9241, only 5 would have run light; under this amendment 23 do. Meanwhile a starved runner pool held each 62-job PR run for hours.
 
 **Decision.** A dev PR runs light unless it changes an input that can break CI itself, or the schema. These keep the broad run:
 - `.github/`, `scripts/ci/` and `packages/`;

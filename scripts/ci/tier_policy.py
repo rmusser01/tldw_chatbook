@@ -136,13 +136,22 @@ def _importers(path: str, corpus: dict[str, str]) -> set[str]:
     return found
 
 
-def _tokens(text: str) -> list[str]:
-    """Shell words of a workflow step, comments dropped, quotes removed."""
-    text = re.sub(r"(?m)(^|\s)#.*$", r"\1", text).replace("\\\n", " ")
+def _run_words(step: str) -> list[str]:
+    """Shell words of a workflow step's `run:` script (never its name or env)."""
+    match = re.search(r"(?m)^(?:[ ]{8})?run:[ \t]*(.*)$", step)
+    if not match:
+        return []
+    lines = [match.group(1).lstrip("|>-")]
+    for line in step[match.end() :].splitlines()[1:]:
+        if line.strip() and not line.startswith(" " * 9):
+            break  # the next key of this step
+        lines.append(line)
+    script = "\n".join(lines).replace("\\\n", " ")
     try:
-        return shlex.split(text)
-    except ValueError:  # an unbalanced quote outside a command
-        return [t.strip("\"'") for t in text.split()]
+        return shlex.split(script, comments=True)
+    except ValueError:  # an unbalanced quote: fall back to plain words
+        script = re.sub(r"(?m)(^|\s)#.*$", r"\1", script)
+        return [re.sub(r"[\"']", "", word) for word in script.split()]
 
 
 def _lanes(root: Path) -> tuple[dict[str, set[str]], set[str], set[str]]:
@@ -161,7 +170,7 @@ def _lanes(root: Path) -> tuple[dict[str, set[str]], set[str], set[str]]:
     other: set[str] = set()
     for job, body in jobs.items():
         for number, step in enumerate(re.split(r"(?m)^      - ", body)):
-            words = _tokens(step)
+            words = _run_words(step)
             for previous, word in zip(["", *words], words, strict=False):
                 if job in lane_jobs and word.startswith("--deselect="):
                     deselected.add(word.split("=", 1)[1])
