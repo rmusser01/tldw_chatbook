@@ -947,7 +947,10 @@ _BUDGETS: dict[str, int] = {
     # prompt's or note's name field instead), Collections' and Artifacts'
     # entries, the marked Folder files landing, the named re-check margin:
     # 323 -> 370 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_navigation_controller.py": 370,
+    # 2026-11-22, r11n4 load flake (same owner decision: expand limits, don't
+    # contort code): the last resort takes focus back from a pane grip that
+    # Textual's reset parked it on: 370 -> 379 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_navigation_controller.py": 379,
     "tldw_chatbook/UI/Library_Modules/library_media_trash_browse_controller.py": 319,
     # 2026-09-09, task-32129 (Obsidian mode for Import once): 587 -> 602
     # (+15), a BEHAVIOUR ADD -- `set_obsidian_mode` (6 lines) plus the
