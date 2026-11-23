@@ -1563,7 +1563,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: the access-time resolution and which name to patch (+7), and a
     #: type-only ``ReviewSetService`` import annotates two private defs (+1):
     #: 32804 -> 32812 lines, 1288 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32812, 1288),
+    #: 2026-11-23, TASK-42473: Media keeps a list entry that has not landed
+    #: yet through Textual's reset onto a pane grip, as Notes does; the
+    #: ``_reset_focus`` override records that landing: +37 lines (32812 -> 32849 on
+    #: dev after TASK-41757), 1288 -> 1289 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32849, 1289),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

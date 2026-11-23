@@ -3957,6 +3957,10 @@ class LibraryScreen(BaseAppScreen):
         #: focus restore just landed on, so its queued focus event does not
         #: revoke an entry armed right after it.
         self._library_entry_restore_landing: Widget | None = None
+        #: TASK-42473: where Textual's own focus reset last landed, and
+        #: whether the armed list entry has landed on a row since its arm.
+        self._library_reset_landing: Widget | None = None
+        self._library_entry_row_landed = False
         #: TASK-41600: the control a click or Tab last put focus on, cleared
         #: when focus moves elsewhere; a Notes canvas sync leaves it alone.
         self._library_input_focus: Widget | None = None
@@ -7650,6 +7654,18 @@ class LibraryScreen(BaseAppScreen):
         self._library_input_focus = super().get_focusable_widget_at(x, y)
         return self._library_input_focus
 
+    def _reset_focus(
+        self, widget: Widget, avoiding: list[Widget] | None = None
+    ) -> None:
+        """Record where Textual's own focus reset lands (TASK-42473).
+
+        Textual moves focus here off a control that is removed or hidden. The
+        move itself is unchanged; ``on_descendant_focus`` reads the landing to
+        tell it from a focus the app or the user chose.
+        """
+        super()._reset_focus(widget, avoiding)
+        self._library_reset_landing = self.focused
+
     def on_mouse_down(self, event: events.MouseDown) -> None:
         """Let click-driven focus changes supersede resize memory."""
         try:
@@ -10138,6 +10154,7 @@ class LibraryScreen(BaseAppScreen):
         )
         self._library_list_entry_focus_generation += 1
         self._library_pending_list_entry_focus = True
+        self._library_entry_row_landed = False
         self._library_pending_list_entry_media_return = media_return
         self._library_pending_list_entry_empty_target = empty_target
         self._library_pending_list_entry_focus_anchor = self.focused
@@ -10341,6 +10358,8 @@ class LibraryScreen(BaseAppScreen):
             if self._library_notes_programmatic_focus_target is focused:
                 self._library_notes_programmatic_focus_target = None
             return
+        # One use: a later click on the same grip is the user's.
+        reset_landing, self._library_reset_landing = self._library_reset_landing, None
         if focused is not self._library_input_focus:
             self._library_input_focus = None  # TASK-41600: not a click or Tab
         # task-31223: the footer's typing-context swap (drop keys a text
@@ -10362,6 +10381,22 @@ class LibraryScreen(BaseAppScreen):
             or self._library_notes_restoring_focus
             or self._notes_state.resize_settling
         )
+        # TASK-42473: a grip landing in an entry window is Textual's reset on
+        # Notes (a click or key disarms first). On Media, which focuses grips
+        # itself, only Textual's reset counts, and only before the entry has
+        # landed a row: after that, repaints restore focus by identity.
+        grip_reset = (
+            focused is not None
+            and focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)
+            and (
+                self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+                or (
+                    self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+                    and focused is reset_landing
+                    and not self._library_entry_row_landed
+                )
+            )
+        )
         if self._library_pending_list_entry_focus and pending_receipt is not None:
             guarded_return_focus = bool(
                 (target_restore or successful_return_focus)
@@ -10372,7 +10407,7 @@ class LibraryScreen(BaseAppScreen):
                     pending_receipt.stable_id,
                 )
             )
-            if not guarded_return_focus:
+            if not guarded_return_focus and not grip_reset:
                 # Revoke the retained receipt before a genuine row selection
                 # can recompose Media and expose any newer owner geometry.
                 self._disarm_library_list_entry_focus()
@@ -10468,6 +10503,7 @@ class LibraryScreen(BaseAppScreen):
         row_class = _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(self._library_selected_row_id)
         widget = event.widget
         if row_class is not None and widget is not None and widget.has_class(row_class):
+            self._library_entry_row_landed = True
             return
         if (
             self._library_notes_restoring_focus
@@ -10480,14 +10516,15 @@ class LibraryScreen(BaseAppScreen):
             # and ``get_focusable_widget_at``). A Notes canvas sync's default
             # restore -- a stale identity resolving to the filter -- keeps the
             # entry waiting for its rows; so does a grip, Textual's reset off
-            # a control the repaint removed, which is not left holding focus.
-            # Any other landing, a deliberate marked one included, disarms.
+            # a control the repaint removed, which is not left holding focus
+            # (``grip_reset``, Media's too). Any other landing, a deliberate
+            # marked one included, disarms.
             if widget is self._library_entry_restore_landing:
                 self._library_entry_restore_landing = None
                 return
-            if widget.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS):
-                self.set_focus(None)
-                return
+        if grip_reset:
+            self.set_focus(None)
+            return
         self._disarm_library_list_entry_focus()
 
     def _focus_library_list_entry_if_current(self, generation: int) -> None:
