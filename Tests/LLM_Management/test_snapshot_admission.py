@@ -1182,3 +1182,41 @@ def test_operation_projection_models_preserve_bounded_typed_state(
     assert error.code == "restore_integrity_failed"
     assert error.submission_possible is False
     assert str(working.path) not in repr(working)
+
+
+def test_a_file_changed_after_it_was_created_still_has_an_identity(tmp_path: Path) -> None:
+    """A model or key file written to after its creation is accepted.
+
+    On Windows a path's ``st_ctime_ns`` is the creation time and a handle's is
+    the last change (CPython 3.12.10), so comparing the two refused every file
+    changed after it was created: every downloaded model. TASK-40608 found it
+    through ``test_fixture_uses_complete_effective_evidence``, whose model
+    file is created and written on either side of a clock tick.
+    """
+    import os
+    import time
+
+    from tldw_chatbook.LLM_Management import snapshot_admission
+
+    model = _write(tmp_path / "model.gguf", b"model")
+    key = _write(tmp_path / "key.txt", b"secret")
+    # Longer than any Windows clock tick (1 ms to 15.6 ms), so the change
+    # below is stamped later than the creation.
+    time.sleep(0.05)
+    for path in (model, key):
+        with path.open("ab") as handle:
+            handle.write(b" bytes" if path is model else b"-key")
+    if os.name == "nt":
+        with model.open("rb") as handle:
+            assert os.fstat(handle.fileno()).st_ctime_ns != model.stat().st_ctime_ns
+
+    identity = snapshot_admission._hash_regular_file(model)
+
+    assert identity.sha256 == hashlib.sha256(b"model bytes").hexdigest()
+    current = model.stat()
+    assert (identity.size_bytes, identity.mtime_ns, identity.ctime_ns) == (
+        current.st_size,
+        current.st_mtime_ns,
+        current.st_ctime_ns,
+    )
+    assert snapshot_admission._read_key_file(str(key)) == "secret-key"

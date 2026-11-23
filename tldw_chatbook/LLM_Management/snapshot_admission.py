@@ -722,6 +722,24 @@ def _resolve_executable(value: str, env: Mapping[str, str]) -> Path:
     return candidate.resolve(strict=True)
 
 
+#: On Windows CPython reports a path's creation time in ``st_ctime_ns`` and a
+#: handle's last change time (measured on 3.12.10), so the two differ for every
+#: file changed after it was created. A path stat is compared with a handle
+#: stat on the fields that mean the same thing in both; change time is compared
+#: only between two path stats, and that is the one kept in ``FileIdentity``,
+#: because ``revalidate_files`` compares it with a later path stat.
+_HANDLE_CTIME_IS_PATH_CTIME = os.name != "nt"
+
+
+def _named_identity(item: os.stat_result) -> tuple[int, ...]:
+    return (item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns, item.st_ctime_ns)
+
+
+def _held_identity(item: os.stat_result) -> tuple[int, ...]:
+    named = _named_identity(item)
+    return named if _HANDLE_CTIME_IS_PATH_CTIME else named[:4]
+
+
 def _hash_regular_file(path: Path) -> FileIdentity:
     resolved = path.expanduser().resolve(strict=True)
     before = resolved.stat()
@@ -733,14 +751,10 @@ def _hash_regular_file(path: Path) -> FileIdentity:
             digest.update(chunk)
         opened = os.fstat(handle.fileno())
     after = resolved.stat()
-    snapshot = lambda item: (
-        item.st_dev,
-        item.st_ino,
-        item.st_size,
-        item.st_mtime_ns,
-        item.st_ctime_ns,
-    )
-    if snapshot(before) != snapshot(opened) or snapshot(opened) != snapshot(after):
+    if (
+        _named_identity(before) != _named_identity(after)
+        or _held_identity(before) != _held_identity(opened)
+    ):
         raise ValueError("file changed")
     return FileIdentity(
         path=resolved,
@@ -748,7 +762,7 @@ def _hash_regular_file(path: Path) -> FileIdentity:
         inode=opened.st_ino,
         size_bytes=opened.st_size,
         mtime_ns=opened.st_mtime_ns,
-        ctime_ns=opened.st_ctime_ns,
+        ctime_ns=after.st_ctime_ns,
         sha256=digest.hexdigest(),
     )
 
@@ -831,14 +845,9 @@ def _read_key_file(value: str) -> str:
             os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
         )
         opened = os.fstat(descriptor)
-        identity = lambda item: (
-            item.st_dev,
-            item.st_ino,
-            item.st_size,
-            item.st_mtime_ns,
-            item.st_ctime_ns,
-        )
-        if not stat.S_ISREG(opened.st_mode) or identity(named) != identity(opened):
+        if not stat.S_ISREG(opened.st_mode) or _held_identity(named) != _held_identity(
+            opened
+        ):
             raise ValueError("key file")
         with os.fdopen(descriptor, "rb", closefd=False) as handle:
             payload = handle.read(MAX_API_KEY_FILE_BYTES + 1)
