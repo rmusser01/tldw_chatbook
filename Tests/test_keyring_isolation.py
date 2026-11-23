@@ -24,6 +24,7 @@ import os
 
 import pytest
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.runtime_policy.server_credentials import (
     CredentialStoreUnavailable,
     build_default_server_credential_store,
@@ -57,7 +58,9 @@ def test_the_production_credential_seam_resolves_to_no_os_store() -> None:
         build_default_server_credential_store()
 
 
-def test_a_constructed_app_records_the_store_as_unavailable() -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_a_constructed_app_records_the_store_as_unavailable(request) -> None:
     """The end state: app construction takes the documented fallback, not the OS.
 
     This is the assertion that would have caught the original gap -- it exercises
@@ -68,6 +71,11 @@ def test_a_constructed_app_records_the_store_as_unavailable() -> None:
     point of the test, not a hole in it: the fallback decision still has to come
     out the same. `Tests/App/test_startup_init_hygiene.py` pins the complementary
     property -- that construction alone reaches no keyring at all.
+
+    It runs in a private profile (TASK-42480): app construction reads config,
+    which the per-test profile redirect refuses with
+    `RecoveryRequired: raw_source_selection_changed`. The child inherits this
+    process's keyring backend and its own conftest pins the same one.
     """
     from Tests.UI.app_factory import _build_test_app
 

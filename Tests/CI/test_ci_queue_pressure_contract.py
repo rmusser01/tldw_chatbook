@@ -546,6 +546,9 @@ ARCHITECTURE_GUARD_TARGETS = (
     # (DNS refusal included), on no PR lane before (~6 s and ~1 s serially).
     "Tests/test_stdlib_logging_format_style.py",
     "Tests/test_network_guard.py",
+    # TASK-42480: the keyring-isolation guard (null backend pinned by the
+    # conftest), on no PR lane before; sandboxed, app case in a private profile.
+    "Tests/test_keyring_isolation.py",
     # TASK-42147: the timer-path `.update(` census, red on dev in no PR lane
     # (pure AST, sandboxed, so before the ChaChaNotesDB and Tests/DB files below).
     "Tests/Architecture/test_timer_path_static_update_inventory.py",
