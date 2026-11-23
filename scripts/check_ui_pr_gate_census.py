@@ -1247,6 +1247,30 @@ MINIMUM_FILES = 2472
 # The floor is the measured entry count.
 MINIMUM_FILES = 2520
 
+
+MINIMUM_FILES = 2038
+MINIMUM_FILES = 2045
+MINIMUM_FILES = 2080
+MINIMUM_FILES = 2149
+MINIMUM_FILES = 2150
+MINIMUM_FILES = 2151
+# 2026-11-19: re-counted after rebasing onto dev a6df4d8d48. The floor is the measured entry count.
+MINIMUM_FILES = 2439
+# 2026-11-20: re-counted after rebasing onto dev d85e90bc9e. The floor is the measured entry count.
+MINIMUM_FILES = 2443
+# 2026-11-21: re-counted after rebasing onto dev f864f00762. The floor is the measured entry count.
+# 2026-11-19: re-counted after rebasing onto dev a6df4d8d48. The floor is the measured entry count.
+MINIMUM_FILES = 2447
+MINIMUM_FILES = 2445
+# 2026-11-21: re-counted after rebasing onto dev fe84affafc. The floor is the measured entry count.
+MINIMUM_FILES = 2456
+# 2026-11-22: re-counted after rebasing onto dev ddd3c02052. The floor is the measured entry count.
+MINIMUM_FILES = 2461
+# 2026-11-22: re-counted after rebasing onto dev 2f7790873a. The floor is the measured entry count.
+MINIMUM_FILES = 2476
+# 2026-11-21: re-counted after rebasing onto dev f864f00762. The floor is the measured entry count.
+MINIMUM_FILES = 2478
+
 # 2026-10-26, TASK-34000.29 (polish-1b batch), appended at the tail, so no
 # existing entry changes shard:
 # - task 6: Tests/UI/test_library_note_editor_feedback_is_honest.py (four
@@ -1306,34 +1330,34 @@ MINIMUM_FILES = 2520
 #   Library boot at 120x36 over a real ChaChaNotes database and the real import
 #   executor, ~10-12 s alone at load ~17, with and without the w1b plugin; kept
 #   out of its ~10 s sibling so neither nears the budget): 935 -> 936.
-# Rebased 2026-11-22 onto dev 2f7790873a (2472 entries, floor 2472): the
+# Rebased 2026-11-22 onto dev fe8c87e3e2 (2478 entries, floor 2478): the
 # polish-1b entries above, then PR #3423's 3 review-fix pins, stay
 # appended at the tail, so no existing slot moves; the floor is the
-# measured entry count: 2472 + 23 = 2495.
+# measured entry count: 2478 + 23 = 2501.
 # - PR #3423 re-review N-1/N-2/N-3 (2026-11-06): Tests/UI/test_library_notes_
 #   bulk_keyword_per_note.py (per-note commits under a ready Sync v2 profile:
 #   three production-CSS Library boots over a real ChaChaNotes database),
-#   appended at the tail: 2495 -> 2496.
+#   appended at the tail: 2501 -> 2502.
 # - PR #3423 nav-home fix round 3 (2026-11-22): Tests/UI/test_library_resume_
 #   focus_every_route.py (a Library resuming over nothing focused lands its
 #   entry or its own rail row, on every rail row the shell builds and the
 #   hub: production-CSS Library boots over a real ChaChaNotes database) is
 #   about 55-60 s whole, over the 30 s per-file budget, so its nine tests go
 #   in by node id at the tail (the route walk split four ways, about 7-10 s
-#   each): 2496 -> 2505.
+#   each): 2502 -> 2511.
 # - PR #3423 review r11n3 N3-1 (2026-11-22): that file's pin for a refused
 #   entry write (one Library boot, about 3 s) goes in by node id at the tail:
-#   2505 -> 2506.
+#   2511 -> 2512.
 # - PR #3423 r11n4 load flake (2026-11-22): that file's pin for a focus a
 #   reset parked on a pane grip (one Library boot, about 3 s), at the tail:
-#   2506 -> 2507.
+#   2512 -> 2513.
 # - PR #3423 r11n4 load flake (2026-11-22): that file's pin for an Artifacts
 #   page read landing in a shell being removed (one boot, about 3 s), at the
-#   tail: 2507 -> 2508.
+#   tail: 2513 -> 2514.
 # - PR #3423 review r11n4 N4-1 (2026-11-22): that file's pin for the re-check
 #   staying on its own route (one Library boot, about 4 s), at the tail:
-#   2508 -> 2509.
-MINIMUM_FILES = 2509
+#   2514 -> 2515.
+MINIMUM_FILES = 2515
 
 
 MINIMUM_FILES = 2038
@@ -1429,6 +1453,12 @@ MINIMUM_FILES = 2766
 MINIMUM_FILES = 2769
 MINIMUM_FILES = 2778
 MINIMUM_FILES = 2785
+
+
+
+
+
+
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 
