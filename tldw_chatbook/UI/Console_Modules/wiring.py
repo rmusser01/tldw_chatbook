@@ -1247,21 +1247,6 @@ def _schedule_raw_cli_projection(screen: Any, session_id: str) -> None:
             close()
 
 
-def _raw_cli_active_leaf_anchor(screen: Any, session_id: str) -> str | None:
-    """Capture the exact native leaf while the user submits the command."""
-    return screen._ensure_console_chat_store().active_leaf(session_id)
-
-
-def _raw_cli_persisted_leaf_anchor(
-    screen: Any,
-    session_id: str,
-    native_leaf_id: str,
-) -> str | None:
-    """Resolve the captured native leaf after first identity persistence."""
-    store = screen._ensure_console_chat_store()
-    return store.persisted_message_id_for_session_node(session_id, native_leaf_id)
-
-
 def raw_cli_anchor_callables(store: Any) -> tuple[Any, Any]:
     """The raw controller's anchor pair: the leaf past unsaved System rows,
     and that row's saved id (TASK-33620.1.10)."""

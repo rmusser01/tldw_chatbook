@@ -23,7 +23,7 @@ from tldw_chatbook.UI.Console_Modules.raw_cli import (
     ConsoleRawCliController,
     restore_refused_raw_cli_stash,
 )
-from tldw_chatbook.UI.Console_Modules.wiring import _raw_cli_persisted_leaf_anchor
+from tldw_chatbook.UI.Console_Modules.wiring import raw_cli_anchor_callables
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_composer_bar import (
     ConsoleComposerBar,
@@ -307,12 +307,10 @@ def test_raw_cli_persisted_anchor_rejects_leaf_owned_by_another_session() -> Non
         persist=False,
     )
     store._nodes_by_session[first.id][leaf.id].persisted_message_id = "persisted-leaf-a"
-    screen = SimpleNamespace(_ensure_console_chat_store=lambda: store)
+    _anchor_leaf, persisted_anchor = raw_cli_anchor_callables(store)
 
-    assert _raw_cli_persisted_leaf_anchor(screen, second.id, leaf.id) is None
-    assert (
-        _raw_cli_persisted_leaf_anchor(screen, first.id, leaf.id) == "persisted-leaf-a"
-    )
+    assert persisted_anchor(second.id, leaf.id) is None
+    assert persisted_anchor(first.id, leaf.id) == "persisted-leaf-a"
 
 
 @pytest.mark.bootstrap_profile
