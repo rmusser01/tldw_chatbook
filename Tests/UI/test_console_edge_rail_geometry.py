@@ -5,7 +5,10 @@ from __future__ import annotations
 import pytest
 from textual.widget import Widget
 
-from Tests.UI.test_console_shell_regions import make_console_pilot
+from Tests.UI.test_console_shell_regions import (
+    click_inspect_rail_open,
+    make_console_pilot,
+)
 
 
 _LEFT_OWNERS = ("#console-left-rail", "#console-context-rail-handle")
@@ -131,8 +134,7 @@ async def test_production_workspace_regions_touch_application_edges(
 async def test_expanded_and_collapsed_rail_owners_keep_one_divider() -> None:
     async with make_console_pilot(size=(160, 45)) as pilot:
         screen = pilot.app.screen
-        assert await pilot.click("#console-inspector-rail-open")
-        await pilot.pause()
+        await click_inspect_rail_open(pilot)
         _assert_edge_owned_workbench(screen)
 
     async with make_console_pilot(size=(160, 45)) as pilot:
@@ -157,8 +159,7 @@ async def test_focus_repaints_only_owned_divider_without_moving_geometry(
 ) -> None:
     async with make_console_pilot(size=(160, 45)) as pilot:
         screen = pilot.app.screen
-        assert await pilot.click("#console-inspector-rail-open")
-        await pilot.pause()
+        await click_inspect_rail_open(pilot)
         before = _geometry_snapshot(screen)
         control = screen.query_one(focus_selector)
         control.focus()
@@ -227,8 +228,7 @@ async def test_live_resize_reasserts_edge_ownership_and_preserves_rail_intent() 
     """One mounted Console retains physical ownership through every band."""
     async with make_console_pilot(size=(150, 30)) as pilot:
         screen = pilot.app.screen
-        assert await pilot.click("#console-inspector-rail-open")
-        await pilot.pause()
+        await click_inspect_rail_open(pilot)
         initial_state = screen._last_console_rail_state
         assert initial_state is not None
         assert initial_state.preferred_left_open

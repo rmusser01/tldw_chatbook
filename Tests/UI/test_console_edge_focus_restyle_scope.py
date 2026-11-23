@@ -24,7 +24,10 @@ import pytest
 from textual.css.model import CombinatorType, SelectorType
 from textual.scrollbar import ScrollBar, ScrollBarCorner
 
-from Tests.UI.test_console_shell_regions import make_console_pilot
+from Tests.UI.test_console_shell_regions import (
+    click_inspect_rail_open,
+    make_console_pilot,
+)
 from tldw_chatbook.UI.Console_Modules.frame import sync_console_focus_paint
 
 # The real ChatScreen goes through config-participant admission, which the
@@ -80,8 +83,7 @@ async def test_an_edge_focus_cue_restyles_only_its_region_and_control() -> None:
     """
     async with make_console_pilot(size=(160, 45)) as pilot:
         screen = pilot.app.screen
-        assert await pilot.click("#console-inspector-rail-open")
-        await pilot.pause()
+        await click_inspect_rail_open(pilot)
         outside = screen.query_one("#console-native-composer")
         sync_console_focus_paint(screen, outside)
         for region_id, control_id in _REGIONS:
@@ -155,8 +157,7 @@ async def test_no_rule_styles_another_node_by_an_edge_regions_focus() -> None:
     """
     async with make_console_pilot(size=(160, 45)) as pilot:
         screen = pilot.app.screen
-        assert await pilot.click("#console-inspector-rail-open")
-        await pilot.pause()
+        await click_inspect_rail_open(pilot)
         controls = {control_id for _region_id, control_id in _REGIONS}
         offenders = []
         named = 0
