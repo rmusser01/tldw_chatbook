@@ -917,28 +917,23 @@ async def test_runtime_round_with_a_never_run_app_and_no_view_is_refused_promptl
 
 
 @pytest.mark.asyncio
-async def test_never_run_app_round_stays_pending_while_a_view_can_answer():
-    """An answerable view keeps the round live (harnesses pair one with a
-    never-run TldwCli as controller.app); only an explicit answer settles it."""
+async def test_never_run_app_round_is_refused_even_while_a_view_can_answer():
+    """A never-run App fails the round closed whatever the view says.
+
+    TASK-41948: harnesses now run controller.app on their host, so the guard
+    no longer asks the view; an answerable view beside a never-run App
+    cannot deliver an answer either.
+    """
     from textual.app import App
 
     controller, store, _viewed = _runtime_owned_controller(App(), _View())
+    assert not controller._approval_view_is_detached()
     background = store.create_session(title="Background", activate=False)
 
     worker, box = _request_round_in_thread(controller, background.id)
-    try:
-        assert await _wait_until(lambda: controller._pending_approval_rounds)
-        await asyncio.sleep(2.5 * controller._interrupt_host.POLL_SECONDS)
-        assert worker.is_alive(), "the round settled with a view still answerable"
-        (round_id,) = controller._pending_approval_rounds
-    finally:
-        for pending in list(controller._pending_approval_rounds):
-            controller.resolve_pending_approval({"write_file": "deny"}, round_id=pending)
-        await asyncio.to_thread(worker.join, 10)
+    await asyncio.to_thread(worker.join, 10)
 
-    assert not worker.is_alive()
-    assert box["decisions"] == {"write_file": "deny"}
-    assert box["decisions"].unresolved_keys == frozenset()
+    _assert_refused_unanswered(worker, box, controller)
 
 
 @pytest.mark.asyncio

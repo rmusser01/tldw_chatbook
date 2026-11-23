@@ -50,6 +50,7 @@ from textual import events
 from textual.widgets import Button
 from textual.worker import NoActiveWorker, get_current_worker
 
+from Tests.UI.app_factory import run_on_host
 from Tests.Agents.test_hook_permissions import hook_file as _hook_file
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_console_workbench_contract import (
@@ -95,6 +96,7 @@ class NavigatedConsoleHarness(ConsolidatedCSSApp):
         self.app_instance = app_instance
 
     async def on_mount(self) -> None:
+        run_on_host(self.app_instance, self)
         async def navigate() -> None:
             await self.push_screen(ChatScreen(self.app_instance))
 

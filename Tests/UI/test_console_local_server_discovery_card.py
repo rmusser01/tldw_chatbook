@@ -18,6 +18,7 @@ from textual.screen import Screen
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.app_factory import run_on_host
 from textual.widgets import Button, Input, Static
 
 from Tests.private_profile import private_profile_test
@@ -205,6 +206,7 @@ class ConsoleHarness(ConsolidatedCSSApp):
         self.app_instance = app_instance
 
     async def on_mount(self) -> None:
+        run_on_host(self.app_instance, self)
         await self.push_screen(ChatScreen(self.app_instance))
 
 
@@ -933,6 +935,7 @@ class CoveredAtLaunchHarness(ConsolidatedCSSApp):
         self.cover = Screen()
 
     async def on_mount(self) -> None:
+        run_on_host(self.app_instance, self)
         await self.push_screen(ChatScreen(self.app_instance))
         self.call_after_refresh(lambda: self.push_screen(self.cover))
 

@@ -30,7 +30,7 @@ import pytest
 from loguru import logger
 from textual.containers import VerticalScroll
 from textual.css.query import NoMatches
-from textual.widgets import Button
+from textual.widgets import Button, RadioButton
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import (
@@ -254,28 +254,12 @@ def _record_notifications(app) -> list[tuple[str, str]]:
     return notes
 
 
-async def _await_answerable_view(pilot, controller) -> None:
-    """Wait until a round armed now would pass its arm-time liveness check.
-
-    Here controller.app is a never-run TldwCli, so that check (TASK-41637)
-    rests on the view alone, and ``_mounted_console`` returns before the
-    attach reconciliation makes the view answerable. A round armed in that gap
-    settles ``cancelled`` at its first poll, although the reconciliation then
-    mounts its parked card (TASK-42481). Arm only once this has passed.
-    """
-
-    assert await _settle(
-        pilot, lambda: not controller._approval_view_is_detached()
-    ), "the Console view never became answerable"
-
-
 def _parked_decision_notice(notes: list[tuple[str, str]]) -> bool:
     """True once a background tab's round has told the user it is waiting.
 
     While Console stays visible, the park toast and the hidden-decision
-    notice are both sent only after the round's arm-time liveness check
-    passed (TASK-42424). Hiding Console announces every registered round,
-    checked or not.
+    notice are sent once the round has armed and is about to wait. Hiding
+    Console announces every registered round.
     """
 
     return any(
@@ -828,16 +812,9 @@ def _assert_surviving_creation_is_live(controller, pending):
         assert not record["approved"]
 
 
-async def _arm_pending_round(
-    pilot, controller, kind: str, session_id: str, *, surviving_child=False
-):
-    """Arm a real blocking round without executing the proposed tool.
+def _arm_pending_round(controller, kind: str, session_id: str, *, surviving_child=False):
+    """Arm a real blocking round without executing the proposed tool."""
 
-    Every arm first waits for an answerable view (TASK-42481), so no journey
-    can arm a round its arm-time liveness check would fail closed.
-    """
-
-    await _await_answerable_view(pilot, controller)
     actor = None
     if kind == "chat_create":
         if surviving_child:
@@ -964,7 +941,6 @@ async def _verify_background_pending_close_names_consequences_and_cancels_only_i
                     host, pilot, "#console-native-composer"
                 )
                 controller = console._ensure_console_chat_controller()
-                app.call_from_thread = host.call_from_thread
                 store = controller.store
                 keeper = store.active_session_id
                 assert _session_ids(store) == [keeper]
@@ -980,9 +956,7 @@ async def _verify_background_pending_close_names_consequences_and_cancels_only_i
                 if kind == "chat_create":
                     controller._active_assistant_message_ids[doomed.id] = assistant.id
                 notes = _record_notifications(app)
-                round_task = await _arm_pending_round(
-                    pilot, controller, kind, doomed.id
-                )
+                round_task = _arm_pending_round(controller, kind, doomed.id)
 
                 async def waiting_run(
                     controller=controller,
@@ -1018,8 +992,7 @@ async def _verify_background_pending_close_names_consequences_and_cancels_only_i
                             and doomed.id in controller._active_stream_tasks
                         ),
                     ), "the actual pending round and its owning run did not arm"
-                    # TASK-42424: a check that lands under the Close dialog would
-                    # settle the round as the close does, proving nothing.
+                    # The round waits, and the user was told, before Close.
                     assert await _settle(
                         pilot, lambda notes=notes: _parked_decision_notice(notes)
                     ), "the closing tab's decision never told the user it waits"
@@ -1113,17 +1086,13 @@ async def _verify_background_pending_close_releases_round_without_an_active_turn
                     host, pilot, "#console-native-composer"
                 )
                 controller = console._ensure_console_chat_controller()
-                app.call_from_thread = host.call_from_thread
                 store = controller.store
                 keeper = store.active_session_id
                 doomed = controller.new_session(title="Pending decision")
                 controller.switch_session(keeper)
                 notes = _record_notifications(app)
-                sibling = await _arm_pending_round(
-                    pilot, controller, "question", keeper
-                )
-                pending = await _arm_pending_round(
-                    pilot,
+                sibling = _arm_pending_round(controller, "question", keeper)
+                pending = _arm_pending_round(
                     controller,
                     kind,
                     doomed.id,
@@ -1162,27 +1131,8 @@ async def _verify_background_pending_close_releases_round_without_an_active_turn
                         _assert_surviving_creation_is_live(controller, pending)
                     assert doomed.id not in controller._active_cancel_events
                     assert doomed.id not in controller._active_assistant_message_ids
-                    # TASK-42424: wait for the viewed tab's question card before
-                    # the Close dialog covers the view. Here controller.app is a
-                    # never-run TldwCli, so the round's arm-time liveness check
-                    # (TASK-41637) rests on the view alone, and a check that
-                    # lands under the dialog fails the round closed. The card
-                    # proves the check ran only because the rounds armed on an
-                    # answerable view: a remount also mounts a parked card
-                    # (TASK-42481). A running app never fails closed, see:
-                    # test_running_app_round_stays_pending_while_no_view_can_answer
-                    assert await _settle(
-                        pilot,
-                        lambda console=console, keeper=keeper: any(
-                            card.display
-                            and card._request_id
-                            and (card._payload or {}).get("session_id") == keeper
-                            for card in console.query("#chat-question-card")
-                        ),
-                    ), "the viewed tab's question card never mounted"
                     assert not sibling.done(), "the viewed tab's question ended before Close"
-                    # Likewise the closing tab's round: settled by a check under
-                    # the dialog, it would pass below even if Close swept nothing.
+                    # Likewise the closing tab's round waits before Close.
                     assert await _settle(
                         pilot, lambda notes=notes: _parked_decision_notice(notes)
                     ), "the closing tab's decision never told the user it waits"
@@ -1217,6 +1167,68 @@ async def _verify_background_pending_close_releases_round_without_an_active_turn
                     await asyncio.wait_for(asyncio.gather(sibling, pending), 5)
 
 
+async def _verify_question_armed_under_a_modal_waits_and_is_answered_after_it(
+    request: pytest.FixtureRequest,
+) -> None:
+    """A round armed while a modal covers Console waits for the user's answer.
+
+    TASK-41948: the harness runs ``controller.app`` on its host, as the
+    shipped app is running, so the round's arm-time liveness check does not
+    depend on the view. Before, the never-run ``TldwCli`` made a modal over
+    the view fail the round closed (``cancelled``) at its first poll.
+
+    Args:
+        request: Pytest request selecting the isolated private-profile child.
+    """
+    app = _ready_app()
+    host = ProductionConsoleHarness(app)
+    async with host.run_test(size=_SIZE) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        keeper = store.active_session_id
+        drafted = store.create_session()
+        store.set_session_draft(drafted.id, "unsent draft")
+        store.switch_session(keeper)
+        await _show_tabs(console, pilot, {keeper, drafted.id})
+        await _click(pilot, f"#console-close-session-tab-{drafted.id}")
+        await _wait_for_confirmation(host)
+        question = _arm_pending_round(controller, "question", keeper)
+        try:
+            assert await _settle(
+                pilot, lambda: len(controller.pending_question_ids()) == 1
+            ), "the question never armed"
+            await pilot.pause(2.5 * controller._interrupt_host.POLL_SECONDS)
+            assert not question.done(), (
+                f"the question armed under a modal settled: {question.result()}"
+            )
+            await _click(pilot, "#cancel-button")
+            assert await _settle(
+                pilot, lambda: not isinstance(host.screen_stack[-1], ConfirmationDialog)
+            )
+
+            def card():
+                for candidate in console.query("#chat-question-card"):
+                    payload = candidate._payload or {}
+                    if candidate.display and payload.get("session_id") == keeper:
+                        return candidate
+                return None
+
+            assert await _settle(pilot, lambda: card() is not None), (
+                "the question card never showed after the modal closed"
+            )
+            card().query(RadioButton).first().value = True
+            await pilot.pause()
+            await _click(pilot, "#question-submit")
+            assert await _settle(pilot, question.done), "the answer never arrived"
+            result = await question
+            assert result["answered"] is True
+            assert result["answers"][0]["selected"] == ["One"]
+        finally:
+            controller.revoke_approval_rounds_for_run(f"close-question-{keeper}")
+            await asyncio.wait_for(asyncio.shield(question), 5)
+
+
 async def _verify_chat_create_enrichment_cannot_arm_after_its_session_closes(
     request, monkeypatch
 ):
@@ -1231,7 +1243,6 @@ async def _verify_chat_create_enrichment_cannot_arm_after_its_session_closes(
         async with host.run_test(size=_SIZE) as pilot:
             console = await _mounted_console(host, pilot, "#console-native-composer")
             controller = console._ensure_console_chat_controller()
-            app.call_from_thread = host.call_from_thread
             keeper = controller.store.active_session_id
             doomed = controller.new_session(title="Closing before confirmation")
             controller.switch_session(keeper)
@@ -1247,8 +1258,8 @@ async def _verify_chat_create_enrichment_cannot_arm_after_its_session_closes(
             monkeypatch.setattr(
                 controller, "_enrich_chat_create_confirm_payload", paused_enrichment
             )
-            pending = await _arm_pending_round(
-                pilot, controller, "chat_create", doomed.id, surviving_child=True
+            pending = _arm_pending_round(
+                controller, "chat_create", doomed.id, surviving_child=True
             )
             try:
                 assert await _settle(pilot, entered.is_set)
@@ -1865,7 +1876,7 @@ async def _run_scenarios(
 async def test_session_close_pending_journeys(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Run the two background pending-close scenarios with fresh owners.
+    """Run the pending-decision scenarios with fresh owners.
 
     Args:
         request: Pytest request selecting the isolated private-profile child.
@@ -1883,6 +1894,7 @@ async def test_session_close_pending_journeys(
                 _verify_background_pending_close_releases_round_without_an_active_turn,
                 {},
             ),
+            (_verify_question_armed_under_a_modal_waits_and_is_answered_after_it, {}),
         ),
     )
 

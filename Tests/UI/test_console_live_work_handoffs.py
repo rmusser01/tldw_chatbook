@@ -12,7 +12,7 @@ from textual.css.query import NoMatches
 from textual.widgets import Static
 
 from Tests.private_profile import private_profile_test
-from Tests.UI.app_factory import _build_test_app, swap_app_aliases
+from Tests.UI.app_factory import _build_test_app, run_on_host, swap_app_aliases
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -145,6 +145,7 @@ class ConsoleHarness(ConsolidatedCSSApp):
         self.app_instance = app_instance
 
     async def on_mount(self) -> None:
+        run_on_host(self.app_instance, self)
         await self.push_screen(ChatScreen(self.app_instance))
 
 

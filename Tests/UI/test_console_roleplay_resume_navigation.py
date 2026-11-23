@@ -13,7 +13,7 @@ from textual.worker import Worker, WorkerState
 import tldw_chatbook.UI.Console_Modules.session as session_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from Tests.private_profile import private_profile_test
-from Tests.UI.app_factory import _build_test_app, persist_seeded_config
+from Tests.UI.app_factory import _build_test_app, persist_seeded_config, run_on_host
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_console_workspace_controller import _conversation_tree_payload
 from Tests.UI.test_destination_shells import _wait_for_selector
@@ -108,6 +108,7 @@ class _MountedNavigationConsoleHarness(ConsolidatedCSSApp):
         self.chat_screen: ChatScreen | None = None
 
     async def on_mount(self) -> None:
+        run_on_host(self.app_instance, self)
         screen = ChatScreen(self.app_instance)
         self.chat_screen = screen
         if self.conversation_id is not None:

@@ -17,6 +17,7 @@ import pytest
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.app_factory import run_on_host
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Widgets.Console.console_video_capacity_modal import (
@@ -343,6 +344,7 @@ async def test_generic_capacity_dismissal_guards_real_staged_artifact(
             self.pending_handoffs = app_instance.pending_handoffs
 
         async def on_mount(self) -> None:
+            run_on_host(self.app_instance, self)
             await self.push_screen(TrackingChatScreen(self.app_instance))
 
     artifact = _artifact(reason=reason, message_id=f"guarded-{reason}")
@@ -2034,6 +2036,7 @@ async def test_mounted_chat_screen_exit_drains_modal_and_picker_waiters(
             self.pending_handoffs = app_instance.pending_handoffs
 
         async def on_mount(self) -> None:
+            run_on_host(self.app_instance, self)
             await self.push_screen(ChatScreen(self.app_instance))
 
     artifact = _artifact(message_id=f"mounted-{wait_surface}")

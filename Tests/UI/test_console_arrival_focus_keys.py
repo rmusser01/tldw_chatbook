@@ -26,6 +26,7 @@ from types import SimpleNamespace
 import pytest
 from textual.events import Key
 
+from Tests.UI.app_factory import run_on_host
 from Tests.private_profile import private_profile_test
 from Tests.UI import pump_probe
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
@@ -57,6 +58,7 @@ class _HeldRestoreHarness(ConsolidatedCSSApp):
 
     async def on_mount(self) -> None:
         self.app_instance._ui_ready = True
+        run_on_host(self.app_instance, self)
         console = ChatScreen(self.app_instance)
         console._restore_console_workbench_focus = self._hold_restore
         await self.push_screen(console)
