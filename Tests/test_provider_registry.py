@@ -211,6 +211,11 @@ def test_continuation_providers_are_the_derived_keys():
 
     assert ContinuationProvider is str
     assert _BASE_CONTINUATION_PROVIDERS <= CONTINUATION_PROVIDER_KEYS
+    # Only an engine preset may join without an edit here: a bespoke provider
+    # that starts checkpointing must be added to the base set on purpose.
+    assert CONTINUATION_PROVIDER_KEYS - _BASE_CONTINUATION_PROVIDERS <= {
+        r.key for r in ENGINE_RECORDS
+    }
     assert {provider for provider, _ in _PAIRINGS} == CONTINUATION_PROVIDER_KEYS
     assert _PAIRINGS == {
         (key, "chat_completions") for key in CONTINUATION_PROVIDER_KEYS
@@ -351,6 +356,15 @@ def test_base_url_required_matches_records_without_a_default_url():
             assert record.base_url_label and record.base_url_setting, record.key
             assert record.base_url_missing_reason and record.base_url_path_note, record.key
             assert (record.base_url_example or "").startswith("https://"), record.key
+    # The record refuses a per-account host without its wording (never "None").
+    from dataclasses import replace
+
+    import pytest
+
+    from tldw_chatbook.provider_registry import AZURE
+
+    with pytest.raises(ValueError, match="base_url_label"):
+        replace(AZURE, base_url_label=None)
 
 
 def test_default_api_key_env_var_is_the_record_field():

@@ -980,7 +980,9 @@ _BUDGETS: dict[str, int] = {
     # load-time migration for the full load and both rebuilds from a raw mapping.
     # 2026-11-22, TASK-36946.3: 8928 -> 8929 (+1) -- the import of the engine
     # presets' registry-rendered [providers] lines.
-    "tldw_chatbook/config.py": 8929,
+    # 2026-11-23, its review round 1: 8929 -> 8932 (+3) -- that substitution
+    # gets its own statement and comment instead of riding the splash one.
+    "tldw_chatbook/config.py": 8932,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):

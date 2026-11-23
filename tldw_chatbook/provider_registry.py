@@ -297,6 +297,20 @@ class ProviderRecord:
     # ``continuation_protocol`` alone.
     checkpoints_continuations: bool = False
 
+    def __post_init__(self) -> None:
+        # A per-account host's wording is rendered verbatim into the setup form
+        # and readiness copy, so a missing field must fail here, not as "None".
+        if self.base_url_required:
+            for name in (
+                "base_url_label",
+                "base_url_example",
+                "base_url_missing_reason",
+                "base_url_setting",
+                "base_url_path_note",
+            ):
+                if not getattr(self, name):
+                    raise ValueError(f"{self.key}: base_url_required needs {name}")
+
 
 # --- Databricks (first engine-driven preset; AI Gateway external models) ---
 DATABRICKS = ProviderRecord(

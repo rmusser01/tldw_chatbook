@@ -3750,7 +3750,7 @@ API_MODELS_BY_PROVIDER = {
 #######################################################################################################################
 
 # --- Configuration File Content (for reference or auto-creation for the CLI) ---
-# Packaged data file (Config_Files/default_config.toml); the two placeholders in it
+# Packaged data file (Config_Files/default_config.toml); the three placeholders in it
 # are resolved just below. Read as bytes so no newline translation can alter it.
 CONFIG_TOML_CONTENT = (
     importlib.resources.files("tldw_chatbook.Config_Files")
@@ -3772,10 +3772,13 @@ CONFIG_TOML_CONTENT = CONFIG_TOML_CONTENT.replace(
 # Same single-substitution discipline for the splash duration (PR #2329):
 # the placeholder keeps the literal out of the template and every reader --
 # the widget, the app fallback, the Settings viewer -- shares the one
-# constant from Constants.py. The engine presets' [providers] lines come from the registry.
+# constant from Constants.py.
 CONFIG_TOML_CONTENT = CONFIG_TOML_CONTENT.replace(
     "__DEFAULT_SPLASH_DURATION__", str(DEFAULT_SPLASH_DURATION_SECONDS)
-).replace("# __ENGINE_PRESET_MODEL_LISTS__\n", ENGINE_PRESET_MODEL_LISTS_TOML)
+)
+# The engine presets' [providers] lines are rendered from their registry records'
+# seed_models (provider_registry.ENGINE_PRESET_MODEL_LISTS_TOML, TASK-36946.3).
+CONFIG_TOML_CONTENT = CONFIG_TOML_CONTENT.replace("# __ENGINE_PRESET_MODEL_LISTS__\n", ENGINE_PRESET_MODEL_LISTS_TOML)
 
 try:
     DEFAULT_CONFIG_FROM_TOML: Dict[str, Any] = tomllib.loads(CONFIG_TOML_CONTENT)

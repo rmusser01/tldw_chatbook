@@ -43,10 +43,12 @@ readiness, display name, continuation pairing, native-tools and auto-refresh
 membership, the setup form's key-page fallback, a per-account host's setup and
 readiness wording (the `base_url_*` fields), and the preset's `[providers]`
 model list, rendered from `seed_models` (TASK-36946.3). The template's byte pin
-leaves engine-preset sections out, and
-`test_engine_preset_sections_mirror_their_records` checks each one against its
-record instead (owner ruling 2026-11-22). A sourced key page is an optional
-`KEY_URLS` row; without it the setup form shows the dashboard copy.
+leaves engine-preset sections out, with the comment lines above their header,
+and `test_engine_preset_sections_mirror_their_records` checks each one against
+its record instead (owner ruling 2026-11-22). No existing test needs an edit,
+though a real preset still gets its own behaviour tests and a User Guide
+provider row. A sourced key page is an optional `KEY_URLS` row; without it the
+setup form shows the dashboard copy.
 Sensitive-request audit and cloud/local classification become
 registry-coverage tests instead of hand-typed literals. Related: ADR-002, ADR-012, ADR-020, ADR-062, ADR-063,
 ADR-343.
