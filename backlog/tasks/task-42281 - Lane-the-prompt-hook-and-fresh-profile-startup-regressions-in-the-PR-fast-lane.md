@@ -17,7 +17,7 @@ dependencies:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-TASK-42172 (a fresh profile with no config folder was refused at startup on Linux) and TASK-42173 (UserPromptSubmit hooks never ran on Console sends) each added a regression test. Both tests sit in files that run in no PR lane; only the nightly full suite runs them. So a regression would reach dev and be caught a day late. Owner decision (2026-11-22): put both in the required PR fast lane.
+TASK-42172 (a fresh profile with no config folder was refused at startup on Linux) and TASK-42173 (UserPromptSubmit hooks never ran on Console sends) each added a regression test. Both tests sit in files that run in no Derived Artifacts lane, PR or nightly; only the release workflow's `pytest Tests --ignore=Tests/UI` runs them. So a regression would reach dev and surface only at release. Owner decision (2026-11-22): put both in the required PR fast lane.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

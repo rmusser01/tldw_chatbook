@@ -1334,7 +1334,7 @@ ADMISSION_4_TARGETS = (
     # TASK-42281 (owner, 2026-11-22): TASK-42173's regression. UserPromptSubmit
     # hooks run (and can block) while a Console submit holds its agent
     # admission. bootstrap_profile with native POSIX group custody; two cases,
-    # about 1 s.
+    # about 1.7 s.
     "Tests/Agents/test_native_legacy_hooks.py::test_prompt_hook_runs_while_the_submit_task_holds_its_agent_admission",
 )
 
