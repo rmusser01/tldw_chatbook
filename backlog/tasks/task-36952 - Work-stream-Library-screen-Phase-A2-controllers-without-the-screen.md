@@ -1,8 +1,9 @@
 ---
 id: TASK-36952
 title: 'Work stream: Library screen Phase A2 — controllers without the screen'
-status: To Do
+status: Done
 created_date: 2026-10-26 01:13
+updated_date: '2026-11-23 20:00'
 labels:
 - architecture-review-2026-10-25
 - library
@@ -23,20 +24,29 @@ Source: architecture review 2026-10-25, `Docs/QA/architecture-review-2026-10-25/
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The media subsystem's controller is constructed without the screen and tested directly
-- [ ] #2 The lambda and unbound-call ratchets are lower than at filing
+- [x] #1 The media subsystem's controller is constructed without the screen and tested directly
+- [x] #2 The lambda and unbound-call ratchets are lower than at filing
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Closed 2026-11-23. Four subtasks, all Done: TASK-36952.1, .2 and .3 (the media method bodies moved into `LibraryMediaController`, in .3.1 to .3.8), and .4.
 
+**AC #1.**
+- TASK-41757 (PR #3719) replaced the controller's 43 screen-method callbacks with four typed shell-service protocols on `LibraryMediaHost`. The controller now reaches its host only through that protocol and its 30 named accessors.
+- TASK-36952.4 builds the controller on a stand-in host (a bare Textual `Screen`, not `LibraryScreen`) and drives one member of each protocol directly. Its test module never loads `library_screen`.
+- Production still constructs the controller with `LibraryScreen`. Owner ruling, 2026-11-22: "The controller still holds the screen object; that is accepted." Owner ruling, 2026-11-23, on how this task closes: "Add a direct test, then close".
+
+**AC #2.** Both ratchets are below their filing measurements, by the pins' own definitions in `Tests/Architecture/test_screen_size_ratchet.py`:
+- `_LIBRARY_INIT_LAMBDAS`: 416 measured at dev `26b2e677dd` (the review's 413 counted the controllers only), now 354.
+- `_LIBRARY_UNBOUND_TEST_CALLS`: 724 measured at dev `26b2e677dd`, now 511. The description's 370 counted only the named private `_x(fake_self, ...)` subset of the same census.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+The media controller owns its bodies, reaches the screen only through typed protocols, and is tested on a stand-in host. The Library lambda and unbound-call ratchets fell from 416 to 354 and from 724 to 511.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done
