@@ -4579,6 +4579,63 @@ def test_worker_shutdown_timeout_reports_failure_without_late_completion(
     assert completed == []
 
 
+def test_pool_teardown_kills_a_worker_that_outlives_sigterm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-42470: a parse-pool worker that survives ``Pool.terminate``'s
+    SIGTERM is killed, so the teardown completes instead of timing out.
+
+    The process here, like the app, has a Python SIGTERM handler, which a
+    spawn child keeps between fork and exec. A replacement worker the pool
+    had just forked lost the SIGTERM that way in a whole recovered-suites
+    run, and the 10 s timeout left the pool retiring. Here the worker
+    ignores SIGTERM and is busy, so it cannot take the pool's stop sentinel
+    either: the same state.
+    """
+    import signal
+
+    monkeypatch.setattr(
+        _ingest_queue_module,
+        "_INGEST_PARSE_POOL_KILL_AFTER_SECONDS",
+        0.2,
+        raising=False,
+    )
+    mixin = LibraryIngestQueueMixin()
+    mixin._ingest_parse_worker_count = lambda: 1
+    resources = mixin._create_ingest_parse_pool()
+    pool = resources.pool
+    completed: list[bool] = []
+    failure: list[BaseException] = []
+    teardown = None
+    try:
+        pool.apply(signal.signal, (signal.SIGTERM, signal.SIG_IGN))
+        pool.apply_async(time.sleep, (60,))
+        started = time.monotonic()
+        teardown = LibraryIngestQueueMixin._shutdown_ingest_workers_off_thread(
+            None,
+            None,
+            None,
+            pool,
+            resources.progress_queue,
+            None,
+            on_complete=lambda: completed.append(True),
+            on_failure=failure.append,
+        )
+        assert teardown is not None
+        teardown.join(timeout=8.0)
+        elapsed = time.monotonic() - started
+        assert not teardown.is_alive(), f"teardown still running after {elapsed:.1f} s"
+        assert failure == []
+        assert completed == [True]
+        assert all(worker.exitcode is not None for worker in pool._pool)
+    finally:
+        for worker in pool._pool:
+            if worker.exitcode is None:
+                worker.kill()
+        if teardown is not None:
+            teardown.join(timeout=15.0)
+
+
 @pytest.mark.asyncio
 @pytest.mark.allow_network
 async def test_pool_submission_binds_generation_and_job_and_applies_transient_progress(

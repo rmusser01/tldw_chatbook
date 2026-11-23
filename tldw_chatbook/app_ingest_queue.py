@@ -346,6 +346,9 @@ _INGEST_PARSE_POOL_RESTART_ERROR = (
     "restart the app before retrying."
 )
 _INGEST_WORKER_SHUTDOWN_TIMEOUT_SECONDS = 10.0
+# TASK-42470: a worker forked just before teardown has the app's SIGTERM
+# handler until it execs, so it can lose the pool's SIGTERM; kill it after this.
+_INGEST_PARSE_POOL_KILL_AFTER_SECONDS = 2.0
 
 
 # (task 10, spec §9.1 AC 37/AC-24b) The named template errors the ingest
@@ -4106,7 +4109,8 @@ class LibraryIngestQueueMixin:
         """Close detached ingest workers without blocking the UI thread.
 
         Executor shutdown remains ahead of parse-pool teardown. The parse pool
-        gets a bounded terminate/join window before its queue is
+        gets a bounded terminate/join window, in which workers that outlive the
+        SIGTERM are killed, before its queue is
         closed/cancelled, then the already-stopped daemon drain receives only a
         bounded join. A timeout reports failure once and never calls the later
         completion callback, so callers keep their no-overlap gate asserted.
@@ -4154,9 +4158,20 @@ class LibraryIngestQueueMixin:
                 except Exception as exc:
                     pool_failure = exc
                 else:
-                    if not pool_shutdown_done.wait(
-                        timeout=_INGEST_WORKER_SHUTDOWN_TIMEOUT_SECONDS
-                    ):
+                    kill_after = min(
+                        _INGEST_PARSE_POOL_KILL_AFTER_SECONDS,
+                        _INGEST_WORKER_SHUTDOWN_TIMEOUT_SECONDS,
+                    )
+                    done = pool_shutdown_done.wait(timeout=kill_after)
+                    if not done:
+                        for worker in tuple(getattr(pool, "_pool", None) or ()):
+                            if worker.exitcode is None:
+                                with contextlib.suppress(Exception):
+                                    worker.kill()
+                        done = pool_shutdown_done.wait(
+                            timeout=_INGEST_WORKER_SHUTDOWN_TIMEOUT_SECONDS - kill_after
+                        )
+                    if not done:
                         pool_failure = TimeoutError(
                             "Library ingest parse pool shutdown timed out."
                         )
