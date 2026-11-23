@@ -119,6 +119,8 @@ The review found the change "ready with fixes"; each is fixed in a commit on thi
 
 **Lane.** Neither `Tests/UI/test_console_credential_poll_gate.py` nor the mounted test was in a PR lane, which is how the mounted test's red went unseen. The file is appended at the census tail as a whole-file entry, and the floor is raised to the measured entry count. Local serial time with the UI-lane flags: 1.8 s for 4 tests (load 13).
 
+**Second review (2026-11-23, "ready to merge").** It found the mounted `Tests/UI/test_console_endpoint_discovery.py::test_shared_evidence_change_refreshes_the_console_once` still unlaned; it is now a node entry at the census tail (about 6.1 s serial with the lane's flags) and the floor is the measured entry count.
+
 **Ratchets.**
 - ChatScreen grew 1 line (24,543 -> 24,544; methods unchanged), raised in `test_screen_size_ratchet.py` and in the copy in `test_console_review_selection_controller_boundary.py`.
 - `settings_screen.py` is at 34,989 lines, under its row (34,993), and `LLM_API_Calls.py` at 5,199, under its row (5,202).

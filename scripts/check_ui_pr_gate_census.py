@@ -1268,6 +1268,10 @@ MINIMUM_FILES = 2528
 # 2026-11-23, TASK-42478 review: the Console credential poll's gate tests, whole
 # file, at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2529
+# 2026-11-23, TASK-42478 second review: the mounted shared-evidence refresh test,
+# red on dev unseen until this task's control-bar retry, at the tail (about 6.1 s
+# serial with the lane's flags). The floor is the measured entry count.
+MINIMUM_FILES = 2530
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 
