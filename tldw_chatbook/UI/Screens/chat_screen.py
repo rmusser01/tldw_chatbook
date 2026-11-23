@@ -10654,8 +10654,9 @@ class ChatScreen(BaseAppScreen):
                 )
                 if snapshot != self._console_credential_snapshot:
                     self._sync_console_settings_summary()
-                    if self._sync_console_control_bar():
-                        self._console_credential_snapshot = snapshot
+                    if not self._sync_console_control_bar():
+                        return  # Deferred: the gate stays open (TASK-42478 review).
+                    self._console_credential_snapshot = snapshot
                 # TASK-36511.4: an unchanged snapshot is a completed pass too.
                 # Commit the pre-gate only from a completed pass (review
                 # finding): lock contention, a dropped deferred sync, or a

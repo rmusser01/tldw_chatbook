@@ -1265,6 +1265,9 @@ MINIMUM_FILES = 2526
 # 2026-11-23, TASK-42478: two node ids at the tail, the Console's and Personas'
 # credential-read gates (each runs two cases). The floor is the measured entry count.
 MINIMUM_FILES = 2528
+# 2026-11-23, TASK-42478 review: the Console credential poll's gate tests, whole
+# file, at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2529
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 

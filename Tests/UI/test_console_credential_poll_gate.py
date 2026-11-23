@@ -52,7 +52,9 @@ def _screen(monkeypatch, *, status="ready"):
     )[1]
     syncs = []
     screen._sync_console_settings_summary = lambda: syncs.append("summary")
-    screen._sync_console_control_bar = lambda: syncs.append("bar")
+    rendered = [True]  # False: the control bar deferred to its replay.
+    screen._sync_console_control_bar = lambda: syncs.append("bar") or rendered[0]
+    screen.rendered = rendered
     return screen, builds, syncs, state, revision
 
 
@@ -84,3 +86,22 @@ def test_a_status_transition_without_revision_rebuilds(monkeypatch):
     state["status"] = "expired"  # time-based expiry: no revision bump
     screen._poll_console_credential_readiness()
     assert len(builds) == 2, "expiry must rebuild even without a revision bump"
+
+
+def test_a_deferred_control_refresh_leaves_the_gate_open(monkeypatch):
+    """TASK-42478 review: a pass whose control-bar sync deferred commits
+    neither the snapshot nor the pre-gate, so the next tick retries (the
+    TASK-36511.4 contract); once one renders, idle ticks go quiet again."""
+    screen, builds, syncs, _state, _rev = _screen(monkeypatch)
+    screen.rendered[0] = False
+
+    screen._poll_console_credential_readiness()
+    screen._poll_console_credential_readiness()
+    assert syncs == ["summary", "bar"] * 2, "a deferred refresh must be retried"
+    assert screen._console_credential_pre_gate is None
+
+    screen.rendered[0] = True
+    for _ in range(3):
+        screen._poll_console_credential_readiness()
+    assert len(builds) == 3
+    assert syncs == ["summary", "bar"] * 3

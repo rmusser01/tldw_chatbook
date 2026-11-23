@@ -1164,15 +1164,25 @@ async def test_shared_evidence_change_refreshes_the_console_once(request):
 
         selected = os.environ["TLDW_CONFIG_PATH"]
         snapshot = console._console_credential_snapshot
+        # TASK-42478 review: an idle poll reads no config (TASK-34918's
+        # pre-gate), so a settled result opens it first, and the first cold
+        # read of an episode defers (TASK-36511.4).
+        store.settle(
+            store.begin(identity), ProviderProbeResult("reachable", ("model-a",))
+        )
         os.environ["TLDW_CONFIG_PATH"] = selected + ".other"
         try:
+            console._poll_console_credential_readiness()
             with pytest.raises(RecoveryRequired):
                 console._poll_console_credential_readiness()
             assert console._console_credential_snapshot == snapshot
         finally:
             os.environ["TLDW_CONFIG_PATH"] = selected
         console._poll_console_credential_readiness()
-        assert console._console_credential_snapshot == snapshot
+        assert (
+            console._console_credential_snapshot[2]
+            == provider_connection_evidence(harness).version
+        )
 
 
 _KEYED_VLLM_CONFIG = {
