@@ -1400,12 +1400,26 @@ def test_diff_only_tool_marker_offers_expansion_labeled_diff():
     assert action.label == "Diff"
 
 
-def test_full_output_tool_marker_keeps_full_output_label():
-    """TASK-1860 copy is unchanged for a marker with hidden full text."""
+@pytest.mark.parametrize(
+    "status", [None, "success", "failed", "timed_out", "stopped", "done"]
+)
+def test_full_output_tool_marker_keeps_full_output_label(status: str | None):
+    """TASK-1860 copy is unchanged for a marker with hidden full text.
+
+    TASK-33621.34 review: a tool that RAN -- and then failed, timed out or
+    was stopped -- produced the text it hides, so only a refusal status may
+    take the "Sent to the model" relabel. Without these cases, relabelling
+    every non-success status passed the whole file.
+    """
     message = ConsoleChatMessage(
         role=ConsoleMessageRole.TOOL,
         content="calculator → 42",
         tool_output_full="the whole untruncated result",
+        activity_presentation=(
+            None
+            if status is None
+            else ConsoleActivityPresentation("tool", "calculator", status)
+        ),
     )
 
     action = _tool_output_action(message)

@@ -47,11 +47,15 @@ FAST_LANE_TARGETS = (
     # TASK-33621.34 (2026-11-22): a refused tool marker's disclosure reads
     # "Sent to the model" (task-32279). Its pin was red on dev for two months
     # with no PR lane running it, after a merge took dev's side of the file.
-    # The other three nodes bound the relabel: an ordinary result and a
-    # result plus diff keep "Full output", and so does a cancelled or
-    # timed-out raw-CLI command whose header also reads `blocked`. Pure, no
-    # profile; 8 tests in 0.8 s serially. Beside the approval riders, not at
-    # the tail, so it does not contend with the tail appends.
+    # The other three nodes bound the relabel: a tool that ran (any status
+    # from success to failed, timed out or stopped) and a result plus diff
+    # keep "Full output", and so does a cancelled or timed-out raw-CLI
+    # command whose header also reads `blocked`. No bootstrap profile. The
+    # action service reads the canvas setting from config (the per-test
+    # sandbox's), harmlessly, since a TOOL row has no canvas block; the
+    # raw-CLI nodes return before that read. 13 tests in 0.9 s serially.
+    # Beside the approval riders, not at the tail, so it does not contend
+    # with the tail appends.
     "Tests/Chat/test_console_message_actions.py::test_full_output_tool_marker_keeps_full_output_label",
     "Tests/Chat/test_console_message_actions.py::test_tool_marker_with_full_output_and_diff_keeps_full_output_label",
     "Tests/Chat/test_console_message_actions.py::test_refused_tool_marker_says_the_body_went_to_the_model",
