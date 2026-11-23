@@ -603,3 +603,83 @@ async def test_the_console_wires_the_stop_into_raw_commands(
         assert chat._raw_cli._emergency_stop_refusal() == ""
     assert not read_emergency_stop(persisted_stop).active
 
+
+@pytest.mark.asyncio
+async def test_a_raw_command_before_the_arrival_read_lands_is_held(
+    tmp_path, monkeypatch, persisted_stop: Path
+) -> None:
+    """Review 2026-11-23 (blocking 1): an unknown stop is not "off".
+
+    Right after the Console opens its view of the stop is unknown until the
+    arrival read lands. A raw command in that window ran on the reviewed head
+    (the raw check returned "" with no known path) while a send held. Here
+    the arrival read is kept in flight; the raw check resolves the stop
+    itself, refuses, and the view then shows the hold.
+    """
+    import threading
+
+    from tldw_chatbook.UI.Console_Modules import emergency_stop_hold
+
+    gate = threading.Event()
+    arrival = emergency_stop_hold._read_default_stop
+
+    def slow_arrival():
+        gate.wait(10)
+        return arrival()
+
+    monkeypatch.setattr(emergency_stop_hold, "_read_default_stop", slow_arrival)
+    app, _gateway = _console_app(tmp_path)
+    try:
+        async with app.run_test(size=(160, 45), notifications=True) as pilot:
+            chat = await _reach_console(app, pilot, "explore_home")
+            assert getattr(chat, "_console_emergency_stop_path", None) is None
+            refusal = chat._raw_cli._emergency_stop_refusal()
+            assert "/emergency-stop clear" in refusal, (
+                "a raw command could run before the arrival read landed",
+                refusal,
+            )
+            assert await _until(pilot, lambda: "Held" in _header_status(chat))
+    finally:
+        gate.set()
+    assert read_emergency_stop(persisted_stop).active
+
+
+@pytest.mark.asyncio
+async def test_a_raw_command_after_a_failed_arrival_read_is_held_until_a_reread(
+    tmp_path, monkeypatch, persisted_stop: Path
+) -> None:
+    """Review 2026-11-23 (blocking 1): a failed arrival read left the view
+    unknown for the whole session, and every raw command ran. Now a raw
+    command is refused while the stop cannot be read, and the refusal asks
+    for a re-read, which records the stop once it can."""
+    from tldw_chatbook.UI.Console_Modules import emergency_stop_hold
+
+    broken = [True]
+    calls = [0]
+    real_path = emergency_stop_hold.default_emergency_stop_path
+
+    def stop_path():
+        calls[0] += 1
+        if broken[0]:
+            raise OSError("data folder unavailable")
+        return real_path()
+
+    monkeypatch.setattr(emergency_stop_hold, "default_emergency_stop_path", stop_path)
+    app, _gateway = _console_app(tmp_path)
+    async with app.run_test(size=(160, 45), notifications=True) as pilot:
+        chat = await _reach_console(app, pilot, "explore_home")
+        assert await _until(pilot, lambda: calls[0] >= 1)  # the arrival read failed
+        await pilot.pause(0.2)
+        assert getattr(chat, "_console_emergency_stop_path", None) is None
+        refusal = chat._raw_cli._emergency_stop_refusal()
+        assert refusal, "a raw command ran while the stop could not be read"
+        assert "emergency stop" in refusal.lower(), refusal
+        broken[0] = False  # The folder is back; the re-read the refusal asked for lands.
+        assert await _until(
+            pilot,
+            lambda: getattr(chat, "_console_emergency_stop_path", None) is not None,
+        ), "the refusal did not ask for a re-read"
+        assert await _until(pilot, lambda: "Held" in _header_status(chat))
+        assert "/emergency-stop clear" in chat._raw_cli._emergency_stop_refusal()
+    assert read_emergency_stop(persisted_stop).active
+

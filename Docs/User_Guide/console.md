@@ -1647,8 +1647,10 @@ strip or with `/emergency-stop clear`), and an empty chat says the stop is
 active.
 Pressing **Held** does nothing; Enter is refused with a notice that names
 `/emergency-stop clear`, and your draft stays. This holds raw shell commands
-(`! ` drafts) too: they read **Held** and do not run. Once the stop is
-cleared the button reads **Send** again. A stop still
+(`! ` drafts) too: they do not run, and the button reads **Held**. (Just
+after the Console opens, before it has read the stop, a raw draft can still
+read **Run**; Enter is refused all the same.) Once the stop is cleared the
+button reads **Send** again. A stop still
 active from an earlier session is announced once when the Console opens.
 Choose **Clear** on the status strip, or run `/emergency-stop clear`, to
 resume at once; no restart is needed. If the stop can't be saved (for
