@@ -171,9 +171,11 @@ async def click_inspect_rail_open(pilot, *, timeout: float = 15.0) -> None:
         ):
             break
         if time.monotonic() > deadline:
+            # Name what a click there reaches instead (an overlay, say).
+            hit = pilot.app.get_widget_at(*region.offset)[0] if region.area else None
             raise AssertionError(
                 f"Inspect rail open control never became clickable: "
-                f"display={control.display} region={region}"
+                f"display={control.display} region={region} hit={hit!r}"
             )
         await pilot.pause(0.01)
     assert await pilot.click("#console-inspector-rail-open")
@@ -634,13 +636,13 @@ async def test_exact_100_workspace_state_matrix_is_contained(
                         expected_displayed=expected_displayed,
                         default_context_only=stored_left_open and not stored_right_open,
                     )
+                    pre_sync_observations.append(True)
+                    for queued_state in queued_first_sync_states:
+                        original_sync(screen, queued_state)
                 except Exception as error:  # a signal callback's errors are only logged
                     first_paint_errors.append(error)
-                else:
-                    pre_sync_observations.append(True)
-                for queued_state in queued_first_sync_states:
-                    original_sync(screen, queued_state)
-                queued_first_sync_states.clear()
+                finally:
+                    queued_first_sync_states.clear()
 
             screen.screen_layout_refresh_signal.subscribe(
                 screen, assert_first_paint_then_delegate_sync, immediate=True
@@ -705,7 +707,11 @@ async def test_exact_100_live_resize_preserves_workspace_and_interaction_state(
     app = _build_test_app()
     _configure_native_ready_console(app)
 
-    async with make_console_pilot(size=(start_width, 30), app=app) as pilot:
+    # A ready provider shows no setup overlay; keep the harness from hiding
+    # one, so a resize that re-shows it fails here (TASK-42416).
+    async with make_console_pilot(
+        size=(start_width, 30), app=app, hide_setup_overlay=False
+    ) as pilot:
         screen = pilot.app.screen
         (
             selected_message_id,
