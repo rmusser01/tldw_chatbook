@@ -378,7 +378,7 @@ Three traps cost a run each while finding it:
 
 **Incident.** A head run and a base run over the same 99 `Tests/Backup_Recovery` and `Tests/Notes` files, each `-n 4`, wrote 8.1 GB and 8.9 GB of pytest temp in about 25 minutes. The volume reached 179 MB free. Both runs died with `OSError: [Errno 28]` and printed no summary, so neither comparison existed. The Bash tool failed too: it could not open its own output file until space was freed. Pytest keeps its last three basetemps, and backup fixtures leave read-only directories its cleanup cannot delete.
 
-**What to do.** Check `df -h` first. Run one backup suite at a time with `--basetemp=<scratch dir>`, then delete that directory afterwards with `chmod -R u+w` before `rm -rf`. For the base comparison, rerun only the head's failing test ids on base, not the whole list.
+**What to do.** Check free space first with `diskutil info / | grep 'Container Free'`, not `df`, which reported a false "disk full" on this APFS volume on 2026-11-18 while the container had 57.7 GB free. Run one backup suite at a time with `--basetemp=<scratch dir>`, then delete that directory afterwards with `chmod -R u+w` before `rm -rf`. For the base comparison, rerun only the head's failing test ids on base, not the whole list.
 
 ## A process-wide `os.close` spy also counts another thread's closes, so a profile change moved a "pin count" (TASK-39114, 2026-11-10)
 
