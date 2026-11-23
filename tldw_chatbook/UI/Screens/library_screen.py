@@ -897,13 +897,16 @@ def _library_entry_target_replaced(widget: Widget) -> bool:
     """Whether a repaint is about to replace ``widget`` (TASK-42422).
 
     It is being pruned, or an ancestor's recompose is queued (TASK-40293) or
-    running: Textual clears ``_recompose_required`` as the recompose starts,
-    and the rebuilt canvas mounts its toolbar before its rows. Focus put on
-    such a widget falls to Textual's reset, which parks it on a pane grip.
+    running. Textual clears ``_recompose_required`` as the recompose starts;
+    ``Widget.recompose`` then holds the widget's ``lock`` (``batch()``) until
+    the new children, nested ones included, have mounted. The lock is on
+    every widget, so this needs no mixin. A rebuilt canvas mounts its toolbar
+    or filter before its rows, and focus put on a replaced widget falls to
+    Textual's reset, which parks it on a pane grip.
     """
     return getattr(widget, "_pruning", False) or any(
         getattr(node, "_recompose_required", False)
-        or getattr(node, "recompose_in_flight", False)
+        or getattr(getattr(node, "lock", None), "is_locked", False)
         for node in getattr(widget, "ancestors", ())
     )
 
@@ -10314,7 +10317,7 @@ class LibraryScreen(BaseAppScreen):
             LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS, _tick
         )
 
-    def _expire_library_list_entry_focus(self) -> None:
+    def _expire_library_list_entry_focus(self, retries: int = 20) -> None:
         """Close the settle window; a Notes entry still waiting lands first.
 
         TASK-41129: a Notes list that is still loading keeps the entry
@@ -10322,7 +10325,8 @@ class LibraryScreen(BaseAppScreen):
         arrive and nothing holds focus -- or only a pane grip, where
         Textual's reset parks it when a recompose removes the focused
         control -- the empty-list target takes it, so focus is never left
-        unset.
+        unset. Review of TASK-42422: a target a repaint is replacing waits
+        for it, one retry tick at a time; after ``retries`` it lands anyway.
         """
         focused = self.focused
         if (
@@ -10339,7 +10343,18 @@ class LibraryScreen(BaseAppScreen):
                 "#library-notes-filter",
             ):
                 found = self.query(selector)
-                if found and found.first() in chain:
+                if not found:
+                    continue
+                if retries > 0 and _library_entry_target_replaced(found.first()):
+                    # The handle a disarm stops (a key or click still wins).
+                    if self._library_list_entry_focus_timer is not None:
+                        self._library_list_entry_focus_timer.stop()
+                    self._library_list_entry_focus_timer = self.set_timer(
+                        LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS,
+                        partial(self._expire_library_list_entry_focus, retries - 1),
+                    )
+                    return
+                if found.first() in chain:
                     self.set_focus(found.first())
                     break
         self._disarm_library_list_entry_focus()

@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from textual.containers import VerticalScroll
 from textual.widgets import Button, Input, TextArea
 
 from Tests.UI.library_quit_guard_support import (
@@ -59,7 +60,15 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
     _wait_for_selector,
 )
+from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Library.collections_capture_models import CaptureSaveRequest
+from tldw_chatbook.Prompt_Management.prompt_scope_service import (
+    LocalPromptService,
+    PromptScopeService,
+)
+from tldw_chatbook.UI.Library_Modules.library_media_browse_controller import (
+    LibraryMediaBrowseController,
+)
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.Widgets.Library import LIBRARY_ADAPTIVE_READER_GRIP_CLASS
 from tldw_chatbook.Widgets.Library.library_media_canvas import LibraryMediaRowScroll
@@ -759,6 +768,13 @@ _FIRST_ROW = {"media": "library-media-row-0", "notes": "library-notes-tree-note-
             _FIRST_ROW["media"],
             id="notes-press-resident-media-rows-held",
         ),
+        # Review of TASK-42422: and with the page result held, so only the
+        # running repaint (no queued one) stands between the entry and ``type:``.
+        pytest.param(
+            True, "", ("media", "notes"), ("press-rows-and-page-held", "media"),
+            _FIRST_ROW["media"],
+            id="notes-press-resident-media-rows-and-page-held",
+        ),
         pytest.param(
             True, "", ("notes", "media"), ("click", "notes"), _FIRST_ROW["notes"],
             id="media-click-resident-notes",
@@ -857,8 +873,10 @@ async def test_each_library_switch_lands_on_its_first_row_never_a_grip(
                 library_screen_module, "LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS", 6.0
             )
         rows_absent_attempts: list[None] = []
-        release_rows = asyncio.Event()
-        if how == "press-rows-held":
+        release_held = asyncio.Event()
+        held = how in {"press-rows-held", "press-rows-and-page-held"}
+        page_held = how == "press-rows-and-page-held"
+        if held:
             # TASK-42422 (CI's UI Fast Lane 33): the Media repaint mounts its
             # toolbar before its rows. An entry attempt in that gap found no
             # row, landed on the empty list's ``type:`` control, and the next
@@ -868,7 +886,7 @@ async def test_each_library_switch_lands_on_its_first_row_never_a_grip(
             enter_list = type(screen)._focus_library_list_entry
 
             async def held_rows(self):
-                await release_rows.wait()
+                await release_held.wait()
                 await compose_rows(self)
 
             def counted_entry(self):
@@ -880,6 +898,15 @@ async def test_each_library_switch_lands_on_its_first_row_never_a_grip(
                     and not control._pruning
                     and control in self.focus_chain
                     and not self.query(".library-media-row")
+                    # With the page held no second repaint is queued, so only
+                    # the running one can tell this attempt to wait.
+                    and not (
+                        page_held
+                        and any(
+                            getattr(node, "_recompose_required", False)
+                            for node in control.ancestors
+                        )
+                    )
                 ):
                     rows_absent_attempts.append(None)
                 return enter_list(self)
@@ -888,22 +915,181 @@ async def test_each_library_switch_lands_on_its_first_row_never_a_grip(
             monkeypatch.setattr(
                 type(screen), "_focus_library_list_entry", counted_entry
             )
-        if how == "click":
-            await pilot.click(f"#library-row-browse-{row}")
-        else:
-            screen.query_one(f"#library-row-browse-{row}").press()
-        if how == "press-rows-held":
-            # Not ``pilot.pause``: it waits for every pump, held ones too.
-            for _ in range(1500):
-                if rows_absent_attempts:
-                    break
-                await asyncio.sleep(0.01)
-            held_focus = screen.focused
-            release_rows.set()
+        if page_held:
+            # Review of TASK-42422: hold the page and facet results too, as
+            # when they are slow, so nothing queues the next repaint.
+            for name in ("_search", "_load_facets"):
+                load = getattr(LibraryMediaBrowseController, name)
+
+                async def held_load(self, *args, _load=load, **kwargs):
+                    await release_held.wait()
+                    return await _load(self, *args, **kwargs)
+
+                monkeypatch.setattr(LibraryMediaBrowseController, name, held_load)
+        held_focus = None
+        try:
+            if how == "click":
+                await pilot.click(f"#library-row-browse-{row}")
+            else:
+                screen.query_one(f"#library-row-browse-{row}").press()
+            if held:
+                # Not ``pilot.pause``: it waits for every pump, held ones too.
+                for _ in range(1500):
+                    if rows_absent_attempts:
+                        break
+                    await asyncio.sleep(0.01)
+                held_focus = screen.focused
+        finally:
+            release_held.set()  # never leave a held mount for teardown
+        if held:
             assert rows_absent_attempts, "No entry attempt saw the rows held."
             # Nothing lands on a control the repaint is still replacing.
             assert held_focus is None, f"mid-repaint focus on {held_focus!r}"
         await settle_on(expected)
         await pilot.pause(0.5)  # a late restore or repaint would show here
         assert on(expected), where()
+        assert not screen.focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)
+
+
+@pytest.mark.asyncio
+async def test_prompts_list_entry_waits_out_a_running_repaint(tmp_path, monkeypatch):
+    """Review of TASK-42422: the Prompts list canvas is not a
+    ``RecomposeCaptureGuard``, so ``recompose_in_flight`` never marked its
+    repaint as running. Its filter mounts before its rows, like Media's
+    toolbar. With the rows held mid-repaint and nothing else queued, a
+    re-armed list entry must wait for the repaint, then land on the first
+    row, not the filter the repaint is still building.
+    """
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    _seed_conversations(app, _two_conversations())
+    prompts_db = PromptsDatabase(
+        tmp_path / "entry-prompts.db", client_id="entry-prompts-test"
+    )
+    prompt_id, _uuid, _msg = prompts_db.add_prompt(
+        name="Summarize",
+        author="Alice",
+        details="A summarizer",
+        system_prompt="You are concise.",
+        user_prompt="Summarize: {text}",
+    )
+    app.prompt_scope_service = PromptScopeService(
+        local_service=LocalPromptService(prompts_db), server_service=None
+    )
+    host = LibraryProductionCSSHarness(app)
+    row_id = f"library-prompt-row-{prompt_id}"
+    release_rows = asyncio.Event()
+    filter_attempts: list[None] = []
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-prompts").press()
+            await _wait_for_selector(screen, pilot, f"#{row_id}")
+            await _wait_for_condition(
+                pilot,
+                lambda: not screen._library_pending_list_entry_focus,
+                message="The Prompts entry window never closed.",
+            )
+            compose_list = VerticalScroll._compose
+            enter_list = type(screen)._focus_library_list_entry
+
+            async def held_list(self):
+                if self.id == "library-prompts-list":
+                    await release_rows.wait()
+                await compose_list(self)
+
+            def counted_entry(self):
+                found = self.query("#library-prompts-filter")
+                control = found.first() if found else None
+                if (
+                    control is not None
+                    and not control._pruning
+                    and control in self.focus_chain
+                    and not self.query(".library-prompt-row")
+                    and not any(
+                        getattr(node, "_recompose_required", False)
+                        for node in control.ancestors
+                    )
+                ):
+                    filter_attempts.append(None)
+                return enter_list(self)
+
+            monkeypatch.setattr(VerticalScroll, "_compose", held_list)
+            monkeypatch.setattr(
+                type(screen), "_focus_library_list_entry", counted_entry
+            )
+            held_focus = None
+            try:
+                screen.set_focus(None)
+                # A "back to the list" seam re-arms while the list repaints.
+                screen._arm_library_list_entry_focus()
+                screen.query_one("#library-prompts-canvas").refresh(recompose=True)
+                # Not ``pilot.pause``: it waits for every pump, held ones too.
+                for _ in range(1500):
+                    if filter_attempts:
+                        break
+                    await asyncio.sleep(0.01)
+                held_focus = screen.focused
+            finally:
+                release_rows.set()  # never leave a held mount for teardown
+            assert filter_attempts, "No entry attempt saw the rows held."
+            assert held_focus is None, f"mid-repaint focus on {held_focus!r}"
+            await _wait_for_condition(
+                pilot,
+                lambda: getattr(screen.focused, "id", None) == row_id,
+                message=lambda: f"{row_id}: focus on {screen.focused!r}",
+            )
+    finally:
+        prompts_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_notes_entry_window_close_waits_for_a_filter_being_repainted():
+    """Review of TASK-42422: when the entry window closes on an empty Notes
+    list with nothing focused, the expiry lands on the filter. A filter a
+    queued repaint is about to replace must not take that landing (Textual's
+    reset would move it to a pane grip); the expiry waits for the repaint and
+    lands on the new filter.
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), notes=[], media=_two_media_items()
+    )
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", None) == "library-notes-filter"
+            and not screen._library_pending_list_entry_focus,
+            message=lambda: f"Notes entry never settled: {screen.focused!r}",
+        )
+        old_filter = screen.focused
+        screen.set_focus(None)
+        # The window is still open, and the canvas holding the filter has a
+        # repaint queued, when the window's timer fires.
+        screen._library_pending_list_entry_focus = True
+        screen.query_one("#library-notes-canvas").refresh(recompose=True)
+        screen._expire_library_list_entry_focus()
+        assert screen.focused is None, f"landed on {screen.focused!r} mid-repaint"
+
+        def on_new_filter() -> bool:
+            focused = screen.focused
+            return (
+                getattr(focused, "id", None) == "library-notes-filter"
+                and focused is not old_filter
+                and focused in screen.focus_chain
+                and not screen._library_pending_list_entry_focus
+            )
+
+        await _wait_for_condition(
+            pilot,
+            on_new_filter,
+            message=lambda: f"The window closed on {screen.focused!r}",
+        )
+        await pilot.pause(0.5)  # a late reset would show here
+        assert on_new_filter(), repr(screen.focused)
         assert not screen.focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)

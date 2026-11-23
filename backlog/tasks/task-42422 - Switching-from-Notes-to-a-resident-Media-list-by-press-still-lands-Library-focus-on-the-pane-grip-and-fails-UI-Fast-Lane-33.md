@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-22 22:10
-updated_date: '2026-11-23 03:31'
+updated_date: '2026-11-23 04:57'
 labels:
 - follow-up
 - ci
@@ -62,7 +62,7 @@ Found during round 21 of the follow-up burn-down (2026-11-22). Checked on the ro
 
 It is a product race, not test timing: the arm is gone and focus stays on the grip for the test's whole 15 s wait, as in all five CI logs (call 20.2-22.1 s).
 
-**Fix.** `_library_entry_target_replaced` in `UI/Screens/library_screen.py` returns true when a widget is `_pruning`, or when any ancestor has a queued (`_recompose_required`) or running (`recompose_in_flight`) recompose. `_focus_library_list_entry` now uses it for the first row, the shared empty-list control (Notes, Prompts, Skills, Conversations, Collections) and Media's empty-list control. On a hit it retries within the arm's window, so the entry lands once the repaint has finished. Before, it landed on a control the repaint was about to remove. This is TASK-40293's rule widened with TASK-41703's "the flag clears as the recompose starts", in the one seam every list route shares.
+**Fix.** `_library_entry_target_replaced` in `UI/Screens/library_screen.py` returns true when a widget is `_pruning`, or when any ancestor has a queued (`_recompose_required`) or running recompose. Running is read from the widget's `lock` (held by `batch()` for the whole `Widget.recompose`), which every widget has. The first version read `recompose_in_flight`, which only `RecomposeCaptureGuard` subclasses carry; review replaced it, see "Review fixes" below. `_focus_library_list_entry` now uses it for the first row, the shared empty-list control (Notes, Prompts, Skills, Conversations, Collections) and Media's empty-list control. On a hit it retries within the arm's window, so the entry lands once the repaint has finished. Before, it landed on a control the repaint was about to remove. This is TASK-40293's rule widened with TASK-41703's "the flag clears as the recompose starts", in the one seam every list route shares.
 
 **Red/green (AC#2).**
 - **New case** `test_each_library_switch_lands_on_its_first_row_never_a_grip[notes-press-resident-media-rows-held]`: it holds `LibraryMediaRowScroll._compose` until an entry attempt has run with the toolbar live and no rows. It asserts that nothing is focused at that point, then the case's usual first-row, focus-chain and no-grip checks. Base: 8 of 8 failed, `mid-repaint focus on Button(id='library-media-type-filter', ...)`; with the earlier end-only form, 4-6 of 8 failed on the grip. Fix: 8 of 8 passed (load 34-43).
@@ -78,11 +78,11 @@ It is a product race, not test timing: the arm is gone and focus stays on the gr
 
 **Siblings.**
 - Every other case of the parametrized test passed in both soaks.
-- The guard sits in the shared seam, so the Notes, Prompts, Skills, Conversations and Collections entries get it too.
+- The guard sits in the shared seam, so the Notes, Prompts, Skills, Conversations and Collections entries get it too. With the first version's `recompose_in_flight`, Prompts and Skills got only the queued half: their list canvases are not `RecomposeCaptureGuard`s. The widget lock removed that dependency (review fixes below).
 - Audited and left alone:
-  - `_expire_library_list_entry_focus`: one Notes landing at window close.
+  - `_expire_library_list_entry_focus`: one Notes landing at window close. Review fixed this one too; see below.
   - `_land_library_media_emptied_page`: runs after the recompose it requested.
-  - `_restore_library_media_focus`: runs after `recompose_in_flight` has cleared.
+  - `_restore_library_media_focus`: runs after the canvas's recompose has returned and released its lock.
 - Media's `on_descendant_focus` still disarms on a grip landing; Notes is exempt. That is no longer reachable from the entry's own landings, so it was not changed.
 
 **Covering runs** (fix applied, `-n 4`).
@@ -125,3 +125,32 @@ It is a product race, not test timing: the arm is gone and focus stays on the gr
   - The `test_library_shell.py` slice `-k "note and (focus or back or selection or entry)"` (60 nodes): 59 passed. The one failure, `test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back`, is base-red or flaky, as above.
   - Preflight passed; ratchets 291 passed; ruff F and `ruff_gate.py` passed. No product code changed, so no ratchet row moved.
 - **File.** `Tests/UI/test_library_shell.py`.
+
+**Review fixes (review of 3c2b0313d4, "With fixes").**
+- **The running half had no pin.** `[notes-press-resident-media-rows-held]` is caught by either half, because the page result has already queued the next repaint when the held attempt runs. With the running half deleted it still passed: 6 of 6, then 8 of 8 (review saw 7 of 7).
+  - New case `[notes-press-resident-media-rows-and-page-held]`. It also holds `LibraryMediaBrowseController._search` and `_load_facets` until the rows are released, so nothing queues a repaint. It counts only attempts with no ancestor `_recompose_required`.
+  - Queued half only: 8 of 8 red, `mid-repaint focus on Button(id='library-media-type-filter', ...)`.
+  - Full guard: 8 of 8 green.
+- **The running signal was mixin-only.** `recompose_in_flight` exists only on `RecomposeCaptureGuard` subclasses, and `LibraryPromptsListCanvas` and `LibrarySkillsListCanvas` are not. `_library_entry_target_replaced` now reads `node.lock.is_locked` instead. `Widget.recompose` holds that lock through `batch()` until its new children, nested ones included, have mounted. The held cases confirm it: with only the lock and no queued repaint, both the Media and the Prompts holds wait, so the lock is still held while a nested `_compose` is blocked. `library_entry_canvases.py` already used `lock.is_locked` as "a recompose is active". In Library code, only `batch()` holds a widget lock.
+  - New test `test_prompts_list_entry_waits_out_a_running_repaint`, on a non-mixin route. It holds `#library-prompts-list`'s `_compose`, re-arms the entry and recomposes the Prompts canvas.
+  - With `recompose_in_flight` (3c2b0313d4): 6 of 6 red, `mid-repaint focus on Input(id='library-prompts-filter')`.
+  - With the queued half only: 8 of 8 red.
+  - With the lock: 8 of 8 green.
+- **Notes window-close fallback.** `_expire_library_list_entry_focus` used to land on the filter even when a repaint was replacing it. It now waits one retry tick at a time when its target is being replaced, up to 20 ticks (1 s), then lands as before. The new timer handle is the one a disarm stops, so a key or click still ends it.
+  - New test `test_notes_entry_window_close_waits_for_a_filter_being_repainted`. It sets an empty Notes list, nothing focused, the window open and a Notes canvas repaint queued, then fires the expiry.
+  - At 3c2b0313d4: 6 of 6 red, `landed on LibraryRailSearchInput(id='library-notes-filter') mid-repaint`.
+  - Fixed: 6 of 6 green. It ends on the new filter, never a grip.
+- **Minors.**
+  - The held tests release their holds in a `finally`.
+  - The helper docstring, the lesson and the notes above now say the running signal is the widget lock and needs no mixin.
+  - The lesson's review incident says the CI-shaped held case is caught by either half, and the page-held variant needs the running half.
+- **Runs** (final tree):
+  - Parametrized test (12 cases), 20 runs at `-n 4`: 240 passed in 8 min 36 s, load 29-38.
+  - 5 serial runs with `-p no:xdist --timeout=180`: 60 passed, load 17-31.
+  - Whole touched file 3 times at `-n 4`: 20 passed each.
+- **Covering run.** 28 Tests/UI files (the 19 above plus nine Prompts and Conversations files), `-n 4`, with the temporary `bootstrap_profile` plugin: 28 failed, 2053 passed (34 min, load 16-62).
+  - Rerun of those 28: 27 fail on this tree and 26 on 3c2b0313d4's `library_screen.py`, with no failure unique to 3c2b0313d4.
+  - The one difference, `test_library_prompts_canvas.py::test_library_prompt_pager_first_and_filter_failure_states[size1]`, failed 5 of 10 here and 4 of 10 at 3c2b0313d4. It fails on a compositor geometry check, not focus.
+- **Checks.** Wiring: 44 passed. Ratchets: 291 passed. Preflight, `ruff --select F` and `ruff_gate.py` passed.
+- **Lane time** (serial, UI lane flags): the page-held case 9.4-10.1 s (load 17-31), the Prompts test 3.5 s and the Notes expiry test 2.8 s (load ~17). All are in a whole-file census entry, so the census is unchanged.
+- **Size.** `library_screen.py` 32842 -> 32857 lines (1288 methods); ratchet row raised by exactly that, with a dated note.

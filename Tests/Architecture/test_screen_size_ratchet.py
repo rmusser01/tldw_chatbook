@@ -1541,7 +1541,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-23, TASK-42422: list entry focus waits out a running recompose
     #: (module-level ``_library_entry_target_replaced``): 32828 -> 32842
     #: lines, 1288 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32842, 1288),
+    #: 2026-11-23, TASK-42422 review fixes: the running-recompose check reads
+    #: the widget lock (no mixin) and the Notes window-close landing waits
+    #: for a repainting filter: 32842 -> 32857 lines, 1288 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32857, 1288),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
