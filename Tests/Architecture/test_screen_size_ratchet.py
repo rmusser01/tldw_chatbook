@@ -1698,7 +1698,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-22, review r11n M-1 (same owner decision): the lifecycle
     #: restore keeps a landing action in place instead of the rail's Import:
     #: 33537 -> 33543 lines, methods unchanged (measured).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 33543, 1314),
+    #: 2026-11-23: re-measured after rebasing onto dev 82055f4750 (owner rule:
+    #: exact, or dev's row + this branch's growth where dev exceeds it):
+    #: dev's TASK-42422 row 32866 + polish-1b's +715 = 33543 -> 33581 lines,
+    #: methods unchanged (measured).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 33581, 1314),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
