@@ -267,3 +267,20 @@ qualification remain unproven; TASK34601 and TASK34601.1 stay In Progress.
 ### TASK-33620.15.52 — Stamp-proven preview switch estimate (2026-11-19)
 
 Owner decision 2026-11-06: the tool-surface preview's kill-switch read is stamp-proven, not a worker hop. The stock light-surface preflight (`owned_preflight_tool_surface`) answers from the previous preview's own read while that read is provably current: the same permission store object with the same installed identity (path, binding, config, selected generation), the admission epoch unmoved, and the store file at the stamp taken before that read, which was then at least `SETTLE_NS` old (the file-stamp proof of TASK-33620.15.38's catalog anchor). Anything else, including a first preview, keeps the finite preparation read above, and only a read that returned is kept; a read that raises still counts as engaged and keeps nothing. Bound: the kept value is an estimate for request sizing only and grants nothing; run start's composition and every tool call read the switch again through their own gates, and nothing else consults it. In-process states in which a real read is refused defer to the finite preparation read, so the estimate answers exactly as that refused read does (engaged): the MCP service's producers paused (the proof is consulted only inside the service's producer-lifetime operation), a local storage pause, the store's participant admission closed or uninstalled, and an earlier write of the store that could not retire its native resources (`raw_participants.refused_in_process`: process state only, no file I/O, and it never waits on the storage lock, which storage admission holds across file reads and a registry `flock`; a lock held elsewhere also defers to the finite preparation read); in-process admission and activation writers advance the epoch, and a config publication changes the store's installed identity. What the proof does not see: an admission or activation change written only by another process (storage admission's per-call stamps catch it at the next real read, run start's included), and, on a network file system, a write from another host while the client's cached attributes still return the old stamp (typically up to about 60 s). Both leave only this estimate stale; neither reaches a gate. This is the one exception to "no permission cache" above, scoped to that estimate.
+
+## TASK-38931 — live-session skill diagnostics
+
+The user approved current-session observation only. The skill cost report
+reads the existing Console preparation accounting and presents a bounded
+projection scoped to the same live conversation incarnation, binding revision,
+and workspace. Invocation observations come from existing accepted request or
+skill launch paths. They never grant authority. Missing capture or provenance
+must be presented as unknown, and estimated attribution may only partition
+the accounting bucket that owns it.
+
+Retain only names and numeric usage or cost metadata in live session memory.
+The report is excluded from the transcript, sync, provider input, and durable
+capture. The report reuses the scoped skill catalog and adds no path authority,
+provider call, or capability startup.
+The visibility limits for project instructions in ADR-317 still apply. See the
+[approved design](../../Docs/superpowers/specs/2026-11-23-console-skill-cost-report-design.md).

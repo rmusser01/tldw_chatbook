@@ -5998,6 +5998,7 @@ class ConsoleProviderGateway:
         provisional_trace_attempt: ProvisionalTraceAttempt | None = None,
         before_provider_dispatch: Callable[[], Awaitable[None]] | None = None,
         emission_observer: Callable[[bool], None] | None = None,
+        prepared_observer: Callable[[PreparedProviderRequest], None] | None = None,
     ) -> AsyncIterator[ProviderStreamItem]:
         """Dispatch streaming for a resolved Console provider.
 
@@ -6166,6 +6167,11 @@ class ConsoleProviderGateway:
                     else None
                 ),
             )
+            if prepared_observer is not None:
+                try:
+                    prepared_observer(prepared)
+                except Exception:  # noqa: BLE001 - observation must not affect dispatch
+                    pass
             capture_off_admission: _ProviderAdapterAdmission | None = None
             resuming_stream_fallback = False
             if capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON:

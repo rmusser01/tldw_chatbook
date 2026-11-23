@@ -770,9 +770,11 @@ class AgentRunTools:
                 return review_claim.receipt
             if child_outcome.status != RUN_DONE:
                 return ToolResult(
-                    ok=False, error=f"sub-agent {child_outcome.status}: {text}"
+                    ok=False,
+                    error=f"sub-agent {child_outcome.status}: {text}",
+                    dispatch_state="settled",
                 )
-            return ToolResult(ok=True, content=text)
+            return ToolResult(ok=True, content=text, dispatch_state="settled")
 
         # -- FLEET path: register, launch, return a handle -- via the
         # shared reserve->Event->thread->handle tail (PR3b Task 4

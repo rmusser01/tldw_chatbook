@@ -247,6 +247,12 @@ async def test_submit_sends_rendered_payload_but_stores_raw_command():
     messages = store.messages_for_session(store.active_session_id)
     user_rows = [m for m in messages if m.role is ConsoleMessageRole.USER]
     assert user_rows[-1].content == "$code-review fix it"
+    from tldw_chatbook.Chat.console_skill_cost_report import format_skill_cost_report
+
+    report = format_skill_cost_report(store._session_or_raise(store.active_session_id), {})
+    assert "code-review: 1 observed" in report
+    assert "loaded-body attribution unavailable" in report
+    assert "fix it" not in report
 
 
 @pytest.mark.asyncio

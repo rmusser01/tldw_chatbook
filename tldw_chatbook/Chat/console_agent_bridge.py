@@ -5236,7 +5236,9 @@ class _BridgeSkillRunner:
         plugin_registry=None,
         plugin_eligible: frozenset[str] = frozenset(),
         plugin_provider: str = "",
+        skill_report_owner: tuple[Any, tuple[str, int, str]] | None = None,
     ) -> None:
+        self._skill_report_owner = skill_report_owner
         self._owned_mcp_names = owned_mcp_names
         self._plugin_registry = plugin_registry
         self._plugin_eligible = plugin_eligible
@@ -5354,6 +5356,7 @@ class _BridgeSkillRunner:
             self._skill_file_bindings.authorize(
                 name, self._definition_digests.get(name)
             )
+        skill_body = rendered
         refs = result.get("reference_files") if isinstance(result, Mapping) else None
         if refs and self._skill_file_bindings is not None:
             rows = ", ".join(
@@ -5367,9 +5370,35 @@ class _BridgeSkillRunner:
                 f"{rendered}\n\nBundled files (readable via skill_file): {rows}",
                 rendered,
             )
-        return spawn(
-            rendered, allowed_tools=allowed_tools, **({"model": model} if model else {})
+        spawn_kwargs = {"model": model} if model else {}
+        if self._skill_report_owner is None or not isinstance(skill_body, str):
+            return spawn(rendered, allowed_tools=allowed_tools, **spawn_kwargs)
+
+        from .console_skill_cost_report import (
+            SKILL_CHILD_OBSERVATION,
+            SkillChildObservation,
+            observe_skill_use,
+            skill_body_digest,
         )
+
+        owner = self._skill_report_owner
+        display = self._plugin_entries.get(name, {}).get("name", name)
+        started = time.monotonic()
+
+        def record_use(body_tokens: int | None) -> None:
+            observe_skill_use(*owner, (display,), body_tokens=body_tokens, now=started)
+
+        observation = SkillChildObservation(
+            len(skill_body), skill_body_digest(skill_body), on_prepared=record_use
+        )
+        token = SKILL_CHILD_OBSERVATION.set(observation)
+        try:
+            spawned = spawn(rendered, allowed_tools=allowed_tools, **spawn_kwargs)
+        finally:
+            SKILL_CHILD_OBSERVATION.reset(token)
+        if not observation.prepared and (spawned.ok or spawned.dispatch_state == "settled"):
+            record_use(None)
+        return spawned
 
 
 @dataclass(slots=True)

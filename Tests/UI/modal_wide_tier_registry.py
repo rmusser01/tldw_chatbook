@@ -189,6 +189,7 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
         "Widgets/Library/library_file_notes_workspace.py",
     ),
     ("#console-run-log-modal", 170, "css/features/_console_panels.tcss"),
+    ("#console-skill-cost-modal", 150, "Widgets/Console/console_skill_cost_modal.py"),
     ("#console-citation-sources-modal", 170, "css/features/_console.tcss"),
     ("#console-side-chat-modal", 170, "Widgets/Console/console_side_chat_modal.py"),
     (

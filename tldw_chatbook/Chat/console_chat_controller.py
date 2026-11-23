@@ -269,6 +269,7 @@ from tldw_chatbook.Chat.console_prepared_request import (
     PERSISTED_MESSAGE_ID_KEY,
     THINKING_OWNER_KEY,
     PreparedConsoleRequest,
+    PreparedProviderRequest,
     freeze_json as freeze_json,  # noqa: PLC0414 - retained live trace patch seam
     _is_current_user_text_transform,
     _reseal_archive_followup_trace_request,
@@ -17547,11 +17548,18 @@ class ConsoleChatController:
     def context_breakdown_accounting(self, session_id: str):
         """The LAST prepared request's accounting for one session, if any.
 
-        TASK-26019. Captured at the send preflight; None before the first
-        send of a session (the surface says so rather than estimating).
-        Reading it never triggers a model call (AC#5).
+        The live diagnostic sample supplies the finalized request when available.
+        An earlier preparation may supply the preflight fallback.
         """
-        return self._context_accounting_by_session.get(session_id)
+        from .console_skill_cost_report import skill_report_accounting
+
+        try:
+            session = self.store._session_or_raise(session_id)
+        except KeyError:
+            return None
+        return skill_report_accounting(
+            session
+        ) or self._context_accounting_by_session.get(session_id)
 
     def redirect_active_run(self, text: str) -> str | None:
         """Cut off the ACTIVE session's current model response and re-run the
@@ -24517,6 +24525,12 @@ class ConsoleChatController:
             # no-op since nothing will ever read a closed session's state.
             return self._session_closed_result()
         owner = next((s for s in self.store.sessions() if s.id == owner_id), None)
+        skill_scope = None
+        if owner is not None and skill_bindings and route is ConsoleRequestRoute.FRESH:
+            from .console_skill_cost_report import skill_report_scope
+
+            if not owner.ephemeral:
+                skill_scope = skill_report_scope(owner)
         turn_context = self._require_complete_turn_execution_context(turn_context)
         if turn_context.session_id != owner_id:
             raise ValueError("Console turn context does not own the assistant row.")
@@ -24931,6 +24945,15 @@ class ConsoleChatController:
             }:
                 return self._session_closed_result()
             stream_signals.automatic_work_chain_id = work_chain_id
+            if skill_scope is not None and not prepare_retry and not variant_mode:
+                from .console_skill_cost_report import observe_skill_use
+
+                observe_skill_use(
+                    owner,
+                    skill_scope,
+                    skill_bindings,
+                    turn_id=assistant_message_id,
+                )
             if (
                 bool(
                     turn_context.tool_configuration.get(
@@ -25718,6 +25741,10 @@ class ConsoleChatController:
             owner_id = self.store.session_id_for_message(assistant_message_id)
         except KeyError:
             return self._session_closed_result()
+        from .console_skill_cost_report import record_skill_cost, skill_report_scope
+
+        skill_report_session = self.store._session_or_raise(owner_id)
+        skill_scope = skill_report_scope(skill_report_session)
         one_shot_used = one_shot_prefill_revision if prefill_from_one_shot else None
         provider_messages = self._provider_messages_with_prefill(
             provider_messages,
@@ -26008,6 +26035,20 @@ class ConsoleChatController:
                     enter_provider_dispatch if deferred_boundary else None
                 ),
             }
+            if (
+                isinstance(dispatch_request, PreparedProviderRequest)
+                and not dispatch_request.known_overflow
+                and not skill_report_session.ephemeral
+            ):
+                record_skill_cost(
+                    skill_report_session,
+                    skill_scope,
+                    dispatch_request.accounting,
+                    native=bool(dispatch_request.tools),
+                    schema_weights=None if dispatch_request.tools else (),
+                    fenced_tokens=0 if not dispatch_request.tools else None,
+                    prepared=True,
+                )
             provider_stream = self.provider_gateway.stream_chat(
                 resolution,
                 dispatch_request,

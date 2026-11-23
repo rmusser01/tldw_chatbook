@@ -13,12 +13,13 @@ store.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any, Mapping
 from unittest.mock import MagicMock
 
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, TextArea
 
 from Tests.UI.test_console_command_composer import _spy_submit_draft
 from Tests.UI.test_console_native_chat_flow import (
@@ -454,3 +455,79 @@ async def test_skills_command_named_run_form_shows_dollar_hint_for_ambiguous_pre
         assert len(host.screen_stack) == baseline_depth, "no picker should have opened"
         # The draft is left exactly as typed.
         assert composer.draft_text() == "/skills code"
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_skill_cost_command_displays_read_only_session_report():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    skills = FakeSkillsScopeService(blocked_skills=[_blocked_skill("inspect")])
+    app.skills_scope_service = skills
+    gateway = CapturingGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    from tldw_chatbook.Chat.console_skill_cost_report import observe_skill_use, skill_report_scope
+
+    async with host.run_test(size=(40, 28)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        before = _console_message_contents(console, ConsoleMessageRole.SYSTEM)
+        first = store._session_or_raise(store.active_session_id)
+        observe_skill_use(first, skill_report_scope(first), ("earlier-skill",))
+
+        async def open_report():
+            composer.load_draft("/skill-cost")
+            console.query_one("#console-send-message", Button).press()
+            for _ in range(40):
+                if host.screen.query("#console-skill-cost-close"):
+                    await pilot.pause()
+                    break
+                await pilot.pause(0.05)
+            return host.screen.query_one("#console-skill-cost-text", TextArea)
+
+        report = await open_report()
+        assert report.read_only
+        close = host.screen.query_one("#console-skill-cost-close", Button)
+        actions = host.screen.query_one("#console-skill-cost-actions")
+        assert close.region.right <= actions.content_region.right
+        assert "Blocked skills: inspect" in report.text
+        assert "earlier-skill: 1 observed" in report.text
+        assert _console_message_contents(console, ConsoleMessageRole.SYSTEM) == before
+        assert composer.draft_text() == ""
+        await pilot.press("escape")
+        assert host.screen is console
+
+        catalog_started = asyncio.Event()
+        release_catalog = asyncio.Event()
+        original_get_context = skills.get_context
+
+        async def delayed_catalog(*, mode=None):
+            catalog_started.set()
+            await release_catalog.wait()
+            return await original_get_context(mode=mode)
+
+        skills.get_context = delayed_catalog
+        composer.load_draft("/skill-cost")
+        console.query_one("#console-send-message", Button).press()
+        await asyncio.wait_for(catalog_started.wait(), timeout=2)
+        console.action_new_console_tab()
+        for _ in range(40):
+            if console._console_visible_draft_session_id not in (first.id, None):
+                break
+            await pilot.pause(0.05)
+        assert store.active_session_id != first.id
+        skills.get_context = original_get_context
+        release_catalog.set()
+        await pilot.pause(0.1)
+        assert host.screen is console
+        skills.blocked_skills = [_blocked_skill("newly-blocked")]
+        report = await open_report()
+        assert "Blocked skills: newly-blocked" in report.text
+        assert "usage unknown" in report.text
+        assert "earlier-skill" not in report.text
+        assert skills.executions == []
+        assert gateway.sent_messages == []

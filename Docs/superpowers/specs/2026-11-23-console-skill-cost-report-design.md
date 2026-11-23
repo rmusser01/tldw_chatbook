@@ -1,6 +1,6 @@
 # Console skill cost and usage report
 
-Status: Proposed
+Status: Approved for current-session observation only
 
 Task: [TASK-38931](../../../backlog/tasks/task-38931%20-%20Report-skill-and-extension-context-costs-and-observed-session-usage.md)
 
@@ -9,7 +9,7 @@ Task: [TASK-38931](../../../backlog/tasks/task-38931%20-%20Report-skill-and-exte
 Open a read-only report from Console with `/skill-cost`. Show the age and
 source of the request sample, the existing request total, and separate figures
 for advertised skills, other tool schemas, and identifiable loaded skill bodies.
-Show skill usage as successful, observed invocations in the current live
+Show skill usage as accepted, observed invocations in the current live
 session, with a count and last use. Show unknown when no observation exists.
 Point users to Library → Skills or Settings → Tools & MCP for relevant conflicts,
 blocked skills, and disabled components. Use the existing Console command worker

@@ -306,6 +306,7 @@ from ...Chat.console_command_grammar import (
     STOP_COMMAND_HANDLER_ID,
     REWIND_COMMAND_NAME,
     SKILLS_COMMAND_HANDLER_ID,
+    SKILL_COST_COMMAND,
     SKILLS_COMMAND_NAME,  # noqa: F401 -- live defining globals for extracted helpers
     STREAM_VIDEO_COMMAND_HANDLER_ID,
     COMMAND_PREFIX,  # noqa: F401 -- live defining globals for extracted helpers
@@ -18578,6 +18579,7 @@ class ChatScreen(BaseAppScreen):
             "insert-prompt": self._console_command_insert_prompt,
             "apply-system": self._console_command_apply_system,
             SKILLS_COMMAND_HANDLER_ID: self._console_command_skills,
+            SKILL_COST_COMMAND: self._console_command_skill_cost,
             FEWER_PERMISSION_PROMPTS_COMMAND_HANDLER_ID: (
                 self._console_command_fewer_permission_prompts
             ),
@@ -19402,6 +19404,11 @@ class ChatScreen(BaseAppScreen):
 
     async def _console_command_skills(self, parse: CommandParse) -> None:
         await self._skill._console_command_skills(parse)
+
+    async def _console_command_skill_cost(self, parse: CommandParse) -> None:
+        from ..Console_Modules.skill import show_skill_cost_report
+
+        await show_skill_cost_report(self)
 
     async def _console_command_fewer_permission_prompts(
         self, parse: CommandParse

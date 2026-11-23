@@ -27,6 +27,7 @@ COMMANDS = [
     "/prompt",
     "/system",
     "/skills",
+    "/skill-cost",
     "/fewer-permission-prompts",
     "/prefill",
     "/generate-image",
@@ -63,7 +64,7 @@ def test_bare_slash_lists_commands_then_skills():
 
 def test_prefix_filters_case_insensitively():
     result = suggestions_for_draft("/SK", default_console_registry(), SKILLS)
-    assert _labels(result) == ["/skills"]
+    assert _labels(result) == ["/skills", "/skill-cost"]
 
 
 def test_skill_entries_complete_to_skills_invocation():

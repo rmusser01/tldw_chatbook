@@ -95,6 +95,7 @@ def test_default_console_registry_registers_prompt_system_skills_prefill_and_gen
         "prompt",
         "system",
         "skills",
+        "skill-cost",
         "fewer-permission-prompts",
         "prefill",
         "generate-image",
@@ -125,6 +126,7 @@ def test_default_console_registry_registers_prompt_system_skills_prefill_and_gen
     assert registry.parse("/prompt") == CommandParse("command", "prompt", "")
     assert registry.parse("/system") == CommandParse("command", "system", "")
     assert registry.parse("/skills") == CommandParse("command", "skills", "")
+    assert registry.parse("/skill-cost") == CommandParse("command", "skill-cost", "")
     assert registry.parse("/fewer-permission-prompts") == CommandParse(
         "command", "fewer-permission-prompts", ""
     )
