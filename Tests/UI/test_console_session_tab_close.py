@@ -257,11 +257,17 @@ def _record_notifications(app) -> list[tuple[str, str]]:
 def _parked_decision_notice(notes: list[tuple[str, str]]) -> bool:
     """True once a background tab's round has told the user it is waiting.
 
-    The park toast and the hidden-decision notice are both sent only after
-    the round's arm-time liveness check passed (TASK-42424).
+    While Console stays visible, the park toast and the hidden-decision
+    notice are both sent only after the round's arm-time liveness check
+    passed (TASK-42424). Hiding Console announces every registered round,
+    checked or not.
     """
 
-    return any(" needs " in message for message, _severity in notes)
+    return any(
+        marker in message
+        for message, _severity in notes
+        for marker in ("needs approval", "needs your answer", "needs confirmation")
+    )
 
 
 def _failure_toasts(notes: list[tuple[str, str]]) -> list[tuple[str, str]]:
