@@ -69,9 +69,9 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
-from textual.events import DescendantFocus, MouseScrollUp
+from textual.events import DescendantFocus, MouseScrollDown, MouseScrollUp
 from textual.screen import ModalScreen
-from textual.scrollbar import ScrollTo, ScrollUp
+from textual.scrollbar import ScrollDown, ScrollTo, ScrollUp
 from textual.widgets import DataTable, Input, Static
 
 from tldw_chatbook.Chat.trajectory import (
@@ -173,40 +173,61 @@ class _TraceInspector(VerticalScroll):
 
 
 class _TraceTable(DataTable):
-    """The ledger table; reports reader scrolls toward older rows.
+    """The ledger table; reports reader scrolls to the screen.
 
     The screen queues its own scrolls (the tail, or a paused reader's rows)
     and cannot tell a reader's scroll from its own by position alone, so the
-    wheel, key and scrollbar paths that move the view up tell it directly.
+    wheel, key and scrollbar paths tell it directly, with the direction:
+    True is toward older rows.
     """
 
-    def __init__(self, *, on_reader_scroll_up: Callable[[], None], **kwargs) -> None:
+    def __init__(self, *, on_reader_scroll: Callable[[bool], None], **kwargs) -> None:
         super().__init__(**kwargs)
-        self._on_reader_scroll_up = on_reader_scroll_up
+        self._on_reader_scroll = on_reader_scroll
 
     # Each handler runs before DataTable's own, which then scrolls.
     def on_mouse_scroll_up(self, event: MouseScrollUp) -> None:
         if not (event.ctrl or event.shift):
-            self._on_reader_scroll_up()
+            self._on_reader_scroll(True)
+
+    def on_mouse_scroll_down(self, event: MouseScrollDown) -> None:
+        if not (event.ctrl or event.shift):
+            self._on_reader_scroll(False)
 
     def on_scroll_up(self, event: ScrollUp) -> None:  # scrollbar, above the thumb
-        self._on_reader_scroll_up()
+        self._on_reader_scroll(True)
+
+    def on_scroll_down(self, event: ScrollDown) -> None:  # scrollbar, below it
+        self._on_reader_scroll(False)
 
     def on_scroll_to(self, message: ScrollTo) -> None:  # scrollbar drag
-        if message.y is not None and message.y < self.scroll_y:
-            self._on_reader_scroll_up()
+        # Against the target: an animated scroll has not moved scroll_y yet.
+        if message.y is not None and message.y != self.scroll_target_y:
+            self._on_reader_scroll(message.y < self.scroll_target_y)
 
     def action_cursor_up(self) -> None:
-        self._on_reader_scroll_up()
+        self._on_reader_scroll(True)
         super().action_cursor_up()
 
+    def action_cursor_down(self) -> None:
+        self._on_reader_scroll(False)
+        super().action_cursor_down()
+
     def action_page_up(self) -> None:
-        self._on_reader_scroll_up()
+        self._on_reader_scroll(True)
         super().action_page_up()
 
+    def action_page_down(self) -> None:
+        self._on_reader_scroll(False)
+        super().action_page_down()
+
     def action_scroll_top(self) -> None:
-        self._on_reader_scroll_up()
+        self._on_reader_scroll(True)
         super().action_scroll_top()
+
+    def action_scroll_bottom(self) -> None:
+        self._on_reader_scroll(False)
+        super().action_scroll_bottom()
 
 
 def _fmt_clock(unix: float | None) -> str:
@@ -486,7 +507,7 @@ class TrajectoryScreen(ModalScreen[None]):
             yield self._filter_bar
             yield self._timeline  # always mounted: zoom state survives
             table = _TraceTable(
-                on_reader_scroll_up=self._reader_scrolled_up,
+                on_reader_scroll=self._reader_scrolled,
                 id="trajectory-table",
                 cursor_type="row",
             )
@@ -793,9 +814,9 @@ class TrajectoryScreen(ModalScreen[None]):
             return
         self._sync_follow_from_scroll()
         if self._follow and self._held_snapshot is not None:
-            # The reader scrolled back to the tail: rebuild it, now following.
-            self._held_snapshot = None
-            self._last_revision = None
+            # The reader scrolled back to the tail: show what is held, as f
+            # does. Deferred, so the render is not part of the poll tick.
+            self.call_later(self.action_resume_follow)
         try:
             revision = self._revision_provider()
         except Exception:  # noqa: BLE001 - provider is external state
@@ -922,7 +943,7 @@ class TrajectoryScreen(ModalScreen[None]):
                     if key == selected_key:
                         self._pending_restore_key = key
         table = self.query_one("#trajectory-table", DataTable)
-        top = table.scroll_y
+        top = table.scroll_target_y
         self._render_ledger()
         # Hold the view the reader had until the queued scroll lands, so a
         # wheel or key in between moves from there, not from the top the
@@ -954,9 +975,11 @@ class TrajectoryScreen(ModalScreen[None]):
         far the anchor sits below the top.
         """
         try:
-            top = int(self.query_one("#trajectory-table", DataTable).scroll_y)
+            table = self.query_one("#trajectory-table", DataTable)
         except Exception:  # noqa: BLE001 - pre-mount refresh
             return None, 0, 0
+        # Where the scroll is going: an animated one has not moved yet.
+        top = int(table.scroll_target_y)
         keys = self._visible_keys
         gap = 1 if top < len(keys) and keys[top] == LOAD_EARLIER_ROW_KEY else 0
         anchor = top + gap
@@ -1027,27 +1050,32 @@ class TrajectoryScreen(ModalScreen[None]):
             return
         if table.max_scroll_y <= 0 or self._scrolls_pending:
             return
-        following = table.scroll_y >= table.max_scroll_y - 1
+        following = table.scroll_target_y >= table.max_scroll_y - 1
         if following != self._follow:
             self._follow = following
             self._refresh_state()
 
-    def _reader_scrolled_up(self) -> None:
-        """A wheel, key or scrollbar scroll toward older rows.
+    def _reader_scrolled(self, toward_older: bool) -> None:
+        """A wheel, key or scrollbar scroll, before the table applies it.
 
         While one of the screen's own scrolls is queued, the table's position
         says nothing about the reader, so this is the only way to see them:
-        follow pauses at once, and the queued scroll lands on the rows the
-        reader scrolled to instead of the tail (TASK-42458).
+        the queued scroll lands on the rows the reader scrolled to, and a
+        scroll toward older rows pauses follow at once (TASK-42458). While
+        following, a scroll toward the tail goes where the queued tail scroll
+        goes, so it changes nothing.
         """
-        if not self._scrolls_pending:
-            return  # the position is settled; the poll tick reads it
-        self._scroll_epoch += 1
-        if self._follow:
-            self._follow = False
-            self._refresh_state()
         table = self.query_one("#trajectory-table", DataTable)
-        table.call_next(self._note_reader_row)  # once the table has scrolled
+        if table.max_scroll_y <= 0:
+            return  # nothing to scroll away from: it keeps following
+        if not self._scrolls_pending:
+            table.call_next(self._sync_follow_from_scroll)  # the label, at once
+        elif toward_older or not self._follow:
+            self._scroll_epoch += 1
+            if self._follow:
+                self._follow = False
+                self._refresh_state()
+            table.call_next(self._note_reader_row)  # once the table has scrolled
 
     def _note_reader_row(self) -> None:
         self._reading_row = self._top_row()
@@ -1057,7 +1085,9 @@ class TrajectoryScreen(ModalScreen[None]):
         self._follow = True
         held, self._held_snapshot = self._held_snapshot, None
         page = min(self._total_records, PAGE_SIZE)
-        if held is None and self._visible_count <= page:
+        if held is None and (
+            self._snapshot_builder is None or self._visible_count <= page
+        ):
             self._queue_ledger_scroll(tail=True)
             self._refresh_state()
             return
@@ -2185,7 +2215,10 @@ class TrajectoryScreen(ModalScreen[None]):
         )
 
         self.app.push_screen(
-            TraceExportDialog(self._snapshot), self._trace_export_finished
+            TraceExportDialog(
+                self._snapshot if self._held_snapshot is None else self._held_snapshot
+            ),
+            self._trace_export_finished,
         )
 
     def _trace_export_finished(self, written: Path | None) -> None:

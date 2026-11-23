@@ -1033,10 +1033,11 @@ pauses at once ("PAUSED · f resume"), even while an update is being drawn: new
 events keep arriving below, and the rows you are reading stay where they are,
 including the oldest rows of a long Trace. Once a paused ledger shows 1,000
 events, new events wait instead of redrawing it ("PAUSED · new events waiting
-· f resume") until you press **f** or scroll back to the bottom. Press **f** to
-jump to the newest events and follow again: the ledger goes back to its newest
-500 events, and the selection moves to the newest row if its row is no longer
-shown.
+· f resume"), and an export still includes them. Press **f** to jump to the
+newest events and follow again: the ledger goes back to its newest 500 events,
+and the selection moves to the newest row if its row is no longer shown.
+Scrolling back to the bottom also follows again, and shows waiting events the
+way **f** does.
 
 ## Related settings & docs
 
