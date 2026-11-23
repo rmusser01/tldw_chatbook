@@ -53,24 +53,33 @@ The owner set the variable on 2026-11-23 and chose to loosen the rule.
   - the light job's wiring.
 - **ADR-366:** Accepted, with an amendment.
 
-**Review:** an independent local review found 1 Critical, 4 Important and 5 Minor issues, all fixed in the second commit:
-- **C1:** a changed file was narrowed to its own smoke nodes.
-- **I1:** imported `test_*.py` modules were treated as ordinary test files.
-- **I2:** schema changes outside `DB/migrations` went light.
-- **I3:** huge or deselect-listed files were selected whole.
-- **I4:** `packages/` was not covered.
-- **M1:** a test file that collected nothing passed silently.
-- **M2:** the light job's plugins and timeout differed from the lanes'.
-- **M3:** pytest config and guard data at depth went light.
-- **M4:** the runner had no tests.
-- **M5:** the ADR and task wording overstated the code.
-
-The label-trigger part of I3 is documented instead of adding `labeled` to the workflow, because any bot label would then start a full 62-job run.
+**Review:** an independent local review ran in three rounds.
+- **Round 1:** 1 Critical, 4 Important and 5 Minor findings, fixed in the second commit:
+  - **C1:** a changed file was narrowed to its own smoke nodes.
+  - **I1:** imported `test_*.py` modules were treated as ordinary test files.
+  - **I2:** schema changes outside `DB/migrations` went light.
+  - **I3:** huge or deselect-listed files were selected whole.
+  - **I4:** `packages/` was not covered.
+  - **M1:** a test file that collected nothing passed silently.
+  - **M2:** the light job's plugins and timeout differed from the lanes'.
+  - **M3:** pytest config and guard data at depth went light.
+  - **M4:** the runner had no tests.
+  - **M5:** the ADR and task wording overstated the code.
+- **Round 2:** no Critical or Important findings. Its Minors are fixed in the third commit:
+  - schema code outside the DB directories (`CREATE TABLE`/`user_version`);
+  - test data files now select the test files that read them;
+  - parenthesized imports, and importers of importers;
+  - the file cap now counts only the PR's own files;
+  - files the lanes run only by node now run those nodes instead of the whole file;
+  - tests for the importer-is-infrastructure branch;
+  - the replay counts and the `ci:full` re-run note.
+- **The label trigger (part of I3):** documented instead of adding `labeled` to the workflow, since any bot label would then start a full 62-job run. The reviewer agreed.
 
 **Verification:**
-- `Tests/CI` 1851 passed, 2 skipped (`-n 4`); `test_tiered_ci.py` 79 passed.
-- Replay over the last 60 dev merges at b31e3e9241: the old rule sends 5 light, the new rule 27.
-  - Of the 33 still broad, 18 change a workflow, 7 change a widely imported test module, 5 touch the two whole-file-excluded UI files, 2 change `Tests/conftest.py` and 1 changes Architecture data.
-  - A light run selects a median of 6 files, and the slowest selection took 26.5 s at load average about 40.
+- `Tests/CI` 1857 passed, 2 skipped (`-n 4`); `test_tiered_ci.py` 84 passed.
+- **Replay** over the last 60 dev merges at b31e3e9241:
+  - The old rule sends 5 light; the new rule sends 24.
+  - Of the 36 still broad: 20 change CI or test configuration (mostly lane additions to the workflow), 10 change a widely imported test module, 5 touch the two whole-file-excluded files and 1 changes Architecture data.
+  - A light run selects a median of 5 files (max 13), and selection takes a median of 0.9 s (max 2.9 s).
 - This PR itself runs broad, because it changes `.github/` and `scripts/ci/`.
 <!-- SECTION:NOTES:END -->

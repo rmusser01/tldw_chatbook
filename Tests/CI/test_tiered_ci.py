@@ -605,8 +605,91 @@ def test_light_job_runs_the_tested_runner_with_the_lanes_plugin_setup():
 
 
 def test_too_many_selected_files_go_broad(tmp_path):
-    """A light run is serial; more files than the cap would not fit its timeout."""
-    files = [f"Tests/UI/test_f{n}.py" for n in range(policy.LIGHT_FILE_CAP)]
+    """A light run is serial; the cap counts the PR's own files, not the smoke set."""
+    files = [f"Tests/UI/test_f{n}.py" for n in range(policy.LIGHT_FILE_CAP + 1)]
     root = _tree(tmp_path, files)
     assert policy.select_changes([("M", f) for f in files], root)["full"]
-    assert not policy.select_changes([("M", f) for f in files[:-3]], root)["full"]
+    assert not policy.select_changes([("M", f) for f in files[:-1]], root)["full"]
+
+
+def test_application_code_with_its_own_schema_goes_broad(tmp_path):
+    """Review I2: feature modules that create or version SQLite tables."""
+    root = _tree(tmp_path, [])
+    feature = root / "tldw_chatbook/Feature"
+    feature.mkdir(parents=True)
+    (feature / "repository.py").write_text('SQL = "CREATE TABLE things (id INTEGER)"\n')
+    (feature / "view.py").write_text("def render():\n    return 1\n")
+    assert policy.select_changes([("M", "tldw_chatbook/Feature/repository.py")], root)[
+        "full"
+    ]
+    assert not policy.select_changes([("M", "tldw_chatbook/Feature/view.py")], root)[
+        "full"
+    ]
+
+
+def test_changed_test_data_runs_the_tests_that_read_it(tmp_path):
+    """Review M3: a data file selects the test files that name it."""
+    root = _tree(
+        tmp_path,
+        {
+            "Tests/UI/shortfall.tsv": "",
+            "Tests/UI/test_reader.py": 'DATA = "shortfall.tsv"\n',
+            "Tests/UI/test_other.py": "",
+        },
+    )
+    plan = policy.select_changes([("M", "Tests/UI/shortfall.tsv")], root)
+    assert not plan["full"]
+    assert "Tests/UI/test_reader.py" in plan["targets"]
+    assert "Tests/UI/test_other.py" not in plan["targets"]
+
+
+def test_importers_are_found_through_parentheses_and_transitively(tmp_path):
+    """Review N1: multi-line imports and importers of importers both count."""
+    root = _tree(
+        tmp_path,
+        {
+            "Tests/Sync/test_base.py": "",
+            "Tests/Plugins/test_paren.py": "from Tests.Sync import (\n    test_base as suite,\n)\n",
+            "Tests/Chat/test_rig.py": "from Tests.Sync.test_base import Recorder\n",
+            "Tests/Chat/test_caller.py": "from Tests.Chat.test_rig import rig\n",
+        },
+    )
+    plan = policy.select_changes([("M", "Tests/Sync/test_base.py")], root)
+    assert {
+        "Tests/Plugins/test_paren.py",
+        "Tests/Chat/test_rig.py",
+        "Tests/Chat/test_caller.py",
+    } <= set(plan["targets"])
+
+
+def test_an_importer_that_is_shared_infrastructure_goes_broad(tmp_path):
+    """Review M4: a helper module importing the changed test module."""
+    root = _tree(
+        tmp_path,
+        {
+            "Tests/UI/test_base.py": "",
+            "Tests/UI/harness.py": "from Tests.UI.test_base import Shell\n",
+        },
+    )
+    assert policy.select_changes([("M", "Tests/UI/test_base.py")], root)["full"]
+
+
+def test_a_file_the_lanes_run_only_by_node_runs_those_nodes(tmp_path):
+    """Review N2: never run whole a file no PR lane runs whole; run its lane nodes."""
+    root = _tree(tmp_path, ["Tests/UI/test_nodes.py", "Tests/UI/test_whole.py"])
+    lanes = root / ".github/workflows/derived-artifacts.yml"
+    lanes.parent.mkdir(parents=True)
+    lanes.write_text(
+        "pytest Tests/UI/test_nodes.py::test_a \\\n"
+        "  Tests/UI/test_nodes.py::test_b[case-1] \\\n"
+        "  Tests/UI/test_whole.py \\\n  Tests/UI/test_whole.py::test_c\n"
+    )
+    nodes = policy.select_changes([("M", "Tests/UI/test_nodes.py")], root)
+    assert not nodes["full"]
+    assert {
+        "Tests/UI/test_nodes.py::test_a",
+        "Tests/UI/test_nodes.py::test_b[case-1]",
+    } <= set(nodes["targets"])
+    assert "Tests/UI/test_nodes.py" not in nodes["targets"]
+    whole = policy.select_changes([("M", "Tests/UI/test_whole.py")], root)
+    assert "Tests/UI/test_whole.py" in whole["targets"]
