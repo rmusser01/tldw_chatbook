@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-22 22:10
-updated_date: '2026-11-23 05:37'
+updated_date: '2026-11-23 07:21'
 labels:
 - follow-up
 - ci
@@ -181,3 +181,12 @@ It is a product race, not test timing: the arm is gone and focus stays on the gr
   - Preflight, `ruff check --select F` and `ruff_gate.py` passed.
   - Size: `library_screen.py` 32857 -> 32866 lines (1288 methods); the ratchet row is raised by exactly that, with a dated note. `screen_constants.py` (+5) has no size row.
 - **Lane time** (serial, UI lane flags, load 12-22): screen-lock test 3.5-3.7 s, cap test 3.0-3.1 s. Both are in a whole-file census entry, so the census is unchanged.
+
+**Stack gate fix (round-22 final gate, 2026-11-23).**
+- **What failed.** `Tests/Architecture/test_timer_path_static_update_inventory.py::test_clock_root_set_is_pinned` was red. The expiry retry re-arms `set_timer` from its own callback, which makes `LibraryScreen._expire_library_list_entry_focus` a new repeating-clock root.
+- **What the root reaches.** `census()` from the test module shows three functions: `_expire_library_list_entry_focus`, `_disarm_library_list_entry_focus` and `_library_entry_target_replaced`. None of them makes a `.update(` call, so no `CLASSIFIED_SITES` row is needed.
+- **Fix.** The root is now in `EXPECTED_CLOCK_ROOTS`, with a dated comment saying why the re-arm is bounded: at most `LIBRARY_LIST_ENTRY_FOCUS_EXPIRY_RETRIES` (20) re-arms, and any disarm or new arm stops it.
+- **Runs.**
+  - The inventory file: 19 passed, including `test_census_actually_finds_the_known_clock_roots`.
+  - The whole `Tests/Architecture` suite, serial: 1492 passed, 5 skipped (13 min, load 8-12). The earlier rounds ran only the size ratchets and so missed this.
+  - The touched Library file at `-n 4`: 22 passed. `ruff --select F` passed.

@@ -1370,6 +1370,18 @@ EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
             "ConsoleLeftRail",
             "_recover_pending_focus",
         ),
+        # 2026-11-23, TASK-42422: the Library list-entry window's close
+        # re-arms one 50 ms timer while the Notes filter it would land on is
+        # being repainted. It stops after LIBRARY_LIST_ENTRY_FOCUS_EXPIRY_RETRIES
+        # (20) re-arms, and a disarm (any key, click or new arm) stops it.
+        # Checked with census(): it reaches only `_disarm_library_list_entry_
+        # focus` and `_library_entry_target_replaced`, and no `.update(`.
+        (
+            "rearming-set_timer",
+            "tldw_chatbook/UI/Screens/library_screen.py",
+            "LibraryScreen",
+            "_expire_library_list_entry_focus",
+        ),
         (
             "rearming-set_timer",
             "tldw_chatbook/UI/Screens/model_installed_view.py",
