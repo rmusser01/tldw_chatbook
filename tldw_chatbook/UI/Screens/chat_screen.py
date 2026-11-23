@@ -19451,10 +19451,9 @@ class ChatScreen(BaseAppScreen):
 
     async def _stop_console_generation_from_visible_action(self) -> None:
         """Route the visible Console stop action through native run control."""
-        # task-3401.5: a video generation in flight for the active session
-        # takes the stop first -- it is not a controller "run", so
-        # stop_active_run() would only toast "No active Console run to stop."
-        # The cancel event wakes the adapter's poll loop immediately.
+        # TASK-3401.5: Stop cancels the active session's video before the
+        # controller, which does not own video runs. The cancel event wakes
+        # the adapter's poll loop immediately.
         runtime = getattr(self, "_console_runtime_ref", None)
         store = runtime.chat_store if runtime is not None else None
         active_session_id = store.active_session_id if store is not None else None
