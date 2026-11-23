@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-22 22:10
-updated_date: 2026-11-23 02:27
+updated_date: 2026-11-23 02:47
 labels:
 - follow-up
 - ci
@@ -67,7 +67,7 @@ TASK-35587 (In Progress since 2026-10-19) is about the same test failing at app 
 - In the shipped app, `controller.app` is the running `TldwCli`, so `is_running` is True and a modal can never fail a round closed.
 
 **Evidence.**
-- Base 2f7790873a without a delay: 7/7 passed (3 serial and 4 file runs at `-n 4`, load 28-42), so it does not reproduce naturally here.
+- Base 2f7790873a without a delay: 7/7 passed in my runs (3 serial and 4 file runs at `-n 4`, load 28-42). The filing did reproduce it naturally: 2 of 3 runs failed at load 6-8 on the round-21 stack 77f124a740. So the race is real outside CI, but my loaded runs did not hit it. The forced delay below is the deterministic reproduction.
 - Temporary forced delay: hold the viewed session's question check (bounded at 5 s) until the view is covered. At base the journey failed 2/2 with `closing the background tab answered the viewed tab`, the trace showed `app_gone=True running=False detached=True`, and the result was `{'answered': False, 'reason': 'cancelled'}`. With the fix it passed 2/2 under the same delay, with every check `app_gone=False`. All instrumentation was reverted.
 
 **Fix (test).** Before opening the Close dialog, `_verify_background_pending_close_releases_round_without_an_active_turn` now waits for the viewed tab's question card (`#chat-question-card`, displayed, payload `session_id == keeper`) and asserts the question is still live. The card mounts only after the liveness check passes, so the check can no longer run under the dialog. Every existing assertion is unchanged.
@@ -91,5 +91,17 @@ TASK-35587 (In Progress since 2026-10-19) is about the same test failing at app 
 
 No user-visible behaviour changed, so no User Guide edit. There are no new census entries.
 
-**Files.** `Tests/UI/test_console_session_tab_close.py`, `Tests/Chat/test_console_runtime_lifetime.py`, and `backlog/docs/lessons-testing-evidence.md` (a new entry: a green mutation run cannot clear a guard condition that only matters in a race).
+**Review round (2026-11-23, 4 Minors).**
+1. **The closing tab's round could settle without the close.** Its arm-time check could also land under the dialog and settle the round the way the close does, so `pending == expected` passed even if the sweep did nothing. Both pending scenarios now record notifications before arming (`_record_notifications`). Before opening Close, they wait for the closing tab's park toast or hidden-decision notice (`_parked_decision_notice`), which is sent only after that check passed.
+   Evidence, with a temporary mutation that disables the session-scoped sweep (`_cancel_pending_decisions_for_session` returns at once):
+   - Full journey, fixed test: red, "closed session left its decision armed without an owning turn". This was 1/1 with no delay, and 1/1 more with the closing tab's question check held until the dialog appeared.
+   - Question-only journey, with the same hold and the same mutation:
+     - the previous test passed 2/2 although nothing swept the round (the trace shows `app_gone=True`);
+     - the fixed test failed 2/2 with the message above (the trace shows `app_gone=False`).
+   The first scenario still passes under this mutation: there the close's run cancellation also settles each round, so that scenario only pins the outcome. All temporary edits were reverted.
+2. The guard comment in `console_interrupt_rounds.py` and the ADR-314 TASK-41637 clarification now say that a modal over the harness view still fails a round closed, and point at the waiting pattern. The module grows by 2 lines, to 6303; its size-ratchet pin is 6307.
+3. The reproduction-rate line now says that the filing reproduced the race naturally at low load, and that my loaded runs did not.
+4. The pin's name is on one line in the journey comment, so it can be found with grep.
+
+**Files.** `Tests/UI/test_console_session_tab_close.py`, `Tests/Chat/test_console_runtime_lifetime.py`, `tldw_chatbook/Chat/console_interrupt_rounds.py` (a comment only), `backlog/decisions/314-indefinite-human-approval-waits.md`, and `backlog/docs/lessons-testing-evidence.md` (a new entry: a green mutation run cannot clear a guard condition that only matters in a race).
 <!-- SECTION:NOTES:END -->
