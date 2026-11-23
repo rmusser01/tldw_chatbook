@@ -21,6 +21,9 @@ from tldw_chatbook.Sync_Interop.notes_organization import (
 )
 
 _PHASES = ("resources", "links", "tombstones")
+#: How many times a step that finds the database changed since its scan goes
+#: back to scan outside the write lock before it scans under the lock.
+_OUTSIDE_SCAN_ATTEMPTS = 3
 _RESOURCE_TABLES = {
     "notes.keyword": ("keywords", "keyword"),
     "notes.keyword_collection": ("keyword_collections", "name"),
@@ -89,6 +92,10 @@ class LegacyNotesOrganizationInventory:
         self.enrolled_conversation_ids = frozenset(
             str(value) for value in enrolled_conversation_ids
         )
+        #: ``(connection, data_version, total_changes)`` -> the snapshot
+        #: scanned then; see ``_step_snapshot``.
+        self._scanned: tuple[tuple[object, int, int], _Snapshot] | None = None
+        self._stale_scans = 0
 
     def run(
         self,
@@ -102,8 +109,11 @@ class LegacyNotesOrganizationInventory:
         while True:
             committed: tuple[str, str | None] | None = None
             outcome: InventoryRunResult | None = None
+            merged = stale = False
+            self._scan_outside_the_write_lock()
             # TASK-34000.84: reads the checkpoint, then commits a bounded
-            # step -- write lock first (its one caller is enrollment).
+            # step -- write lock first (its one caller is enrollment). The
+            # organization scan ran just above, outside the lock.
             with self.repository.db.transaction(immediate=True) as cursor:
                 checkpoint = self._checkpoint(cursor)
                 prerequisite = self._prerequisite_reason(cursor, checkpoint)
@@ -111,8 +121,9 @@ class LegacyNotesOrganizationInventory:
                     outcome = InventoryRunResult("held", prerequisite)
                 elif checkpoint is None:  # pragma: no cover - prerequisite guards this
                     outcome = InventoryRunResult("held", "bootstrap_pull_incomplete")
+                elif (snapshot := self._step_snapshot(cursor)) is None:
+                    stale = True
                 elif checkpoint["inventory_phase"] == "complete":
-                    snapshot = self._snapshot(cursor)
                     baseline, final_key = self._parse_token(
                         checkpoint["last_inventory_key"]
                     )
@@ -133,9 +144,9 @@ class LegacyNotesOrganizationInventory:
                             skipped_dependencies=snapshot.skipped_dependencies,
                         )
                 else:
-                    # ponytail: re-hash the source for each bounded commit; add a
-                    # snapshot table only if large inventories make this measurable.
-                    snapshot = self._snapshot(cursor)
+                    # ponytail: the source is re-hashed whenever any connection
+                    # changed the database; a snapshot table would make that
+                    # incremental if large inventories under steady writes need it.
                     skipped = snapshot.skipped_dependencies
                     phase = str(checkpoint["inventory_phase"])
                     raw_token: str | None = checkpoint["last_inventory_key"]
@@ -163,6 +174,7 @@ class LegacyNotesOrganizationInventory:
                             next_entry = self._next_entry(entries, last_key)
                             if next_entry is not None:
                                 if next_entry.merge is not None:
+                                    merged = True
                                     local_id, remote_id = next_entry.merge
                                     self.repository.apply_resolved_inventory_merge(
                                         cursor,
@@ -208,6 +220,9 @@ class LegacyNotesOrganizationInventory:
                                     last_inventory_key=next_token,
                                 )
                                 committed = (next_phase, None)
+            self._keep_scan_after_own_commit(merged)
+            if stale:
+                continue
             if outcome is not None:
                 return outcome
             if committed is None:  # pragma: no cover - every branch above terminates
@@ -278,6 +293,70 @@ class LegacyNotesOrganizationInventory:
             (self.repository.server_profile_id, self.dataset_id),
         ).fetchone()
         return "adoption_review_required" if open_review is not None else None
+
+    @staticmethod
+    def _scan_key(cursor: sqlite3.Cursor) -> tuple[object, int, int]:
+        """What must be unchanged for a scan to still describe the database.
+
+        ``PRAGMA data_version`` changes when another connection commits (or
+        restarts the WAL); ``total_changes`` when this connection writes.
+        """
+        connection = cursor.connection
+        version = int(cursor.execute("PRAGMA data_version").fetchone()[0])
+        return connection, version, connection.total_changes
+
+    def _scan_outside_the_write_lock(self) -> None:
+        """Scan in a plain read transaction unless the last scan is current.
+
+        Review of TASK-34000.84: ``_snapshot`` reads and hashes every
+        organization row, 310 ms a step with 9,800 intents at load 55-65.
+        Scanned under ``BEGIN IMMEDIATE`` once per step, back to back, it
+        held a concurrent one-row write off for 10.7 s.
+        """
+        with self.repository.db.transaction() as cursor:
+            key = self._scan_key(cursor)
+            if self._scanned is None or self._scanned[0] != key:
+                self._scanned = (key, self._snapshot(cursor))
+
+    def _step_snapshot(self, cursor: sqlite3.Cursor) -> _Snapshot | None:
+        """The snapshot for this step, which holds the write lock.
+
+        Reused when nothing changed since ``_scan_outside_the_write_lock``,
+        so the step never acts on stale rows. When another connection
+        committed in between, it returns None (the step does nothing and the
+        loop scans outside the lock again), and after
+        ``_OUTSIDE_SCAN_ATTEMPTS`` such tries it scans here, under the lock,
+        so enrollment still progresses under steady writes.
+        """
+        key = self._scan_key(cursor)
+        if self._scanned is not None and self._scanned[0] == key:
+            self._stale_scans = 0
+            return self._scanned[1]
+        self._stale_scans += 1
+        if self._stale_scans < _OUTSIDE_SCAN_ATTEMPTS:
+            return None
+        self._stale_scans = 0
+        self._scanned = (key, self._snapshot(cursor))
+        return self._scanned[1]
+
+    def _keep_scan_after_own_commit(self, merged: bool) -> None:
+        """Re-key the scan past this step's own writes, or drop it.
+
+        A step's intent and checkpoint writes do not change the scan (each
+        step re-checks the digest against the baseline), so only
+        ``total_changes`` moves; this connection's own commit leaves
+        ``data_version`` as it was. A step that applied a merge drops the scan.
+        """
+        if self._scanned is None:
+            return
+        if merged:
+            self._scanned = None
+            return
+        (connection, version, _), snapshot = self._scanned
+        self._scanned = (
+            (connection, version, connection.total_changes),
+            snapshot,
+        )
 
     def _snapshot(self, cursor: sqlite3.Cursor) -> _Snapshot:
         resource_scan = self._scan_resources(cursor)

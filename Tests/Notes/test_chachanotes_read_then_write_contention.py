@@ -1289,3 +1289,105 @@ def test_a_lock_held_past_the_busy_timeout_is_busy_not_a_version_conflict(
     assert not isinstance(caught.value, ConflictError)
     assert caught.value.sqlite_errorcode & 0xFF == sqlite3.SQLITE_BUSY
     assert not landed()
+
+
+def _inventory_runner(tmp_path: Path):
+    """``test_notes_organization_legacy_inventory.py``'s seeded enrollment."""
+    path = tmp_path / "inventory-scan.sqlite"
+    inventory._seed_inventory_db(path)
+    own = CharactersRAGDB(path, client_id="inventory-tests")
+    _CLEANUPS.append(own.close_connection)
+    runner = inventory._inventory_types()(
+        NotesOrganizationRepository(own, server_profile_id=inventory.PROFILE),
+        dataset_id=inventory.DATASET,
+        enrolled_note_ids={inventory.IDS["note_enrolled"]},
+        enrolled_conversation_ids={"conversation-enrolled"},
+    )
+    return path, runner
+
+
+def _record_scans(monkeypatch: pytest.MonkeyPatch, path: Path) -> list[bool]:
+    """Record, per organization scan, whether the write lock was held."""
+    scans: list[bool] = []
+    inventory_type = inventory._inventory_types()
+    real = inventory_type._snapshot
+
+    def probing(self, cursor):
+        probe = sqlite3.connect(path, timeout=0, isolation_level=None)
+        try:
+            probe.execute("BEGIN IMMEDIATE")
+            probe.rollback()
+            scans.append(False)
+        except sqlite3.OperationalError:
+            scans.append(True)
+        finally:
+            probe.close()
+        return real(self, cursor)
+
+    monkeypatch.setattr(inventory_type, "_snapshot", probing)
+    return scans
+
+
+def test_enrollment_inventory_scans_outside_the_write_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review of TASK-34000.84: each inventory step took the write lock and
+    then re-read and hashed every organization row (310 ms a step with 9,800
+    intents at load 55-65), so a concurrent one-row write waited 10.7 s. The
+    scan now runs in a plain read transaction and is reused while no
+    connection changed the database; another connection's commit only makes
+    the next step scan again, still outside the lock."""
+    path, runner = _inventory_runner(tmp_path)
+    with sqlite3.connect(path) as setup:
+        setup.execute("CREATE TABLE inventory_probe (n INTEGER)")
+    scans = _record_scans(monkeypatch, path)
+    steps: list[str] = []
+
+    def after_commit(phase: str, _key: str | None) -> None:
+        steps.append(phase)
+        if len(steps) == 3:
+            with sqlite3.connect(path) as writer:
+                writer.execute("INSERT INTO inventory_probe (n) VALUES (1)")
+
+    result = runner.run(after_commit=after_commit)
+
+    assert result.status == "complete", result
+    assert True not in scans, scans
+    assert 2 <= len(scans) < len(steps), (scans, steps)
+
+
+def test_a_change_between_the_scan_and_the_step_is_seen_by_the_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The step re-checks under the write lock that nothing changed since
+    the scan: a keyword renamed by another connection in between makes the
+    step scan again and hold the inventory, writing nothing from the stale
+    scan."""
+    path, runner = _inventory_runner(tmp_path)
+    steps: list[str] = []
+    inventory_type = inventory._inventory_types()
+    real_scan = inventory_type._scan_outside_the_write_lock
+    calls = {"n": 0}
+
+    def scan_then_rename(self) -> None:
+        real_scan(self)
+        calls["n"] += 1
+        if calls["n"] == 3:
+            with sqlite3.connect(path) as writer:
+                renamed = writer.execute(
+                    "UPDATE keywords SET keyword = 'Drifted' WHERE sync_id = ?",
+                    (inventory.IDS["keyword_deleted"],),
+                ).rowcount
+            steps.append(f"renamed {renamed}")
+
+    monkeypatch.setattr(
+        inventory_type, "_scan_outside_the_write_lock", scan_then_rename
+    )
+
+    result = runner.run(after_commit=lambda phase, _key: steps.append(phase))
+
+    assert (result.status, result.reason_code) == (
+        "held",
+        "inventory_source_changed",
+    ), result
+    assert steps[-1] == "renamed 1", steps
