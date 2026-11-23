@@ -47,6 +47,7 @@ from Tests.Sync_Interop.test_notes_organization_intent_dispatch import (
     _scope,
     _set_group_state,
 )
+from tldw_chatbook.Character_Chat.Character_Chat_Lib import create_conversation
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
 )
@@ -177,6 +178,17 @@ def _character_delete(db, tmp_path):
     return (
         lambda: db.soft_delete_character_card(character_id, expected_version=1),
         lambda: db.get_character_card_by_id(character_id) is None,
+    )
+
+
+def _character_conversation_create(db, tmp_path):  # Character_Chat_Lib
+    character_id = db.add_character_card({"name": "Cass"})
+    created: list = []
+    return (
+        lambda: created.append(create_conversation(db, character_id=character_id)),
+        lambda: (
+            created[0] is not None and db.get_conversation_by_id(created[0]) is not None
+        ),
     )
 
 
@@ -1064,6 +1076,7 @@ CASES: tuple[Case, ...] = (
     _keyword_delete,
     _character_update,
     _character_delete,
+    _character_conversation_create,
     _conversation_keywords,
     _flashcard_create,
     _flashcard_update,

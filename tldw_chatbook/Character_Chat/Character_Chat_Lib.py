@@ -229,7 +229,7 @@ def create_conversation(
     conv_payload = {"character_id": target_character_id, "title": final_title}
 
     try:
-        with db.transaction():  # Ensure atomicity
+        with db.transaction(immediate=True):  # reads the authority first (TASK-34000.84)
             new_conv_id = db.add_conversation(conv_payload)
             if not new_conv_id:
                 logger.error("Failed to add conversation to DB.")
