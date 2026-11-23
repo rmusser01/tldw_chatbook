@@ -14,6 +14,7 @@ from __future__ import annotations
 import _socket
 import json
 import os
+import shlex
 import socket
 import subprocess
 import sys
@@ -751,3 +752,152 @@ def test_a_child_process_never_runs_the_keychain_reader(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr[-4000:]
     assert json.loads(result.stdout.strip().splitlines()[-1]) == []
+
+
+# --- TASK-42482: the moved-HOME opt-in, and the suite's own Keychain backstop --
+#
+# A user who runs Chatbook with a moved HOME and chose the Claude subscription
+# may set `[api_settings.anthropic] allow_keychain_with_moved_home = true` to
+# read the Keychain anyway. Because that switch would let a test past the HOME
+# check, `Tests/real_profile_guard.py` (installed by `Tests/conftest.py` in
+# every pytest process) refuses the lookup itself and fails the test. The
+# opt-in lives only in config, so a child process never inherits it; the two
+# TASK-42477 tests above still pin the HOME check for children.
+
+_LOOKUP = ["find-generic-password", "-s", "Claude Code-credentials", "-w"]
+
+
+@pytest.mark.parametrize(
+    ("opted_in", "auth_source", "reads"),
+    [(True, "claude_subscription", 1), (True, "api_key", 0), (False, "claude_subscription", 0)],
+    ids=["opted-in", "api-key", "not-opted-in"],
+)
+def test_a_moved_home_reads_the_keychain_only_when_the_subscription_user_opted_in(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    opted_in: bool,
+    auth_source: str,
+    reads: int,
+) -> None:
+    from types import SimpleNamespace
+
+    from tldw_chatbook import config
+    from tldw_chatbook.LLM_Calls import anthropic_subscription as subscription
+
+    spawned: list[list[str]] = []
+
+    def run(command, **_kwargs):
+        spawned.append(list(command))
+        return SimpleNamespace(returncode=0, stdout='{"claudeAiOauth": {"accessToken": "t"}}')
+
+    anthropic: dict[str, object] = {"auth_source": auth_source}
+    if opted_in:
+        anthropic["allow_keychain_with_moved_home"] = True
+    # The fake `run` first, so monkeypatch's reverse undo never pairs the real
+    # `run` with the opt-in (TASK-42477's order rule).
+    monkeypatch.setattr(subscription.subprocess, "run", run)
+    monkeypatch.setattr(subscription, "_KEYCHAIN_CACHE", None)
+    monkeypatch.setattr(subscription, "sys", SimpleNamespace(platform="darwin"))
+    monkeypatch.setattr(subscription, "DEFAULT_CREDENTIALS_PATH", tmp_path / "absent")
+    monkeypatch.setattr(subscription, "_home_is_account_home", lambda: False)
+    monkeypatch.setattr(
+        config, "load_settings", lambda *_a, **_k: {"api_settings": {"anthropic": anthropic}}
+    )
+
+    credential = subscription.read_claude_code_credential()
+
+    assert spawned == [["/usr/bin/security", *_LOOKUP]] * reads
+    assert (credential is not None) is bool(reads)
+
+
+@pytest.mark.parametrize(
+    ("event", "args", "refused"),
+    [
+        ("subprocess.Popen", ("/usr/bin/security", ["/usr/bin/security", *_LOOKUP], None, None), True),
+        ("subprocess.Popen", ("/bin/sh", ["/bin/sh", "-c", "security " + " ".join(_LOOKUP)], None, None), True),
+        ("os.posix_spawn", ("/usr/bin/security", [b"/usr/bin/security", *_LOOKUP], {}), True),
+        ("os.system", ("/usr/bin/security find-generic-password -s 'Claude Code-credentials'",), True),
+        ("subprocess.Popen", ("/usr/bin/security", ["security", "list-keychains", "-d", "user"], None, None), False),
+        ("subprocess.Popen", ("/usr/bin/security", ["security", "find-generic-password", "-s", "other"], None, None), False),
+        ("subprocess.Popen", ("/bin/echo", ["echo", "Claude Code-credentials"], None, None), False),
+    ],
+    ids=["argv", "shell", "posix-spawn", "system", "list-keychains", "other-service", "not-security"],
+)
+def test_the_suite_guard_matches_only_the_claude_code_keychain_lookup(
+    event: str, args: tuple, refused: bool
+) -> None:
+    from Tests import real_profile_guard as guard
+
+    assert (guard._keychain_lookup(event, args) is not None) is refused
+
+
+@pytest.mark.parametrize("shell", [False, True], ids=["argv", "shell"])
+def test_the_suite_refuses_the_claude_code_keychain_lookup(tmp_path: Path, shell: bool) -> None:
+    """A real-shaped spawn fails the test; never run it under a probe that refuses first.
+
+    The `security` here is a stand-in script in tmp_path that leaves a marker;
+    `/usr/bin/security` is never named. Without the guard the script runs.
+    """
+    from Tests import real_profile_guard as guard
+
+    marker = tmp_path / "ran"
+    stand_in = tmp_path / "security"
+    stand_in.write_text(f"#!/bin/sh\ntouch '{marker}'\n")
+    stand_in.chmod(0o755)
+    argv = [str(stand_in), *_LOOKUP]
+
+    with pytest.raises(guard.RealKeychainLookupError):
+        subprocess.run(
+            shlex.join(argv) if shell else argv,
+            shell=shell,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+    refusals = guard.take_violations()
+
+    assert not marker.exists()
+    assert len(refusals) == 1 and "Claude Code-credentials" in refusals[0]
+
+
+def test_a_test_that_opts_in_without_faking_run_is_refused_and_recorded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The product swallows the refusal (it reads as "no credential"); the record
+    is what fails such a test, through `Tests/conftest.py`'s autouse fixture.
+
+    `run` is only redirected to a stand-in `security`, so a missing guard runs
+    the stand-in and never `/usr/bin/security`. Never run it under a probe that
+    refuses first.
+    """
+    from types import SimpleNamespace
+
+    from Tests import real_profile_guard as guard
+    from tldw_chatbook import config
+    from tldw_chatbook.LLM_Calls import anthropic_subscription as subscription
+
+    marker = tmp_path / "ran"
+    stand_in = tmp_path / "security"
+    stand_in.write_text(f"#!/bin/sh\ntouch '{marker}'\n")
+    stand_in.chmod(0o755)
+    real_run = subprocess.run
+
+    def run(command, **kwargs):
+        assert command[0] == "/usr/bin/security"
+        return real_run([str(stand_in), *command[1:]], **kwargs)
+
+    monkeypatch.setattr(subscription.subprocess, "run", run)
+    monkeypatch.setattr(subscription, "_KEYCHAIN_CACHE", None)
+    monkeypatch.setattr(subscription, "sys", SimpleNamespace(platform="darwin"))
+    monkeypatch.setattr(subscription, "DEFAULT_CREDENTIALS_PATH", tmp_path / "absent")
+    monkeypatch.setattr(subscription, "_home_is_account_home", lambda: False)
+    opted_in = {"auth_source": "claude_subscription", "allow_keychain_with_moved_home": True}
+    monkeypatch.setattr(
+        config, "load_settings", lambda *_a, **_k: {"api_settings": {"anthropic": opted_in}}
+    )
+
+    assert subscription.read_claude_code_credential() is None
+    refusals = guard.take_violations()
+
+    assert not marker.exists()
+    assert len(refusals) == 1 and "Claude Code-credentials" in refusals[0]

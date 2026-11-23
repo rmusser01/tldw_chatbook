@@ -62,6 +62,12 @@ CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude
 AUTH_SOURCE_API_KEY = "api_key"
 AUTH_SOURCE_SUBSCRIPTION = "claude_subscription"
 
+#: TASK-42482 (owner decision 2026-11-23): ``[api_settings.anthropic]
+#: allow_keychain_with_moved_home = true`` lets a moved HOME read the Keychain
+#: item, for a user who chose the subscription. Off by default; read from
+#: config only, never from the environment, so no child process inherits it.
+KEYCHAIN_WITH_MOVED_HOME_SETTING = "allow_keychain_with_moved_home"
+
 #: Copy for AC#2 — chatbook never refreshes; the owning tool does.
 STALE_CREDENTIAL_MESSAGE = (
     "The Claude subscription credential is expired. Chatbook only reads it — "
@@ -72,7 +78,8 @@ MISSING_CREDENTIAL_MESSAGE = (
     'auth_source is "claude_subscription" but no Claude Code credential was '
     "found (checked ~/.claude/.credentials.json and, on macOS, the login "
     'Keychain item "Claude Code-credentials", which is read only while HOME '
-    "is your account's home folder). Log in with Claude Code first "
+    "is your account's home folder, unless [api_settings.anthropic] "
+    "allow_keychain_with_moved_home = true). Log in with Claude Code first "
     "(and unlock your Keychain if prompted), or set [api_settings.anthropic] "
     'auth_source back to "api_key".'
 )
@@ -322,6 +329,29 @@ def _home_is_account_home() -> bool:
         return False
 
 
+def _moved_home_keychain_allowed() -> bool:
+    """Whether the user let a moved HOME read the Keychain (TASK-42482).
+
+    Only ``[api_settings.anthropic] allow_keychain_with_moved_home = true``
+    together with ``auth_source = "claude_subscription"`` does. It is read
+    through ``load_settings``; a config that cannot be read counts as off.
+
+    Returns:
+        ``True`` only for that explicit opt-in.
+    """
+    try:
+        from tldw_chatbook.config import load_settings
+
+        anthropic = (load_settings().get("api_settings") or {}).get("anthropic")
+    except Exception:  # noqa: BLE001 - an unreadable config never opts in
+        return False
+    return (
+        isinstance(anthropic, Mapping)
+        and anthropic.get(KEYCHAIN_WITH_MOVED_HOME_SETTING) is True
+        and anthropic_auth_source(anthropic) == AUTH_SOURCE_SUBSCRIPTION
+    )
+
+
 def _keychain_credential_raw() -> str | None:
     """Return Claude Code's Keychain credential JSON on macOS, else ``None``.
 
@@ -329,13 +359,16 @@ def _keychain_credential_raw() -> str | None:
     (non-macOS, item absent, ``security`` unavailable) yields ``None`` so the
     caller falls through to today's no-credential behavior (AC#6). So does a
     moved HOME (``_home_is_account_home``): a sandboxed profile never queries
-    the real Keychain.
+    the real Keychain, unless its user opted in
+    (``_moved_home_keychain_allowed``).
 
     Returns:
         The raw JSON string stored under ``KEYCHAIN_SERVICE``, or ``None``.
     """
     global _KEYCHAIN_CACHE
-    if sys.platform != "darwin" or not _home_is_account_home():
+    if sys.platform != "darwin" or not (
+        _home_is_account_home() or _moved_home_keychain_allowed()
+    ):
         return None
     with _KEYCHAIN_LOCK:
         cached = _KEYCHAIN_CACHE
