@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-18 16:14
-updated_date: '2026-11-23 02:28'
+updated_date: '2026-11-23 03:17'
 labels:
 - follow-up
 - architecture-review-2026-10-25
@@ -58,7 +58,7 @@ Owner ruling 2026-11-22: the screen implements protocols; no separate service ob
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Code commit `9d1b0d1c6e`, then fix round 1 (commits listed in the report), on base `8a55555798` (dev, 2026-11-22).
+Code commit `9d1b0d1c6e`, then fix rounds 1 and 2 (commits listed in the report), on base `8a55555798` (dev, 2026-11-22).
 
 Evidence and scripts are in the coordinator's local scratch folder, `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/_arch-sdd/scratchpad/p4ms/`. It is not in the repo. File names below are relative to it.
 
@@ -75,7 +75,11 @@ Evidence and scripts are in the coordinator's local scratch folder, `/Users/macb
 **AC #3: `LibraryScreen` implements all four new protocols** (structurally; it does not subclass them). Owner ruling, 2026-11-22: "**The screen implements protocols.** Extend the existing `LibraryMediaHost` pattern: replace the 43 callbacks with a few typed `Protocol`s ... that `LibraryScreen` implements, and have the controller call them on the host object it already receives. The controller still holds the screen object; that is accepted. Do not build separate service objects." That is R4's named cost: the controller keeps a screen object, by the owner's decision.
 
 **Public names.** Two members were already public: `action_library_narrow_stage_return` and `request_library_reader_layout_refresh`. The other 41 are one block at the end of `LibraryScreen`, `x = _Forward("_x")`.
-- **`_Forward`.** A module-level non-data descriptor in `library_screen.py`. It reads `getattr(obj, "_x")` on every access (fix round 1, review M5). So a patch of the private name, on the instance or the class, reaches the media controller as it did through the old lambdas. Patching the public name on an instance also works, because the descriptor has no `__set__`.
+- **`_Forward`.** A module-level non-data descriptor in `library_screen.py` (fix round 1, review M5).
+  - It reads `getattr(obj, "_x")` on each access, so a patch of the private name, on the instance or the class, reaches the media controller's later reads.
+  - **Where it differs from base** (review round 2, N1). It resolves when the attribute is read, not when the call runs. The controller hands eight callbacks on: `call_next`, three `call_after_refresh`, two `partial`, two `then=`. Each keeps whatever `_x` was when it was taken, so a test must patch `_x` before such a callback is scheduled. Base's stored lambdas re-read `self._x` when they fired. No current test patches inside that window: the reviewer's call-window probe over the 36 tests that patch these names logged nothing.
+  - **Why not a per-call lambda.** By the coordinator's ruling, `_Forward` does not hand back a per-call lambda: that would make `iscoroutinefunction` false on the async members.
+  - **Patch and autospec the private name, not the public one** (N2). `_Forward`'s docstring says why: `create_autospec` keeps `self` in a `_Forward` member's signature, and `monkeypatch`'s undo of the public name leaves an instance attribute that shadows later patches of `_x`.
 - **Why the first version changed.** It bound `x = _x` when the class body ran. A test that patched `_x` then missed the controller's calls: four tests needed retargets, and a future test asserting a negative would have passed without checking anything. With `_Forward` those four tests are back to their base text.
 - **No methods added.** The private names stay, and no method was added.
 - **Why not a full rename.** At base, the 41 private names have 765 references in about 130 test files (`_select_library_rail_row` alone has 202 in 43 files) and about 250 in source outside the screen. Several are resolved by shared dispatchers on either the screen or a forwarding controller:
@@ -108,9 +112,9 @@ Evidence and scripts are in the coordinator's local scratch folder, `/Users/macb
   - `(self._safe_text if True else None)`.
 
 Three more tests guard the protocols:
-- **`test_library_screen_implements_the_media_service_protocols`** pins the 43 members by protocol. For each one it checks:
+- **`test_library_screen_implements_the_media_service_protocols`** pins the 43 members by protocol. Fix round 2 (N3) annotated the two private defs that lacked annotations (`_review_set_service -> ReviewSetService | None`, `_toggle_reviewed_unguarded(service: ReviewSetService)`, with a type-only import) and added the annotations to the comparison. For each member it checks:
   - that the public name is a `_Forward` to its own mapped private method (M2);
-  - that that method has the declared descriptor kind, the declared sync or async kind (M3), and the declared parameter list (names, kinds, defaults);
+  - that that method has the declared descriptor kind, the declared sync or async kind (M3), the declared parameter list (names, kinds, defaults, annotations) and the declared return annotation;
   - that the member shadows nothing inherited.
 
   It is red at base. Negative controls, each red:
@@ -118,7 +122,8 @@ Three more tests guard the protocols:
   - a changed protocol default ("signature differs");
   - the `register_footer_shortcuts` name ("shadows ['BaseAppScreen']");
   - `focus_library_rail_action` forwarding to `_focus_library_control` ("does not forward");
-  - the protocol declaring the async `review_set_picker_worker` sync ("signature differs").
+  - the protocol declaring the async `review_set_picker_worker` sync ("signature differs");
+  - (fix round 2, `fr2-negctl.txt`) a changed return annotation, a changed parameter annotation, and each of the two private defs unannotated again ("signature differs").
 - **`test_a_patched_private_screen_method_reaches_the_media_controller`** (instance and class, M5). For all 43 members, it patches the private name on a bare `LibraryScreen` instance, or on the class, then checks two things: that the controller's group-(a) property hands back the patch, and that calling it reaches the patch.
   - Red with the first version's `x = _x` block: 41 members each way.
   - Red for a controller property wired to a sibling member (M2's controller side).
@@ -127,8 +132,8 @@ Three more tests guard the protocols:
 **AC #4.**
 - `_LIBRARY_INIT_LAMBDAS`: 397 -> 354 (-43), and it stayed 354 in fix round 1.
 - `_LIBRARY_UNBOUND_TEST_CALLS`: unchanged at 511.
-- `LibraryScreen` `_BUDGETS` row: 32828/1288 -> 32753/1288, then 32766/1288 in fix round 1 (+16 for `_Forward`, -2 for one-line forwards, -1 comment). Still 62 under base.
-- `library_media_controller.py` module-size row: 11085 -> 11136, then 11140 in fix round 1 (M4's docstring fix), each with a dated comment. The first change was +51: the protocols +125, the host's bases +1, the parameters and stored callables -89, prose +14.
+- `LibraryScreen` `_BUDGETS` row: 32828/1288 -> 32753/1288, then 32766/1288 in fix round 1 (+16 for `_Forward`, -2 for one-line forwards, -1 comment), then 32774/1288 in fix round 2 (`_Forward`'s docstring +7, a type-only import +1). Still 54 under base.
+- `library_media_controller.py` module-size row: 11085 -> 11136, then 11140 in fix round 1 (M4's docstring fix), then 11141 in fix round 2 (N1's wording), each with a dated comment. The first change was +51: the protocols +125, the host's bases +1, the parameters and stored callables -89, prose +14.
 
 **AC #5.** No test is retargeted. Fix round 1 reverted the first version's four retargets, and the four tests pass in their base form:
 - `test_library_media_render_fixes.py::test_dismiss_receipt_paints_undo_at_the_items_pane_width`
@@ -141,13 +146,14 @@ Three more tests guard the protocols:
   - First version, head before the collision fix: 2557 failed and 13 errors (785 the `TypeError` above; most of the rest the local RecoveryRequired).
   - After the fix, head on those 2570 ids: 1145 failed and 4 errors. Base on those 1149: 1144 failed too (`base-v2-failed-ids.txt`).
   - Fix round 1, the full set at head: 1146 failed, 3851 passed, 4 errors (`fr1-head-covering.log.gz`). The ids that fail at both sides are the same 1144. The 6 that failed only at head passed when the 6 were rerun together (5 of 6 on the first rerun, all 6 on the second).
+  - Fix round 2, the full set at head: 1142 failed, 3855 passed, 4 errors (`fr2-head-covering.log.gz`). The ids that fail at both sides are the same 1144. The 2 that failed only at head passed on two reruns.
 - **The 1144 fail-at-both ids under a temporary `@private_profile_test` marker** (`tempmark2.py`; files restored and the diff verified):
   - First version: head 110 failed and 4 errors; base 111 failed and 4 errors. The 7 ids that differ each flip on both sides across two reruns per side (`tm-rerun.log`). The common failures' messages match, apart from log-order noise.
   - Fix round 1, head, under a heavier load: 116 failed and 4 errors (`fr1-head-tm.log.gz`).
     - 17 ids differ from the first version's base run: 11 failed only at head, 6 only at base.
     - Rerun twice per side (`fr1-tm-rerun.log`), every id that failed at head also failed at base, and the rest passed on both sides.
   - `test_programmatic_media_row_restore_keeps_reader_until_user_keys` fails 2 of 3 runs on each side.
-- **`Tests/Architecture`, serial:** 1496 passed and 5 skipped (`fr1-head-arch.log`). Base is 1492; the difference is the conformance test, the AC #2 guard and the probe test's two params.
+- **`Tests/Architecture`, serial:** 1496 passed and 5 skipped, in fix rounds 1 and 2 (`fr1-head-arch.log`, `fr2-head-arch.log`). Base is 1492; the difference is the conformance test, the AC #2 guard and the probe test's two params.
 - **Static checks:** `preflight.sh` (Python 3.12) passed. `ruff check --select F` is clean on the changed files, with no new B/ASYNC/PLE findings per file.
 
 **Files:**
