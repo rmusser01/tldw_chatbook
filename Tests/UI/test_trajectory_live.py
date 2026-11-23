@@ -454,6 +454,61 @@ async def test_a_paused_reader_keeps_their_place_across_a_live_rebuild(
         assert screen._follow is False
 
 
+async def test_navigating_while_a_live_trace_loads_keeps_the_cursor_in_view(
+    monkeypatch, wait_for_condition
+):
+    """A key press that renders the ledger before the worker's render lands.
+
+    That render is the first one, but the reader picked a row: the Trace
+    must show it, not open at the tail with the cursor off screen
+    (TASK-42414 review).
+    """
+
+    async def until(condition):
+        await wait_for_condition(condition, timeout=10.0, interval=0.01)
+
+    release = threading.Event()
+    worker_done = threading.Event()
+    build = TrajectoryScreen._build_row_specs
+    render_worker = TrajectoryScreen._render_worker
+
+    def held_off_thread(self):
+        if threading.current_thread() is not threading.main_thread():
+            release.wait(10)
+        return build(self)
+
+    def render_worker_then_flag(self):
+        try:
+            render_worker(self)  # returns once its render was applied or dropped
+        finally:
+            worker_done.set()
+
+    monkeypatch.setattr(TrajectoryScreen, "_build_row_specs", held_off_thread)
+    monkeypatch.setattr(TrajectoryScreen, "_render_worker", render_worker_then_flag)
+    turns = 600  # 1200 records: past WORKER_THRESHOLD, so a worker renders it
+    app = TrajectoryHostApp(
+        snapshot_with_turns(turns), lambda: 3, lambda: snapshot_with_turns(turns)
+    )
+    async with app.run_test() as pilot:
+        screen = app.screen_instance
+        table = screen.query_one("#trajectory-table", DataTable)
+        try:
+            await until(lambda: screen._loading)
+            await pilot.press("n")
+            await until(lambda: table.row_count > 0)
+        finally:
+            release.set()
+        await until(lambda: worker_done.is_set() and not screen._scrolls_pending)
+
+        top = int(table.scroll_y)
+        height = table.scrollable_content_region.height
+        assert top <= table.cursor_row < top + height, (
+            f"cursor row {table.cursor_row} is off screen ({top}..{top + height})"
+        )
+        screen._sync_follow_from_scroll()  # what the next poll tick does
+        assert screen._follow is False
+
+
 async def test_unchanged_revision_does_not_rebuild():
     state = {"revision": 5, "turns": 3}
     builder_calls = []

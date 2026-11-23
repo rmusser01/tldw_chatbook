@@ -1275,11 +1275,13 @@ class TrajectoryScreen(ModalScreen[None]):
                 self._refresh_hints()
             return
         table = self.query_one("#trajectory-table", DataTable)
-        # A live Trace opens following, so it opens on its newest row.
+        # A live Trace opens following, so it opens on its newest row, unless
+        # the reader already picked a row while the ledger was loading.
         opens_following = (
             not self._ledger_rendered
             and self._snapshot_builder is not None
             and self._follow
+            and self._pending_restore_key is None
         )
         previous_key = self._pending_restore_key
         self._pending_restore_key = None
