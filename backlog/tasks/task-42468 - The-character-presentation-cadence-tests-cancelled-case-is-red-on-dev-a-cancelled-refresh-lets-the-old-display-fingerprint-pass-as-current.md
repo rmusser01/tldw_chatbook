@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-23 06:38
-updated_date: 2026-11-23 20:49
+updated_date: 2026-11-23 23:16
 labels:
 - follow-up
 - console
@@ -35,7 +35,13 @@ Found during round 22 of the follow-up burn-down (2026-11-23): TASK-42426's cove
 - [x] #2 A defect is fixed in product code (a cancelled refresh never certifies the old fingerprint), with the `[cancelled]` case as its red-first test; drift is repaired in the test with its assertion kept
 - [x] #3 All three parameters pass, alone and in a `-n 4` run of the file
 - [x] #4 The file runs in a PR lane, with its serial time under the lane's flags recorded in the notes
+- [x] #5 A refresh that publishes nothing for any other reason (its owner or scope moved during the read, or it raised) while it still owns the panel leaves it idle, with its fingerprint dropped so the next display check reloads; a test red at base covers the stock route and the original loop
+- [x] #6 A cancelled search leaves the panel idle with a Retry for its query instead of "Searching local character chats…"; a test red at base covers it, and the search's other exits that publish nothing take the same guard
+- [x] #7 Each sibling path that does not stick is recorded in the notes with its evidence
+- [x] #8 The touched test files pass 20 soak runs at `-n 4` under load
 <!-- AC:END -->
+
+AC #5-#8 added 2026-11-23 (round 24, coordinator request): the stuck phase is the same defect class as the `[cancelled]` red. 95ca4bf47b's IDLE-only display check also strands a refresh that returns without publishing (owner or scope moved; the code's own comment says "its next check reloads") and a cancelled search, so the fix belongs with this task rather than in a follow-up.
 
 ## Implementation Plan
 
@@ -44,6 +50,9 @@ Found during round 22 of the follow-up burn-down (2026-11-23): TASK-42426's cove
 2. Decide drift vs defect from what the user would see (a panel left on "Refreshing..." whose display check never runs again).
 3. If a defect: fix it in `ConsoleCharacterContextController.refresh()` so a cancelled refresh that still owns its generation leaves the panel idle and drops the old fingerprint for the next check to reload; keep the test's assertion and add one for the stuck phase; red at base, green after.
 4. Run all three parameters alone and at -n 4; lane the file in an existing non-UI PR step (the unlaned-riders job) with its CI pin, timed serially with that step's flags.
+5. (AC #5-#8) Write red-at-base tests for a refresh that publishes nothing after its owner or scope moved (the stock route a run's display check takes for a changed open chat, and the original loop) and for a cancelled search.
+6. Replace the refresh's cancellation handler with one guard the operations share, in the controller that owns the phase: on any exit, if the operation still owns the generation and its phase, settle the panel idle (a refresh drops its fingerprint; a search keeps its query and offers Retry).
+7. Record the exits that do not stick with their evidence, soak the touched files 20 times at -n 4, and re-run the round's check list.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -51,7 +60,7 @@ Found during round 22 of the follow-up burn-down (2026-11-23): TASK-42426's cove
 <!-- SECTION:NOTES:BEGIN -->
 **Cause (AC#1): a product defect, from 95ca4bf47b (2026-11-14).** That commit made `refresh_presentation_if_scope_changed` return False at once unless the controller's phase is IDLE, so a display check never runs beside an operation. `refresh()` sets the phase to REFRESHING in `_begin` and nothing set it back when the refresh was cancelled. A cancelled refresh therefore left the panel on "Refreshing local character chats…" with the old fingerprint and the old presentation key in place, and every later display check returned "unchanged" without reading anything, until some other operation (a search, a Retry) began. Before 95ca4bf47b the next check ran anyway and its own refresh republished, so the test passed. The test's assertion (`_presentation_scope_key is None or` a successful refresh at the current generation) caught the old key surviving; the stuck phase is the user-visible half.
 
-**Fix (AC#2).** `ConsoleCharacterContextController.refresh()` (`UI/Console_Modules/character_context.py`) now catches `CancelledError` around everything after `_begin`. If the refresh still owns the generation and the phase is still REFRESHING, it calls `invalidate_scope(_supersede=False)`: the panel goes IDLE, `loading` clears, the old fingerprint is dropped, and the next display check reloads and certifies a fresh publication. It then re-raises. A newer operation's state is left alone. The fix is in `refresh()`, so it also covers a display check cancelled during its own inner refresh (`_supersede=False`); a trace during the covering run saw the handler fire there once (generation 0) as well as in the red test.
+**Fix (AC#2).** First commit: `ConsoleCharacterContextController.refresh()` (`UI/Console_Modules/character_context.py`) caught `CancelledError` around everything after `_begin`; the sibling-path work below replaced that handler with the shared `_settle_unpublished` guard in a `finally`, which keeps this behaviour. If the refresh still owns the generation and the phase is still REFRESHING, it calls `invalidate_scope(_supersede=False)`: the panel goes IDLE, `loading` clears, the old fingerprint is dropped, and the next display check reloads and certifies a fresh publication. It then re-raises. A newer operation's state is left alone. The fix is in `refresh()`, so it also covers a display check cancelled during its own inner refresh (`_supersede=False`); a trace during the covering run saw the handler fire there once (generation 0) as well as in the red test.
 
 **Red/green.**
 - At base: `[cancelled]` fails at the existing assertion ("old fingerprint certified a refresh that never successfully published"; key from generation 1, `_successful_refresh_generation` None, generation 2).
@@ -63,4 +72,31 @@ Found during round 22 of the follow-up burn-down (2026-11-23): TASK-42426's cove
 **Lane (AC#4).** The file is `bootstrap_profile`, so it joins the unlaned-riders job ("Dreams tracking tests and unlaned riders", `.github/workflows/derived-artifacts.yml`) after `Tests/Tool_Packs`, never before a sandboxed target; `Tests/CI/test_ci_queue_pressure_contract.py`'s `DREAMS_TRACKING_RIDERS` pin lists it last. Serially with the step's flags (`--timeout=180`): 47 passed in 63 s and 72 s (load 14-18). The whole step through `r19-step.sh` (`-p no:xdist --timeout=180`): 801 passed in 780 s at load 15-20. The CI contract files that pin the job passed (812 at `-n 4`).
 
 **Files.** `tldw_chatbook/UI/Console_Modules/character_context.py`, `Tests/Backup_Recovery/test_character_presentation_cadence.py`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, and `Docs/User_Guide/console/sessions-tabs-workspaces.md` (an interrupted reload clears the "Refreshing" line).
+
+**Sibling paths (AC #5-#8, added at the coordinator's request).** The same IDLE-only display check strands any operation that keeps its loading phase. Each path, with a test red at base (product file at b31e3e9241, every red at the stuck-phase assertion, and the phase at the blocked read confirmed REFRESHING or SEARCHING):
+- **A refresh whose open chat or data profile moved during its read (sticks).** `test_refresh_that_publishes_nothing_leaves_the_panel_idle[conversation|database]`. During a run, a display check for a changed open chat goes straight to the stock `refresh()` (`known_changed` in `refresh_if_scope_changed`). If the chat or the database accessor moves again while `_refresh_recent_batch` reads, `readers.ambient_current()` is False and the refresh returns without publishing, as designed ("its next check reloads"), but the panel stayed REFRESHING and the next check refused to run.
+- **The original refresh loop with a custom owner (sticks).** `[direct]`: `refresh(_presentation_is_current=...)` whose owner stops being current returns at `not presentation_is_current()` after its read, also REFRESHING.
+- **A cancelled search (sticks).** `test_cancelled_character_search_does_not_leave_the_panel_searching`: cancelled during its scope read, the panel stayed on "Searching local character chats…".
+
+**Fix: one guard, where the phase is owned.** `ConsoleCharacterContextController._settle_unpublished(generation, phase, *, reload=False, error="")` settles the panel IDLE unless a newer operation owns the generation or the operation already published (its phase is no longer the one it began). `refresh()` and `search()` call it from a `finally` around everything after `_begin`, which replaces the earlier `CancelledError` handler, so cancellation, a raised error and every unpublished return take the same path. A refresh drops its fingerprint (`invalidate_scope(_supersede=False)`), so the next check reloads. A search keeps its query and fingerprint and shows "Could not search local character chats · Retry"; the widget's Retry re-runs the search for that query. Dropping a search's fingerprint was rejected: the next check's reload publishes a browse state without the query, which would hide the Retry while the search box still holds the text.
+
+**Paths that do not stick (AC #7), with evidence.**
+- Exits where a newer operation took the generation (`generation != self._generation` in refresh and search): the newer operation publishes its own phase. The guard checks the generation; `[superseded]` passes.
+- A refresh with no owner (Retry, the first load): `presentation_is_current()` is always True, a moved scope `continue`s, and the loop ends by publishing "Local character chats changed · Retry". No unpublished return remains, apart from cancellation or a raise.
+- Search's moved-scope exits `continue` and end by publishing the same Retry. What remains is a cancellation or raise, and the database-unavailable branch when the scope moved; both now take the guard.
+- The display check's merged read (`_check_recent_batch`) publishes without `_begin`, so it never sets a loading phase. In this task's first test draft the barrier fired in that read with the phase IDLE, so that draft took the run route instead.
+
+**Red/green.** At base: the character file gives 5 failed (`[cancelled]` and the four new cases), 46 passed. With the guard: 51 of 51.
+
+**Other runs with the guard.**
+- The 18 covering files at `-n 4` (load about 50): 435 passed, 11 failed. Ten are the base reds listed above. The eleventh, `test_console_character_section_collapsed_render.py::test_send_with_the_character_section_collapsed_renders_nothing_there` (a census entry; a private-profile child), failed at the child's deadline (`private_profile.py:410`, "still running after …"), not at an assertion.
+- That file is load-flaky at base as well. With `test_console_character_context.py` and `test_character_context_async_ownership.py` at `-n 4` (load 54-73), base failed in 3 of 3 runs: `test_opening_after_a_collapsed_refresh_shows_its_chats_without_refreshing` 3 times, `test_widget_query_validation_preserves_search_and_clear` once. With the guard, 3 of 4 runs failed (`test_send_with…` twice, `test_opening_after…` once, the query-validation test once), and one run passed 92 of 92 (load 60).
+- In 3 of those guarded runs, a temporary file write (reverted) recorded every time the guard settled the panel, the private-profile children included: zero times. With no firing, the try/finally leaves those tests' behaviour unchanged. `test_send_with…` alone, serially: 3 of 3 passed with the guard, 3 of 3 at base.
+- The first 47 tests kept their results.
+
+**Soak (AC #8).** The character file (51 tests), 20 whole-file runs at `-n 4` as two concurrent loops of 10, beside other agents' load (1-minute load 54-102): 20 of 20 passed, 51 of 51 each.
+
+**Lane.** The riders job's note now gives the file's 51 tests: 125-134 s serially with the step's flags at load 59-79 (the first 47 took 63-72 s at load 14-18). The whole step through `r19-step.sh` (`-p no:xdist --timeout=180`): 805 passed in 1174 s at load 60-100.
+
+**Files (sibling paths).** `tldw_chatbook/UI/Console_Modules/character_context.py` (`_settle_unpublished`, plus `finally` blocks in `refresh()` and `search()`), `Tests/Backup_Recovery/test_character_presentation_cadence.py` (4 tests), `.github/workflows/derived-artifacts.yml` (lane note), `Docs/User_Guide/console/sessions-tabs-workspaces.md` (an interrupted search offers Retry; a moved chat or data profile clears "Refreshing").
 <!-- SECTION:NOTES:END -->

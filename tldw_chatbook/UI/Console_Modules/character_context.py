@@ -1050,6 +1050,40 @@ class ConsoleCharacterContextController:
             phase=ConsoleCharacterOperationPhase.IDLE, operation_row_key="",
         ))
 
+    def _settle_unpublished(
+        self,
+        generation: int,
+        phase: ConsoleCharacterOperationPhase,
+        *,
+        reload: bool = False,
+        error: str = "",
+    ) -> None:
+        """Leave the panel idle after an operation that ended without publishing.
+
+        TASK-42468: the display check runs only while the controller is IDLE
+        (95ca4bf47b). A refresh or search that was cancelled, raised, or
+        returned because its owner or scope moved during the read kept its
+        loading phase, so the panel stayed on "Refreshing…"/"Searching…" and
+        the check never ran again. Unless a newer operation owns the state
+        (or this one published), the panel goes idle.
+
+        Args:
+            generation: The operation's generation from ``_begin``.
+            phase: The phase the operation began.
+            reload: Drop the fingerprint so the next display check reloads, as
+                a refresh's unpublished exits always left to that check.
+            error: Copy for the panel instead, such as a Retry.
+        """
+        if generation != self._generation or self.state.phase is not phase:
+            return
+        if reload:
+            self.invalidate_scope(_supersede=False)
+            return
+        self._publish(replace(
+            self.state, phase=ConsoleCharacterOperationPhase.IDLE, loading=False,
+            operation_row_key="", error=error,
+        ))
+
     def _mark_checked(self, started: tuple, invalidations: int) -> None:
         """Start the run recheck interval unless the scope was invalidated since."""
         if self._scope_invalidations == invalidations:
@@ -1978,18 +2012,12 @@ class ConsoleCharacterContextController:
                         scope_fingerprint=None,
                     )
                 )
-        except asyncio.CancelledError:
-            # TASK-42468: a cancelled refresh publishes nothing. Left in
-            # REFRESHING, the panel kept its "Refreshing…" line and the
-            # display check, which runs only when IDLE (95ca4bf47b), never
-            # checked it again. Unless a newer operation owns the state, go
-            # idle and drop the old fingerprint so the next check reloads.
-            if (
-                generation == self._generation
-                and self.state.phase is ConsoleCharacterOperationPhase.REFRESHING
-            ):
-                self.invalidate_scope(_supersede=False)
-            raise
+        finally:
+            # TASK-42468: cancelled, raised, or returned because the owner or
+            # scope moved, without publishing.
+            self._settle_unpublished(
+                generation, ConsoleCharacterOperationPhase.REFRESHING, reload=True
+            )
 
     async def refresh_unavailable_details(
         self, groups: Iterable[CharacterConversationGroup]
@@ -2191,105 +2219,114 @@ class ConsoleCharacterContextController:
             restore_focus=None,
             restore_scroll_offset=None,
         )
-        for _attempt in range(_SCOPE_CAPTURE_ATTEMPTS):
-            try:
-                snapshot = await self._capture_scope()
-            except _ConsoleCharacterScopeChanged:
-                continue
-            except _ConsoleCharacterScopeReadError as error:
-                if generation != self._generation:
-                    return
-                if not self._ambient_scope_matches(
-                    error.database, error.current, error.open_conversation_id
-                ):
+        try:
+            for _attempt in range(_SCOPE_CAPTURE_ATTEMPTS):
+                try:
+                    snapshot = await self._capture_scope()
+                except _ConsoleCharacterScopeChanged:
                     continue
-                self._publish(
-                    replace(
-                        self.state,
-                        phase=ConsoleCharacterOperationPhase.IDLE,
-                        loading=False,
-                        operation_row_key="",
-                        error="Could not search local character chats · Retry",
-                        scope_fingerprint=None,
-                    )
-                )
-                return
-            if snapshot.database is None:
-                if (
-                    generation == self._generation
-                    and await self._operation_scope_is_current(snapshot, generation)
-                ):
+                except _ConsoleCharacterScopeReadError as error:
+                    if generation != self._generation:
+                        return
+                    if not self._ambient_scope_matches(
+                        error.database, error.current, error.open_conversation_id
+                    ):
+                        continue
                     self._publish(
                         replace(
                             self.state,
                             phase=ConsoleCharacterOperationPhase.IDLE,
                             loading=False,
-                            error="Local character search is unavailable · Retry",
-                            scope_fingerprint=snapshot.fingerprint,
+                            operation_row_key="",
+                            error="Could not search local character chats · Retry",
+                            scope_fingerprint=None,
                         )
                     )
-                return
-            try:
-                rows, status = await self._await_database_work(
-                    snapshot.database, self._search_sync,
-                    snapshot.database,
-                    snapshot.fingerprint,
-                    normalized,
-                )
-            except Exception:  # noqa: BLE001 - DB boundary becomes visible recovery
+                    return
+                if snapshot.database is None:
+                    if (
+                        generation == self._generation
+                        and await self._operation_scope_is_current(snapshot, generation)
+                    ):
+                        self._publish(
+                            replace(
+                                self.state,
+                                phase=ConsoleCharacterOperationPhase.IDLE,
+                                loading=False,
+                                error="Local character search is unavailable · Retry",
+                                scope_fingerprint=snapshot.fingerprint,
+                            )
+                        )
+                    return
+                try:
+                    rows, status = await self._await_database_work(
+                        snapshot.database, self._search_sync,
+                        snapshot.database,
+                        snapshot.fingerprint,
+                        normalized,
+                    )
+                except Exception:  # noqa: BLE001 - DB boundary becomes visible recovery
+                    if generation != self._generation:
+                        return
+                    if not await self._operation_scope_is_current(snapshot, generation):
+                        continue
+                    self._publish(
+                        replace(
+                            self.state,
+                            phase=ConsoleCharacterOperationPhase.IDLE,
+                            loading=False,
+                            error="Could not search local character chats · Retry",
+                        )
+                    )
+                    return
                 if generation != self._generation:
                     return
                 if not await self._operation_scope_is_current(snapshot, generation):
                     continue
+                fingerprint = snapshot.fingerprint
+                keyword_error = {
+                    CharacterKeywordIndexStatus.ABSENT: "Character source changed · Retry",
+                    CharacterKeywordIndexStatus.BUILDING: (
+                        "Character chat search is rebuilding · Retry"
+                    ),
+                    CharacterKeywordIndexStatus.FAILED: (
+                        "Character chat index needs repair · Retry"
+                    ),
+                }.get(status, "")
+                self._publish(
+                    replace(
+                        self.state,
+                        search_rows=(
+                            rows[:CONSOLE_CHARACTER_SEARCH_LIMIT]
+                            if not keyword_error
+                            else ()
+                        ),
+                        phase=ConsoleCharacterOperationPhase.IDLE,
+                        loading=False,
+                        error=keyword_error,
+                        data_revision=fingerprint.data_revision,
+                        scope_fingerprint=fingerprint,
+                        keyword_status=status,
+                    )
+                )
+                return
+            if generation == self._generation:
                 self._publish(
                     replace(
                         self.state,
                         phase=ConsoleCharacterOperationPhase.IDLE,
                         loading=False,
-                        error="Could not search local character chats · Retry",
+                        error="Local character chats changed · Retry",
+                        scope_fingerprint=None,
                     )
                 )
-                return
-            if generation != self._generation:
-                return
-            if not await self._operation_scope_is_current(snapshot, generation):
-                continue
-            fingerprint = snapshot.fingerprint
-            keyword_error = {
-                CharacterKeywordIndexStatus.ABSENT: "Character source changed · Retry",
-                CharacterKeywordIndexStatus.BUILDING: (
-                    "Character chat search is rebuilding · Retry"
-                ),
-                CharacterKeywordIndexStatus.FAILED: (
-                    "Character chat index needs repair · Retry"
-                ),
-            }.get(status, "")
-            self._publish(
-                replace(
-                    self.state,
-                    search_rows=(
-                        rows[:CONSOLE_CHARACTER_SEARCH_LIMIT]
-                        if not keyword_error
-                        else ()
-                    ),
-                    phase=ConsoleCharacterOperationPhase.IDLE,
-                    loading=False,
-                    error=keyword_error,
-                    data_revision=fingerprint.data_revision,
-                    scope_fingerprint=fingerprint,
-                    keyword_status=status,
-                )
-            )
-            return
-        if generation == self._generation:
-            self._publish(
-                replace(
-                    self.state,
-                    phase=ConsoleCharacterOperationPhase.IDLE,
-                    loading=False,
-                    error="Local character chats changed · Retry",
-                    scope_fingerprint=None,
-                )
+        finally:
+            # TASK-42468: cancelled, raised, or returned because the scope
+            # moved, without publishing: offer Retry for the same query.
+            self._settle_unpublished(
+                generation,
+                ConsoleCharacterOperationPhase.SEARCHING,
+                error="Could not search local character chats · Retry",
             )
 
     async def activate(

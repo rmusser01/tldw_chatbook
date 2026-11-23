@@ -490,6 +490,131 @@ async def test_direct_refresh_outcome_cannot_certify_an_old_display(tmp_path, ou
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["conversation", "database", "direct"])
+async def test_refresh_that_publishes_nothing_leaves_the_panel_idle(tmp_path, change):
+    """TASK-42468: a refresh whose owner or scope moved during its read publishes
+    nothing and leaves the next check to reload. The display check runs only
+    while the controller is IDLE (95ca4bf47b), so a panel left REFRESHING never
+    had that next check. ``conversation`` and ``database`` move the scope
+    during the stock refresh a run's display check starts for a changed open
+    chat; ``direct`` takes a custom owner through refresh()'s original loop."""
+    database = CharactersRAGDB(tmp_path / "moved.db", "moved")
+    other = (
+        CharactersRAGDB(tmp_path / "other.db", "other") if change == "database" else None
+    )
+    controller, screen, active, _current, conversation = _character(database)
+    entered, release = threading.Event(), threading.Event()
+    blocked = False
+    allowed = [True]
+    pending = None
+    phase_at_read = []
+
+    def barrier(_frame, name):
+        nonlocal blocked
+        if name == "recent_return" and not blocked:
+            blocked = True
+            entered.set()
+            assert release.wait(10)
+
+    try:
+        await controller.refresh()
+        await _display(controller, screen)
+        if change == "direct":
+            # A custom display owner takes refresh()'s original loop.
+            work = controller.refresh(
+                _presentation_is_current=lambda: allowed[0], _supersede=False
+            )
+        else:
+            # During a run, a changed open chat sends the display check
+            # straight to the stock refresh() (``known_changed``).
+            controller._run_active = lambda: True
+            conversation[0] = "conversation-a"
+            work = _display(controller, screen)
+        with _actual_calls(barrier=barrier):
+            pending = asyncio.create_task(work)
+            assert await asyncio.to_thread(entered.wait, 10)
+            phase_at_read.append(controller.state.phase)
+            if change == "conversation":
+                conversation[0] = "conversation-b"
+            elif change == "database":
+                active[0] = other
+            else:
+                allowed[0] = False
+            release.set()
+            await pending
+        assert phase_at_read == [ConsoleCharacterOperationPhase.REFRESHING]
+        assert (
+            controller.state.phase is ConsoleCharacterOperationPhase.IDLE
+            and not controller.state.loading
+        ), "a refresh that published nothing left the panel refreshing"
+        allowed[0] = True
+        controller._run_active = None  # The run ended; the idle check certifies.
+        await _display(controller, screen)
+        assert (
+            controller._successful_refresh_generation == controller._generation
+            and controller._presentation_scope_key is not None
+        ), "the next display check did not reload the moved scope"
+    finally:
+        release.set()
+        if pending is not None:
+            await asyncio.gather(pending, return_exceptions=True)
+        database.close()
+        if other is not None:
+            other.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_character_search_does_not_leave_the_panel_searching(tmp_path):
+    """TASK-42468: a cancelled search kept SEARCHING ("Searching local character
+    chats..."), and the display check, which runs only while IDLE, never ran
+    again. It now offers Retry for the same query."""
+    database = CharactersRAGDB(tmp_path / "search.db", "search")
+    controller, screen, *_ = _character(database)
+    entered, release = threading.Event(), threading.Event()
+    blocked = False
+    pending = None
+    phase_at_read = []
+
+    def barrier(_frame, name):
+        nonlocal blocked
+        if name == "pairs_return" and not blocked:
+            blocked = True
+            entered.set()
+            assert release.wait(10)
+
+    try:
+        await controller.refresh()
+        await _display(controller, screen)
+        with _actual_calls(barrier=barrier):
+            pending = asyncio.create_task(controller.search("echo"))
+            assert await asyncio.to_thread(entered.wait, 10)
+            phase_at_read.append(controller.state.phase)
+            pending.cancel()
+            await asyncio.sleep(0)
+            release.set()
+            result = await asyncio.gather(pending, return_exceptions=True)
+        assert phase_at_read == [ConsoleCharacterOperationPhase.SEARCHING]
+        assert isinstance(result[0], asyncio.CancelledError)
+        assert (
+            controller.state.phase is ConsoleCharacterOperationPhase.IDLE
+            and not controller.state.loading
+        ), "a cancelled search left the panel searching"
+        assert controller.state.query == "echo" and controller.state.error, (
+            "a cancelled search showed no Retry for its query"
+        )
+        with _actual_calls() as after:
+            await _display(controller, screen)
+        assert after["pairs"] >= 1, (
+            "the display check read nothing after the cancelled search"
+        )
+    finally:
+        release.set()
+        if pending is not None:
+            await asyncio.gather(pending, return_exceptions=True)
+        database.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "reader",
     ["_load_recent_sync", "_load_unavailable_details_sync", "refresh_if_scope_changed"],
