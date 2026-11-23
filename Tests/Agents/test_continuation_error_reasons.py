@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 from loguru import logger
 
+from Tests.Agents.test_agent_runtime_preparation import _receipt, _row
 from Tests.Agents.test_provider_continuation_runtime import (
     CALCULATOR,
     CONFIG,
@@ -41,7 +42,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCallFinished,
     ToolResult,
 )
-from tldw_chatbook.Agents.agent_runtime import run_agent_loop
+from tldw_chatbook.Agents.agent_runtime import ToolBatchPreparation, run_agent_loop
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
     ContinuationRestoreTarget,
@@ -289,14 +290,18 @@ _OWNERLESS = ContinuationEventContext(
 )
 
 
-def _restore(checkpoint, target, *, expand=None, context=None):
+def _restore(
+    checkpoint, target, *, expand=None, context=None, review=None, invoke=None
+):
     deps = _deps(
         [ModelTurn(text="must not run")],
         order=[],
         persist=lambda event: None,
-        invoke=lambda call: pytest.fail("no tool may run after a failed restore"),
+        invoke=invoke
+        or (lambda call: pytest.fail("no tool may run after a failed restore")),
         expand=expand,
         context=context,
+        review=review,
     )
     return run_agent_loop(
         CONFIG,
@@ -1171,3 +1176,110 @@ def test_store_failure_cause_class_is_logged(warnings_log) -> None:
     joined = "\n".join(warnings_log)
     assert "cause_type=ValueError" in joined
     assert "PRIVATE-CANARY" not in joined
+
+
+# Port review (round 24, 2026-11-23): these five exits were pinned only by the
+# AST guard's distinct-literal scan. Each is now driven to its own code.
+
+
+def _fail_finished(event) -> None:
+    if isinstance(event, ToolCallFinished):
+        raise RuntimeError("Continuation revision conflict.")
+
+
+def _raise_review(batch):
+    raise RuntimeError("review hook down")
+
+
+def _defer_batch(calls) -> ToolBatchPreparation:
+    return ToolBatchPreparation(
+        "retry_with_context", (_row("nested"),), _receipt("nested")
+    )
+
+
+def _history_lost_after_restore():
+    """An expander that serves the restore, then fails on the next expansion."""
+    expansions: list[object] = []
+
+    def expand(checkpoint):
+        expansions.append(checkpoint)
+        if len(expansions) > 1:
+            raise RuntimeError("history unavailable")
+        return []
+
+    return expand
+
+
+def _live_tool_run(*, persist, review=None, prepare=None):
+    deps = _deps(
+        _tool_then_final(None)[:1],
+        order=[],
+        persist=persist,
+        review=review,
+        invoke=lambda call: pytest.fail("no tool may run"),
+    )
+    deps.prepare_tool_calls = prepare
+    return run_agent_loop(
+        CONFIG, [{"role": "user", "content": "go"}], [CALCULATOR], deps
+    )
+
+
+def _restored_run(*, review, invoke=None):
+    return _restore(
+        _restore_checkpoint(),
+        _DEEPSEEK_TARGET,
+        expand=_history_lost_after_restore(),
+        review=review,
+        invoke=invoke,
+    )
+
+
+_CONFLICT = {"continuation_store_failure": "revision_conflict"}
+
+
+@pytest.mark.parametrize(
+    ("run", "expected"),
+    [
+        (
+            lambda: _live_tool_run(persist=lambda event: None, review=_raise_review),
+            {"continuation_error": "review_hook_failed"},
+        ),
+        (
+            lambda: _live_tool_run(
+                persist=_fail_finished, review=lambda batch: {"a": "denied"}
+            ),
+            {"continuation_error": "refusal_transition_failed", **_CONFLICT},
+        ),
+        (
+            lambda: _live_tool_run(persist=_fail_finished, prepare=_defer_batch),
+            {"continuation_error": "deferral_transition_failed", **_CONFLICT},
+        ),
+        (
+            lambda: _restored_run(review=lambda batch: {"call-1": "denied"}),
+            {"continuation_error": "refusal_restore_history_unavailable"},
+        ),
+        (
+            lambda: _restored_run(
+                review=lambda batch: {},
+                invoke=lambda call: ToolResult(ok=True, content="4"),
+            ),
+            {"continuation_error": "result_restore_history_unavailable"},
+        ),
+    ],
+    ids=[
+        "review hook raises",
+        "refusal not stored",
+        "deferral not stored",
+        "refusal loses restored history",
+        "result loses restored history",
+    ],
+)
+def test_exits_the_ast_guard_alone_covered_record_their_reason(
+    run, expected, warnings_log
+) -> None:
+    outcome = run()
+
+    assert outcome.status == RUN_ERROR
+    assert _error_states(outcome) == expected
+    reason = expected["continuation_error"]
+    assert any(f"reason={reason}" in line for line in warnings_log), warnings_log
