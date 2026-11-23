@@ -1538,7 +1538,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-19, TASK-41715 (review r17ls-rev1): five late completions read
     #: ``is_attached`` on its own line before ``app.screen``: 32823 -> 32828
     #: lines, 1288 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32828, 1288),
+    #: 2026-11-23, TASK-42422: list entry focus waits out a running recompose
+    #: (module-level ``_library_entry_target_replaced``): 32828 -> 32842
+    #: lines, 1288 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32842, 1288),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

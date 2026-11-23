@@ -893,6 +893,21 @@ def _log_source_snapshot_failure(deadline_marker: str = "") -> None:
     )
 
 
+def _library_entry_target_replaced(widget: Widget) -> bool:
+    """Whether a repaint is about to replace ``widget`` (TASK-42422).
+
+    It is being pruned, or an ancestor's recompose is queued (TASK-40293) or
+    running: Textual clears ``_recompose_required`` as the recompose starts,
+    and the rebuilt canvas mounts its toolbar before its rows. Focus put on
+    such a widget falls to Textual's reset, which parks it on a pane grip.
+    """
+    return getattr(widget, "_pruning", False) or any(
+        getattr(node, "_recompose_required", False)
+        or getattr(node, "recompose_in_flight", False)
+        for node in getattr(widget, "ancestors", ())
+    )
+
+
 #: task-32246 AC#2: the Enter action of every control Tab can reach inside
 #: the open note editor, so the footer can name where focus is when the
 #: characters typed there would go nowhere. Read by
@@ -10631,10 +10646,7 @@ class LibraryScreen(BaseAppScreen):
         # true, and the retry re-attempts against the replacement rows.
         raw_rows = list(self.query(f".{row_class}"))
         rows = [row for row in raw_rows if not getattr(row, "_pruning", False)]
-        if rows and any(
-            getattr(node, "_recompose_required", False)
-            for node in getattr(rows[0], "ancestors", ())
-        ):
+        if rows and _library_entry_target_replaced(rows[0]):
             # TASK-40293: a queued recompose will replace these rows too, and
             # Textual's reset off the pruned row reads as a user move.
             rows = []
@@ -10684,7 +10696,7 @@ class LibraryScreen(BaseAppScreen):
                 except (NoMatches, QueryError):
                     pass
                 else:
-                    if getattr(control, "_pruning", False) or (
+                    if _library_entry_target_replaced(control) or (
                         control not in self.focus_chain
                     ):
                         # TASK-34000.26: the filter the recompose is
@@ -10705,9 +10717,11 @@ class LibraryScreen(BaseAppScreen):
             if row_class == "library-media-row":
                 control = self._library_media_empty_list_fallback_target()
                 if control is not None:
-                    if getattr(control, "_pruning", False):
+                    if _library_entry_target_replaced(control):
                         # TASK-34000.26: the preferred control is being
                         # replaced; wait for its replacement instead.
+                        # TASK-42422: so is one mounted before the rows
+                        # of a repaint still running (CI's Library grip).
                         self._retry_library_list_entry_focus_while_armed()
                         return
                     self._library_notes_programmatic_focus_target = control

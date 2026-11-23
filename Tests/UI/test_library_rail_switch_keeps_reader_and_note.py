@@ -31,6 +31,8 @@ outside the lane.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from textual.widgets import Button, Input, TextArea
 
@@ -60,6 +62,7 @@ from Tests.UI.test_library_shell import (
 from tldw_chatbook.Library.collections_capture_models import CaptureSaveRequest
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.Widgets.Library import LIBRARY_ADAPTIVE_READER_GRIP_CLASS
+from tldw_chatbook.Widgets.Library.library_media_canvas import LibraryMediaRowScroll
 from tldw_chatbook.Widgets.Library.library_media_content import (
     LibraryMediaContentBody,
 )
@@ -750,6 +753,12 @@ _FIRST_ROW = {"media": "library-media-row-0", "notes": "library-notes-tree-note-
             True, "", ("media", "notes"), ("press", "media"), _FIRST_ROW["media"],
             id="notes-press-resident-media",
         ),
+        # TASK-42422: the same switch with the Media rows held mid-repaint.
+        pytest.param(
+            True, "", ("media", "notes"), ("press-rows-held", "media"),
+            _FIRST_ROW["media"],
+            id="notes-press-resident-media-rows-held",
+        ),
         pytest.param(
             True, "", ("notes", "media"), ("click", "notes"), _FIRST_ROW["notes"],
             id="media-click-resident-notes",
@@ -847,10 +856,53 @@ async def test_each_library_switch_lands_on_its_first_row_never_a_grip(
             monkeypatch.setattr(
                 library_screen_module, "LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS", 6.0
             )
+        rows_absent_attempts: list[None] = []
+        release_rows = asyncio.Event()
+        if how == "press-rows-held":
+            # TASK-42422 (CI's UI Fast Lane 33): the Media repaint mounts its
+            # toolbar before its rows. An entry attempt in that gap found no
+            # row, landed on the empty list's ``type:`` control, and the next
+            # repaint removed it, so Textual parked focus on the Library grip.
+            # Hold the rows' mount until an attempt has run in that gap.
+            compose_rows = LibraryMediaRowScroll._compose
+            enter_list = type(screen)._focus_library_list_entry
+
+            async def held_rows(self):
+                await release_rows.wait()
+                await compose_rows(self)
+
+            def counted_entry(self):
+                # The first ``type:`` match, as the old one can linger.
+                found = self.query("#library-media-type-filter")
+                control = found.first() if found else None
+                if (
+                    control is not None
+                    and not control._pruning
+                    and control in self.focus_chain
+                    and not self.query(".library-media-row")
+                ):
+                    rows_absent_attempts.append(None)
+                return enter_list(self)
+
+            monkeypatch.setattr(LibraryMediaRowScroll, "_compose", held_rows)
+            monkeypatch.setattr(
+                type(screen), "_focus_library_list_entry", counted_entry
+            )
         if how == "click":
             await pilot.click(f"#library-row-browse-{row}")
         else:
             screen.query_one(f"#library-row-browse-{row}").press()
+        if how == "press-rows-held":
+            # Not ``pilot.pause``: it waits for every pump, held ones too.
+            for _ in range(1500):
+                if rows_absent_attempts:
+                    break
+                await asyncio.sleep(0.01)
+            held_focus = screen.focused
+            release_rows.set()
+            assert rows_absent_attempts, "No entry attempt saw the rows held."
+            # Nothing lands on a control the repaint is still replacing.
+            assert held_focus is None, f"mid-repaint focus on {held_focus!r}"
         await settle_on(expected)
         await pilot.pause(0.5)  # a late restore or repaint would show here
         assert on(expected), where()
