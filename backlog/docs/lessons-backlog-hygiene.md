@@ -3,6 +3,18 @@
 Mechanical traps in the task board and the plumbing around it. Cheap to avoid once
 known, expensive to rediscover. Every entry states the incident that produced it.
 
+## Check "this lane never touched it" before taking one side of a merge whole (TASK-33621.34, 2026-11-23)
+
+**Incident.** 35b8300999 merged origin/dev into PR #2594's branch (fix/approval-wave-b-card) on 2026-09-11. Its message says "console_message_actions.py: this lane never touched it (ours == merge base), dev's version taken". The premise was false. 47a613e375 (TASK-32279), on that same branch the day before, had added the "Sent to the model" label for refused tool markers in that file. Taking dev's copy reverted all three of its hunks, and the PR merged without them. The pin `test_refused_tool_marker_says_the_body_went_to_the_model` was red on dev for about ten weeks, because no PR lane ran its file. A verifier found it by hand.
+
+**What to do.** Before taking one side of a conflicted (or suspiciously clean) file whole, list what the lane did to it:
+
+```bash
+git log --oneline $(git merge-base HEAD <incoming>)..HEAD -- <file>
+```
+
+Empty output means "ours == merge base" holds, and taking theirs loses nothing. Any commit listed is work that taking theirs will revert, so re-apply it on top of their copy. Afterwards, check that the lane's pins for that file still pass. If no lane runs them, a revert like this one is only found by hand.
+
 ## Sweep cited ids by reading each distinct blob once, not with `git grep` across every ref (round 20 filing, 2026-11-22)
 
 **Incident.** Round 20's backlog fix (5083c52f7b) needed the highest task id cited anywhere, including ids cited in text before their task file lands. A `git grep` for task ids across the 723 ref tips ran for more than 12 minutes at load average 33. The tips share almost all of their files, so `git grep` read the same blobs once per ref. Listing the blob ids at every tip, keeping the distinct ones (93,746 blobs under the directories that cite ids), and scanning them in one `git cat-file --batch` pass took minutes. The round's filing sweep used the same method on 1,104 refs at load 12-15, listing each tip's whole tree (the command below without its path filter): 101,427 distinct blobs, listed in 3 min 17 s and scanned in 4 min.
