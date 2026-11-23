@@ -732,17 +732,27 @@ def _without_engine_preset_sections(text: str) -> str:
     for record in ENGINE_RECORDS:
         if record.defaults_settings_section:  # custom-hosted reads [api_settings.custom]
             continue
-        text, count = re.subn(
+        matches = list(re.finditer(
             rf"(?m)^(?:{comment})*[ \t]*\[api_settings\.{re.escape(record.key)}\][^\n]*\n"
             # Lines under the header: anything but a table header, and a blank
             # line only when more of the section's keys (maybe after comments)
             # follow it.
             rf"(?:[ \t]*(?!\[)\S[^\n]*\n|[ \t]*\n(?=(?:{comment})*[ \t]*[^\s#\[]))*"
             r"(?:[ \t]*\n)?",
-            "",
             text,
+        ))
+        assert len(matches) == 1, f"{record.key}: {len(matches)} [api_settings] sections"
+        start, end = matches[0].span()
+        # House style is a precondition, not an assumption: a blank line (or the
+        # file's edge) on both sides, so a section never claims a neighbour's
+        # comments (review round 2, N1).
+        assert start == 0 or re.search(r"(?:\A|\n)[ \t]*\n\Z", text[:start]), (
+            f"{record.key}: its [api_settings] section needs a blank line above it"
         )
-        assert count == 1, f"{record.key}: {count} [api_settings] sections"
+        assert end == len(text) or re.search(r"\n[ \t]*\n\Z", text[start:end]), (
+            f"{record.key}: its [api_settings] section needs a blank line below it"
+        )
+        text = text[:start] + text[end:]
     return text
 
 
