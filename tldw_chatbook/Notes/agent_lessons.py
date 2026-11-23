@@ -267,7 +267,11 @@ def initialize_agent_lessons_folder(
     from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
 
     folders = LocalNoteFolderRepository(db)
-    with db.transaction() as cursor:
+    # TASK-42412: read-then-write, so take the write lock first. A DEFERRED
+    # read cannot upgrade while another connection writes (the startup Actor
+    # Pack recovery, during a backend switch): SQLite returns SQLITE_BUSY at
+    # once, without the busy handler. IMMEDIATE waits on the busy timeout.
+    with db.transaction(immediate=True) as cursor:
         state = cursor.execute(
             "SELECT * FROM agent_lessons_seed_state WHERE profile_id = ? AND dataset_id = ?",
             (normalized_profile, normalized_dataset),

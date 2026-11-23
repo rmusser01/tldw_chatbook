@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import uuid
 from pathlib import Path
 
@@ -540,5 +541,91 @@ def test_differently_spelled_remote_seed_requires_review(tmp_path: Path) -> None
             .fetchone()["state"]
             == "open"
         )
+    finally:
+        db.close_connection()
+
+
+def test_seed_waits_for_a_writer_another_connection_holds(tmp_path: Path):
+    """TASK-42412: the seed must wait for a concurrent writer, not fail.
+
+    A backend switch seeds this folder on the UI thread while the startup
+    Actor Pack recovery writes to the same database. The seed used to read in
+    a DEFERRED transaction and then write, and SQLite refuses that read-to-write
+    upgrade at once, without asking the busy handler, while another connection
+    holds the write lock.
+    """
+    db = _db(tmp_path / "held.sqlite")
+    holding = threading.Event()
+
+    def hold() -> None:
+        try:
+            with db.transaction(immediate=True):
+                holding.set()
+                threading.Event().wait(1.0)
+        finally:
+            db.close_connection()
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    try:
+        assert holding.wait(10)
+        try:
+            outcome = initialize_agent_lessons_folder(
+                db, scope_mode="local_only", profile_id="local", dataset_id="local"
+            )
+        except Exception as error:  # noqa: BLE001 - the assertion names it
+            outcome = error
+        assert getattr(outcome, "status", None) == "created", repr(outcome)
+    finally:
+        holder.join(10)
+        db.close_connection()
+    assert not holder.is_alive()
+
+
+def test_seed_survives_a_write_committed_between_its_read_and_its_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """TASK-42412: the order captured under load (SQLITE_BUSY_SNAPSHOT, 517).
+
+    The recovery committed a ``buddy_profiles`` row 4 ms after the seed's
+    first read, and the seed's write then found its read snapshot stale.
+    """
+    db = _db(tmp_path / "raced.sqlite")
+    create_folder = LocalNoteFolderRepository.create_folder
+
+    def write_elsewhere() -> None:
+        try:
+            db.get_connection().execute("PRAGMA busy_timeout = 200")
+            with db.transaction(immediate=True) as cursor:
+                cursor.execute(
+                    "INSERT INTO buddy_profiles(id,name,source_key) VALUES (?,?,NULL)",
+                    (str(uuid.uuid4()), "raced"),
+                )
+        except Exception:  # noqa: BLE001 - after the fix the seed holds the lock
+            pass
+        finally:
+            db.close_connection()
+
+    def create_after_a_foreign_commit(self, **kwargs):
+        writer = threading.Thread(target=write_elsewhere)
+        writer.start()
+        writer.join(10)
+        return create_folder(self, **kwargs)
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                LocalNoteFolderRepository,
+                "create_folder",
+                create_after_a_foreign_commit,
+            )
+            try:
+                outcome = initialize_agent_lessons_folder(
+                    db, scope_mode="local_only", profile_id="local", dataset_id="local"
+                )
+            except Exception as error:  # noqa: BLE001 - the assertion names it
+                outcome = error
+        assert LocalNoteFolderRepository.create_folder is create_folder
+        assert getattr(outcome, "status", None) == "created", repr(outcome)
     finally:
         db.close_connection()
