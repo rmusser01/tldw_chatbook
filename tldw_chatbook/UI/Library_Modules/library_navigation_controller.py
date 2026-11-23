@@ -10,6 +10,7 @@ Repair's payload, service and modal imports remain first-use, not startup.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -274,9 +275,10 @@ class LibraryNavigationController:
         elif row in _LIST_ENTRY_ROWS:
             screen._arm_library_list_entry_focus()
             # Review r11n I-2: rows that arrive after the arm's window end it
-            # with nothing landed (it lands from None on Notes only).
+            # with nothing landed; r11n4 N4-1: the re-check is this row's only.
             screen.set_timer(
-                _RECHECK_AFTER_ARM_SECONDS, self._land_content_focus_if_unfocused
+                _RECHECK_AFTER_ARM_SECONDS,
+                partial(self._land_content_focus_if_unfocused, row),
             )
         elif not row:
             self._land_route_entry()
@@ -314,7 +316,7 @@ class LibraryNavigationController:
         screen._library_notes_programmatic_focus_target = screen.focused
         return screen.focused is not None  # r11n3 N3-1: its write can be refused
 
-    def _land_content_focus_if_unfocused(self) -> None:
+    def _land_content_focus_if_unfocused(self, armed_row: str = "") -> None:
         """The last resort when nothing landed, for the resume and its re-check.
 
         In order: Folder files' own restore, or the route's entry control;
@@ -339,6 +341,7 @@ class LibraryNavigationController:
             or screen.app.screen is not screen
             or (focused is not None and not parked)
             or screen._library_pending_list_entry_focus
+            or (armed_row and armed_row != screen._library_selected_row_id)
         ):
             return
         if screen._file_notes_active():

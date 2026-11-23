@@ -44,6 +44,9 @@ from Tests.UI.test_library_prompts_canvas import (
 from tldw_chatbook.Library.library_content_evidence import LibraryEvidenceStatus
 from tldw_chatbook.Library.library_shell_state import build_library_shell_state
 from tldw_chatbook.UI.Library_Modules import library_navigation_controller
+from tldw_chatbook.UI.Library_Modules.library_artifacts_controller import (
+    LibraryArtifactsController,
+)
 from tldw_chatbook.UI.Library_Modules.library_collections_controller import (
     LibraryCollectionsController,
 )
@@ -337,6 +340,88 @@ async def test_the_re_check_takes_focus_back_from_a_reset_parked_grip(
         profile.close()
 
 
+async def test_the_re_check_stays_on_the_route_it_was_armed_for(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A list route's re-check never takes a grip on the route switched to.
+
+    Review r11n4 N4-1 (PROBE-B): F1 closing over an unfocused Conversations
+    armed the 2.1 s re-check; inside the window the user switched to
+    Artifacts, collapsed its Library pane and pressed F6 onto that pane's
+    grip. F6 records no click or Tab, so the re-check read the grip as
+    Textual's reset and moved focus to the Artifacts list. The re-check is
+    held here and fired once the user has moved on, as the timer fires.
+    """
+
+    async def keep_in_memory(self, *args) -> None:
+        return None  # the pane choice stays in app_config; nothing on disk
+
+    monkeypatch.setattr(LibraryArtifactsController, "_persist", keep_in_memory)
+    profile = _Profile(tmp_path, monkeypatch)
+    host = profile.host()
+    try:
+        async with host.run_test(size=SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _press(host, screen, pilot, "#library-row-browse-conversations")
+            await _until(
+                pilot,
+                lambda: bool(screen.query("#library-conversation-row-0")),
+                "the Conversations rows",
+            )
+            await pilot.pause()
+            screen._disarm_library_list_entry_focus()
+            await _clear_focus(screen, pilot)
+            rechecks: list[object] = []
+            set_timer = screen.set_timer
+            recheck_delay = library_navigation_controller._RECHECK_AFTER_ARM_SECONDS
+
+            def hold_recheck(delay, callback=None, *args, **kwargs):
+                if delay == recheck_delay:
+                    rechecks.append(callback)
+                    return set_timer(HOLD, lambda: None)
+                return set_timer(delay, callback, *args, **kwargs)
+
+            monkeypatch.setattr(screen, "set_timer", hold_recheck)
+            await _f1_shortcuts(host, screen, pilot)
+            monkeypatch.setattr(screen, "set_timer", set_timer)
+            assert rechecks, "the resume armed no re-check"
+            await _press(host, screen, pilot, "#library-row-artifacts-all")
+            await _until(
+                pilot,
+                lambda: (c := screen._artifacts_controller) is not None
+                and c.shell is not None
+                and c.shell.is_mounted,
+                "the Artifacts reader shell",
+            )
+            controller = screen._artifacts_controller
+            if controller.layout.library_open:
+                controller.toggle_pane("library")
+            grip_id = "library-artifacts-library-grip"
+            await _until(
+                pilot,
+                lambda: any(w.id == grip_id for w in screen.focus_chain),
+                "the collapsed Library pane's grip",
+            )
+            for _ in range(4):  # F6 by its action, as the key runs it
+                if _focused_id(screen) == grip_id:
+                    break
+                screen.action_focus_next_workbench_pane()
+                await pilot.pause()
+            assert _focused_id(screen) == grip_id, _focused_id(screen)
+            await _until(
+                pilot,
+                lambda: not screen._library_pending_list_entry_focus,
+                "the list-entry window to close, as it has when the timer fires",
+            )
+            for recheck in rechecks:
+                recheck()
+            await pilot.pause()
+            assert _focused_id(screen) == grip_id, _focused_id(screen)
+    finally:
+        profile.close()
+
+
 async def test_artifacts_never_syncs_a_page_into_a_shell_being_removed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -495,9 +580,9 @@ async def _walk_routes(tmp_path, monkeypatch, group: int) -> list[str]:
     rechecks: list[float] = []
     last_resort = navigation._land_content_focus_if_unfocused
 
-    def counted(self) -> None:
+    def counted(self, *args) -> None:
         checks.append(self.screen._library_selected_row_id)
-        last_resort(self)
+        last_resort(self, *args)
 
     monkeypatch.setattr(navigation, "_land_content_focus_if_unfocused", counted)
     db, prompts = _real_prompt_scope_service(tmp_path)
@@ -513,7 +598,9 @@ async def _walk_routes(tmp_path, monkeypatch, group: int) -> list[str]:
             set_timer = screen.set_timer
 
             def recorded_set_timer(delay, callback=None, *args, **kwargs):
-                if getattr(callback, "__func__", None) is counted:
+                # The re-check is bound to its row (r11n4 N4-1): a partial.
+                bound = getattr(callback, "func", callback)
+                if getattr(bound, "__func__", None) is counted:
                     rechecks.append(delay)
                 return set_timer(delay, callback, *args, **kwargs)
 

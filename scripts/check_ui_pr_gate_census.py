@@ -1330,7 +1330,10 @@ MINIMUM_FILES = 2520
 # - PR #3423 r11n4 load flake (2026-11-22): that file's pin for an Artifacts
 #   page read landing in a shell being removed (one boot, about 3 s), at the
 #   tail: 2507 -> 2508.
-MINIMUM_FILES = 2508
+# - PR #3423 review r11n4 N4-1 (2026-11-22): that file's pin for the re-check
+#   staying on its own route (one Library boot, about 4 s), at the tail:
+#   2508 -> 2509.
+MINIMUM_FILES = 2509
 
 
 MINIMUM_FILES = 2038

@@ -645,15 +645,19 @@ async def test_a_check_started_with_focus_outside_the_import_says_esc_cancel(
         profile.close()
 
 
-async def test_a_notes_list_entry_arm_keeps_a_grip_the_user_clicked(
+async def test_a_notes_list_entry_arm_never_blanks_a_grip_the_user_clicked(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Only Textual's reset onto a grip is cleared by an arm, never a click's.
+    """An arm no longer blanks a clicked grip; where the list's entry is
+    reachable it still lands it.
 
     r11n4 load flake: the running-check footer pin above failed once with
     focus on None. A Notes list-entry arm clears a focused pane grip as
-    Textual's reset (TASK-41129), and it did so for the grip the user had
-    clicked too; any arm in that window reproduced the red exactly.
+    Textual's reset (TASK-41129), and it blanked the grip the user had
+    clicked too; any arm in that window reproduced the red exactly. On the
+    list the arm then lands its entry, as it does from any control (review
+    r11n4 N4-3); in the import view, where no list entry is reachable, the
+    clicked grip is the end state the footer pin depends on.
     """
     profile = _Profile(tmp_path, monkeypatch)
     host = profile.host()
@@ -672,13 +676,45 @@ async def test_a_notes_list_entry_arm_keeps_a_grip_the_user_clicked(
             grip = screen.query_one("#library-browse-items-grip")
             screen._library_input_focus = grip  # what a click on it records
             screen.set_focus(grip)
+            await pilot.pause()  # the click's own focus event, before any arm
             screen._arm_library_list_entry_focus()
-            assert screen.focused is grip, screen.focused
+            assert screen.focused is grip, screen.focused  # not blanked
+            await _until(
+                pilot,
+                lambda: screen.focused is not None and screen.focused is not grip,
+                lambda: f"the arm to land the list's entry, on {screen.focused!r}",
+            )
             screen._disarm_library_list_entry_focus()
             screen._library_input_focus = None  # Textual's reset, no click
             screen.set_focus(grip)
+            await pilot.pause()
             screen._arm_library_list_entry_focus()
             assert screen.focused is None, screen.focused
+            screen._disarm_library_list_entry_focus()
+            await _open_import_once_on_the_folder(host, screen, pilot, profile.folder)
+            await _until(
+                pilot,
+                lambda: not any(
+                    worker.group == "library_note_import_recognition"
+                    and not worker.is_finished
+                    for worker in host.workers
+                )
+                and not any(
+                    widget.has_pending_recompose_callback
+                    for widget in screen.query("*")
+                    if isinstance(widget, PostRecomposeCallback)
+                ),
+                "the selection to settle",
+            )
+            screen._disarm_library_list_entry_focus()
+            grip = screen.query_one("#library-browse-items-grip")
+            screen._library_input_focus = grip
+            screen.set_focus(grip)
+            await pilot.pause()
+            screen._arm_library_list_entry_focus()
+            for _ in range(10):  # frames, not time: the arm's own landing
+                await pilot.pause()
+            assert screen.focused is grip, screen.focused
             screen._disarm_library_list_entry_focus()
     finally:
         profile.close()
