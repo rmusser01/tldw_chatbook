@@ -191,6 +191,32 @@ def _tool_cost_key(signature: str) -> str:
     return hashlib.sha256(signature.encode("utf-8")).hexdigest()[:32]
 
 
+#: The internal prompts an agent's first request carries: its operating
+#: prompt, the light-surface hint, the fenced tool protocol and a tool's
+#: description. An override, a legacy key or a new shipped default changes
+#: the tool cost, so their resolved text is part of the tool signature.
+_AGENT_PROMPT_IDS = (
+    "agents.console_agent_operating",
+    "agents.console_light_surface_hint",
+    "agents.tool_protocol",
+    "agents.ask_user_tool_description",
+)
+
+
+def _agent_prompt_digest() -> str:
+    """A digest of the resolved agent prompts (override, legacy or default)."""
+    from ...Internal_Prompts.resolver import get_internal_prompt
+
+    digest = hashlib.sha256()
+    for prompt_id in _AGENT_PROMPT_IDS:
+        try:
+            text = get_internal_prompt(prompt_id)
+        except Exception:  # noqa: BLE001 -- an unresolved prompt is its own state
+            text = "\x00unresolved"
+        digest.update(f"{prompt_id}\x00{text}\x00".encode("utf-8"))
+    return digest.hexdigest()[:32]
+
+
 def _tool_costs_job(kind: str, snapshot: dict[str, int]) -> dict[str, int] | None:
     """One read or write of the saved agent tool costs, on a worker thread.
 
@@ -326,6 +352,7 @@ class ConsoleContextSpendController:
         self._console_tool_costs_pending: dict[str, int] = {}
         self._console_tool_costs_busy = False
         self._console_tool_costs_dirty = False
+        self._console_agent_prompt_digest: tuple[int, str] | None = None
         self._console_settled_spend_cache = None
         self._console_cost_projection_tokens_cache = None
         self._last_console_context_control_state = None
@@ -881,6 +908,22 @@ class ConsoleContextSpendController:
 
         future.add_done_callback(landed)
 
+    def _console_agent_prompts(self) -> str:
+        """The agent prompts' digest, resolved once per config publication.
+
+        The resolver reads the in-memory config (``[internal_prompts]`` never
+        reaches ``app_config``), so it is not re-run on every render: the
+        digest is kept until the runtime config generation changes.
+        """
+        from ... import config as config_module
+
+        generation = config_module.get_runtime_config_generation()
+        cached = self._console_agent_prompt_digest
+        if cached is None or cached[0] != generation:
+            cached = (generation, _agent_prompt_digest())
+            self._console_agent_prompt_digest = cached
+        return cached[1]
+
     def _console_tool_signature(
         self, settings: ConsoleSessionSettings, session_id: str | None = None
     ) -> str:
@@ -888,11 +931,11 @@ class ConsoleContextSpendController:
 
         Config sections, plus two in-memory runtime facts (review 2026-11-23):
         an armed raw shell and the conversation's assistant Library access.
-        The app version stands in for the built-in tool catalog and the
-        agent's default operating prompt, and ``[internal_prompts]`` for an
-        overridden one: a figure saved before an upgrade or an override can
-        be smaller than today's tools (review 2026-11-23). The MCP kill switch
-        and hub servers need a store read; see TASK-33621.4.4.
+        The app version stands in for the built-in tool catalog, and a digest
+        of the resolved agent prompts covers an override, a legacy key and a
+        new shipped default: a figure saved before an upgrade or an override
+        can be smaller than today's tools (reviews of 2026-11-23). The MCP
+        kill switch and hub servers need a store read; see TASK-33621.4.4.
         """
         import tldw_chatbook
 
@@ -924,7 +967,7 @@ class ConsoleContextSpendController:
                 raw_armed,
                 library,
                 getattr(tldw_chatbook, "__version__", None),
-                config.get("internal_prompts"),
+                self._console_agent_prompts(),
             ],
             sort_keys=True,
             default=str,

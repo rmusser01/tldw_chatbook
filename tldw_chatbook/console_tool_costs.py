@@ -6,9 +6,12 @@ so an agent chat reopened after a restart can say Ready instead of "may pause
 to compact" before its first send. Keys are digests of the configuration
 signature (``context_spend._tool_cost_key``), never its config content.
 
-The Console calls this module off the UI loop only, and imports it lazily, so
-it stays off the boot path. It is a small top-level module so the UI test
-suite can give every test its own file without loading Console code.
+The Console reads and writes the file off the UI loop only, and first
+imports this module there (the off-loop job), so it stays off the boot path.
+One import is on the loop: storing a new figure reads ``LIMIT``, which by then
+is a ``sys.modules`` hit, because that store waits for the off-loop read to
+land. It is a small top-level module so the test suite can give every test
+its own file without loading Console code.
 """
 
 from __future__ import annotations

@@ -739,13 +739,35 @@ async def test_an_agent_chats_tool_cost_counts_and_is_never_a_false_ready(
                     monkeypatch.setattr(
                         tldw_chatbook, "__version__", f"{tldw_chatbook.__version__}.1"
                     )
+                    changed = await displayed()
                 else:
-                    overridden = dict(app.app_config)
-                    overridden["internal_prompts"] = {
-                        "agents.console_agent_operating": "longer " * 1500
-                    }
-                    monkeypatch.setattr(app, "app_config", overridden)
-                changed = await displayed()
+                    # Round-6 review: saved the way Settings saves it, then
+                    # reloaded. ``load_settings`` builds app_config without an
+                    # [internal_prompts] section, so a signature that read the
+                    # section never changed in the running app.
+                    from tldw_chatbook.Internal_Prompts import authoring
+
+                    # The prompts are resolved once per config publication,
+                    # not on every render.
+                    resolved = []
+                    digest = cs._agent_prompt_digest
+                    monkeypatch.setattr(
+                        cs,
+                        "_agent_prompt_digest",
+                        lambda: resolved.append(1) or digest(),
+                    )
+                    await displayed()
+                    await displayed()
+                    assert resolved == [], "the agent prompts were re-resolved per render"
+                    prompt = "agents.console_agent_operating"
+                    assert authoring.save_override(prompt, "longer " * 1500)
+                    try:
+                        app.app_config = config_module.load_settings(force_reload=True)
+                        changed = await displayed()
+                        assert resolved, "a saved override was not resolved"
+                    finally:
+                        assert authoring.reset_override(prompt)
+                        app.app_config = config_module.load_settings(force_reload=True)
                 assert changed.request_overhead_tokens == 3000, (
                     "a figure saved under another app version or operating "
                     "prompt was used",

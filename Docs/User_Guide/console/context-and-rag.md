@@ -170,8 +170,8 @@ under **Ask**, the header badge, Inspect's "What happens if I send now?" Run
 line and the Context chip say so, in one of two ways:
 
 - **Next send pauses to compact** when every input of the next send is
-  measured: the header badge reads it (on narrow terminals the badge has no
-  room for it), the Run line and the run chip at the start of the status
+  measured: the header badge reads it (on narrow terminals, a short
+  **Pauses**), the Run line and the run chip at the start of the status
   strip read **Pauses for compaction**, and the Context chip starts with it.
   Its tooltip gives the estimate ("Next send pauses to compact (estimated
   ~1,656 of 1,500 conversation tokens)").
