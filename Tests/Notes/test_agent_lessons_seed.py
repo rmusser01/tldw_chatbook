@@ -609,7 +609,9 @@ def test_seed_waits_for_a_writer_another_connection_holds(
         assert LocalNoteFolderRepository.create_folder is create_folder
         assert getattr(outcome, "status", None) == "created", repr(outcome)
     finally:
-        holder.join(10)
+        # A setup error before start() must surface, not join's RuntimeError.
+        if holder.ident is not None:
+            holder.join(10)
         db.close_connection()
     assert not holder.is_alive()
 
@@ -712,6 +714,8 @@ def test_an_already_seeded_call_does_not_wait_for_another_writer(tmp_path: Path)
         assert second.folder_id == first.folder_id
         assert waited < 0.5, f"seeded call waited {waited:.3f} s for the write lock"
     finally:
-        holder.join(10)
+        # A setup error before start() must surface, not join's RuntimeError.
+        if holder.ident is not None:
+            holder.join(10)
         db.close_connection()
     assert not holder.is_alive()
