@@ -1166,14 +1166,23 @@ class ConsoleAgentController:
         return ensure_console_runtime(self.app_instance, view=screen)
 
     def _agent_runs_reads_closed(self) -> bool:
-        """Whether this view's runtime has begun disposing (TASK-42426).
+        """Whether this view's Console is closing (TASK-42426).
 
-        `_dispose_owned` latches `_disposed` before its first await and then
-        retires the AgentRuns file. The view stays live meanwhile, so a fresh
+        Quit approval's `begin_dispose` sets the runtime's `_disposed` first
+        (`_dispose_owned` sets it otherwise, before its first await), and
+        `_shutdown_console_runtime` marks the view tearing down before it
+        drains the view's workers, on every exit route. The runtime then
+        retires the AgentRuns file while the view stays live, so a fresh
         finite read started by a render would race that retirement. Reads
-        already in flight are not affected. Never resolves a new runtime.
+        already in flight are not affected. This reads the screen's
+        already-resolved runtime; every caller resolves it to obtain the
+        bridge. ADR-225 needs no amendment: this is a per-view admission
+        fence on the runtime's existing latch.
         """
-        resolver = getattr(self._screen, "_console_runtime", None)
+        screen = self._screen
+        if getattr(screen, "_console_chat_tearing_down", False) is True:
+            return True
+        resolver = getattr(screen, "_console_runtime", None)
         runtime = resolver() if callable(resolver) else None
         return getattr(runtime, "_disposed", False) is True
 
@@ -2820,11 +2829,15 @@ class ConsoleAgentController:
         ):
             self.release_historical_presentation()
             return bridge.historical_snapshot(conversation_id)
+        key = self._historical_presentation_key(bridge, conversation_id)
         state = self._console_historical_read
         if self._agent_runs_reads_closed():
-            kept = state and (state["value"] or state.get("stale"))
-            return kept or AgentLiveSnapshot()
-        key = self._historical_presentation_key(bridge, conversation_id)
+            same = state is not None and self._historical_owner(
+                state["key"]
+            ) == self._historical_owner(key)
+            return (same and (state["value"] or state.get("stale"))) or (
+                AgentLiveSnapshot()
+            )
         if self._historical_reads_held:
             current = state is not None and state["key"] == key
             return (current and state["value"]) or AgentLiveSnapshot()

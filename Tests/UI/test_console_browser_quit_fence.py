@@ -258,21 +258,40 @@ async def test_approved_quit_cancels_browser_at_terminal_fence(
         )
 
 
+def _close_console(agent, route):
+    """Close the way an exit does: quit approval latches the runtime, and
+    every exit route marks the view tearing down before its drain."""
+    if route == "latched":
+        agent._screen._console_runtime()._disposed = True
+    else:
+        agent._screen._console_chat_tearing_down = True
+
+
+def _view_agent_runs_reader(agent, bridge, reader, conversation_id="conv"):
+    """One render's call into the view's AgentRuns reader, and its empty value."""
+    from types import SimpleNamespace
+
+    if reader == "counts":
+        rows = (SimpleNamespace(conversation_id=conversation_id),)
+        return (lambda: agent._console_subagent_counts_for_rows(bridge, rows)), {}
+    agent._current_rail_conversation_id = lambda: conversation_id
+    return agent._console_agent_fleet_rows, ()
+
+
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("route", ["latched", "tearing_down"])
 @pytest.mark.parametrize("reader", ["counts", "history"])
 async def test_disposing_runtime_admits_no_new_view_agent_runs_read(
-    tmp_path, monkeypatch, reader
+    tmp_path, monkeypatch, reader, route
 ):
-    """TASK-42426: once dispose latches, a render starts no AgentRuns read.
+    """TASK-42426: once the Console closes, a render starts no AgentRuns read.
 
     Quit drains (cancels) the view's reads before it disposes the runtime,
     and a cancelled read keeps no fresh refresh time. The view stays live
     while the runtime retires its AgentRuns file, so a render would start a
     new read there and race that retirement.
     """
-    from types import SimpleNamespace
-
     from Tests.UI.test_console_refresh_read_batching import (
         _agent,
         _historical_bridge,
@@ -286,17 +305,11 @@ async def test_disposing_runtime_admits_no_new_view_agent_runs_read(
         bridge, _child = _historical_bridge(database)
         agent, tasks = _agent(bridge)
         reads = []
+        render, shown = _view_agent_runs_reader(agent, bridge, reader)
         if reader == "counts":
             name, owner = "count_subagents_by_conversation", database
-            rows = (SimpleNamespace(conversation_id="conv"),)
-
-            def render():
-                return agent._console_subagent_counts_for_rows(bridge, rows)
-
-            shown = {}
         else:
             name, owner = "_derive_historical_snapshot", bridge
-            render, shown = agent._console_agent_fleet_rows, ()
         original = getattr(owner, name)
 
         def held(*args, **kwargs):
@@ -316,14 +329,61 @@ async def test_disposing_runtime_admits_no_new_view_agent_runs_read(
         release.set()
         await asyncio.gather(*tasks, return_exceptions=True)
         assert await asyncio.to_thread(retired.wait, 5)
-        # Dispose latches before its first await, then retires AgentRuns.
-        agent._screen._console_runtime()._disposed = True
+        _close_console(agent, route)
         for _ in range(3):
             assert render() == shown
         assert len(tasks) == 1 and len(reads) == 1, (
-            "A render admitted a new AgentRuns read while the runtime disposed"
+            "A render admitted a new AgentRuns read while the Console closed"
         )
     finally:
         release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        database.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("reader", ["counts", "history"])
+async def test_disposing_runtime_keeps_showing_published_agent_runs_values(
+    tmp_path, monkeypatch, reader
+):
+    """TASK-42426: a closing Console shows the values a read already published.
+
+    Only the conversation that read them gets them back: a render for another
+    conversation shows nothing rather than borrowed rows. No render reads.
+    """
+    from Tests.UI.test_console_refresh_read_batching import (
+        _agent,
+        _finish,
+        _historical_bridge,
+    )
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.UI.Screens import chat_screen
+
+    database = AgentRunsDB(tmp_path / "quit-values.sqlite", "quit-values")
+    tasks = []
+    try:
+        bridge, child = _historical_bridge(database)
+        agent, tasks = _agent(bridge)
+        # Every render would read again if nothing stopped it.
+        monkeypatch.setattr(chat_screen, "CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS", 0)
+        render, empty = _view_agent_runs_reader(agent, bridge, reader)
+        assert render() == empty
+        await _finish(tasks)
+        def shown():
+            value = render()
+            return value if reader == "counts" else [row.row_id for row in value]
+
+        published = shown()
+        assert published == ({"conv": 1} if reader == "counts" else [child])
+        await _finish(tasks)
+        issued = len(tasks)
+        _close_console(agent, "latched")
+        for _ in range(3):
+            assert shown() == published
+        other, _empty = _view_agent_runs_reader(agent, bridge, reader, "other-conv")
+        assert other() == empty, "A closing Console showed another chat's rows"
+        assert len(tasks) == issued, "A render read AgentRuns while the Console closed"
+    finally:
         await asyncio.gather(*tasks, return_exceptions=True)
         database.close()
