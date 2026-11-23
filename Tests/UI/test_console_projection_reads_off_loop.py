@@ -132,6 +132,37 @@ def _isolate_checked_renders(monkeypatch, tasks: set | None = None) -> set:
     return tasks
 
 
+def _isolate_config_locks(monkeypatch) -> None:
+    """Hold both config locks through each core-state push in the calling task.
+
+    The FULL's ``sync_console_core_state`` probes the config locks without
+    blocking, and leaves the whole sync to its replay when another thread
+    holds one (TASK-36511). A worker's config read can hold one at any
+    moment, and a test that reads its own sync's replay flag took that for a
+    slow FULL replaying itself (TASK-42466). This push waits for the locks
+    instead; a cold config still defers to the replay, as do pushes in other
+    tasks.
+    """
+    from contextlib import ExitStack
+
+    from tldw_chatbook import config
+
+    task = asyncio.current_task()
+    real = config_sync.sync_console_core_state
+
+    def push(screen):
+        if asyncio.current_task() is not task:
+            return real(screen)
+        with ExitStack() as held:
+            # The push's own order; both are reentrant, so its probe succeeds.
+            for lock in (config._settings_rebuild_lock(), config._config_file_lock()):
+                assert lock.acquire(timeout=30), "a config lock stayed busy"
+                held.callback(lock.release)
+            return real(screen)
+
+    monkeypatch.setattr(config_sync, "sync_console_core_state", push)
+
+
 @pytest.mark.asyncio
 async def test_run_start_rereads_an_expired_display_so_the_first_projection_pays_no_operation(
     monkeypatch,
@@ -296,8 +327,10 @@ async def test_a_full_sync_slower_than_the_display_life_does_not_replay_itself(
 
             console._sync_native_console_transcript = slow_transcript
             # A busy storage coordinator must not refuse the FULL's projection or
-            # its rail step; an expired display still does.
+            # its rail step, nor a busy config lock its core-state push; an
+            # expired display still does.
             _isolate_checked_renders(monkeypatch)
+            _isolate_config_locks(monkeypatch)
             console._console_control_bar_replay_whole_sync = False
             result = await console._sync_native_console_chat_ui()
             assert (
