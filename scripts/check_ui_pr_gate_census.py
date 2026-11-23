@@ -1270,32 +1270,18 @@ MINIMUM_FILES = 2461
 MINIMUM_FILES = 2476
 # 2026-11-21: re-counted after rebasing onto dev f864f00762. The floor is the measured entry count.
 MINIMUM_FILES = 2478
-
-
-MINIMUM_FILES = 2038
-MINIMUM_FILES = 2045
-MINIMUM_FILES = 2080
-MINIMUM_FILES = 2149
-MINIMUM_FILES = 2150
-MINIMUM_FILES = 2151
-# 2026-11-19: re-counted after rebasing onto dev a6df4d8d48. The floor is the measured entry count.
-MINIMUM_FILES = 2439
-# 2026-11-20: re-counted after rebasing onto dev d85e90bc9e. The floor is the measured entry count.
-MINIMUM_FILES = 2443
-# 2026-11-21: re-counted after rebasing onto dev f864f00762. The floor is the measured entry count.
-# 2026-11-19: re-counted after rebasing onto dev a6df4d8d48. The floor is the measured entry count.
-MINIMUM_FILES = 2447
-MINIMUM_FILES = 2445
-# 2026-11-21: re-counted after rebasing onto dev fe84affafc. The floor is the measured entry count.
-MINIMUM_FILES = 2456
-# 2026-11-22: re-counted after rebasing onto dev ddd3c02052. The floor is the measured entry count.
-MINIMUM_FILES = 2461
-# 2026-11-22: re-counted after rebasing onto dev 2f7790873a. The floor is the measured entry count.
-MINIMUM_FILES = 2476
-# 2026-11-21: re-counted after rebasing onto dev f864f00762. The floor is the measured entry count.
-MINIMUM_FILES = 2478
 # 2026-11-23: re-counted after rebasing onto dev fe8c87e3e2 (TASK-42416's 48 entries on dev's 2478). The floor is the measured entry count.
 MINIMUM_FILES = 2526
+# 2026-11-23, TASK-42478: two node ids at the tail, the Console's and Personas'
+# credential-read gates (each runs two cases). The floor is the measured entry count.
+MINIMUM_FILES = 2528
+# 2026-11-23, TASK-42478 review: the Console credential poll's gate tests, whole
+# file, at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2529
+# 2026-11-23, TASK-42478 second review: the mounted shared-evidence refresh test,
+# red on dev unseen until this task's control-bar retry, at the tail (about 6.1 s
+# serial with the lane's flags). The floor is the measured entry count.
+MINIMUM_FILES = 2530
 
 # 2026-10-26, TASK-34000.29 (polish-1b batch), appended at the tail, so no
 # existing entry changes shard:
@@ -1356,33 +1342,33 @@ MINIMUM_FILES = 2526
 #   Library boot at 120x36 over a real ChaChaNotes database and the real import
 #   executor, ~10-12 s alone at load ~17, with and without the w1b plugin; kept
 #   out of its ~10 s sibling so neither nears the budget): 935 -> 936.
-# Rebased 2026-11-22 onto dev 82055f4750 (2526 entries, floor 2526): the
+# Rebased 2026-11-22 onto dev b31e3e9241 (2530 entries, floor 2530): the
 # polish-1b entries above, then PR #3423's 3 review-fix pins, stay
 # appended at the tail, so no existing slot moves; the floor is the
-# measured entry count: 2526 + 23 = 2549.
+# measured entry count: 2530 + 23 = 2553.
 # - PR #3423 re-review N-1/N-2/N-3 (2026-11-06): Tests/UI/test_library_notes_
 #   bulk_keyword_per_note.py (per-note commits under a ready Sync v2 profile:
 #   three production-CSS Library boots over a real ChaChaNotes database),
-#   appended at the tail: 2549 -> 2550.
+#   appended at the tail: 2553 -> 2554.
 # - PR #3423 nav-home fix round 3 (2026-11-22): Tests/UI/test_library_resume_
 #   focus_every_route.py (a Library resuming over nothing focused lands its
 #   entry or its own rail row, on every rail row the shell builds and the
 #   hub: production-CSS Library boots over a real ChaChaNotes database) is
 #   about 55-60 s whole, over the 30 s per-file budget, so its nine tests go
 #   in by node id at the tail (the route walk split four ways, about 7-10 s
-#   each): 2550 -> 2559.
+#   each): 2554 -> 2563.
 # - PR #3423 review r11n3 N3-1 (2026-11-22): that file's pin for a refused
 #   entry write (one Library boot, about 3 s) goes in by node id at the tail:
-#   2559 -> 2560.
+#   2563 -> 2564.
 # - PR #3423 r11n4 load flake (2026-11-22): that file's pin for a focus a
 #   reset parked on a pane grip (one Library boot, about 3 s), at the tail:
-#   2560 -> 2561.
+#   2564 -> 2565.
 # - PR #3423 r11n4 load flake (2026-11-22): that file's pin for an Artifacts
 #   page read landing in a shell being removed (one boot, about 3 s), at the
-#   tail: 2561 -> 2562.
+#   tail: 2565 -> 2566.
 # - PR #3423 review r11n4 N4-1 (2026-11-22): that file's pin for the re-check
 #   staying on its own route (one Library boot, about 4 s), at the tail:
-#   2562 -> 2563.
+#   2566 -> 2567.
 # - PR #3423 rebase 16 (2026-11-23): that file's pin for a Media list entry
 #   landing on its already-focused row (one Library boot, about 4 s), at the
 #   tail: 2563 -> 2564.
@@ -1486,6 +1472,8 @@ MINIMUM_FILES = 2785
 
 
 
+#   tail: 2567 -> 2568.
+MINIMUM_FILES = 2568
 
 
 def read_census(path: Path) -> list[str]:
