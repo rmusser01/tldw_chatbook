@@ -1,11 +1,11 @@
 ---
 id: TASK-42477
-title: "Every mounted Console test on macOS reads the real login Keychain through the Claude subscription credential poll, in pytest and in its child processes"
+title: "Every mounted Console test on macOS spawns security against the real login Keychain through the Claude subscription credential poll, in pytest and in its child processes"
 status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-23 10:39
-updated_date: 2026-11-23 10:48
+updated_date: 2026-11-23 11:21
 labels:
 - follow-up
 - tests
@@ -29,7 +29,7 @@ dependencies: []
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Found during round 22 of the follow-up burn-down (2026-11-23). Checked on `fu/r22-keychain` at 62531d037a (the head of `fu/r22-railrecon`); paths are under `tldw_chatbook/` unless they start with `Tests/` or `Docs/`.
 
-**Why.** On macOS, when `~/.claude/.credentials.json` is absent, `LLM_Calls/anthropic_subscription.py::_keychain_credential_raw` runs `/usr/bin/security find-generic-password -s "Claude Code-credentials" -w`. That reads the login account's Keychain, whatever HOME is, and returns the Claude Code OAuth token into the process. The Console's credential poll (`ChatScreen._poll_console_credential_readiness`) calls `subscription_credential_status(background=True)` on every tick, whether or not Anthropic is selected, and the first background read reaches the Keychain. The Personas and Settings screens make the same call.
+**Why.** On macOS, when `~/.claude/.credentials.json` is absent, `LLM_Calls/anthropic_subscription.py::_keychain_credential_raw` runs `/usr/bin/security find-generic-password -s "Claude Code-credentials" -w`, a query of the real OS Keychain service. Moving HOME does not stop the spawn. What `security` returns under a moved HOME (the token, nothing, a block or a prompt) was not established, because every measured spawn was refused. Earlier lessons point away from a returned token: TASK-31450, TASK-32344 and TASK-33020 in `backlog/docs/lessons-live-verification.md` saw a 401, "no login keychain" and an authorization block. The Console's credential poll (`ChatScreen._poll_console_credential_readiness`) calls `subscription_credential_status(background=True)` on every tick, whether or not Anthropic is selected, and the first background read reaches that spawn. The Personas and Settings screens make the same call.
 
 The suite's isolation does not cover it. `Tests/conftest.py` redirects HOME, XDG and the config path and pins the null `keyring` backend; `security` honours none of them. No conftest stubs the read, and neither does the scratch wrapper. Only four test files fake it, and only in their own Keychain tests. Many tests also run the app in child processes (the `Tests/Performance` profilers and the private-profile harness), which no conftest monkeypatch reaches. The owner's rule is that tests never touch the real OS keyring.
 
@@ -40,7 +40,7 @@ The suite's isolation does not cover it. `Tests/conftest.py` redirects HOME, XDG
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 No test reads the real login Keychain: with the fix, the same Console sample and the same Performance child file make zero `security` spawns under the refusing probe
+- [x] #1 No test spawns `security` against the real login Keychain: with the fix, the same Console sample and the same Performance child file make zero `security` spawns under the refusing probe
 - [x] #2 The fix also covers child processes that load no conftest (a plain Python child that inherits the test environment), with no per-harness plumbing
 - [x] #3 A guard test, in a file a pull-request lane already runs, fails if the credential read would run `security` in-process or in a child. It is shown red before the fix (refusing the spawn, never running it) and green after, and it bites on Linux CI too
 - [x] #4 The four test files that test the Keychain path still exercise it with their own fakes and pass; a negative control shows those cases need the Keychain branch
@@ -67,7 +67,7 @@ The suite's isolation does not cover it. `Tests/conftest.py` redirects HOME, XDG
 - A new env switch would have to be added to every child-environment builder. `run_console_three_turn_profile.build_child_environment` is a strict allowlist that already drops `PYTHON_KEYRING_BACKEND`, and the TASK-31210 harnesses rebuild the environment as well. The switch would also be a test-only product knob.
 - A `sitecustomize` misses children whose PYTHONPATH is rebuilt (the mount profiler sets `PYTHONPATH=<repo root>`).
 
-The cost is that a real user who runs Chatbook with a moved HOME no longer borrows the Keychain credential. That is deliberate: a moved HOME is a sandboxed profile. The credential file under that HOME still works, and the missing-credential message says why the Keychain was skipped.
+The possible cost: a real user who runs Chatbook with a moved HOME no longer borrows the Keychain credential, if `security` would have returned it there. If `security` finds nothing under a moved HOME (as the TASK-31450, TASK-32344 and TASK-33020 lessons suggest), users lose nothing. Either way the trade is deliberate: a moved HOME is a sandboxed profile. The credential file under that HOME still works, and the missing-credential message says why the Keychain was skipped.
 
 **Guard tests** (`Tests/test_network_guard.py`, a whole-file target of the "Run Architecture guard contracts" PR step). Both force the module's darwin branch, so they bite on Linux CI too:
 - In-process: a `subprocess.run` recorder refuses `security`, and the test drives a sync read plus a fresh readiness cache's background read (the Console path).
@@ -88,7 +88,7 @@ Red at the base, with the spawn refused, never run: both failed with `assert [['
 - `Tests/LLM_Calls` and `Tests/UI/test_console_subscription_readiness.py` at `-n 4`: 2280 passed, 47 skipped, 7 failed, 0 spawns. The 7 are red at the base with the same command (patch set aside and re-applied): 3 `test_summarization_diagnostic_privacy` digest pins, 2 `test_realtime_protocol`, `test_only_fireworks_restricts_reasoning_effort_levels` (deepseek also restricts), and `test_chat_with_anthropic_refuses_cross_origin_redirect` (`RecoveryRequired` in `load_settings`).
 - `Tests/test_network_guard.py` serially: 32 passed, 1 skipped, in 1.06 s.
 - `Tests/CI` at `-n 4`: 1823 passed, 2 skipped.
-- Lint: `ruff check --select F` is clean on the product file. Its two findings in touched test files predate this task (`test_anthropic_subscription.py:149` F841 and `test_personas_subscription_readiness.py:17` F401; both are at the base, and CI's F gate covers only `tldw_chatbook`). `Tests/lint/ruff_gate.py` exits 0.
+- Lint: `ruff check --select F` is clean on the product file. Its two findings in touched test files predate this task (`test_anthropic_subscription.py:149` F841 and `test_personas_subscription_readiness.py:17` F401; both are at the base, and CI's F gate covers only `tldw_chatbook`). The review round removed both. `Tests/lint/ruff_gate.py` exits 0.
 - Preflight: passed (`scripts/preflight.sh` through the wrapper, all derived-artifact checks).
 
 No module-size row lists `anthropic_subscription.py`, and no census or lane changed.
@@ -99,4 +99,23 @@ No module-size row lists `anthropic_subscription.py`, and no census or lane chan
 - Docs: `Docs/User_Guide/settings.md`, and a lesson in `backlog/docs/lessons-testing-evidence.md`.
 
 **ID check.** 42477-42480 were unused after a fetch: 1130 refs, all history names, every other worktree's backlog, and all 98,896 distinct blobs at every ref tip.
+**Review round (2026-11-23).** The review of b97db969fd ("ready with fixes, wording") confirmed:
+- `_keychain_credential_raw` is the only `security` spawn site;
+- the HOME check is sound on every edge case (4.6 µs per call);
+- the guards run on a PR lane and fail without the fix;
+- the opt-in files never run the real command.
+
+Its findings are fixed in new commits:
+- **Unmeasured claim.** The first version said a moved HOME "would still read the real account's token". Every spawn was refused, so only the spawn against the real OS Keychain service was measured; whether it would have returned the token, found nothing, blocked or prompted was not. The lesson, `_home_is_account_home`'s docstring, the guard comment in `Tests/test_network_guard.py`, this task's title and description, and AC #1 now say only that. The lesson cites the three `lessons-live-verification.md` entries that point the other way (TASK-31450, TASK-32344, TASK-33020). The cost sentence above is now conditional. The task file was renamed to match the new title. The first commit's message (e30dc9b2f7) still carries the old wording; it was not amended.
+- **Opt-in order.** In the four files, the `_home_is_account_home` opt-in is now set after the fake `run`, and in the helper test HOME and the password database are set after it. monkeypatch's reverse undo therefore never leaves the real `run` in place while the HOME check says "home".
+- **The returncode test was vacuous.** `test_keychain_reader_nonzero_returncode_is_none` now counts calls to its fake `run`. With its opt-in removed it fails with `assert 0 == 1`; before, it passed either way.
+- **The fix's limit is in the lesson:** a child started with HOME removed counts as the account's home, because `Path.home()` falls back to the password database. An example is `Tests/Performance/test_console_three_turn_profile.py:3991`, whose child environment holds only PATH; it only imports modules, so it never reaches the read.
+
+Filed TASK-42478 (high: the polls spawn the Keychain read whatever the auth source), TASK-42479 (low: the three-turn profiler's child gets no null keyring backend) and TASK-42480 (low: lane `Tests/test_keyring_isolation.py`).
+
+After the review fixes, all with the refusing probe on (0 spawns in every run):
+- the four Keychain files plus `Tests/test_network_guard.py` at `-n 4`: 92 passed, 1 skipped;
+- `Tests/CI` at `-n 4`: 1823 passed, 2 skipped;
+- preflight: passed;
+- `ruff check --select F` on the touched files: clean, after removing the two findings that predate this task (an unused `result =` in `test_anthropic_subscription.py` and an unused `character_handler_module` import in `test_personas_subscription_readiness.py`); `Tests/lint/ruff_gate.py` exits 0.
 <!-- SECTION:NOTES:END -->
