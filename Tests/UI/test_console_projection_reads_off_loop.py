@@ -100,8 +100,8 @@ async def _fresh_display(console):
     return projection
 
 
-def _isolate_checked_renders(monkeypatch) -> None:
-    """Hold the storage coordinator through each checked render in this task.
+def _isolate_checked_renders(monkeypatch, tasks: set | None = None) -> set:
+    """Hold the storage coordinator through each checked render in ``tasks``.
 
     A checked display render declines a coordinator that another thread
     holds, and leaves its work to the whole-sync replay in another task
@@ -109,14 +109,18 @@ def _isolate_checked_renders(monkeypatch) -> None:
     on a worker thread (TASK-42425), and a test that reads its own task's
     renders took that deferral for a cadence failure. Every other refusal,
     an expired or moved display included, still declines.
+
+    Returns:
+        The isolated tasks (the calling task unless ``tasks`` is given); a
+        test may add a worker's task to it before that worker renders.
     """
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
 
-    task = asyncio.current_task()
+    tasks = {asyncio.current_task()} if tasks is None else tasks
     real = spend._run_checked_display_sync
 
     def run(projection, sync, request_retry):
-        if asyncio.current_task() is not task:
+        if asyncio.current_task() not in tasks:
             return real(projection, sync, request_retry)
         assert storage._lock.acquire(timeout=30), "storage coordinator stayed busy"
         try:
@@ -125,6 +129,7 @@ def _isolate_checked_renders(monkeypatch) -> None:
             storage._lock.release()
 
     monkeypatch.setattr(spend, "_run_checked_display_sync", run)
+    return tasks
 
 
 @pytest.mark.asyncio
@@ -1904,21 +1909,19 @@ async def test_a_full_sync_asked_for_during_a_pause_runs_once_after_resume(
             # CORE can independently request another replay during this FULL.
             # Follow the replacement scheduled by resume and the old timer.
             launched = []
-            deferred_renders = set()  # FULLs that left their render to the replay.
+            isolated = _isolate_checked_renders(monkeypatch, set())
+            deferred_rail_reads = set()
+            sync_rail_visibility = config_sync.sync_console_rail_visibility
 
-            def observe_deferral(name):
-                render = getattr(config_sync, name)
+            def observe_rail_visibility(screen):
+                result = sync_rail_visibility(screen)
+                if result is False:
+                    deferred_rail_reads.add(asyncio.current_task())
+                return result
 
-                def observed(screen, *args, **kwargs):
-                    result = render(screen, *args, **kwargs)
-                    if result is False:
-                        deferred_renders.add(asyncio.current_task())
-                    return result
-
-                monkeypatch.setattr(config_sync, name, observed)
-
-            observe_deferral("project_console_tick")
-            observe_deferral("sync_console_rail_visibility")
+            monkeypatch.setattr(
+                config_sync, "sync_console_rail_visibility", observe_rail_visibility
+            )
             replay = console._run_coalesced_control_bar_sync
             after_refresh = console.call_after_refresh
 
@@ -1931,6 +1934,8 @@ async def test_a_full_sync_asked_for_during_a_pause_runs_once_after_resume(
                     if work is console._sync_native_console_chat_ui and (
                         kwargs.get("group") == "console-sync"
                     ):
+                        # Its first await comes before any render (TASK-42425).
+                        isolated.add(worker._task)
                         launched.append((started_at, worker))
                     return worker
 
@@ -1955,10 +1960,10 @@ async def test_a_full_sync_asked_for_during_a_pause_runs_once_after_resume(
             )
             async with asyncio.timeout_at(resumed + 30):
                 if await worker.wait() is not True:
-                    # Its projection or its later rail read can defer to the
-                    # replay while another thread holds the storage
-                    # coordinator (TASK-42425: a DB connection's admission).
-                    assert worker._task in deferred_renders
+                    # FULL already projected. Its later rail read can still
+                    # defer: the rewarm re-reads only an expired display, and
+                    # one just short of its 1 s life can expire as it renders.
+                    assert worker._task in deferred_rail_reads
                     await until(
                         lambda: any(ok for when, ok in fulls if when >= started_at),
                         timeout=30,
@@ -2010,6 +2015,9 @@ async def test_a_control_bar_sync_builds_the_workspace_context_once(monkeypatch)
     from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
     from tldw_chatbook.UI.Console_Modules import workspace
 
+    # The display's proof lives one second; on a loaded runner the syncs below
+    # (and the coordinator wait) can outlast it on the real clock.
+    _install_clock(monkeypatch)
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
         console, _composer = await ready_console(host, pilot, gateway)
