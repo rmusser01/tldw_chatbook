@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -26,11 +27,93 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
     build_console_conversation_browser_state,
 )
 
+# TASK-42469: the mounted tests read config, so on a sandboxed profile they
+# stopped at RecoveryRequired: raw_source_selection_changed before their
+# assertions (locally and in a PR lane). The file keeps the bootstrap profile,
+# as the badge and composer files beside it do.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _select_test_log_run(controller, target):
     """Give focused log lifecycle tests a UI selection and matching metadata seam."""
     controller._capture_run_log_selection = lambda bridge: ("test-conversation", target(), (None, None))
     controller._console_agent_bridge.resolve_run_log_target = lambda conversation, drill: drill
+
+
+class _RailBridge:
+    """What a mounted Console's own ticks read from the attached bridge.
+
+    After mount the Console keeps ticking, and its control-bar sync and tick
+    projection read the Agent section's lines and fleet rows from whatever
+    bridge is attached. A double without these methods raised AttributeError
+    whenever a tick landed inside the test (TASK-42469), so every attached
+    double starts from these quiet answers.
+    """
+
+    def subagent_counts(self, conversation_ids):
+        return {}
+
+    def live_snapshot(self, conversation_id):
+        return AgentLiveSnapshot()
+
+    def subagent_run(self, run_id):
+        return None
+
+    def subagent_runs(self, conversation_id):
+        return []
+
+
+def _record_probe_publications(controller, record):
+    """Call ``record()`` for each Agent-section sync a log probe's result makes.
+
+    The Console's own control-bar sync also syncs the section on every tick,
+    so a recorder on the screen method alone counted ticks as publications
+    (TASK-42469). Only the syncs made inside the probe's publication count.
+    """
+    publishing = []
+    publish = controller._publish_console_agent_log_availability
+
+    def publish_and_mark(*args):
+        publishing.append(True)
+        try:
+            return publish(*args)
+        finally:
+            publishing.pop()
+
+    controller._publish_console_agent_log_availability = publish_and_mark
+    controller._screen._sync_console_agent_section = lambda: (
+        record() if publishing else None
+    )
+
+
+async def _settle_workers(host) -> None:
+    """``host.workers.wait_for_complete()``, except for a worker the Console
+    cancelled itself.
+
+    The Console restarts some exclusive workers on its own (the workspace
+    tray's legacy-alias sync after each tray recompose), and Textual's wait
+    raises ``WorkerCancelled`` for the one replaced while the test waits
+    (TASK-42469). That one has settled. A worker that raised still fails the
+    test.
+    """
+    from textual.worker import WorkerCancelled
+
+    for worker in list(host.workers):
+        try:
+            await worker.wait()
+        except WorkerCancelled:
+            pass
+
+
+def _rail_state_with_agent(console, agent_open):
+    """The real rail state, with the Agent section forced open or closed.
+
+    The control-bar sync asks for the rail state with keywords
+    (``inspector_state``), so a no-argument stub raised TypeError when a tick
+    landed inside the test (TASK-42469).
+    """
+    real = console._current_console_rail_state
+    return lambda **kwargs: replace(real(**kwargs), agent_open=agent_open)
 
 
 def _all_rows(state):
@@ -281,7 +364,7 @@ async def test_subagent_counts_are_batched_and_gated_not_refreshed_every_tick(
 
         calls = []
 
-        class _FakeBridge:
+        class _FakeBridge(_RailBridge):
             def subagent_counts(self, conversation_ids):
                 calls.append(list(conversation_ids))
                 return {cid: 2 for cid in conversation_ids}
@@ -368,7 +451,7 @@ async def test_an_active_run_requeries_subagent_counts_at_most_once_a_second(
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
         calls = []
 
-        class _FakeBridge:
+        class _FakeBridge(_RailBridge):
             def subagent_counts(self, conversation_ids):
                 calls.append(list(conversation_ids))
                 return {cid: len(calls) for cid in conversation_ids}
@@ -510,7 +593,7 @@ async def test_agent_section_lines_render_brackets_literally_not_escaped():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
 
-        class _FakeBridge:
+        class _FakeBridge(_RailBridge):
             def live_snapshot(self, conversation_id):
                 return AgentLiveSnapshot(
                     status="running",
@@ -552,7 +635,7 @@ async def test_agent_section_falls_back_to_historical_snapshot_when_live_is_idle
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
 
-        class _FakeBridge:
+        class _FakeBridge(_RailBridge):
             def live_snapshot(self, conversation_id):
                 return AgentLiveSnapshot()  # idle -- simulates a fresh process
 
@@ -596,7 +679,7 @@ async def test_agent_section_prefers_live_snapshot_over_historical_when_present(
 
         calls = []
 
-        class _FakeBridge:
+        class _FakeBridge(_RailBridge):
             def live_snapshot(self, conversation_id):
                 return AgentLiveSnapshot(status="running", step=2)
 
@@ -679,7 +762,7 @@ async def test_drilldown_falls_back_to_overview_after_conversation_switch():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
 
-        class _FakeBridge:
+        class _FakeBridge(_RailBridge):
             def __init__(self):
                 self.active_conversation_id = "conv-A"
 
@@ -745,7 +828,7 @@ async def test_drilldown_render_path_rejects_record_from_other_conversation():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
 
-        class _FakeBridge:
+        class _FakeBridge(_RailBridge):
             def subagent_run(self, run_id):
                 return {
                     "id": run_id,
@@ -801,7 +884,7 @@ async def test_drilldown_step_text_grows_with_a_configured_cap_above_eighty(
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
 
-        class _FakeBridge:
+        class _FakeBridge(_RailBridge):
             def subagent_run(self, run_id):
                 return {
                     "id": run_id,
@@ -853,7 +936,7 @@ async def test_full_log_probe_never_touches_the_bridge_while_collapsed():
 
         probe_calls = []
 
-        class _FakeBridge:
+        class _FakeBridge(_RailBridge):
             def subagent_counts(self, conversation_ids):
                 return {}
 
@@ -883,7 +966,7 @@ async def test_full_log_probe_never_touches_the_bridge_while_collapsed():
         console._console_agent_drilldown_run_id = None
         console._character._current_console_rail_conversation_id = lambda: "conv-A"
         console._agent._console_agent_drilldown_conversation_id = "conv-A"
-        console._current_console_rail_state = lambda: SimpleNamespace(agent_open=False)
+        console._current_console_rail_state = _rail_state_with_agent(console, False)
 
         # Several "ticks" while collapsed: not even the run-id resolution
         # -- let alone `run_log_available` -- may run.
@@ -906,7 +989,7 @@ async def test_full_log_probe_is_cached_per_run_id_while_open():
 
         probe_calls = []
 
-        class _FakeBridge:
+        class _FakeBridge(_RailBridge):
             def subagent_counts(self, conversation_ids):
                 return {}
 
@@ -940,14 +1023,14 @@ async def test_full_log_probe_is_cached_per_run_id_while_open():
         console._console_agent_drilldown_run_id = None
         console._character._current_console_rail_conversation_id = lambda: "conv-A"
         console._agent._console_agent_drilldown_conversation_id = "conv-A"
-        console._current_console_rail_state = lambda: SimpleNamespace(agent_open=True)
+        console._current_console_rail_state = _rail_state_with_agent(console, True)
 
         # Steady state (same target run id across ticks): probed once, then
         # every later tick is a cache hit.
         console._sync_console_agent_section()
         console._sync_console_agent_section()
         console._sync_console_agent_section()
-        await host.workers.wait_for_complete()
+        await _settle_workers(host)
         assert probe_calls == ["run-1"]
 
         # The target run changes (e.g. a new primary run started) -- the
@@ -955,7 +1038,7 @@ async def test_full_log_probe_is_cached_per_run_id_while_open():
         fake_bridge.target_run_id = "run-2"
         console._sync_console_agent_section()
         console._sync_console_agent_section()
-        await host.workers.wait_for_complete()
+        await _settle_workers(host)
         assert probe_calls == ["run-1", "run-2"]
 
 
@@ -973,7 +1056,7 @@ async def test_view_full_log_loads_off_thread_then_opens_the_modal():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
 
-        class _FakeBridge:
+        class _FakeBridge(_RailBridge):
             def subagent_counts(self, conversation_ids):
                 return {}
 
@@ -1013,7 +1096,7 @@ async def test_view_full_log_loads_off_thread_then_opens_the_modal():
         # blocking and without having pushed the modal yet.
         assert len(host.screen_stack) == stack_len_before
 
-        await host.workers.wait_for_complete()
+        await _settle_workers(host)
         await pilot.pause()
 
         assert len(host.screen_stack) == stack_len_before + 1
@@ -1038,7 +1121,7 @@ async def test_view_full_log_no_ops_when_there_is_no_target_run():
 
         stack_len_before = len(host.screen_stack)
         console._agent._open_console_agent_run_log_viewer()
-        await host.workers.wait_for_complete()
+        await _settle_workers(host)
         await pilot.pause()
 
         assert len(host.screen_stack) == stack_len_before
@@ -1088,7 +1171,7 @@ async def test_clicking_a_specific_subagent_row_drills_into_that_run_directly():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
 
-        class _FakeBridge:
+        class _FakeBridge(_RailBridge):
             _RUNS = [
                 {
                     "id": "run-newest",
@@ -1215,7 +1298,7 @@ async def test_console_agent_fleet_token_total_sums_live_handles():
             ),
         )
 
-        class _FakeBridge:
+        class _FakeBridge(_RailBridge):
             def fleet_snapshot(self, conversation_id):
                 return list(handles) if conversation_id == "conv-A" else []
 
@@ -1255,7 +1338,7 @@ async def test_cancel_console_agent_fleet_row_delegates_to_the_bridge():
 
         calls = []
 
-        class _FakeBridge:
+        class _FakeBridge(_RailBridge):
             def cancel_subagent(self, conversation_id, handle_id):
                 calls.append((conversation_id, handle_id))
                 return True
@@ -1288,7 +1371,7 @@ async def test_cancel_console_agent_fleet_row_returns_false_with_no_row_id():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
 
-        class _FakeBridge:
+        class _FakeBridge(_RailBridge):
             def subagent_counts(self, conversation_ids):
                 return {}
 
@@ -1320,7 +1403,7 @@ async def test_drilldown_shows_a_live_childs_steps_before_they_reach_the_db():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
 
-        class _FakeBridge:
+        class _FakeBridge(_RailBridge):
             def subagent_run(self, run_id):
                 # Row exists from `create_run`; steps land only at the end.
                 return {
@@ -1374,7 +1457,7 @@ async def test_drilldown_still_prefers_the_persisted_steps_once_they_exist():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
 
-        class _FakeBridge:
+        class _FakeBridge(_RailBridge):
             def subagent_run(self, run_id):
                 return {
                     "id": run_id,
@@ -1426,7 +1509,7 @@ async def test_full_log_slow_probe_is_off_thread_and_rejects_stale_target():
         controller = console._agent
         target = ["run-a"]
 
-        class Bridge:
+        class Bridge(_RailBridge):
             def subagent_counts(self, conversation_ids):
                 return {}
 
@@ -1440,8 +1523,9 @@ async def test_full_log_slow_probe_is_off_thread_and_rejects_stale_target():
         controller._console_agent_bridge = bridge
         _select_test_log_run(controller, lambda: target[0])
         published = []
-        console._sync_console_agent_section = lambda: published.append(
-            controller._console_agent_full_log_cache_available
+        _record_probe_publications(
+            controller,
+            lambda: published.append(controller._console_agent_full_log_cache_available),
         )
         assert controller._console_agent_full_log_available() is False
         await settled(pilot, entered.is_set)
@@ -1449,11 +1533,11 @@ async def test_full_log_slow_probe_is_off_thread_and_rejects_stale_target():
         assert calls[0][1] != ui_thread
         target[0] = "run-b"
         gate.set()
-        await host.workers.wait_for_complete()
+        await _settle_workers(host)
         assert published == []
         assert controller._console_agent_full_log_cache_available is False
         assert controller._console_agent_full_log_available() is False
-        await host.workers.wait_for_complete()
+        await _settle_workers(host)
         assert published == [True]
 
 
@@ -1477,11 +1561,12 @@ async def test_negative_availability_retries_after_real_first_record_append(
         controller._console_agent_bridge = bridge
         _select_test_log_run(controller, lambda: "append-run")
         published = []
-        console._sync_console_agent_section = lambda: published.append(
-            controller._console_agent_full_log_cache_available
+        _record_probe_publications(
+            controller,
+            lambda: published.append(controller._console_agent_full_log_cache_available),
         )
         assert controller._console_agent_full_log_available() is False
-        await host.workers.wait_for_complete()
+        await _settle_workers(host)
         assert published == [False]
         writer = run_log.RunLogWriter()
         writer.bind("append-run")
@@ -1496,7 +1581,7 @@ async def test_negative_availability_retries_after_real_first_record_append(
         assert controller._console_agent_full_log_available(allow_probe=False) is False
         assert published == [False]
         assert controller._console_agent_full_log_available() is False
-        await host.workers.wait_for_complete()
+        await _settle_workers(host)
         assert published == [False, True]
         assert controller._console_agent_full_log_available() is True
 
@@ -1517,7 +1602,7 @@ async def test_pending_negative_probe_never_restarts_and_updates_real_affordance
     gate, entered = threading.Event(), threading.Event()
     calls = []
 
-    class Bridge:
+    class Bridge(_RailBridge):
         def subagent_counts(self, conversation_ids):
             return {}
 
@@ -1552,7 +1637,7 @@ async def test_pending_negative_probe_never_restarts_and_updates_real_affordance
             )
         assert calls == ["held-run"]
         gate.set()
-        await host.workers.wait_for_complete()
+        await _settle_workers(host)
         assert console.query_one("#console-agent-view-full-log", Button).display
 
 
@@ -1569,7 +1654,7 @@ async def test_initial_page_rejects_target_change_without_availability_scan(
     ui_thread = threading.get_ident()
     reads = []
 
-    class Bridge:
+    class Bridge(_RailBridge):
         def subagent_counts(self, conversation_ids):
             return {}
 
@@ -1599,7 +1684,7 @@ async def test_initial_page_rejects_target_change_without_availability_scan(
         else:
             target[0] = "replacement-run"
         gate.set()
-        await host.workers.wait_for_complete()
+        await _settle_workers(host)
         assert reads and all(thread != ui_thread for thread in reads)
         assert not any(
             isinstance(screen, ConsoleRunLogModal) for screen in host.screen_stack
@@ -1622,7 +1707,7 @@ async def test_initial_empty_log_semantics(state):
         )
     )
 
-    class Bridge:
+    class Bridge(_RailBridge):
         def subagent_counts(self, conversation_ids):
             return {}
 
@@ -1638,7 +1723,7 @@ async def test_initial_empty_log_semantics(state):
         controller._console_agent_bridge = bridge
         _select_test_log_run(controller, lambda: "empty-run")
         controller._open_console_agent_run_log_viewer()
-        await host.workers.wait_for_complete()
+        await _settle_workers(host)
         await pilot.pause()
         assert isinstance(host.screen_stack[-1], ConsoleRunLogModal) is (
             state == "empty-continuation"
@@ -1655,7 +1740,7 @@ async def test_log_probe_settles_stale_or_cancelled_generation(cancel):
     entered, gate = threading.Event(), threading.Event()
     calls = []
 
-    class Bridge:
+    class Bridge(_RailBridge):
         def subagent_counts(self, conversation_ids):
             return {}
 
@@ -1676,7 +1761,7 @@ async def test_log_probe_settles_stale_or_cancelled_generation(cancel):
         controller._console_agent_bridge = bridge
         _select_test_log_run(controller, lambda: target[0])
         published = []
-        controller._screen._sync_console_agent_section = lambda: published.append(True)
+        _record_probe_publications(controller, lambda: published.append(True))
         assert not controller._console_agent_full_log_available()
         await settled(pilot, entered.is_set)
         if cancel:
@@ -1695,7 +1780,7 @@ async def test_log_probe_settles_stale_or_cancelled_generation(cancel):
         assert not published
         target[0] = "A"
         assert not controller._console_agent_full_log_available()
-        await host.workers.wait_for_complete()
+        await _settle_workers(host)
         assert calls == ["A", "A"]
         assert published == [True]
 
@@ -1711,7 +1796,7 @@ async def test_log_target_metadata_resolution_is_off_thread_and_stale_safe(open_
     ui_thread = threading.get_ident()
     reads = []
 
-    class Bridge:
+    class Bridge(_RailBridge):
         def subagent_counts(self, conversation_ids):
             return {}
 
@@ -1743,7 +1828,7 @@ async def test_log_target_metadata_resolution_is_off_thread_and_stale_safe(open_
         controller._console_agent_bridge = bridge
         controller._current_rail_conversation_id = lambda: conversation[0]
         published = []
-        console._sync_console_agent_section = lambda: published.append(True)
+        _record_probe_publications(controller, lambda: published.append(True))
         if open_viewer:
             controller._open_console_agent_run_log_viewer()
         else:
@@ -1752,7 +1837,7 @@ async def test_log_target_metadata_resolution_is_off_thread_and_stale_safe(open_
         assert reads and all(thread != ui_thread for thread in reads)
         conversation[0] = "B"
         gate.set()
-        await host.workers.wait_for_complete()
+        await _settle_workers(host)
         assert not published
         assert not any(
             isinstance(screen, ConsoleRunLogModal) for screen in host.screen_stack
@@ -1828,7 +1913,7 @@ async def test_old_log_probe_cannot_settle_newer_pending_generation():
     gates = {run: threading.Event() for run in ("A", "B")}
     entered = {run: threading.Event() for run in ("A", "B")}
 
-    class Bridge:
+    class Bridge(_RailBridge):
         def subagent_counts(self, conversation_ids):
             return {}
 
@@ -1885,7 +1970,7 @@ async def test_modal_log_predicate_uses_turn_token_without_metadata_reads():
     token = ["turn-a"]
     metadata_reads, page_reads = [], []
 
-    class Bridge:
+    class Bridge(_RailBridge):
         def subagent_counts(self, conversation_ids):
             return {}
 
@@ -1911,11 +1996,18 @@ async def test_modal_log_predicate_uses_turn_token_without_metadata_reads():
         controller._current_rail_conversation_id = lambda: "A"
         console._sync_console_agent_section = lambda: None
         controller._open_console_agent_run_log_viewer()
-        await settled(
-            pilot, lambda: isinstance(host.screen_stack[-1], ConsoleRunLogModal)
-        )
+
+        def next_laid_out() -> bool:
+            # A modal enters the stack before it mounts; a click on its
+            # unplaced Next button misses (TASK-42469).
+            top = host.screen_stack[-1]
+            return isinstance(top, ConsoleRunLogModal) and any(
+                button.region.area for button in top.query("#console-run-log-next")
+            )
+
+        await settled(pilot, next_laid_out)
         modal = host.screen_stack[-1]
-        await pilot.click("#console-run-log-next")
+        assert await pilot.click("#console-run-log-next")
         await settled(pilot, lambda: "SECOND" in modal.query_one(TextArea).text)
         assert len(metadata_reads) == 1
         assert len(page_reads) == 2 and all(
@@ -1934,7 +2026,7 @@ async def test_log_probe_cancelled_before_entry_retries_on_existing_tick(monkeyp
 
     calls = []
 
-    class Bridge:
+    class Bridge(_RailBridge):
         def subagent_counts(self, conversation_ids):
             return {}
 

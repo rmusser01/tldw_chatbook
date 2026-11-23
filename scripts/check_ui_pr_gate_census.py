@@ -1284,6 +1284,11 @@ MINIMUM_FILES = 2534
 # split into one node id per test function (79), each well under 30 s, so the
 # rebalancer can deal them. The floor is the measured entry count.
 MINIMUM_FILES = 2610
+# 2026-11-23, TASK-42467 and TASK-42469: 15 entries at the tail, all on no lane
+# before: the sub-agent badge file and the agent rail file (whole files), and
+# 13 node ids for the tab-switch composer file's green tests (TASK-35830's two
+# red send-guard functions stay out). The floor is the measured entry count.
+MINIMUM_FILES = 2625
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 
