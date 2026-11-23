@@ -143,7 +143,7 @@ def write_committed_between_read_and_write(db: Any) -> Iterator[list[object]]:
 
 @contextmanager
 def write_lock_held_elsewhere(
-    db: Any, *, grace: float = 0.2, bound: float = 5.0
+    db: Any, *, grace: float = 0.2, bound: float = 30.0
 ) -> Iterator[list[object]]:
     """Hold the write lock from another connection while the block runs.
 
@@ -151,11 +151,16 @@ def write_lock_held_elsewhere(
     (``BEGIN IMMEDIATE``, or a write statement), so a transaction that waits on
     its busy timeout gets the lock then. A DEFERRED transaction that already
     read fails that write at once with SQLITE_BUSY (5) instead. The hold also
-    ends when the block exits, and after ``bound`` seconds at most. Yields
-    ``["asked"]`` once this thread asked for the lock while it was held.
+    ends when the block exits, and after ``bound`` seconds at most (a safety
+    stop, far above any case's setup).
+
+    Yields one entry for this thread's first ask: ``"asked"`` when the other
+    connection still held the lock at that moment, ``"asked-after-release"``
+    when it had already let go (the hold proved nothing, so ``held_off``
+    rejects it).
     """
     connection = db.get_connection()
-    holding, asked, done = threading.Event(), threading.Event(), threading.Event()
+    holding, asked, released, done = (threading.Event() for _ in range(4))
     outcomes: list[object] = []
 
     def on_statement(sql: str) -> None:
@@ -165,7 +170,7 @@ def write_lock_held_elsewhere(
         if upper.startswith("BEGIN IMMEDIATE") or (
             _statement_kind(sql) == "write" and connection.in_transaction
         ):
-            outcomes.append("asked")
+            outcomes.append("asked-after-release" if released.is_set() else "asked")
             asked.set()
 
     def hold() -> None:
@@ -178,6 +183,7 @@ def write_lock_held_elsewhere(
                 if asked.wait(0.01):
                     done.wait(grace)  # let the transaction under test block
                     break
+            released.set()
             holder.rollback()
         finally:
             holder.close()
@@ -202,9 +208,12 @@ def write_lock_held_elsewhere(
 def held_off(mode: Callable[..., Any], outcomes: list[object]) -> bool:
     """Whether the forced contention ran and the transaction held it off.
 
-    True for a transaction that took the write lock before its first read:
-    the other connection's commit was locked out and its WAL restart fell
-    back to passive, or this thread asked for the lock while it was held.
+    For the commit order: the other connection's write was refused ("database
+    is locked") and its WAL restart fell back to passive (busy flag 1), so the
+    transaction held the write lock across its read and its write. For the
+    held order: this thread asked for the write lock while the other
+    connection still held it (``"asked"``); an ask after the hold had already
+    ended (``"asked-after-release"``) does not count.
     """
     if len(outcomes) != 1:
         return False
