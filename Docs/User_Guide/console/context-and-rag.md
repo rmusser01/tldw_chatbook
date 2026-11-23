@@ -176,11 +176,21 @@ line and the Context chip say so, in one of two ways:
   Its tooltip gives the estimate ("Next send pauses to compact (estimated
   ~1,656 of 1,500 conversation tokens)").
 - **May pause to compact** when some input is only estimated, as in an agent
-  chat, which is the default: the agent's tools are counted from your last
-  send, and the next send's tools may differ. The pause is likely but not
-  certain. The header badge, the Run line and the Context chip read **May
-  pause to compact**, and the tooltip gives the estimated history and names
-  what was estimated. Below the trigger such a chat simply reads **Ready**.
+  chat, which is the default. The agent's tools (their definitions, or the
+  tool text a provider without native tool calls carries in the system
+  prompt) are counted from the largest send this session has measured with
+  the same model and tool settings, and the next send's tools may differ.
+  The pause is likely but not certain. The header badge, the Run line and
+  the Context chip read **May pause to compact**, and the tooltip gives the
+  estimated history and names what was estimated. Below the trigger such a
+  chat simply reads **Ready**. Until a send has measured the tools (after
+  the app starts, or after you change the model, a tool gate or MCP
+  settings), the trigger is not known, so an agent chat with any history
+  reads **May pause to compact**.
+- **Next send won't fit** when the system prompt, tools and attached context
+  alone leave no room for the conversation. The send would be refused before
+  anything is sent, so the badge, the Run line and the Context chip say so
+  instead of Ready; the tooltip says what to remove.
 
 Either way you approve before anything is summarized: the send that reaches
 the trigger is held on the card described above. While a message is held, the badge

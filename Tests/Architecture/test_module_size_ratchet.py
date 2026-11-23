@@ -129,7 +129,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-22, same task and rule: 2886 -> 2894 (+8), the Held Send's tooltip
     # says how to resume, and its reason names the stop over other blockers.
     # 2026-11-24 rebase onto dev 9fa2bf1b1d: exact measurement.
-    "tldw_chatbook/Chat/console_display_state.py": 2925,
+    # 2026-11-22, TASK-33621.4 (same rule): 2894 -> 2895 (+1), the Inspect
+    # field carries the forecast note ("May pause to compact" / "won't fit").
+    # 2026-11-24 rebase onto dev 9fa2bf1b1d: exact measurement.
+    "tldw_chatbook/Chat/console_display_state.py": 2926,
     "tldw_chatbook/Widgets/Console/console_selection.py": 379,
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
     # 244 -> 257 (+13), TASK-38585 renders labels literally, not as markup.

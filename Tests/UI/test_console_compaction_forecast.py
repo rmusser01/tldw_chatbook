@@ -339,6 +339,284 @@ async def test_automatic_forecast_matches_real_preflight_with_overhead_and_cap(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    [
+        "D2-unmeasured",
+        "D1-native",
+        "D1-fenced",
+        "D2-other-session",
+        "E-custom-fenced",
+        "C3-stale-gate",
+        "cannot-fit",
+    ],
+)
+async def test_an_agent_chats_tool_cost_counts_and_is_never_a_false_ready(
+    request, monkeypatch, tmp_path, case
+):
+    """Review D1-D3 and follow-ups 1-2 (2026-11-22), against the real check.
+
+    An agent chat (3,000-token system prompt, 5,000 tokens of history,
+    Automatic budget, a 10,000-token input ceiling) whose tools are either
+    provider-native (2,004 schema tokens) or fenced into the system prompt
+    (a 2,000-token rendering delta, as on llama.cpp/vLLM/Ollama):
+
+    - D2: before any request in this run the tools are unmeasured, so the
+      chat may pause (the delta review's probe B read Ready at a displayed
+      5,600 while the real check held at 3,996).
+    - D1/D3: after one real check the displayed trigger is the real hold's
+      (probe A read Ready at 5,600 against a fenced hold at 4,000).
+    - D2(a): another session falls back to the largest remembered figure.
+    - Follow-up 1: a tool-gate change forgets a stale figure (probe C3: a
+      remembered 204 read Ready while 2,004 held).
+    - Follow-up 2: a system prompt that leaves no room reads "Next send
+      won't fit", never Ready (probe D: the real send is refused).
+    """
+    from dataclasses import replace
+    from Tests.UI.test_console_compaction_hold_flow import _ask_console, _held_console
+    from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
+    from tldw_chatbook.Chat import console_prepared_request, console_session_settings
+    from tldw_chatbook.Chat.console_tool_surface_preview import ToolSurfacePreview
+    from tldw_chatbook.UI.Console_Modules import console_spend_projection as spend
+    from tldw_chatbook.Utils.token_counter import ContextWindowResolution
+    from tldw_chatbook import config as config_module, model_capabilities
+
+    def words(messages, _model, *_args, **_kwargs):
+        return 3 + sum(len(str(row.get("content", "")).split()) for row in messages)
+
+    monkeypatch.setattr(
+        console_prepared_request, "count_console_messages_tokens", words
+    )
+    monkeypatch.setattr(console_session_settings, "_estimate_tokens_locally", words)
+    window = ContextWindowResolution(tokens=10_768, verified=True, source="test")
+    catalog = model_capabilities.get_model_capabilities()
+    monkeypatch.setattr(
+        catalog, "get_model_capabilities", lambda *_args: {"max_output_tokens": 256}
+    )
+    app, database, host, adapter, adapter_calls = await _held_console(
+        monkeypatch, tmp_path
+    )
+    console = None
+    try:
+        async with host.run_test(size=(160, 45)) as pilot:
+            console, controller, session, runtime, tasks = await _ask_console(
+                host, pilot, monkeypatch, adapter
+            )
+            trust = await app.ensure_local_skill_trust_service()
+            assert app.local_skills_service.trust_service is trust
+            assert controller._agent_runtime_enabled
+            assert controller._agent_bridge is not None
+            gateway = controller.provider_gateway
+            resolve = gateway.resolve_for_send
+
+            async def current_resolution(selection):
+                return replace(
+                    await resolve(selection), context_window=window, max_tokens=256
+                )
+
+            monkeypatch.setattr(gateway, "resolve_for_send", current_resolution)
+            monkeypatch.setattr(
+                console._context_spend, "_context_window_for_display", lambda _s: window
+            )
+            for _ in range(2):
+                controller.store.append_message(
+                    session.id, role=ConsoleMessageRole.USER, content="q", persist=True
+                )
+                controller.store.append_message(
+                    session.id,
+                    role=ConsoleMessageRole.ASSISTANT,
+                    content="detail " * 2499,
+                    persist=True,
+                )
+
+            def set_policy(budget: int | None) -> None:
+                controller.store.set_session_context_policy_overrides(
+                    session.id,
+                    ConsoleContextPolicyOverrides(
+                        budget_mode=(
+                            ContextBudgetMode.AUTOMATIC
+                            if budget is None
+                            else ContextBudgetMode.CUSTOM
+                        ),
+                        custom_budget_tokens=budget,
+                        compaction_mode=ContextCompactionMode.ASK,
+                    ),
+                )
+
+            async def set_prompt(prompt_words: int) -> None:
+                session.settings = replace(
+                    controller.store.session_settings(session.id),
+                    source="user",
+                    max_tokens=256,
+                    system_prompt="mandatory " * prompt_words,
+                )
+                session.settings_revision += 1
+                await console._sync_native_console_chat_ui()
+                console._console_composer_or_none().load_draft("next")
+
+            set_policy(None)
+            await set_prompt(2996)
+
+            def no_preview(*_args, **_kwargs):
+                raise AssertionError("the display must not preview the tool surface")
+
+            async def displayed():
+                projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
+                await _sync_console_control_bar_now(console)
+                memory = spend.ConsoleContextReadSnapshot.for_screen(
+                    console, max_age=1.0
+                )
+                assert await memory.warm(controller, session.id)
+                states = []
+                with pytest.MonkeyPatch.context() as patch:
+                    patch.setattr(
+                        controller._agent_bridge, "preview_tool_surface", no_preview
+                    )
+                    assert projection.run(
+                        lambda: states.append(
+                            console._context_spend._console_context_control_state_for_session(
+                                session.id
+                            )
+                        )
+                    )
+                return states[-1]
+
+            async def real_check(surface):
+                resolution = await gateway.resolve_for_send(
+                    controller._provider_selection_for_session(session.id)
+                )
+                rows = controller._provider_messages_for_session(
+                    session.id,
+                    annotate_ids=True,
+                    turn_context=controller.resolve_turn_execution_context(session.id),
+                )
+                with pytest.MonkeyPatch.context() as patch:
+                    if surface is not None:
+                        patch.setattr(
+                            controller._agent_bridge,
+                            "preview_tool_surface",
+                            lambda *_args, **_kwargs: surface,
+                        )
+                    return await controller._assess_context_compaction(
+                        session_id=session.id,
+                        resolution=resolution,
+                        provider_messages=[*rows, {"role": "user", "content": "next"}],
+                        uncommitted_user_message_id=None,
+                    )
+
+            def remembered() -> dict:
+                return getattr(console._context_spend, "_console_tool_overhead_seen", {})
+
+            # As after an app restart: nothing prepared, nothing remembered.
+            controller._context_accounting_by_session.clear()
+            remembered().clear()
+
+            def native(tool_words: int) -> ToolSurfacePreview:
+                return ToolSurfacePreview(
+                    tools=(
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "big",
+                                "description": "word " * tool_words,
+                                "parameters": {"type": "object", "properties": {}},
+                            },
+                        },
+                    )
+                )
+
+            prompt = controller.store.session_settings(session.id).system_prompt
+            fenced = ToolSurfacePreview(system_prompt=f"{prompt}\n\n" + "fenced " * 2000)
+
+            if case == "D2-unmeasured":
+                # Probe B: no request yet in this run. Dev's code read Ready
+                # (displayed 5,600) while the real check held at 3,996.
+                before = await displayed()
+                hold, alert = await real_check(native(2000))
+                assert alert is None and hold is not None and hold.trigger_tokens == 3996
+                assert before.forecast_high_context, "a Ready that can hold"
+                assert "not measured yet" in before.forecast_unavailable_reason
+            elif case in {"D1-native", "D1-fenced"}:
+                # Probes B2 and A: after one check the displayed trigger is the
+                # real one; fenced text (the prompt delta) counts too.
+                surface, trigger = (
+                    (native(2000), 3996) if case == "D1-native" else (fenced, 4000)
+                )
+                hold, alert = await real_check(surface)
+                assert alert is None and hold is not None
+                assert hold.trigger_tokens == trigger, hold
+                after = await displayed()
+                assert after.compaction_trigger_tokens == hold.trigger_tokens, (
+                    after.compaction_trigger_tokens,
+                    hold,
+                )
+                assert after.forecast_high_context
+                assert after.compaction_pause_forecast is None
+            elif case == "D2-other-session":
+                # This tab has no request of its own; another session's largest
+                # figure under the same tool configuration stands in.
+                hold, _alert = await real_check(native(2000))
+                assert hold is not None and hold.trigger_tokens == 3996
+                await displayed()  # The display sees the request it follows.
+                controller._context_accounting_by_session.clear()
+                if session.id in remembered():
+                    remembered()["another-session"] = remembered().pop(session.id)
+                borrowed = await displayed()
+                assert borrowed.compaction_trigger_tokens == 3996, (
+                    borrowed.compaction_trigger_tokens
+                )
+                assert borrowed.forecast_high_context
+            elif case == "E-custom-fenced":
+                # Probe E: a custom 6,500 budget is capped at 5,000 by the delta.
+                set_policy(6500)
+                hold, _alert = await real_check(fenced)
+                assert hold is not None and hold.trigger_tokens == 4000
+                custom = await displayed()
+                assert custom.compaction_trigger_tokens == 4000, (
+                    custom.compaction_trigger_tokens
+                )
+                assert custom.forecast_high_context
+            elif case == "C3-stale-gate":
+                # Probe C3: 204 tool tokens remembered, then a tool gate changes
+                # and the next request carries 2,004.
+                hold, _alert = await real_check(native(200))
+                assert hold is None
+                small = await displayed()
+                assert not small.forecast_high_context  # 5,003 under 5,436
+                assert config_module.save_settings_to_cli_config(
+                    {"tools": {"read_file_enabled": True}}
+                )
+                try:
+                    app.app_config = config_module.load_settings(force_reload=True)
+                    stale = await displayed()
+                    hold, _alert = await real_check(native(2000))
+                finally:
+                    assert config_module.save_settings_to_cli_config(
+                        {"tools": {"read_file_enabled": False}}
+                    )
+                    app.app_config = config_module.load_settings(force_reload=True)
+                assert hold is not None and hold.trigger_tokens == 3996
+                assert stale.forecast_high_context, "a stale tool figure read Ready"
+                assert "not measured yet" in stale.forecast_unavailable_reason
+            else:
+                # Probe D: a system prompt that leaves no room. The send is
+                # refused ("cannot make room"); dev's display read Ready.
+                await set_prompt(10496)
+                full = await displayed()
+                hold, alert = await real_check(None)
+                assert hold is None and alert is not None, (hold, alert)
+                assert getattr(full, "compaction_cannot_fit", False), "read Ready"
+                shown = build_console_context_cost_state(full, _COST)
+                assert shown.label.startswith("Next send won't fit · "), shown.label
+                assert "compacting older turns cannot make room" in shown.tooltip
+            assert adapter_calls == []
+    finally:
+        if console is not None:
+            await console._console_runtime().dispose()
+        database.close()
+
+
+@pytest.mark.asyncio
 async def test_a_prefill_or_staged_image_is_counted_and_never_reads_a_false_ready(
     request, monkeypatch, tmp_path
 ):
@@ -897,12 +1175,16 @@ def test_an_agent_chat_reads_ready_below_the_trigger_and_may_pause_above() -> No
     assert "forecast unavailable" not in shown.label.lower()
 
     for values, expected in (
-        ({"compaction_may_pause": True}, may_pause),
+        ({"compaction_forecast_note": may_pause}, may_pause),
+        ({"compaction_forecast_note": "Next send won't fit"}, "Next send won't fit"),
         ({}, "Ready"),
-        ({"compaction_may_pause": True, "run_active": True}, "Running"),
-        ({"compaction_may_pause": True, "run_failed": True}, "Failed"),
+        ({"compaction_forecast_note": may_pause, "run_active": True}, "Running"),
+        ({"compaction_forecast_note": may_pause, "run_failed": True}, "Failed"),
         (
-            {"compaction_may_pause": True, "run_blocked_reason": "recovery needed"},
+            {
+                "compaction_forecast_note": may_pause,
+                "run_blocked_reason": "recovery needed",
+            },
             "Blocked — recovery needed",
         ),
     ):
@@ -919,24 +1201,27 @@ def test_an_agent_chat_reads_ready_below_the_trigger_and_may_pause_above() -> No
         return build_console_workbench_state(**values).header.status_label
 
     assert badge() == "Ready"
-    assert badge(compaction_may_pause=True) == may_pause
+    assert badge(compaction_forecast_note=may_pause) == may_pause
     assert (
         badge(
             readiness_word="Missing key",
             provider_blocker_copy="Missing API key",
-            compaction_may_pause=True,
+            compaction_forecast_note=may_pause,
         )
         == "Missing key"
     )
-    assert badge(compaction_may_pause=True, blocked_turn="compaction ask") == "Blocked"
+    assert (
+        badge(compaction_forecast_note=may_pause, blocked_turn="compaction ask")
+        == "Blocked"
+    )
     # Single-pane widths drop the readiness word because it overruns the row.
-    assert badge(compaction_may_pause=True, readiness_word="") == ""
+    assert badge(compaction_forecast_note=may_pause, readiness_word="") == ""
     from tldw_chatbook.Widgets.Console import console_workbench_state as workbench
 
     assert (
         badge(
             control_state=replace(_control_state(), emergency_stop_held=True),
-            compaction_may_pause=True,
+            compaction_forecast_note=may_pause,
         )
         == workbench.CONSOLE_EMERGENCY_STOP_HEADER_LABEL
     )
@@ -964,7 +1249,7 @@ def test_an_agent_chat_reads_ready_below_the_trigger_and_may_pause_above() -> No
         ),
         _context_spend=SimpleNamespace(
             compaction_pause_expected=lambda: False,
-            compaction_may_pause=lambda: over[0],
+            compaction_forecast_note=lambda: may_pause if over[0] else "",
         ),
         _console_send_ack=SimpleNamespace(run_copy=lambda _sid: acknowledgement[0]),
     )
@@ -1115,7 +1400,8 @@ def test_both_compaction_run_lines_fit_the_inspect_rail_whole() -> None:
     held = _BLOCKED_TURN_REASONS[ConsolePreparationPauseKind.CONTEXT_COMPACTION]
     for line in (
         run(compaction_pause_expected=True),
-        run(compaction_may_pause=True),  # owner decision 2026-11-20
+        run(compaction_forecast_note="May pause to compact"),  # owner, 2026-11-20
+        run(compaction_forecast_note="Next send won't fit"),  # review, 2026-11-22
         run(run_blocked_reason=held),
     ):
         assert cell_len(f"Run: {line}") <= 29, line

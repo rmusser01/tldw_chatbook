@@ -67,9 +67,14 @@ COMPACTION_PAUSE_FORECAST_COPY = "Next send pauses to compact"
 #: default), is over its displayed trigger: a pause is likely, not certain.
 COMPACTION_MAY_PAUSE_COPY = "May pause to compact"
 
+#: Review follow-up 2 (2026-11-22): the same surfaces when the static input
+#: alone leaves no conversation capacity, so the send is refused.
+COMPACTION_CANNOT_FIT_COPY = "Next send won't fit"
+
 #: Review S1 (2026-11-22): what each inexact cause names in the tooltip.
 _MAY_PAUSE_CAUSES = {
     "tools": "the agent's tools",
+    "tools-unknown": "the agent's tools (unmeasured until the next send)",
     "limits": "this provider's input and output limits",
     "prefill": "the response prefill",
     "media": "images",
@@ -77,17 +82,27 @@ _MAY_PAUSE_CAUSES = {
 }
 
 
-def compaction_may_pause_reason(history_tokens: int, causes: Sequence[str]) -> str:
+def compaction_may_pause_reason(
+    history_tokens: int, causes: Sequence[str], *, over: bool = True
+) -> str:
     """The may-pause tooltip's reason, naming what is only estimated.
 
     Args:
-        history_tokens: The estimated conversation tokens over the trigger.
-        causes: Inexact inputs ("tools", "limits", "prefill", "media",
-            "memory"), in order; unknown names are skipped.
+        history_tokens: The estimated conversation tokens.
+        causes: Inexact inputs ("tools", "tools-unknown", "limits",
+            "prefill", "media", "memory"), in order; unknown names skip.
+        over: Whether the history is over the displayed trigger. Without it
+            (the agent's tools unmeasured), the trigger itself is unknown.
 
     Returns:
         Lower-case-led copy that follows "May pause to compact: ".
     """
+    if not over:
+        return (
+            f"the agent's tools are not measured yet (a send measures them), so "
+            f"the trigger for this history (~{history_tokens:,} conversation "
+            "tokens) is unknown and the send itself checks."
+        )
     named = [
         _MAY_PAUSE_CAUSES[cause]
         for cause in dict.fromkeys(causes)
@@ -267,6 +282,19 @@ class ConsoleContextControlState:
         if decision is not CompactionDecision.ASK:
             return None
         return CompactionPauseForecast(self.forecast_tokens, trigger, budget)
+
+    @property
+    def compaction_cannot_fit(self) -> bool:
+        """The counted static input leaves no conversation capacity.
+
+        Review follow-up 2 (2026-11-22): the send is then refused before any
+        provider call ("compacting older turns cannot make room"), so no
+        surface may read Ready.
+        """
+        return (
+            self.request_overhead_tokens is not None
+            and self.resolved_policy.available_conversation_capacity_tokens == 0
+        )
 
     @property
     def conversation_budget_tokens(self) -> int | None:
@@ -726,7 +754,18 @@ def build_console_context_cost_state(
     compact_part = "" if fullness == "unknown" else f"Ctx {fullness} · "
     # TASK-33621.4 AC#3: lead with it, so a clipped strip still shows it.
     forecast = getattr(context, "compaction_pause_forecast", None)
-    if forecast is not None:
+    if getattr(context, "compaction_cannot_fit", False):
+        context_part = f"{COMPACTION_CANNOT_FIT_COPY} · {context_part}"
+        compact_part = f"{COMPACTION_CANNOT_FIT_COPY} · {compact_part}"
+        compaction_line += (
+            f" {COMPACTION_CANNOT_FIT_COPY}: the system prompt, tools and attached "
+            f"context need more than the "
+            f"{format_context_tokens(context.safe_input_ceiling_tokens)} tokens the "
+            "model's context window leaves for a request, so compacting older turns "
+            "cannot make room. Remove attached sources or tools, or lower Max tokens "
+            "in Chat settings ▸ Model and generation (Ctrl+O)."
+        )
+    elif forecast is not None:
         context_part = f"{COMPACTION_PAUSE_FORECAST_COPY} · {context_part}"
         compact_part = f"Pauses to compact · {compact_part}"
         compaction_line += (

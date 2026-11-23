@@ -44,8 +44,10 @@ Top to bottom:
   when the next send will compact first, and **May pause to compact** when
   the history is over the compaction trigger but some input is only
   estimated, as in an agent chat (the default), so the pause is not certain;
-  below the trigger the badge keeps the readiness word. Below 84 columns,
-  where the word does not fit, the badge reads **Ready** or **Blocked**.
+  below the trigger the badge keeps the readiness word. **Next send won't
+  fit** says the system prompt, tools and attached context leave no room.
+  Below 84 columns, where the word does not fit, the badge reads **Ready**
+  or **Blocked**.
 - **Control bar** — one row of buttons: **New tab**, **Settings**, **⚓**
   (hook permissions), **Context rail**, **Search Library**, **Help**.
   (**Save as Chatbook** lives in the composer's **Menu** button, left of

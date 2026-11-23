@@ -51,6 +51,8 @@ from ...Utils.token_counter import NON_TEXT_PART_TOKEN_ESTIMATE
 from ...Widgets.Console.console_context_controls import (
     ConsoleContextControlState,
     build_console_context_control_state,
+    COMPACTION_CANNOT_FIT_COPY,
+    COMPACTION_MAY_PAUSE_COPY,
     compaction_forecast_rows,
     compaction_may_pause_reason,
 )
@@ -293,6 +295,8 @@ class ConsoleContextSpendController:
         self._console_estimate_cache_owners = None
         self._console_settled_context_cache = None
         self._console_compaction_forecast_cache = None
+        #: Review D2: session -> (accounting, tool signature, tool tokens).
+        self._console_tool_overhead_seen: dict[str, tuple[Any, str, int]] = {}
         self._console_settled_spend_cache = None
         self._console_cost_projection_tokens_cache = None
         self._last_console_context_control_state = None
@@ -667,10 +671,14 @@ class ConsoleContextSpendController:
             estimate,
             controller=controller,
         )
-        if mandatory is not None and "tools" in causes and accounting is not None:
-            # Review B1 (2026-11-22): the agent's tools as the last prepared
-            # request carried them; never previewed here (permission reads).
-            mandatory += max(0, int(getattr(accounting, "tool_schema_tokens", 0)))
+        if "tools" in causes:
+            # Review B1/D1/D2 (2026-11-22): the agent's tool cost as prepared
+            # requests carried it; never previewed here (permission reads).
+            tools = self._console_agent_tool_overhead(session_id, settings, accounting)
+            if tools is None:
+                causes = tuple("tools-unknown" if c == "tools" else c for c in causes)
+            elif mandatory is not None:
+                mandatory += tools
         caps = spend.model_token_caps_for_display(self._screen, settings)
         causes = (*causes, *history_causes, *(() if caps is not None else ("limits",)))
         unavailable = ""
@@ -701,23 +709,89 @@ class ConsoleContextSpendController:
             forecast_unavailable_reason=unavailable,
         )
         trigger = state.compaction_trigger_tokens
-        if (
-            unavailable
-            and estimated_history is not None
+        over = (
+            estimated_history is not None
             and trigger is not None
             and estimated_history >= trigger
+        )
+        if unavailable and estimated_history is not None and (
+            over or "tools-unknown" in causes
         ):
             # An advisory about the displayed estimate, never an ASK verdict.
             # Owner decision 2026-11-20 ("ready, then may pause"): below the
-            # trigger an inexact forecast shows nothing; over it, this.
+            # trigger an inexact forecast shows nothing; over it, this. With
+            # the agent's tools unmeasured (review D2) the trigger itself is
+            # unknown, so any history may pause: never a Ready that can hold.
             state = replace(
                 state,
                 forecast_high_context=True,
                 forecast_unavailable_reason=compaction_may_pause_reason(
-                    estimated_history, causes
+                    estimated_history, causes, over=over
                 ),
             )
         return state
+
+    def _console_agent_tool_overhead(
+        self, session_id: str, settings: ConsoleSessionSettings, accounting: Any
+    ) -> int | None:
+        """The agent's tool cost per request, or None while it is unmeasured.
+
+        Review D1 (2026-11-22): tool schemas plus the system-prompt rendering
+        delta, which carries fenced tool definitions and agent guidance on
+        providers without native tool calls. Review D2: prepared requests are
+        remembered per session for this run only, so the largest figure from
+        any session under the current tool configuration stands in, and with
+        none the cost is unknown. Review follow-up 1: a figure counts only
+        under the configuration it was measured with (model, tool gates, MCP
+        and Console tool settings); a change makes it unknown until a send.
+
+        Args:
+            session_id: The session whose prepared request may be new.
+            settings: The session's settings (provider and model).
+            accounting: That session's last prepared-request accounting.
+
+        Returns:
+            Tokens, or None when nothing measured the current configuration.
+        """
+        signature = self._console_tool_signature(settings)
+        seen = self._console_tool_overhead_seen
+        if accounting is not None:
+            cost = sum(
+                max(0, int(getattr(accounting, name, 0) or 0))
+                for name in ("tool_schema_tokens", "system_prompt_delta_tokens")
+            )
+            entry = seen.get(session_id)
+            if entry is None or entry[0] is not accounting:
+                # The largest under one configuration: a later request without
+                # the tools (a /compact summary) must not lower it.
+                if entry is not None and entry[1] == signature:
+                    cost = max(cost, entry[2])
+                seen[session_id] = (accounting, signature, cost)
+        known = [cost for _acct, sig, cost in seen.values() if sig == signature]
+        return max(known) if known else None
+
+    def _console_tool_signature(self, settings: ConsoleSessionSettings) -> str:
+        """What decides the agent's tool set, from in-memory settings only."""
+        import json
+
+        config = spend._screen_readiness_config(self._screen)
+        config = config if isinstance(config, Mapping) else {}
+        console = config.get("console")
+        console = console if isinstance(console, Mapping) else {}
+        return json.dumps(
+            [
+                settings.provider,
+                settings.model,
+                config.get("tools"),
+                config.get("mcp"),
+                {
+                    key: console.get(key)
+                    for key in ("agent_runtime", "local_tools_enabled")
+                },
+            ],
+            sort_keys=True,
+            default=str,
+        )
 
     def _console_compaction_mandatory_estimate(
         self,
@@ -876,14 +950,20 @@ class ConsoleContextSpendController:
         state = self._last_console_context_control_state
         return state is not None and state.compaction_pause_forecast is not None
 
-    def compaction_may_pause(self) -> bool:
-        """Whether the next send may pause: no exact forecast, history over trigger.
+    def compaction_forecast_note(self) -> str:
+        """What the header, Inspect and an idle run chip say before a send.
 
-        TASK-33621.4 AC#3, owner decision 2026-11-20: an agent chat's tools are
-        not counted, so below the trigger it reads Ready and over it "may pause".
+        TASK-33621.4 AC#3, owner decision 2026-11-20 ("ready, then may
+        pause"): "May pause to compact" when an inexact forecast is over the
+        trigger or the agent's tools are unmeasured; review follow-up 2:
+        "Next send won't fit" when the static input leaves no room. Else "".
         """
         state = self._last_console_context_control_state
-        return state is not None and state.forecast_high_context
+        if state is None:
+            return ""
+        if state.compaction_cannot_fit:
+            return COMPACTION_CANNOT_FIT_COPY
+        return COMPACTION_MAY_PAUSE_COPY if state.forecast_high_context else ""
 
     def _build_console_settings_summary_state(self) -> ConsoleSettingsSummaryState:
         """Build compact summary state for the active Console session settings."""
