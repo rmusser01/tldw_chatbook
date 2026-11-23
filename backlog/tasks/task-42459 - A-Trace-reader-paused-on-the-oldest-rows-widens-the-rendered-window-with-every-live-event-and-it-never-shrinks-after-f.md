@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-23 06:38
-updated_date: 2026-11-23 21:31
+updated_date: 2026-11-23 22:28
 labels:
 - follow-up
 - trace
@@ -71,3 +71,13 @@ After `f` the window stayed at 4000, and a following rebuild took 197 ms. These 
 **Docs.** `Docs/User_Guide/console/chat-basics.md` describes the held events and what `f` does.
 
 **Soak.** 32 of 32 runs green (157 tests each, load 49-89; one combined serial run of the four Trace census files with the lane's flags: 124 passed in 222.9 s at load ~74-85) (see TASK-42457).
+
+**Bound kept.** The coordinator ruled on 2026-11-23 to keep the bound.
+
+**Review fixes (commit 787d0059cc).**
+- **Export dropped held events.** `action_export_trace` now exports the held snapshot when there is one. This is checked in `test_a_paused_window_at_the_bound_holds_new_events_until_f`: at 057ed23ecf, "export wrote 1520 of 1522 records".
+- **Scrolling back to the tail kept the grown window.** That release path now runs `f`'s path (`action_resume_follow`) through `call_later`, so the render is not part of the poll tick. The window shrinks, the held events render at the tail, and the cursor moves to the newest row if its row is gone. `test_timer_path_static_update_inventory` still passes: 19 tests. New test `test_scrolling_back_to_the_tail_of_a_held_window_shows_the_newest_page` was red at 057ed23ecf (`1500 == 500`).
+- **`f` on a static Trace threw away pages loaded with `e`.** `f` now shrinks only a live window (`_snapshot_builder is not None`). New test `test_f_on_a_static_trace_keeps_the_pages_loaded_with_e` was red at 057ed23ecf (`500 == 1000`).
+- **Formatting.** The two `until(lambda: ...)` waits added this round now match ruff format. `ruff format --diff` reports no hunk in this round's lines. The file's other hunks were there at base and are left alone.
+- **Docs.** `chat-basics.md` says an export includes the waiting events, and that scrolling back to the bottom shows them the way `f` does.
+- **Soak after the review fixes.** 20 of 20 runs of the five Trace files at `-n 4` passed (168 tests each, load 40-80). `test_trajectory_live.py`, a census entry, now has 41 tests: 37.8 s serial with the lane's flags at load 42. Tests/CI at `-n 4`: 1823 passed, 2 skipped.

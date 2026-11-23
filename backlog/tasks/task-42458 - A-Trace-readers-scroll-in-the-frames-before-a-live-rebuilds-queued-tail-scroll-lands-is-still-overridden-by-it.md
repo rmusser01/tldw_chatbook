@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-23 06:38
-updated_date: 2026-11-23 21:31
+updated_date: 2026-11-23 22:28
 labels:
 - follow-up
 - trace
@@ -67,3 +67,19 @@ Found during round 22 of the follow-up burn-down (2026-11-23). Checked on the ro
 **Docs.** In `Docs/User_Guide/console/chat-basics.md`, the "can be undone by that update" sentence is gone. The guide now says a scroll up pauses at once, even while an update is drawn.
 
 **Soak.** 32 of 32 runs green (157 tests each, load 49-89; one combined serial run of the four Trace census files with the lane's flags: 124 passed in 222.9 s at load ~74-85) (see TASK-42457).
+
+**AC #1 ratified.** The coordinator ratified the "toward older rows" amendment on 2026-11-23.
+
+**Review fixes (commit 787d0059cc).** The names above changed: `_reader_scrolled_up` became `_reader_scrolled(toward_older)`, and the test became `test_a_reader_scroll_while_a_ledger_scroll_is_queued_keeps_the_reader`.
+- **Animated scrollbar scrolls were still undone.** A click above the thumb runs an animated page up. A drag may animate too. The reader's row was read from `scroll_y` before the animation moved, so the view came back. `_top_row`, the view held across a re-render, and the follow check now read `scroll_target_y`. `on_scroll_to` compares against it as well.
+- **A paused reader's scroll toward newer rows was undone.** The ledger now reports both directions: wheel, `cursor_down`, `page_down`, `scroll_bottom`, `ScrollDown`, and a downward `ScrollTo`. While paused, any reader scroll in the window bumps the epoch and records the reader's row again. While following, a scroll toward the tail still changes nothing.
+- **A ledger that cannot scroll paused for good.** `max_scroll_y <= 0` now returns early: there is nothing to scroll away from, and the follow check never resumes such a ledger.
+- **"Pauses at once" was only true in the window.** With nothing queued, a reader scroll now runs the follow check right after the table applies it (`call_next`). Because the check reads `scroll_target_y`, an animated scroll pauses at once too.
+- **Tests (`Tests/UI/test_trajectory_live.py`).** Six cases were added: two for the animated scrollbar (`ScrollTo(animate=True)`, `ScrollUp()`), and four for a paused rebuild in the downward direction (wheel, page down, `ScrollTo`, `ScrollDown`). The paused cases put the cursor in view first, so page down moves the view a page instead of moving the cursor from the newest row to the tail. Also added: `test_a_reader_scroll_up_pauses_follow_at_once[wheel|scrollbar-click]` and `test_a_scroll_on_a_ledger_that_cannot_scroll_keeps_following`.
+- **Red/green.** All the new cases were red at 057ed23ecf: the reader's row was overridden in the animated and paused cases, follow waited in the at-once cases, and follow stayed `False` in the cannot-scroll case. All are green after. Controls, each run once on the final code:
+  - `_top_row` reading `scroll_y` fails the 3 animated cases.
+  - No downward hooks fails the 4 paused-down cases.
+  - No early return fails the cannot-scroll test.
+  - A follow check that reads `scroll_y` fails `at_once[scrollbar-click]`.
+- **Docs.** `chat-basics.md` already said a scroll pauses at once and the reader's rows stay. Both statements are now true in every case above.
+- **Soak after the review fixes.** 20 of 20 runs of the five Trace files at `-n 4` passed (168 tests each, load 40-80). `test_trajectory_live.py`, a census entry, now has 41 tests: 37.8 s serial with the lane's flags at load 42. Tests/CI at `-n 4`: 1823 passed, 2 skipped.
