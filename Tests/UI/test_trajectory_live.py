@@ -454,6 +454,80 @@ async def test_a_paused_reader_keeps_their_place_across_a_live_rebuild(
         assert screen._follow is False
 
 
+async def _paused_at(pilot, until, turns, row):
+    """Open a live Trace of ``turns`` turns and pause it with ``row`` at the top."""
+    screen = pilot.app.screen_instance
+    table = screen.query_one("#trajectory-table", DataTable)
+    await until(lambda: table.max_scroll_y > 0 and not screen._scrolls_pending)
+    table.scroll_to(y=row, animate=False)
+    await until(lambda: table.scroll_y == row)
+    screen._sync_follow_from_scroll()
+    assert screen._follow is False
+    return screen, table
+
+
+@pytest.mark.parametrize("first", ["paused-rebuild", "re-render"])
+async def test_a_second_rebuild_in_the_same_frame_keeps_the_readers_row(
+    first, wait_for_condition
+):
+    """A rebuild that lands while a re-render's reset is still in flight.
+
+    The first re-render reset the scroll to the top at once; the second
+    must not read that reset as the reader's place (TASK-42414 review).
+    """
+
+    async def until(condition):
+        await wait_for_condition(condition, timeout=10.0, interval=0.01)
+
+    app = TrajectoryHostApp(
+        snapshot_with_turns(260), lambda: 3, lambda: snapshot_with_turns(260)
+    )
+    async with app.run_test() as pilot:
+        screen, table = await _paused_at(pilot, until, 260, 40)
+        reading = screen._visible_keys[40]
+        assert reading == "turn:t23"
+
+        # Both in one frame: nothing lands between them.
+        if first == "paused-rebuild":
+            screen._apply_live_snapshot(snapshot_with_turns(261))
+        else:
+            screen._render_ledger()  # what a search key, t, e or a filter runs
+        screen._apply_live_snapshot(snapshot_with_turns(262))
+
+        await until(lambda: not screen._scrolls_pending)
+        top = int(table.scroll_y)
+        assert screen._visible_keys[top] == reading, (
+            f"the reader's top row {reading} now shows {screen._visible_keys[top]}"
+        )
+
+
+@pytest.mark.parametrize("row", [0, 2], ids=["earlier-row-at-top", "oldest-record-at-top"])
+async def test_a_paused_reader_on_the_oldest_rows_keeps_them(row, wait_for_condition):
+    """Past 500 records each new turn drops the oldest rows off the window.
+
+    A paused reader reading those rows keeps them: the window grows to hold
+    them, as it does for the cursor row (TASK-42414 review).
+    """
+
+    async def until(condition):
+        await wait_for_condition(condition, timeout=10.0, interval=0.01)
+
+    app = TrajectoryHostApp(
+        snapshot_with_turns(260), lambda: 3, lambda: snapshot_with_turns(260)
+    )
+    async with app.run_test() as pilot:
+        screen, table = await _paused_at(pilot, until, 260, row)
+        seen = screen._visible_keys[row : row + 6]
+        for turns in (261, 262, 263):
+            screen._apply_live_snapshot(snapshot_with_turns(turns))
+            await until(lambda: not screen._scrolls_pending)
+            top = int(table.scroll_y)
+            assert screen._visible_keys[top : top + 6] == seen, (
+                f"after {turns} turns the reader sees "
+                f"{screen._visible_keys[top : top + 6]}, not {seen}"
+            )
+
+
 async def test_navigating_while_a_live_trace_loads_keeps_the_cursor_in_view(
     monkeypatch, wait_for_condition
 ):
