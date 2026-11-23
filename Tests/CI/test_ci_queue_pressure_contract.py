@@ -417,10 +417,11 @@ DREAMS_BOUNDARY_TARGETS = (
     # the same reason as TASK-36532 above, and before the bootstrap-profile
     # suites below (TASK-32873). Every production
     # ConsoleAgentBridge( passes a light-surface reader (carried #3295 review
-    # fix; pure AST, <1 s); the one-time Full agent tools upgrade's decision
-    # over real tmp WorkspaceDB/AgentRunsDB files and a real config.toml
-    # (~25 s); and the app's boot worker running it on three seeded private
-    # profiles (~40 s serial). All sandboxed.
+    # fix; pure AST); the one-time Full agent tools upgrade's decision over
+    # real tmp WorkspaceDB/AgentRunsDB files and a real config.toml; and the
+    # app's boot worker running it on three seeded private profiles. All
+    # sandboxed. Re-timed 2026-11-23 with this step's flags, serial at load
+    # 40-44 on 18 CPUs: 7 tests in 3.9 s, 86 in 132.2 s and 3 in 59.5 s.
     "Tests/Architecture/test_console_agent_bridge_light_surface_wiring.py",
     "Tests/Agents/test_full_agent_tools_upgrade.py",
     "Tests/App/test_full_agent_tools_upgrade_boot.py",

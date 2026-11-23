@@ -1385,9 +1385,10 @@ jobs:
       # only its two small files here) appends the Console sync maintenance
       # file and the automatic wake recovery file.
       # TASK-34100.5.3.2: the light-surface bridge guard and the Full
-      # agent tools upgrade suites (sandboxed, ~65 s), for the same reason,
-      # after the QwenCloud file and before the bootstrap-profile suites
-      # (TASK-32873).
+      # agent tools upgrade suites (sandboxed; re-timed 2026-11-23 with this
+      # step's flags, serial at load 40-44: 3.9, 132 and 59 s), for the same
+      # reason, after the QwenCloud file and before the bootstrap-profile
+      # suites (TASK-32873).
       - name: Run Dreams and Guardian boundary contracts
         if: ${{ !cancelled() }}
         run: |
