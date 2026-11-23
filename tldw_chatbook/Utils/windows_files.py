@@ -539,6 +539,7 @@ class _Native:
         extra_access=0,
         _metadata_record=None,
         share=_SHARE_ALL,
+        walk=False,
     ):
         access = _READ_CONTROL | _READ_ATTRIBUTES | _SYNCHRONIZE | extra_access
         if directory:
@@ -601,7 +602,16 @@ class _Native:
                     info.volume,
                     (info.index_high << 32) | info.index_low,
                 )
-            self.ntfs(handle)
+            if parent is None or not walk:
+                self.ntfs(handle)
+            # ``walk``: a folder opened below a parent handle only to open
+            # names below it. It is on that parent's volume, because the only
+            # way off it is a reparse point, which info() refused above, and
+            # the name the caller asked about is queried itself when it is
+            # opened. Querying every folder of every chain as well cost a
+            # Console turn tens of seconds: each query is two more calls that
+            # give up the interpreter lock (journey README 55-68 s with it,
+            # about 20 s without; TASK-40608, 2026-11-22).
             return handle.value
         except BaseException:
             if _metadata_record is None:
@@ -965,7 +975,7 @@ def _parent(path, dir_fd=None):
         handle, start, owned = borrowed[0].handle, borrowed[1], False
     try:
         for part in parts[start:-1]:
-            successor = native.open_handle(part, parent=handle, directory=True)
+            successor = native.open_handle(part, parent=handle, directory=True, walk=True)
             if owned:
                 native.kernel.CloseHandle(handle)
             handle, owned = successor, True
@@ -1156,6 +1166,7 @@ class WindowsOS:
             return {}
         native = _native()
         parents = {node.parent for node in nodes if node.parent != node}
+        targets = set(selected)
         handles, identities, observations = {}, {}, {}
         opened, failed = [], []
 
@@ -1175,6 +1186,8 @@ class WindowsOS:
                     metadata=True,
                     directory=node in parents,
                     _metadata_record=record,
+                    # A folder that is only on the way to a selected path.
+                    walk=node in parents and node not in targets,
                 )
             return record
 
