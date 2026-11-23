@@ -40,6 +40,7 @@ _, LIVE_SCREEN_LINE_CEILING, LIVE_SCREEN_METHOD_CEILING = _SCREEN_SIZE_BUDGETS[
 #: Re-pinned 2026-11-24 with the row, TASK-42475 review (side-effect-free accessor).
 #: Re-pinned 2026-11-23 with the row, raised for TASK-34100.16.1 (ported onto dev b31e3e9241; +3 lines).
 #: Re-pinned 2026-11-22 with the row (rebased onto dev fe8c87e3e2).
+#: Re-pinned 2026-11-23 with the row (rebased onto dev b31e3e9241).
 LIVE_RATCHET_ROW = ("ChatScreen", 24_595, 742)
 MAX_DELEGATE_LINES = 5
 
