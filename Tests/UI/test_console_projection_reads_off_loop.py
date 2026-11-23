@@ -1934,7 +1934,7 @@ async def test_a_full_sync_asked_for_during_a_pause_runs_once_after_resume(
                     if work is console._sync_native_console_chat_ui and (
                         kwargs.get("group") == "console-sync"
                     ):
-                        # Its first await comes before any render (TASK-42425).
+                        # Its first suspension comes before any render (TASK-42425).
                         isolated.add(worker._task)
                         launched.append((started_at, worker))
                     return worker
