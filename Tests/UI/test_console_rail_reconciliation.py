@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import replace
 from types import MethodType, SimpleNamespace
@@ -426,6 +427,58 @@ async def test_empty_native_tree_focuses_the_workspace_disclosure_control() -> N
 async def _settle(pilot, passes: int = 5) -> None:
     for _ in range(passes):
         await pilot.pause()
+
+
+async def _wait_for_inspector_quiet(
+    pilot, screen, rail: ConsoleInspectorRail, *, owner_passes_after: int
+) -> None:
+    """Wait until the open Inspect rail and the Console's own syncs are quiet.
+
+    TASK-42474. The Console's startup syncs (a console-sync worker, the
+    credential poll's first full pass, a config-rebuild retry) re-sync the
+    Inspector owners from the screen's builders. Under load one landed after
+    a five-pause settle and counted a second local-then-outer pair. Quiet
+    means, on two polls in a row: the rail open with nothing scheduled on it
+    or its sections, the owner-pass count unchanged and past
+    ``owner_passes_after`` (so the awaited pass has run), attach reconciled,
+    no Console sync running, requested or scheduled, no credential first pass
+    or config retry owed, and no worker left (TASK-42148's signal, widened).
+    """
+
+    def pending() -> list[str]:
+        flags = (
+            ("rail closed", not rail.display),
+            ("outer reconcile scheduled", rail._outer_reconcile_scheduled),
+            ("attach not reconciled", not screen._console_attach_reconciled),
+            ("sync in progress", screen._console_sync_in_progress),
+            ("sync requested", screen._console_sync_requested),
+            (
+                "control-bar sync scheduled",
+                getattr(screen, "_console_control_bar_sync_scheduled", False),
+            ),
+            ("credential first pass", screen._console_credential_pre_gate is None),
+            ("config retry", bool(getattr(screen, "_console_config_retries", None))),
+            ("owner pass", rail._outer_owner_reconcile_count <= owner_passes_after),
+        )
+        return (
+            [name for name, busy in flags if busy]
+            + [
+                f"section {section.section_id}"
+                for section in rail.query(ConsoleBoundedSection)
+                if section._reconcile_scheduled
+            ]
+            + [f"worker {worker.name or worker.group}" for worker in screen.workers]
+        )
+
+    deadline = time.monotonic() + 15.0
+    quiet_polls, passes = 0, rail._outer_owner_reconcile_count
+    while quiet_polls < 2:
+        if time.monotonic() > deadline:
+            raise AssertionError(f"Inspector still busy: {pending()}")
+        stable = rail._outer_owner_reconcile_count == passes
+        passes = rail._outer_owner_reconcile_count
+        quiet_polls = quiet_polls + 1 if stable and not pending() else 0
+        await pilot.pause(0.05)
 
 
 async def _wait_for_rail_condition(
@@ -1958,11 +2011,13 @@ async def test_inspector_descendant_owners_reconcile_local_then_outer(
     async with host.run_test(size=(160, 45)) as pilot:
         screen = host.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-settings-summary")
-        screen.query_one("#console-inspector-rail-open", Button).press()
-        await _settle(pilot)
-        screen._stop_console_transcript_sync_timer()
-
         rail = screen.query_one("#console-right-rail", ConsoleInspectorRail)
+        closed_passes = rail._outer_owner_reconcile_count
+        screen.query_one("#console-inspector-rail-open", Button).press()
+        screen._stop_console_transcript_sync_timer()
+        await _wait_for_inspector_quiet(
+            pilot, screen, rail, owner_passes_after=closed_passes
+        )
         events: list[str] = []
         target_section = {
             "sources": "sources",
@@ -2002,26 +2057,38 @@ async def test_inspector_descendant_owners_reconcile_local_then_outer(
                 "#console-settings-summary", ConsoleSettingsSummary
             )
             owner._on_reconcile = observe_outer
-            owner.sync_state(replace(owner.state, model_row="Model: owner-path-probe"))
+            state = replace(owner.state, model_row="Model: owner-path-probe")
+            # TASK-42474: a later Console sync republishes the screen's own
+            # state; hand it the probe so that sync cannot undo it.
+            monkeypatch.setattr(
+                screen._context_spend,
+                "_build_console_settings_summary_state",
+                lambda: state,
+            )
+            owner.sync_state(state)
         else:
             owner = screen.query_one(
                 "#console-run-inspector-state", ConsoleRunInspector
             )
             owner._on_reconcile = observe_outer
-            owner.sync_state(
-                replace(
-                    owner.state,
-                    dictionary_rows=(
-                        ConsoleDisplayRow("Dictionary A", "attached"),
-                        ConsoleDisplayRow("Dictionary B", "attached"),
-                    ),
-                    world_book_rows=(
-                        ConsoleDisplayRow("World Book A", "attached"),
-                        ConsoleDisplayRow("World Book B", "attached"),
-                    ),
-                )
+            state = replace(
+                owner.state,
+                dictionary_rows=(
+                    ConsoleDisplayRow("Dictionary A", "attached"),
+                    ConsoleDisplayRow("Dictionary B", "attached"),
+                ),
+                world_book_rows=(
+                    ConsoleDisplayRow("World Book A", "attached"),
+                    ConsoleDisplayRow("World Book B", "attached"),
+                ),
             )
-        await _settle(pilot, passes=10)
+            monkeypatch.setattr(
+                screen, "_build_console_inspector_state", lambda _launch: state
+            )
+            owner.sync_state(state)
+        await _wait_for_inspector_quiet(
+            pilot, screen, rail, owner_passes_after=baseline
+        )
 
         assert "local" in events
         assert "outer" in events
@@ -2072,11 +2139,13 @@ async def test_chat_screen_inspector_mutation_paths_delegate_one_owner_request(
     async with host.run_test(size=(160, 45)) as pilot:
         screen = host.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-settings-summary")
-        screen.query_one("#console-inspector-rail-open", Button).press()
-        await _settle(pilot)
-        screen._stop_console_transcript_sync_timer()
-
         rail = screen.query_one("#console-right-rail", ConsoleInspectorRail)
+        closed_passes = rail._outer_owner_reconcile_count
+        screen.query_one("#console-inspector-rail-open", Button).press()
+        screen._stop_console_transcript_sync_timer()
+        await _wait_for_inspector_quiet(
+            pilot, screen, rail, owner_passes_after=closed_passes
+        )
         target_section = {
             "sources": "sources",
             "settings": "session-settings",
@@ -2144,7 +2213,9 @@ async def test_chat_screen_inspector_mutation_paths_delegate_one_owner_request(
                 lambda _launch: state,
             )
             await _sync_console_control_bar_now(screen, screen._current_console_rail_state())
-        await _settle(pilot, passes=10)
+        await _wait_for_inspector_quiet(
+            pilot, screen, rail, owner_passes_after=baseline
+        )
 
         assert "local" in events
         assert events.index("local") < events.index("outer")
