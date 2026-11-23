@@ -466,6 +466,8 @@ DREAMS_TRACKING_RIDERS = (
     "Tests/Workspaces/test_console_workspace_create_handler.py",
     "Tests/Workspaces/test_console_workspace_reconcile.py",
     "Tests/Workspaces/test_workspace_create_modal.py",
+    # TASK-42412: sandboxed, so before Tool_Packs.
+    "Tests/Notes/test_agent_lessons_seed.py",
     "Tests/Tool_Packs",
 )
 #: TASK-42191's C7 nodes, the only bootstrap_profile tests in Tests/Tool_Packs.

@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-22 21:17
-updated_date: 2026-11-23 05:33
+updated_date: 2026-11-23 05:42
 labels:
 - follow-up
 - ci
@@ -87,6 +87,7 @@ Fixed in the test (AC#2's second branch). The refusal is correct behaviour for t
 Out of scope here (proposed as follow-ups):
 - Add the trace refusal codes the send diagnostic does not know (`surface_replacement_checkpoint_unavailable` and others) to `_TRACE_FAILURE_CATEGORIES`.
 - Check whether an agent's next call after a failed first call should be refused by trace reservation.
+- Grep-audit the other read-then-write `db.transaction()` sites (no `immediate=True`) on shared ChaChaNotes handles; any of them fails the same way under a concurrent writer.
 
 Files: `Tests/Performance/test_console_managed_received_acceptance.py` (one wait, 8 lines); `backlog/docs/lessons-testing-evidence.md` (one entry).
 
@@ -111,6 +112,6 @@ Files: `Tests/Performance/test_console_managed_received_acceptance.py` (one wait
   - Note: a second startup caller, `_deferred_wire_notes_sync_services` (`app_service_wiring.py:1988`), runs the same seed, and the shared fix covers it.
 - *Whole "Run the recovered suites" step* at bc8ba15f47, serial with the CI flags (`--storage-lease-guard --timeout=180 --tb=short`) and full output kept: 2006 passed, 1 skipped, 1 deselected in 1048.14 s, load 46 falling to 11. This test took 11.84 s.
 - *Covering tests* (`-n 4`): the seed file plus the Sync_Interop/Agents/Notes files that import `agent_lessons` ran 156 passed, 2 failed. The 2 (`test_notes_organization_app_wiring.py::test_real_per_user_notes_owner_rolls_back_mutation_and_intent_together` and `test_agent_runtime_preparation.py::test_agent_lessons_guidance_recomputes_from_each_effective_schema_set`) fail with `RecoveryRequired: raw_source_selection_changed`, the known local trap, and fail the same way with base `agent_lessons.py`.
-- *Lane.* `Tests/Notes/test_agent_lessons_seed.py` is in no PR lane, only the nightly whole-tree run. It was left unlaned because the recovered-suites step is at its time cap and the lanes workflow is another session's. The managed test, which is laned, exercises the integration path.
+- *Lane.* `Tests/Notes/test_agent_lessons_seed.py` now runs in the "Dreams tracking tests and unlaned riders" job (derived-artifacts.yml), after the three Workspaces riders and before `Tests/Tool_Packs`. It is sandboxed, and the job's pinned order keeps Tool_Packs last because Tool_Packs' bootstrap_profile nodes would break config reads for any test after it. `DREAMS_TRACKING_RIDERS` in `Tests/CI/test_ci_queue_pressure_contract.py` pins it. The job runs no `--storage-lease-guard` and no marker filter; its flags are serial `--timeout=180 --tb=short`. Cost: 16 tests, 12.5-12.8 s serially at load 11, so about 33 s at CI's 2.6x factor. Over 15 PR runs to 2026-11-23 02:31Z the job took median 8.4 / max 9.65 min of its 20, so about 10 min of headroom remains. Local step run and Tests/CI results: the whole step, serial with its flags, ran 753 passed in 429.17 s at load about 10, and this file passed 16/16 in place. `Tests/CI` at `-n 4` ran 1823 passed, 2 skipped.
 - Files: `tldw_chatbook/Notes/agent_lessons.py` (immediate transaction + comment), `Tests/Notes/test_agent_lessons_seed.py` (two tests), `Tests/Performance/test_console_managed_received_acceptance.py` (`settle()` takes a label, and the stop-read wait fails as `managed_received_emergency_stop_read_timeout`, since `refresh()` logs a failed read only at DEBUG), `backlog/docs/lessons-testing-evidence.md` (one new entry, and the first entry corrected).
 <!-- SECTION:NOTES:END -->

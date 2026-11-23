@@ -1465,6 +1465,10 @@ jobs:
     # max 8.0 min of its 20 over 22 PR runs to 2026-11-22, so even at CI's
     # 2.6x quiet-host factor for the additions (UI census note) it stays about
     # 7 min under the cap.
+    # TASK-42412: the agent-lessons seed file (sandboxed, so before Tool_Packs;
+    # 16 tests, 12.5-12.8 s serially at load 11) pins the seed's write lock
+    # against a concurrent writer. 15 PR runs to 2026-11-23 02:31Z took median
+    # 8.4 / max 9.65 min of the 20; +~33 s at 2.6x keeps ~10 min headroom.
     name: Dreams tracking tests and unlaned riders
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -1489,6 +1493,7 @@ jobs:
             Tests/Workspaces/test_console_workspace_create_handler.py \
             Tests/Workspaces/test_console_workspace_reconcile.py \
             Tests/Workspaces/test_workspace_create_modal.py \
+            Tests/Notes/test_agent_lessons_seed.py \
             Tests/Tool_Packs \
             --timeout=180 \
             --tb=short
