@@ -15,7 +15,7 @@ from dataclasses import dataclass, replace
 from types import SimpleNamespace
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import DataTable, Input, Static
 from textual.widgets.data_table import RowDoesNotExist
@@ -34,6 +34,7 @@ from tldw_chatbook.UI.Screens.trajectory_screen import (
     TrajectoryScreen,
     _number_logical_turns,
 )
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 
 # ---------------------------------------------------------------------------
 # Duck-typed projection inputs (same mirrors as the projection unit tests)
@@ -249,8 +250,10 @@ def repeated_turn_segments_with_colliding_event_id() -> TrajectorySnapshot:
     )
 
 
-class _Harness(App[None]):
+class _Harness(ConsolidatedCSSApp):
     """Minimal host so the screen can be pushed like the Console would."""
+
+    CSS_PATH = BUNDLED_STYLESHEET
 
     def compose(self) -> ComposeResult:
         yield Static("base")
