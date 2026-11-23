@@ -54,6 +54,7 @@ from tldw_chatbook.UI.Screens.trajectory_screen import (
     WORKER_THRESHOLD,
     TrajectoryScreen,
 )
+from tldw_chatbook.UI.Widgets.trajectory_timeline import TrajectoryTimeline
 
 # ---------------------------------------------------------------------------
 # Duck-typed projection inputs (same mirrors as the trajectory screen suite)
@@ -933,6 +934,153 @@ async def test_scrolling_back_to_the_tail_of_a_held_window_shows_the_newest_page
         )
         assert screen._follow is True
         assert screen._visible_count == PAGE_SIZE
+
+
+async def _held_at_the_bound(pilot, until):
+    """Pause a 260-turn live Trace on its oldest rows and hold a 761-turn update."""
+    screen, table = await _paused_at(pilot, until, 260, 0)
+    screen._apply_live_snapshot(snapshot_with_turns(760))
+    await until(lambda: not screen._scrolls_pending)
+    screen._apply_live_snapshot(snapshot_with_turns(761))
+    assert screen._held_snapshot is not None
+    return screen, table
+
+
+async def test_a_newer_update_at_the_tail_of_a_held_window_is_not_redrawn_over(
+    monkeypatch, wait_for_condition
+):
+    """An update that lands after the reader reached the bottom wins.
+
+    The tick that saw the reader at the bottom then drew the older held
+    snapshot over it, and the newest events stayed hidden (TASK-42459
+    re-review).
+    """
+
+    async def until(condition):
+        await wait_for_condition(condition, timeout=10.0, interval=0.01)
+
+    poll = TrajectoryScreen._poll_revision
+    monkeypatch.setattr(TrajectoryScreen, "_poll_revision", lambda self: None)
+    app = TrajectoryHostApp(
+        snapshot_with_turns(260), lambda: 3, lambda: snapshot_with_turns(762)
+    )
+    async with app.run_test() as pilot:
+        screen, table = await _held_at_the_bound(pilot, until)
+        table.scroll_end(animate=False, immediate=True)
+        await until(lambda: table.scroll_y == table.max_scroll_y)
+
+        screen._apply_live_snapshot(snapshot_with_turns(762))  # before the tick
+        poll(screen)
+        await until(lambda: not screen._scrolls_pending)
+        await pilot.pause()
+        await until(lambda: not screen._scrolls_pending)
+        assert screen._held_snapshot is None
+        assert screen._total_records == 762 * 2, (
+            f"the ledger shows {screen._total_records} records, not {762 * 2}"
+        )
+        assert screen._visible_keys[-1].endswith("a761")
+        assert screen._follow is True
+
+
+async def test_a_reader_who_scrolls_up_again_before_the_resume_stays_paused(
+    monkeypatch, wait_for_condition
+):
+    """Reaching the bottom and leaving it before the deferred resume runs.
+
+    The resume forced follow on and drew the held events anyway
+    (TASK-42459 re-review).
+    """
+
+    async def until(condition):
+        await wait_for_condition(condition, timeout=10.0, interval=0.01)
+
+    poll = TrajectoryScreen._poll_revision
+    monkeypatch.setattr(TrajectoryScreen, "_poll_revision", lambda self: None)
+    app = TrajectoryHostApp(
+        snapshot_with_turns(260), lambda: 3, lambda: snapshot_with_turns(761)
+    )
+    async with app.run_test() as pilot:
+        screen, table = await _held_at_the_bound(pilot, until)
+        table.scroll_end(animate=False, immediate=True)
+        await until(lambda: table.scroll_y == table.max_scroll_y)
+
+        poll(screen)  # sees the reader at the bottom and defers the resume
+        table.scroll_to(y=0, animate=False)  # before it runs
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._held_snapshot is not None, "the held events were drawn"
+        assert screen._follow is False
+        assert screen._total_records == 760 * 2
+        assert table.scroll_y == 0
+
+
+@pytest.mark.parametrize(
+    "how", ["previous-match", "timeline-click", "timeline-click-pages-in"]
+)
+async def test_a_navigation_move_while_a_tail_scroll_is_queued_keeps_the_cursor_in_view(
+    how, monkeypatch, wait_for_condition
+):
+    """A navigation key or a timeline click moves the reader toward older rows.
+
+    Neither counted as a reader scroll, so a queued tail scroll pulled the
+    view back to the tail with the cursor off screen, still FOLLOWING
+    (TASK-42458 re-review).
+    """
+
+    async def until(condition):
+        await wait_for_condition(condition, timeout=10.0, interval=0.01)
+
+    held = []
+    released = False
+
+    def hold(callback, *args, **kwargs):
+        if released:  # a released callback that queues another passes
+            return MessagePump.call_after_refresh(table, callback, *args, **kwargs)
+        held.append(
+            partial(MessagePump.call_after_refresh, table, callback, *args, **kwargs)
+        )
+        return True
+
+    # Past 500 records the oldest are not drawn: a click on one pages it in,
+    # and the table scrolls to it only after its re-render lays out.
+    turns = 260 if how == "timeline-click-pages-in" else 60
+    monkeypatch.setattr(TrajectoryScreen, "_poll_revision", lambda self: None)
+    app = TrajectoryHostApp(
+        snapshot_with_turns(turns), lambda: 3, lambda: snapshot_with_turns(turns)
+    )
+    async with app.run_test() as pilot:
+        screen = app.screen_instance
+        table = screen.query_one("#trajectory-table", DataTable)
+        await until(lambda: table.max_scroll_y > 0 and not screen._scrolls_pending)
+        monkeypatch.setattr(table, "call_after_refresh", hold)
+        screen._apply_live_snapshot(snapshot_with_turns(turns + 1))
+        assert screen._scrolls_pending and screen._follow is True
+
+        if how == "previous-match":
+            for _ in range(30):
+                await pilot.press("p")
+        else:
+            index = 0 if how == "timeline-click-pages-in" else -60
+            older = screen._all_records()[index]
+            screen._timeline.post_message(
+                TrajectoryTimeline.TrajectoryBarSelected(screen._record_key(older))
+            )
+            await pilot.pause()
+        assert screen._follow is False, "the move did not pause follow"
+
+        released = True
+        for release in held:
+            release()
+        await until(
+            lambda: (
+                not screen._scrolls_pending and table.scroll_y == table.scroll_target_y
+            )
+        )
+        top = int(table.scroll_y)
+        rows = table.scrollable_content_region.height - table.header_height
+        assert top <= table.cursor_row < top + rows, (
+            f"cursor row {table.cursor_row} is off screen ({top}..{top + rows})"
+        )
 
 
 async def test_f_on_a_static_trace_keeps_the_pages_loaded_with_e(wait_for_condition):

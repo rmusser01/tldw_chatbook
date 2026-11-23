@@ -816,7 +816,7 @@ class TrajectoryScreen(ModalScreen[None]):
         if self._follow and self._held_snapshot is not None:
             # The reader scrolled back to the tail: show what is held, as f
             # does. Deferred, so the render is not part of the poll tick.
-            self.call_later(self.action_resume_follow)
+            self.call_later(self._resume_if_still_at_tail)
         try:
             revision = self._revision_provider()
         except Exception:  # noqa: BLE001 - provider is external state
@@ -833,6 +833,12 @@ class TrajectoryScreen(ModalScreen[None]):
             group="trajectory-live",
             exclusive=True,
         )
+
+    def _resume_if_still_at_tail(self) -> None:
+        """The deferred half of the poll's resume: the reader may have left."""
+        self._sync_follow_from_scroll()
+        if self._follow and self._held_snapshot is not None:
+            self.action_resume_follow()
 
     def _live_rebuild_worker(self, revision: int | None) -> None:
         """Worker-thread half of the live rebuild (video-player pattern)."""
@@ -889,12 +895,19 @@ class TrajectoryScreen(ModalScreen[None]):
             self._failure = None
             self._retry_target = None
             self._retry_in_flight = False
-        if not self._follow and self._visible_count >= WORKER_THRESHOLD:
+        if self._held_snapshot is not None or (
+            not self._follow and self._visible_count >= WORKER_THRESHOLD
+        ):
             # Past this many records a synchronous re-render stalls the UI
             # (TASK-42459 measured 118-232 ms a rebuild at 2000-4000), so a
             # paused reader keeps their rows and new events wait for ``f``.
+            # Once something is held, the newest snapshot is what is held,
+            # and a reader back at the tail gets it as ``f`` would.
             self._held_snapshot = snapshot
-            self._refresh_state()
+            if self._follow:
+                self.action_resume_follow()
+            else:
+                self._refresh_state()
             return
         self._install_live_snapshot(snapshot)
 
@@ -1054,6 +1067,18 @@ class TrajectoryScreen(ModalScreen[None]):
         if following != self._follow:
             self._follow = following
             self._refresh_state()
+
+    def _reader_moved_cursor(self, from_key: str | None, to_key: str) -> None:
+        """A navigation key or a timeline click moved the cursor to ``to_key``.
+
+        That moves the view as a scroll would, so it counts as one, in the
+        direction the cursor went.
+        """
+        keys = self._visible_keys
+        if to_key not in keys:
+            return
+        older = from_key not in keys or keys.index(to_key) < keys.index(from_key)
+        self._reader_scrolled(older)
 
     def _reader_scrolled(self, toward_older: bool) -> None:
         """A wheel, key or scrollbar scroll, before the table applies it.
@@ -1909,6 +1934,7 @@ class TrajectoryScreen(ModalScreen[None]):
         except StopIteration:
             return  # unknown record (stale bar from a live snapshot): no-op
         key = self._record_key(selected_record)
+        from_key = self._cursor_key()
         state_without_time = replace(self._filter_bar.state, time_range=None)
         if not self._record_matches(
             selected_record, self._query.lower()
@@ -1952,6 +1978,7 @@ class TrajectoryScreen(ModalScreen[None]):
         # on both synchronous and future worker-backed paths.
         if key in self._visible_keys:
             self._move_cursor_to_key(key)
+            self._reader_moved_cursor(from_key, key)
 
     def _move_cursor_to_key(self, key: str) -> None:
         """Best-effort cursor move to the row with ``key``."""
@@ -2079,6 +2106,7 @@ class TrajectoryScreen(ModalScreen[None]):
             self._pending_restore_key = key
             self._render_ledger()
         self._move_cursor_to_key(key)
+        self._reader_moved_cursor(current, key)
 
     def action_next_match(self) -> None:
         self._navigate_records(lambda _record: True, 1)
