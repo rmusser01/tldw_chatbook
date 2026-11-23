@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-22 22:10
-updated_date: 2026-11-23 03:31
+updated_date: 2026-11-23 04:14
 labels:
 - follow-up
 - ci
@@ -56,7 +56,7 @@ All three pin the Console's sync and projection cadence (coalescing a run start'
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-**Verdict (AC#1): test ordering, not a product cadence defect, for all three nodes and one more.** Every failure was the test's own sync meeting the storage coordinator (`storage_admission._lock`) held by another thread at a checked display render. `_checked_display_status` takes that lock with `acquire(blocking=False)` before and after each render, and a busy coordinator declines the render. The product then leaves it to the whole-sync replay, which renders in another task, as designed (TASK-40968). The tests read their own task's render, so they counted that deferral as a cadence failure. The cadence decisions themselves (left to the poll, owed, served) are made before the render and were right in every logged case. Every refused proof was fresh (0.0-0.6 s old against a 1 s life).
+**Verdict (AC#1): test ordering, not a product cadence defect, for all three nodes and one more.** All 12 CI failures match one mechanism: a sync whose render the test asserted (in the test's own task, or for node 3 the resume FULL's worker task) met the storage coordinator (`storage_admission._lock`) held by another thread at a checked display render. The local probe reproduced it for nodes 1-3 and the workspace sibling; the snapshot node's CI symptom matches the forced overlap. `_checked_display_status` takes that lock with `acquire(blocking=False)` before and after each render, and a busy coordinator declines the render. The product then leaves it to the whole-sync replay, which renders in another task, as designed (TASK-40968). The tests read that sync's render, so they counted the deferral as a cadence failure. The cadence decisions themselves (left to the poll, owed, served) are made before the render and were right in every logged case. Every refused proof was fresh (0.0-0.6 s old against a 1 s life).
 
 **CI evidence.** Of the 228 Derived Artifacts runs created since 2026-11-20, I scanned every attempt of the 213 that did not end in success, and found 12 failed UI Fast Lane (36) jobs (the filing counted 11):
 - `test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection`, 7 jobs. Line 491 `assert False is True` (the tick's projection returned False) in 137289973758, 137002801775 and 136379457523. Line 522 `assert ([])` (the FULL returned at its declined projection, before the transcript) in 137297601294, 137237410875, 137073602499 and 136377707759.
@@ -77,12 +77,20 @@ The snapshot sibling did not fail in 24 local executions. Its CI symptom matches
 - node 3: the child reported `assert <Task ...> in set()`;
 - snapshot: `assert (0 + 1) in []`;
 - workspace: `_sync_console_control_bar deferred`.
-Fixed copies: 10 of 10 passed, 7 of them under the same forced holds (a log confirmed each hold fired) and 3 unforced.
+Fixed copies at 0cfd93fee3: 10 of 10 passed, 7 of them under the same forced holds (a log confirmed each hold fired) and 3 unforced. After the review round (below), the node 3 and workspace tests at 6787c7fe57 passed the same forced hold again, 2 of 2, and both holds fired.
 
 **Fix (test only; no product change).**
-- New helper `_isolate_checked_renders(monkeypatch)` (TASK-40968's pattern, from one choke point). It wraps `console_spend_projection._run_checked_display_sync` so each checked render in the calling task waits for the coordinator (`acquire(timeout=30)`) and holds it, with no await under it. Renders in other tasks are unchanged. An expired or moved display still declines.
-- Applied to node 1 (the owner task that counts projections), node 2 (the FULL awaited in the test task) and five siblings with the same exposure. Two siblings have CI or local reds: the context-snapshot tick and the workspace-context bare syncs. Three have no recorded red: the `_project` calls in `test_run_start_rereads_an_expired_display_...` and `test_a_projection_rereads_an_aging_display_...`, and node 2's second FULL, which the same install covers.
-- Node 3 already allowed the resume's FULL to defer its rail read "while storage is busy". It assumed the projection before it could not defer. The test now records a deferral from `project_console_tick` as well as from `sync_console_rail_visibility` (`deferred_renders`), and then waits, as before, for a FULL to render. I kept its "launched once", "before the backoff" and "stopped timer delivers nothing" assertions unchanged.
+- New helper `_isolate_checked_renders(monkeypatch, tasks=None)` (TASK-40968's pattern, from one choke point). It wraps `console_spend_projection._run_checked_display_sync` so each checked render in a set of tasks waits for the coordinator (`acquire(timeout=30)`) and holds it, with no await under it. The set is the calling task by default, and the helper returns it so a test can add a worker's task. Renders in other tasks are unchanged. An expired or moved display still declines.
+- Applied to node 1 (the owner task that counts projections), node 2 (the FULL awaited in the test task, which also covers its second FULL) and four sibling tests with the same exposure. Two siblings have CI or local reds: the context-snapshot tick and the workspace-context bare syncs. Two have no recorded red: the `_project` calls in `test_run_start_rereads_an_expired_display_...` and `test_a_projection_rereads_an_aging_display_...`.
+- Node 3 (as revised in review, 6787c7fe57): `record_full` adds the resume FULL's worker task to the isolated set as the worker starts. The FULL's first await comes before any render, so the task is registered in time. Only its rail read may still defer, as the test allowed before: the rewarm re-reads only an expired display, and one just short of its 1 s life can expire as it renders. Its "launched once", "before the backoff" and "stopped timer delivers nothing" assertions are unchanged. (0cfd93fee3 had instead widened the allowance to any projection deferral; review showed that let a regression through, see below.)
+- The workspace-context test now installs the fake clock (`_install_clock`), as the file's other display tests do. On the real clock its four syncs, and the coordinator wait, could outlast the display's one-second proof on a loaded runner (6787c7fe57).
+
+**Review round (2026-11-23).** The review found Minors, all fixed in new commits:
+- Node 3's widened allowance accepted any deferral of the resume FULL's projection. With a temporary mutation that made that projection always defer (`project_console_tick` returning the replay for the resume FULL's task), the 0cfd93fee3 test passed; the 6787c7fe57 test fails with `assert <Task ...> in set()`.
+- The workspace test's real clock. With a temporary 1.1 s block on the loop before its syncs, the 0cfd93fee3 test failed (`_sync_console_control_bar deferred`); the 6787c7fe57 test passes.
+- Counts: four sibling tests, not five (the fifth was node 2's second FULL; corrected above).
+- Correction to commit 0cfd93fee3's message, which says the probe "reproduced each node at base". It reproduced nodes 1-3 and the workspace sibling. The snapshot node did not fail locally; only its CI symptom matches the forced overlap.
+- The lesson entry was reworded to the same scope and cross-referenced to task-3315's "re-derive the failing STATEMENT" corollary.
 
 **Negative controls on the fixed tests** (temporary source edits, run, then reverted):
 - `rewarm_console_presentation` returns at once: node 2 fails with "replayed itself". The isolation does not hide an expired display.
@@ -95,9 +103,13 @@ Fixed copies: 10 of 10 passed, 7 of them under the same forced holds (a log conf
 - 20 of 20 whole-file runs at -n 4 passed (29 of 29 each). These were two concurrent loops of 10, run beside the serial loop.
 - 6 of 6 more at -n 6 passed (load 31-37).
 - 5 of 5 serial runs with the UI lane's flags (`-p no:xdist --timeout=180`) passed, 284-370 s each (load 23-42).
+After the review round, on 6787c7fe57 (the final test file), again beside other agents' load:
+- 20 of 20 whole-file runs at -n 4 passed (29 of 29 each; two concurrent loops of 10 beside the serial loop; load 26-47).
+- 6 of 6 more at -n 6 passed (load 25-31).
+- 5 of 5 serial runs with `-p no:xdist --timeout=180` passed, 196-346 s each (load 27-46).
 For contrast, at base the same load gave the probe failures above. One base run under `taskpolicy -b` failed only on 30 s setup and `private_sqlite_helper_timeout` app-boot timeouts, which is the starvation artefact the `taskpolicy -b` lesson describes, so I did not use `-b` for the soak.
 
-**Other checks.** `ruff check` (all rules, and `--select F`) passes and `ruff format` reports the file already formatted. `Tests/CI/test_console_approval_critical_gate.py`, which names the file, passed 6 of 6. `./scripts/preflight.sh` passed through the wrapper. No size ratchet lists the file. The census entry is unchanged (no new test).
+**Other checks.** `ruff check` (all rules, and `--select F`) passes and `ruff format` reports the file already formatted. `Tests/CI/test_console_approval_critical_gate.py`, which names the file, passed 6 of 6. `./scripts/preflight.sh` passed through the wrapper, and again on the review-round tree. No size ratchet lists the file. The census entry is unchanged (no new test).
 
-**Files.** `Tests/UI/test_console_projection_reads_off_loop.py`, and a `backlog/docs/lessons-testing-evidence.md` entry: map a CI failure by its assertion text, not its line number, and isolate every own-task render in the file.
+**Files.** `Tests/UI/test_console_projection_reads_off_loop.py`, and a `backlog/docs/lessons-testing-evidence.md` entry: map a CI failure by its assertion text, not its line number, and isolate every render a test asserts.
 <!-- SECTION:NOTES:END -->
