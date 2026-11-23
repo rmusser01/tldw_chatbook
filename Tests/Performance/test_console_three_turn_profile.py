@@ -3877,6 +3877,8 @@ def test_build_child_environment_is_strictly_allowlisted(tmp_path: Path) -> None
         "PYTHONPATH": "/candidate/that/must/not/leak",
         "HOME": "/Users/alice",
         "UNRELATED": "host-state",
+        # TASK-42479: a host backend is never inherited (macOS: the login Keychain).
+        "PYTHON_KEYRING_BACKEND": "keyring.backends.macOS.Keyring",
     }
 
     assert callable(build_child_environment)
@@ -3893,6 +3895,7 @@ def test_build_child_environment_is_strictly_allowlisted(tmp_path: Path) -> None
     assert environment["TLDW_TEST_MODE"] == "1"
     assert environment["PYTHONDONTWRITEBYTECODE"] == "1"
     assert environment["PYTHONUNBUFFERED"] == "1"
+    assert environment.get("PYTHON_KEYRING_BACKEND") == "keyring.backends.null.Keyring"
     assert set(environment).isdisjoint(
         {"OPENAI_API_KEY", "HTTPS_PROXY", "NO_PROXY", "PYTHONPATH", "UNRELATED"}
     )
@@ -8363,6 +8366,70 @@ def test_assert_child_environment_requires_sample_owned_paths(tmp_path: Path) ->
     escaped["XDG_DATA_HOME"] = str(tmp_path / "outside")
     with pytest.raises(RuntimeError, match="child_environment_mismatch"):
         assert_child_environment(sample_root, escaped)
+
+    # TASK-42479: the child builds a real TldwCli, so it must keep the null
+    # keyring backend; without it (or with another) it would get the OS store.
+    without_backend = {
+        key: value
+        for key, value in environment.items()
+        if key != "PYTHON_KEYRING_BACKEND"
+    }
+    with pytest.raises(RuntimeError, match="child_environment_mismatch"):
+        assert_child_environment(sample_root, without_backend)
+    other_backend = dict(environment)
+    other_backend["PYTHON_KEYRING_BACKEND"] = "keyring.backends.macOS.Keyring"
+    with pytest.raises(RuntimeError, match="child_environment_mismatch"):
+        assert_child_environment(sample_root, other_backend)
+    assert environment.get("PYTHON_KEYRING_BACKEND") == "keyring.backends.null.Keyring"
+
+
+def test_parent_spawns_each_child_with_the_null_keyring_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TASK-42479: the env handed to the spawn, captured without a real child."""
+    spawned: list[dict[str, str]] = []
+
+    def child(_command, *, environment, **_kwargs):
+        spawned.append(dict(environment))
+        return profile.ChildResult("failed", 1, None)
+
+    monkeypatch.setattr(profile, "run_child_with_watchdog", child)
+    run_root = tmp_path / "run"
+    sample_root = run_root / "samples" / "env-check"
+    run_root.mkdir()
+    profile._run_parent_child(
+        SimpleNamespace(
+            endpoint="http://127.0.0.1:9099",
+            model="fixture.gguf",
+            iterations=1,
+            burn_in_blocks=0,
+            sample_timeout=5.0,
+        ),
+        runner=Path(profile.__file__).resolve(),
+        run_root=run_root,
+        raw_path=run_root / "raw.jsonl",
+        revisions={
+            "control": profile.CONTROL_SHA,
+            "candidate": profile.CANDIDATE_SHA,
+        },
+        target_root=tmp_path,
+        sample_root=sample_root,
+        spec={
+            "sample_id": "env-check",
+            "phase": "warmup",
+            "iteration": -1,
+            "arm": "control",
+            "schedule_position": 0,
+            "target_root": str(tmp_path),
+            "sample_root": str(sample_root),
+            "run_root": str(run_root),
+            "evidence_path": str(run_root / "raw.jsonl"),
+        },
+    )
+
+    assert [environment.get("PYTHON_KEYRING_BACKEND") for environment in spawned] == [
+        "keyring.backends.null.Keyring"
+    ]
 
 
 def test_child_spec_round_trip_rejects_unknown_fields(tmp_path: Path) -> None:

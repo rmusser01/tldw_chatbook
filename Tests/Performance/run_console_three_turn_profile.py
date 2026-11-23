@@ -237,6 +237,7 @@ _SAFE_INHERITED_ENVIRONMENT = (
     "TERM",
     "TZ",
 )
+_NULL_KEYRING_BACKEND = "keyring.backends.null.Keyring"
 _OWNED_CHILD_ENVIRONMENT = (
     "HOME",
     "XDG_CONFIG_HOME",
@@ -4110,6 +4111,9 @@ def build_child_environment(
             "TLDW_TEST_MODE": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONUNBUFFERED": "1",
+            # TASK-42479: the child builds a real TldwCli; never the OS keyring
+            # (on macOS the login Keychain), whatever the host sets.
+            "PYTHON_KEYRING_BACKEND": _NULL_KEYRING_BACKEND,
         }
     )
     return environment
@@ -4125,6 +4129,7 @@ def assert_child_environment(sample_root: Path, environment: Mapping[str, str]) 
             "TLDW_TEST_MODE",
             "PYTHONDONTWRITEBYTECODE",
             "PYTHONUNBUFFERED",
+            "PYTHON_KEYRING_BACKEND",
             # macOS inserts this locale descriptor even when subprocess.env is
             # otherwise exact. It contains no path, credential, or user content.
             "__CF_USER_TEXT_ENCODING",
@@ -4140,6 +4145,7 @@ def assert_child_environment(sample_root: Path, environment: Mapping[str, str]) 
         "TLDW_TEST_MODE": "1",
         "PYTHONDONTWRITEBYTECODE": "1",
         "PYTHONUNBUFFERED": "1",
+        "PYTHON_KEYRING_BACKEND": _NULL_KEYRING_BACKEND,
     }
     if any(environment.get(key) != value for key, value in expected_flags.items()):
         raise RuntimeError("child_environment_mismatch:flags")
