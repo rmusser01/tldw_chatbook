@@ -13400,9 +13400,8 @@ class SettingsScreen(BaseAppScreen):
     def _provider_saved_auth_source(self, provider: object) -> str:
         """Return the saved sign-in choice; only Anthropic has one (TASK-34201)."""
         # Readiness's own test (TASK-42478 review), so the two cannot drift.
-        app_config = getattr(self.app_instance, "app_config", None)
-        subscribed = isinstance(app_config, Mapping) and uses_claude_subscription(
-            str(provider or ""), app_config
+        subscribed = uses_claude_subscription(
+            str(provider or ""), self._app_config_mapping()
         )
         return _anthropic_auth_sources()[1 if subscribed else 0]
 
