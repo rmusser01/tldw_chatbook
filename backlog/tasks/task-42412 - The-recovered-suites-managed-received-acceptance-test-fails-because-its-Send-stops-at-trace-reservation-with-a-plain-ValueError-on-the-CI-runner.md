@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-22 21:17
-updated_date: 2026-11-23 05:42
+updated_date: 2026-11-23 06:13
 labels:
 - follow-up
 - ci
@@ -99,7 +99,7 @@ Files: `Tests/Performance/test_console_managed_received_acceptance.py` (one wait
   - 12.4719: the UI thread's INSERT fails with `SQLITE_BUSY_SNAPSHOT` (517).
   The reviewer's thread dumps were taken in the error handler, after the recovery thread had already moved on to `persona_visual_participants.files`.
 - *Why neither the busy handler nor the retry absorbs it.* The seed reads and then writes in a DEFERRED transaction. If another connection committed after the read, SQLite returns SQLITE_BUSY_SNAPSHOT (517); if it still holds the write lock, it returns SQLITE_BUSY (5). Both come back at once, and SQLite never calls the busy handler on a read-to-write upgrade, so the 15 s `busy_timeout` never applies. This is a refusal, not a hold longer than the timeout. `_retry_owned_contention` would retry 517, but only for a transaction the repository owns, and here `create_folder` ran in the caller's transaction (`cursor=` passed).
-- *Fix (product).* `initialize_agent_lessons_folder` opens its transaction with `db.transaction(immediate=True)`. The write lock is taken before the first read and waits on the busy timeout, which is the repo's existing rule for read-then-write transactions (`TransactionContextManager` docstring; TASK-34000.28's `BEGIN IMMEDIATE` in the folder repository). Both callers (the local seed on backend change, and `NotesOrganizationSyncService.initialize_agent_lessons_seed`) get it. The recovery's own write transaction is a few milliseconds, so the wait is short.
+- *Fix (product).* `initialize_agent_lessons_folder` opens its transaction with `db.transaction(immediate=True)`. (After review, a998b8d378 first answers the already-seeded case in a plain read; see the review section below.) The write lock is taken before the first read and waits on the busy timeout, which is the repo's existing rule for read-then-write transactions (`TransactionContextManager` docstring; TASK-34000.28's `BEGIN IMMEDIATE` in the folder repository). Both callers (the local seed on backend change, and `NotesOrganizationSyncService.initialize_agent_lessons_seed`) get it. The recovery's own write transaction is a few milliseconds, so the wait is short.
 - *Red/green, with forced contention.* Two new tests in `Tests/Notes/test_agent_lessons_seed.py`:
   - `test_seed_waits_for_a_writer_another_connection_holds`: another connection holds `BEGIN IMMEDIATE` for 1 s. Base: `AssertionError: FolderConflictError('Folder changed during mutation.')`, SQLite code 5 (SQLITE_BUSY) while the holder was alive.
   - `test_seed_survives_a_write_committed_between_its_read_and_its_write`: another connection commits a `buddy_profiles` row between the seed's read and its write, the captured order. Base: the same assertion, code 517.
@@ -113,5 +113,25 @@ Files: `Tests/Performance/test_console_managed_received_acceptance.py` (one wait
 - *Whole "Run the recovered suites" step* at bc8ba15f47, serial with the CI flags (`--storage-lease-guard --timeout=180 --tb=short`) and full output kept: 2006 passed, 1 skipped, 1 deselected in 1048.14 s, load 46 falling to 11. This test took 11.84 s.
 - *Covering tests* (`-n 4`): the seed file plus the Sync_Interop/Agents/Notes files that import `agent_lessons` ran 156 passed, 2 failed. The 2 (`test_notes_organization_app_wiring.py::test_real_per_user_notes_owner_rolls_back_mutation_and_intent_together` and `test_agent_runtime_preparation.py::test_agent_lessons_guidance_recomputes_from_each_effective_schema_set`) fail with `RecoveryRequired: raw_source_selection_changed`, the known local trap, and fail the same way with base `agent_lessons.py`.
 - *Lane.* `Tests/Notes/test_agent_lessons_seed.py` now runs in the "Dreams tracking tests and unlaned riders" job (derived-artifacts.yml), after the three Workspaces riders and before `Tests/Tool_Packs`. It is sandboxed, and the job's pinned order keeps Tool_Packs last because Tool_Packs' bootstrap_profile nodes would break config reads for any test after it. `DREAMS_TRACKING_RIDERS` in `Tests/CI/test_ci_queue_pressure_contract.py` pins it. The job runs no `--storage-lease-guard` and no marker filter; its flags are serial `--timeout=180 --tb=short`. Cost: 16 tests, 12.5-12.8 s serially at load 11, so about 33 s at CI's 2.6x factor. Over 15 PR runs to 2026-11-23 02:31Z the job took median 8.4 / max 9.65 min of its 20, so about 10 min of headroom remains. Local step run and Tests/CI results: the whole step, serial with its flags, ran 753 passed in 429.17 s at load about 10, and this file passed 16/16 in place. `Tests/CI` at `-n 4` ran 1823 passed, 2 skipped.
-- Files: `tldw_chatbook/Notes/agent_lessons.py` (immediate transaction + comment), `Tests/Notes/test_agent_lessons_seed.py` (two tests), `Tests/Performance/test_console_managed_received_acceptance.py` (`settle()` takes a label, and the stop-read wait fails as `managed_received_emergency_stop_read_timeout`, since `refresh()` logs a failed read only at DEBUG), `backlog/docs/lessons-testing-evidence.md` (one new entry, and the first entry corrected).
+- Files: `tldw_chatbook/Notes/agent_lessons.py` (seeded read first, then the immediate transaction), `Tests/Notes/test_agent_lessons_seed.py` (three tests), `Tests/Performance/test_console_managed_received_acceptance.py` (`settle()` takes a label, and the stop-read wait fails as `managed_received_emergency_stop_read_timeout`, since `refresh()` logs a failed read only at DEBUG), `backlog/docs/lessons-testing-evidence.md` (one new entry, and the first entry corrected).
+**Review of c4e1096055 (fixes).**
+- *The seeded fast path.* The first fix made the whole seed IMMEDIATE, so the common already-seeded call queued behind any ChaChaNotes writer on the UI loop. Both UI-loop callers hit it: the backend switch (`app.py:2069`) and the deferred startup timer (`app_startup.py:111-114` -> `app_service_wiring.py:1984-1988`). The wait could last up to the 15 s busy timeout and then raise. The reviewer's bench, with another connection holding `BEGIN IMMEDIATE`: base 5.4 ms; at c4e1096055, 154 ms behind a 120 ms writer, 575 ms behind 500 ms and 2017 ms behind 2 s. While waiting, the UI thread also held a counted core operation that a backup pause must drain.
+  - Fix (a998b8d378): `_seeded_result` reads the seed state in a plain `db.transaction()` and returns `already_seeded` if seeded. Only otherwise does the seed open `transaction(immediate=True)`, where it re-checks the state with the same helper before seeding.
+  - New test `test_an_already_seeded_call_does_not_wait_for_another_writer`: a seeded call while another connection holds the write lock for up to 2 s. Red at c4e1096055's `agent_lessons.py` (`AssertionError: seeded call waited 2.031 s for the write lock`), green now.
+- *Minor 2.* `test_seed_survives_a_write_committed_between_its_read_and_its_write` now records the foreign writer's outcome and asserts it is `"committed"` (base order) or `sqlite3.OperationalError("database is locked")` (seed holds the lock). A broken INSERT can no longer let base pass silently.
+- *Minor 3.* `test_seed_waits_for_a_writer_another_connection_holds` now ends its hold on events instead of a 1 s clock:
+  - when the seed's folder write was attempted (wrapped `create_folder`, the DEFERRED order);
+  - or 0.2 s after the seed asked for the write lock (instance-patched `db.transaction`, the IMMEDIATE order, which then waits for the release).
+  - It is bounded at 5 s. At base it stays red even with a temporary 1.5 s delay before the seed call, which would have made the old 1 s-hold version pass.
+- *Minor 4.* The lesson now carries the UI-loop caveat and this bench.
+- *Matrix, `-k` on the three tests, serial:*
+
+  | `agent_lessons.py` at | Result |
+  |---|---|
+  | HEAD | 3 passed |
+  | c4e1096055 | seeded test red, 2 race tests green |
+  | base 2f7790873a | both race tests red (`FolderConflictError`), seeded test green |
+
+- *Covering tests* (`-n 4`, load 9-22): seed file + `Tests/Notes` agent-lesson files + the five `Sync_Interop` notes-organization files + two `Agents` files. 235 passed, 2 failed: the same two `RecoveryRequired: raw_source_selection_changed` nodes, red at base.
+- *Heavy soak:* the managed test at a998b8d378, serial per lane with the step flags, ran 69/69 passed. The first soak (20 busy loops + 3 lanes x 8) passed 24/24 at 1-min load 18.7-36; it lasted only 2.5 min, so the load average lagged. The second (24 busy loops + 3 lanes x 15, 06:16-06:21Z) passed 45/45 at 1-min load 32.8-46.9, with 18.5-21.3 s a run. Preflight, ruff F and `ruff_gate.py` (RATCHET OK, 1088 of 1105) pass.
 <!-- SECTION:NOTES:END -->
