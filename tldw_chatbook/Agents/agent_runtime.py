@@ -1191,8 +1191,8 @@ class LoopState:
     trace_steps: int = 0
     owner_sequence: int = 0
     continuation_checkpoint: ProviderContinuationCheckpoint | None = None
-    #: TASK-34100.3 AC#3: the store's precondition code from the last failed
-    #: continuation persist, consumed by the next continuation-error exit.
+    #: TASK-34100.3: last failed persist's code (store, projection or ack);
+    #: consumed by ``_continuation_error`` or ``_keep_reply_without_replay``.
     continuation_store_failure: str | None = None
     restored_calls: list[ToolCall] | None = None
     restore_history_start: int | None = None
