@@ -1024,6 +1024,17 @@ Transcript:
 | u | Open retained review reports for this chat |
 | Esc | Clear the selection; with nothing selected, return to the composer |
 
+A live Trace opens on its newest events, with the selection on the last row,
+and follows new events while you are at the bottom of its ledger (its state
+line reads "LIVE · FOLLOWING"). If you move the selection or search while a
+long Trace is still loading, the ledger is drawn at once and LOADING clears;
+after moving the selection it opens on the row you picked. Scroll up and it
+pauses ("PAUSED · f resume"): new events keep arriving below, and the rows you
+are reading stay where they are, including the oldest rows of a long Trace.
+A scroll made at the very moment an update is drawn can be undone by that
+update; scroll again. Press **f** to jump to the newest events and follow
+again.
+
 ## Related settings & docs
 
 ### Exchange capture privacy

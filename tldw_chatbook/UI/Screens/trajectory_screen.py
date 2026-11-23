@@ -57,7 +57,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import time
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import asdict, replace
@@ -374,9 +373,13 @@ class TrajectoryScreen(ModalScreen[None]):
         #: Tail-follow: True while the reader is at the bottom; scrolling
         #: up suspends it, ``f`` re-enables.
         self._follow = True
-        #: Explicit resume grace: geometry-polling must not cancel an
-        #: in-flight ``f`` before its deferred ``scroll_end`` lands.
-        self._follow_grace_until = 0.0
+        #: Ledger scrolls and re-renders not yet landed. Until they land the
+        #: table's scroll position is mid-change (a re-render resets it to the
+        #: top), so it says nothing about where the reader is.
+        self._scrolls_pending = 0
+        #: Where the reader was when the scroll last stood still: see
+        #: ``_top_row``. A paused rebuild scrolls back to it.
+        self._reading_row: tuple[str | None, int, int] = (None, 0, 0)
         self._turns: tuple[TrajectoryTurn, ...] = snapshot.turns
         self._turn_numbers = _number_logical_turns(self._turns)
         self._collapsed: set[str] = set()
@@ -800,6 +803,11 @@ class TrajectoryScreen(ModalScreen[None]):
             return
         if revision is not None and revision != self._last_revision:
             return
+        # The tick that started this rebuild saw the reader at the tail, but
+        # they may have scrolled up since: re-read it before the re-render
+        # resets the scroll, or the tail scroll below snaps them back.
+        self._sync_follow_from_scroll()
+        reading_key = self._note_reading_row()[0]
         selected_key = self._cursor_key()
         self._snapshot = snapshot
         self._turns = snapshot.turns
@@ -837,18 +845,15 @@ class TrajectoryScreen(ModalScreen[None]):
         self._visible_count = max(
             self._visible_count, min(self._total_records, PAGE_SIZE)
         )
-        if selected_key is not None and not self._follow:
-            flat = [record for turn in self._turns for record in turn.records]
-            for index, record in enumerate(flat):
-                if self._record_key(record) == selected_key:
-                    self._visible_count = max(self._visible_count, len(flat) - index)
-                    self._pending_restore_key = selected_key
-                    break
-            else:
-                header_visible_count = self._visible_count_for_turn_header(selected_key)
-                if header_visible_count is not None:
-                    self._visible_count = max(self._visible_count, header_visible_count)
-                    self._pending_restore_key = selected_key
+        if not self._follow:
+            # A paused reader keeps the cursor row and the rows they are
+            # reading, even past the newest page.
+            for key in (selected_key, reading_key):
+                window = None if key is None else self._window_for_key(key)
+                if window is not None:
+                    self._visible_count = max(self._visible_count, window)
+                    if key == selected_key:
+                        self._pending_restore_key = key
         self._render_ledger()
         try:
             self.query_one("#trajectory-title", Static).update(self._title_text())
@@ -856,19 +861,75 @@ class TrajectoryScreen(ModalScreen[None]):
             pass
         self._refresh_hints()
         self._refresh_state()
-        if self._follow:
-            try:
-                table = self.query_one("#trajectory-table", DataTable)
-                # The re-render resets scroll geometry; scrolling must land
-                # after the table re-lays out, not at the stale range.
-                table.call_after_refresh(table.scroll_end, animate=False)
-            except Exception:  # noqa: BLE001 - pre-mount refresh
-                pass
+        # Following: the tail. Paused: the reader's rows, since the re-render
+        # reset the scroll and restores only the cursor.
+        self._queue_ledger_scroll(tail=self._follow)
+
+    def _window_for_key(self, key: str) -> int | None:
+        """The newest-record window that keeps row ``key``, or None."""
+        flat = [record for turn in self._turns for record in turn.records]
+        for index, record in enumerate(flat):
+            if self._record_key(record) == key:
+                return len(flat) - index
+        return self._visible_count_for_turn_header(key)
+
+    def _top_row(self) -> tuple[str | None, int, int]:
+        """Where the reader is: an anchor row key, the top row, and the gap.
+
+        The anchor is the row at the top, or the row under "Earlier events",
+        which a rebuild keeps while the rows under it change; the gap is how
+        far the anchor sits below the top.
+        """
+        try:
+            top = int(self.query_one("#trajectory-table", DataTable).scroll_y)
+        except Exception:  # noqa: BLE001 - pre-mount refresh
+            return None, 0, 0
+        keys = self._visible_keys
+        gap = 1 if top < len(keys) and keys[top] == LOAD_EARLIER_ROW_KEY else 0
+        anchor = top + gap
+        return (keys[anchor] if anchor < len(keys) else None), top, gap
+
+    def _note_reading_row(self) -> tuple[str | None, int, int]:
+        """Record where the reader is, unless the scroll is mid-change."""
+        if not self._scrolls_pending:
+            self._reading_row = self._top_row()
+        return self._reading_row
+
+    def _scroll_to_reading_row(self, **scroll: object) -> None:
+        """Put the reader's anchor row back where it was; a lost one keeps the
+        old offset, which the table clamps to its bounds."""
+        key, top, gap = self._reading_row
+        if key in self._visible_keys:
+            top = self._visible_keys.index(key) - gap
+        try:
+            self.query_one("#trajectory-table", DataTable).scroll_to(y=top, **scroll)
+        except Exception:  # noqa: BLE001 - the screen is closing
+            self._ledger_scroll_landed()
+
+    def _queue_ledger_scroll(self, *, tail: bool) -> None:
+        """Scroll to the tail, or to the reader's rows, once laid out.
+
+        The re-render resets scroll geometry; scrolling must land after the
+        table re-lays out, not at the stale range.
+        """
+        try:
+            table = self.query_one("#trajectory-table", DataTable)
+        except Exception:  # noqa: BLE001 - pre-mount refresh
+            return
+        scroll = table.scroll_end if tail else self._scroll_to_reading_row
+        if table.call_after_refresh(
+            scroll, animate=False, on_complete=self._ledger_scroll_landed
+        ):
+            self._scrolls_pending += 1
+
+    def _ledger_scroll_landed(self) -> None:
+        self._scrolls_pending = max(0, self._scrolls_pending - 1)
 
     def _sync_follow_from_scroll(self) -> None:
         """Suspend follow while the reader is off the bottom edge.
 
-        Pull-based (checked on every poll tick) rather than event-based:
+        Pull-based (checked on every poll tick and before each live
+        re-render) rather than event-based:
         DataTable scroll geometry is authoritative and needs no message
         plumbing, and a table that cannot scroll at all keeps following.
         """
@@ -876,9 +937,7 @@ class TrajectoryScreen(ModalScreen[None]):
             table = self.query_one("#trajectory-table", DataTable)
         except Exception:  # noqa: BLE001 - pre-mount refresh
             return
-        if table.max_scroll_y <= 0:
-            return
-        if time.monotonic() < self._follow_grace_until:
+        if table.max_scroll_y <= 0 or self._scrolls_pending:
             return
         following = table.scroll_y >= table.max_scroll_y - 1
         if following != self._follow:
@@ -888,12 +947,7 @@ class TrajectoryScreen(ModalScreen[None]):
     def action_resume_follow(self) -> None:
         """Re-enable tail-follow and jump to the newest records (``f``)."""
         self._follow = True
-        self._follow_grace_until = time.monotonic() + 1.0
-        try:
-            table = self.query_one("#trajectory-table", DataTable)
-            table.call_after_refresh(table.scroll_end, animate=False)
-        except Exception:  # noqa: BLE001 - pre-mount refresh
-            pass
+        self._queue_ledger_scroll(tail=True)
         self._refresh_state()
 
     def _title_text(self) -> str:
@@ -1246,6 +1300,15 @@ class TrajectoryScreen(ModalScreen[None]):
                 self._refresh_hints()
             return
         table = self.query_one("#trajectory-table", DataTable)
+        # A live Trace opens following, so it opens on its newest row, unless
+        # the reader already picked a row while the ledger was loading.
+        opens_following = (
+            not self._ledger_rendered
+            and self._snapshot_builder is not None
+            and self._follow
+            and self._pending_restore_key is None
+        )
+        self._note_reading_row()  # before the clear below resets the scroll
         previous_key = self._pending_restore_key
         self._pending_restore_key = None
         if previous_key is None and self._visible_keys:
@@ -1253,6 +1316,12 @@ class TrajectoryScreen(ModalScreen[None]):
             if 0 <= row < len(self._visible_keys):
                 previous_key = self._visible_keys[row]
         table.clear(columns=False)
+        # Count that reset until the table has re-laid out (two hops), so
+        # nothing reads it as the reader's position in between.
+        if table.call_after_refresh(
+            table.call_after_refresh, self._ledger_scroll_landed
+        ):
+            self._scrolls_pending += 1
         self._row_records = {}
         self._row_turn_ids = {}
         self._visible_keys = []
@@ -1272,7 +1341,7 @@ class TrajectoryScreen(ModalScreen[None]):
                 if record_key in self._row_records:
                     self._row_records[record_key] = rec
         if self._visible_keys:
-            index = 0
+            index = len(self._visible_keys) - 1 if opens_following else 0
             if previous_key is not None:
                 try:
                     index = self._visible_keys.index(previous_key)
@@ -1284,6 +1353,8 @@ class TrajectoryScreen(ModalScreen[None]):
                 logger.debug(
                     "Trajectory cursor restore skipped: {}", type(exc).__name__
                 )
+        if opens_following:
+            self._queue_ledger_scroll(tail=True)
         self._refresh_hints()
         self._sync_timeline_selection()
         self._filter_bar.update_counts(
@@ -1291,12 +1362,15 @@ class TrajectoryScreen(ModalScreen[None]):
             len(self._matching_records()),
             self._total_records,
         )
-        if generation is not None:
-            self._loading = False
-            if self._retry_target == "render":
-                self._failure = None
-                self._retry_target = None
-                self._retry_in_flight = False
+        # Any render that lands has built the ledger, so a synchronous one (a
+        # key or a search while the first build runs in a worker) ends the
+        # load too; that worker's older build is then dropped as stale. (A
+        # retry in flight still reads RETRYING: that label comes first.)
+        self._loading = False
+        if generation is not None and self._retry_target == "render":
+            self._failure = None
+            self._retry_target = None
+            self._retry_in_flight = False
         self._refresh_state()
         if self.query_one("#trajectory-inspector", VerticalScroll).display:
             self._refresh_inspector()
