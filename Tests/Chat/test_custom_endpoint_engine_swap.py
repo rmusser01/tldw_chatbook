@@ -17,14 +17,12 @@ from __future__ import annotations
 
 import inspect
 import json
-from typing import get_args
 
 import pytest
 
 from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError
 from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS, PROVIDER_PARAM_MAP
 from tldw_chatbook.Chat.provider_continuation import (
-    ContinuationProvider,
     ContinuationRound,
     ContinuationCall,
     ProviderContinuationCheckpoint,
@@ -38,6 +36,7 @@ from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
     resolve_hosted_request,
 )
 from tldw_chatbook.provider_registry import (
+    CONTINUATION_PROVIDER_KEYS,
     CUSTOM_HOSTED,
     RECORDS_BY_KEY,
     TOGETHER,
@@ -447,8 +446,9 @@ def test_thinking_budget_tokens_accepted_and_dropped() -> None:
 
 
 def test_continuation_pairings_gain_the_four_keys() -> None:
-    literal = set(get_args(ContinuationProvider))
-    assert {"custom-hosted", "together", "fireworks", "cerebras"} <= literal
+    assert {"custom-hosted", "together", "fireworks", "cerebras"} <= (
+        CONTINUATION_PROVIDER_KEYS
+    )
 
 
 def test_custom_hosted_continuation_round_trip() -> None:

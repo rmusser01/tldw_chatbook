@@ -72,7 +72,11 @@ def test_zero_stale_hours_is_allowed():
 
 
 def test_auto_refresh_cloud_provider_list_is_pinned():
-    assert set(AUTO_REFRESH_PROVIDER_LIST_KEYS) == {
+    # Every base provider stays; a new engine preset with a models route joins
+    # through its record's auto_refresh flag, with no edit here (TASK-36946.3).
+    from tldw_chatbook.provider_registry import ENGINE_RECORDS
+
+    base = {
         "OpenAI",
         "Anthropic",
         "MistralAI",
@@ -112,5 +116,8 @@ def test_auto_refresh_cloud_provider_list_is_pinned():
         # TASK-33506 (the other four follow-up presets are seeded-only).
         "WandB",
     }
-    assert len(AUTO_REFRESH_PROVIDER_LIST_KEYS) == 30
+    keys = set(AUTO_REFRESH_PROVIDER_LIST_KEYS)
+    assert len(base) == 30 and base <= keys
+    assert keys - base <= {r.config_key for r in ENGINE_RECORDS if r.auto_refresh}
+    assert len(AUTO_REFRESH_PROVIDER_LIST_KEYS) == len(keys)
     assert SELECTOR_MERGE_CAP == 50

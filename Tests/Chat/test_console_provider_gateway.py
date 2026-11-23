@@ -3431,7 +3431,7 @@ async def test_shipped_default_continuation_destinations_stay_durable() -> None:
     import tomllib
 
     from tldw_chatbook import config as app_config
-    from tldw_chatbook.provider_registry import ENGINE_RECORDS
+    from tldw_chatbook.provider_registry import ENGINE_RECORDS, RECORDS_BY_KEY
 
     defaults = tomllib.loads(app_config.CONFIG_TOML_CONTENT)
     environ = {
@@ -3465,8 +3465,9 @@ async def test_shipped_default_continuation_destinations_stay_durable() -> None:
         for key in ["moonshot", "zai", "deepseek"] + [r.key for r in ENGINE_RECORDS]:
             resolved = await resolve(key)
             if not resolved.ready:
-                # Workspace-URL presets block until a base URL is configured.
-                assert key in {"azure", "cloudflare", "custom-hosted", "databricks"}
+                # Workspace-URL presets block until a base URL is configured
+                # (the record's flag, so a new one needs no edit, TASK-36946.3).
+                assert key == "custom-hosted" or RECORDS_BY_KEY[key].base_url_required, key
                 continue
             ready.append(key)
             assert resolved.continuation_protocol, key

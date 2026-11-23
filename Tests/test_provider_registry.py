@@ -103,6 +103,42 @@ def test_identity_fields_match_config_tables():
     assert checked > 0
 
 
+def test_engine_preset_sections_mirror_their_records():
+    # Owner ruling 2026-11-22 (TASK-36946.3): the template byte pin leaves the
+    # engine presets' [api_settings.<key>] sections out, so this checks each one
+    # whole: exactly the record's settings_defaults plus its default base URL.
+    import tomllib
+
+    from tldw_chatbook.config import CONFIG_TOML_CONTENT
+
+    tables = tomllib.loads(CONFIG_TOML_CONTENT)["api_settings"]
+    for record in ENGINE_RECORDS:
+        if record.defaults_settings_section:  # custom-hosted reads [api_settings.custom]
+            continue
+        assert record.key in tables, f"no [api_settings.{record.key}] section"
+        expected = dict(record.settings_defaults)
+        if record.default_base_url:
+            expected["api_base_url"] = record.default_base_url
+        assert tables[record.key] == expected, record.key
+
+
+def test_engine_preset_model_lists_come_from_the_records():
+    # TASK-36946.3: the template holds one placeholder for the engine presets'
+    # [providers] lines; each list is its record's seed_models, in record order.
+    import tomllib
+
+    from tldw_chatbook.config import CONFIG_TOML_CONTENT
+
+    assert "__ENGINE_PRESET_MODEL_LISTS__" not in CONFIG_TOML_CONTENT
+    providers = tomllib.loads(CONFIG_TOML_CONTENT)["providers"]
+    presets = [r for r in ENGINE_RECORDS if r.key != "custom-hosted"]
+    keys = list(providers)
+    start = keys.index(presets[0].config_key)
+    assert keys[start:start + len(presets)] == [r.config_key for r in presets]
+    for record in presets:
+        assert providers[record.config_key] == list(record.seed_models), record.key
+
+
 def test_inference_cloud_keys_join_every_parity_surface():
     # Task 5 (ADR-179 Phase 2): together/fireworks/cerebras join the
     # audited set, cloud classification, auto-refresh, native tools,
@@ -149,18 +185,37 @@ def test_databricks_preset_shape():
 # --- Lookup tables derived from the records (TASK-36946.1) ---
 
 
-def test_continuation_provider_literal_matches_derived_keys():
-    # A typing Literal cannot be computed, so it is pinned to the derived set
-    # that the runtime checks (_PAIRINGS) are built from.
-    from typing import get_args
+# The hand-kept ContinuationProvider Literal at 8a55555798, before TASK-36946.3
+# derived it: every provider in it must keep checkpointing continuations, while
+# a new preset joins through its record with no edit here.
+_BASE_CONTINUATION_PROVIDERS = frozenset(
+    {
+        "moonshot", "zai", "deepseek", "databricks", "custom-hosted", "together",
+        "fireworks", "cerebras", "sambanova", "nvidia", "deepinfra", "nebius",
+        "novita", "minimax", "mimo", "tokenhub", "byteplus", "stepfun", "vercel",
+        "zenmux", "kilo", "siliconflow", "baseten", "gmi", "ollama_cloud",
+        "upstage", "arcee", "qianfan", "nous", "venice", "meta", "azure", "wandb",
+        "cloudflare", "opencode_zen", "commandcode",
+    }
+)
 
+
+def test_continuation_providers_are_the_derived_keys():
+    # The runtime checks (_PAIRINGS) are built from the registry-derived set;
+    # no hand-kept Literal repeats it (TASK-36946.3).
     from tldw_chatbook.Provider_Contract.provider_continuation import (
         _PAIRINGS,
         ContinuationProvider,
     )
     from tldw_chatbook.provider_registry import CONTINUATION_PROVIDER_KEYS
 
-    assert set(get_args(ContinuationProvider)) == CONTINUATION_PROVIDER_KEYS
+    assert ContinuationProvider is str
+    assert _BASE_CONTINUATION_PROVIDERS <= CONTINUATION_PROVIDER_KEYS
+    # Only an engine preset may join without an edit here: a bespoke provider
+    # that starts checkpointing must be added to the base set on purpose.
+    assert CONTINUATION_PROVIDER_KEYS - _BASE_CONTINUATION_PROVIDERS <= {
+        r.key for r in ENGINE_RECORDS
+    }
     assert {provider for provider, _ in _PAIRINGS} == CONTINUATION_PROVIDER_KEYS
     assert _PAIRINGS == {
         (key, "chat_completions") for key in CONTINUATION_PROVIDER_KEYS
@@ -249,10 +304,17 @@ _BASE_KEYLESS = frozenset(
 
 
 def test_readiness_key_sets_are_pinned_to_the_base_values():
+    # No base key leaves or changes sides; a new engine preset joins through
+    # its record alone (TASK-36946.3), so the only keys beyond the base are
+    # engine presets' own.
     from tldw_chatbook import provider_registry as registry
 
-    assert registry.PROVIDERS_REQUIRING_API_KEY_KEYS == _BASE_KEYED
-    assert registry.KEYLESS_PROVIDER_KEYS == _BASE_KEYLESS
+    keyed = registry.PROVIDERS_REQUIRING_API_KEY_KEYS
+    keyless = registry.KEYLESS_PROVIDER_KEYS
+    assert _BASE_KEYED <= keyed
+    assert _BASE_KEYLESS <= keyless
+    presets = {registry.normalize_provider_config_key(r.key) for r in ENGINE_RECORDS}
+    assert (keyed - _BASE_KEYED) | (keyless - _BASE_KEYLESS) <= presets
 
 
 def test_readiness_key_sets_are_the_registry_derivations():
@@ -285,10 +347,24 @@ def test_readiness_key_sets_are_the_registry_derivations():
 def test_base_url_required_matches_records_without_a_default_url():
     from tldw_chatbook.provider_registry import PROVIDERS_REQUIRING_BASE_URL_KEYS
 
-    assert PROVIDERS_REQUIRING_BASE_URL_KEYS == {"azure", "cloudflare", "databricks"}
+    # The built-in per-account hosts stay; a new one joins through its record
+    # (TASK-36946.3), which also carries its setup and readiness wording.
+    assert {"azure", "cloudflare", "databricks"} <= PROVIDERS_REQUIRING_BASE_URL_KEYS
     for record in ALL_RECORDS:
         if record.base_url_required:
             assert record.engine_driven and record.default_base_url is None
+            assert record.base_url_label and record.base_url_setting, record.key
+            assert record.base_url_missing_reason and record.base_url_path_note, record.key
+            assert (record.base_url_example or "").startswith("https://"), record.key
+    # The record refuses a per-account host without its wording (never "None").
+    from dataclasses import replace
+
+    import pytest
+
+    from tldw_chatbook.provider_registry import AZURE
+
+    with pytest.raises(ValueError, match="base_url_label"):
+        replace(AZURE, base_url_label=None)
 
 
 def test_default_api_key_env_var_is_the_record_field():
@@ -408,8 +484,15 @@ def test_display_names_follow_records_and_overrides_are_not_redundant():
     )
     from tldw_chatbook.provider_registry import normalize_provider_config_key as norm
 
-    assert PROVIDER_DISPLAY_NAMES == _EXPECTED_DISPLAY_NAMES
     by_key = {norm(r.key): r.display_name for r in ALL_RECORDS}
+    # Base labels are unchanged; a new engine preset's label is its record's
+    # display_name, with no edit here (TASK-36946.3).
+    assert {k: PROVIDER_DISPLAY_NAMES.get(k) for k in _EXPECTED_DISPLAY_NAMES} == (
+        _EXPECTED_DISPLAY_NAMES
+    )
+    added = set(PROVIDER_DISPLAY_NAMES) - set(_EXPECTED_DISPLAY_NAMES)
+    assert added <= {norm(r.key) for r in ENGINE_RECORDS}
+    assert {k: PROVIDER_DISPLAY_NAMES[k] for k in added} == {k: by_key[k] for k in added}
     for key, label in _DISPLAY_NAME_OVERRIDES.items():
         # An override equal to the record value is dead weight.
         assert by_key.get(key) != label, key

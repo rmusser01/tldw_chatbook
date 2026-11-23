@@ -702,8 +702,58 @@ def test_propagation_follows_imports_not_names():
 # unused api_url.
 # TASK-42002: a fresh config carries config schema version 2.
 # TASK-42153: and now version 3 (config migration 3).
-_TEMPLATE_SHA256 = "2199410528eeca0e5de3fadd612c987867d87531d9db0c5c6fc0b9500d4448d9"
+# TASK-36946.3: the engine presets' [providers] lines became one placeholder,
+# rendered from their registry records. Owner ruling 2026-11-22: the hash also
+# leaves out every engine preset's [api_settings.<key>] section, so adding a
+# preset does not move it; test_engine_preset_sections_mirror_their_records
+# (Tests/test_provider_registry.py) checks those sections against the records.
+# Review round 1: a section includes its leading comment lines and inner blank
+# lines (house style), and the generated block's header no longer names a file.
+_TEMPLATE_SHA256 = "1e0e65b440d79e854117af4c1fe550b2aadd652e5a3d5b0d59c0a50fe9fc6714"
 _TEMPLATE_RELATIVE = "tldw_chatbook/Config_Files/default_config.toml"
+
+
+def _without_engine_preset_sections(text: str) -> str:
+    """The template minus each engine preset's ``[api_settings.<key>]`` section.
+
+    A section, in the template's house style, is the comment lines directly
+    above its header, the header, the lines under it up to the next table
+    header (blank lines inside included when more keys follow), and the blank
+    line that ends it. A table header right after a preset's lines is never
+    part of the section, so a non-preset table edit still moves the hash.
+    Which sections come from the registry, not a hand list; each preset must
+    have exactly one.
+    """
+    import re
+
+    from tldw_chatbook.provider_registry import ENGINE_RECORDS
+
+    comment = r"[ \t]*#[^\n]*\n"
+    for record in ENGINE_RECORDS:
+        if record.defaults_settings_section:  # custom-hosted reads [api_settings.custom]
+            continue
+        matches = list(re.finditer(
+            rf"(?m)^(?:{comment})*[ \t]*\[api_settings\.{re.escape(record.key)}\][^\n]*\n"
+            # Lines under the header: anything but a table header, and a blank
+            # line only when more of the section's keys (maybe after comments)
+            # follow it.
+            rf"(?:[ \t]*(?!\[)\S[^\n]*\n|[ \t]*\n(?=(?:{comment})*[ \t]*[^\s#\[]))*"
+            r"(?:[ \t]*\n)?",
+            text,
+        ))
+        assert len(matches) == 1, f"{record.key}: {len(matches)} [api_settings] sections"
+        start, end = matches[0].span()
+        # House style is a precondition, not an assumption: a blank line (or the
+        # file's edge) on both sides, so a section never claims a neighbour's
+        # comments (review round 2, N1).
+        assert start == 0 or re.search(r"(?:\A|\n)[ \t]*\n\Z", text[:start]), (
+            f"{record.key}: its [api_settings] section needs a blank line above it"
+        )
+        assert end == len(text) or re.search(r"\n[ \t]*\n\Z", text[start:end]), (
+            f"{record.key}: its [api_settings] section needs a blank line below it"
+        )
+        text = text[:start] + text[end:]
+    return text
 
 
 def test_default_config_template_bytes_are_unchanged():
@@ -711,7 +761,8 @@ def test_default_config_template_bytes_are_unchanged():
     from pathlib import Path
 
     data = (Path(__file__).resolve().parents[1] / _TEMPLATE_RELATIVE).read_bytes()
-    assert hashlib.sha256(data).hexdigest() == _TEMPLATE_SHA256
+    scoped = _without_engine_preset_sections(data.decode("utf-8"))
+    assert hashlib.sha256(scoped.encode("utf-8")).hexdigest() == _TEMPLATE_SHA256
 
 
 def test_config_toml_content_is_the_data_file_with_placeholders_resolved():
@@ -728,8 +779,13 @@ def test_config_toml_content_is_the_data_file_with_placeholders_resolved():
     expected = raw.replace(
         "__DEFAULT_TRANSCRIPTION_PROVIDER__", config._default_stt_provider_for_platform()
     ).replace("__DEFAULT_SPLASH_DURATION__", str(config.DEFAULT_SPLASH_DURATION_SECONDS))
+    # TASK-36946.3: the engine presets' [providers] lines render from the registry.
+    placeholder = "# __ENGINE_PRESET_MODEL_LISTS__\n"
+    assert raw.count(placeholder) == 1
+    expected = expected.replace(placeholder, config.ENGINE_PRESET_MODEL_LISTS_TOML)
     assert config.CONFIG_TOML_CONTENT == expected
     assert "__DEFAULT_" not in config.CONFIG_TOML_CONTENT
+    assert "__ENGINE_PRESET_" not in config.CONFIG_TOML_CONTENT
 
 
 def test_config_py_no_longer_embeds_the_template():

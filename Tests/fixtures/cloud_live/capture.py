@@ -45,7 +45,6 @@ Usage (repo root)::
 from __future__ import annotations
 
 import argparse
-import ast
 import json
 import os
 import re
@@ -150,22 +149,12 @@ def _env_name(record: ProviderRecord, suffix: str) -> str:
 
 
 def _config_seeds(record: ProviderRecord) -> list[str]:
-    """The ``[providers]`` seed list shipped in the default config template (Config_Files/default_config.toml), read as text.
+    """The ``[providers]`` seed list the default config ships for ``record``.
 
-    Importing ``tldw_chatbook.config`` would load the real app configuration,
-    so the seed line is parsed from the source instead.
+    It is the record's ``seed_models``: the template renders the engine presets'
+    lists from them (TASK-36946.3), so it no longer holds them as text.
     """
-    source = (REPO_ROOT / "tldw_chatbook" / "Config_Files" / "default_config.toml").read_text(
-        encoding="utf-8"
-    )
-    match = re.search(rf"^{re.escape(record.config_key)} = (\[.*\])", source, re.MULTILINE)
-    if not match:
-        return []
-    try:
-        seeds = ast.literal_eval(match.group(1))
-    except (SyntaxError, ValueError):
-        return []
-    return [seed for seed in seeds if isinstance(seed, str)]
+    return list(record.seed_models)
 
 
 def _single_line(value: str, limit: int) -> str:

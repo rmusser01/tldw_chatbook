@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import BaseModel, field_validator
 
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.provider_registry import ENGINE_RECORDS
 
 AUTO_REFRESH_PROVIDER_LIST_KEYS: tuple[str, ...] = (
     "OpenAI",
@@ -18,40 +19,9 @@ AUTO_REFRESH_PROVIDER_LIST_KEYS: tuple[str, ...] = (
     "OpenRouter",
     "QwenCloud",
     "ZAI",
-    "Databricks",
-    # ADR-179 Phase 2 Task 5: the inference-cloud engine presets ship
-    # /models-discoverable OpenAI-compatible endpoints (together/fireworks/
-    # cerebras), so their catalogs auto-refresh on startup like the others.
-    "Together",
-    "Fireworks",
-    "Cerebras",
-    # TASK-33201 doc-derived presets with a /models route (MiniMax has none
-    # documented, so it is seeded from its docs instead).
-    "SambaNova",
-    "NVIDIA",
-    "DeepInfra",
-    "Nebius",
-    "Novita",
-    # TASK-33350: presets with a documented OpenAI-shaped /models route
-    # (MiMo and BytePlus are seeded-only).
-    "TokenHub",
-    "StepFun",
-    # TASK-33351 gateway/host presets with a models route (Upstage and
-    # Qianfan document none and ship seeded).
-    "Vercel",
-    "ZenMux",
-    "Kilo",
-    "SiliconFlow",
-    "Baseten",
-    "GMI",
-    "OllamaCloud",
-    "Arcee",
-    "Nous",
-    "Venice",
-    "Meta",
-    # TASK-33506: W&B lists models; Azure (deployments), Cloudflare (no
-    # route), OpenCode Zen and Command Code (mixed protocols) ship seeded.
-    "WandB",
+    # Engine presets with a /models route (record ``auto_refresh``), in
+    # registry order, so a new preset needs no edit here (TASK-36946.3).
+    *(record.config_key for record in ENGINE_RECORDS if record.auto_refresh),
 )
 
 SELECTOR_MERGE_CAP = 50
