@@ -1629,8 +1629,15 @@ match steering (visible notice; same 4,000-character cap).
 
 **Emergency stop.** `/emergency-stop` is the global brake: it holds **all**
 new agent runs and new scheduled dispatches from starting, across the whole
-app — in-flight runs and already-dispatched scheduled tasks are left to
-finish untouched. The stop is durable (it survives a restart) and
+app. A run that is already going keeps running, but none of its tool calls
+executes while the stop is active — the shell tool, built-in, local and MCP
+tools, and sub-agent spawns alike. Each call is refused with a result that
+names the stop and the reason you typed, for example "tool call blocked: the
+emergency stop is active (runaway agent)", so the model can wind down and
+you can see why on the call's row. No approval card is raised during the
+stop, and a card you approve after the stop lands is refused instead of run.
+A call that was already executing when the stop landed finishes and keeps
+its own result. The stop is durable (it survives a restart) and
 fail-safe: if its state can't be read, the app treats it as stopped rather
 than proceeding. While it is active the Console shows it until it is
 cleared, not just in the five-second toast: the header badge reads
@@ -1641,7 +1648,7 @@ is on", and an empty chat says the stop is active. A send you try anyway is
 refused with a notice that names `/emergency-stop clear`. A stop still
 active from an earlier session is announced once when the Console opens.
 Choose **Clear** on the status strip, or run `/emergency-stop clear`, to
-resume at once; no restart is needed. If the stop can't be saved (for
+resume at once (sends, schedules and tool calls); no restart is needed. If the stop can't be saved (for
 example, the data folder is read-only), the Console says so and keeps
 showing the stop's real state. A stop cleared from another copy of the app
 is noticed the next time you send, and that send goes through. To end just
