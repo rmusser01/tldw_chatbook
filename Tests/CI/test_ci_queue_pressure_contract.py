@@ -454,8 +454,9 @@ DREAMS_BOUNDARY_TARGETS = (
 #: TASK-34929: the Dreams tracking tests, gated whole in their own job.
 DREAMS_TRACKING_TARGET = "Tests/Dreams/test_track_service.py"
 #: Round 21 ports: riders on no PR lane before (the Workspaces files
-#: TASK-42382, Tool_Packs TASK-42191). Tool_Packs last: its bootstrap_profile
-#: nodes enroll the process, and every later test then fails any in-process
+#: TASK-42382, Tool_Packs TASK-42191). Tool_Packs after every sandboxed
+#: rider: its bootstrap_profile nodes enroll the process, and every later
+#: sandboxed test then fails any in-process
 #: config read with RecoveryRequired: raw_source_selection_changed -- in this
 #: serial lane only, since -n 4 locally runs them on other workers
 #: (TASK-32873). So no Tool_Packs file may read config in-process, and nothing
@@ -469,6 +470,9 @@ DREAMS_TRACKING_RIDERS = (
     # TASK-42412: sandboxed, so before Tool_Packs.
     "Tests/Notes/test_agent_lessons_seed.py",
     "Tests/Tool_Packs",
+    # TASK-42468: bootstrap_profile, so after Tool_Packs (nothing sandboxed
+    # may follow it).
+    "Tests/Backup_Recovery/test_character_presentation_cadence.py",
 )
 #: TASK-42191's C7 nodes, the only bootstrap_profile tests in Tests/Tool_Packs.
 TOOL_PACKS_BOOTSTRAP_NODES = (

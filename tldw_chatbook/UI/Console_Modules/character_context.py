@@ -1867,116 +1867,129 @@ class ConsoleCharacterContextController:
         if not presentation_is_current():
             return
         generation = self._begin(ConsoleCharacterOperationPhase.REFRESHING, supersede=_supersede)
-        readers = _stock_character_refresh_readers(self, _presentation_is_current, generation)
-        if readers is not None:
-            published = await self._refresh_recent_batch(readers, generation)
-            if published is True:
-                try:
-                    readers.require_current()
-                    if generation == self._generation:
-                        self._successful_refresh_generation = generation
-                except _ConsoleCharacterReaderChanged:
-                    pass
-            return
-        for _attempt in range(_SCOPE_CAPTURE_ATTEMPTS):
-            if not presentation_is_current():
+        try:
+            readers = _stock_character_refresh_readers(self, _presentation_is_current, generation)
+            if readers is not None:
+                published = await self._refresh_recent_batch(readers, generation)
+                if published is True:
+                    try:
+                        readers.require_current()
+                        if generation == self._generation:
+                            self._successful_refresh_generation = generation
+                    except _ConsoleCharacterReaderChanged:
+                        pass
                 return
-            try:
-                snapshot = await self._capture_scope()
-            except _ConsoleCharacterScopeChanged:
-                continue
-            except _ConsoleCharacterScopeReadError as error:
-                if generation != self._generation or not presentation_is_current():
+            for _attempt in range(_SCOPE_CAPTURE_ATTEMPTS):
+                if not presentation_is_current():
                     return
-                if not self._ambient_scope_matches(
-                    error.database, error.current, error.open_conversation_id
-                ):
+                try:
+                    snapshot = await self._capture_scope()
+                except _ConsoleCharacterScopeChanged:
                     continue
-                self._publish(
-                    replace(
-                        self.state,
-                        phase=ConsoleCharacterOperationPhase.IDLE,
-                        loading=False,
-                        error="Could not load local character chats · Retry",
-                        scope_fingerprint=None,
-                    )
-                )
-                return
-            database = snapshot.database
-            fingerprint = snapshot.fingerprint
-            if database is None:
-                if (
-                    generation == self._generation
-                    and await self._operation_scope_is_current(snapshot, generation)
-                    and presentation_is_current()
-                ):
+                except _ConsoleCharacterScopeReadError as error:
+                    if generation != self._generation or not presentation_is_current():
+                        return
+                    if not self._ambient_scope_matches(
+                        error.database, error.current, error.open_conversation_id
+                    ):
+                        continue
                     self._publish(
                         replace(
                             self.state,
                             phase=ConsoleCharacterOperationPhase.IDLE,
                             loading=False,
-                            error="Local character data is unavailable · Retry",
-                            scope_fingerprint=fingerprint,
+                            error="Could not load local character chats · Retry",
+                            scope_fingerprint=None,
                         )
                     )
-                return
-            try:
-                groups, details = await self._await_database_work(
-                    database, self._load_recent_sync, database, fingerprint
-                )
-            except Exception:  # noqa: BLE001 - DB boundary becomes visible recovery
+                    return
+                database = snapshot.database
+                fingerprint = snapshot.fingerprint
+                if database is None:
+                    if (
+                        generation == self._generation
+                        and await self._operation_scope_is_current(snapshot, generation)
+                        and presentation_is_current()
+                    ):
+                        self._publish(
+                            replace(
+                                self.state,
+                                phase=ConsoleCharacterOperationPhase.IDLE,
+                                loading=False,
+                                error="Local character data is unavailable · Retry",
+                                scope_fingerprint=fingerprint,
+                            )
+                        )
+                    return
+                try:
+                    groups, details = await self._await_database_work(
+                        database, self._load_recent_sync, database, fingerprint
+                    )
+                except Exception:  # noqa: BLE001 - DB boundary becomes visible recovery
+                    if generation != self._generation or not presentation_is_current():
+                        return
+                    if not await self._operation_scope_is_current(snapshot, generation):
+                        continue
+                    if not presentation_is_current():
+                        return
+                    self._publish(
+                        replace(
+                            self.state,
+                            phase=ConsoleCharacterOperationPhase.IDLE,
+                            loading=False,
+                            error="Could not load local character chats · Retry",
+                        )
+                    )
+                    return
                 if generation != self._generation or not presentation_is_current():
                     return
                 if not await self._operation_scope_is_current(snapshot, generation):
                     continue
                 if not presentation_is_current():
                     return
+                expanded = self.state.expanded_key
+                keys = {group.key for group in groups}
+                if expanded not in keys:
+                    expanded = next((g.key for g in groups if g.is_current), None)
+                    expanded = expanded or (groups[0].key if groups else None)
+                selected = self.state.selected_unavailable_row_key
+                row_keys = {detail.row_key for detail in details}
+                if selected not in row_keys:
+                    selected = ""
+                self._publish(
+                    ConsoleCharacterContextState(
+                        groups=groups,
+                        expanded_key=expanded,
+                        data_revision=fingerprint.data_revision,
+                        scope_fingerprint=fingerprint,
+                        unavailable_details=details,
+                        selected_unavailable_row_key=selected,
+                    )
+                )
+                self._successful_refresh_generation = generation
+                return
+            if generation == self._generation and presentation_is_current():
                 self._publish(
                     replace(
                         self.state,
                         phase=ConsoleCharacterOperationPhase.IDLE,
                         loading=False,
-                        error="Could not load local character chats · Retry",
+                        error="Local character chats changed · Retry",
+                        scope_fingerprint=None,
                     )
                 )
-                return
-            if generation != self._generation or not presentation_is_current():
-                return
-            if not await self._operation_scope_is_current(snapshot, generation):
-                continue
-            if not presentation_is_current():
-                return
-            expanded = self.state.expanded_key
-            keys = {group.key for group in groups}
-            if expanded not in keys:
-                expanded = next((g.key for g in groups if g.is_current), None)
-                expanded = expanded or (groups[0].key if groups else None)
-            selected = self.state.selected_unavailable_row_key
-            row_keys = {detail.row_key for detail in details}
-            if selected not in row_keys:
-                selected = ""
-            self._publish(
-                ConsoleCharacterContextState(
-                    groups=groups,
-                    expanded_key=expanded,
-                    data_revision=fingerprint.data_revision,
-                    scope_fingerprint=fingerprint,
-                    unavailable_details=details,
-                    selected_unavailable_row_key=selected,
-                )
-            )
-            self._successful_refresh_generation = generation
-            return
-        if generation == self._generation and presentation_is_current():
-            self._publish(
-                replace(
-                    self.state,
-                    phase=ConsoleCharacterOperationPhase.IDLE,
-                    loading=False,
-                    error="Local character chats changed · Retry",
-                    scope_fingerprint=None,
-                )
-            )
+        except asyncio.CancelledError:
+            # TASK-42468: a cancelled refresh publishes nothing. Left in
+            # REFRESHING, the panel kept its "Refreshing…" line and the
+            # display check, which runs only when IDLE (95ca4bf47b), never
+            # checked it again. Unless a newer operation owns the state, go
+            # idle and drop the old fingerprint so the next check reloads.
+            if (
+                generation == self._generation
+                and self.state.phase is ConsoleCharacterOperationPhase.REFRESHING
+            ):
+                self.invalidate_scope(_supersede=False)
+            raise
 
     async def refresh_unavailable_details(
         self, groups: Iterable[CharacterConversationGroup]

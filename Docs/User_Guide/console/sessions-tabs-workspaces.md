@@ -113,7 +113,9 @@ without first showing "Refreshing local character chats…". While the section
 is collapsed, those checks still run but the hidden list is not redrawn;
 expanding the section shows the latest result straight away. **Retry** reloads
 directly and shows "Refreshing local character chats…" while it works, or
-"Searching local character chats…" when a Context search is active.
+"Searching local character chats…" when a Context search is active. A reload
+that is interrupted before it finishes clears "Refreshing local character
+chats…", and the next check loads the list again.
 When a Context search is active, **Continue search in Character chats** opens
 that same validated query in Ctrl+K's complete local Character-chat results.
 Enter or double-click opens an exact saved conversation in its Console tab;

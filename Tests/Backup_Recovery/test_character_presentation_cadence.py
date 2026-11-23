@@ -26,6 +26,7 @@ from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Console_Modules.character_context import (
     ConsoleCharacterContextController,
+    ConsoleCharacterOperationPhase,
 )
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.usefixtures("local_root")]
@@ -474,6 +475,13 @@ async def test_direct_refresh_outcome_cannot_certify_an_old_display(tmp_path, ou
             and not controller.state.loading
             and not controller.state.error
         ), "old fingerprint certified a refresh that never successfully published"
+        # TASK-42468: the display check refuses to run in any phase but IDLE
+        # (95ca4bf47b), so a refresh that ends without publishing must not
+        # leave the panel on "Refreshing local character chats…" for good.
+        assert (
+            controller.state.phase is ConsoleCharacterOperationPhase.IDLE
+            and not controller.state.loading
+        ), "a refresh that never published left the panel refreshing"
     finally:
         release.set()
         if pending is not None:
