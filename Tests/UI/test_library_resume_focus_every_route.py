@@ -31,6 +31,7 @@ from Tests.UI.test_library_notes_import_escape_keeps_running import (
     SIZE,
     _active_library_screen,
     _clear_focus,
+    _click_focus,
     _f1_shortcuts,
     _press,
     _Profile,
@@ -332,8 +333,7 @@ async def test_the_re_check_takes_focus_back_from_a_reset_parked_grip(
             controller._land_content_focus_if_unfocused()
             landed = _focused_id(screen)
             assert landed == "library-media-empty-import", landed
-            screen._library_input_focus = grip  # what a click on it records
-            screen.set_focus(grip)
+            _click_focus(screen, grip)
             controller._land_content_focus_if_unfocused()
             assert screen.focused is grip, _focused_id(screen)
     finally:

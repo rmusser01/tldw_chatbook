@@ -227,6 +227,24 @@ async def _press(host, screen, pilot, selector: str) -> None:
     button.press()
 
 
+def _click_focus(screen, widget) -> None:
+    """Focus ``widget`` the way a click does, through the screen's click seam.
+
+    Textual forwards a MouseDown through ``get_focusable_widget_at`` before it
+    focuses the target; the Library's override records the control as the
+    user's (``_library_input_focus``, TASK-41600) and first disarms a Notes
+    list entry still waiting, whose rules read a grip landing as Textual's
+    reset and clear it (``on_descendant_focus``). CI lane 8 (run
+    45119091545): setting the record by hand skipped that disarm, and with
+    the rail press's arm still pending on the slow runner the grip went to
+    None.
+    """
+    region = widget.region
+    picked = screen.get_focusable_widget_at(region.x, region.y)
+    assert picked is widget, picked
+    screen.set_focus(widget)
+
+
 def _batch_of_one(controller) -> None:
     """The real executor, one item per batch: a cancel lands between items."""
 
@@ -568,8 +586,10 @@ async def test_a_check_started_with_focus_outside_the_import_says_esc_cancel(
     check's recompose removed the focused control and Textual's focus reset
     refreshed the screen. With focus outside the import -- here on the Items
     pane grip, where that reset parks it -- the footer said Escape goes back
-    to Notes while Escape cancelled the check. The grip is focused as a
-    click focuses it, so the check's own repaint keeps it (TASK-41600). A
+    to Notes while Escape cancelled the check. The grip is focused through
+    the click seam (``_click_focus``) with the rail press's Notes arm held
+    open, as it still was on CI lane 8's slow runner (run 45119091545), so
+    the check's own repaint keeps it (TASK-41600). A
     grip focused in code reads as Textual's reset to that repaint, which
     restores focus into the import -- a focus move that repaints the footer
     by itself, and that under load could land before the publish did
@@ -611,9 +631,10 @@ async def test_a_check_started_with_focus_outside_the_import_says_esc_cancel(
                 "the selection to settle",
             )
             grip = screen.query_one("#library-browse-items-grip")
-            # What a click on the grip records (``get_focusable_widget_at``).
-            screen._library_input_focus = grip
-            screen.set_focus(grip)
+            # CI lane 8: on a slow runner the rail press's Notes arm is still
+            # waiting here; holding it open makes every run cover that case.
+            screen._arm_library_list_entry_focus()
+            _click_focus(screen, grip)
 
             await _press(host, screen, pilot, "#note-import-check")
             await _until(pilot, check.entered.is_set, "the check to start")
@@ -656,8 +677,8 @@ async def test_a_notes_list_entry_arm_never_blanks_a_grip_the_user_clicked(
     Textual's reset (TASK-41129), and it blanked the grip the user had
     clicked too; any arm in that window reproduced the red exactly. On the
     list the arm then lands its entry, as it does from any control (review
-    r11n4 N4-3); in the import view, where no list entry is reachable, the
-    clicked grip is the end state the footer pin depends on.
+    r11n4 N4-3). The import view, where no list entry is reachable, is the
+    next test.
     """
     profile = _Profile(tmp_path, monkeypatch)
     host = profile.host()
@@ -674,8 +695,7 @@ async def test_a_notes_list_entry_arm_never_blanks_a_grip_the_user_clicked(
             await pilot.pause()
             screen._disarm_library_list_entry_focus()
             grip = screen.query_one("#library-browse-items-grip")
-            screen._library_input_focus = grip  # what a click on it records
-            screen.set_focus(grip)
+            _click_focus(screen, grip)
             await pilot.pause()  # the click's own focus event, before any arm
             screen._arm_library_list_entry_focus()
             assert screen.focused is grip, screen.focused  # not blanked
@@ -691,6 +711,26 @@ async def test_a_notes_list_entry_arm_never_blanks_a_grip_the_user_clicked(
             screen._arm_library_list_entry_focus()
             assert screen.focused is None, screen.focused
             screen._disarm_library_list_entry_focus()
+    finally:
+        profile.close()
+
+
+async def test_a_notes_list_entry_arm_keeps_a_clicked_grip_in_the_import_view(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In the import view no list entry is reachable, so the clicked grip holds.
+
+    That is the end state the running-check footer pin depends on (review
+    r11n4 N4-3). A boot of its own: a click on the list first leaves a
+    deferred Notes work-pane callback that a whole-screen settle would wait
+    on (r11c8 probe).
+    """
+    profile = _Profile(tmp_path, monkeypatch)
+    host = profile.host()
+    try:
+        async with host.run_test(size=SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
             await _open_import_once_on_the_folder(host, screen, pilot, profile.folder)
             await _until(
                 pilot,
@@ -708,8 +748,7 @@ async def test_a_notes_list_entry_arm_never_blanks_a_grip_the_user_clicked(
             )
             screen._disarm_library_list_entry_focus()
             grip = screen.query_one("#library-browse-items-grip")
-            screen._library_input_focus = grip
-            screen.set_focus(grip)
+            _click_focus(screen, grip)
             await pilot.pause()
             screen._arm_library_list_entry_focus()
             for _ in range(10):  # frames, not time: the arm's own landing
