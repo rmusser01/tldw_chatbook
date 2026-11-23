@@ -195,9 +195,9 @@ async def test_responsive_rebuild_preserves_stable_event_selection_and_filters()
 
 
 @pytest.mark.asyncio
-async def test_long_inspector_is_focusable_scrolls_to_painted_bottom_and_full_pane() -> (
-    None
-):
+async def test_long_inspector_is_focusable_scrolls_to_painted_bottom_and_full_pane(
+    wait_for_condition,
+) -> None:
     snapshot = _long_detail_snapshot()
     async with _mounted(
         snapshot,
@@ -226,7 +226,13 @@ async def test_long_inspector_is_focusable_scrolls_to_painted_bottom_and_full_pa
         assert "TRACE_BOTTOM_SENTINEL" not in _painted_text(app)
 
         await pilot.press("end")
-        await pilot.pause()
+        # `end` is Textual's deferred scroll_end: on a loaded host the layout
+        # pilot.pause() runs itself can come first (TASK-42460).
+        await wait_for_condition(
+            lambda: inspector.scroll_y == inspector.max_scroll_y,
+            timeout=10.0,
+            interval=0.01,
+        )
         assert inspector.scroll_y == inspector.max_scroll_y
         assert "TRACE_BOTTOM_SENTINEL" in _painted_text(app)
         assert str(cue.render()) == ""
@@ -945,9 +951,9 @@ async def test_focus_only_transitions_refresh_filter_recovery_truth() -> None:
 
 
 @pytest.mark.asyncio
-async def test_inspector_scroll_survives_same_event_refresh_and_resets_on_change() -> (
-    None
-):
+async def test_inspector_scroll_survives_same_event_refresh_and_resets_on_change(
+    wait_for_condition,
+) -> None:
     snapshot = _long_detail_snapshot()
     async with _mounted(snapshot, size=(60, 18)) as (app, pilot, screen):
         table = screen.query_one("#trajectory-table", DataTable)
@@ -959,8 +965,15 @@ async def test_inspector_scroll_survives_same_event_refresh_and_resets_on_change
         table.move_cursor(row=table.get_row_index(tool_key), animate=False)
         await pilot.press("enter")
         await pilot.press("end")
-        await pilot.pause()
         inspector = screen.query_one("#trajectory-inspector", VerticalScroll)
+        # `end` is a deferred, animated scroll_end: read the place it settles
+        # on, not one it passes through (TASK-42460).
+        await wait_for_condition(
+            lambda: inspector.max_scroll_y > 0
+            and inspector.scroll_y == inspector.max_scroll_y,
+            timeout=10.0,
+            interval=0.01,
+        )
         before = inspector.scroll_y
         assert before > 0
 
@@ -980,7 +993,10 @@ async def test_inspector_scroll_survives_same_event_refresh_and_resets_on_change
             if record is not None and key != tool_key
         )
         table.move_cursor(row=table.get_row_index(different_key), animate=False)
-        await pilot.pause()
+        # A new event scrolls the inspector home, deferred to a refresh.
+        await wait_for_condition(
+            lambda: inspector.scroll_y == 0, timeout=10.0, interval=0.01
+        )
         assert screen._cursor_key() == different_key
         assert inspector.scroll_y == 0
 

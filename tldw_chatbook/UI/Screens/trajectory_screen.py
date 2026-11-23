@@ -472,6 +472,12 @@ class TrajectoryScreen(ModalScreen[None]):
         else:
             self._render_ledger()
         table.focus()
+        # The fold cue follows the inspector's geometry, so reconcile it in the
+        # layout that gives the inspector its overflow, not in a pass queued
+        # behind it (TASK-42460).
+        self.screen_layout_refresh_signal.subscribe(
+            self, lambda _screen: self._refresh_inspector_cue(), immediate=True
+        )
         if self._revision_provider is not None and self._snapshot_builder is not None:
             try:
                 self._last_revision = self._revision_provider()
@@ -488,11 +494,6 @@ class TrajectoryScreen(ModalScreen[None]):
         self._configure_columns()
         self._filter_bar.set_compact(self.size.width < 100)
         self._apply_height_budget()
-        try:
-            self.query_one("#trajectory-inspector", VerticalScroll)
-            self._schedule_inspector_cue()
-        except Exception:  # noqa: BLE001 - resize may precede composition
-            pass
 
     def _apply_height_budget(self) -> None:
         """Keep state, timeline, ledger, and both hint rows reachable at 18 rows."""
@@ -1631,7 +1632,6 @@ class TrajectoryScreen(ModalScreen[None]):
             inspector.scroll_home(animate=False)
         if focus:
             inspector.focus()
-        self._schedule_inspector_cue()
         self._refresh_hints()
 
     def _refresh_inspector(self) -> None:
@@ -1662,24 +1662,15 @@ class TrajectoryScreen(ModalScreen[None]):
             cue = self.query_one("#trajectory-inspector-overflow", Static)
         except Exception:  # noqa: BLE001 - layout may be tearing down
             return
-        if not inspector.display:
-            cue.display = False
-            cue.update("")
-            return
-        cue.display = True
+        cue.display = inspector.display
         has_more = (
-            inspector.max_scroll_y > 0 and inspector.scroll_y < inspector.max_scroll_y
+            inspector.display
+            and inspector.max_scroll_y > 0
+            and inspector.scroll_y < inspector.max_scroll_y
         )
-        cue.update("▼ more — scroll…" if has_more else "")
-
-    def _schedule_inspector_cue(self) -> None:
-        """Reconcile fold geometry after the class-driven layout has settled."""
-
-        self.call_after_refresh(self._refresh_inspector_cue)
-        # Opening detail also hides the timeline, which may settle in the next
-        # compositor cycle at a responsive boundary. This bounded second pass
-        # prevents a one-frame missing cue without polling or repaint loops.
-        self.set_timer(0.01, self._refresh_inspector_cue)
+        text = "▼ more — scroll…" if has_more else ""
+        if cue.content != text:  # an update lays out, which runs this again
+            cue.update(text)
 
     # -- events -----------------------------------------------------------------
 
@@ -1871,7 +1862,6 @@ class TrajectoryScreen(ModalScreen[None]):
             inspector.display = True
             cue.display = True
             inspector.focus()
-            self._schedule_inspector_cue()
         self._refresh_hints()
 
     def action_toggle_detail_full(self) -> None:
@@ -1886,7 +1876,6 @@ class TrajectoryScreen(ModalScreen[None]):
         self._detail_full = not self._detail_full
         self.set_class(self._detail_full, "trace-detail-full")
         inspector.focus()
-        self._schedule_inspector_cue()
         self._refresh_hints()
 
     def action_load_earlier(self) -> None:
