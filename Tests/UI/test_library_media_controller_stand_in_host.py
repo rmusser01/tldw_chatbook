@@ -247,7 +247,8 @@ async def test_the_stand_in_provides_every_member_of_the_host_protocol() -> None
     wrong_kind = sorted(
         name
         for name in services
-        if inspect.iscoroutinefunction(getattr(LibraryMediaHost, name))
+        # An annotation-only member has no attribute, and counts as sync.
+        if inspect.iscoroutinefunction(getattr(LibraryMediaHost, name, None))
         != inspect.iscoroutinefunction(vars(_StandInHost)[name])
     )
     assert not wrong_kind, f"stand-in members not sync/async as the protocol declares: {wrong_kind}"
