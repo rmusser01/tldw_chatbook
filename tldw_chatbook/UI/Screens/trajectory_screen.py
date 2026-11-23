@@ -57,7 +57,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import time
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import asdict, replace
@@ -374,9 +373,10 @@ class TrajectoryScreen(ModalScreen[None]):
         #: Tail-follow: True while the reader is at the bottom; scrolling
         #: up suspends it, ``f`` re-enables.
         self._follow = True
-        #: Explicit resume grace: geometry-polling must not cancel an
-        #: in-flight ``f`` before its deferred ``scroll_end`` lands.
-        self._follow_grace_until = 0.0
+        #: Tail scrolls queued but not landed. Until they land the table's
+        #: scroll position is mid-change (a re-render resets it to the top),
+        #: so it says nothing about where the reader is.
+        self._tail_scrolls_pending = 0
         self._turns: tuple[TrajectoryTurn, ...] = snapshot.turns
         self._turn_numbers = _number_logical_turns(self._turns)
         self._collapsed: set[str] = set()
@@ -800,6 +800,10 @@ class TrajectoryScreen(ModalScreen[None]):
             return
         if revision is not None and revision != self._last_revision:
             return
+        # The tick that started this rebuild saw the reader at the tail, but
+        # they may have scrolled up since: re-read it before the re-render
+        # resets the scroll, or the tail scroll below snaps them back.
+        self._sync_follow_from_scroll()
         selected_key = self._cursor_key()
         self._snapshot = snapshot
         self._turns = snapshot.turns
@@ -857,18 +861,31 @@ class TrajectoryScreen(ModalScreen[None]):
         self._refresh_hints()
         self._refresh_state()
         if self._follow:
-            try:
-                table = self.query_one("#trajectory-table", DataTable)
-                # The re-render resets scroll geometry; scrolling must land
-                # after the table re-lays out, not at the stale range.
-                table.call_after_refresh(table.scroll_end, animate=False)
-            except Exception:  # noqa: BLE001 - pre-mount refresh
-                pass
+            self._queue_tail_scroll()
+
+    def _queue_tail_scroll(self) -> None:
+        """Scroll to the newest row once the table has re-laid out.
+
+        The re-render resets scroll geometry; scrolling must land after the
+        table re-lays out, not at the stale range.
+        """
+        try:
+            table = self.query_one("#trajectory-table", DataTable)
+        except Exception:  # noqa: BLE001 - pre-mount refresh
+            return
+        if table.call_after_refresh(
+            table.scroll_end, animate=False, on_complete=self._tail_scroll_landed
+        ):
+            self._tail_scrolls_pending += 1
+
+    def _tail_scroll_landed(self) -> None:
+        self._tail_scrolls_pending = max(0, self._tail_scrolls_pending - 1)
 
     def _sync_follow_from_scroll(self) -> None:
         """Suspend follow while the reader is off the bottom edge.
 
-        Pull-based (checked on every poll tick) rather than event-based:
+        Pull-based (checked on every poll tick and before each live
+        re-render) rather than event-based:
         DataTable scroll geometry is authoritative and needs no message
         plumbing, and a table that cannot scroll at all keeps following.
         """
@@ -876,9 +893,7 @@ class TrajectoryScreen(ModalScreen[None]):
             table = self.query_one("#trajectory-table", DataTable)
         except Exception:  # noqa: BLE001 - pre-mount refresh
             return
-        if table.max_scroll_y <= 0:
-            return
-        if time.monotonic() < self._follow_grace_until:
+        if table.max_scroll_y <= 0 or self._tail_scrolls_pending:
             return
         following = table.scroll_y >= table.max_scroll_y - 1
         if following != self._follow:
@@ -888,12 +903,7 @@ class TrajectoryScreen(ModalScreen[None]):
     def action_resume_follow(self) -> None:
         """Re-enable tail-follow and jump to the newest records (``f``)."""
         self._follow = True
-        self._follow_grace_until = time.monotonic() + 1.0
-        try:
-            table = self.query_one("#trajectory-table", DataTable)
-            table.call_after_refresh(table.scroll_end, animate=False)
-        except Exception:  # noqa: BLE001 - pre-mount refresh
-            pass
+        self._queue_tail_scroll()
         self._refresh_state()
 
     def _title_text(self) -> str:

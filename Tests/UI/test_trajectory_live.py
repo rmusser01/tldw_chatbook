@@ -19,6 +19,7 @@ integration surface.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -244,37 +245,130 @@ async def test_live_revision_change_appends_rows_and_follows_tail():
         assert "follow" in str(screen.query_one("#trajectory-hints").render())
 
 
-async def test_scrolling_up_suspends_follow_until_f_resumes():
-    # 60 turns overflow any pilot viewport, so scrolling is real.
+async def test_scrolling_up_suspends_follow_until_f_resumes(wait_for_condition):
+    # 60 turns overflow any pilot viewport, so scrolling is real. A scroll
+    # lands a refresh or more after it is asked for, and a loaded runner can
+    # take several, so each step waits on the table's own geometry with a
+    # deadline, not on a count of pauses (TASK-42414).
+    async def until(condition):
+        await wait_for_condition(condition, timeout=10.0, interval=0.01)
+
     state = {"revision": 3, "turns": 60}
     builder = lambda: snapshot_with_turns(state["turns"])  # noqa: E731
     app = TrajectoryHostApp(snapshot_with_turns(60), lambda: state["revision"], builder)
     async with app.run_test() as pilot:
         screen = app.screen_instance
         table = screen.query_one("#trajectory-table", DataTable)
+        await until(lambda: table.max_scroll_y > 0)
         table.scroll_end(animate=False)
-        await pilot.pause()
+        await until(lambda: table.scroll_y == table.max_scroll_y)
+        screen._sync_follow_from_scroll()
         assert screen._follow is True
 
         # The reader scrolls up to inspect history.
         table.scroll_to(y=0, animate=False)
-        await pilot.pause()
+        await until(lambda: table.scroll_y == 0)
         screen._sync_follow_from_scroll()
         assert screen._follow is False
 
-        # New records arrive while reading: no tail jump.
+        # New records arrive while reading: no tail jump, even once every
+        # queued tail scroll has had its chance to land.
         state["turns"] = 61
         state["revision"] += 1
         screen._poll_revision()
-        for _ in range(40):
-            if table.row_count > 123:
-                break
-            await pilot.pause(0.05)
+        await until(
+            lambda: table.row_count == 61 * 3 and not screen._tail_scrolls_pending
+        )
         assert screen._follow is False
         assert table.scroll_y == 0  # reading position preserved
 
         # f re-enables follow and jumps to the tail.
         await pilot.press("f")
+        assert screen._follow is True
+        await until(lambda: table.scroll_y == table.max_scroll_y)
+
+
+async def test_a_reader_scroll_during_a_live_rebuild_is_not_snapped_back(
+    monkeypatch, wait_for_condition
+):
+    """The rebuild a tick started at the tail lands after the reader scrolled up.
+
+    It must leave the reader where they are and suspend follow, not scroll
+    them back to the tail (TASK-42414).
+    """
+
+    async def until(condition):
+        await wait_for_condition(condition, timeout=10.0, interval=0.01)
+
+    # The test runs the poll tick itself, so no interval tick re-reads the
+    # scroll position while the rebuild is held.
+    poll = TrajectoryScreen._poll_revision
+    monkeypatch.setattr(TrajectoryScreen, "_poll_revision", lambda self: None)
+    release = threading.Event()
+    state = {"revision": 3, "turns": 60}
+
+    def builder():
+        release.wait(10)
+        return snapshot_with_turns(state["turns"])
+
+    app = TrajectoryHostApp(snapshot_with_turns(60), lambda: state["revision"], builder)
+    async with app.run_test():
+        screen = app.screen_instance
+        table = screen.query_one("#trajectory-table", DataTable)
+        try:
+            await until(lambda: table.max_scroll_y > 0)
+            table.scroll_end(animate=False)
+            await until(lambda: table.scroll_y == table.max_scroll_y)
+
+            # A new turn lands; the tick sees the reader at the tail and
+            # starts the rebuild, which is held.
+            state["turns"] = 61
+            state["revision"] += 1
+            poll(screen)
+            assert screen._follow is True
+
+            # The reader scrolls up while the rebuild is in flight.
+            table.scroll_to(y=0, animate=False)
+            await until(lambda: table.scroll_y == 0)
+        finally:
+            release.set()
+
+        await until(
+            lambda: table.row_count == 61 * 3 and not screen._tail_scrolls_pending
+        )
+        assert table.scroll_y == 0, "the rebuild snapped the reader back to the tail"
+        assert screen._follow is False
+
+
+async def test_back_to_back_live_rebuilds_keep_following_the_tail(wait_for_condition):
+    """A rebuild landing before the last one's tail scroll keeps following.
+
+    The first re-render reset the scroll to the top; the second must not
+    read that as the reader scrolling up (TASK-42414).
+    """
+
+    async def until(condition):
+        await wait_for_condition(condition, timeout=10.0, interval=0.01)
+
+    state = {"revision": 3, "turns": 60}
+    builder = lambda: snapshot_with_turns(state["turns"])  # noqa: E731
+    app = TrajectoryHostApp(snapshot_with_turns(60), lambda: state["revision"], builder)
+    async with app.run_test():
+        screen = app.screen_instance
+        table = screen.query_one("#trajectory-table", DataTable)
+        await until(lambda: table.max_scroll_y > 0)
+        table.scroll_end(animate=False)
+        await until(lambda: table.scroll_y == table.max_scroll_y)
+        screen._sync_follow_from_scroll()
+        assert screen._follow is True
+
+        screen._apply_live_snapshot(snapshot_with_turns(61))
+        screen._apply_live_snapshot(snapshot_with_turns(62))
+        assert screen._follow is True
+
+        await until(
+            lambda: table.row_count == 62 * 3 and not screen._tail_scrolls_pending
+        )
         assert screen._follow is True
         assert table.scroll_y == table.max_scroll_y
 
