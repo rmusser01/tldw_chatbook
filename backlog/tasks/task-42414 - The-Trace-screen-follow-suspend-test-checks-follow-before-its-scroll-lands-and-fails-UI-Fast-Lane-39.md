@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-22 21:17
-updated_date: 2026-11-23 02:27
+updated_date: 2026-11-23 03:15
 labels:
 - follow-up
 - ci
@@ -49,6 +49,7 @@ Found during round 21 of the follow-up burn-down (2026-11-22). Checked on the ro
 5. Siblings: grep the trajectory and trace tests for one-pause scroll reads and fix those with the same cause.
 6. Soak the file 20 times at -n 4 and 5 times serially with the UI lane flags; run covering tests, preflight, ruff F and the size ratchets; notes, ACs, Done.
 7. Added after review (coordinator decision): open a live Trace at the tail with follow engaged, and keep a paused reader's rows across a live rebuild, each with a test red at base; then repeat step 6.
+8. Review rev1 (coordinator decision, fix every finding): navigation during loading must not open at the tail; keep the reader's row through same-frame re-renders and a sliding page; record the known gap; then repeat step 6.
 
 ## Implementation Notes
 
@@ -70,8 +71,8 @@ Found during round 21 of the follow-up burn-down (2026-11-22). Checked on the ro
   - The old test's "new records" step waited on `row_count > 123`, which the 180-row ledger already met, so it checked before the rebuild landed.
 - **Product fix (`UI/Screens/trajectory_screen.py`).**
   - `_apply_live_snapshot` re-reads follow from the scroll position before its re-render resets the scroll.
-  - Every scroll the screen queues goes through `_queue_ledger_scroll(row)`: the tail for live follow, `f` and the open, or a row for the paused restore. It counts each one in `_scrolls_pending` until the scroll's `on_complete` reports it landed.
-  - `_sync_follow_from_scroll` skips while a scroll is pending, so the top-of-table position a re-render leaves behind is never read as the reader scrolling.
+  - Every scroll the screen queues goes through `_queue_ledger_scroll(tail=...)`: the tail for live follow, `f` and the open, or the reader's recorded row for the paused restore, resolved against the rows present when it lands. `_scrolls_pending` counts each one until its `on_complete` reports it landed. It also counts each re-render's own scroll reset for two refresh hops.
+  - `_sync_follow_from_scroll` skips while anything is pending, so the top-of-table position a re-render leaves behind is never read as the reader scrolling.
   - The count replaces `f`'s 1 s wall-clock grace and the `time` import. A grace renewed on every rebuild would have made follow impossible to suspend while streaming.
 - **Follow-ups fixed here (coordinator decision).**
   - **Follow engaged on open.** A live Trace on an overflowing conversation opened at the top while showing FOLLOWING. The first tick then paused it (probe: follow True and y 0 at open, follow False 1.2 s later).
@@ -81,6 +82,18 @@ Found during round 21 of the follow-up burn-down (2026-11-22). Checked on the ro
   - **Paused reader keeps their rows.** `DataTable.clear()` reset the scroll and only the cursor row came back, so a paused reader who had scrolled away from the cursor was thrown back to it on every rebuild (probe: y=40 → 0).
     - The rebuild now scrolls back to the row the reader had at the top, by row key, because past 500 records the newest page slides and a raw offset shifts. A row that is gone keeps the old offset, which the table clamps.
     - Test, parametrized `appended` / `newest-page-slides`: red at plain dev and at the first commit (`assert 0 == 40`, shown with a temporary copy that read the pending count with `getattr`). Red 3 of 3 with the restore removed. With a raw-offset restore, `newest-page-slides` is red (`turn:t24` where `turn:t23` was).
+- **Review fixes (rev1, head 4483cbb4db).**
+  - **Navigation while loading.** A live Trace over 1000 records builds its ledger in a worker. A navigation key (`n`, `j`, `u`) or a timeline click before that lands renders at once with a row to restore. That render counted as the first one, so the Trace opened at the tail with the picked row off screen, still FOLLOWING. Opening at the tail now also needs `_pending_restore_key is None`.
+    - `test_navigating_while_a_live_trace_loads_keeps_the_cursor_in_view`: red at 4483cbb4db (cursor row 1, view 1777..1801), green after, and red again with the guard removed.
+  - **A reset read as the reader's place.** The restore read the reader's row from a scroll that a re-render resets to 0 at once. A second paused rebuild, or a search key, `t`, `e` or a filter, in the same frame sent the reader to row 0.
+    - Each re-render now counts its reset until the table re-lays out. `_note_reading_row` records the reader's anchor only while nothing is pending; otherwise it keeps the last one. The restore resolves the anchor when it lands.
+    - `test_a_second_rebuild_in_the_same_frame_keeps_the_readers_row[paused-rebuild|re-render]`: both red at 4483cbb4db (`turn:t23` became `__load_earlier__`), green after.
+    - Red in both cases with the anchor re-read on every call; red in the `re-render` case with the re-render count removed.
+  - **Drift on the oldest rows.** Past 500 records each new turn drops the oldest rows, so a paused reader on them drifted (u10 → u11 → u12 → u13). The window now grows to keep the reader's anchor row, as it already did for the cursor row (`_window_for_key`). With "Earlier events" at the top, the anchor is the row under it.
+    - `test_a_paused_reader_on_the_oldest_rows_keeps_them[earlier-row-at-top|oldest-record-at-top]`, three rebuilds each: both red at 4483cbb4db (u10 → u11 on the first rebuild), green after.
+    - Red in both cases with only the cursor row kept in the window; red in `earlier-row-at-top` with "Earlier events" used as the anchor.
+  - **Known gap (not fixed).** A reader scroll that arrives while one of the screen's own deferred scrolls is in flight (one or two refresh hops after a live rebuild, an `f` or the open) is overridden when that scroll lands. The same window also delays the follow check for that scroll to the next poll tick. Closing it needs reader-input events from the DataTable (wheel, keys, scrollbar) rather than its scroll position. The User Guide no longer claims a scroll is kept "even when an update was already loading"; it says a scroll made at the very moment an update is drawn can be undone by it.
+  - **Found, not fixed (proposed to the coordinator).** Navigating or searching while a Trace over 1000 records is still building its ledger leaves the state line on "LOADING · Building trace ledger…" for good. The synchronous render never clears `_loading`, and the worker's later render is dropped as stale. A probe showed this at plain dev and at 4483cbb4db.
 - **Tests (`Tests/UI/test_trajectory_live.py`, a whole-file census entry; no census edit).**
   - `test_scrolling_up_suspends_follow_until_f_resumes` waits on the table's geometry with a deadline (existing `wait_for_condition` fixture, 10 s / 10 ms) and keeps every follow and position assertion. Its own `scroll_end` is `immediate=True`.
     - A deferred one failed 3 of 25 soak runs, plus 2 of 12 in a hunt, at the "new records" check (`assert True is False`).
@@ -91,20 +104,22 @@ Found during round 21 of the follow-up burn-down (2026-11-22). Checked on the ro
     - `test_a_reader_scroll_during_a_live_rebuild_is_not_snapped_back` (red 3 of 3 without the re-read, `assert 160 == 0`)
     - `test_back_to_back_live_rebuilds_keep_following_the_tail` (red 3 of 3 without the pending skip)
     - `test_a_paused_reader_keeps_their_place_across_a_live_rebuild[appended|newest-page-slides]`
+    - The three rev1 tests above.
   - The file's other 12 tests are unedited.
 - **Siblings.**
   - I scanned the 84 failed Derived Artifacts runs from 2026-11-20 03:35Z to 2026-11-22 18:09Z (156 failed UI jobs in 71 runs). This node failed in 29 of those jobs, and no other Trace or trajectory node failed.
   - `test_trace_responsive.py`'s inspector `end` checks have a one-pause shape, but they assert `max_scroll_y > 0` first and never failed, so I left them unedited.
-- **Soak of the final file** (18 tests; load is on 18 CPUs).
-  - -n 4, 20 runs: 20/20, load 29-37.
-  - Two concurrent -n 4 loops of 10 runs: 20/20, load 26-32.
-  - Serial with `-p no:xdist --timeout=180`, 5 runs: 5/5, 7.1-8.5 s per file.
+- **Soak of the final file** (23 tests; load is on 18 CPUs).
+  - -n 4, 20 runs: 20/20, load 30-43.
+  - Serial with `-p no:xdist --timeout=180`, 5 runs: 5/5, 17-26 s per file at load 41-44. The 600-turn navigation test and the 260-turn tests roughly doubled the file's serial time; an earlier 18-test soak took 7.1-8.5 s at load ~30.
+  - Before rev1 (18 tests): 20/20 at -n 4 (load 29-37), two concurrent loops of 10 runs 20/20 (load 26-32), and 5/5 serial.
 - **Checks.**
-  - Covering Trace, trajectory, modal and Console-trace files: 462 passed, 12 failed. All 12 fail the same way at plain dev:
+  - Covering Trace, trajectory, modal and Console-trace files, final tree: 466 passed, 13 failed. Twelve of the 13 fail the same way at plain dev:
     - the 3 no-lane Trace nodes (`test_trace_filters_navigation::test_live_insertion_before_selection_preserves_event_id_filters_and_viewport`, and `test_trajectory_timeline_integration`'s `test_click_outside_active_brush_atomically_clears_time_and_selects` and `test_timeline_renders_bars_for_timed_snapshot`);
     - 9 nodes in `test_console_tab_switch_binds_composer.py`, which stubs `open_trajectory_view`. It is the same failing set with the dev screen file.
+    - The 13th, `test_trace_responsive.py::test_long_inspector_is_focusable_scrolls_to_painted_bottom_and_full_pane`, failed once at load 47 (`'▼ more — scroll' in ''` at :225) and passed 4 of 4 serially. Repeated 32 times at -n 4: 1 and 0 failures with the dev screen file, 2 and 0 with the final one. It is a pre-existing flake in the inspector overflow cue, which code this task does not touch; I proposed it as a follow-up.
   - Architecture size, timer-path and modal ratchets, run serially: 267 passed.
   - `ruff --select F` on the touched files, `Tests/lint/ruff_gate.py` and preflight: all pass.
 - **Docs.**
-  - `Docs/User_Guide/console/chat-basics.md`: a paragraph on live Trace. It opens on the newest events, follows while you are at the bottom, pauses and keeps your rows when you scroll up, and resumes with `f`.
+  - `Docs/User_Guide/console/chat-basics.md`: a paragraph on live Trace. It opens on the newest events, or on the row you picked while a long Trace was loading. It follows while you are at the bottom. When you scroll up it pauses and keeps your rows, including the oldest rows of a long Trace, and a scroll at the very moment an update is drawn can be undone. `f` resumes.
   - `backlog/docs/lessons-textual.md`: `scroll_to` is immediate on a DataTable while `scroll_end` is deferred.
