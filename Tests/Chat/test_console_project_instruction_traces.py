@@ -56,6 +56,7 @@ async def _project_console(
     discover_tools=False,
     cold_after_request=None,
     tool_prefix="",
+    first_failure=None,
 ):
     """Use real new-session/workspace defaults; replace only provider HTTP."""
     with (
@@ -97,6 +98,7 @@ async def _project_console(
         factory = ConsoleTraceBoundaryFactory(db)
         reservation_errors = []
         http_payloads = []
+        attempts = []
 
         def boundary(request, resolved, route):
             try:
@@ -111,6 +113,9 @@ async def _project_console(
 
         def respond(request: httpx.Request) -> httpx.Response:
             assert request.url.path == "/v1/chat/completions"
+            attempts.append(request)
+            if first_failure is not None and len(attempts) == 1:
+                return first_failure(request)  # returns an error or raises
             payload = json.loads(request.content)
             http_payloads.append(payload)
             if len(http_payloads) == cold_after_request:
@@ -242,6 +247,7 @@ async def _project_console(
                     session=session,
                     factory=factory,
                     http_payloads=http_payloads,
+                    attempts=attempts,
                     reservation_errors=reservation_errors,
                     project_file=root / source_name,
                     restart_factory=restart_factory,
@@ -597,3 +603,61 @@ async def test_transformed_project_sends_preserve_source_and_context(
                 "ON r.revision_id = e.semantic_revision_id"
             ).fetchall()
         assert pins and all(row[0] == row[1] for row in pins)
+
+
+def _llama_failure(kind):
+    def fail(request: httpx.Request) -> httpx.Response:
+        if kind.startswith("http"):
+            return httpx.Response(int(kind[4:]), json={"error": {"message": "fixture"}})
+        error = {
+            "connect": httpx.ConnectError,
+            "timeout": httpx.ReadTimeout,
+            "remote_protocol": httpx.RemoteProtocolError,
+        }[kind]
+        raise error("fixture", request=request)
+
+    return fail
+
+
+@pytest.mark.parametrize(
+    "failure,retried",
+    [
+        ("http429", True),
+        ("http503", True),
+        ("connect", True),
+        ("timeout", True),
+        ("remote_protocol", True),
+        ("http400", False),
+        ("http401", False),
+        ("http404", False),
+    ],
+)
+async def test_llamacpp_agent_retries_a_transient_failure_in_place(
+    tmp_path, monkeypatch, failure, retried
+):
+    """TASK-42472: a llama.cpp agent run retries a transient failure in place.
+
+    The direct HTTP path raises raw httpx errors, which the agent's retry
+    classifier did not count, so a 503 or a refused connection ended the run
+    at once. The retried call is admitted to the captured trace as a
+    TOOL_LOOP call against the failed first call; a 4xx still ends the run.
+    """
+    async with _project_console(
+        tmp_path, monkeypatch, first_failure=_llama_failure(failure)
+    ) as app:
+        result = await app.controller.submit_draft("Hello", session_id=app.session.id)
+        assert result.accepted
+        with app.db.transaction() as cursor:
+            calls = app.factory.repository.read_conversation_call_lineage(
+                cursor, app.session.persisted_conversation_id
+            )
+        lineage = [(call.route_identity, call.state.value) for call in calls]
+        assert app.reservation_errors == []
+        if retried:
+            assert app.controller.run_state.status.value == "completed"
+            assert len(app.attempts) == 2
+            assert lineage == [("agent_first", "error"), ("tool_loop", "complete")]
+        else:
+            assert app.controller.run_state.status.value == "failed"
+            assert len(app.attempts) == 1
+            assert lineage == [("agent_first", "error")]
