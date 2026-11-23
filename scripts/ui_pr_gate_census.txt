@@ -3705,3 +3705,6 @@ Tests/UI/test_console_endpoint_discovery.py::test_shared_evidence_change_refresh
 # driven directly, its host protocol's members checked against the stand-in.
 # One whole file, eight cases, 1.9 s serially with the lane's flags at load 7.5.
 Tests/UI/test_library_media_controller_stand_in_host.py
+Tests/UI/test_trace_filters_navigation.py
+Tests/UI/test_trajectory_timeline_integration.py
+Tests/UI/test_trace_responsive.py
