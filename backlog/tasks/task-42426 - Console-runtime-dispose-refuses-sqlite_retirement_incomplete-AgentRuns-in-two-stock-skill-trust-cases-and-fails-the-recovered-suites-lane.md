@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-22 22:10
-updated_date: 2026-11-23 04:52
+updated_date: 2026-11-23 05:16
 labels:
 - follow-up
 - ci
@@ -91,23 +91,35 @@ Both cases pass locally at the base.
 
 **AC#4: product guard (review follow-up).**
 - **The race.** The app's quit route (`settle_view_and_dispose`) cancels the view's count worker. A cancelled count keeps its old refresh time, because `state["at"]` is set only on success. The view stays live while `runtime.dispose()` retires AgentRuns, so a render could start a fresh read that races the retire, and quit would log `SQLite retirement incomplete at quit: AgentRuns`. The test had the same gap between its wait and the retire.
-- **The guard.** `ConsoleAgentController._agent_runs_reads_closed()` reads the view's own runtime through the screen's `_console_runtime` resolver; it never resolves a new runtime. It returns true once `_disposed` has latched, which `_dispose_owned` does before its first await. While it is true:
-  - `_console_subagent_counts_for_rows` returns the counts it already has, on the file-backed AgentRuns path;
-  - `_presentation_historical_snapshot` returns its last value, or the stale rows it kept;
+- **The guard.** `ConsoleAgentController._agent_runs_reads_closed()` returns true once the Console is closing, by either of two signals:
+  - the runtime's `_disposed` latch. Quit approval's `begin_dispose` sets it first; otherwise `_dispose_owned` sets it before its first await. It reads the screen's already-resolved runtime; every caller resolves that runtime to obtain the bridge.
+  - the view's `_console_chat_tearing_down` flag. `_shutdown_console_runtime` sets it before it drains the view's workers, on every exit route. That covers an exit without quit approval (`on_shutdown_request` with no `begin_dispose`), where `_disposed` is set only inside `_dispose_owned`, after the drain and after `dispose()`'s opening awaits.
+
+  While it is true:
+  - `_console_subagent_counts_for_rows` returns the counts it already has for that row set, on the file-backed AgentRuns path;
+  - `_presentation_historical_snapshot` returns its last value or kept stale rows, but only when that state belongs to the same owner and conversation (`_historical_owner`, as the normal path checks); otherwise it returns an empty snapshot;
   - neither schedules a read. Memory and custom bridges are unchanged.
+- **ADR-225 needs no amendment.** This is a per-view admission fence on the runtime's existing latch.
 - **What it does not cover.** Reads already in flight at the latch still run, so the test-side wait stays.
-- **Test.** `Tests/UI/test_console_browser_quit_fence.py::test_disposing_runtime_admits_no_new_view_agent_runs_read[counts|history]` sits in an existing whole-file UI census entry, so the census needs no edit. It starts the read, cancels its worker the way quit's drain does, and waits for the read to retire. Then it latches `_disposed`, renders three times, and asserts there is no new worker and only one read.
-  - Without the guard: 2 failed with `assert (2 == 1)`, from a second `_load_subagent_counts` or `_load_historical_presentation` task.
-  - With the guard: 2 passed.
-  - Serial time with the UI lane flags (`-p no:xdist --timeout=180 --durations=0`): 2 passed in 2.62 s (1.27 s of it setup) at load 28.
-- **TASK-34661 cross-reference.** This guard closes the quit-path race: a render during dispose can no longer start a view AgentRuns read after quit's drain has cancelled the count. TASK-34661's own file is not edited.
+- **Tests** in `Tests/UI/test_console_browser_quit_fence.py`, an existing whole-file UI census entry, so the census needs no edit:
+  - `test_disposing_runtime_admits_no_new_view_agent_runs_read[counts|history × latched|tearing_down]` starts the read, cancels its worker the way quit's drain does, and waits for the read to retire. It then closes the Console by the given signal, renders three times, and asserts there is no new worker and only one read.
+  - `test_disposing_runtime_keeps_showing_published_agent_runs_values[counts|history]` lets a read publish (the count refresh window is set to 0, so every render would read again) and then latches the runtime. Three renders return the published values with no new read. A render for another conversation returns empty and reads nothing.
+- **Red/green**, each by a temporary source edit, reverted:
+  - First commit's tests, before the guard: 2 failed with `assert (2 == 1)`; with the guard, 2 passed.
+  - No guard at all: 6 of the 6 current cases failed on their read assertions.
+  - Without the tearing-down signal: `[counts-tearing_down]` and `[history-tearing_down]` failed ("A render admitted a new AgentRuns read while the Console closed").
+  - Without the owner check: `keeps_showing[history]` failed ("A closing Console showed another chat's rows").
+  - With every fix: 6 of 6 passed.
+- **Serial time with the UI lane flags.** First commit's two cases: 2 passed in 2.62 s (1.27 s of it setup) at load 28. Current six cases: 6 passed in 3.18 s at load 36.
+- **TASK-34661 cross-reference.** This guard closes the quit-path race on approved and unapproved exits alike: a render during shutdown can no longer start a view AgentRuns read after the drain has cancelled the count. TASK-34661's own file is not edited.
 - **Covering runs.**
-  - The quit fence, refresh-read batching, historical-read cancellation and count host-shutdown files: 30 passed (`-n 4`).
-  - Soak of the touched tests (both stock cases and both new parameters), 4 parallel loops × 5 rounds = 20 rounds: 80 of 80 passed at load 17-29.
-  - `test_console_agent_rail.py`, `test_console_agent_controller.py` and `test_console_fleet_historical_detail.py` fail locally with the known `RecoveryRequired: raw_source_selection_changed` trap. I ran them under a temporary `bootstrap_profile` marker, since reverted. Under the marker the branch failed 12 tests and base 13, 10 of them the same. The rest were full-log probe tests in `test_console_agent_rail.py` that change from run to run (two more branch runs of that file failed 11 and 9). None of them involves disposal.
-  - `test_subagent_badge_primary_token.py::test_real_badge_count_work_tracks_subagents_not_primary_publication[child]` fails the same way at base (a `TypeError` in its repaint double).
-- **Ratchets.** The module-size, screen-size, worker-group inventory and chat code-identity ratchets: 278 passed, run serially. `agent.py` has no size row.
-- **Sweep (nothing changed).** 31 test files mount an app with `run_test` and call `runtime.dispose()` directly; 15 of them run in a PR lane. The task's 140-run CI scan found this refusal only in the two stock cases. With the guard, a render after the latch starts no read, so only a read already in flight at the latch can still race a direct dispose.
+  - First commit: the quit fence, refresh-read batching, historical-read cancellation and count host-shutdown files passed 30 of 30 (`-n 4`). Soak of the touched tests, 4 loops × 5 rounds: 80 of 80 passed at load 17-29.
+  - Second review (`-n 4`): the quit fence, refresh-read batching, historical-read cancellation, count host-shutdown, badge primary-token, fleet targets, inspector section, drill-tick reads and fleet runtime files: 233 passed, 1 failed. The failure, `test_subagent_badge_primary_token.py::...[child]`, fails the same way at base (a `TypeError` in its repaint double).
+  - The files that set `_console_chat_tearing_down` (session tab close, hook-review send freeze, character presentation cadence): 71 passed, 1 failed. `test_character_presentation_cadence.py::test_direct_refresh_outcome_cannot_certify_an_old_display` fails 1 of 3 parameters on base and branch alike, twice each.
+  - Soak of the new and changed cases (both stock cases plus all six quit-fence cases), 4 loops × 5 rounds: 160 of 160 passed (8 per round) at load 50-61.
+  - `test_console_agent_rail.py`, `test_console_agent_controller.py` and `test_console_fleet_historical_detail.py` fail locally with the known `RecoveryRequired: raw_source_selection_changed` trap. I ran them under a temporary `bootstrap_profile` marker, since reverted. The branch then failed 12 tests and base 13, 10 of them the same. The rest were full-log probe tests in `test_console_agent_rail.py` that change from run to run (two more branch runs failed 11 and 9). None of them involves disposal.
+- **Ratchets.** The module-size, screen-size, worker-group inventory and chat code-identity ratchets: 278 passed, run serially, after both commits. `agent.py` has no size row.
+- **Sweep (nothing changed).** 31 test files mount an app with `run_test` and call `runtime.dispose()` directly; 15 of them run in a PR lane. The task's 140-run CI scan found this refusal only in the two stock cases. With the guard, a render after the Console starts closing starts no read, so only a read already in flight at that point can still race a direct dispose.
 - **Lane on the follow-up commit:** 2006 passed, 1 skipped in 24:17 (load at the end 20-45), no failures. The ingest-runner and managed-received tests that failed on the first lane run both passed this time.
 
 **Files.** `Tests/Performance/test_console_skill_trust_stock_owned.py` (the settle wait), `tldw_chatbook/UI/Console_Modules/agent.py` (the guard), `Tests/UI/test_console_browser_quit_fence.py` (the render-after-dispose test). Lessons: `backlog/docs/lessons-testing-evidence.md` records this incident (wait, do not cancel), and `backlog/docs/lessons-backlog-hygiene.md` records the zsh trap (`"$F[case]"` subscripts the variable, so a soak's node ids came out empty and pytest collected the whole tree).
