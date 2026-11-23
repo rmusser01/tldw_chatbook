@@ -70,6 +70,11 @@ from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleTranscript
 from tldw_chatbook.Widgets.Console.console_rail_handle import ConsoleRailHandle
 
+# The real ChatScreen goes through config-participant admission, which the
+# per-test sandbox refuses (RecoveryRequired); keep the collection-time
+# profile, as the other mounted Console tests do (TASK-42416).
+pytestmark = pytest.mark.bootstrap_profile
+
 # (id, expected_at_160x45, expected_at_235x52, expected_at_120x30) where
 # expected is "hittable" | "hidden" | "clipped" -- pinned against the
 # production hierarchy and shipped stylesheet.

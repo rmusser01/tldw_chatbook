@@ -3640,3 +3640,60 @@ Tests/UI/test_console_stop_during_failed_commit.py::test_a_failing_commit_with_n
 # send, whose save then fails too, settles the same way (6-7 s each).
 Tests/UI/test_console_stop_during_failed_commit.py::test_stop_during_a_card_retry_whose_commit_fails_gives_the_send_back[before-reservation]
 Tests/UI/test_console_stop_during_failed_commit.py::test_stop_during_a_card_retry_whose_commit_fails_gives_the_send_back[inside-reservation]
+# TASK-42416 (2026-11-23): the Console shell-region and edge-rail geometry files
+# ran in no lane; the edge-rail live-resize test was red at base unseen. Both
+# are now bootstrap_profile. Serially with the lane's flags at load 32-33:
+# shell regions 44 passed in 202.6 s, edge rails 16 passed in 80.4 s, over the
+# 30 s per-entry budget, so one node per test function (2.5-17.8 s), split by
+# parameter where a function passes 30 s (region geometry 103 s, live resize
+# 32.4 s). Appended at the tail, except
+# test_exact_100_workspace_state_matrix_is_contained: it fails about 1 run in
+# 4 at base too (a first-paint transcript hit on a detached empty-state
+# Static), so it stays out of the lane until that oracle is fixed.
+Tests/UI/test_console_shell_regions.py::test_fresh_console_composes_saved_rail_label_style
+Tests/UI/test_console_shell_regions.py::test_console_pilot_uses_the_exact_production_css_stack
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-shell-hittable-hittable-hittable-size0]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-shell-hittable-hittable-hittable-size1]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-shell-hittable-hittable-hittable-size2]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-left-rail-hittable-hittable-hittable-size0]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-left-rail-hittable-hittable-hittable-size1]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-left-rail-hittable-hittable-hittable-size2]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-left-rail-body-hittable-hittable-hittable-size0]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-left-rail-body-hittable-hittable-hittable-size1]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-left-rail-body-hittable-hittable-hittable-size2]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-main-column-hittable-hittable-hittable-size0]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-main-column-hittable-hittable-hittable-size1]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-main-column-hittable-hittable-hittable-size2]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-context-rail-handle-hidden-hidden-hidden-size0]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-context-rail-handle-hidden-hidden-hidden-size1]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-context-rail-handle-hidden-hidden-hidden-size2]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-inspector-rail-handle-hittable-hittable-hittable-size0]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-inspector-rail-handle-hittable-hittable-hittable-size1]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-inspector-rail-handle-hittable-hittable-hittable-size2]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-control-bar-hittable-hittable-hittable-size0]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-control-bar-hittable-hittable-hittable-size1]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-control-bar-hittable-hittable-hittable-size2]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-mode-bar-hidden-hidden-hidden-size0]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-mode-bar-hidden-hidden-hidden-size1]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-mode-bar-hidden-hidden-hidden-size2]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-native-composer-hittable-hittable-hittable-size0]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-native-composer-hittable-hittable-hittable-size1]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-native-composer-hittable-hittable-hittable-size2]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-run-inspector-hidden-hidden-hidden-size0]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-run-inspector-hidden-hidden-hidden-size1]
+Tests/UI/test_console_shell_regions.py::test_region_geometry_is_stable[#console-run-inspector-hidden-hidden-hidden-size2]
+Tests/UI/test_console_shell_regions.py::test_compact_workspace_grid_children_are_contained
+Tests/UI/test_console_shell_regions.py::test_bounded_rail_default_shell_matrix_is_compositor_contained
+Tests/UI/test_console_shell_regions.py::test_exact_100_live_resize_preserves_workspace_and_interaction_state[101-to-100]
+Tests/UI/test_console_shell_regions.py::test_exact_100_live_resize_preserves_workspace_and_interaction_state[100-to-101]
+Tests/UI/test_console_shell_regions.py::test_exact_100_live_resize_preserves_workspace_and_interaction_state[99-to-100]
+Tests/UI/test_console_shell_regions.py::test_exact_100_live_resize_preserves_workspace_and_interaction_state[100-to-99]
+Tests/UI/test_console_edge_rail_geometry.py::test_production_workspace_regions_touch_application_edges
+Tests/UI/test_console_edge_rail_geometry.py::test_expanded_and_collapsed_rail_owners_keep_one_divider
+Tests/UI/test_console_edge_rail_geometry.py::test_focus_repaints_only_owned_divider_without_moving_geometry
+Tests/UI/test_console_edge_rail_geometry.py::test_f6_transcript_focus_marks_only_stable_title_without_geometry_change
+Tests/UI/test_console_edge_rail_geometry.py::test_live_resize_reasserts_edge_ownership_and_preserves_rail_intent
+Tests/UI/test_console_edge_rail_geometry.py::test_collapsed_handle_focus_is_non_color_and_dimension_stable
+Tests/UI/test_console_edge_rail_geometry.py::test_focus_paint_clears_when_focus_becomes_none
+Tests/UI/test_console_edge_rail_geometry.py::test_native_widget_blur_repaints_the_actual_focus_successor
+Tests/UI/test_console_edge_rail_geometry.py::test_rapid_focus_transfer_keeps_only_the_current_edge_painted

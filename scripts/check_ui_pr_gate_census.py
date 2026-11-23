@@ -1231,6 +1231,11 @@ MINIMUM_FILES = 2457
 # functions as nodes (the file runs 114.1 s, over the 30 s per-entry budget)
 # at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2472
+# TASK-42416 (2026-11-23): append the Console shell-region and edge-rail
+# geometry files (no lane before; now bootstrap_profile) as 47 nodes at the
+# tail, one per test function, by parameter where a function ran over 30 s.
+# The floor is the measured entry count.
+MINIMUM_FILES = 2519
 
 
 MINIMUM_FILES = 2038

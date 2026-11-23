@@ -4,7 +4,7 @@ title: "The Console edge-focus restyle tests click the Inspect rail open control
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-22 21:17
-updated_date: 2026-11-23 02:21
+updated_date: 2026-11-23 02:45
 labels:
 - follow-up
 - ci
@@ -75,7 +75,70 @@ TASK-41632 fixed the same kind of fixed-wait flake in the `_open_console_inspect
 
 **Lane step:** `r19-step.sh ... "Run admission-sensitive suites 2" -p no:xdist --timeout=300` (94 targets, the workflow's flags) gave 1512 passed, rc 0, in 25:49 at load 30-62. The edge-focus tests took 5.64 s and 6.07 s.
 
-**Checks:** preflight passed; `ruff --select F` passed on the three files. No product module changed and no ratchet lists these files. No census edit: the file is already a `derived-artifacts.yml` admission-2 target.
+**Checks:** preflight passed; `ruff --select F` passed on the three files. No product module changed and no ratchet lists these files. The edge-focus file needed no census edit: it is already a `derived-artifacts.yml` admission-2 target.
+
+**Addition beyond the ACs: the two sibling files are now laned (coordinator decision, 2026-11-23).** Why: `test_console_shell_regions.py` and `test_console_edge_rail_geometry.py` ran in no lane (nothing in `.github/` or `scripts/` named them). Locally they failed 60/60 with `RecoveryRequired`, so the live-resize test was red at base and nobody saw it.
+
+- **Marker.** Both files now carry a module `pytestmark = pytest.mark.bootstrap_profile`, as the edge-focus file does with this harness. This replaces the temporary marker used for verification above.
+- **Placement.** Appended at the UI census tail: the census already holds `bootstrap_profile` files, the checker accepts the parameter ids, and `MINIMUM_FILES` is 2519 (2472 + 47). No re-deal or shard change.
+- **Measurement.** Serial with the UI lane's flags (`-p no:xdist --timeout=180 --durations=0`) at load 32-33:
+  - shell regions: 44 passed in 202.6 s;
+  - edge rails: 16 passed in 80.4 s.
+- **Granularity.** Both files run over the 30 s per-entry budget, so there is one node per test function. `test_region_geometry_is_stable` (103.1 s, 30 cases) and `test_exact_100_live_resize_preserves_workspace_and_interaction_state` (32.4 s) are split by parameter.
+- **One function left out.** `test_exact_100_workspace_state_matrix_is_contained` (17.8 s) is not laned. It fails about 1 run in 4, on base and branch alike: 3/12 runs on each.
+  - Its `hide_setup_overlay=False` first-paint oracle hit a detached `#console-empty-body` Static: `native transcript is not painted at (39, 16)`, with `ancestors == []`.
+  - It is a proposed follow-up: fix that oracle, then lane it.
+- **Soak.** Four serial copies of the 47 laned entries ran at once: 4 × 56 tests, 224/224 passed, load 22-37 (about 5:00 each).
+- **Mixed process.** The new entries, followed in the same process by the round-21 sandboxed tail entries, gave 77 passed. The one failure was the matrix function above.
+- **Checks.** Tests/CI at -n 4 and preflight pass.
+- **Per-entry charges** (local serial seconds, setup + call + teardown, load 32-33), 47 entries, 232.1 s in all:
+  - `test_console_shell_regions.py::test_fresh_console_composes_saved_rail_label_style`: 11.5 s
+  - `test_console_shell_regions.py::test_console_pilot_uses_the_exact_production_css_stack`: 3.9 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-shell-hittable-hittable-hittable-size0]`: 4.0 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-shell-hittable-hittable-hittable-size1]`: 3.4 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-shell-hittable-hittable-hittable-size2]`: 3.8 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-left-rail-hittable-hittable-hittable-size0]`: 3.4 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-left-rail-hittable-hittable-hittable-size1]`: 3.2 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-left-rail-hittable-hittable-hittable-size2]`: 2.9 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-left-rail-body-hittable-hittable-hittable-size0]`: 3.5 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-left-rail-body-hittable-hittable-hittable-size1]`: 4.1 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-left-rail-body-hittable-hittable-hittable-size2]`: 4.0 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-main-column-hittable-hittable-hittable-size0]`: 3.3 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-main-column-hittable-hittable-hittable-size1]`: 3.0 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-main-column-hittable-hittable-hittable-size2]`: 3.5 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-context-rail-handle-hidden-hidden-hidden-size0]`: 3.0 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-context-rail-handle-hidden-hidden-hidden-size1]`: 3.0 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-context-rail-handle-hidden-hidden-hidden-size2]`: 2.9 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-inspector-rail-handle-hittable-hittable-hittable-size0]`: 2.9 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-inspector-rail-handle-hittable-hittable-hittable-size1]`: 3.1 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-inspector-rail-handle-hittable-hittable-hittable-size2]`: 2.5 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-control-bar-hittable-hittable-hittable-size0]`: 2.8 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-control-bar-hittable-hittable-hittable-size1]`: 2.8 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-control-bar-hittable-hittable-hittable-size2]`: 2.8 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-mode-bar-hidden-hidden-hidden-size0]`: 3.9 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-mode-bar-hidden-hidden-hidden-size1]`: 4.2 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-mode-bar-hidden-hidden-hidden-size2]`: 4.0 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-native-composer-hittable-hittable-hittable-size0]`: 4.3 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-native-composer-hittable-hittable-hittable-size1]`: 4.1 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-native-composer-hittable-hittable-hittable-size2]`: 3.6 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-run-inspector-hidden-hidden-hidden-size0]`: 3.6 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-run-inspector-hidden-hidden-hidden-size1]`: 3.7 s
+  - `test_console_shell_regions.py::test_region_geometry_is_stable[#console-run-inspector-hidden-hidden-hidden-size2]`: 3.7 s
+  - `test_console_shell_regions.py::test_compact_workspace_grid_children_are_contained`: 3.6 s
+  - `test_console_shell_regions.py::test_bounded_rail_default_shell_matrix_is_compositor_contained`: 6.8 s
+  - `test_console_shell_regions.py::test_exact_100_live_resize_preserves_workspace_and_interaction_state[101-to-100]`: 7.3 s
+  - `test_console_shell_regions.py::test_exact_100_live_resize_preserves_workspace_and_interaction_state[100-to-101]`: 7.4 s
+  - `test_console_shell_regions.py::test_exact_100_live_resize_preserves_workspace_and_interaction_state[99-to-100]`: 8.9 s
+  - `test_console_shell_regions.py::test_exact_100_live_resize_preserves_workspace_and_interaction_state[100-to-99]`: 8.8 s
+  - `test_console_edge_rail_geometry.py::test_production_workspace_regions_touch_application_edges`: 14.5 s
+  - `test_console_edge_rail_geometry.py::test_expanded_and_collapsed_rail_owners_keep_one_divider`: 10.0 s
+  - `test_console_edge_rail_geometry.py::test_focus_repaints_only_owned_divider_without_moving_geometry`: 9.8 s
+  - `test_console_edge_rail_geometry.py::test_f6_transcript_focus_marks_only_stable_title_without_geometry_change`: 3.8 s
+  - `test_console_edge_rail_geometry.py::test_live_resize_reasserts_edge_ownership_and_preserves_rail_intent`: 6.8 s
+  - `test_console_edge_rail_geometry.py::test_collapsed_handle_focus_is_non_color_and_dimension_stable`: 9.2 s
+  - `test_console_edge_rail_geometry.py::test_focus_paint_clears_when_focus_becomes_none`: 10.6 s
+  - `test_console_edge_rail_geometry.py::test_native_widget_blur_repaints_the_actual_focus_successor`: 3.1 s
+  - `test_console_edge_rail_geometry.py::test_rapid_focus_transfer_keeps_only_the_current_edge_painted`: 3.1 s
 
 **Lesson:** a "re-shown overlay" variant was added to `backlog/docs/lessons-testing-evidence.md` (Pilot clicks section).
 
@@ -84,4 +147,5 @@ TASK-41632 fixed the same kind of fixed-wait flake in the `_open_console_inspect
 - `Tests/UI/test_console_edge_focus_restyle_scope.py`
 - `Tests/UI/test_console_edge_rail_geometry.py`
 - `backlog/docs/lessons-testing-evidence.md`
+- `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py` (lane addition)
 <!-- SECTION:NOTES:END -->

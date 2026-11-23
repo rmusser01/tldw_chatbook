@@ -10,6 +10,11 @@ from Tests.UI.test_console_shell_regions import (
     make_console_pilot,
 )
 
+# The real ChatScreen goes through config-participant admission, which the
+# per-test sandbox refuses (RecoveryRequired); keep the collection-time
+# profile, as the other mounted Console tests do (TASK-42416).
+pytestmark = pytest.mark.bootstrap_profile
+
 
 _LEFT_OWNERS = ("#console-left-rail", "#console-context-rail-handle")
 _RIGHT_OWNERS = ("#console-right-rail", "#console-inspector-rail-handle")
