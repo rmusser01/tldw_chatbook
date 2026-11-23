@@ -714,6 +714,10 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
         assert bounded._reconcile_scheduled is False
         assert rail._outer_owner_reconcile_count == baseline + 1
         assert rail._outer_reconcile_scheduled is False
+        # A redundant trailing owner pass would land after settling: re-check
+        # the count once more after an idle pause (flags are not re-asserted).
+        await pilot.pause()
+        assert rail._outer_owner_reconcile_count == baseline + 1, rail_report()
 
         if direction == "pending-to-readiness":
             assert (
