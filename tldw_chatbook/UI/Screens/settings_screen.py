@@ -125,6 +125,7 @@ from ...Chat.provider_readiness import (
     provider_config_key,
     provider_credential_source,
     required_base_url_target,
+    uses_claude_subscription,
 )
 from ...Chat.provider_setup_persistence import (
     ProviderSetupDraft,
@@ -13398,11 +13399,12 @@ class SettingsScreen(BaseAppScreen):
 
     def _provider_saved_auth_source(self, provider: object) -> str:
         """Return the saved sign-in choice; only Anthropic has one (TASK-34201)."""
-        if provider_config_key(str(provider or "")) != "anthropic":
-            return _anthropic_auth_sources()[0]
-        from ...LLM_Calls.anthropic_subscription import anthropic_auth_source
-
-        return anthropic_auth_source(self._provider_config("anthropic"))
+        # Readiness's own test (TASK-42478 review), so the two cannot drift.
+        app_config = getattr(self.app_instance, "app_config", None)
+        subscribed = isinstance(app_config, Mapping) and uses_claude_subscription(
+            str(provider or ""), app_config
+        )
+        return _anthropic_auth_sources()[1 if subscribed else 0]
 
     def _provider_auth_readiness_config(self, provider: object) -> Mapping[str, object]:
         """Return readiness config with Anthropic's unsaved sign-in choice applied.

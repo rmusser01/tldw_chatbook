@@ -429,18 +429,24 @@ def provider_config_key(provider: str | None) -> str:
 
 
 def uses_claude_subscription(
-    provider: str | None, app_config: Mapping[str, object]
+    provider: str | None,
+    app_config: Mapping[str, object],
+    *,
+    provider_settings: Mapping[str, object] | None = None,
 ) -> bool:
     """Whether ``provider``'s readiness reads the Claude subscription credential.
 
     Only Anthropic with ``[api_settings.anthropic] auth_source =
-    "claude_subscription"`` does (TASK-26022 AC#5). ``get_provider_readiness``
-    and the mounted Personas poll share this test, so the poll reads the
-    credential exactly when readiness would (TASK-42478).
+    "claude_subscription"`` does (TASK-26022 AC#5); the table is the first
+    normalised match, as readiness resolves it. Readiness, the mounted
+    Personas poll, Settings' saved choice, the first-run listing copy and the
+    Anthropic send all ask this, so none can drift (TASK-42478).
 
     Args:
         provider: Display provider name or key.
         app_config: Loaded app configuration.
+        provider_settings: Anthropic's table when the caller already resolved
+            it from ``app_config``; looked up when omitted.
 
     Returns:
         True only for that pair; False otherwise, including for provider
@@ -453,13 +459,14 @@ def uses_claude_subscription(
         anthropic_auth_source,
     )
 
-    try:
-        settings = provider_settings_for_key(
-            app_config.get("api_settings", {}), "anthropic"
-        )
-    except ProviderSettingsError:
-        return False
-    return anthropic_auth_source(settings) == AUTH_SOURCE_SUBSCRIPTION
+    if provider_settings is None:
+        try:
+            provider_settings = provider_settings_for_key(
+                app_config.get("api_settings", {}), "anthropic"
+            )
+        except ProviderSettingsError:
+            return False
+    return anthropic_auth_source(provider_settings) == AUTH_SOURCE_SUBSCRIPTION
 
 
 def required_base_url_target(provider: str | None) -> str | None:
@@ -837,7 +844,9 @@ def get_provider_readiness(
     # its own source so subscription vs API key is visible at a glance; the
     # token never rides the record. Missing/expired blocks with the
     # refresh-in-Claude-Code copy -- never a silent API-key fallback.
-    if uses_claude_subscription(provider_name, app_config):
+    if uses_claude_subscription(
+        provider_name, app_config, provider_settings=provider_settings
+    ):
         from tldw_chatbook.LLM_Calls.anthropic_subscription import (
             subscription_credential_status,
         )

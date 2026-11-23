@@ -358,17 +358,19 @@ def subscription_cannot_list(
 
 
 def _signs_in_with_subscription(step: Any, provider: str) -> bool:
-    """Whether ``provider`` is Anthropic signed in with a Claude subscription."""
+    """Whether ``provider`` is Anthropic signed in with a Claude subscription.
+
+    Readiness's own test (TASK-42478 review): a provider spelled
+    ``Anthropic`` compared unequal to ``"anthropic"`` here.
+    """
 
     wizard = getattr(step, "wizard", None)
     app_config = getattr(getattr(wizard, "app_instance", None), "app_config", None)
-    if provider != "anthropic" or not isinstance(app_config, Mapping):
+    if not isinstance(app_config, Mapping):
         return False
-    from tldw_chatbook.config import provider_settings_for_key
-    from tldw_chatbook.LLM_Calls.anthropic_subscription import anthropic_auth_source
+    from tldw_chatbook.Chat.provider_readiness import uses_claude_subscription
 
-    settings = provider_settings_for_key(app_config.get("api_settings"), "anthropic")
-    return anthropic_auth_source(settings) == "claude_subscription"
+    return uses_claude_subscription(provider, app_config)
 
 
 def _with_keyless_hint(

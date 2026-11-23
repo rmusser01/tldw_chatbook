@@ -1547,7 +1547,6 @@ def chat_with_anthropic(
     from tldw_chatbook.LLM_Calls.anthropic_subscription import (
         MISSING_CREDENTIAL_MESSAGE,
         STALE_CREDENTIAL_MESSAGE,
-        anthropic_auth_source,
         read_claude_code_credential,
         subscription_headers_for_token,
         with_claude_code_identity,
@@ -1562,15 +1561,13 @@ def chat_with_anthropic(
     # message rather than silently falling back to (and billing) an API key.
     subscription_token: Optional[str] = None
     # Qodo #5 (PR #2313): auth_source lives in the MODERN [api_settings.anthropic]
-    # table (where it is documented and where readiness reads it) -- the legacy
-    # anthropic_api mapping never receives it. Read the modern table first.
-    _modern_anthropic = (loaded_config_data.get("api_settings") or {}).get(
-        "anthropic"
-    ) or {}
-    _auth_config = (
-        _modern_anthropic if "auth_source" in _modern_anthropic else anthropic_config
-    )
-    if anthropic_auth_source(_auth_config) == "claude_subscription":
+    # table (where it is documented) -- the legacy anthropic_api mapping never
+    # receives it. TASK-42478 review: decided by readiness's own test, which
+    # takes the first normalised table, so [api_settings.Anthropic] signs in
+    # the way readiness reported it.
+    from tldw_chatbook.Chat.provider_readiness import uses_claude_subscription
+
+    if uses_claude_subscription("anthropic", loaded_config_data):
         _sub_cred = read_claude_code_credential()
         if _sub_cred is None:
             raise ChatConfigurationError(
