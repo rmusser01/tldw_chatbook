@@ -337,6 +337,44 @@ async def test_the_re_check_takes_focus_back_from_a_reset_parked_grip(
         profile.close()
 
 
+async def test_artifacts_never_syncs_a_page_into_a_shell_being_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A page read that lands while a rail switch removes its shell is dropped.
+
+    r11n4 load flake: switching between two Artifacts rows pruned the old
+    reader shell while its page read was still current (same scope until the
+    new shell attaches), and the read synced into the pruned children:
+    ``NoMatches('#library-artifacts-heading')`` failed the worker.
+    """
+    profile = _Profile(tmp_path, monkeypatch)
+    host = profile.host()
+    try:
+        async with host.run_test(size=SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _select(screen, pilot, "artifacts-all")
+            controller = screen._artifacts_controller
+            await _until(
+                pilot,
+                lambda: controller.shell is not None and controller.shell.is_mounted,
+                "the Artifacts reader shell",
+            )
+            shell = controller.shell
+            synced: list[bool] = []
+            monkeypatch.setattr(shell, "sync", lambda: synced.append(True))
+            shell._pruning = True  # what ``App._prune`` marks while removing it
+            try:
+                controller.sync()
+            finally:
+                shell._pruning = False
+            assert not synced, "synced into a shell being removed"
+            controller.sync()
+            assert synced, "a live shell must still be synced"
+    finally:
+        profile.close()
+
+
 # --- the copied entry table, and every route ------------------------------
 
 

@@ -287,8 +287,8 @@ class LibraryArtifactsController:
         self.screen._artifacts_navigation.resume()
 
     def sync(self) -> None:
-        if self.shell is not None and self.shell.is_mounted and self.active():
-            self.shell.sync()
+        if (s := self.shell) and s.is_mounted and not s._pruning and self.active():
+            self.shell.sync()  # r11n4: never into a shell a switch is removing
 
     @property
     def empty_actions_visible(self) -> bool:

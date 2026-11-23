@@ -1327,7 +1327,10 @@ MINIMUM_FILES = 2520
 # - PR #3423 r11n4 load flake (2026-11-22): that file's pin for a focus a
 #   reset parked on a pane grip (one Library boot, about 3 s), at the tail:
 #   2506 -> 2507.
-MINIMUM_FILES = 2507
+# - PR #3423 r11n4 load flake (2026-11-22): that file's pin for an Artifacts
+#   page read landing in a shell being removed (one boot, about 3 s), at the
+#   tail: 2507 -> 2508.
+MINIMUM_FILES = 2508
 
 
 MINIMUM_FILES = 2038
