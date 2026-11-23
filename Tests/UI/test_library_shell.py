@@ -33560,6 +33560,15 @@ async def test_library_note_newer_selection_cancels_pending_back_focus() -> None
             lambda: len(screen.query(".library-notes-row")) >= 2,
             message="Both note rows never mounted.",
         )
+        # TASK-42422: the row press below is code-driven, so nothing disarms
+        # the list-entry window first, as a real key (``on_key``) or click
+        # (``get_focusable_widget_at``) does. A retry tick inside the window
+        # took focus back to the first row from the editor, 11 of 30 runs.
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen._library_pending_list_entry_focus,
+            message="The list-entry window never closed.",
+        )
         screen._notes_state.pending_focus_identity = LibraryNotesFocusIdentity(
             stage="notes",
             region="navigator",

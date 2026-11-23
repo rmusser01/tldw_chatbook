@@ -39,6 +39,7 @@ from textual.css.query import NoMatches, QueryError
 from textual.dom import DOMNode
 from textual.errors import NoWidget
 from textual.geometry import Region
+from textual.screen import Screen
 from textual.timer import Timer
 from textual.widget import Widget
 from textual.worker import Worker, get_current_worker
@@ -720,6 +721,7 @@ from ..Library_Modules.screen_constants import (
     LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS,
     LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS,
     LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS,
+    LIBRARY_LIST_ENTRY_FOCUS_EXPIRY_RETRIES,
     _LIBRARY_SLASH_CANVAS_FILTERS,
     LIBRARY_NOTES_AUTOSAVE_SECONDS,
     LIBRARY_NOTES_AUTOSAVE_MAX_WAIT_SECONDS,
@@ -890,6 +892,29 @@ def _log_source_snapshot_failure(deadline_marker: str = "") -> None:
     """
     logger.opt(exception=True).warning(
         f"Failed to load local Library source snapshot.{deadline_marker}"
+    )
+
+
+def _library_entry_target_replaced(widget: Widget) -> bool:
+    """Whether a repaint is about to replace ``widget`` (TASK-42422).
+
+    It is being pruned, or an ancestor's recompose is queued (TASK-40293) or
+    running. Textual clears ``_recompose_required`` as the recompose starts;
+    ``Widget.recompose`` then holds the widget's ``lock`` (``batch()``) until
+    the new children, nested ones included, have mounted. The lock is on
+    every widget, so this needs no mixin. A rebuilt canvas mounts its toolbar
+    or filter before its rows, and focus put on a replaced widget falls to
+    Textual's reset, which parks it on a pane grip. The Screen's own lock is
+    not read: entry attempts run on the screen's own message pump, so they
+    never interleave with its recompose, and the old flag never covered it.
+    """
+    return getattr(widget, "_pruning", False) or any(
+        getattr(node, "_recompose_required", False)
+        or (
+            not isinstance(node, Screen)
+            and getattr(getattr(node, "lock", None), "is_locked", False)
+        )
+        for node in getattr(widget, "ancestors", ())
     )
 
 
@@ -10299,7 +10324,9 @@ class LibraryScreen(BaseAppScreen):
             LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS, _tick
         )
 
-    def _expire_library_list_entry_focus(self) -> None:
+    def _expire_library_list_entry_focus(
+        self, retries: int = LIBRARY_LIST_ENTRY_FOCUS_EXPIRY_RETRIES
+    ) -> None:
         """Close the settle window; a Notes entry still waiting lands first.
 
         TASK-41129: a Notes list that is still loading keeps the entry
@@ -10307,7 +10334,8 @@ class LibraryScreen(BaseAppScreen):
         arrive and nothing holds focus -- or only a pane grip, where
         Textual's reset parks it when a recompose removes the focused
         control -- the empty-list target takes it, so focus is never left
-        unset.
+        unset. Review of TASK-42422: a target a repaint is replacing waits
+        for it, one retry tick at a time; after ``retries`` it lands anyway.
         """
         focused = self.focused
         if (
@@ -10324,7 +10352,18 @@ class LibraryScreen(BaseAppScreen):
                 "#library-notes-filter",
             ):
                 found = self.query(selector)
-                if found and found.first() in chain:
+                if not found:
+                    continue
+                if retries > 0 and _library_entry_target_replaced(found.first()):
+                    # The handle a disarm stops (a key or click still wins).
+                    if self._library_list_entry_focus_timer is not None:
+                        self._library_list_entry_focus_timer.stop()
+                    self._library_list_entry_focus_timer = self.set_timer(
+                        LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS,
+                        partial(self._expire_library_list_entry_focus, retries - 1),
+                    )
+                    return
+                if found.first() in chain:
                     self.set_focus(found.first())
                     break
         self._disarm_library_list_entry_focus()
@@ -10631,10 +10670,7 @@ class LibraryScreen(BaseAppScreen):
         # true, and the retry re-attempts against the replacement rows.
         raw_rows = list(self.query(f".{row_class}"))
         rows = [row for row in raw_rows if not getattr(row, "_pruning", False)]
-        if rows and any(
-            getattr(node, "_recompose_required", False)
-            for node in getattr(rows[0], "ancestors", ())
-        ):
+        if rows and _library_entry_target_replaced(rows[0]):
             # TASK-40293: a queued recompose will replace these rows too, and
             # Textual's reset off the pruned row reads as a user move.
             rows = []
@@ -10684,7 +10720,7 @@ class LibraryScreen(BaseAppScreen):
                 except (NoMatches, QueryError):
                     pass
                 else:
-                    if getattr(control, "_pruning", False) or (
+                    if _library_entry_target_replaced(control) or (
                         control not in self.focus_chain
                     ):
                         # TASK-34000.26: the filter the recompose is
@@ -10705,9 +10741,11 @@ class LibraryScreen(BaseAppScreen):
             if row_class == "library-media-row":
                 control = self._library_media_empty_list_fallback_target()
                 if control is not None:
-                    if getattr(control, "_pruning", False):
+                    if _library_entry_target_replaced(control):
                         # TASK-34000.26: the preferred control is being
                         # replaced; wait for its replacement instead.
+                        # TASK-42422: so is one mounted before the rows
+                        # of a repaint still running (CI's Library grip).
                         self._retry_library_list_entry_focus_while_armed()
                         return
                     self._library_notes_programmatic_focus_target = control
