@@ -1111,6 +1111,23 @@ async def _verify_background_pending_close_releases_round_without_an_active_turn
                         _assert_surviving_creation_is_live(controller, pending)
                     assert doomed.id not in controller._active_cancel_events
                     assert doomed.id not in controller._active_assistant_message_ids
+                    # TASK-42424: wait for the viewed tab's question card before
+                    # the Close dialog covers the view. Here controller.app is a
+                    # never-run TldwCli, so the round's arm-time liveness check
+                    # (TASK-41637) rests on the view alone, and a check that
+                    # lands under the dialog fails the round closed. A running
+                    # app never does (test_running_app_round_stays_pending_
+                    # while_no_view_can_answer).
+                    assert await _settle(
+                        pilot,
+                        lambda console=console, keeper=keeper: any(
+                            card.display
+                            and card._request_id
+                            and (card._payload or {}).get("session_id") == keeper
+                            for card in console.query("#chat-question-card")
+                        ),
+                    ), "the viewed tab's question card never mounted"
+                    assert not sibling.done(), "the viewed tab's question ended before Close"
                     await _show_tabs(console, pilot, {keeper, doomed.id})
                     await _click(pilot, f"#console-close-session-tab-{doomed.id}")
                     await _wait_for_confirmation(host)
