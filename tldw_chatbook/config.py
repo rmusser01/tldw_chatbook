@@ -6583,8 +6583,8 @@ def insert_absent_cli_config_bool(section: str, key: str, value: bool) -> bool:
             key,
         )
         try:
-            # A full reload: publishing the parsed text would skip the loader's
-            # raw-file transforms, e.g. legacy replay_thinking (v5r1 R1-4).
+            # A full reload re-reads the bytes just committed, so the session
+            # runs on exactly what the next launch loads.
             _publish_runtime_config_unlocked(config_path=config_path)
         except Exception:  # The line is on disk; report that, not a failed write.
             raise ConfigPostCommitError(

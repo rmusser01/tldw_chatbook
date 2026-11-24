@@ -474,12 +474,20 @@ def test_a_profile_whose_tools_are_dotted_keys_is_upgraded_not_failed_closed(
 
 
 def test_the_one_line_writer_keeps_the_load_time_config_transforms(profile) -> None:
-    """Review v5r1 (R1-4): the write republishes the runtime config. A
-    republish from the bare parsed text skipped the transforms the real
-    loader applies to the raw file, so an old profile's legacy
-    ``[console] replay_thinking = false`` (no ``reasoning_history``) ran the
-    rest of the session with ``reasoning_history`` back at "auto" -- on the
-    first launch of exactly the old profiles the legacy transform is for."""
+    """The write republishes the runtime config, and the session then runs on
+    exactly what the next launch loads, load-time transforms included: an old
+    profile's legacy ``[console] replay_thinking = false`` (no
+    ``reasoning_history``) stays "off", on the first launch of exactly the old
+    profiles that transform is for.
+
+    Review v5r1 (R1-4) found a republish from the parsed text that skipped
+    those transforms ("auto"), and the writer moved to a full reload. Since
+    dev's TASK-42131 (b290f519ef) the parsed-text rebuild runs them too, so
+    this pins the session's view after the write, not which publish path the
+    writer takes: it fails if that view skips the load-time transforms or
+    differs from a fresh load of the file."""
+    import copy
+
     from tldw_chatbook.config import (
         insert_absent_cli_config_bool,
         load_cli_config_and_ensure_existence,
@@ -494,9 +502,10 @@ def test_the_one_line_writer_keeps_the_load_time_config_transforms(profile) -> N
 
     assert insert_absent_cli_config_bool("tools", "full_agent_tools_enabled", True)
 
-    published = load_cli_config_and_ensure_existence()
+    published = copy.deepcopy(load_cli_config_and_ensure_existence())
     assert published["tools"]["full_agent_tools_enabled"] is True
     assert published["console"]["reasoning_history"] == "off"
+    assert published == load_cli_config_and_ensure_existence(force_reload=True)
     assert profile.config_path.read_text(encoding="utf-8") == (
         "# mine\n[console]\nreplay_thinking = false\n\n[tools]\n"
         "full_agent_tools_enabled = true\n"
