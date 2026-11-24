@@ -98,6 +98,8 @@ async def test_a_selected_git_filter_names_its_cause_and_remedy(
 async def test_change_review_keyboard_conflict_preparation_and_retry(
     request, tmp_path, monkeypatch, theme, size
 ):
+    from tldw_chatbook.Workspaces import change_turn_tracker
+
     app = _build_test_app()
     registry = app.workspace_registry_service
     registry.create_workspace(workspace_id="ws-review", name="Review workspace")
@@ -109,7 +111,7 @@ async def test_change_review_keyboard_conflict_preparation_and_retry(
     release = threading.Event()
     calls = []
 
-    def initialize(path):
+    def initialize(path, **_shadow):
         calls.append(path)
         entered.set()
         if not release.wait(20):
@@ -117,7 +119,9 @@ async def test_change_review_keyboard_conflict_preparation_and_retry(
         if len(calls) == 1:
             raise RuntimeError("preparation failed at /private/synthetic-root")
 
-    monkeypatch.setattr(service, "_initialize_root", initialize)
+    # The native issuer captured service._initialize_root at wiring, so patching
+    # that now reads as a changed source; hold the shadow step it calls instead.
+    monkeypatch.setattr(change_turn_tracker, "initialize_shadow_root", initialize)
     host = _StyledDestinationHarness(app, "settings")
     host.theme = theme
     try:
