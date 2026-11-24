@@ -151,41 +151,51 @@ async def make_console_pilot(*, size, app=None, hide_setup_overlay=True):
         yield pilot
 
 
-async def click_inspect_rail_open(pilot, *, timeout: float = 15.0) -> None:
+async def click_inspect_rail_open(
+    pilot, *, offset: tuple[int, int] = (0, 0), timeout: float = 15.0
+) -> None:
     """Click the Inspect rail's open control once a click can reach it.
 
     TASK-42416: waits until ``#console-inspector-rail-open`` is displayed, has
     a region and is the widget at its click point (what ``pilot.click``
     asserts), clicks it, then waits until the Inspect rail is displayed with a
-    region. The deadline only bounds a real failure (TASK-41632).
+    region. The deadline only bounds a real failure (TASK-41632). A click
+    that does not open the rail fails here, naming the widget it reached
+    (TASK-42463).
     """
     screen = pilot.app.screen
     deadline = time.monotonic() + timeout
     while True:
         control = screen.query_one("#console-inspector-rail-open")
         region = control.region
+        point = region.offset + offset
         if (
             control.display
             and region.area
-            and pilot.app.get_widget_at(*region.offset)[0] is control
+            and pilot.app.get_widget_at(*point)[0] is control
         ):
             break
         if time.monotonic() > deadline:
             # Name what a click there reaches instead (an overlay, say).
-            hit = pilot.app.get_widget_at(*region.offset)[0] if region.area else None
+            hit = pilot.app.get_widget_at(*point)[0] if region.area else None
             raise AssertionError(
                 f"Inspect rail open control never became clickable: "
                 f"display={control.display} region={region} hit={hit!r}"
             )
         await pilot.pause(0.01)
-    assert await pilot.click("#console-inspector-rail-open")
+    if not await pilot.click("#console-inspector-rail-open", offset=offset):
+        hit = pilot.app.get_widget_at(*point)[0]
+        raise AssertionError(f"the click at {point} reached {hit!r}")
     while True:
         rail = screen.query_one("#console-right-rail")
         if rail.display and rail.region.width > 0:
             await pilot.pause()
             return
         if time.monotonic() > deadline:
-            raise AssertionError(f"Inspect rail never opened: region={rail.region}")
+            raise AssertionError(
+                f"Inspect rail never opened: region={rail.region}; the click at "
+                f"{point} reached {control!r}"
+            )
         await pilot.pause(0.01)
 
 

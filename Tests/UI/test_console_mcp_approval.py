@@ -1657,29 +1657,11 @@ async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
     await asyncio.wait_for(projection_drained.wait(), timeout=10.0)
 
     def unsettled() -> list[str]:
-        return [
+        # TASK-42475: the Console's own startup and sync work, then this
+        # wait's focus checks.
+        return [*screen.console_pending_startup_work()] + [
             name
             for name, pending in (
-                ("attach not reconciled", not screen._console_attach_reconciled),
-                ("sync in progress", screen._console_sync_in_progress),
-                ("sync requested", screen._console_sync_requested),
-                (
-                    "control-bar replay",
-                    getattr(screen, "_console_control_bar_replay_whole_sync", False),
-                ),
-                (
-                    "control-bar sync scheduled",
-                    getattr(screen, "_console_control_bar_sync_scheduled", False),
-                ),
-                (
-                    "console-sync worker running",
-                    any(
-                        worker.node is screen
-                        and worker.group == "console-sync"
-                        and not worker.is_finished
-                        for worker in screen.workers
-                    ),
-                ),
                 # TASK-41530 fix round 1: mount (and the attach's resume)
                 # schedule `_restore_console_workbench_focus`, once through
                 # `set_timer(0.2, ...)`. A restore that runs after the test
@@ -4968,8 +4950,9 @@ def test_request_mcp_approvals_zero_timeout_keeps_round_armed_for_late_decision(
         )
 
     decider = threading.Thread(target=_decide_late)
-    decider.start()
+    # Before the start: a decider that runs first would shorten the measured wait.
     started = time.monotonic()
+    decider.start()
     decisions = controller.request_mcp_approvals([_pending()])
     elapsed = time.monotonic() - started
     decider.join()

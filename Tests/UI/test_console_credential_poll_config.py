@@ -94,19 +94,10 @@ async def test_credential_poll_defers_native_config_contention(lock_name):
             0.25, screen._poll_console_credential_readiness
         )
         async with asyncio.timeout(10):
+            # TASK-42475: the screen's own pending-work signal, not a copied list.
             while (
                 screen._console_credential_snapshot is None
-                or screen._console_sync_in_progress
-                or screen._console_sync_requested
-                # Lazily created; production reads it the same way.
-                or getattr(screen, "_console_control_bar_replay_whole_sync", False)
-                or screen._console_control_bar_sync_scheduled
-                or any(
-                    worker.node is screen
-                    and worker.group == "console-sync"
-                    and not worker.is_finished
-                    for worker in screen.workers
-                )
+                or screen.console_pending_startup_work()
             ):
                 await asyncio.sleep(0.01)
         assert "Not ready · timed out" in str(

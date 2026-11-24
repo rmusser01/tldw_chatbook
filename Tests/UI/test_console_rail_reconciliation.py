@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import replace
@@ -32,9 +33,8 @@ from tldw_chatbook.Chat.console_display_state import (
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.console_rail_state import ConsoleRailState
 from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsSummaryState
-from tldw_chatbook.Chat.provider_test_evidence import shared_connection_evidence
-# Looked up at call time, as the poll does (chat_screen.py), so a test that
-# replaces these names on the module is seen by the wait too.
+# The credential poll looks these up at call time (chat_screen.py), so the
+# pending-work pin test replaces them on the module.
 from tldw_chatbook.LLM_Calls import anthropic_subscription
 from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
 from tldw_chatbook.UI.Console_Modules.rail_section_layout import outer_hint_required
@@ -434,7 +434,12 @@ async def _settle(pilot, passes: int = 5) -> None:
 
 
 async def _wait_for_inspector_quiet(
-    pilot, screen, rail: ConsoleInspectorRail, *, owner_passes_after: int
+    pilot,
+    screen,
+    rail: ConsoleInspectorRail,
+    *,
+    owner_passes_after: int | None,
+    until: Callable[[], bool] | None = None,
 ) -> None:
     """Wait until the open Inspect rail and the Console's own syncs are quiet.
 
@@ -444,42 +449,27 @@ async def _wait_for_inspector_quiet(
     a five-pause settle and counted a second local-then-outer pair. Quiet
     means, on two polls in a row: the rail open with nothing scheduled on it
     or its sections, the owner-pass count unchanged and past
-    ``owner_passes_after`` (so the awaited pass has run), attach reconciled,
-    no Console sync running, requested or scheduled, no config retry owed, no
-    app worker left (TASK-42148's signal, widened), and the credential poll
-    settled: the background credential read has completed and the poll has
-    committed the gate it would read now. A first read that settles later
-    bumps the revision, and the poll then re-syncs the settings summary and
-    the run inspector.
+    ``owner_passes_after`` (so the awaited pass has run), and the screen's
+    own pending startup work empty (``console_pending_startup_work``,
+    TASK-42475: attach, Console syncs, the credential read and poll pass,
+    config retries and the screen's workers).
+
+    TASK-42463: ``owner_passes_after=None`` requires no owner pass, for a
+    half that asserts none happens. ``until`` is the state the awaited action
+    produces, for an action that leaves the quiet state unchanged until its
+    deferred work starts (TASK-42415's trap).
     """
 
-    def credential_gate() -> tuple[object, ...]:
-        # The poll's own pre-gate (ChatScreen._poll_console_credential_readiness),
-        # which reads the credential only for a chat on the subscription (TASK-42478).
-        return (
-            anthropic_subscription.subscription_credential_status(background=True)
-            if screen._console_subscription_selected
-            else None,
-            anthropic_subscription.subscription_readiness_revision(),
-            getattr(shared_connection_evidence(lambda: screen.app), "version", 0),
-        )
-
     def pending() -> list[str]:
-        gate = credential_gate()
+        passes = rail._outer_owner_reconcile_count
         flags = (
             ("rail closed", not rail.display),
             ("outer reconcile scheduled", rail._outer_reconcile_scheduled),
-            ("attach not reconciled", not screen._console_attach_reconciled),
-            ("sync in progress", screen._console_sync_in_progress),
-            ("sync requested", screen._console_sync_requested),
             (
-                "control-bar sync scheduled",
-                getattr(screen, "_console_control_bar_sync_scheduled", False),
+                "owner pass",
+                owner_passes_after is not None and passes <= owner_passes_after,
             ),
-            ("credential read", gate[0] == "pending"),
-            ("credential poll pass", screen._console_credential_pre_gate != gate),
-            ("config retry", bool(getattr(screen, "_console_config_retries", None))),
-            ("owner pass", rail._outer_owner_reconcile_count <= owner_passes_after),
+            ("awaited state", until is not None and not until()),
         )
         return (
             [name for name, busy in flags if busy]
@@ -488,7 +478,7 @@ async def _wait_for_inspector_quiet(
                 for section in rail.query(ConsoleBoundedSection)
                 if section._reconcile_scheduled
             ]
-            + [f"worker {worker.name or worker.group}" for worker in screen.workers]
+            + list(screen.console_pending_startup_work())
         )
 
     deadline = time.monotonic() + 15.0
@@ -1250,9 +1240,15 @@ async def _open_production_inspector(host, pilot) -> ConsoleInspectorRail:
 
     screen = host.screen_stack[-1]
     rail = screen.query_one("#console-right-rail", ConsoleInspectorRail)
+    # TASK-42463: wait for the open (laid out, its reconcile run) and for the
+    # Console's startup syncs, not a fixed settle, so callers that capture the
+    # scheduler or count owner passes start from a quiet rail. An open makes
+    # an owner pass only when it changes an owner, so none is required.
     if not rail.display:
         screen.query_one("#console-inspector-rail-open", Button).press()
-        await _settle(pilot, passes=8)
+    await _wait_for_inspector_quiet(
+        pilot, screen, rail, owner_passes_after=None, until=lambda: rail.region.width > 0
+    )
     assert rail.display
     return rail
 
@@ -1512,8 +1508,12 @@ async def test_inspector_geometry_only_generation_reconciles_without_owner_pass(
         content = Static("geometry-only content", id="geometry-only-outer-demand")
         content.styles.height = 10
         await outer.mount(content)
+        screen = host.screen_stack[-1]
+        requested = inspector._outer_owner_reconcile_count
         inspector.request_outer_reconcile()
-        await _settle(pilot, passes=8)
+        await _wait_for_inspector_quiet(
+            pilot, screen, inspector, owner_passes_after=requested
+        )
         assert hint.display is False
         assert inspector._outer_reconcile_scheduled is False
         fitting_signature = (
@@ -1529,7 +1529,10 @@ async def test_inspector_geometry_only_generation_reconciles_without_owner_pass(
 
         content.styles.height = fitting_signature[1] + 2
         content.refresh(layout=True)
-        await _settle(pilot, passes=8)
+        # No owner pass may run; the layout's own reconcile shows the hint.
+        await _wait_for_inspector_quiet(
+            pilot, screen, inspector, owner_passes_after=None, until=lambda: hint.display
+        )
 
         overflow_signature = (
             max(
@@ -2261,6 +2264,138 @@ async def test_chat_screen_inspector_mutation_paths_delegate_one_owner_request(
         assert section.viewport.content_region.height == min(
             section.desired_content_lines, 20
         )
+
+
+@pytest.mark.asyncio
+async def test_console_pending_startup_work_names_each_pending_producer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-42475: each producer, driven pending, is named; a quiet Console names none.
+
+    The checks run with no await in between, so no tick sees the patched
+    state. A producer renamed or dropped in the product leaves its name out.
+    """
+    from tldw_chatbook import config as tldw_config
+    from tldw_chatbook.UI.Console_Modules import console_spend_projection as spend
+    from tldw_chatbook.UI.Console_Modules.config_sync import replay_whole_console_sync
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _ProductionConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        rail = await _open_production_inspector(host, pilot)
+        screen = host.screen_stack[-1]
+
+        def pending() -> tuple[str, ...]:
+            return screen.console_pending_startup_work()
+
+        async def quiet() -> None:
+            await _wait_for_inspector_quiet(pilot, screen, rail, owner_passes_after=None)
+            assert pending() == ()
+
+        await quiet()
+        for attribute, value, name in (
+            ("_console_attach_reconciled", False, "attach not reconciled"),
+            ("_console_sync_in_progress", True, "sync in progress"),
+            ("_console_sync_requested", True, "sync requested"),
+        ):
+            with monkeypatch.context() as patch:
+                patch.setattr(screen, attribute, value)
+                assert pending() == (name,)
+
+        screen._request_console_control_bar_sync(delayed=True)
+        assert pending() == ("control-bar sync scheduled",)
+        await quiet()
+        replay_whole_console_sync(screen)
+        assert "control-bar replay owed" in pending()
+        await quiet()
+
+        # A subscription chat: the accessor reads the gate the poll recorded,
+        # never the credential, so it starts no reader thread (review).
+        reads: list[bool] = []
+
+        def credential_status(*, background: bool = False) -> str:
+            reads.append(background)
+            return "pending"
+
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                anthropic_subscription, "subscription_credential_status", credential_status
+            )
+            patch.setattr(screen, "_console_subscription_selected", True)
+            names = pending()
+            assert reads == [], "the accessor read the credential"
+            assert names == ()
+            screen._poll_console_credential_readiness()
+            assert reads == [True]
+            assert "credential read" in pending()
+            assert reads == [True], "the accessor read the credential"
+        await quiet()
+        revision = anthropic_subscription.subscription_readiness_revision()
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                anthropic_subscription,
+                "subscription_readiness_revision",
+                lambda: revision + 1,
+            )
+            assert pending() == ("credential poll pass",)
+            await quiet()  # The real poll commits the gate it reads now.
+        await quiet()
+        # A gate the poll read but could not commit (here, config-lock
+        # contention): the revision matches what it read, the commit lags.
+        held, release = threading.Event(), threading.Event()
+
+        def hold_rebuild_lock() -> None:
+            with tldw_config._settings_rebuild_lock():
+                held.set()
+                release.wait(5)
+
+        owner = threading.Thread(target=hold_rebuild_lock)
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                anthropic_subscription,
+                "subscription_readiness_revision",
+                lambda: revision + 2,
+            )
+            owner.start()
+            try:
+                assert held.wait(3)
+                screen._poll_console_credential_readiness()
+                assert screen._console_credential_pre_gate_seen[1] == revision + 2
+                assert pending() == ("credential poll pass",)
+            finally:
+                release.set()
+                owner.join(3)
+            await quiet()
+        await quiet()
+        # Before the poll's first read nothing is recorded or committed.
+        with monkeypatch.context() as patch:
+            patch.setattr(screen, "_console_credential_pre_gate_seen", None)
+            patch.setattr(screen, "_console_credential_pre_gate", None)
+            assert pending() == ("credential poll pass",)
+        await quiet()
+
+        refreshed = []
+
+        @spend.retry_after_config_rebuild
+        def _probe_config_refresh(_screen) -> None:
+            refreshed.append(_screen)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(tldw_config, "config_read_would_wait", lambda: True)
+            _probe_config_refresh(screen)
+        assert pending() == ("config retry _probe_config_refresh",)
+        await quiet()
+        assert refreshed == [screen]
+
+        release = asyncio.Event()
+        screen.run_worker(release.wait(), name="console-probe")
+        app_worker = screen.app.run_worker(release.wait(), name="app-probe")
+        assert pending() == ("worker console-probe",)  # Not the app's own.
+        release.set()
+        await app_worker.wait()
+        await quiet()
 
 
 @pytest.mark.asyncio
@@ -3164,8 +3299,12 @@ async def test_pure_inspector_scroll_never_relayouts_the_rail(
         content = Static("pure scroll content", id="pure-scroll-outer-demand")
         content.styles.height = outer.content_region.height + 8
         await outer.mount(content)
+        screen = host.screen_stack[-1]
+        requested = inspector._outer_owner_reconcile_count
         inspector.request_outer_reconcile()
-        await _settle(pilot, passes=8)
+        await _wait_for_inspector_quiet(
+            pilot, screen, inspector, owner_passes_after=requested
+        )
 
         assert hint.display is True
         assert _shows_outer_hint(hint.renderable)
@@ -3223,7 +3362,13 @@ async def test_pure_inspector_scroll_never_relayouts_the_rail(
         burst = list(observed)
         for _ in range(notches):
             _post_wheel(outer, down=True)
-        await _settle(pilot, passes=8)
+        await _wait_for_inspector_quiet(
+            pilot,
+            screen,
+            inspector,
+            owner_passes_after=None,
+            until=lambda: outer.scroll_y == outer.max_scroll_y,
+        )
         assert outer.scroll_y == outer.max_scroll_y
         assert str(hint.renderable) == ""
         assert observed == burst, (
@@ -3275,9 +3420,13 @@ async def test_inspector_section_collapse_still_runs_the_full_reconcile(
                 id="collapse-probe-content",
             )
         )
+        screen = host.screen_stack[-1]
+        requested = inspector._outer_owner_reconcile_count
         sources.request_reconcile()
         inspector.request_outer_reconcile()
-        await _settle(pilot, passes=10)
+        await _wait_for_inspector_quiet(
+            pilot, screen, inspector, owner_passes_after=requested
+        )
         assert sources.display is True
         assert hint.display is True
         assert inspector._outer_reconcile_scheduled is False
@@ -3288,13 +3437,21 @@ async def test_inspector_section_collapse_still_runs_the_full_reconcile(
         # reconcile request -- the collapse must reach the outer fold through
         # the body's own committed-geometry trigger, exactly as production does.
         sources.display = False
-        await _settle(pilot, passes=10)
+        await _wait_for_inspector_quiet(
+            pilot, screen, inspector, owner_passes_after=None, until=lambda: bool(observed)
+        )
         assert observed, "a section collapse must still take the full reconcile path"
         _assert_outer_fold_contract(inspector, outer, hint)
 
         collapsed_refreshes = len(observed)
         sources.display = True
-        await _settle(pilot, passes=10)
+        await _wait_for_inspector_quiet(
+            pilot,
+            screen,
+            inspector,
+            owner_passes_after=None,
+            until=lambda: len(observed) > collapsed_refreshes,
+        )
         assert len(observed) > collapsed_refreshes, (
             "re-expanding the section must reconcile the outer fold too"
         )
@@ -3353,8 +3510,11 @@ async def test_scroll_cost_probe_still_detects_pre_split_routing(
         content = Static("pre-split routing", id="pre-split-outer-demand")
         content.styles.height = outer.content_region.height + 8
         await outer.mount(content)
+        requested = inspector._outer_owner_reconcile_count
         inspector.request_outer_reconcile()
-        await _settle(pilot, passes=8)
+        await _wait_for_inspector_quiet(
+            pilot, host.screen_stack[-1], inspector, owner_passes_after=requested
+        )
         assert outer.max_scroll_y > 0
         assert inspector._outer_reconcile_scheduled is False
 

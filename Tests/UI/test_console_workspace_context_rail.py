@@ -129,31 +129,18 @@ async def _wait_for_console_startup_settled(console, pilot) -> None:
     screen's own workspace state into the rail. A state a test pushes before
     that lands is replaced. Under load that took the marker off the Chats
     header, the test's workspace out of the tree, and pointed the first row's
-    action menu at the screen's own row. The signal is the screen's own: attach
-    reconciled, no Console sync running, requested or scheduled, and no worker
-    left, on two checks in a row (a finishing worker can start another).
+    action menu at the screen's own row. The signal is the screen's own
+    (``console_pending_startup_work``, TASK-42475), empty on two checks in a
+    row (a finishing worker can start another).
     """
-
-    def pending() -> list[str]:
-        flags = (
-            ("attach not reconciled", not console._console_attach_reconciled),
-            ("sync in progress", console._console_sync_in_progress),
-            ("sync requested", console._console_sync_requested),
-            (
-                "control-bar sync scheduled",
-                getattr(console, "_console_control_bar_sync_scheduled", False),
-            ),
-        )
-        return [name for name, busy in flags if busy] + [
-            f"worker {worker.name or worker.group}" for worker in console.workers
-        ]
 
     deadline = time.monotonic() + 15.0
     quiet_checks = 0
     while quiet_checks < 2:
-        if time.monotonic() > deadline:
-            raise AssertionError(f"Console startup work still pending: {pending()}")
-        quiet_checks = 0 if pending() else quiet_checks + 1
+        pending = console.console_pending_startup_work()
+        if pending and time.monotonic() > deadline:
+            raise AssertionError(f"Console startup work still pending: {pending}")
+        quiet_checks = 0 if pending else quiet_checks + 1
         await pilot.pause(0.05)
 
 
