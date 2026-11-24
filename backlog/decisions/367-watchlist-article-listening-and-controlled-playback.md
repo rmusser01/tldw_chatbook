@@ -135,6 +135,66 @@ therefore passes for the recorded build/route/shape. The portable gate remains
 unqualified. TASK-41177 may begin under this scope; it still must qualify its
 actual adapter and all production ownership transfers before completion.
 
+## Production output contract, 2026-11-23 continuation
+
+The user authorized the controlled adapter, complete production wiring and repair
+of the local pytest bootstrap workflow. This continues TASK-41177 beyond its
+isolated lease increment. Storage, synthesis orchestration and listening UI keep
+their later task boundaries. This record was renumbered from provisional 366 to
+367 after dev reserved 366 for CI; the playback evidence itself is unchanged.
+
+- The app owns one admission service. Issue an exact intent ticket at the play
+  action, before asynchronous preparation/probe or synthesis intended to play.
+  A slow older preparation cannot displace a newer intent. Prepare/validate before
+  physical takeover; exact logical EOF needs no player or replacement lease.
+- Keep lease authority decisions on the app loop and publish retained work before
+  eager callbacks can enter. A one-way thread-safe revocation flag is latched on
+  replacement, exact Stop/release and shutdown. A worker checks it at its spawn
+  commitment point. Already-committed native work stays owned until it returns
+  and its late resource is checked/retired; cancellation never invents absence.
+- Controlled preparation binds a full physical-file digest, source-frame bookmark,
+  content/physical frame counts, PCM16 stereo 48 kHz and versioned 250 ms zero
+  padding. Keep a read pin on the exact file and its path ancestry through launch
+  and playback, excluding writes, replacement and ancestor redirection. Reuse the
+  Windows native path layer with a narrow read-sharing pin; preserve its existing
+  default behavior. Recheck private artifact authority on the pinned ancestry.
+  Pin and hash the qualified executable too; no unqualified wrapper is executed.
+- Promote only the bounded stdlib progress parser. Keep physical progress distinct
+  from the clamped logical bookmark. Natural completion requires corroborating
+  advancing, current/fresh source clocks into validated padding, plausible elapsed
+  progression and spontaneous checked zero exit, with no Stop/revocation. A last
+  stats sample or exit alone is insufficient. Weak evidence is Uncertain; Stop in
+  padding is Stopped. The actual adapter's classifier must pass native short,
+  near-EOF, resume, EOF and deliberately early-exit controls before activation.
+- Reaping ffplay is separate from endpoint silence. Qualify a bounded post-reap
+  settling policy with actual old-source end versus successor onset, using the
+  production adapter. A provisional 250 ms settling guard may be evaluated under
+  the unchanged 1.5 s Stop bound; do not call it qualified until measured. Runtime
+  retirement combines positive native custody/cleanup and that qualified policy;
+  it is not per-run acoustic measurement or a hard real-time/all-device guarantee.
+  Default Windows routing policy and the tested executable/PCM shape define the
+  first software capability; physical evidence remains scoped to its tested host.
+  Explicit alternate/dummy SDL/device routes stay unsupported.
+- Successful OS delegation, including unproven wmplayer launcher lifetimes and
+  external video opens, records an unresolved in-memory handoff epoch. Before
+  any later in-app output, require explicit user acknowledgement that external
+  playback has stopped. A newer delegation invalidates older acknowledgements;
+  no timer, launcher exit, unmount or artifact deletion clears it. Consecutive
+  explicit external opens keep working and accumulate the epoch. Retain/reap only
+  owned launcher handles; never kill an unrelated user's media application.
+- Lease the entire exact speculative duplex session while its device may render.
+  Takeover retires that session through existing close evidence/quarantine rather
+  than permanently closing the runtime supervisor. Ordinary PCM and media/file
+  adapters must retain uncertain native handles and request checked closes.
+  Native workers and process/stream waits run off the UI loop.
+- Video-only probes do not displace sound. Audible media joins before every launch
+  and seek; checked retirement precedes replacement. The pre-existing Windows
+  inherited-fd audio limitation must refuse before takeover until independently
+  supported; injected orchestration tests are not native video-audio evidence.
+- Approved shutdown closes admission before cancelling producers or tearing down
+  views. Exact cleanup cannot target another app/run, including quick quit and
+  direct unmount. Do not use process-name scans or killall as retirement proof.
+
 ## Windows fixed-tail profile: endpoint qualification passed, portable gate open
 
 The Windows follow-up evaluates **250 ms of local zero PCM appended once to the
