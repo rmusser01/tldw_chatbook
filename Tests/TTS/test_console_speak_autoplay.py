@@ -1262,6 +1262,96 @@ async def test_failed_manual_replacement_keeps_healthy_native_owner_and_its_stop
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure_before_start_receipt", [True, False])
+async def test_admitted_file_start_remains_addressable_across_failed_replacement(
+    tmp_path, monkeypatch, failure_before_start_receipt
+):
+    from textual.widgets import Button
+    from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
+
+    store = ConsoleChatStore()
+    session = store.create_session()
+    first, second = [
+        store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content=text
+        )
+        for text in ("first", "second")
+    ]
+    controller = _SpeechRequestControllerStub(store, True)
+    handler = controller.app_instance._tts_handler = _new_handler(
+        controller.app_instance
+    )
+    controller.app_instance.control_tts_playback = handler.handle_tts_playback
+    controller._console_message_action_service = ConsoleMessageActionService(
+        canvas_enabled_reader=lambda: False
+    )
+    controller._console_message_presentation = lambda message: message
+
+    committed, return_start = threading.Event(), threading.Event()
+
+    class HeldResult(ConsoleFilePlayer):
+        def play_prepared(self, plan, **kwargs):
+            accepted = super().play_prepared(plan, **kwargs)
+            committed.set()
+            assert return_start.wait(5)
+            return accepted
+
+    player = HeldResult(PlaybackState.PLAYING)
+    monkeypatch.setattr(audio_output_runs, "SimpleAudioPlayer", lambda: player)
+    speak = ConsoleMessageController.request_console_message_speech
+    post = controller.app_instance.post_message
+    assert await speak(controller, first.id)
+    first_request = post.call_args.args[0]
+    path = tmp_path / "first.wav"
+    path.write_bytes(b"first")
+    await handler._cache_audio_file(first.id, path, first_request.playback_lifecycle)
+    await handler.handle_tts_playback(
+        TTSPlaybackEvent(
+            "play",
+            first.id,
+            playback_lifecycle=first_request.playback_lifecycle,
+            audio_intent=first_request.audio_intent,
+            expected_path=path,
+        )
+    )
+    try:
+        await wait_for_condition(committed.is_set)
+        assert player.state is PlaybackState.PLAYING
+        assert first_request.playback_lifecycle.state == "generating"
+        assert await speak(controller, second.id)
+        replacement = post.call_args.args[0]
+        if not failure_before_start_receipt:
+            return_start.set()
+            await wait_for_condition(
+                lambda: first_request.playback_lifecycle.state == "playing"
+            )
+            assert controller._console_speech_states[first.id] == "playing"
+            assert controller._console_speech_owner is replacement.playback_lifecycle
+        replacement.report_outcome(False)
+        assert replacement.playback_lifecycle.state == "failed"
+        assert controller._console_speech_owner is first_request.playback_lifecycle
+        assert (
+            controller._console_speech_states[first.id]
+            == first_request.playback_lifecycle.state
+        )
+        return_start.set()
+        await wait_for_condition(
+            lambda: first_request.playback_lifecycle.state == "playing"
+        )
+        assert controller._console_speech_states[first.id] == "playing"
+        button = Button("Stop")
+        button.console_action_id, button.console_message_id = "speak-stop", first.id
+        assert await ConsoleMessageController.handle_console_message_action(
+            controller, Button.Pressed(button)
+        )
+        assert player.retirement_confirmed(expected_token=player.token)
+        assert controller.app_instance.audio_output.owner is None
+    finally:
+        return_start.set()
+        await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
 async def test_superseded_generation_settles_external_outcome_once() -> None:
     store = ConsoleChatStore()
     session = store.create_session()

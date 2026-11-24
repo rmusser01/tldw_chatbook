@@ -198,6 +198,52 @@ async def test_missing_posix_opener_refuses_before_process_birth_and_keeps_local
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("concrete_exec", [True, False])
+async def test_exec_refusal_releases_only_at_concrete_posix_launcher(
+    tmp_path, monkeypatch, concrete_exec
+):
+    import errno
+    import shutil
+    import subprocess
+    import sys
+    from tldw_chatbook.Media_Playback import player_pipeline
+    from tldw_chatbook.TTS.audio_output_ownership import OutputBlocked
+    from tldw_chatbook.UI.Console_Modules.video import resolve_external_video_opener
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    video = tmp_path / "video.mp4"
+    video.touch()
+    app = _App()
+    calls = []
+
+    def refused(command):
+        calls.append(command)
+        raise FileNotFoundError(errno.ENOENT, "missing interpreter")
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/xdg-open")
+    monkeypatch.setattr(subprocess, "Popen", refused)
+    monkeypatch.setattr(
+        player_pipeline, "playback_tools_available", lambda: (False, "missing")
+    )
+    opener = ChatScreen._open_video_with_os if concrete_exec else refused
+    controller = _controller_with_video(app, opener, video)
+    controller._preflight_external_video = resolve_external_video_opener
+    await controller._play_console_video("m1")
+    assert calls == ([["/usr/bin/xdg-open", str(video)]] if concrete_exec else [video])
+    assert app.audio_output.handoff_epoch is None
+
+    async def retired():
+        return True
+
+    if concrete_exec:
+        assert (await app.audio_output.acquire("local", retired)).is_current()
+    else:
+        with pytest.raises(OutputBlocked):
+            await app.audio_output.acquire("local", retired)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("change", ["session", "visit"])
 async def test_stale_stream_resolution_cannot_open_another_chat(monkeypatch, change):
     import asyncio

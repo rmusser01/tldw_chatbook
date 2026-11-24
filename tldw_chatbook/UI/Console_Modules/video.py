@@ -67,7 +67,11 @@ def open_external_video(path: Path):
         except OSError as error:
             raise ExternalVideoNotLaunched() from error
         return None
-    return subprocess.Popen([executable, str(path)])  # nosec B603
+    try:
+        return subprocess.Popen([executable, str(path)])  # nosec B603
+    except FileNotFoundError as error:
+        # POSIX reports an absent executable or shebang interpreter before exec.
+        raise ExternalVideoNotLaunched() from error
 
 
 async def _delegate_video(

@@ -1223,13 +1223,21 @@ class ConsoleMessageController:
             active = getattr(self, "_active_console_speech", None)
             if state == "playing" and current:
                 self._active_console_speech = playback_lifecycle
-            if (
-                current
-                and self._console_speech_request_generation == request_generation
+            if current and (
+                self._console_speech_request_generation == request_generation
+                or self._console_speech_owner is playback_lifecycle
             ):
                 self._settle_console_speech_presentation(
-                    message_id, request_generation, state=state
+                    message_id, self._console_speech_request_generation, state=state
                 )
+            elif (
+                current
+                and state == "playing"
+                and self._console_speaking_message_id != message_id
+            ):
+                # The other row still owns the pending request and its presentation.
+                self._console_speech_states[message_id] = state
+                self._schedule_console_speech_state_sync()
             if state in {"failed", "stopped"}:
                 if active is playback_lifecycle:
                     self._active_console_speech = None
@@ -1244,7 +1252,7 @@ class ConsoleMessageController:
                     # healthy predecessor. Its exact Stop remains available.
                     self._console_speech_owner = active
                     self._console_speaking_message_id = active.message_id
-                    self._console_speech_states[active.message_id] = "playing"
+                    self._console_speech_states[active.message_id] = active.state
                     self._speech_presentation = active.presentation
                     self._speech_presentation_validator = active.is_current
             if state == "stopped":
@@ -1346,6 +1354,13 @@ class ConsoleMessageController:
     def _begin_console_speech_presentation(self, message_id: str) -> int:
         """Show the new preparation while its predecessor retains the active output."""
         active = getattr(self, "_active_console_speech", None)
+        prior = self._console_speech_owner
+        if prior is not None and prior is not active:
+            # Native start can already be committed while its first notification
+            # is queued. Preserve that exact predecessor as a screen Stop target.
+            handler = getattr(self.app_instance, "_tts_handler", None)
+            if handler is not None and handler.holds_admitted_speech(prior) is True:
+                self._active_console_speech = active = prior
         active_message_id = active.message_id if active is not None else None
         for other_id, state in tuple(self._console_speech_states.items()):
             if other_id == message_id:

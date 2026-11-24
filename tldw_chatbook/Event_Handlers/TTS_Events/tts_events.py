@@ -3347,6 +3347,16 @@ class TTSEventHandler:
             on_finished(False)
         return "streaming_failed"
 
+    def holds_admitted_speech(self, lifecycle: TTSPlaybackLifecycle) -> bool:
+        """Whether this exact lifecycle has an admitted run still in native custody."""
+        return any(
+            attempt.lifecycle is lifecycle
+            and attempt.run is not None
+            and attempt.run.lease is not None
+            and not attempt.run.retirement_confirmed
+            for attempt in self._speech_outputs
+        )
+
     def _prepare_output(self, message_id, lifecycle, *, ticket=None, path=None):
         ticket = ticket or _speech_intent.get() or begin_speech_intent(self.app)
         attempt = _SpeechOutput(message_id, lifecycle, ticket, path)
