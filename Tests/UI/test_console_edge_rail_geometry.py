@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from textual.widget import Widget
 
@@ -452,3 +454,53 @@ async def test_rapid_focus_transfer_keeps_only_the_current_edge_painted() -> Non
         assert _geometry_snapshot(screen) == geometry
         assert _hit_snapshot(screen) == hits
         _assert_edge_owned_workbench(screen)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "size",
+    [
+        pytest.param((100, 24), id="100x24"),
+        pytest.param((160, 24), id="160x24"),
+        pytest.param((100, 28), id="100x28"),
+        pytest.param((100, 29), id="100x29"),
+        pytest.param((100, 30), id="100x30"),
+        pytest.param((100, 31), id="100x31"),
+    ],
+)
+async def test_collapsed_context_handle_fits_the_workspace_grid(
+    size: tuple[int, int],
+) -> None:
+    """The collapsed Context handle stays inside the grid's content rows.
+
+    TASK-42461: below 30 rows the grid gives its content fewer than 20 rows
+    (14 at 24), and the handle's old 20-row floor let the grid cut off its
+    lower rows. At 30 rows and above the handle already filled the grid
+    exactly, and still does. The stacked-label handle is already capped by
+    its ``max-height: 100%``.
+    """
+    async with make_console_pilot(size=size) as pilot:
+        screen = pilot.app.screen
+        handle = screen.query_one("#console-context-rail-handle")
+        assert await pilot.click("#console-context-rail-collapse")
+        deadline = time.monotonic() + 15.0
+        while not (handle.display and handle.region.area):
+            assert time.monotonic() < deadline, (
+                f"Context handle never displayed: region={handle.region}"
+            )
+            await pilot.pause(0.01)
+        await pilot.pause()
+
+        grid = screen.query_one("#console-workspace-grid")
+        button = screen.query_one("#console-context-rail-open")
+        assert grid.content_region.contains_region(handle.region), (
+            f"console-context-rail-handle escapes workspace content: "
+            f"child={handle.region}, grid={grid.content_region}"
+        )
+        assert handle.region.height == grid.content_region.height
+        assert handle.region.contains_region(button.region)
+        center = (
+            button.region.x + button.region.width // 2,
+            button.region.y + (button.region.height - 1) // 2,
+        )
+        assert screen.get_widget_at(*center)[0] is button

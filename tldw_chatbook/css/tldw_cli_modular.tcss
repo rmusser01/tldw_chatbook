@@ -6788,6 +6788,11 @@ ConsoleTerminalWorkspace#console-main-column > Button {
     align-horizontal: center;
 }
 
+
+#console-context-rail-handle {
+    min-height: $ds-size-0;
+}
+
 .console-rail-handle-button.console-rail-handle-button-vertical {
     width: $ds-size-1;
     min-width: $ds-size-1;

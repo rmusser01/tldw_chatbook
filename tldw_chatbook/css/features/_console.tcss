@@ -637,6 +637,20 @@ ConsoleTerminalWorkspace#console-main-column > Button {
     align-horizontal: center;
 }
 
+/* TASK-42461: .console-rail-handle's 20-row floor clipped the collapsed
+   Context handle. The workspace grid has no floor of its own (chat_screen.py
+   sets its min_height to 0, so an expanded composer can take its rows), and
+   below 30 terminal rows it gives its content fewer than 20: 14 at 24 rows.
+   The grid cut off the handle's lower rows. The handle stands in for the
+   Context rail, whose floor is 0, so it takes the same floor (TASK-24700 did
+   this for the Inspector handle) and keeps its 100% height. Nothing moves at
+   30 rows and above. The id leaves the Library, Personas and Lab handles that
+   share these classes as they were. (The stacked-label form was already
+   capped by .console-rail-handle-vertical's max-height.) */
+#console-context-rail-handle {
+    min-height: $ds-size-0;
+}
+
 .console-rail-handle-button.console-rail-handle-button-vertical {
     width: $ds-size-1;
     min-width: $ds-size-1;

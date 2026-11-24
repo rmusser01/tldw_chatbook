@@ -31,15 +31,31 @@ from Tests.UI.test_console_right_rail import (
     _wait_for_right_rail_condition,
     make_console_pilot,
 )
+from Tests.UI.test_console_shell_regions import click_inspect_rail_open
+
+# The real ChatScreen goes through config-participant admission, which the
+# per-test sandbox refuses (RecoveryRequired); keep the collection-time
+# profile, as the other mounted Console tests do (TASK-42416, TASK-42462).
+pytestmark = pytest.mark.bootstrap_profile
 
 
 INSPECTOR_OUTER_HINT = "▼ more sections — scroll"
 INSPECTOR_OUTER_HINT_ID = "console-inspector-outer-scroll-hint"
+# TASK-42462: this geometry was sized when ConsoleHarness loaded no bundled
+# stylesheet. 09dfb3b9bc (on dev with 8ca6b14740, PR #2050) pinned the harness
+# to the bundle, and two production spacings then took three of these rows:
+# `.console-region` pads the rail by a row top and bottom, and
+# `.console-inspector-context-section` gives the Sources tray a one-row bottom
+# margin. Zero both, so ten sources fill the outer body exactly again.
 STAGED_ONE_ROW_TEST_CSS = """
 #console-right-rail {
     height: 19;
     min-height: 19;
     max-height: 19;
+    padding: 0;
+}
+#console-staged-context-tray {
+    margin: 0;
 }
 #console-inspector-rail-body {
     height: 1fr;
@@ -115,11 +131,33 @@ def _inside(widget, owner) -> bool:
 
 async def _open_inspector(pilot):
     if not pilot.app.screen.query_one("#console-right-rail").display:
-        await pilot.click("#console-inspector-rail-open")
+        await click_inspect_rail_open(pilot)
     await pilot.pause()
     pilot.app.screen._stop_console_transcript_sync_timer()
     await pilot.pause()
     return pilot.app.screen.query_one("#console-right-rail")
+
+
+async def _focus_captured_by_rail(
+    pilot, rail, section: ConsoleBoundedSection, widget: Widget, *, description: str
+) -> None:
+    """Focus ``widget`` and wait until the rail has recorded it.
+
+    TASK-42462: ``app.focused`` changes as soon as Textual applies the focus,
+    but the rail records a section's focus history in ``on_descendant_focus``,
+    a message Textual delivers later. A control removed in between leaves the
+    rail no history to recover focus from.
+    """
+    widget.focus()
+    await _wait_for_right_rail_condition(
+        pilot,
+        lambda: (
+            pilot.app.focused is widget
+            and rail._section_focus_history.get(section.section_id, (None, ()))[0]
+            is widget
+        ),
+        description=description,
+    )
 
 
 async def _overflow(section: ConsoleBoundedSection, rows: int = 21) -> None:
@@ -499,20 +537,28 @@ async def test_n_and_p_are_rail_local_no_wrap_and_editable_input_keeps_printable
 
         body.can_focus = True
         body.focus()
+        collapse = rail.query_one("#console-inspector-rail-collapse", Button)
+        # TASK-42462: the rail paints the scroll-owner cue from its focus
+        # handler, which Textual delivers after `app.focused` changes.
         await _wait_for_right_rail_condition(
             pilot,
-            lambda: pilot.app.focused is body,
+            lambda: (
+                pilot.app.focused is body
+                and "underline" in str(collapse.styles.text_style)
+            ),
             description="focused Inspector outer body",
         )
-        collapse = rail.query_one("#console-inspector-rail-collapse", Button)
         assert "underline" in str(collapse.styles.text_style)
         await pilot.press("n")
+        external_header = sources.parent.children[0]
         await _wait_for_right_rail_condition(
             pilot,
-            lambda: pilot.app.focused is sources.viewport,
+            lambda: (
+                pilot.app.focused is sources.viewport
+                and "underline" in str(external_header.styles.text_style)
+            ),
             description="next navigation to Sources",
         )
-        external_header = sources.parent.children[0]
         assert "underline" in str(external_header.styles.text_style)
 
         await pilot.press("p")
@@ -689,6 +735,78 @@ async def test_navigation_focuses_overflow_viewport_contains_header_and_preserve
         assert sources.viewport.scroll_y == 2
         assert tray.display is tray_display
         assert sources.display is section_display
+
+
+@pytest.mark.asyncio
+async def test_navigation_header_stays_revealed_when_focus_lands_after_the_reveal(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The target's header stays in view whichever of focus and refresh lands first.
+
+    TASK-42462: `_focus_boundary` reveals the header, but `focus()` is applied
+    later, and Textual then scrolled the newly focused viewport's top into
+    view, pushing the header out by a row. Its delayed reveal could not undo
+    that when it ran before focus landed (it stops once focus is not on its
+    target). Running the reveal at once forces that order.
+    """
+    async with make_console_pilot(
+        size=(160, 30), css=STAGED_OVERFLOW_TEST_CSS
+    ) as pilot:
+        rail = await _open_inspector(pilot)
+        outer = rail.query_one("#console-inspector-rail-body")
+        tray = rail.query_one("#console-staged-context-tray", ConsoleStagedContextTray)
+        tray.sync_state(_staged_state(12))
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                bool(list(tray.query("#console-bounded-section-sources")))
+                and tray.query_one(
+                    "#console-bounded-section-sources", ConsoleBoundedSection
+                ).viewport.can_focus
+            ),
+            description="real staged-source owner overflow",
+        )
+        sources = tray.query_one(
+            "#console-bounded-section-sources", ConsoleBoundedSection
+        )
+        header = sources.parent.children[0]
+        outer.focus()
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: pilot.app.focused is outer,
+            description="focused Inspector outer body",
+        )
+
+        original_call_after_refresh = rail.call_after_refresh
+
+        def reveal_before_focus_lands(callback, *args, **kwargs):
+            if getattr(callback, "__name__", None) == "_reveal_boundary_header":
+                callback(*args, **kwargs)
+                return True
+            return original_call_after_refresh(callback, *args, **kwargs)
+
+        monkeypatch.setattr(rail, "call_after_refresh", reveal_before_focus_lands)
+        await pilot.press("n")
+        offsets: list[float] = []
+
+        def focused_and_still() -> bool:
+            offsets.append(outer.scroll_y)
+            return (
+                pilot.app.focused is sources.viewport
+                and len(offsets) > 1
+                and offsets[-1] == offsets[-2]
+            )
+
+        await _wait_for_right_rail_condition(
+            pilot,
+            focused_and_still,
+            description="Sources focused with the outer body at rest",
+            stable_polls=5,
+        )
+        assert _fully_inside_outer(header, outer), (
+            f"Sources header at y={header.region.y} is outside the outer body "
+            f"{outer.content_region} (scroll_y={outer.scroll_y})"
+        )
 
 
 @pytest.mark.asyncio
@@ -983,6 +1101,8 @@ async def test_navigation_focuses_first_enabled_visible_control_in_nonoverflow_t
         ("body", f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}"),
         ("none", f"#{CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID}"),
     ),
+    # Literal ids so the UI census can gate each case (TASK-42462).
+    ids=("header", "body", "none"),
 )
 async def test_run_boundary_focus_never_leaks_to_sibling_group_control(
     target_mode: str,
@@ -1279,11 +1399,8 @@ async def test_disappearing_target_recovers_next_then_previous_and_keeps_outside
             description="recovery controls settled",
         )
 
-        middle.focus()
-        await _wait_for_right_rail_condition(
-            pilot,
-            lambda: pilot.app.focused is middle,
-            description="middle recovery target focused",
+        await _focus_captured_by_rail(
+            pilot, rail, section, middle, description="middle recovery target focused"
         )
         await middle.remove()
         section.request_reconcile()
@@ -1379,16 +1496,18 @@ async def test_inactive_section_history_cannot_recover_after_focus_moves_elsewhe
         await settings.viewport.mount(settings_action)
         settings.request_reconcile()
 
-        source_action.focus()
-        await _wait_for_right_rail_condition(
+        await _focus_captured_by_rail(
             pilot,
-            lambda: pilot.app.focused is source_action,
+            rail,
+            sources,
+            source_action,
             description="first section recovery history",
         )
-        settings_action.focus()
-        await _wait_for_right_rail_condition(
+        await _focus_captured_by_rail(
             pilot,
-            lambda: pilot.app.focused is settings_action,
+            rail,
+            settings,
+            settings_action,
             description="focus moved to a different Inspector section",
         )
 
@@ -1414,11 +1533,8 @@ async def test_empty_owner_is_settled_absence_with_one_outer_fallback():
         source_action = Button("source action", id="empty-owner-source-action")
         await sources.viewport.mount(source_action)
         sources.request_reconcile()
-        source_action.focus()
-        await _wait_for_right_rail_condition(
-            pilot,
-            lambda: pilot.app.focused is source_action,
-            description="empty-owner focused action",
+        await _focus_captured_by_rail(
+            pilot, rail, sources, source_action, description="empty-owner focused action"
         )
 
         owner = sources.parent
@@ -1450,10 +1566,11 @@ async def test_persistent_malformed_owner_drains_recovery_with_outer_fallback():
         source_action = Button("source action", id="malformed-owner-source-action")
         await sources.viewport.mount(source_action)
         sources.request_reconcile()
-        source_action.focus()
-        await _wait_for_right_rail_condition(
+        await _focus_captured_by_rail(
             pilot,
-            lambda: pilot.app.focused is source_action,
+            rail,
+            sources,
+            source_action,
             description="malformed-owner focused action",
         )
 
@@ -1521,10 +1638,11 @@ async def test_structural_run_recompose_restores_same_stable_action_id():
             description="enabled approval action before structural recompose",
         )
         previous = rail.query_one(f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}", Button)
-        previous.focus()
-        await _wait_for_right_rail_condition(
+        await _focus_captured_by_rail(
             pilot,
-            lambda: pilot.app.focused is previous,
+            rail,
+            rail.query_one("#console-bounded-section-approvals", ConsoleBoundedSection),
+            previous,
             description="approval action focused before structural recompose",
         )
 
@@ -1594,10 +1712,13 @@ async def test_structural_control_and_boundary_removal_recovers_without_stale_re
             description="three structural recovery controls mounted",
         )
         old_middle = rail.query_one("#recompose-action-middle", Button)
-        old_middle.focus()
-        await _wait_for_right_rail_condition(
+        await _focus_captured_by_rail(
             pilot,
-            lambda: pilot.app.focused is old_middle,
+            rail,
+            rail.query_one(
+                "#console-bounded-section-chat-dictionaries", ConsoleBoundedSection
+            ),
+            old_middle,
             description="middle structural recovery control focused",
         )
 
@@ -1658,10 +1779,11 @@ async def test_recovery_uses_external_header_control():
         settings_target = Button("body", id="settings-recovery-target")
         await settings.viewport.mount(settings_target)
         settings.request_reconcile()
-        settings_target.focus()
-        await _wait_for_right_rail_condition(
+        await _focus_captured_by_rail(
             pilot,
-            lambda: pilot.app.focused is settings_target,
+            rail,
+            settings,
+            settings_target,
             description="settings recovery target focus",
         )
         await settings_target.remove()
@@ -1685,10 +1807,11 @@ async def test_recovery_falls_back_to_outer_body_then_collapse(disable_outer):
         source_target = Button("body", id="source-recovery-target")
         await sources.viewport.mount(source_target)
         sources.request_reconcile()
-        source_target.focus()
-        await _wait_for_right_rail_condition(
+        await _focus_captured_by_rail(
             pilot,
-            lambda: pilot.app.focused is source_target,
+            rail,
+            sources,
+            source_target,
             description="source recovery target focus",
         )
         if disable_outer:
@@ -1772,8 +1895,10 @@ async def test_local_offset_survives_collapse_reopen_without_extra_writes(
             return original(**changes)
 
         monkeypatch.setattr(screen, "_set_console_rail_preference", observe_preferences)
-        await pilot.click("#console-inspector-rail-collapse")
-        await pilot.click("#console-inspector-rail-open")
+        assert await pilot.click("#console-inspector-rail-collapse")
+        # TASK-42462: the open control appears only once the collapse lands; a
+        # click sent before then reached nothing and the rail stayed closed.
+        await click_inspect_rail_open(pilot)
         await _wait_for_right_rail_condition(
             pilot,
             lambda: rail.display and section.viewport.scroll_y == 5,
