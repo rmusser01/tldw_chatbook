@@ -28,6 +28,7 @@ import warnings
 
 import numpy as np
 from scipy.signal import butter, correlate, resample_poly, sosfiltfilt
+from pulse_fragments import CLOCK_REASON, PulseError, capture_fragments
 from wasapi_packets import MAX_POLL_GAP_S, content_span, drain_recorder, quiet_window
 
 RATE = 48000
@@ -254,6 +255,7 @@ def _capture_worker(
     duration_s: float,
     capture_buffer_frames: int = BLOCK,
     capture_clock: str = "legacy",
+    finish=None,
 ) -> None:
     """Capture only the exact render loopback; emit sanitized numerical telemetry."""
     output = open(os.devnull, "w")
@@ -277,6 +279,9 @@ def _capture_worker(
                     metrics, message
                 )
             )
+            if capture_clock == "pulse-fragment":
+                capture_fragments(connection, duration_s, capture_buffer_frames, finish)
+                return
             import soundcard as sc
 
             speaker = sc.default_speaker()
@@ -331,9 +336,14 @@ def _capture_worker(
                         metrics["send_wait_max_s"], elapsed
                     )
                     metrics["send_wait_total_s"] += elapsed
-    except Exception:
+    except Exception as error:
         try:
-            connection.send(("error", "capture_failed"))
+            connection.send(
+                (
+                    "error",
+                    str(error) if isinstance(error, PulseError) else "capture_failed",
+                )
+            )
         except (BrokenPipeError, EOFError, OSError):
             pass
     finally:
@@ -549,6 +559,39 @@ def _match_packets(packets, source):
     return match, metrics
 
 
+def _match_fragments(fragments, source):
+    metrics = {}
+    if not fragments:
+        return None, {"stage": "no_pulse_fragments"}
+    data = np.concatenate([fragment.data for fragment in fragments])
+    match = measure_match(data, source, diagnostics=metrics)
+    if match is not None:
+        match["capture_onset_frame"] = fragments[0].frame + round(
+            match["capture_onset_s"] * RATE
+        )
+        match["capture_end_frame"] = fragments[0].frame + round(
+            match["capture_end_s"] * RATE
+        )
+    return match, metrics
+
+
+def _fragment_quiet(fragments, tail_frames=None):
+    result = {"status": "unqualified", "rms": None, "frames": 0}
+    if not fragments:
+        return result
+    data = np.concatenate([fragment.data for fragment in fragments])
+    if tail_frames is not None:
+        if len(data) < tail_frames:
+            return result
+        data = data[-tail_frames:]
+    rms = float(np.sqrt(np.mean(data.astype(np.float64) ** 2)))
+    return {
+        "status": "pass" if rms <= 0.0002 else "fail",
+        "rms": rms,
+        "frames": len(data),
+    }
+
+
 def run_case(
     executable: Path,
     wav: Path,
@@ -564,9 +607,13 @@ def run_case(
     """Measure one bounded native run; all raw samples/output are disposable."""
     if capture_buffer_frames not in (480, 4800):
         raise ValueError("capture_buffer_frames_must_be_480_or_4800")
-    if capture_clock not in ("legacy", "wasapi-packet"):
+    if capture_clock not in ("legacy", "wasapi-packet", "pulse-fragment"):
         raise ValueError("unknown_capture_clock")
     packet_mode = capture_clock == "wasapi-packet"
+    pulse_mode = capture_clock == "pulse-fragment"
+    native_mode = packet_mode or pulse_mode
+    if pulse_mode and platform.system() != "Linux":
+        raise ValueError("pulse_requires_linux")
     result = {
         "launched": False,
         "generation": generation,
@@ -597,23 +644,34 @@ def run_case(
         "post_stop_silence": "unqualified",
     }
     context = mp.get_context("spawn")
+    finish = context.Event() if pulse_mode else None
+    if pulse_mode:
+        result["telemetry_reason"] = CLOCK_REASON
+        if stop_after is not None:
+            result.update(
+                post_stop_latency="unqualified",
+                post_stop_latency_reason=CLOCK_REASON,
+                post_stop_silence_reason=CLOCK_REASON,
+            )
     receiver, sender = context.Pipe(duplex=False)
+    capture_args = (sender, result["capture_lifetime_s"], capture_buffer_frames)
+    if native_mode:
+        capture_args += (capture_clock,)
+    if pulse_mode:
+        capture_args += (finish,)
     capture = context.Process(
         target=_capture_worker,
-        args=(
-            sender,
-            result["capture_lifetime_s"],
-            capture_buffer_frames,
-            capture_clock,
-        )
-        if packet_mode
-        else (sender, result["capture_lifetime_s"], capture_buffer_frames),
+        args=capture_args,
         daemon=True,
     )
     process = None
     reader = None
     blocks = []
     packets = []
+    fragments = []
+    baseline_count = 0
+    exit_frame_count = 0
+    pulse_complete = False
     polls = []
     packet_frames = 0
     live_executor = None
@@ -641,10 +699,11 @@ def run_case(
         if len(ready) > 2:
             result["diagnostics"]["capture_configuration"] = ready[2]
         polls.append(ready[1])
-        if packet_mode and padded and stop_after is not None:
+        if native_mode and padded and stop_after is not None:
             live_executor = ThreadPoolExecutor(max_workers=1)
         # Independent pre-launch baseline; no output names or samples are saved.
-        baseline_until = time.perf_counter() + 0.35
+        baseline_duration = 0.35
+        baseline_until = time.perf_counter() + baseline_duration
         deadline = (
             time.perf_counter() + len(source) / RATE + 6 + (30.25 if padded else 0)
         )
@@ -653,10 +712,47 @@ def run_case(
                 try:
                     message = receiver.recv()
                 except EOFError:
+                    if pulse_mode and not pulse_complete:
+                        result["reason"] = "capture_monitor_ended_early"
+                        return result
                     break
                 if message[0] == "error":
                     result["reason"] = message[1]
                     return result
+                if message[0] == "pulse_complete" and pulse_mode:
+                    if not finish.is_set():
+                        result["reason"] = "capture_monitor_ended_early"
+                        return result
+                    pulse_complete = True
+                    break
+                if message[0] == "fragment" and pulse_mode:
+                    _, stamp, fragment, worker_metrics = message
+                    if (
+                        fragments
+                        and fragments[-1].frame + len(fragments[-1].data)
+                        != fragment.frame
+                    ):
+                        result["reason"] = "pulse_read_index_gap"
+                        return result
+                    fragments.append(fragment)
+                    packet_frames += len(fragment.data)
+                    if (
+                        len(fragments) > 10000
+                        or packet_frames > RATE * result["capture_lifetime_s"]
+                    ):
+                        result["reason"] = "capture_bound_exceeded"
+                        return result
+                    result.update(
+                        capture_fragments=len(fragments),
+                        capture_frames=packet_frames,
+                        capture_first_frame=fragments[0].frame,
+                        capture_end_frame=fragment.frame + len(fragment.data),
+                    )
+                    metrics = result["diagnostics"]
+                    metrics["worker"] = worker_metrics
+                    metrics["receive_backlog_max_s"] = max(
+                        metrics["receive_backlog_max_s"], time.perf_counter() - stamp
+                    )
                 if message[0] == "packets":
                     _, stamp, batch, worker_metrics = message
                     metrics = result["diagnostics"]
@@ -693,6 +789,25 @@ def run_case(
                         return result
             now = time.perf_counter()
             if process is None and now >= baseline_until:
+                if (
+                    pulse_mode
+                    and packet_frames < round(RATE * baseline_duration)
+                    and now < baseline_until + 1
+                ):
+                    time.sleep(0.005)
+                    continue
+                baseline_count = len(fragments)
+                player_options = (
+                    {
+                        "env": {
+                            **os.environ,
+                            "PULSE_SINK": ready[3],
+                            "SDL_AUDIODRIVER": "pulseaudio",
+                        }
+                    }
+                    if pulse_mode
+                    else {}
+                )
                 launched_at = now
                 process = subprocess.Popen(
                     [
@@ -710,6 +825,7 @@ def run_case(
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.PIPE,
                     bufsize=0,
+                    **player_options,
                 )
                 result["launched"] = True
                 if padded:
@@ -743,22 +859,29 @@ def run_case(
                     if (
                         live_future is None
                         and playing_at is None
-                        and len(packets) > last_checked_blocks
+                        and len(fragments if pulse_mode else packets)
+                        > last_checked_blocks
                     ):
-                        last_checked_blocks = len(packets)
-                        recent = [
-                            packet
-                            for packet in packets[-32:]
-                            if packet.start_s >= max(launched_at, now - 0.20)
-                        ]
+                        if pulse_mode:
+                            last_checked_blocks = len(fragments)
+                            recent = fragments[
+                                max(baseline_count, len(fragments) - 4) :
+                            ]
+                            matcher = _match_fragments
+                        else:
+                            last_checked_blocks = len(packets)
+                            recent = [
+                                packet
+                                for packet in packets[-32:]
+                                if packet.start_s >= max(launched_at, now - 0.20)
+                            ]
+                            matcher = _match_packets
                         if recent:
-                            live_future = live_executor.submit(
-                                _match_packets, recent, source
-                            )
+                            live_future = live_executor.submit(matcher, recent, source)
                             result["diagnostics"]["live_matcher_calls"] += 1
                 if (
                     padded
-                    and not packet_mode
+                    and not native_mode
                     and playing_at is None
                     and len(blocks) - last_checked_blocks >= 4
                 ):
@@ -788,7 +911,7 @@ def run_case(
                 if (
                     padded
                     and playing_at is None
-                    and (not packet_mode or stop_after is not None)
+                    and (not native_mode or stop_after is not None)
                     and time.perf_counter() >= playing_ready_deadline
                     and process.poll() is None
                 ):
@@ -797,7 +920,7 @@ def run_case(
                 if (
                     stop_after is not None
                     and stop_at is None
-                    and (not packet_mode or process.poll() is None)
+                    and (not native_mode or process.poll() is None)
                     and stop_is_due(
                         now_s=time.perf_counter(),
                         launched_at_s=launched_at,
@@ -823,6 +946,7 @@ def run_case(
                     result["stop_process_latency_s"] = time.perf_counter() - stop_at
                 if process.poll() is not None and exited_at is None:
                     exited_at = time.perf_counter()
+                    exit_frame_count = packet_frames
                     result["returncode"] = process.returncode
                     result["process_exit"] = (
                         "pass"
@@ -830,19 +954,53 @@ def run_case(
                         else "fail"
                     )
                 if exited_at is not None and now - exited_at >= 0.6:
-                    break
+                    if not pulse_mode or pulse_complete:
+                        break
+                    if not finish.is_set():
+                        finish.set()
+                        deadline = now + STOP_BOUND_S
             time.sleep(0.005)
         else:
+            if pulse_mode and finish.is_set():
+                result["reason"] = "capture_monitor_ended_early"
+                return result
             result["reason"] = (
                 "playing_ready_timeout"
                 if padded
                 and playing_at is None
-                and (not packet_mode or stop_after is not None)
+                and (not native_mode or stop_after is not None)
                 else "playback_deadline"
             )
             if result["reason"] == "playback_deadline":
                 result["process_exit"] = "fail"
-        if packet_mode:
+        if pulse_mode:
+            baseline = _fragment_quiet(fragments[:baseline_count])
+            if baseline["frames"] < round(RATE * baseline_duration):
+                baseline["status"] = "unqualified"
+            result.update(baseline_monitor=baseline, baseline_rms=baseline["rms"])
+            if baseline["status"] != "pass":
+                result["endpoint_loopback"] = baseline["status"]
+                result["reason"] = (
+                    "noisy_baseline"
+                    if baseline["status"] == "fail"
+                    else "baseline_unobserved"
+                )
+                return result
+            result["frames_received_after_exit"] = packet_frames - exit_frame_count
+            if (
+                not pulse_complete
+                or exited_at is None
+                or packet_frames - exit_frame_count < round(RATE * 0.4)
+            ):
+                result.setdefault("reason", "capture_monitor_ended_early")
+                return result
+            playback_fragments = fragments[baseline_count:]
+            measurement, final_metrics = _match_fragments(playback_fragments, source)
+            if stop_at is not None:
+                result["engine_quiet_samples"] = _fragment_quiet(
+                    playback_fragments, tail_frames=round(RATE * 0.2)
+                )
+        elif packet_mode:
             result.update(
                 capture_packets=len(packets),
                 capture_frames=packet_frames,
@@ -928,9 +1086,10 @@ def run_case(
             final_metrics = {}
             measurement = measure_match(captured, source, diagnostics=final_metrics)
         result["diagnostics"]["final_matcher"] = final_metrics
-        result["capture_blocks"] = len(blocks)
+        if not pulse_mode:
+            result["capture_blocks"] = len(blocks)
         result["observation_count_retained"] = len(observations)
-        if stop_at is not None and not packet_mode:
+        if stop_at is not None and not native_mode:
             post = [
                 (stamp, data)
                 for stamp, data in blocks
@@ -968,7 +1127,7 @@ def run_case(
                 bookmark_alignment(
                     result.get("saved_bookmark_frame"),
                     measurement["end_source_s"],
-                    content_duration_s=len(source) / RATE if packet_mode else None,
+                    content_duration_s=len(source) / RATE if native_mode else None,
                 )
             )
         error = measurement["start_source_s"] - offset
@@ -980,6 +1139,8 @@ def run_case(
             result["tail_coverage"] = (
                 "pass" if abs(remaining) <= TAIL_TOLERANCE_S else "fail"
             )
+        if pulse_mode:
+            return result
         # Map a matched sample to its acquisition block, independent of launch.
         if packet_mode:
             onset_wall = measurement["capture_onset_qpc_s"]
@@ -1090,7 +1251,7 @@ def run_matrix(
         tail_padding_ms not in (0, 250)
         or repeat not in (1, 2, 3)
         or capture_buffer_frames not in (480, 4800)
-        or capture_clock not in ("legacy", "wasapi-packet")
+        or capture_clock not in ("legacy", "wasapi-packet", "pulse-fragment")
     ):
         raise ValueError("invalid_matrix_settings")
     artifacts = {}
@@ -1222,6 +1383,8 @@ def native_result(runs: list[dict]) -> str:
     """Every required case counts; unmatched cases and missing cleanup cannot pass."""
     required = []
     for run in runs:
+        if run.get("capture_clock") == "pulse-fragment":
+            required.append(run.get("telemetry", "unqualified"))
         if _capture_quality_unqualified(run):
             required.append("unqualified")
         if run.get("cleanup_errors"):
@@ -1309,9 +1472,17 @@ def main() -> int:
         "--capture-buffer-frames", type=int, choices=(480, 4800), default=480
     )
     parser.add_argument(
-        "--capture-clock", choices=("legacy", "wasapi-packet"), default="legacy"
+        "--capture-clock",
+        choices=("legacy", "wasapi-packet", "pulse-fragment"),
+        default="legacy",
     )
     args = parser.parse_args()
+    if (
+        args.capture_loopback
+        and args.capture_clock == "pulse-fragment"
+        and platform.system() != "Linux"
+    ):
+        parser.error("pulse-fragment capture requires Linux")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     clock = time.get_clock_info("perf_counter")
     receipt = {
