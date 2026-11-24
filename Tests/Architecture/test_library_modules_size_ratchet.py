@@ -930,7 +930,13 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-24, rebased onto dev 9fa2bf1b1d: 9186 -> 9195 (dev measures
     # 7501 after TASK-34100.16.1's +9; polish-1b's own +1694; same owner
     # decision: expand limits, don't contort code).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 9195,
+    # 2026-11-24, PR #3423 rebase 21 load flake (same owner decision: expand
+    # limits, don't contort code): a Trash landing's keep-in-view waits for
+    # the screen's next layout pass (``_recheck_landed_trash_control_after_
+    # layout``) while a Notes sync is queued, its control has no layout yet
+    # or focus is parked, instead of settling before any layout:
+    # 9195 -> 9258 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 9258,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

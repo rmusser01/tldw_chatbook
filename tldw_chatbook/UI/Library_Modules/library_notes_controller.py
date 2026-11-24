@@ -578,6 +578,7 @@ from ...Widgets.Library import (
     LibraryNotesCanvas,
     LibraryRail,
 )
+from ...Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from ...Widgets.Library.library_file_notes_events import (
     FileNotesEditableOpened,
     FileNotesIdentityCleared,
@@ -704,8 +705,10 @@ def _bulk_keyword_refusal_reason(error: BaseException) -> str:
     return ""
 
 
-#: TASK-34000.29 8b (ruling T8b-e): how many refreshes a Trash landing's
-#: keep-in-view waits for a pruning sync's replay to put focus back.
+#: TASK-34000.29 8b (ruling T8b-e): how many screen layout passes a Trash
+#: landing's keep-in-view waits for its control to hold focus with a layout
+#: (a pruning sync's replay putting focus back, the new list's first layout).
+#: Counted in layout passes since PR #3423 rebase 21: refreshes ran out in ms.
 _TRASH_LANDING_SETTLE_DEFERRALS = 5
 
 
@@ -8655,29 +8658,89 @@ class LibraryNotesController:
         capture read the rebuilt list at offset 0 and re-applied it over the
         landed row below the fold (traced at 100x30: a Restore of the last
         row, one sync injected right after its landing). So while focus sits
-        on that framework landing, the check is deferred to the next refresh
-        -- a bounded number of times -- with the offset still withheld.
+        on that framework landing, the check is deferred -- a bounded number
+        of times -- with the offset still withheld.
+
+        PR #3423 rebase 21 (2026-11-24, traced under 8-way load): in all 48
+        traced landings the check settled before its control had any layout
+        -- the screen runs ``call_after_refresh`` callbacks before a
+        recomposed list is laid out, and five refresh deferrals burned out in
+        about 6 ms -- so the scroll did nothing; and a sync queued after the
+        landing then replaced the row before any later scroll reached it (the
+        last row purged below the fold, 2 runs in 40). So the check waits for
+        the screen's next LAYOUT pass instead (``_recheck_landed_trash_
+        control_after_layout``): while a Notes sync is still queued -- its
+        recompose will prune the control and its replay land the new one,
+        so that wait is not counted -- and, bounded, while the control has
+        no layout yet or focus is parked.
         """
         in_view = self._library_notes_view == "trash" and self._trash_focus_role == role
         target = self._library_notes_trash_focus_target(role) if in_view else None
         focused = self.focused
-        if (
-            target is not None
-            and focused is not target
-            and deferrals < _TRASH_LANDING_SETTLE_DEFERRALS
-            and _is_framework_focus_landing(self, focused)
+        if target is not None and (
+            focused is target or _is_framework_focus_landing(self, focused)
         ):
-            self.call_after_refresh(
-                partial(LibraryNotesController._keep_landed_trash_control_in_view, self),
-                role,
-                deferrals + 1,
+            # The canvas whose recompose rebuilds the control (the Notes work
+            # pane hosts the Trash), where every Notes sync queues its replay.
+            canvas = next(
+                (
+                    node
+                    for node in target.ancestors
+                    if isinstance(node, PostRecomposeCallback)
+                ),
+                None,
             )
-            return
+            resync_queued = (
+                canvas is not None and canvas.has_pending_recompose_callback
+            )
+            unsettled = deferrals < _TRASH_LANDING_SETTLE_DEFERRALS and (
+                focused is not target or not target.size
+            )
+            if (resync_queued or unsettled) and (
+                LibraryNotesController._recheck_landed_trash_control_after_layout(
+                    self, canvas, role, deferrals if resync_queued else deferrals + 1
+                )
+            ):
+                return
         if getattr(self, "_trash_landing_settling", "") == role:
             self._trash_landing_settling = ""
         if target is None or focused is not target:
             return
         target.scroll_visible(animate=False, force=True, immediate=True)
+
+    def _recheck_landed_trash_control_after_layout(
+        self, canvas: Any, role: str, deferrals: int
+    ) -> bool:
+        """Run a landing's keep-in-view again after the screen's next layout.
+
+        Keyed on the canvas: it outlives the list it recomposes (the landed
+        control's own list may be pruned first), and nothing else subscribes
+        it to this signal. The callback only unsubscribes and queues the
+        check; ``Signal.publish`` swallows a callback's error.
+
+        Args:
+            canvas: The canvas holding the landed control, or ``None``.
+            role: The landing's Trash role.
+            deferrals: The bounded waits spent, this one included.
+
+        Returns:
+            False when there is no running canvas to wait on: the caller
+            settles at once.
+        """
+        if canvas is None or not canvas.is_running:
+            return False
+        signal = canvas.screen.screen_layout_refresh_signal
+
+        def after_layout(_screen: object) -> None:
+            signal.unsubscribe(canvas)
+            self.call_later(
+                partial(LibraryNotesController._keep_landed_trash_control_in_view, self),
+                role,
+                deferrals,
+            )
+
+        signal.subscribe(canvas, after_layout, immediate=True)
+        return True
 
     def _refresh_library_notes_trash(self, *, focus_role: str = "") -> None:
         """Reload the soft-deleted snapshot the row and the view both read.

@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from types import MethodType, SimpleNamespace
 
 import pytest
+from textual.geometry import Size
 from textual.widgets import Button, Static
 
 from Tests.UI.test_library_notes_folder_navigator import (
@@ -42,6 +43,7 @@ from tldw_chatbook.UI.Library_Modules.library_notes_controller import (
     LibraryNotesController,
 )
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
 
 NOW = datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc)
@@ -1205,6 +1207,8 @@ def test_the_landed_control_is_scrolled_in_only_while_it_still_has_focus() -> No
     scrolled: list[str] = []
     control = SimpleNamespace(
         scroll_visible=lambda **_kwargs: scrolled.append("next"),
+        size=Size(6, 1),  # laid out
+        ancestors=(),
     )
     fake = SimpleNamespace(
         _library_notes_view="trash",
@@ -1737,6 +1741,68 @@ def test_a_dropped_landing_stops_withholding_the_trash_offset() -> None:
     assert fake._trash_landing_settling == ""
 
 
+class _LayoutSignal:
+    """``Screen.screen_layout_refresh_signal``'s subscribe/unsubscribe/publish."""
+
+    def __init__(self) -> None:
+        self.subscribed: dict[object, list] = {}
+
+    def subscribe(self, node, callback, immediate: bool = False) -> None:
+        assert immediate  # the callback only unsubscribes and queues the check
+        self.subscribed.setdefault(node, []).append(callback)
+
+    def unsubscribe(self, node) -> None:
+        self.subscribed.pop(node, None)
+
+    def publish(self) -> None:
+        """One layout pass."""
+        for callbacks in list(self.subscribed.values()):
+            for callback in list(callbacks):
+                callback(None)
+
+
+class _WorkPane(PostRecomposeCallback):
+    """The canvas holding the Trash: a queued replay, a screen to lay out."""
+
+    is_running = True
+
+    def __init__(self) -> None:
+        self.screen = SimpleNamespace(screen_layout_refresh_signal=_LayoutSignal())
+
+
+def _landing_fake(control) -> SimpleNamespace:
+    """A controller one Restore landed (``trash-restore:19``), still settling.
+
+    Focus starts on ``control``; ``fake.grip`` is Textual's reset landing.
+    """
+    queued: list[tuple] = []
+    grip = SimpleNamespace(id="library-browse-items-grip")
+    return SimpleNamespace(
+        _library_notes_view="trash",
+        _trash_focus_role="trash-restore:19",
+        _trash_landing_settling="trash-restore:19",
+        _library_notes_trash_focus_target=lambda _role: control,
+        focused=control,
+        call_later=lambda *args: queued.append(args),
+        _screen=SimpleNamespace(
+            _library_notes_reset_landing_canvas=lambda node: (
+                object() if node is grip else None
+            )
+        ),
+        queued=queued,
+        grip=grip,
+    )
+
+
+def _layout_pass(fake: SimpleNamespace, canvas: _WorkPane) -> None:
+    """Lay the screen out once, then run what that pass queued."""
+    canvas.screen.screen_layout_refresh_signal.publish()
+    pending, fake.queued[:] = list(fake.queued), []
+    for check, *args in pending:
+        assert check.func is LibraryNotesController._keep_landed_trash_control_in_view
+        check(*args)
+
+
 def test_a_landing_waits_while_a_pruning_sync_has_focus_parked() -> None:
     """Ruling T8b-e: settle only once the landed control has focus again.
 
@@ -1744,56 +1810,121 @@ def test_a_landing_waits_while_a_pruning_sync_has_focus_parked() -> None:
     list and pruned the landed button, Textual parked focus on the Library
     grip, and the keep-in-view ran THEN -- it scrolled nothing and dropped
     the marker under the replay, so a later capture re-applied offset 0 over
-    the row below the fold. Seen once in the 100x30 Pilot before this
-    existed; without it, 14 later runs passed, so only this rider can force
-    the window. While focus sits on that framework landing the
-    check defers to the next refresh -- the offset still withheld -- and a
-    bounded number of times.
+    the row below the fold. While focus sits on that framework landing the
+    check waits -- the offset still withheld -- a bounded number of times.
+    PR #3423 rebase 21: each wait is a screen LAYOUT pass, not a refresh
+    (five refreshes ran out in about 6 ms, before any layout).
     """
     scrolled: list[str] = []
-    deferred: list[tuple] = []
-    control = SimpleNamespace(scroll_visible=lambda **_kwargs: scrolled.append("row"))
-    grip = SimpleNamespace(id="library-browse-items-grip")
-    parked: dict[str, object] = {"on": grip}
-    fake = SimpleNamespace(
-        _library_notes_view="trash",
-        _trash_focus_role="trash-restore:19",
-        _trash_landing_settling="trash-restore:19",
-        _library_notes_trash_focus_target=lambda _role: control,
-        focused=grip,
-        call_after_refresh=lambda *args: deferred.append(args),
-        _screen=SimpleNamespace(
-            _library_notes_reset_landing_canvas=lambda focused: (
-                object() if focused is parked["on"] else None
-            )
-        ),
+    canvas = _WorkPane()
+    control = SimpleNamespace(
+        scroll_visible=lambda **_kwargs: scrolled.append("row"),
+        size=Size(11, 1),
+        ancestors=(SimpleNamespace(), canvas),
     )
+    fake = _landing_fake(control)
+    fake.focused = fake.grip
 
     LibraryNotesController._keep_landed_trash_control_in_view(fake, "trash-restore:19")
     assert fake._trash_landing_settling == "trash-restore:19"
-    assert scrolled == []
-    ((retry, role, attempt),) = deferred
-    assert retry.func is LibraryNotesController._keep_landed_trash_control_in_view
-    assert (role, attempt) == ("trash-restore:19", 1)
+    assert scrolled == [] and fake.queued == []
+    assert list(canvas.screen.screen_layout_refresh_signal.subscribed) == [canvas]
 
     fake.focused = control  # the sync's replay put focus back
-    retry(role, attempt)
+    _layout_pass(fake, canvas)
     assert scrolled == ["row"]
     assert fake._trash_landing_settling == ""
+    assert canvas.screen.screen_layout_refresh_signal.subscribed == {}
 
     # Bounded: focus that never comes back stops withholding the offset.
-    fake.focused = grip
+    fake.focused = fake.grip
     fake._trash_landing_settling = "trash-restore:19"
     LibraryNotesController._keep_landed_trash_control_in_view(
         fake, "trash-restore:19", 5
     )
     assert fake._trash_landing_settling == ""
+    assert canvas.screen.screen_layout_refresh_signal.subscribed == {}
     # A focus the USER chose (not the framework's landing) settles at once.
     fake._trash_landing_settling = "trash-restore:19"
     fake.focused = SimpleNamespace(id="library-notes-trash-back")
-    deferred.clear()
     LibraryNotesController._keep_landed_trash_control_in_view(fake, "trash-restore:19")
-    assert deferred == []
+    assert canvas.screen.screen_layout_refresh_signal.subscribed == {}
+    assert fake._trash_landing_settling == ""
+
+
+def test_a_landing_waits_for_its_control_to_be_laid_out() -> None:
+    """PR #3423 rebase 21: a focused control with no layout is not settled.
+
+    Under 8-way load all 48 traced landings ran this check before the
+    recomposed list was laid out: the scroll did nothing and the marker went,
+    and the purged-below-the-fold row stayed under the fold (2 runs in 40).
+    The check waits for the next layout pass, counted against the bound.
+    """
+    scrolled: list[str] = []
+    canvas = _WorkPane()
+    control = SimpleNamespace(
+        scroll_visible=lambda **_kwargs: scrolled.append("row"),
+        size=Size(0, 0),  # mounted, never laid out
+        ancestors=(canvas,),
+    )
+    fake = _landing_fake(control)
+
+    LibraryNotesController._keep_landed_trash_control_in_view(fake, "trash-restore:19")
+    assert scrolled == []
+    assert fake._trash_landing_settling == "trash-restore:19"
+
+    control.size = Size(11, 1)  # this pass laid it out
+    _layout_pass(fake, canvas)
+    assert scrolled == ["row"]
+    assert fake._trash_landing_settling == ""
+
+    # Bounded: a control that never gets a layout (not displayed) settles.
+    control.size = Size(0, 0)
+    fake._trash_landing_settling = "trash-restore:19"
+    scrolled.clear()
+    LibraryNotesController._keep_landed_trash_control_in_view(
+        fake, "trash-restore:19", 5
+    )
+    assert fake._trash_landing_settling == ""
+    assert canvas.screen.screen_layout_refresh_signal.subscribed == {}
+
+
+def test_a_landing_waits_out_a_queued_notes_sync_without_spending_the_bound() -> None:
+    """PR #3423 rebase 21: a sync queued on the Trash's canvas is waited out.
+
+    Its recompose will prune the landed control and its replay land the new
+    one, so the landing is not settled on the doomed control -- even one
+    already laid out and past the bound (no layout pass is spent on it).
+    """
+    scrolled: list[str] = []
+    canvas = _WorkPane()
+    canvas.queue_after_recompose(lambda: None)  # a Notes sync's replay
+    control = SimpleNamespace(
+        scroll_visible=lambda **_kwargs: scrolled.append("row"),
+        size=Size(11, 1),
+        ancestors=(canvas,),
+    )
+    fake = _landing_fake(control)
+
+    LibraryNotesController._keep_landed_trash_control_in_view(
+        fake, "trash-restore:19", 5
+    )
+    assert scrolled == []
+    assert fake._trash_landing_settling == "trash-restore:19"
+
+    # A layout pass while it is still queued: the check runs again, with the
+    # bound unspent, and waits again.
+    canvas.screen.screen_layout_refresh_signal.publish()
+    ((check, role, deferrals),) = fake.queued
+    assert (role, deferrals) == ("trash-restore:19", 5)
+    fake.queued.clear()
+    check(role, deferrals)
+    assert scrolled == []
+    assert list(canvas.screen.screen_layout_refresh_signal.subscribed) == [canvas]
+
+    canvas.queue_after_recompose(None)  # the recompose ran its replay
+    _layout_pass(fake, canvas)
+    assert scrolled == ["row"]
     assert fake._trash_landing_settling == ""
 
 
