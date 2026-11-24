@@ -241,7 +241,7 @@ def ask_trigger_refusal_copy(
     return (
         f"Not {action}: this chat reached its compaction threshold "
         f"({_tokens(used_tokens)} of {_tokens(budget_tokens)} tokens; trigger "
-        f"{_tokens(trigger_tokens)}). Run /compact to summarize older turns, "
+        f"{_tokens(trigger_tokens)}). Run /compact in Console to summarize older turns, "
         "then try again, or change When limit nears in Chat settings ▸ "
         f"Context and memory (Ctrl+O).{_estimate_window_sentence(estimated)}"
     )

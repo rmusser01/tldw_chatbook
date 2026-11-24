@@ -95,10 +95,9 @@ async def resend_turn(
     it is retried in place; otherwise the empty reply and the rows after the
     user message are tombstoned and the turn re-runs from the user message.
     Hook review, required initialization/input and readiness run under the
-    normal submission owner before clearing. Skill refusal and the thinking
-    preflight run in the Retry/Continue bodies after the clear: a refusal
-    there leaves the turn still broken (Resend stays on offer) but the cleared
-    rows stay cleared. In a temporary chat nothing is persisted, so a cleared
+    normal submission owner before clearing. The Retry/Continue bodies check
+    thinking, skills and capacity before they clear the stale tail.
+    In a temporary chat nothing is persisted, so a cleared
     empty reply is simply gone.
 
     Args:
@@ -162,21 +161,29 @@ async def _resend_turn(
     )
     snapshot = tuple((row.id, row.status, row.content) for row in messages)
 
-    async def replay(resolution, context, hook_rows, mixin_current):
+    def current_refusal() -> str | None:
+        if store.active_session_id != session_id:
+            return RESEND_OTHER_SESSION_COPY
         current = store.messages_for_session(session_id)
         if (
             resend_target_id(current) != message_id
             or tuple((row.id, row.status, row.content) for row in current) != snapshot
         ):
-            return ConsoleSubmitResult(False, False, RESEND_NOT_BROKEN_COPY)
-        in_place = reply is not None and reply.status == "failed"
-        anchor_id = reply.id if in_place else message_id
-        refusal = _delete_rows_after(store, session_id, anchor_id)
-        if refusal:
+            return RESEND_NOT_BROKEN_COPY
+        return None
+
+    in_place = reply is not None and reply.status == "failed"
+    anchor_id = reply.id if in_place else message_id
+
+    def clear_stale_tail() -> str | None:
+        return current_refusal() or _delete_rows_after(store, session_id, anchor_id)
+
+    async def replay(resolution, context, hook_rows, mixin_current):
+        if refusal := current_refusal():
             return ConsoleSubmitResult(False, False, refusal)
         if in_place:
             return await controller._retry_message_body(
-                reply.id, resolution, context, hook_rows
+                reply.id, resolution, context, hook_rows, resend_cleanup=clear_stale_tail
             )
         return await controller._continue_from_message_body(
             message_id,
@@ -184,6 +191,7 @@ async def _resend_turn(
             context,
             hook_rows,
             resend=True,
+            resend_cleanup=clear_stale_tail,
             mixin_retry_of_attempt_id=(
                 reply.metadata.mixin_attempt_id
                 if reply is not None and reply.metadata is not None

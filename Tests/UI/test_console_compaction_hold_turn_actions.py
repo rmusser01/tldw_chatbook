@@ -2,7 +2,7 @@
 
 Continue, Regenerate and Retry cannot show the hold card. On dev, each one
 committed an assistant attempt over the Ask compaction trigger, marked it
-Failed and explained afterwards. ``refuse_at_ask_trigger`` now stops all three
+Failed and explained afterwards. ``refuse_turn_action`` now stops all three
 before anything is committed. Continue is driven in
 ``test_console_compaction_hold_flow.py``; these two drive the other call
 sites through the same real controller.

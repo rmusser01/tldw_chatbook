@@ -20,7 +20,7 @@ import pytest
 from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
 from tldw_chatbook.Chat.console_chat_models import ConsoleSubmissionOrigin
 from tldw_chatbook.Chat.console_compaction_gate import (
-    refuse_at_ask_trigger,
+    refuse_turn_action,
     refuse_unprepared,
     refuse_without_card,
 )
@@ -35,12 +35,14 @@ _HOLD = ContextCompactionHold(
     budget_tokens=1_500,
     estimated=False,
 )
+_CAPACITY_ALERT = "This message is too long for the model. Shorten it or choose a larger model."
 
 
 class _Controller:
-    def __init__(self, *, mode, hold) -> None:
+    def __init__(self, *, mode, hold, alert=None) -> None:
         self.mode = mode
         self.hold = hold
+        self.alert = alert
         self.blocked: list[tuple[str, str]] = []
         self.assessed: list[dict] = []
         self.store = SimpleNamespace(sessions=lambda: [SimpleNamespace(id="session-1")])
@@ -50,21 +52,21 @@ class _Controller:
 
     async def _assess_context_compaction(self, **kwargs):
         self.assessed.append(kwargs)
-        return self.hold, None
+        return self.hold, self.alert
 
     def _block(self, session_id: str, copy: str):
         self.blocked.append((session_id, copy))
         return SimpleNamespace(accepted=False, visible_copy=copy)
 
 
-def _run(controller):
+def _run(controller, action="continued"):
     return asyncio.run(
-        refuse_at_ask_trigger(
+        refuse_turn_action(
             controller,
             "session-1",
             object(),
             [{"role": "user", "content": "x"}],
-            "continued",
+            action,
         )
     )
 
@@ -83,6 +85,18 @@ def test_over_the_ask_trigger_the_turn_is_refused_before_commit() -> None:
     assert "/compact" in copy
 
 
+@pytest.mark.parametrize("mode", (ContextCompactionMode.ASK, ContextCompactionMode.AUTOMATIC))
+@pytest.mark.parametrize("action", ("continued", "regenerated", "retried", "resent"))
+def test_actions_refuse_an_unfixable_request_at_admission(mode, action) -> None:
+    controller = _Controller(mode=mode, hold=None, alert=_CAPACITY_ALERT)
+
+    result = _run(controller, action)
+
+    assert result is not None and not result.accepted
+    assert result.visible_copy == _CAPACITY_ALERT
+    assert controller.blocked == [("session-1", _CAPACITY_ALERT)]
+
+
 @pytest.mark.parametrize(
     ("mode", "hold"),
     [
@@ -96,8 +110,8 @@ def test_otherwise_the_turn_goes_on_unprobed_or_unblocked(mode, hold) -> None:
 
     assert _run(controller) is None
     assert controller.blocked == []
-    if mode is not ContextCompactionMode.ASK:
-        assert controller.assessed == []  # no probe cost outside Ask
+    if mode is ContextCompactionMode.OFF:
+        assert controller.assessed == []
 
 
 def test_the_refusal_copy_flags_an_assumed_window() -> None:
@@ -179,7 +193,27 @@ def test_a_buddy_reply_is_refused_and_the_console_draft_is_kept() -> None:
 
     assert controller.abandoned == ["prep-1"]
     assert result.visible_copy.startswith("Not sent:")
+    assert "Run /compact in Console" in result.visible_copy
     assert controller.draft == "my own console draft"
+
+
+@pytest.mark.parametrize("queued", (False, True), ids=("buddy", "queued"))
+def test_prepared_cardless_overflow_preserves_retryable_text(queued) -> None:
+    controller = _CardlessController()
+    origin = ConsoleSubmissionOrigin.QUEUED if queued else ConsoleSubmissionOrigin.MANUAL
+    queue_entry_id = "entry-1" if queued else None
+
+    result = refuse_without_card(
+        controller, _PREPARATION, None, origin=origin,
+        queue_entry_id=queue_entry_id, preserve_composer=not queued, alert=_CAPACITY_ALERT,
+    )
+
+    assert result is not None and not result.accepted and not result.should_clear_draft
+    assert result.visible_copy == _CAPACITY_ALERT
+    assert result.origin == origin and result.queue_entry_id == queue_entry_id
+    assert controller.abandoned == ["prep-1"]
+    if not queued:
+        assert controller.draft == "my own console draft"
 
 
 def test_below_the_trigger_a_cardless_send_goes_on_untouched() -> None:
@@ -233,6 +267,18 @@ def test_an_unprepared_send_over_the_trigger_drops_its_echo_and_is_refused() -> 
         "session-1",
         ConsoleSubmissionOrigin.MANUAL,
     )
+
+
+def test_unprepared_overflow_drops_the_echo_and_keeps_the_draft() -> None:
+    controller = _UnpreparedController()
+    result = refuse_unprepared(
+        controller, "session-1", None, echoed_user=SimpleNamespace(id="echo-1"),
+        origin=ConsoleSubmissionOrigin.MANUAL, queue_entry_id=None, alert=_CAPACITY_ALERT,
+    )
+
+    assert result is not None and not result.accepted and not result.should_clear_draft
+    assert result.visible_copy == _CAPACITY_ALERT
+    assert controller.deleted == ["echo-1"]
 
 
 def test_below_the_trigger_an_unprepared_send_goes_on_untouched() -> None:
