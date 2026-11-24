@@ -23,12 +23,18 @@ from .copy_dialog import (
 from .copy_receipt_view import ResearchCopyProgress, ResearchCopyReceiptView
 
 
+def _current(screen, capture) -> bool:
+    return (
+        screen.is_attached
+        and screen.app.is_running
+        and screen.controller.is_current_request(capture)
+    )
+
+
 async def show_workspace_actions(screen, capture) -> None:
     workspace = screen.copy_workspace
     ref = capture.ref
-    current = lambda: (
-        screen.is_mounted and screen.controller.is_current_request(capture)
-    )
+    current = lambda: _current(screen, capture)
     try:
         action = await screen.app.push_screen_wait(
             ResearchWorkspaceActions(
@@ -47,13 +53,21 @@ async def show_workspace_actions(screen, capture) -> None:
 
             await export_workspace_bundle(screen, ref, current)
         elif workspace is not None and action == "receipts":
-            receipts = await workspace.list_recoverable(ref)
+            receipts = await workspace.list_history(ref)
             if current():
                 selected = await screen.app.push_screen_wait(
                     ResearchCopyReceiptView(open_receipts=receipts)
                 )
                 if selected and current():
-                    await _run_copy(screen, capture, resume=selected)
+                    receipt = await workspace.service.get_copy_receipt(
+                        selected, workspace=ref
+                    )
+                    if receipt is not None and current():
+                        retry = await screen.app.push_screen_wait(
+                            ResearchCopyReceiptView(receipt)
+                        )
+                        if retry and current():
+                            await _run_copy(screen, capture, resume=retry)
         elif workspace is not None:
             await _prepare_copy(screen, capture, share=action == "copy-server-share")
     except Exception as exc:
@@ -72,9 +86,7 @@ async def show_workspace_actions(screen, capture) -> None:
 
 async def _prepare_copy(screen, capture, *, share: bool) -> None:
     ref, workspace = capture.ref, screen.copy_workspace
-    current = lambda: (
-        screen.is_mounted and screen.controller.is_current_request(capture)
-    )
+    current = lambda: _current(screen, capture)
     if ref.data_source is WorkspaceDataSource.LOCAL:
         visible = screen.controller.visible_workspace
         name = visible.name if visible is not None else ref.workspace_id
@@ -152,9 +164,7 @@ async def _run_copy(
     share=False,
     share_draft=None,
 ) -> None:
-    current = lambda: (
-        screen.is_mounted and screen.controller.is_current_request(capture)
-    )
+    current = lambda: _current(screen, capture)
     service = screen.copy_workspace.service
     stop = asyncio.Event()
     progress = ResearchCopyProgress(stop)

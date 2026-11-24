@@ -551,6 +551,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             self._workspace_action_open = False
 
     async def _open_research_sharing(self, ref: QualifiedWorkspaceRef, *, draft=None) -> None:
+        from ...Sharing_Interop.clone_receipts import SharingCloneReceipts
         from ...Sharing_Interop.server_sharing_service import ServerSharingService
         from ...Sharing_Interop.sharing_scope_service import SharingScopeService
         from ..Research_Workspace_Modules.sharing_dialog import ResearchSharingDialog
@@ -572,9 +573,14 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             server_service=ServerSharingService(client, policy_enforcer=policy),
             policy_enforcer=policy,
         )
+        receipts = (
+            SharingCloneReceipts(self.overlay_store.path.parent, ref.server_profile_id, ref.principal_id)
+            if self.overlay_store is not None else None
+        )
         await self.app.push_screen_wait(
             ResearchSharingDialog(
-                ref, scope, current=current, draft=draft, server_base_url=client.base_url
+                ref, scope, current=current, draft=draft, server_base_url=client.base_url,
+                clone_receipts=receipts,
             )
         )
 

@@ -7,12 +7,14 @@ from Tests.app_module_patches import patch_app_global
 from Tests.UI.library_quit_guard_support import _settings_without_splash, _until
 from Tests.UI.test_research_chat_region import build_research_app, open_chat
 from tldw_chatbook.Research_Workspace.contracts import QualifiedWorkspaceRef
+from tldw_chatbook.Sharing_Interop.clone_receipts import SharingCloneReceipts
 from tldw_chatbook.UI.Research_Workspace_Modules.sharing_dialog import (
     ResearchSharingDialog,
 )
 
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
+CLONE_OPERATION = "d290f1ee-6c54-4b01-90e6-d701748f0851"
 
 
 class _SharingOwner:
@@ -20,6 +22,7 @@ class _SharingOwner:
         self.calls = []
         self.active_shares = []
         self.tokens = []
+        self.share_available = True
 
     async def list_workspace_shares(self, workspace_id, *, mode):
         assert workspace_id == "shared-ws" and mode == "server"
@@ -52,6 +55,8 @@ class _SharingOwner:
 
     async def list_shared_with_me(self, *, mode):
         assert mode == "server"
+        if not self.share_available:
+            return {"items": []}
         return {
             "items": [
                 {
@@ -76,12 +81,12 @@ class _SharingOwner:
 
     async def clone_shared_workspace(self, share_id, *, mode, idempotency_key):
         self.calls.append(("clone", share_id, mode, idempotency_key))
-        return {"operation_id": "exact-clone", "status": "pending"}
+        return {"operation_id": CLONE_OPERATION, "status": "pending"}
 
     async def get_shared_workspace_clone_operation(
         self, share_id, operation_id, *, mode
     ):
-        assert (share_id, operation_id, mode) == (27, "exact-clone", "server")
+        assert (share_id, operation_id, mode) == (27, CLONE_OPERATION, "server")
         return {"operation_id": operation_id, "status": "completed"}
 
     async def inspect_public_link(self, token, *, mode):
@@ -102,7 +107,7 @@ class _SharingOwner:
         return {"resource_type": "workspace", "resource_id": "imported-ws"}
 
 
-async def _open_sharing(app, pilot, owner):
+async def _open_sharing(app, pilot, owner, *, receipts=None):
     await open_chat(app, pilot)
     ref = QualifiedWorkspaceRef("server", "shared-ws", "server-profile", "account")
     dialog = ResearchSharingDialog(
@@ -110,6 +115,7 @@ async def _open_sharing(app, pilot, owner):
         owner,
         current=lambda: True,
         server_base_url="https://sharing-fixture.invalid",
+        clone_receipts=receipts,
     )
     await app.push_screen(dialog)
     await _until(
@@ -310,7 +316,9 @@ async def test_received_workspace_clone_retains_its_operation(tmp_path, monkeypa
     owner = _SharingOwner()
     with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
         async with app.run_test(size=(84, 24)) as pilot:
-            dialog = await _open_sharing(app, pilot, owner)
+            path = tmp_path / "sharing"
+            receipts = SharingCloneReceipts(path, "server-profile", "account")
+            dialog = await _open_sharing(app, pilot, owner, receipts=receipts)
             dialog.query_one("#research-sharing-section", Select).value = "received"
             await _until(
                 pilot,
@@ -345,12 +353,33 @@ async def test_received_workspace_clone_retains_its_operation(tmp_path, monkeypa
                 "clone admitted",
             )
             assert owner.calls[0][:3] == ("clone", 27, "server")
+            assert receipts.get(27).operation_id == CLONE_OPERATION
+            dialog.query_one("#research-sharing-close", Button).press()
+            await _until(pilot, lambda: app.screen is not dialog, "sharing closed")
+            owner.share_available = False
+            reopened = SharingCloneReceipts(path, "server-profile", "account")
+            dialog = await _open_sharing(app, pilot, owner, receipts=reopened)
+            dialog.query_one("#research-sharing-section", Select).value = "received"
+            await _until(
+                pilot,
+                lambda: dialog.query_one("#research-sharing-received").display,
+                "received workspaces reopened",
+            )
+            dialog.query_one("#research-received-list", Button).press()
+            status = dialog.query_one("#research-sharing-status", Static)
+            await _until(
+                pilot,
+                lambda: "0 workspaces shared" in str(status.render()),
+                "retained clone loaded after revocation",
+            )
+            dialog.query_one("#research-received-select", Select).value = 27
             dialog.query_one("#research-received-status", Button).press()
             await _until(
                 pilot,
                 lambda: "Clone · completed" in str(status.render()),
                 "clone settled",
             )
+            assert len(owner.calls) == 1
 
 
 async def test_share_actions_can_receive_focus_across_terminal_sizes(

@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Select, Static
 
 from Tests.app_module_patches import patch_app_global
 from Tests.UI.library_quit_guard_support import _settings_without_splash, _until
@@ -69,7 +69,7 @@ async def test_copy_and_share_opens_sharing_only_after_completed_copy(
             screen.copy_workspace = SimpleNamespace(
                 new_server_target=lambda: target,
                 preflight_copy=preflight,
-                list_recoverable=recover,
+                list_history=recover,
                 service=SimpleNamespace(execute_copy=execute),
             )
 
@@ -201,3 +201,64 @@ async def test_workspace_actions_export_the_reviewed_local_bundle(
                     b"Metadata only" in manifest and b"Device preferences" in manifest
                 )
                 assert b"Device-only body" not in manifest
+
+
+async def test_workspace_actions_reopen_completed_receipt_without_resuming(
+    tmp_path, monkeypatch
+):
+    app, _, _ = build_research_app(tmp_path, monkeypatch)
+    with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
+        async with app.run_test(size=(84, 24)) as pilot:
+            screen, _ = await open_chat(app, pilot)
+            ref = screen.controller.selected_ref
+            target = QualifiedWorkspaceRef(
+                "server", "completed-copy", "profile", "account"
+            )
+            item = ResearchCopyItem(
+                CopyOwnerRef(ref, "artifact", "41", version=1), "copy_content"
+            )
+            manifest = ResearchCopyManifest(
+                ref, target, (item,), "2026-11-24T19:00:00Z"
+            )
+            receipt = SimpleNamespace(
+                manifest=manifest, items=(), status=ResearchCopyStatus.COMPLETED
+            )
+
+            async def history(workspace):
+                assert workspace == ref
+                return (receipt,)
+
+            async def get_receipt(transfer_id, *, workspace):
+                assert (transfer_id, workspace) == (manifest.transfer_id, ref)
+                return receipt
+
+            screen.copy_workspace = SimpleNamespace(
+                list_history=history,
+                service=SimpleNamespace(get_copy_receipt=get_receipt),
+            )
+            screen.query_one("#research-workspace-actions", Button).press()
+            await _until(
+                pilot,
+                lambda: bool(app.screen.query("#research-action-receipts")),
+                "workspace actions",
+            )
+            app.screen.query_one("#research-action-receipts", Button).press()
+            await _until(
+                pilot,
+                lambda: bool(app.screen.query("#research-copy-open-receipt")),
+                "receipt history",
+            )
+            await pilot.pause()
+            app.screen.query_one(
+                "#research-copy-receipt-select", Select
+            ).value = manifest.transfer_id
+            app.screen.query_one("#research-copy-open-receipt", Button).press()
+            await _until(
+                pilot,
+                lambda: bool(app.screen.query("#research-copy-receipt-status")),
+                "completed receipt opened",
+            )
+            assert "Completed" in str(
+                app.screen.query_one("#research-copy-receipt-status", Static).render()
+            )
+            assert not app.screen.query("#research-copy-resume")

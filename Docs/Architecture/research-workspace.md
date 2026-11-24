@@ -115,7 +115,8 @@ owner types as blocked when their import contract is unavailable.
 
 WorkspaceDB records each item checkpoint and the Server migration receipt.
 Stopping finishes the current checkpoint so a later attempt can recover
-acknowledged owners. Local Export uses the same outbound policy and writes
+acknowledged owners. Copy history can reopen completed and terminal receipts
+alongside retryable operations. Local Export uses the same outbound policy and writes
 reviewed text plus a Markdown manifest into a ZIP at the chosen path. Copy and
 export omit device-only content. Reference and metadata entries contribute no
 document content to the export.
@@ -123,7 +124,10 @@ document content to the export.
 Server sharing uses the captured profile, account, and workspace. Share offers
 team and organization access, clone permission, password and limit settings for
 links, active access editing and revocation, and recipient preview, verification,
-import, and clone. Copy to Server and Share opens the separate Share dialog after
+import, and clone. A private receipt retains the clone key and canonical Server
+operation ID for the selected account. The dialog reads status from the owner
+after reopening, including for an operation admitted before a share was revoked.
+Copy to Server and Share opens the separate Share dialog after
 the Server migration is finalized and Copy reports completion.
 
 ## Runs lifecycle

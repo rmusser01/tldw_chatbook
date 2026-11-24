@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -88,6 +89,7 @@ class ResearchSharingDialog(
         draft=None,
         prepare_only=False,
         server_base_url: str = "",
+        clone_receipts=None,
     ) -> None:
         super().__init__()
         if ref.data_source is not WorkspaceDataSource.SERVER:
@@ -98,6 +100,7 @@ class ResearchSharingDialog(
         self.draft = draft
         self.prepare_only = prepare_only
         self.server_base_url = server_base_url.rstrip("/")
+        self.clone_receipts = clone_receipts
         self._busy = False
         self._workspace_shares = {}
         self._links = {}
@@ -517,19 +520,38 @@ class ResearchSharingDialog(
 
     async def _list_received(self) -> None:
         result = await self._call("list_shared_with_me")
+        workspaces = list(result["items"])
+        rows = list(workspaces)
+        if self.clone_receipts is not None:
+            available = {item["share_id"] for item in workspaces}
+            saved = await asyncio.to_thread(self.clone_receipts.list_receipts)
+            rows.extend(
+                {
+                    "share_id": share_id,
+                    "workspace_name": f"Clone receipt for share {share_id}",
+                    "receipt_only": True,
+                }
+                for share_id in sorted(saved.keys() - available)
+            )
+        if not self.current():
+            return
         self._received = self._fill(
             "#research-received-select",
-            result["items"],
+            rows,
             key="share_id",
             label=lambda row: str(row.get("workspace_name") or row["workspace_id"]),
         )
-        self._status(f"{len(self._received)} workspaces shared with this account.")
+        self._status(f"{len(workspaces)} workspaces shared with this account.")
 
     async def _received_action(self, action: str) -> None:
         selected = self._selected_id("#research-received-select", self._received)
         item = self._received[selected]
         name = item.get("workspace_name") or item["workspace_id"]
         if action == "preview":
+            if item.get("receipt_only"):
+                raise ValueError(
+                    "This share is unavailable. Check its retained Clone status."
+                )
             reply = await self._call("get_shared_workspace", selected)
             share = reply.get("share") or {}
             if (
@@ -542,24 +564,51 @@ class ResearchSharingDialog(
             )
             self._status(f"{name} · {share.get('access_level')} · {clone}")
             return
+        stored = (
+            await asyncio.to_thread(self.clone_receipts.get, selected)
+            if self.clone_receipts is not None
+            else None
+        )
         if action == "clone":
-            if not item.get("allow_clone"):
+            pending = stored is not None and not stored.operation_id
+            if not item.get("allow_clone") and not pending:
                 raise ValueError("The owner disabled cloning for this workspace.")
             if not await self._confirm("Clone shared workspace?", str(name), "Clone"):
                 return
-            key = self._clone_keys.setdefault(selected, str(uuid4()))
+            if self.clone_receipts is not None:
+                stored = await asyncio.to_thread(self.clone_receipts.prepare, selected)
+                key = stored.idempotency_key
+            else:
+                key = self._clone_keys.setdefault(selected, str(uuid4()))
             result = await self._call(
                 "clone_shared_workspace", selected, idempotency_key=key
             )
         else:
-            operation_id = self._clones.get(selected)
+            operation_id = stored.operation_id if stored else self._clones.get(selected)
             if not operation_id:
+                if stored is not None:
+                    raise ValueError(
+                        "The clone response was interrupted. Use Clone to recover the same operation."
+                    )
                 raise ValueError("Start a clone before checking its operation.")
             result = await self._call(
                 "get_shared_workspace_clone_operation", selected, operation_id
             )
-        if result.get("operation_id"):
-            self._clones[selected] = result["operation_id"]
+        confirmed = result.get("operation_id")
+        if confirmed:
+            if stored is not None:
+                await asyncio.to_thread(
+                    self.clone_receipts.remember,
+                    selected,
+                    stored.idempotency_key,
+                    confirmed,
+                )
+            else:
+                self._clones[selected] = confirmed
+        elif self.clone_receipts is not None:
+            raise ValueError(
+                "The Server returned no durable clone receipt. Check its workspace list for the result."
+            )
         status = str(result.get("status") or "pending").replace("_", " ")
         self._status(f"Clone · {status}")
 

@@ -86,6 +86,48 @@ def test_copy_lease_expiry_fences_the_previous_worker(setup_copy):
         )
 
 
+def test_rolled_back_status_requires_owner_acknowledgement_and_remains_in_history(
+    setup_copy,
+):
+    _, _, store, _, manifest, confirmation = setup_copy
+    created = store.create_from_manifest(manifest, confirmation)
+    held = store.claim(manifest.transfer_id, expected_revision=created.revision)
+    item = held.items[0]
+    destination = CopyOwnerRef(SERVER, "media", "900", version=1)
+    saved = store.record_item_stage(
+        manifest.transfer_id,
+        item.item_key,
+        CopyItemStage.DESTINATION_SAVED,
+        destination=destination,
+        expected_revision=held.revision,
+        lease_token=held.lease_token,
+    )
+    with pytest.raises(CopyReceiptConflict, match="acknowledgement"):
+        store.finish(
+            manifest.transfer_id,
+            ResearchCopyStatus.ROLLED_BACK,
+            expected_revision=saved.revision,
+            lease_token=held.lease_token,
+        )
+    undone = store.record_item_stage(
+        manifest.transfer_id,
+        item.item_key,
+        CopyItemStage.DESTINATION_SAVED,
+        rolled_back=True,
+        expected_revision=saved.revision,
+        lease_token=held.lease_token,
+    )
+    finished = store.finish(
+        manifest.transfer_id,
+        ResearchCopyStatus.ROLLED_BACK,
+        expected_revision=undone.revision,
+        lease_token=held.lease_token,
+    )
+    assert finished.items[0].rolled_back
+    assert store.list_history(LOCAL) == (finished,)
+    assert not store.list_recoverable(LOCAL)
+
+
 def test_item_stage_cas_preserves_exact_owner_then_recovers_partial_copy(setup_copy):
     _, _, store, _, manifest, confirmation = setup_copy
     receipt = store.create_from_manifest(manifest, confirmation)

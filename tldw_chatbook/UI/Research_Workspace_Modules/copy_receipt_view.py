@@ -86,11 +86,13 @@ class ResearchCopyReceiptView(SafeModalDismissMixin, ModalScreen[str | None]):
                             if row.failure
                             else row.stage.value.replace("_", " ")
                         )
+                        if row.rolled_back:
+                            state = "rolled back"
                         yield Static(
                             f"{row.item.source.kind.value} {row.item.source.owner_id} · {state}",
                             markup=False,
                         )
-                else:
+                elif self.open_receipts:
                     yield Select(
                         [
                             (
@@ -99,22 +101,26 @@ class ResearchCopyReceiptView(SafeModalDismissMixin, ModalScreen[str | None]):
                             )
                             for row in self.open_receipts
                         ],
-                        prompt="Recoverable Copy",
+                        prompt="Choose a Copy receipt",
                         id="research-copy-receipt-select",
                     )
-            if (
-                self.open_receipts
-                or receipt
-                and receipt.status
-                in {
-                    ResearchCopyStatus.PARTIALLY_COMPLETED,
-                    ResearchCopyStatus.FAILED_RETRYABLE,
-                }
-            ):
+                else:
+                    yield Static("No Copy receipts for this workspace.", markup=False)
+            if self.open_receipts:
+                yield Button(
+                    "Open receipt", id="research-copy-open-receipt", compact=True
+                )
+            if receipt and receipt.status in {
+                ResearchCopyStatus.CONFIRMED,
+                ResearchCopyStatus.IN_PROGRESS,
+                ResearchCopyStatus.PARTIALLY_COMPLETED,
+                ResearchCopyStatus.FAILED_RETRYABLE,
+            }:
                 yield Button("Resume Copy", id="research-copy-resume", compact=True)
             yield Button("Close", id="research-copy-receipt-close", compact=True)
 
     @on(Button.Pressed, "#research-copy-resume")
+    @on(Button.Pressed, "#research-copy-open-receipt")
     def resume(self) -> None:
         selection = (
             self.receipt.manifest.transfer_id

@@ -270,6 +270,17 @@ class ResearchCopyReceiptStore:
     def list_recoverable(
         self, ref: QualifiedWorkspaceRef, *, limit: int = 20
     ) -> tuple[ResearchCopyReceipt, ...]:
+        return self._list_history(ref, limit=limit, recoverable_only=True)
+
+    def list_history(
+        self, ref: QualifiedWorkspaceRef, *, limit: int = 20
+    ) -> tuple[ResearchCopyReceipt, ...]:
+        """Show recent confirmed operations for this exact workspace."""
+        return self._list_history(ref, limit=limit, recoverable_only=False)
+
+    def _list_history(
+        self, ref, *, limit, recoverable_only
+    ) -> tuple[ResearchCopyReceipt, ...]:
         validate_copy_workspace(ref)
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("Choose a bounded Copy receipt page")
@@ -277,11 +288,11 @@ class ResearchCopyReceiptStore:
         with self.db.transaction() as conn:
             rows = conn.execute(
                 """SELECT transfer_id FROM research_copy_operations
-                   WHERE status IN ('confirmed', 'in_progress', 'partially_completed', 'failed_retryable')
+                   WHERE (? = 0 OR status IN ('confirmed', 'in_progress', 'partially_completed', 'failed_retryable'))
                      AND ((source_data_source, source_server_profile_id, source_principal_id, source_workspace_id) = (?, ?, ?, ?)
                         OR (destination_data_source, destination_server_profile_id, destination_principal_id, destination_workspace_id) = (?, ?, ?, ?))
                    ORDER BY updated_at DESC, transfer_id LIMIT ?""",
-                (*identity, *identity, limit),
+                (int(recoverable_only), *identity, *identity, limit),
             ).fetchall()
             return tuple(self._require(conn, row["transfer_id"]) for row in rows)
 

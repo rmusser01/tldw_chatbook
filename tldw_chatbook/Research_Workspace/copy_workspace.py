@@ -101,8 +101,8 @@ class ResearchWorkspaceCopy:
     def new_server_target(self) -> QualifiedWorkspaceRef:
         return self.server.new_copy_workspace()
 
-    async def list_recoverable(self, ref: QualifiedWorkspaceRef):
-        return await self.service._off_loop(self.service.receipts.list_recoverable, ref)
+    async def list_history(self, ref: QualifiedWorkspaceRef):
+        return await self.service._off_loop(self.service.receipts.list_history, ref)
 
     async def candidates(
         self, ref: QualifiedWorkspaceRef
