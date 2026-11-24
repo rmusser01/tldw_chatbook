@@ -448,8 +448,9 @@ def test_every_completed_pair_reconciliation_locator_uses_indexed_search(
                 "console_trace_surface_nodes",
                 "semantic_revision_id",
             ): "idx_console_trace_surface_nodes_semantic_revision_exact",
-            # Locators classified after v72 (38467b8fc6, d24c4c04b2) planned
-            # as SCAN until v88 indexed them (TASK-42517).
+            # Locators classified after v72 (38467b8fc6, d24c4c04b2, and the
+            # v86 mix-in result revision) planned as SCAN until v88 indexed
+            # them (TASK-42517).
             (
                 "console_hook_continuation_receipts",
                 "assistant_message_id",
@@ -482,6 +483,10 @@ def test_every_completed_pair_reconciliation_locator_uses_indexed_search(
                 "console_response_rule_validations",
                 "message_id",
             ): "idx_response_rule_validations_message",
+            (
+                "console_prompt_mixin_attempts",
+                "result_revision_id",
+            ): "idx_console_mixin_attempt_result_revision",
         }
         locators = frozenset().union(
             persistence_module._VOICE_PROMOTION_MANDATORY_LOCATORS,

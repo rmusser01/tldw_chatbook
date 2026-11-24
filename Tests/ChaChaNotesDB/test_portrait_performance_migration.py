@@ -33,7 +33,9 @@ def test_v82_upgrade_preserves_original_artwork_and_has_no_sync_triggers(tmp_pat
             ).fetchall()
             == []
         )
-        from tldw_chatbook.DB.recovery_core_schema import CHACHANOTES_V85_SCHEMAS
+        # Admissible as the current version's backup catalog, read from the
+        # recovery policy: a pinned V85 tuple went stale at v86 (TASK-42517).
+        from tldw_chatbook.DB.recovery_core import core_adapters
 
         catalog = tuple(
             row[0]
@@ -41,7 +43,12 @@ def test_v82_upgrade_preserves_original_artwork_and_has_no_sync_triggers(tmp_pat
                 "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
             )
         )
-        assert catalog in CHACHANOTES_V85_SCHEMAS
+        policy = next(
+            owner
+            for owner in core_adapters()
+            if owner.owner_id == "db.chachanotes.primary"
+        ).schema_policy()
+        assert (CharactersRAGDB._CURRENT_SCHEMA_VERSION, catalog) in policy.schema_sql
     finally:
         db.close()
 

@@ -112,7 +112,7 @@ class _Restrictions:
         self.response_rules_migration = False
         self.prompt_mixins_migration = False
         self.child_segments_migration = False
-        # TASK-42517 v87->v88: index name -> (table, column), empty when off.
+        # TASK-42517 v87->v88: index name -> table, empty when off.
         self.locator_indexes = {}
         self.canvas_sibling_migration = False
         self.portrait_migration = None
@@ -710,15 +710,16 @@ class _Restrictions:
                         and second in {"type", "name", "tbl_name", "rootpage", "sql"}
                     )
                 )
-                # TASK-42517 v87->v88: exactly the eight message-locator
-                # indexes, each on its own table.
+                # TASK-42517 v87->v88: exactly the nine locator indexes, each
+                # on its own table (name -> table; the installed .sql and the
+                # exact post-step catalog check fix the columns).
                 allowed |= (
                     bool(self.locator_indexes)
                     and database == "main"
                     and source is None
                     and (
                         action == sqlite3.SQLITE_CREATE_INDEX
-                        and self.locator_indexes.get(first, (None,))[0] == second
+                        and self.locator_indexes.get(first) == second
                         or action == sqlite3.SQLITE_REINDEX
                         and first in self.locator_indexes
                         or action == sqlite3.SQLITE_INSERT

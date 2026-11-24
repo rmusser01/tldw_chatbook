@@ -1,10 +1,12 @@
 -- TASK-42517: exact leading-column indexes for the voice-promotion message
--- locators classified after schema 72. v72 gave every census locator one, so
--- a larger history cannot turn one reconciliation into a table scan; the hook
--- receipt (38467b8fc6) and response-rule / machine follow-up (d24c4c04b2)
--- locators joined the census without them and planned as SCAN. The
--- `parent_assistant_message_id` and `message_id` columns are also `messages`
--- foreign keys, so a message delete no longer scans these tables either.
+-- and revision locators classified after schema 72. v72 gave every census
+-- locator one, so a larger history cannot turn one reconciliation into a
+-- table scan; the hook receipt (38467b8fc6) and response-rule / machine
+-- follow-up (d24c4c04b2) locators joined the census without them and planned
+-- as SCAN, and the v86 mix-in attempts' result revision (7970fbcada) was never
+-- classified. The `parent_assistant_message_id`, `message_id` and
+-- `result_revision_id` columns are also foreign keys, so a message delete or a
+-- trace GC sweep no longer scans these tables either.
 CREATE INDEX idx_hook_continuation_receipts_assistant_message
   ON console_hook_continuation_receipts(assistant_message_id);
 CREATE INDEX idx_hook_continuation_receipts_parent_assistant_message
@@ -21,3 +23,5 @@ CREATE INDEX idx_response_rule_fixtures_message
   ON console_response_rule_fixtures(message_id);
 CREATE INDEX idx_response_rule_validations_message
   ON console_response_rule_validations(message_id);
+CREATE INDEX idx_console_mixin_attempt_result_revision
+  ON console_prompt_mixin_attempts(result_revision_id);

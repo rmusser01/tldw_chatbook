@@ -1267,46 +1267,28 @@ CHACHANOTES_CHILD_SEGMENTS_V86_TO_V87_SQL = (
 
 
 
-# TASK-42517: v88 indexes the voice-promotion message locators that joined the
+# TASK-42517: v88 indexes the voice-promotion locators that joined the
 # census after schema 72 (chachanotes_v87_to_v88_message_locator_indexes.sql).
-# The declarations equal a fresh constructor's (Tests/Backup_Recovery/
-# test_core_owners.py compares them); v87 stays historical. The restore
-# sandbox admits exactly these name -> (table, column) pairs.
-CHACHANOTES_V88_LOCATOR_INDEXES = {
-    "idx_hook_continuation_receipts_assistant_message": (
-        "console_hook_continuation_receipts",
-        "assistant_message_id",
-    ),
-    "idx_hook_continuation_receipts_parent_assistant_message": (
-        "console_hook_continuation_receipts",
-        "parent_assistant_message_id",
-    ),
-    "idx_machine_followup_receipts_assistant_message": (
-        "console_machine_followup_receipts",
-        "assistant_message_id",
-    ),
-    "idx_machine_followup_receipts_parent_assistant_message": (
-        "console_machine_followup_receipts",
-        "parent_assistant_message_id",
-    ),
-    "idx_response_rule_assessments_message": (
-        "console_response_rule_assessments",
-        "message_id",
-    ),
-    "idx_response_rule_drafts_message": ("console_response_rule_drafts", "message_id"),
-    "idx_response_rule_fixtures_message": (
-        "console_response_rule_fixtures",
-        "message_id",
-    ),
-    "idx_response_rule_validations_message": (
-        "console_response_rule_validations",
-        "message_id",
-    ),
-}
-CHACHANOTES_V88_ADDITIONS = tuple(
-    f"CREATE INDEX {name}\n  ON {table}({column})"
-    for name, (table, column) in CHACHANOTES_V88_LOCATOR_INDEXES.items()
+# Exact installed declarations, as a fresh constructor writes them
+# (Tests/Backup_Recovery/test_core_owners.py compares them); v87 stays
+# historical.
+CHACHANOTES_V88_ADDITIONS = (
+    "CREATE INDEX idx_hook_continuation_receipts_assistant_message\n  ON console_hook_continuation_receipts(assistant_message_id)",
+    "CREATE INDEX idx_hook_continuation_receipts_parent_assistant_message\n  ON console_hook_continuation_receipts(parent_assistant_message_id)",
+    "CREATE INDEX idx_machine_followup_receipts_assistant_message\n  ON console_machine_followup_receipts(assistant_message_id)",
+    "CREATE INDEX idx_machine_followup_receipts_parent_assistant_message\n  ON console_machine_followup_receipts(parent_assistant_message_id)",
+    "CREATE INDEX idx_response_rule_assessments_message\n  ON console_response_rule_assessments(message_id)",
+    "CREATE INDEX idx_response_rule_drafts_message\n  ON console_response_rule_drafts(message_id)",
+    "CREATE INDEX idx_response_rule_fixtures_message\n  ON console_response_rule_fixtures(message_id)",
+    "CREATE INDEX idx_response_rule_validations_message\n  ON console_response_rule_validations(message_id)",
+    "CREATE INDEX idx_console_mixin_attempt_result_revision\n  ON console_prompt_mixin_attempts(result_revision_id)",
 )
+#: Index name -> table for the restore sandbox's v87->v88 step. The
+#: authorizer checks only that pair; the columns are fixed by the installed
+#: .sql and by the exact post-step catalog check against the V88 schemas.
+CHACHANOTES_V88_LOCATOR_INDEXES = {
+    sql.split()[2]: sql.split()[4].split("(")[0] for sql in CHACHANOTES_V88_ADDITIONS
+}
 CHACHANOTES_V88_SCHEMAS = tuple(
     tuple(sorted(schema + CHACHANOTES_V88_ADDITIONS, key=_installed_schema_order))
     for schema in CHACHANOTES_V87_SCHEMAS

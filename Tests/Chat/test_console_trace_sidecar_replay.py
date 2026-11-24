@@ -217,7 +217,6 @@ async def replay_harness(tmp_path, monkeypatch, request):
                     pass
 
 
-@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_replay_harness_retires_held_worker_native_connection(
     tmp_path, monkeypatch

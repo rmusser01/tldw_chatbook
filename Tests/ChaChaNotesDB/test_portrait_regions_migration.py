@@ -51,7 +51,9 @@ def test_v83_upgrade_preserves_old_six_frames_and_admits_actual_schema(tmp_path)
             is None
         )
         assert db.execute_query("PRAGMA foreign_key_check").fetchall() == []
-        from tldw_chatbook.DB.recovery_core_schema import CHACHANOTES_V85_SCHEMAS
+        # Admissible as the current version's backup catalog, read from the
+        # recovery policy: a pinned V85 tuple went stale at v86 (TASK-42517).
+        from tldw_chatbook.DB.recovery_core import core_adapters
 
         actual = tuple(
             row[0]
@@ -59,7 +61,12 @@ def test_v83_upgrade_preserves_old_six_frames_and_admits_actual_schema(tmp_path)
                 "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
             )
         )
-        assert actual in CHACHANOTES_V85_SCHEMAS
+        policy = next(
+            owner
+            for owner in core_adapters()
+            if owner.owner_id == "db.chachanotes.primary"
+        ).schema_policy()
+        assert (CharactersRAGDB._CURRENT_SCHEMA_VERSION, actual) in policy.schema_sql
         assert (
             db.execute_query(
                 "SELECT name FROM sqlite_schema WHERE type='trigger' AND tbl_name='character_portrait_regions'"
