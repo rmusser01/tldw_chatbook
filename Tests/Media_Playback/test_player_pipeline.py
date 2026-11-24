@@ -270,6 +270,34 @@ def test_second_spawn_failure_reaps_ffmpeg_and_closes_stdout_and_pipe_fds(
     assert pipeline.current_run is None
 
 
+@pytest.mark.parametrize("ambiguous_leg", ["ffmpeg", "ffplay"])
+def test_opaque_media_birth_on_either_leg_blocks_retirement_and_replacement(
+    monkeypatch, ambiguous_leg
+):
+    fds, closed = _record_real_pipe_fds(monkeypatch)
+    children = _SpawnRecorder()
+
+    def spawn(cmd, **kwargs):
+        child = children(cmd, **kwargs)
+        if cmd[0] == ambiguous_leg:
+            raise OSError("constructor failed after child birth")
+        return child
+
+    pipeline = pp.PlayerPipeline("clip.mp4", _probe(), spawn=spawn)
+    with pytest.raises(OSError, match="after child birth"):
+        pipeline.start()
+    assert sorted(closed) == sorted(fds)
+    assert pipeline.current_run is None and not pipeline.stop()
+    born = list(children.calls)
+    for action in (pipeline.start, lambda: pipeline.seek(1.0)):
+        with pytest.raises(RuntimeError, match="unconfirmed"):
+            action()
+        assert children.calls == born
+    if ambiguous_leg == "ffplay":
+        assert born[0].events == ["terminate", ("wait", 2)]
+    assert not born[-1].terminated
+
+
 def test_audio_read_fd_close_failure_rolls_back_private_run_and_children(monkeypatch):
     real_pipe = os.pipe
     real_close = os.close
@@ -868,11 +896,12 @@ def test_file_source_has_no_reconnect_flags():
 def test_partial_spawn_keeps_resistant_demux_and_its_stdout_until_reaped():
     stdout = _FakeStdout(b"", chunk=1)
     spawn = _SpawnRecorder(
-        stdout_factory=lambda: stdout, fail_at=2, timeout_at=1, final_wait_error_at=1
+        stdout_factory=lambda: stdout, timeout_at=1, final_wait_error_at=1
     )
     pipeline = pp.PlayerPipeline("clip.mp4", _probe(), spawn=spawn)
     with pytest.raises(OSError):
-        pipeline.start()
+        # Revoke after taking custody of ffmpeg, before dispatching ffplay.
+        pipeline.start(start_authority=lambda: not spawn.calls)
     assert pipeline.current_run is None
     (demux,) = spawn.calls
     assert stdout.close_calls == 0
