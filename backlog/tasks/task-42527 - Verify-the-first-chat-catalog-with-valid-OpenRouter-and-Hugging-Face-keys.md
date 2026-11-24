@@ -15,7 +15,7 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-TASK-34100.2 (PR #3517, ported onto dev in round 24) closed its live-verification criterion, AC#13, without two cases: a valid OpenRouter key and a valid Hugging Face key. Both need a real, paid provider account, and round 24 forbade real provider calls (owner decision 2026-11-23, "close without valid-key cases"). Every other AC#13 case (real OpenAI, Anthropic and Gemini keys, the invalid OpenRouter and Hugging Face keys, env-key-only launches and a real llama.cpp server as a Custom OpenAI-compatible endpoint) was verified live on the branch and is recorded in TASK-34100.2's notes.
+TASK-34100.2 (PR #3517, ported onto dev in round 24) closed its live-verification criterion, AC#13, without two cases: a valid OpenRouter key and a valid Hugging Face key. Both need real providers (round 24 forbids contacting them; owner decision 2026-11-23, "close without valid-key cases"). Every other AC#13 case (real OpenAI, Anthropic and Gemini keys, the invalid OpenRouter and Hugging Face keys, env-key-only launches and a real llama.cpp server as a Custom OpenAI-compatible endpoint) was verified live on the branch and is recorded in TASK-34100.2's notes.
 
 This task closes that gap: with a valid key for each provider, setup's authenticated key check accepts the key (OpenRouter's /api/v1/key, Hugging Face's whoami-v2), and the first chat on that provider gets a real reply, on a fresh isolated profile through the real app.
 <!-- SECTION:DESCRIPTION:END -->
