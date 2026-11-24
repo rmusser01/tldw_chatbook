@@ -534,6 +534,15 @@ inspect unmigrated or rollback snapshots, so new queries are version-gated.
   report that uncertainty rather than minting authority from a pathname or digest.
   Startup reconciliation must establish a fresh/quiesced producer boundary;
   borrowing a live holder is insufficient to retire its pending synthesis claims.
+  A worker rejecting its freshly created stage keeps that exclusive creation
+  handle through committed invalidation and same-object disposal. For retry it
+  may seal a separate `article-audio-rejected-stage-v1` cleanup-only witness from
+  bounded measured raw bytes and the same image/key/native identity tuple. This
+  variant authorizes only its exact stage name in an unreferenced deletion row;
+  it cannot authorize a final, attachment or playback. Preserve an existing
+  publication witness and keep crash-discovered unsealed partials uncertain.
+  Elective pruning qualifies native cleanup before retiring reusable metadata;
+  immediate source-deletion invalidation retains its independent semantics.
   The existing TTS package is lazy and its container validator imports no runtime
   owner or optional audio/UI dependency. Expose the same callable as
   `validate_controlled_wav`, retaining its physical-frame argument and private

@@ -1,5 +1,22 @@
 # Lessons: what counts as evidence a change works
 
+## A retained directory identity did not freeze its Windows name (TASK-41178, 2026-11-24)
+
+**Incident.** The first native regular-file test run passed twelve cases but let
+the owned parent directory move while an `OpenFileById` handle used read/write
+sharing without delete sharing. Its file identity stayed stable. Acquiring named
+directory handles from the physical volume GUID, then checking the final parent
+identity against the borrowed descriptor, blocked both the parent and ancestor
+rename controls. The final Windows NTFS run passed fourteen custody cases and
+forty-five existing filesystem cases.
+
+**What to do.** Test namespace stability separately from object identity on the
+qualified host. Keep the proven regular-file handle through the native effect;
+checking a name and then reopening it for deletion or publication permits a
+different object to receive the effect. Preserve a durable custody witness for
+cleanup retries rather than treating a private filename as ownership. See
+`Tests/Backup_Recovery/test_held_regular_file.py` and ADR-367.
+
 ## A network sentinel can block Windows event-loop initialization (TASK-41177 follow-up, 2026-11-24)
 
 **Incident.** A mounted default-factory check failed with `transport_failed`.
