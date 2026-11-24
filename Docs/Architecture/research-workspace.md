@@ -53,6 +53,10 @@ cleaning up workspace memberships.
 
 The Runs screen creates a run through the scope service; the local engine executes in an exclusive worker group per run, persisting progress/events/artifacts and a budget ledger, honoring pause/cancel **between phases**, and on completion optionally inserting an assistant message via the chat handoff (which never raises — failure degrades to a notification). Outputs land in the research DB and as chat messages — not as Library media or workspace quick notes. The server side declares session CRUD and filtered run lists unsupported; see the gotcha below about run deletion.
 
+**Load Bundle** selects the stored report first when one exists. Both that
+read and **Load Artifact** use the scope's keyword-only `mode`, `run_id`, and
+`artifact_name` contract. The scope dispatches Local reads to its executor.
+
 `ResearchWindow` owns the Runs selection, detail, action target, and loaded
 bundle/artifact/event payload. Its native two-second interval refreshes only a
 selected nonterminal Local run. A read captures the source and window selection
