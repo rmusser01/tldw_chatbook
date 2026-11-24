@@ -821,6 +821,8 @@ def create_console_speculative_voice_session(
     worker: Any = None,
     process_supervisor: Any = None,
     entry_current: Callable[[], bool] | None = None,
+    audio_intent=None,
+    on_displaced: Callable[[], None] | None = None,
 ) -> ConsoleVoiceProcess:
     """Build one qualified view-local pipeline from existing app services."""
 
@@ -1070,8 +1072,19 @@ def create_console_speculative_voice_session(
             )
         return True
 
+    from tldw_chatbook.TTS.audio_output_admission import acquire_audio_output
+
+    async def admit_audio(run, *, current):
+        return await acquire_audio_output(
+            app_instance, audio_intent, "Hands-free voice", run, current=current
+        )
+
+    if audio_intent is None:
+        audio_intent = app_instance.audio_output.begin_intent()
     engine = ConsoleVoiceProcess(
         supervisor.device_lease,
+        admit_audio=admit_audio,
+        on_displaced=on_displaced,
         bootstrap=bootstrap,
         preflight=preflight,
         current=lambda: (

@@ -37,6 +37,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from tldw_chatbook.TTS import audio_output_runs
+from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership
+
 from Tests.TTS.test_console_speak_autoplay import _FakeApp
 from Tests.TTS_Events.test_spoken_feedback_streaming import _RecordingSink
 from tldw_chatbook.app import TldwCli
@@ -139,6 +142,7 @@ class _Handler(tts_events.TTSEventHandler):
 
     def __init__(self, service):
         super().__init__()
+        self.app = SimpleNamespace(audio_output=AudioOutputOwnership())
         self._tts_service = service
         self.messages = []
         self.finished = []
@@ -200,7 +204,17 @@ async def _run(handler, service, text, *, console=True, public=False, resolution
 
 
 @pytest.fixture(autouse=True)
-def _sink_instances():
+def _sink_instances(monkeypatch):
+    from Tests.TTS.test_audio_output_runs import FilePlayer
+    from tldw_chatbook.TTS.audio_player import PlaybackState
+
+    class Player(FilePlayer):
+        def play_prepared(self, plan, **kwargs):
+            accepted = super().play_prepared(plan, **kwargs)
+            self.state = PlaybackState.FINISHED
+            return accepted
+
+    monkeypatch.setattr(audio_output_runs, "SimpleAudioPlayer", Player)
     _SinkRegistry.instances = []
     yield _SinkRegistry.instances
     _SinkRegistry.instances = []
@@ -211,7 +225,7 @@ async def test_long_utterance_plays_every_piece_in_order_through_one_sink(monkey
     service, requests = _service()
     handler = _Handler(service)
     monkeypatch.setattr(tts_events, "sink_available", lambda: True)
-    monkeypatch.setattr(tts_events, "StreamingPcmSink", _SinkRegistry)
+    monkeypatch.setattr(audio_output_runs, "StreamingPcmSink", _SinkRegistry)
 
     await _run(handler, service, LONG_TEXT, public=True)
 
@@ -240,7 +254,7 @@ async def test_short_utterance_keeps_the_single_request_path(monkeypatch):
     service, requests = _service()
     handler = _Handler(service)
     monkeypatch.setattr(tts_events, "sink_available", lambda: True)
-    monkeypatch.setattr(tts_events, "StreamingPcmSink", _SinkRegistry)
+    monkeypatch.setattr(audio_output_runs, "StreamingPcmSink", _SinkRegistry)
 
     await _run(handler, service, "A short reply.")
 
@@ -253,7 +267,7 @@ async def test_non_wav_request_keeps_the_single_request_path(monkeypatch):
     service, requests = _service(audio_format="pcm", request_body=b"\x01\x02" * 600)
     handler = _Handler(service)
     monkeypatch.setattr(tts_events, "sink_available", lambda: True)
-    monkeypatch.setattr(tts_events, "StreamingPcmSink", _SinkRegistry)
+    monkeypatch.setattr(audio_output_runs, "StreamingPcmSink", _SinkRegistry)
 
     await _run(handler, service, LONG_TEXT)
 
@@ -276,7 +290,7 @@ async def test_mid_utterance_failure_is_reported_and_not_replayed(monkeypatch):
     service, requests = _service(fail_before_request=2)
     handler = _Handler(service)
     monkeypatch.setattr(tts_events, "sink_available", lambda: True)
-    monkeypatch.setattr(tts_events, "StreamingPcmSink", _SinkRegistry)
+    monkeypatch.setattr(audio_output_runs, "StreamingPcmSink", _SinkRegistry)
 
     await _run(handler, service, LONG_TEXT)
 
@@ -299,7 +313,7 @@ async def test_sink_open_failure_falls_back_to_the_whole_utterance(monkeypatch):
         _open_should_fail = True
 
     monkeypatch.setattr(tts_events, "sink_available", lambda: True)
-    monkeypatch.setattr(tts_events, "StreamingPcmSink", CannotOpen)
+    monkeypatch.setattr(audio_output_runs, "StreamingPcmSink", CannotOpen)
 
     await _run(handler, service, LONG_TEXT)
 
@@ -350,7 +364,7 @@ async def test_manual_long_wav_retains_the_original_file_delivery(monkeypatch):
     service, requests = _service(request_body=body)
     handler = _Handler(service)
     monkeypatch.setattr(tts_events, "sink_available", lambda: True)
-    monkeypatch.setattr(tts_events, "StreamingPcmSink", _SinkRegistry)
+    monkeypatch.setattr(audio_output_runs, "StreamingPcmSink", _SinkRegistry)
 
     await _run(handler, service, LONG_TEXT, console=False)
 
@@ -366,7 +380,7 @@ async def test_unspaced_long_reply_is_bounded_and_spoken_completely(monkeypatch)
     service, requests = _service()
     handler = _Handler(service)
     monkeypatch.setattr(tts_events, "sink_available", lambda: True)
-    monkeypatch.setattr(tts_events, "StreamingPcmSink", _SinkRegistry)
+    monkeypatch.setattr(audio_output_runs, "StreamingPcmSink", _SinkRegistry)
 
     await _run(handler, service, text, public=True)
 
@@ -393,7 +407,7 @@ async def test_piece_completion_reports_overall_generation_progress(monkeypatch)
 
     monkeypatch.setattr(service, "synthesize_default", completed_piece)
     monkeypatch.setattr(tts_events, "sink_available", lambda: True)
-    monkeypatch.setattr(tts_events, "StreamingPcmSink", _SinkRegistry)
+    monkeypatch.setattr(audio_output_runs, "StreamingPcmSink", _SinkRegistry)
 
     await _run(handler, service, LONG_TEXT)
 
@@ -474,7 +488,7 @@ async def test_every_piece_rejects_mismatched_exact_selection(
 
     monkeypatch.setattr(service, "synthesize_effective", effective)
     monkeypatch.setattr(tts_events, "sink_available", lambda: True)
-    monkeypatch.setattr(tts_events, "StreamingPcmSink", _SinkRegistry)
+    monkeypatch.setattr(audio_output_runs, "StreamingPcmSink", _SinkRegistry)
     resolution = CharacterTTSRequestResolution(
         source="default_profile",
         request=TTSRequest(
@@ -515,7 +529,7 @@ async def test_oversized_clauses_preserve_all_punctuation(monkeypatch, text):
     service, requests = _service()
     handler = _Handler(service)
     monkeypatch.setattr(tts_events, "sink_available", lambda: True)
-    monkeypatch.setattr(tts_events, "StreamingPcmSink", _SinkRegistry)
+    monkeypatch.setattr(audio_output_runs, "StreamingPcmSink", _SinkRegistry)
 
     await _run(handler, service, text, public=True)
 
@@ -532,6 +546,7 @@ async def test_long_reply_routes_through_public_console_snapshot_event(monkeypat
     service, requests = _service()
     handler = _Handler(service)
     app = _FakeApp()
+    app.audio_output = handler.app.audio_output
     app._ensure_tts_handler = AsyncMock(return_value=handler)
     handler.app = app
     store = ConsoleChatStore()
@@ -556,7 +571,7 @@ async def test_long_reply_routes_through_public_console_snapshot_event(monkeypat
         playback_lifecycle=lifecycle,
     )
     monkeypatch.setattr(tts_events, "sink_available", lambda: True)
-    monkeypatch.setattr(tts_events, "StreamingPcmSink", _SinkRegistry)
+    monkeypatch.setattr(audio_output_runs, "StreamingPcmSink", _SinkRegistry)
     try:
         await TldwCli.handle_tts_message_speech_request_event(app, event)
         tasks = tuple(handler._active_tasks)
@@ -590,7 +605,7 @@ async def test_oversized_spaced_clause_keeps_words_whole(monkeypatch):
     service, requests = _service()
     handler = _Handler(service)
     monkeypatch.setattr(tts_events, "sink_available", lambda: True)
-    monkeypatch.setattr(tts_events, "StreamingPcmSink", _SinkRegistry)
+    monkeypatch.setattr(audio_output_runs, "StreamingPcmSink", _SinkRegistry)
 
     await _run(handler, service, text, public=True)
 

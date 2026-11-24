@@ -449,6 +449,7 @@ class ConsoleMessageController:
         self._console_speech_request_generation = 0
         self._console_speech_lifetime_generation = 0
         self._console_speech_owner: Any | None = None
+        self.audio_intent = None
         self._speech_presentation: SpeechPresentation | None = None
         self._speech_presentation_validator: Callable[[], bool] | None = None
         self._console_speech_pending_stop: tuple[str, int] | None = None
@@ -1160,6 +1161,11 @@ class ConsoleMessageController:
                 presentation_context=self._screen._console_presentation_context(),
             )
 
+        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+            begin_speech_intent,
+        )
+
+        audio_intent = begin_speech_intent(self.app_instance)
         prior_message_id = self._console_speaking_message_id
         prior_owner = self._console_speech_owner
         if prior_message_id is not None:
@@ -1194,7 +1200,7 @@ class ConsoleMessageController:
                 outcome_callback=settle_prior_stop,
             )
             await self._dispatch_console_speech_stop_event(stop_event)
-            if prior_stop_outcome is not True:
+            if prior_stop_outcome is not True or not audio_intent.is_current():
                 self._console_speech_pending_stop = None
                 report_outcome(False)
                 return False
@@ -1288,6 +1294,7 @@ class ConsoleMessageController:
             presentation=presentation,
         )
         self._console_speech_owner = playback_lifecycle
+        self.audio_intent = audio_intent
 
         def report_generation_outcome(ok: bool) -> None:
             if ok is True:
@@ -1298,6 +1305,7 @@ class ConsoleMessageController:
         event = TTSMessageSpeechRequestEvent(
             speech_snapshot,
             validate_speech_snapshot,
+            audio_intent=audio_intent,
             outcome_callback=report_generation_outcome,
             expected_destination_fingerprint=expected_destination_fingerprint,
             retry_failed_auto=retry_failed_auto,

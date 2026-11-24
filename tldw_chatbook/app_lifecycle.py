@@ -9,7 +9,6 @@ import asyncio
 import contextlib
 import inspect
 import logging
-import os
 import sqlite3
 import subprocess
 import threading
@@ -35,7 +34,11 @@ from tldw_chatbook.app_keep_alive import (
     retire_dead_pump,
 )
 from tldw_chatbook.app_service_wiring import TldwCli  # class proxy (see its docstring)
-from tldw_chatbook.app_shutdown import _drain_app_unmount_services
+from tldw_chatbook.app_shutdown import (
+    _drain_app_unmount_services,
+    begin_audio_shutdown,
+    observe_audio_shutdown,
+)
 from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
 from tldw_chatbook.config import (
     get_cli_config_path,
@@ -244,6 +247,7 @@ class LifecycleMixin:
 
         # Set shutdown flag to prevent new operations
         self._shutting_down = True
+        begin_audio_shutdown(self)
 
         # TASK-22215: stop admitting staggered boot workers before cancelling
         # the live ones, so a completion arriving mid-teardown cannot start a
@@ -823,6 +827,7 @@ class LifecycleMixin:
         """Settle app-owned durable work before Textual closes screens."""
         # Match App.exit's mount-admission fence, including direct run_test teardown.
         self._exit = True
+        begin_audio_shutdown(self)
         # Bound pre-unmount drains with the existing process-owned watchdog.
         arm_exit_watchdog(reason="app shutdown")
         cancellation: asyncio.CancelledError | None = None
@@ -1063,6 +1068,7 @@ class LifecycleMixin:
 
     async def on_unmount(self) -> None:
         """Clean up logging resources on application exit."""
+        begin_audio_shutdown(self)
 
         # Settle boot-owned native work before any other owner can advance.
         actor_recovery_cancellation = await self._shutdown_actor_pack_recovery()
@@ -1210,45 +1216,6 @@ class LifecycleMixin:
 
         # Force cleanup of any remaining threads and processes
         try:
-            import platform
-
-            # On macOS, force kill any afplay processes
-            if platform.system() == "Darwin":
-                try:
-                    # Find and kill any afplay processes spawned by this app
-                    import psutil
-
-                    current_pid = os.getpid()
-                    for proc in psutil.process_iter(["pid", "name", "ppid"]):
-                        try:
-                            if (
-                                proc.info["name"] == "afplay"
-                                and proc.info["ppid"] == current_pid
-                            ):
-                                self.loguru_logger.info(
-                                    f"Killing orphaned afplay process: {proc.info['pid']}"
-                                )
-                                proc.kill()
-                        except (psutil.NoSuchProcess, psutil.AccessDenied):
-                            pass
-                except ImportError:
-                    # Fallback if psutil not available - run in background
-
-                    @work(thread=True)
-                    def kill_afplay_processes():
-                        try:
-                            # Kill all afplay processes (less precise but works)
-                            subprocess.run(
-                                ["killall", "afplay"], capture_output=True, timeout=1
-                            )
-                            self.loguru_logger.info("Killed all afplay processes")
-                        except Exception as e:
-                            self.loguru_logger.debug(
-                                f"Could not kill afplay processes: {e}"
-                            )
-
-                    # Run in background to avoid blocking
-                    self.run_worker(kill_afplay_processes, name="kill_afplay")
             # task-19561: this used to reach into `loop._default_executor`,
             # call `shutdown(wait=False)` and then set the private attribute
             # to `None`. Nulling it is what made the situation worse, not
@@ -1984,6 +1951,7 @@ class LifecycleMixin:
                         pass
                     return
             self._shutting_down = True
+            begin_audio_shutdown(self)
             from .UI.Console_Modules import view_workers
 
             # Cancel before cleanup yields; the original manager retains Tasks
@@ -2150,22 +2118,7 @@ class LifecycleMixin:
 
     async def _cleanup_audio_for_quit(self) -> None:
         """Stop and release app-owned audio before the final exit."""
-
-        audio_player = getattr(self, "audio_player", None)
-        if audio_player is None:
-            return
-        try:
-            await asyncio.wait_for(audio_player.stop(), timeout=0.5)
-        except asyncio.TimeoutError:
-            loguru_logger.warning("Audio stop timed out")
-        except Exception:
-            loguru_logger.warning("Audio stop failed during quit")
-        try:
-            await asyncio.wait_for(audio_player.cleanup(), timeout=0.5)
-        except asyncio.TimeoutError:
-            loguru_logger.warning("Audio cleanup timed out")
-        except Exception:
-            loguru_logger.warning("Audio cleanup failed during quit")
+        await observe_audio_shutdown(self, 0.5)
 
     @staticmethod
     def _save_shutdown_caches_with_timeout() -> None:

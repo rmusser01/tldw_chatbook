@@ -1,5 +1,6 @@
 """Exact disposable presentation ownership through the existing speech entries."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -15,6 +16,16 @@ from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
 )
 
 
+from tldw_chatbook.TTS import audio_output_runs
+from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership
+
+
+def handler_with_audio():
+    handler = TTSEventHandler()
+    handler.app = SimpleNamespace(audio_output=AudioOutputOwnership())
+    return handler
+
+
 def presentation(*, message_id=None, utterance_token=None):
     return SpeechPresentation(
         SpeechPresentationOwner(
@@ -27,7 +38,7 @@ def presentation(*, message_id=None, utterance_token=None):
 async def test_public_handsfree_entry_forwards_observation_and_finishes_once(
     monkeypatch,
 ):
-    handler = TTSEventHandler()
+    handler = handler_with_audio()
     speech = presentation(message_id="reply", utterance_token=8)
     kwargs_seen, finished = {}, []
 
@@ -78,7 +89,7 @@ def test_stale_lifecycle_terminal_settles_only_its_own_channel_despite_listener_
 async def test_guarded_preview_forwards_observation_without_a_conversation_message(
     monkeypatch,
 ):
-    handler = TTSEventHandler()
+    handler = handler_with_audio()
     speech = presentation()
     captured = {}
     monkeypatch.setattr(
@@ -112,7 +123,7 @@ async def test_guarded_preview_forwards_observation_without_a_conversation_messa
 
 @pytest.mark.asyncio
 async def test_rate_limit_wrapper_preserves_optional_observation(monkeypatch):
-    handler = TTSEventHandler()
+    handler = handler_with_audio()
     speech = presentation()
     generate = AsyncMock()
     monkeypatch.setattr(handler, "_generate_tts", generate)
@@ -170,10 +181,9 @@ async def test_public_utterance_retains_completion_until_native_output_ack(
 
     from Tests.Audio.test_streaming_sink_presentation import DelayedStream
     from tldw_chatbook.Audio.streaming_sink import StreamingPcmSink
-    from tldw_chatbook.Event_Handlers.TTS_Events import tts_events as module
     from tldw_chatbook.TTS.pcm_stream import SinkPlan
 
-    handler = TTSEventHandler()
+    handler = handler_with_audio()
     speech = presentation(utterance_token=3)
     opened, fed = asyncio.Event(), asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -186,7 +196,7 @@ async def test_public_utterance_retains_completion_until_native_output_ack(
         return stream
 
     def make_sink(**kwargs):
-        sink = StreamingPcmSink(stream_factory=backend, **kwargs)
+        sink = StreamingPcmSink(**{**kwargs, "stream_factory": backend})
         holder["sink"] = sink
         return sink
 
@@ -204,7 +214,7 @@ async def test_public_utterance_retains_completion_until_native_output_ack(
             playback_lifecycle=kwargs["playback_lifecycle"],
         )
 
-    monkeypatch.setattr(module, "StreamingPcmSink", make_sink)
+    monkeypatch.setattr(audio_output_runs, "StreamingPcmSink", make_sink)
     monkeypatch.setattr(handler, "_generate_tts", generate)
     monkeypatch.setattr(
         handler, "_prepare_tts_text", AsyncMock(return_value="sentence A")
@@ -227,7 +237,7 @@ async def test_public_utterance_retains_completion_until_native_output_ack(
         await asyncio.sleep(0)
         assert sink.state == "draining" and not task.done()
         assert finished == []
-        assert handler._active_stream_playback_owner is not None
+        assert len(handler._speech_outputs) == 1
         if cancel_tail:
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
@@ -241,7 +251,7 @@ async def test_public_utterance_retains_completion_until_native_output_ack(
             await asyncio.wait_for(task, 2)
             assert finished == [True]
         assert speech.read().state == "stopped"
-        assert handler._active_stream_playback_owner is None
+        assert not handler._speech_outputs
     finally:
         if "sink" in holder:
             holder["sink"].stop()
@@ -318,9 +328,8 @@ async def test_cancelled_guarded_preview_settles_its_channel_without_stopping_ne
 ):
     import asyncio
 
-    from tldw_chatbook.Event_Handlers.TTS_Events import tts_events as module
 
-    handler = TTSEventHandler()
+    handler = handler_with_audio()
     old, new = presentation(), presentation()
     admitted = asyncio.Event()
     monkeypatch.setattr(
@@ -332,8 +341,6 @@ async def test_cancelled_guarded_preview_settles_its_channel_without_stopping_ne
         admitted.set()
 
     monkeypatch.setattr(handler, "_admit_tts_generation", admit)
-    stops = []
-    monkeypatch.setattr(module, "stop_live_sink", lambda: stops.append(True))
     task = asyncio.create_task(
         handler.speak_guarded_utterance(
             "sample",
@@ -353,12 +360,16 @@ async def test_cancelled_guarded_preview_settles_its_channel_without_stopping_ne
         presentation=new,
     )
     replacement.report("playing")
-    handler._active_stream_playback_owner = replacement
+    attempt = handler._prepare_output("newer", replacement)
+
+    async def retire():
+        pytest.fail("The old preview tried to retire the new request")
+
+    lease = await handler.app.audio_output.acquire("newer", retire, intent=attempt.ticket)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert stops == []
-    assert handler._active_stream_playback_owner is replacement
+    assert lease.is_current() and handler._speech_outputs == [attempt]
     assert new.read().state == "playing"
     # No old handler owner remains: existing exact Stop reports failure rather
     # than claiming it stopped the replacement. Its own channel still settles.
@@ -377,11 +388,10 @@ async def test_native_started_callback_preserves_app_context_for_observer_task(
 
     from Tests.Audio.test_streaming_sink_presentation import DelayedStream
     from tldw_chatbook.Audio.streaming_sink import StreamingPcmSink
-    from tldw_chatbook.Event_Handlers.TTS_Events import tts_events as module
     from tldw_chatbook.TTS.pcm_stream import SinkPlan
 
     app = App()
-    handler = TTSEventHandler()
+    handler = handler_with_audio()
     opened, fed = asyncio.Event(), asyncio.Event()
     observed = asyncio.get_running_loop().create_future()
     loop = asyncio.get_running_loop()
@@ -400,7 +410,7 @@ async def test_native_started_callback_preserves_app_context_for_observer_task(
         return holder["stream"]
 
     def sink(**kwargs):
-        holder["sink"] = StreamingPcmSink(stream_factory=backend, **kwargs)
+        holder["sink"] = StreamingPcmSink(**{**kwargs, "stream_factory": backend})
         return holder["sink"]
 
     async def source():
@@ -413,7 +423,7 @@ async def test_native_started_callback_preserves_app_context_for_observer_task(
         validator=lambda: True,
         callback=report,
     )
-    monkeypatch.setattr(module, "StreamingPcmSink", sink)
+    monkeypatch.setattr(audio_output_runs, "StreamingPcmSink", sink)
     monkeypatch.setattr(handler, "_post_tts_message", AsyncMock(return_value=True))
     with app._context():
         task = asyncio.create_task(
@@ -443,16 +453,13 @@ async def test_owned_file_started_callback_preserves_app_context_for_observer_ta
     monkeypatch, tmp_path
 ):
     import asyncio
-    import threading
-    from contextvars import Context
-
     from textual._context import active_app
     from textual.app import App
 
-    from tldw_chatbook.Event_Handlers.TTS_Events import tts_events as module
+    from Tests.TTS.owned_output_fakes import ConsoleFilePlayer
 
     app = App()
-    handler = TTSEventHandler()
+    handler = handler_with_audio()
     observed = asyncio.get_running_loop().create_future()
 
     async def repaint():
@@ -462,33 +469,19 @@ async def test_owned_file_started_callback_preserves_app_context_for_observer_ta
         if state == "playing":
             asyncio.create_task(repaint())
 
-    def playback(*args, on_started, **kwargs):
-        Context().run(on_started)
-        return True
-
-    monkeypatch.setattr(module, "_play_legacy_clip_and_await_completion", playback)
-
-    class _PlayingPlayer:
-        # TASK-39040: the started callback reads the player's state (a clip
-        # handed to the default app is retained); this one is a normal clip.
-        def get_state(self):
-            from tldw_chatbook.TTS.audio_player import PlaybackState
-
-            return PlaybackState.PLAYING
-
-    monkeypatch.setattr(
-        "tldw_chatbook.TTS.audio_player.get_audio_player", lambda: _PlayingPlayer()
-    )
+    monkeypatch.setattr(audio_output_runs, "SimpleAudioPlayer", ConsoleFilePlayer)
     lifecycle = TTSPlaybackLifecycle(
         message_id="file-context", request_id=1, validator=lambda: True, callback=report
     )
     with app._context():
-        await handler._run_owned_file_playback(
-            "file-context",
-            tmp_path / "sample.wav",
-            lifecycle,
-            threading.Event(),
-            threading.Event(),
+        path = tmp_path / "sample.wav"
+        path.write_bytes(b"clip")
+        handler._audio_files["file-context"] = path
+        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSPlaybackEvent
+
+        await handler.handle_tts_playback(
+            TTSPlaybackEvent("play", "file-context", playback_lifecycle=lifecycle)
         )
+        await asyncio.gather(*tuple(handler._active_tasks))
     assert await asyncio.wait_for(observed, 2) is app
     await handler.cleanup_tts_resources()

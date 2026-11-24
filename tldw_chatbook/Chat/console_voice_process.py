@@ -47,6 +47,18 @@ class CloseEvidence:
     resources_outcome: AttemptCleanupOutcome | None
     transport_failure_code: str | None
 
+    @property
+    def confirmed(self) -> bool:
+        return (
+            self.native_closed
+            and self.child_exited
+            and self.tree_absent
+            and self.pipes_closed
+            and not self.forced_termination
+            and self.resources_outcome is AttemptCleanupOutcome.CLEAN
+            and self.transport_failure_code is None
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class VoiceProcessSnapshot:
@@ -76,15 +88,7 @@ class DeviceLease:
         with self._lock:
             if self._owner is not owner:
                 return
-            if not (
-                evidence.native_closed
-                and evidence.child_exited
-                and evidence.tree_absent
-                and evidence.pipes_closed
-                and not evidence.forced_termination
-                and evidence.resources_outcome is AttemptCleanupOutcome.CLEAN
-                and evidence.transport_failure_code is None
-            ):
+            if not evidence.confirmed:
                 self.quarantined = True
             else:
                 self._owner = None
@@ -221,6 +225,8 @@ class ConsoleVoiceProcess:
         clear_preview=None,
         preserve_draft=None,
         on_runtime_failure=None,
+        admit_audio=None,
+        on_displaced=None,
     ) -> None:
         self.device_lease = device_lease
         self._popen = popen
@@ -259,6 +265,12 @@ class ConsoleVoiceProcess:
         self._clear_preview = clear_preview
         self._preserve_draft = preserve_draft
         self._on_runtime_failure = on_runtime_failure
+        self._admit_audio = admit_audio
+        self._on_displaced = on_displaced
+        self._audio_lease = None
+        self._spawn_task = None
+        self._spawn_fence = threading.Event()
+        self._spawn_dispatched = threading.Event()
         self._failure_notified = False
         self._tts = None
         self._parent_tasks = set()
@@ -297,6 +309,24 @@ class ConsoleVoiceProcess:
     def fence_and_close(self, reason):
         self._begin_close()
         return asyncio.shield(self.close_task)
+
+    def retire(self):
+        """Fence this exact session while its retained close checks all receipts."""
+        from tldw_chatbook.Audio.voice_process_types import ControlKind
+
+        first = not self._stop.is_set()
+        closure = self.fence_and_close(ControlKind.TEARDOWN)
+        if first and self._on_displaced is not None:
+            self._on_displaced()
+
+        async def observe():
+            try:
+                evidence = await asyncio.wait_for(closure, GRACE_SECONDS)
+            except TimeoutError:
+                return False
+            return evidence.confirmed
+
+        return observe()
 
     def _own_parent(self, coroutine):
         task = self._own(coroutine)
@@ -342,7 +372,7 @@ class ConsoleVoiceProcess:
                 raise VoiceProcessError()
             if self._stop.is_set() or not current():
                 raise VoiceProcessError("stale")
-            identity = source_identity()
+            identity = await asyncio.to_thread(source_identity)
             h = bootstrap.header
             encode_record(bootstrap, "parent_to_child")
             if (
@@ -350,9 +380,57 @@ class ConsoleVoiceProcess:
                 != identity
             ):
                 raise VoiceProcessError()
+
+            def current_start():
+                return not self._stop.is_set() and current()
+
+            if not current_start():
+                raise VoiceProcessError("stale")
+            if self._admit_audio is not None:
+                self._audio_lease = await self._admit_audio(self, current=current_start)
+                if (
+                    self._audio_lease is None
+                    or not self._audio_lease.authorizes(self.retire)
+                    or not current_start()
+                ):
+                    raise VoiceProcessError("stale")
             self.device_lease.acquire(self)
             self._gate = StartupGate(identity)
-            self.process = self._popen(
+            self._spawn_task = self._own(self._launch(identity, h))
+            await asyncio.shield(self._spawn_task)
+            if not current_start():
+                raise VoiceProcessError("stale")
+            if not await asyncio.to_thread(self.pipe.writer.wait_written, 1, 0.5):
+                raise VoiceProcessError("transport_failed")
+            if not current_start():
+                raise VoiceProcessError("stale")
+            self._renew_task = self._own(self._renew())
+            await self._wait(lambda: self._gate.prepared, lambda: self._gate.deadline)
+            self._gate.permit(
+                current=current_start()
+                and (
+                    self._audio_lease is None
+                    or self._audio_lease.authorizes(self.retire)
+                )
+            )
+            self.pipe.send("start", capture_live=True)
+            await self._wait(lambda: self.ready, lambda: self._gate.deadline)
+        except Exception as error:
+            self._begin_close()
+            if isinstance(error, VoiceProcessError):
+                raise
+            raise VoiceProcessError() from None
+
+    async def _launch(self, identity, h):
+        await asyncio.sleep(0)  # publish custody before a worker can enter Popen
+
+        def launch():
+            if self._spawn_fence.is_set() or (
+                self._audio_lease is not None and self._audio_lease.revoked
+            ):
+                raise VoiceProcessError("stale")
+            self._spawn_dispatched.set()
+            return self._popen(
                 [sys.executable, "-m", "tldw_chatbook.Audio.voice_process_entry"],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -363,39 +441,28 @@ class ConsoleVoiceProcess:
                 env=child_environment(),
                 bufsize=0,
             )
-            self.tree = self._tree_factory(self.process.pid)
-            self.tree.attach()
-            self.pipe = LifecyclePipe(
-                os.dup(self.process.stdout.fileno()),
-                self.process.stdin.fileno(),
-                generation=h["generation"],
-                request_id=h["request_id"],
-                parent=True,
-                consume=self._receive,
-                fault=self._transport_fault,
-            )
-            if self._bindings[0] is not None:
-                self._compose_parent()
-            self._monitor_task = self._own(self._monitor())
-            fields = {
-                key: value
-                for key, value in h.items()
-                if key not in {"version", "op", "generation", "request_id", "sequence"}
-            }
-            self.pipe.send("bootstrap", **fields)
-            if not await asyncio.to_thread(self.pipe.writer.wait_written, 1, 0.5):
-                raise VoiceProcessError("transport_failed")
-            self._renew_task = self._own(self._renew())
-            await self._wait(lambda: self._gate.prepared, lambda: self._gate.deadline)
-            self._gate.permit(current=not self._stop.is_set() and current())
-            # Wire compatibility: this grants new child capture, never adoption.
-            self.pipe.send("start", capture_live=True)
-            await self._wait(lambda: self.ready, lambda: self._gate.deadline)
-        except Exception as error:
-            self._begin_close()
-            if isinstance(error, VoiceProcessError):
-                raise
-            raise VoiceProcessError() from None
+
+        self.process = await asyncio.to_thread(launch)
+        self.tree = await asyncio.to_thread(self._tree_factory, self.process.pid)
+        await asyncio.to_thread(self.tree.attach)
+        self.pipe = LifecyclePipe(
+            os.dup(self.process.stdout.fileno()),
+            self.process.stdin.fileno(),
+            generation=h["generation"],
+            request_id=h["request_id"],
+            parent=True,
+            consume=self._receive,
+            fault=self._transport_fault,
+        )
+        if self._bindings[0] is not None and not self._stop.is_set():
+            self._compose_parent()
+        self._monitor_task = self._own(self._monitor())
+        fields = {
+            key: value
+            for key, value in h.items()
+            if key not in {"version", "op", "generation", "request_id", "sequence"}
+        }
+        self.pipe.send("bootstrap", **fields)
 
     async def _wait(self, predicate, deadline):
         while True:
@@ -976,6 +1043,9 @@ class ConsoleVoiceProcess:
     def _begin_close(self):
         first = not self._stop.is_set()
         self._stop.set()
+        self._spawn_fence.set()
+        if self._audio_lease is not None:
+            self._audio_lease.revoke()
         self._phase = "off"
         self.ready = False
         if first:
@@ -990,6 +1060,7 @@ class ConsoleVoiceProcess:
             self._gate.stopped = True
         if self.close_task is None:
             self.close_task = self._own(self._close())
+            self.close_task.add_done_callback(self._settle_audio)
         if self._failure is not None and not self._failure_notified:
             self._failure_notified = True
             if self._on_runtime_failure is not None:
@@ -1045,20 +1116,45 @@ class ConsoleVoiceProcess:
                 self._terminate_tree()
             await asyncio.sleep(0.02)
 
+    def _settle_audio(self, task):
+        lease = self._audio_lease
+        if lease is not None:
+            if (
+                not task.cancelled()
+                and task.exception() is None
+                and task.result().confirmed
+            ):
+                lease.release()
+            else:
+                lease.block()
+
     async def _close(self):
+        await asyncio.sleep(0)
+        if self._spawn_task is not None:
+            await asyncio.gather(
+                asyncio.shield(self._spawn_task), return_exceptions=True
+            )
+        observers = [
+            task for task in (self._renew_task, self._monitor_task) if task is not None
+        ]
+        for observer in observers:
+            observer.cancel()
+        if observers:
+            await asyncio.gather(*observers, return_exceptions=True)
         deadline = time.monotonic() + GRACE_SECONDS
         if self.process is None:
+            absent = not self._spawn_dispatched.is_set()
             evidence = CloseEvidence(
-                True,
-                True,
-                True,
-                True,
+                absent,
+                absent,
+                absent,
+                absent,
                 False,
                 AttemptCleanupOutcome.CLEAN,
                 self.transport_failure_code,
             )
             self.device_lease.finish(self, evidence)
-            if self._effects is None:
+            if evidence.confirmed and self._effects is None:
                 retired = getattr(self, "_on_retired", None)
                 if retired is not None:
                     retired()
@@ -1126,4 +1222,8 @@ class ConsoleVoiceProcess:
             self.transport_failure_code,
         )
         self.device_lease.finish(self, evidence)
+        if evidence.confirmed and self._effects is None:
+            retired = getattr(self, "_on_retired", None)
+            if retired is not None:
+                retired()
         return evidence

@@ -2422,21 +2422,22 @@ def test_production_promotion_callback_binds_no_render_boundary(
     from tldw_chatbook import config as config_module
     from tldw_chatbook.Chat import console_voice_input as voice_input_module
     from tldw_chatbook.Chat import console_voice_promotion as promotion_module
-    from tldw_chatbook.Chat.console_voice_process import ConsoleVoiceProcess
+    from tldw_chatbook.Chat.console_voice_process import ConsoleVoiceProcess, VoiceProcessSupervisor
 
     promoted: list[tuple[Any, Any]] = []
 
     class _Winner:
-        def __init__(self, _owner: Any) -> None:
+        def __init__(self, _owner: Any, **trace_bindings) -> None:
             return None
 
         def promote(self, context: Any, snapshot: Any, *, on_claim: Any = None) -> str:
-            assert on_claim is None
+            assert callable(on_claim)
             promoted.append((context, snapshot))
             return "promoted"
 
     class _Store:
         active_session_id = "session-voice"
+        persistence = None
 
         def sessions(self) -> list[Any]:
             return [SimpleNamespace(id=self.active_session_id)]
@@ -2445,7 +2446,7 @@ def test_production_promotion_callback_binds_no_render_boundary(
             return 1
 
     class _Controller:
-        provider_gateway = object()
+        provider_gateway = SimpleNamespace(provisional_trace_registry=None)
         store = _Store()
 
         async def prepare_speculative_voice_attempt(self, **_kwargs: Any) -> Any:
@@ -2475,7 +2476,18 @@ def test_production_promotion_callback_binds_no_render_boundary(
     monkeypatch.setattr(promotion_module, "VoiceWinningPromotion", _Winner)
 
     owner = VoicePromotionOwner(lambda: object())
-    app = SimpleNamespace()
+    from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership
+
+    app = SimpleNamespace(
+        audio_output=AudioOutputOwnership(),
+        console_runtime=SimpleNamespace(
+            voice_process_supervisor=VoiceProcessSupervisor()
+        ),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_runtime.ensure_console_runtime",
+        lambda app, **kwargs: app.console_runtime,
+    )
     view = _View()
     session = create_console_speculative_voice_session(
         app_instance=app,

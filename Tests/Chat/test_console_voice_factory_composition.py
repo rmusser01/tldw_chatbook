@@ -23,6 +23,7 @@ from tldw_chatbook.Chat.console_voice_trace_promotion import (
 )
 from Tests.Chat.test_console_voice_promotion import _post_dispatch_call
 from Tests.Chat.test_console_voice_capture import _eligible
+from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership
 
 
 def _factory(monkeypatch, store, owner, gateway):
@@ -54,7 +55,7 @@ def _factory(monkeypatch, store, owner, gateway):
             self.bindings = bindings
 
     monkeypatch.setattr(console_voice_process, "ConsoleVoiceProcess", Endpoint)
-    supervisor = SimpleNamespace(device_lease=object(), retain=lambda _engine: None)
+    supervisor = SimpleNamespace(device_lease=object(), retain=lambda _engine, *, session_id: None)
     monkeypatch.setattr(
         console_runtime,
         "ensure_console_runtime",
@@ -73,7 +74,7 @@ def _factory(monkeypatch, store, owner, gateway):
         _console_dictation_state="idle",
     )
     return create_console_speculative_voice_session(
-        app_instance=SimpleNamespace(),
+        app_instance=SimpleNamespace(audio_output=AudioOutputOwnership()),
         view=view,
         promotion_owner=owner,
         dispatch_supervisor=VoiceDispatchSupervisor(),
@@ -256,6 +257,7 @@ async def test_factory_imports_actual_trace_only_after_actual_pair_commit(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_real_saved_controller_sealed_headers_import_through_winning_claim(
     tmp_path,
 ):

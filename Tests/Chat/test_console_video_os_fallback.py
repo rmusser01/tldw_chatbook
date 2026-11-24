@@ -15,10 +15,12 @@ from types import SimpleNamespace
 import pytest
 
 from tldw_chatbook.UI.Console_Modules.video import ConsoleVideoController
+from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership
 
 
 class _App:
     def __init__(self) -> None:
+        self.audio_output = AudioOutputOwnership()
         self.notifications: list[tuple[str, str]] = []
 
     def notify(self, message, severity="information"):
@@ -69,6 +71,22 @@ async def test_the_fallback_calls_the_os_launcher(tmp_path, monkeypatch):
     await controller._play_console_video("m1")
 
     assert opened == [video_path], "the OS launcher was not called"
+    assert app.audio_output.handoff_epoch is not None
+
+
+def test_actual_bound_screen_opener_invokes_windows_shell(monkeypatch, tmp_path):
+    import os
+    import sys
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    path = tmp_path / "movie.mp4"
+    path.touch()
+    opened = []
+    screen = ChatScreen.__new__(ChatScreen)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(os, "startfile", opened.append, raising=False)
+    screen._open_video_with_os(path)
+    assert opened == [str(path)]
 
 
 @pytest.mark.asyncio
@@ -95,3 +113,43 @@ async def test_a_failing_launcher_is_logged_and_surfaced_not_swallowed(
     assert any(sev == "error" for _msg, sev in app.notifications), (
         f"a failed launch was swallowed: {app.notifications}"
     )
+
+
+@pytest.mark.asyncio
+async def test_late_os_acceptance_after_revocation_requires_confirmation_before_in_app_output(
+    tmp_path,
+):
+    import asyncio
+    import threading
+    from tldw_chatbook.UI.Console_Modules.video import _delegate_video
+    from tldw_chatbook.TTS.audio_output_ownership import OutputHandoffRequired
+
+    app = _App()
+    host = app.audio_output
+    path = tmp_path / "video.mp4"
+    path.touch()
+    entered, finish = asyncio.Event(), threading.Event()
+    loop = asyncio.get_running_loop()
+
+    def open_os(_):
+        loop.call_soon_threadsafe(entered.set)
+        assert finish.wait(3)
+
+    task = asyncio.create_task(
+        _delegate_video(app, host.begin_intent(), path, open_os, lambda: True)
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        takeover = asyncio.create_task(
+            host.acquire("speaker", lambda: asyncio.sleep(0, result=True))
+        )
+        await asyncio.sleep(0)
+        assert not takeover.done()
+        finish.set()
+        assert await task
+        with pytest.raises(OutputHandoffRequired) as refusal:
+            await takeover
+        assert host.handoff_epoch is refusal.value.epoch
+    finally:
+        finish.set()
+        await asyncio.gather(task, return_exceptions=True)
