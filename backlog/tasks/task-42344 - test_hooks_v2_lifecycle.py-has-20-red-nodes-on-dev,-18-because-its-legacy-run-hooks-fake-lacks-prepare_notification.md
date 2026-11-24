@@ -3,10 +3,10 @@ id: TASK-42344
 title: >-
   test_hooks_v2_lifecycle.py has 20 red nodes on dev, 18 because its legacy
   run-hooks fake lacks prepare_notification
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-22T16:37:00Z'
-updated_date: '2026-11-24T19:54:36Z'
+updated_date: '2026-11-24T21:00:10Z'
 labels:
   - follow-up
   - tests
@@ -36,7 +36,7 @@ Found by the TASK-34975 port (round 20, fu/r20-ctxclose), which reported it as `
 - [x] #1 The 18 `prepare_notification` nodes pass, with the test fake matching the engine interface the controller now calls
 - [x] #2 The other two red nodes are traced: each is fixed, or the implementation notes show it is a separate cause and name a task for it
 - [x] #3 The whole file passes through the scratch wrapper at `-n 4` on a branch carrying the fix, with the load average recorded
-- [ ] #4 The file runs on a PR lane
+- [x] #4 The file runs on a PR lane
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -58,4 +58,6 @@ Reason: The fix restores borrowing under the existing physical-ownership and not
 The recorder now claims the exact legacy notification token once. Scheduled wake passed after the fixture correction. The native trace showed Interrupt trying to take a second opaque claim from outside the accepted turn task and refusing with `hook_activity_busy`. Exact cancellation now carries the already-admitted ordinary owner into the existing native event guard. The queued worker rechecks the accepted turn's original source under the existing ADR-163 borrowing contract. A regression fails without that retained source and passes when replacing the app config is refused.
 
 Final Ubuntu 24.04 qualification at four workers recorded 47 passes and two Darwin-only skips. Load moved from 0.84/0.31/0.14 to 1.81/0.75/0.31. The source replacement control ran again with the original event capture and failed at its refusal assertion. The required admission-sensitive job selects the whole file. [Linux job](https://github.com/rmusser01/tldw_chatbook/actions/runs/45475265787/job/138733698267).
+
+The official PR Fast Lane (admission-sensitive) job on PR #3763 passed on reviewed commit 0df0b348f6, including this task's test suite. [GitHub Actions job](https://github.com/rmusser01/tldw_chatbook/actions/runs/45480195611/job/138754609157).
 <!-- SECTION:NOTES:END -->

@@ -3,10 +3,10 @@ id: TASK-42345
 title: >-
   A Console session reopened under the id of a closed session stays fenced until
   the app restarts
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-22T16:37:00Z'
-updated_date: '2026-11-24T19:54:53Z'
+updated_date: '2026-11-24T21:47:16Z'
 labels:
   - follow-up
   - console
@@ -44,7 +44,7 @@ The root cause is the id reuse. The latches are deliberate: a close that timed o
 - [x] #1 After a clean close of a goal run's chat, resuming that paused or ready goal gives a session the user can send in and close
 - [x] #2 Late callbacks from a closed session, including one whose close timed out, still cannot reach the reopened session
 - [x] #3 A test closes a goal run's chat, resumes the goal, then sends and closes, and is shown red before the fix
-- [ ] #4 The new test runs on a PR lane
+- [x] #4 The new test runs on a PR lane
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -70,4 +70,6 @@ The provider send and second close pass locally after an old producer outlives t
 The tightened regression uses one real runtime for close, public Resume, a native automatic iteration, an ordinary provider send, and the second close. Final Ubuntu qualification passed all 39 Goal and ledger cases at four workers. The same test with clean dev 9fa2bf1b1d production code failed in 6.17 seconds because the reopened live ID equaled the closed ID. [Linux job](https://github.com/rmusser01/tldw_chatbook/actions/runs/45475265787/job/138733698986).
 
 The official recovered-suites job passed 2,022 tests and failed teardown because the Goal ledger test's two accept workers retained SQLite leases. Each accept worker now closes the handle it opened. The exact failure reproduced with `--storage-lease-guard` before that change. The complete Goal ledger file then passed all 11 cases with the guard enabled. [Initial PR lane](https://github.com/rmusser01/tldw_chatbook/actions/runs/45480195611/job/138754609306).
+
+The official PR lane (recovered suites) job on PR #3763 passed on reviewed commit a4cd501350, including this task's test suite. [GitHub Actions job](https://github.com/rmusser01/tldw_chatbook/actions/runs/45486307493/job/138780223049).
 <!-- SECTION:NOTES:END -->
