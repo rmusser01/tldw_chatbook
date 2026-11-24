@@ -215,3 +215,44 @@ async def test_cleanup_failure_survives_waiter_cancellation(simultaneous: bool) 
     assert retirement.calls == 1
     first.release()
     assert (await output.acquire("recovered", retired)).is_current()
+
+
+@pytest.mark.asyncio
+async def test_eager_reentrant_start_retires_the_actual_successor() -> None:
+    output = AudioOutputOwnership()
+    callbacks = []
+    playlist_start: asyncio.Task[AudioOutputLease] | None = None
+
+    async def retire_playlist() -> bool:
+        callbacks.append("playlist")
+        return False
+
+    async def retire_old() -> bool:
+        nonlocal playlist_start
+        callbacks.append("old")
+        old.release()
+        playlist_start = asyncio.create_task(
+            output.acquire("playlist", retire_playlist)
+        )
+        return True
+
+    loop = asyncio.get_running_loop()
+    previous_factory = loop.get_task_factory()
+    loop.set_task_factory(asyncio.eager_task_factory)
+    try:
+        old = await output.acquire("old", retire_old)
+        with pytest.raises(RuntimeError):
+            await output.acquire("preview", retired)
+        assert playlist_start is not None
+        playlist = await playlist_start
+        assert playlist.is_current()
+        assert callbacks == ["old"]
+
+        with pytest.raises(RuntimeError):
+            await output.acquire("console", retired)
+        assert callbacks == ["old", "playlist"]
+        assert output.owner == "playlist"
+        assert output.blocked
+        assert not playlist.is_current()
+    finally:
+        loop.set_task_factory(previous_factory)
