@@ -27,7 +27,7 @@ import sqlite3
 import threading
 import time
 import weakref
-from contextlib import closing, contextmanager
+from contextlib import ExitStack, closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,6 +44,7 @@ from typing import (
     TYPE_CHECKING,
     Union,
 )
+from uuid import uuid4
 from urllib.parse import urlparse, urlunparse
 from urllib.parse import urlsplit, urlunsplit
 
@@ -61,8 +62,10 @@ from tldw_chatbook.Backup_Recovery.participants import (
     core_operation,
     core_transaction,
     register_core_connection,
+    listening_mutation_context,
 )
 
+from .subscriptions_schema import migration, statements
 from .private_sqlite import connect_private_sqlite
 from .base_db import BaseDB
 from .sql_validation import get_safe_order_by_clause, validate_identifier
@@ -86,7 +89,7 @@ if TYPE_CHECKING:
     )
 
 
-_CURRENT_SCHEMA_VERSION = 3
+_CURRENT_SCHEMA_VERSION = 4
 _AGENT_NAME_ORDER_PREFIX_CHARS = 96
 
 INTERRUPTED_RUN_ERROR = "Interrupted: the application stopped before this run finished."
@@ -591,6 +594,7 @@ class SubscriptionsDB(BaseDB):
         client_id: str = "default",
         *,
         read_only: bool = False,
+        memory_listening_binding: Path | None = None,
     ):
         """
         Initialize the Subscriptions database.
@@ -600,6 +604,13 @@ class SubscriptionsDB(BaseDB):
             client_id: Client identifier for multi-client support
             read_only: Open an existing database without initializing schema
         """
+        self._memory_listening_binding = None
+        if memory_listening_binding is not None:
+            if str(db_path) != ":memory:" or not memory_listening_binding.is_absolute():
+                raise ValueError("memory_binding_requires_private_memory_db")
+            self._memory_listening_binding = memory_listening_binding / (
+                "memory-" + uuid4().hex
+            )
         self._local = threading.local()
         # Every thread-local connection this instance has open, keyed by the
         # ident of the thread that owns it (task-19562). `threading.local` is
@@ -674,6 +685,7 @@ class SubscriptionsDB(BaseDB):
             conn.create_function(
                 "unicode_casefold", 1, _sqlite_unicode_casefold, deterministic=True
             )
+            conn.create_function("listening_delete_guard", 0, self._guard_listening_delete)
             conn.execute("PRAGMA foreign_keys = ON;")
             conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS};")
             if self._read_only:
@@ -762,8 +774,7 @@ class SubscriptionsDB(BaseDB):
         fix (e.g. a shared-cache ``file::memory:?cache=shared`` URI plus a
         dedicated keepalive connection).
         """
-        with core_operation(self):
-            conn = self.conn
+        with self.transaction(immediate=True) as conn:
             has_version_table = conn.execute(
                 "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'schema_version'"
             ).fetchone()
@@ -778,7 +789,7 @@ class SubscriptionsDB(BaseDB):
                 # untouched: normalizing it away would delete a newer build's
                 # marker and then run v2 assumptions over schema and data this
                 # build has never seen (Qodo #4).
-                recognized = bool(versions) and set(versions) <= {1, 2, 3}
+                recognized = bool(versions) and set(versions) <= {1, 2, 3, 4}
                 if not recognized:
                     raise SubscriptionError(
                         f"Unsupported subscriptions schema version {versions} in "
@@ -790,17 +801,16 @@ class SubscriptionsDB(BaseDB):
                     self._migrate_from_v2_to_v3()
                 elif len(versions) > 1:
                     with self.transaction() as tx_conn:
-                        tx_conn.execute("DELETE FROM schema_version WHERE version != 3")
+                        tx_conn.execute("DELETE FROM schema_version WHERE version != ?", (max(versions),))
 
-            with self.transaction() as conn:
-                conn.executescript("""
+            for statement in statements("""
             PRAGMA foreign_keys = ON;
             
             -- Schema version tracking
             CREATE TABLE IF NOT EXISTS schema_version (
                 version INTEGER PRIMARY KEY NOT NULL
             );
-            INSERT OR IGNORE INTO schema_version (version) VALUES (3);
+
             
             -- Unified subscription table with enhanced features
             CREATE TABLE IF NOT EXISTS subscriptions (
@@ -1067,9 +1077,19 @@ class SubscriptionsDB(BaseDB):
             BEGIN
                 UPDATE subscription_templates SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
             END;
-            """)
-            conn.executescript(SITE_CONFIGS_DDL)
+            """):
+                conn.execute(statement)
+            for statement in statements(SITE_CONFIGS_DDL):
+                conn.execute(statement)
             self._ensure_watchlists_schema(conn)
+            if not conn.in_transaction:
+                conn.execute("BEGIN IMMEDIATE")
+            stamp = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[
+                0
+            ]
+            if stamp != _CURRENT_SCHEMA_VERSION:
+                for statement in migration(3):
+                    conn.execute(statement)
 
     def _migrate_from_v1_to_v2(self) -> None:
         """Atomically rebuild durable briefing provenance and active claims."""
@@ -1156,15 +1176,8 @@ class SubscriptionsDB(BaseDB):
     def _migrate_from_v2_to_v3(self):
         """Persist conservative URL lineage before any restored source is fetched."""
         with self.transaction(immediate=True) as conn:
-            migration = Path(__file__).with_name("migrations") / "subscriptions_v2_to_v3_url_provenance.sql"
-            pending = ""
-            for line in migration.read_text(encoding="utf-8").splitlines(keepends=True):
-                pending += line
-                if sqlite3.complete_statement(pending):
-                    conn.execute(pending)
-                    pending = ""
-            if pending.strip():
-                raise SubscriptionError("incomplete_provenance_migration")
+            for statement in migration(2):
+                conn.execute(statement)
 
     def _ensure_watchlists_schema(self, conn=None):
         """Idempotent migration for watchlists screen schema additions."""
@@ -1235,9 +1248,17 @@ class SubscriptionsDB(BaseDB):
                 # so commit immediately before toggling it off, and again after
                 # the rebuild before toggling it back on. Read the pragma back
                 # rather than assuming the toggle took effect.
-                conn.commit()
-                cursor.execute("PRAGMA foreign_keys = OFF;")
-                if cursor.execute("PRAGMA foreign_keys").fetchone()[0] != 0:
+                preserve_orphans = (
+                    cursor.execute(
+                        "SELECT 1 FROM subscription_filters f WHERE subscription_id IS NOT NULL "
+                        "AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.id=f.subscription_id) LIMIT 1"
+                    ).fetchone()
+                    is not None
+                )
+                if preserve_orphans:
+                    conn.commit()
+                    cursor.execute("PRAGMA foreign_keys = OFF;")
+                if preserve_orphans and cursor.execute("PRAGMA foreign_keys").fetchone()[0] != 0:
                     raise RuntimeError(
                         "Could not disable foreign_keys enforcement for the "
                         "subscription_filters rebuild; refusing to risk a "
@@ -1287,7 +1308,8 @@ class SubscriptionsDB(BaseDB):
                         UPDATE subscription_filters SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
                     END
                 """)
-                    conn.commit()
+                    if preserve_orphans:
+                        conn.commit()
                 except Exception:
                     # Roll back any partial rebuild so no pending transaction
                     # remains -- otherwise the PRAGMA restore below would be a
@@ -1765,7 +1787,8 @@ class SubscriptionsDB(BaseDB):
             END
         """)
 
-            conn.commit()
+            if not getattr(self._local, "transaction_depth", 0):
+                conn.commit()
 
     def backfill_items_fts(self, chunk_size: int = 500) -> int:
         """Index one chunk of items that are missing from the FTS table.
@@ -2108,6 +2131,7 @@ class SubscriptionsDB(BaseDB):
             return
 
         self._local.transaction_depth = 1
+        self._local.transaction_resources = ExitStack()
         try:
             if immediate:
                 conn.execute("BEGIN IMMEDIATE")
@@ -2122,6 +2146,9 @@ class SubscriptionsDB(BaseDB):
             raise
         finally:
             self._local.transaction_depth = 0
+            self._local.listening_write = None
+            self._local.transaction_resources.close()
+            self._local.transaction_resources = None
 
     # --- Core Subscription Management ---
 
@@ -2586,14 +2613,102 @@ class SubscriptionsDB(BaseDB):
 
             return success
 
-    def delete_subscription(self, subscription_id: int) -> bool:
+    @property
+    def listening_binding(self) -> Path:
+        """Return the physical lock selection, including an explicit private test binding."""
+        if self.is_memory_db:
+            if self._memory_listening_binding is None:
+                raise ValueError("memory_listening_binding_required")
+            return self._memory_listening_binding.resolve()
+        return Path(self.db_path_str).resolve()
+
+    def _pin_listening(self, stack, lease, profile):
+        return stack.enter_context(listening_mutation_context(self, lease, profile))
+
+    def _guard_listening_delete(self):
+        """SQLite invokes this for each affected row, even with cached statements."""
+        if getattr(self._local, "listening_write", None) is None:
+            raise ValueError("listening_destructive_transaction_required")
+        return 1
+
+    @contextmanager
+    def listening_transaction(self, *, lease=None, profile=None):
+        """Pin custody through the outermost commit or rollback."""
+        if getattr(self._local, "transaction_depth", 0):
+            holder = getattr(self._local, "listening_write", None)
+            if holder is None and lease is None:
+                raise ValueError("listening_outer_lease_required")
+            if holder is not None and lease is not None and lease is not holder:
+                raise ValueError("invalid_listening_lease")
+            # An existing native borrower pins the lease through the outermost
+            # SQLite commit. A nested mutation cannot expand this custody.
+            self._local.listening_write = self._pin_listening(
+                self._local.transaction_resources,
+                holder if holder is not None else lease,
+                profile,
+            )
+            with self.transaction(immediate=True) as conn:
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
+                else:
+                    # Promote a caller's deferred transaction before performing
+                    # CAS reads. SQLite refuses a stale read snapshot here.
+                    conn.execute(
+                        "UPDATE listening_session SET revision=revision WHERE 0"
+                    )
+                conn.execute("SAVEPOINT listening_mutation")
+                try:
+                    yield conn
+                except BaseException:
+                    conn.execute("ROLLBACK TO listening_mutation")
+                    raise
+                finally:
+                    conn.execute("RELEASE listening_mutation")
+            return
+        with ExitStack() as stack:
+            holder = self._pin_listening(stack, lease, profile)
+            with self.transaction(immediate=True) as conn:
+                self._local.listening_write = holder
+                yield conn
+
+    @contextmanager
+    def destructive_transaction(self, *, lease=None):
+        """Serialize supported source removal, including legacy memory-only callers."""
+        if (
+            self.is_memory_db
+            and self._memory_listening_binding is None
+            and lease is None
+        ):
+            with self.transaction(immediate=True) as conn:
+                yield conn
+        else:
+            with self.listening_transaction(lease=lease) as conn:
+                yield conn
+
+    def delete_article(self, item_id: int, *, lease=None) -> bool:
+        with self.destructive_transaction(lease=lease) as conn:
+            return (
+                conn.execute(
+                    "DELETE FROM subscription_items WHERE id=?", (item_id,)
+                ).rowcount
+                == 1
+            )
+
+    def delete_brief(self, brief_id: int, *, lease=None) -> bool:
+        with self.destructive_transaction(lease=lease) as conn:
+            return (
+                conn.execute("DELETE FROM briefings WHERE id=?", (brief_id,)).rowcount
+                == 1
+            )
+
+    def delete_subscription(self, subscription_id: int, *, lease=None) -> bool:
         """Delete a subscription and all related data."""
         start_time = time.time()
 
         # IMMEDIATE (task-21233): reserves the write lock up front
         # (task-21100 policy; this writer can overlap the chunked
         # items_fts backfill's per-chunk commits).
-        with self.transaction(immediate=True) as conn:
+        with self.destructive_transaction(lease=lease) as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM subscriptions WHERE id = ?", (subscription_id,))
             success = cursor.rowcount > 0

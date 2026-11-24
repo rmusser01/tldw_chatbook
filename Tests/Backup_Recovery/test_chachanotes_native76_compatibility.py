@@ -248,9 +248,31 @@ def test_subscription_native_catalog_retains_exact_embedded_stamps(
         connection.execute("UPDATE db_schema_version SET version=?", (version,))
         connection.commit()
     owner = next(a for a in recovery_adapters() if a.owner_id == "db.subscriptions")
+    with closing(sqlite3.connect(path)) as connection:
+        receipts = connection.execute(
+            "SELECT * FROM console_dispatch_checkpoints"
+        ).fetchall()
+        messages = connection.execute("SELECT * FROM messages ORDER BY id").fetchall()
     before = _dump(path)
-    assert validation.validate_candidate(owner, path, Event(), migrate=True) == ()
+    assert validation.validate_candidate(owner, path, Event(), migrate=False) == ()
     assert _dump(path) == before
+    assert validation.validate_candidate(owner, path, Event(), migrate=True) == ()
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute("SELECT version FROM schema_version").fetchall() == [
+            (4,)
+        ]
+        assert connection.execute(
+            "SELECT version FROM db_schema_version"
+        ).fetchone() == (version,)
+        assert (
+            connection.execute("SELECT * FROM console_dispatch_checkpoints").fetchall()
+            == receipts
+        )
+        assert (
+            connection.execute("SELECT * FROM messages ORDER BY id").fetchall()
+            == messages
+        )
+
     with closing(sqlite3.connect(path)) as connection:
         connection.execute("UPDATE db_schema_version SET version=75")
         connection.commit()
@@ -534,10 +556,9 @@ def test_repaired77_catalog_admits_only_its_exact_stamp(
 
     path = tmp_path / "fresh.sqlite"
     if subscriptions:
-        from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+        from Tests.DB.historical_subscriptions import historical_database
 
-        other = SubscriptionsDB(path)
-        other.close()
+        historical_database(path, source_index=False)
     # This control remains about the independently frozen historical v77 shape.
     monkeypatch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 77)
     db = CharactersRAGDB(path, client_id="repaired-stamp")

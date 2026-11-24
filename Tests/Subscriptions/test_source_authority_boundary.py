@@ -98,12 +98,14 @@ async def test_restored_v2_source_has_conservative_lineage_before_first_fetch(
         egress, "get_cli_setting", lambda section, key, default=None: default
     )
     path = tmp_path / "subscriptions.db"
-    db = SubscriptionsDB(path, "authority-test")
-    source_id = db.add_subscription("legacy", "url", _URL)
-    db.close()
-    # v2 and v3 have the same physical columns; v3's migration owns the data.
+    from Tests.DB.historical_subscriptions import historical_database
+
+    historical_database(path, version=2)
     with sqlite3.connect(path) as connection:
-        connection.execute("UPDATE schema_version SET version=2")
+        source_id = connection.execute(
+            "INSERT INTO subscriptions(name,type,source) VALUES ('legacy','url',?)",
+            (_URL,),
+        ).lastrowid
         connection.execute("UPDATE subscriptions SET processing_options=?", (stored,))
     with sqlite3.connect(path) as connection:
         trigger = connection.execute(
@@ -186,13 +188,13 @@ def test_subscriptions_provenance_migration_failure_rolls_back_data_trigger_and_
     from pathlib import Path
 
     path = tmp_path / "subscriptions.db"
-    original = SubscriptionsDB(path, "rollback-test")
-    original.add_subscription(
-        "legacy", "url", "http://intranet/a", auto_pause_threshold=10
-    )
-    original.close()
+    from Tests.DB.historical_subscriptions import historical_database
+
+    historical_database(path, version=2)
     with sqlite3.connect(path) as connection:
-        connection.execute("UPDATE schema_version SET version=2")
+        connection.execute(
+            "INSERT INTO subscriptions(name,type,source) VALUES ('legacy','url','http://intranet/a')"
+        )
         connection.execute("UPDATE subscriptions SET processing_options=NULL")
         before_rows = connection.execute("SELECT * FROM subscriptions").fetchall()
         before_schema = connection.execute(

@@ -105,6 +105,7 @@ class _Restrictions:
         self.steps = 0
         self.migrating = False
         self.migration_owner = None
+        self.article_listening_migration = False
         self.shipped_checkpoint_migration = False
         self.shipped_checkpoint_rename = False
         self.fleet_progress_migration = False
@@ -845,6 +846,46 @@ class _Restrictions:
                     and action == sqlite3.SQLITE_ALTER_TABLE
                     and (first, second, database, source) == ("main", "guardian_alerts", None, None)
                 )
+                if (
+                    self.migration_owner == "db.subscriptions"
+                    and self.article_listening_migration
+                    and source is None
+                    and database == "main"
+                ):
+                    listen_tables = {
+                        "listening_session",
+                        "listening_entries",
+                        "article_audio",
+                    }
+                    listen_indexes = {
+                        "idx_article_audio_identity": "article_audio",
+                        "idx_article_audio_lru": "article_audio",
+                        "idx_listening_entries_artifact": "listening_entries",
+                        "idx_listening_entries_item": "listening_entries",
+                        "sqlite_autoindex_listening_entries_1": "listening_entries",
+                        "sqlite_autoindex_listening_entries_2": "listening_entries",
+                        "sqlite_autoindex_listening_session_1": "listening_session",
+                        "sqlite_autoindex_article_audio_1": "article_audio",
+                    }
+                    allowed |= (
+                        action == sqlite3.SQLITE_CREATE_TABLE
+                        and first in listen_tables
+                        or action == sqlite3.SQLITE_CREATE_INDEX
+                        and first in listen_indexes
+                        and second == listen_indexes[first]
+                        or action == sqlite3.SQLITE_REINDEX
+                        and first in listen_indexes
+                        and second is None
+                        or action == sqlite3.SQLITE_CREATE_TRIGGER
+                        and (first, second)
+                        in {
+                            ("listening_item_delete", "subscription_items"),
+                            ("listening_brief_delete", "briefings"),
+                        }
+                        or action == sqlite3.SQLITE_UPDATE
+                        and first == "sqlite_master"
+                        and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+                    )
                 if allowed:
                     return sqlite3.SQLITE_OK
             # Research keeps its existing ADD COLUMN authority. Only fixed
@@ -1460,6 +1501,11 @@ def _check(connection, owner, policy, restrictions):
             return payload_issues, None
         if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
             return ("invalid_sqlite_integrity",), None
+        if owner.owner_id == "db.subscriptions" and version == 4:
+            from tldw_chatbook.DB.subscriptions_schema import listening_issues
+
+            if issues := listening_issues(connection):
+                return issues, None
         if owner.owner_id == "db.subscriptions" and any(
             row[1] == "db_schema_version" for row in actual
         ):
@@ -1717,6 +1763,10 @@ def _validate_candidate(
                                 and version in (82, 83)
                                 else None
                             )
+                            restrictions.article_listening_migration = (
+                                installed.owner_id == "db.subscriptions"
+                                and version == 3
+                            )
                             try:
                                 for statement in statements:
                                     if restrictions.expired():
@@ -1732,6 +1782,7 @@ def _validate_candidate(
                                         restrictions.dropping_workflow_phase = False
                             finally:
                                 restrictions.portrait_migration = None
+                                restrictions.article_listening_migration = False
                         restrictions.migrating = False
                         issues, version = _check(
                             connection, installed, policy, restrictions

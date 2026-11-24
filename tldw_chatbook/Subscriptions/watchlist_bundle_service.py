@@ -302,7 +302,7 @@ class WatchlistBundleService:
             )
             return self._get(conn, watchlist_id)
 
-    def delete(self, watchlist_id: int) -> None:
+    def delete(self, watchlist_id: int, *, lease=None) -> None:
         """Delete a watchlist. Membership cascades; sources are untouched.
 
         Args:
@@ -312,7 +312,7 @@ class WatchlistBundleService:
         Returns:
             None.
         """
-        with self._db.transaction() as conn:
+        with self._db.destructive_transaction(lease=lease) as conn:
             conn.execute("DELETE FROM watchlists WHERE id = ?", (watchlist_id,))
 
     def list_watchlists(

@@ -16,6 +16,7 @@ from tldw_chatbook.DB.Subscriptions_DB import (
     SubscriptionsDBReadError,
 )
 from tldw_chatbook.DB.sql_validation import validate_identifier
+from tldw_chatbook.Utils.platform_files import os as native_os
 
 
 def _create_subscriptions_database(path: Path) -> None:
@@ -54,7 +55,7 @@ def _sqlite_artifact_snapshot(
             f"{path.name}-"
         ):
             continue
-        metadata = candidate.stat()
+        metadata = native_os.stat(candidate, follow_symlinks=False)
         snapshot[candidate.name] = (
             stat.S_IMODE(metadata.st_mode),
             metadata.st_size,
@@ -140,7 +141,7 @@ def test_read_only_uses_dedicated_owner_and_only_safe_connection_pragmas(
     db.assert_agent_read_ready()
     assert [
         tuple(row) for row in db.conn.execute("SELECT version FROM schema_version")
-    ] == [(2,)]
+    ] == [(SubscriptionsDB._CURRENT_SCHEMA_VERSION,)]
 
     assert calls == [
         (

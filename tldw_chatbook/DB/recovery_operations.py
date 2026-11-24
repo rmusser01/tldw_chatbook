@@ -1059,17 +1059,14 @@ def _briefing_relocation_authorizer(read_authorizer):
 
 class _SubscriptionsAdapter(_SQLiteDeclaration):
     def schema_policy(self) -> SchemaPolicy:
-        migration = Path(__file__).with_name("migrations") / "subscriptions_v2_to_v3_url_provenance.sql"
-        statements = []
-        pending = ""
-        for line in migration.read_text(encoding="utf-8").splitlines(keepends=True):
-            pending += line
-            if sqlite3.complete_statement(pending):
-                statements.append(pending)
-                pending = ""
-        if pending.strip():
-            raise ValueError("incomplete_provenance_migration")
-        return SchemaPolicy(self.owner_id, self.versions, self.schemas, ((2, 3, tuple(statements)),))
+        from .subscriptions_schema import migration
+
+        return SchemaPolicy(
+            self.owner_id,
+            self.versions,
+            self.schemas,
+            tuple((version, version + 1, migration(version)) for version in (2, 3)),
+        )
 
     def relocate_restore(
         self, item: StorageItem, candidate: Path, mapping: Mapping[str, Path]
@@ -1339,6 +1336,10 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
             )
             if stamp not in _subscriptions_chachanotes_stamps(actual):
                 return ("unsupported_schema_version",)
+        if connection.execute("SELECT version FROM schema_version").fetchone()[0] == 4:
+            from .subscriptions_schema import listening_issues
+
+            return listening_issues(connection)
         return ()
 
     def validate_restore(self, item: StorageItem, candidate: Path) -> tuple[str, ...]:
@@ -1405,7 +1406,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "db.subscriptions",
             "subscriptions_db_path",
             "tldw_chatbook_subscriptions.db",
-            (3, 2),
+            (4, 3, 2),
             _SUBSCRIPTIONS_SCHEMA,
             (),
         ),
@@ -1519,6 +1520,7 @@ _SUBSCRIPTIONS_SCHEMA += (
 
 def _subscriptions_chachanotes_stamps(schema):
     """Return embedded stamps for a matched complete Subscription catalog."""
+    schema = _SUBSCRIPTIONS_V4_PREDECESSORS.get(schema, schema)
     if schema in _SUBSCRIPTIONS_CHILD_SEGMENTS_V87_SCHEMAS:
         return ((87,),)
     if schema in _SUBSCRIPTIONS_MIXINS_V86_SCHEMAS:
@@ -1776,6 +1778,22 @@ _AGENT_RUNS_SCHEMA += tuple(
 _SUBSCRIPTIONS_SCHEMA = tuple((3, schema) for version, schema in _SUBSCRIPTIONS_SCHEMA
                               if version == 2) + _SUBSCRIPTIONS_SCHEMA
 
+from .subscriptions_schema import (
+    listening_catalog,
+    migration as _subscriptions_migration,
+)
+
+_LISTENING_OBJECTS = tuple(
+    sql.removesuffix(";")
+    for sql in _subscriptions_migration(3)
+    if sql.startswith("CREATE ")
+)
+_SUBSCRIPTIONS_V4_PREDECESSORS = {
+    listening_catalog(schema, _LISTENING_OBJECTS): schema
+    for version, schema in _SUBSCRIPTIONS_SCHEMA
+    if version == 3
+}
+_SUBSCRIPTIONS_SCHEMA += tuple((4, schema) for schema in _SUBSCRIPTIONS_V4_PREDECESSORS)
 
 
 _AGENT_RUNS_SCHEMA += tuple(

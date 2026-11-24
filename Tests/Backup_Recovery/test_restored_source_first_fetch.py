@@ -76,7 +76,17 @@ from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
 base=Path.home()
 source=base/'source';source.mkdir(mode=0o700)
 legacy=source/'subscriptions.db'
-setup = "import sys,sqlite3\nfrom pathlib import Path\nlegacy=Path(sys.argv[1])\nfrom tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB\nfrom tldw_chatbook.DB.recovery_operations import recovery_adapters\nnative=SubscriptionsDB(legacy,'legacy-source')\nsource_id=native.add_subscription(name='legacy private source',type='url',source='https://later-private.example/pricing')\nassert source_id==1\nconnection=native.conn\nnative.close()\ntry:connection.execute('SELECT 1')\nexcept sqlite3.ProgrammingError:pass\nelse:raise AssertionError('fixture native handle survived explicit close')\n"
+setup = '''
+import sqlite3,sys
+from pathlib import Path
+from contextlib import closing
+from Tests.DB.historical_subscriptions import historical_database
+legacy=Path(sys.argv[1])
+historical_database(legacy,version=2)
+with closing(sqlite3.connect(legacy)) as connection, connection:
+ connection.execute("INSERT INTO subscriptions (id,name,type,source) VALUES (1,'legacy private source','url','https://later-private.example/pricing')")
+'''
+
 result=subprocess.run([sys.executable,"-c",setup,str(legacy)],capture_output=True,text=True,timeout=15)
 assert result.returncode==0,result.stdout[-1000:]+result.stderr[-4000:]
 from tldw_chatbook.DB.recovery_operations import recovery_adapters
@@ -89,7 +99,7 @@ with closing(sqlite3.connect(legacy)) as conn:
  catalog=tuple(row[0] for row in conn.execute('SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name'))
  owner=next(owner for owner in recovery_adapters() if owner.owner_id=='db.subscriptions')
  assert (2,catalog) in owner.schema_policy().schema_sql,'fixture must match measured native v2 catalog'
-config_payload=('[general]\nusers_name="original"\n[dreams]\nenabled=false\n[database]\nsubscriptions_db_path="'+str(legacy)+'"\n').encode()
+config_payload=('[general]\nusers_name="original"\n[dreams]\nenabled=false\n[database]\nsubscriptions_db_path="'+legacy.as_posix()+'"\n').encode()
 doc=manifest(config_payload)
 doc['owners']=[dict(owner_id='config',schema_version=1,capabilities=[]),dict(owner_id='db.subscriptions',schema_version=2,capabilities=[])]
 doc['files'][0].update(owner_id='config',logical_id='profile:profile:config',relative_path='config.toml')
