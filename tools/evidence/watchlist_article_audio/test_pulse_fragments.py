@@ -17,6 +17,7 @@ from cffi import FFI
 import numpy as np
 
 import qualification as q
+from pulse_fragments import Route
 
 
 class FragmentTests(unittest.TestCase):
@@ -80,7 +81,8 @@ class FragmentTests(unittest.TestCase):
         sink = (b"private sink", 3, b"different monitor name", 8)
         source = (b"different monitor name", 8, b"private sink", 3)
         self.assertEqual(
-            verify_route(b"private sink", sink, source), b"different monitor name"
+            verify_route(b"private sink", sink, source),
+            Route(b"private sink", 3, b"different monitor name", 8),
         )
         for bad in [
             (b"different", 8, b"private sink", 3),
@@ -104,6 +106,7 @@ class FragmentTests(unittest.TestCase):
             "channels",
             "format",
             "attributes",
+            "same_name_replacement",
         ):
             with self.subTest(fault=fault):
                 self.check_geometry(ffi, fault)
@@ -114,6 +117,9 @@ class FragmentTests(unittest.TestCase):
         api = SimpleNamespace(
             PA_STREAM_READY=2,
             PA_SAMPLE_FLOAT32LE=5,
+            pa_stream_get_device_index=lambda _: 9
+            if fault == "same_name_replacement"
+            else 8,
             pa_stream_get_state=lambda _: 3 if fault == "failed" else 2,
             pa_stream_get_device_name=lambda _: ffi.new(
                 "char[]", b"mic" if fault == "moved" else b"mon"
@@ -131,22 +137,31 @@ class FragmentTests(unittest.TestCase):
         with self.subTest(fault=fault):
             if fault:
                 with self.assertRaises(RuntimeError):
-                    stream_geometry(ffi, api, None, b"mon")
+                    stream_geometry(ffi, api, None, Route(b"sink", 3, b"mon", 8))
             else:
                 self.assertEqual(
-                    stream_geometry(ffi, api, None, b"mon"), (4194304, 38400)
+                    stream_geometry(ffi, api, None, Route(b"sink", 3, b"mon", 8)),
+                    (4194304, 38400),
                 )
 
 
 class PulseCaseTests(unittest.TestCase):
     def run_fixture(
-        self, stop_after=None, *, baseline=True, complete=True, padded=False
+        self,
+        stop_after=None,
+        *,
+        baseline=True,
+        complete=True,
+        padded=False,
+        clipped=False,
+        fragment_frames=4800,
+        playback_route="verified",
     ):
         from pulse_fragments import Fragment
 
-        source = q.marker_signal(0.5)
+        source = q.marker_signal(5.0 if clipped else 0.5)
         pcm = np.repeat(source[:, None], 2, axis=1).astype("<f4")
-        silence = np.zeros((4800, 2), dtype="<f4")
+        silence = np.zeros((fragment_frames, 2), dtype="<f4")
         start = time.perf_counter()
         process = Mock(stderr=io.BytesIO(), returncode=0)
         player_env = {}
@@ -163,7 +178,9 @@ class PulseCaseTests(unittest.TestCase):
                     return True
                 if finish.is_set():
                     return complete and not self.finished
-                return self.count < int((time.perf_counter() - start) / 0.04)
+                return self.count < int(
+                    (time.perf_counter() - start) * 120000 / fragment_frames
+                )
 
             def recv(self):
                 if not self.ready:
@@ -176,14 +193,18 @@ class PulseCaseTests(unittest.TestCase):
                     )
                 if finish.is_set():
                     self.finished = True
-                    return ("pulse_complete",)
+                    return ("pulse_complete", playback_route)
                 index = self.count
                 self.count += 1
                 data = silence
                 if launched is not None:
                     delta = index - launched
-                    if 0 <= delta < 5 and not process.terminate.called:
-                        data = pcm[delta * 4800 : (delta + 1) * 4800]
+                    if delta * fragment_frames < len(pcm) and (
+                        clipped or not process.terminate.called
+                    ):
+                        data = pcm[
+                            delta * fragment_frames : (delta + 1) * fragment_frames
+                        ]
                 elif baseline == "one" and index > 0:
                     return ("unobserved",)
                 elif not baseline:
@@ -206,7 +227,8 @@ class PulseCaseTests(unittest.TestCase):
         def poll():
             return (
                 0
-                if process.terminate.called or receiver.count >= launched + 6
+                if process.terminate.called
+                or (receiver.count - launched) * fragment_frames >= 28800
                 else None
             )
 
@@ -283,6 +305,36 @@ class PulseCaseTests(unittest.TestCase):
         self.assertEqual(run["endpoint_loopback"], "pass")
         self.assertGreater(run["missing_tail_s"], 0.02)
         self.assertEqual(run["post_stop_latency"], "unqualified")
+
+    def test_capture_ending_inside_marker_cannot_grade_natural_tail(self):
+        row = self.run_fixture(clipped=True)
+        self.assertEqual(row["seek"], "pass")
+        self.assertEqual(row["tail_coverage"], "unqualified")
+        self.assertNotIn("missing_tail_s", row)
+
+    def test_capture_ending_inside_marker_cannot_grade_stopped_source(self):
+        with patch("qualification.saved_bookmark_frame", return_value=4800):
+            row = self.run_fixture(stop_after=0.015, clipped=True, padded=True)
+        self.assertEqual(row["seek"], "pass")
+        self.assertEqual(row["bookmark_alignment"], "unqualified")
+        self.assertNotIn("missing_tail_s", row)
+        self.assertNotIn("bookmark_end_error_s", row)
+
+    def test_small_pulse_fragments_can_trigger_playing_stop(self):
+        row = self.run_fixture(stop_after=0.015, padded=True, fragment_frames=256)
+        self.assertIn("stop_process_latency_s", row)
+        self.assertEqual(row["endpoint_loopback"], "pass")
+
+    def test_moved_or_unavailable_player_route_censors_content_with_intact_monitor(
+        self,
+    ):
+        for route in ("pulse_player_route_changed", "pulse_player_route_unavailable"):
+            with self.subTest(route=route):
+                row = self.run_fixture(playback_route=route)
+                self.assertEqual(row["process_exit"], "pass")
+                self.assertEqual(row["endpoint_loopback"], "unqualified")
+                self.assertEqual(row["tail_coverage"], "unqualified")
+                self.assertEqual(row["reason"], route)
 
     def test_native_cli_refuses_pulse_on_other_platforms_before_opening_player(self):
         with tempfile.TemporaryDirectory() as scratch:
@@ -397,6 +449,7 @@ class CaptureStartupTests(unittest.TestCase):
         )
         api.pa_stream_get_state.return_value = 2
         api.pa_stream_is_suspended.return_value = 0
+        api.pa_stream_get_device_index.return_value = 8
         api.pa_stream_get_device_name.return_value = ffi.new("char[]", b"monitor")
         api.pa_stream_get_sample_spec.return_value = SimpleNamespace(
             format=5, rate=48000, channels=2
@@ -440,8 +493,7 @@ class CaptureStartupTests(unittest.TestCase):
             api,
             SimpleNamespace(_lock_mainloop=nullcontext),
             stream,
-            b"private",
-            b"monitor",
+            Route(b"private", 3, b"monitor", 8),
             1,
             4800,
             messages,
@@ -454,3 +506,57 @@ class CaptureStartupTests(unittest.TestCase):
         message = messages.get_nowait()
         self.assertEqual(message[2].frame, 11)
         self.assertAlmostEqual(message[3]["signed_latency_min_s"], -0.012)
+
+
+class PlayerRouteTests(unittest.TestCase):
+    def test_native_notifications_track_owned_input_through_removal(self):
+        from pulse_fragments import watch_player_route
+
+        class FFIStub:
+            NULL = None
+            callback = staticmethod(lambda signature: lambda function: function)
+            string = staticmethod(lambda value: value)
+
+        pulse = SimpleNamespace(context=object(), _lock_mainloop=nullcontext)
+        for moved in (False, True):
+            with self.subTest(moved=moved):
+                observed = threading.Event()
+                api = Mock(PA_OPERATION_DONE=1)
+                api.pa_operation_get_state.return_value = 1
+                api.pa_context_subscribe.side_effect = (
+                    lambda context, mask, callback, user: (
+                        callback(context, 1, user),
+                        object(),
+                    )[1]
+                )
+                info = SimpleNamespace(
+                    index=77, sink=3, proplist={"application.process.id": b"1234"}
+                )
+                api.pa_proplist_gets.side_effect = lambda props, key: props.get(
+                    key.decode()
+                )
+
+                def query(context, index, callback, user, info=info, observed=observed):
+                    callback(context, info, 0, user)
+                    callback(context, None, 1, user)
+                    observed.set()
+                    return object()
+
+                api.pa_context_get_sink_input_info.side_effect = query
+                with watch_player_route(FFIStub(), api, pulse) as history:
+                    callback = api.pa_context_set_subscribe_callback.call_args.args[1]
+                    callback(pulse.context, 2, 77, None)
+                    self.assertTrue(observed.wait(1))
+                    observed.clear()
+                    if moved:
+                        info.sink = 4
+                    callback(pulse.context, 0x12, 77, None)
+                    self.assertTrue(observed.wait(1))
+                    callback(pulse.context, 0x22, 77, None)
+                self.assertEqual(
+                    history.verdict(1234, 3),
+                    "pulse_player_route_changed" if moved else "verified",
+                )
+                self.assertEqual(
+                    history.verdict(4321, 3), "pulse_player_route_unavailable"
+                )
