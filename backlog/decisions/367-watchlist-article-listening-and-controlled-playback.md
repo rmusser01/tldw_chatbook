@@ -165,6 +165,16 @@ their later task boundaries. This record was renumbered from provisional 366 to
   Pathname consumers must use stable physical volume ancestry, or refuse aliases
   whose DOS-device mapping is outside the retained pins. Check auxiliary handle
   closes and retain ambiguous process births instead of assuming no child.
+  For this Windows-only controlled command, use a narrow private CreateProcessW
+  launcher with retained PROCESS_INFORMATION and an explicit inherited-handle
+  allowlist. Popen hides the birth result behind potentially raising pipe/thread
+  cleanup, preventing clean rejection from being distinguished from unknown birth.
+  Preserve its argument-list quoting, Unicode environment and checked wait/close
+  behavior; ordinary players keep their existing adapters. Native version probes
+  reject the extended `\\?\Volume{GUID}` executable spelling with error 87 but
+  accept the equivalent `\\.\Volume{GUID}` spelling. Derive that executable
+  spelling only from the pinned physical volume identity; retain full ancestry
+  pins and qualify the actual WAV consumer path independently.
 - Promote only the bounded stdlib progress parser. Keep physical progress distinct
   from the clamped logical bookmark. Natural completion requires corroborating
   advancing, current/fresh source clocks into validated padding, plausible elapsed
