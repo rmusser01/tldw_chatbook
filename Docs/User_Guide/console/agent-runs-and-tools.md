@@ -298,6 +298,17 @@ the turn; a turn that is still running can start preparing other folders again
 after the release. When you quit, the app does not
 wait for such a tool, and everything else still shuts down normally.
 
+Change Review never runs a Git filter program while it prepares a folder or
+records a turn's changes. (Undo restores files with Git's normal checkout.) If
+your Git configuration defines a clean, smudge or process filter (`git lfs
+install` adds one) and a file in a Change Review folder selects it through
+`.gitattributes`, that folder's preparation is refused, and **Settings →
+Workspaces** and the turn's *change review skipped* note say so. Removing the
+`filter=` attribute or the filter's configuration, then choosing **Retry failed
+preparation**, lets the folder prepare, but it also changes how Git stores those
+files, so for a Git LFS repository leave them as they are. A configured filter
+that no file in the folder selects does not block Change Review.
+
 While a model call is generating or thinking, this line may also show its
 current output count. `17 provider output tok` means the provider supplied an
 explicit count. `~17 local output tok` is Chatbook's local estimate from the

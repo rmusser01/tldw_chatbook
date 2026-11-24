@@ -1,7 +1,7 @@
 ---
 id: TASK-42101
 title: "Native change review is refused for every user with Git LFS installed"
-status: To Do
+status: Done
 assignee: []
 created_date: 2026-11-20 00:40
 labels:
@@ -36,7 +36,80 @@ So for anyone who has ever installed Git LFS, native change review is refused in
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The owner's choice is recorded in ADR-084 and ADR-285. The known options are: keep refusing any configured filter; refuse only filters that a workspace path actually selects through its attributes; or treat Git LFS specially.
-- [ ] #2 A test with Git LFS filters in the global config and a workspace that tracks no LFS path pins the chosen behaviour for native change review and for `@staged`/`@diff`.
-- [ ] #3 When capture is refused because of configured filters, the user can see that cause and what would change it. Verify this in the running app.
+- [x] #1 The owner's choice is recorded in ADR-084 and ADR-285. Chosen (2026-11-19): refuse a configured filter only when a path the invocation can reach selects it through Git attributes. The other options were to keep refusing any configured filter, or to treat Git LFS specially.
+- [x] #2 With Git LFS-style filters configured and a workspace that tracks no LFS path, native change review publishes and `@diff` reads, and the driver never runs. A path that selects the driver still refuses, including an ignored path force-staged from stdin and a top-level path while the app runs from a subdirectory. No configured driver runs even when detection misses one, and none runs inside a submodule (tests).
+- [x] #3 When capture is refused because of configured filters, the user can see that cause and what would change it. Verify this in the running app.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes (ADR-084 and ADR-285 amended in place).
+
+1. Pin the new rule with failing tests: a filter nothing selects (capture and `@staged`), and an ignored force-staged path that selects one.
+2. In `qualified_git_command`, keep the partial-clone refusal unconditional. For filter-capable invocations, ask Git which paths select a configured driver, and refuse only then.
+3. Pass `update-index --stdin` paths into the check, and give the references runner stdin.
+4. Make the refusal name its remedy, then update the ADRs and the architecture doc.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+- **Rule (`Workspaces/native_git.py`).** A configured clean/process/smudge driver refuses only when a reachable path selects it.
+  - **When the check runs:** only when the config query finds filter names, and only for invocations that can hand work-tree content to a filter: add, update-index, rm, commit, diff, `ls-files -m`, and `cat-file --filters`.
+  - **How it decides:** `_selects_configured_filter` runs `ls-files -z --cached --others --exclude-standard`, adds the exact paths an `update-index -z --stdin` stages, and asks `check-attr -z --stdin filter`. Git resolves the attributes, macros included.
+  - **Inside the custody job:** the check runs in the same opaque job, again before every such invocation.
+  - **Unchanged:** partial-clone remotes still always refuse.
+- **Guarantee (from the security review).** Detection decides the refusal; it does not guarantee that no filter runs. The review reproduced three escapes on the first version (80f7b33ad6):
+  - `@diff`'s dirty-submodule check ran `git status` inside a submodule, and that ran its filter.
+  - With the app's cwd in a subdirectory of the root, Git scoped the check to that subdirectory, while `commit` refreshed the whole index.
+  - A `.gitattributes` write racing the check got the filter run in 4 of 25 captures.
+
+  Now:
+  - **Neutralization:** `_neutralize_filters` empties every configured driver's commands for the command itself, through GIT_CONFIG_COUNT. That keeps driver names out of argv, and submodule children inherit it.
+  - **Submodules:** `diff` gets `--ignore-submodules=dirty`, which also covers a driver configured only in a submodule's own config.
+  - **Working directory:** ShadowRepo runs Git at its root, for both the native and legacy runners. This also fixes `add -- .` and stdin paths resolving against the app's cwd.
+  - **Refused outright:** `cat-file --textconv` (a textconv driver is not a filter and is not qualified) and non-`-z` `update-index --stdin`.
+  - **Checked empirically:** in a scratch HOME, the env pins kept a sentinel filter from running in the superproject and in a submodule child. A selected `required` driver fails the command instead.
+- **Second review (9a8dfe33dd).** All three escapes are closed: 7 of 25 racing captures got past the check and the filter ran 0 times. The review found two gaps that predate this task, and both are fixed:
+  - **Submodule child diff:** with `diff.submodule=diff`, a moved submodule started a child `git diff` without --no-ext-diff/--no-textconv, so its external diff ran. `diff` now also gets `--submodule=short`.
+  - **Non-UTF-8 names:** under a UTF-8 locale the `--get-regexp` query missed driver and remote names holding invalid UTF-8, so the check failed open. The query now runs under `LC_ALL=C`.
+  - **Hardening:** ShadowRepoService resolves the `git` it finds on PATH to an absolute path, since Git now runs at the agent-writable root.
+  - **Tests:** each of these has a test that fails on 9a8dfe33dd.
+- **Third pass (ac8d4f281d).** The reviewer confirmed both gaps closed: no textconv or external diff program ran on a moved submodule, and the `\xff\xfe` driver and remote are refused. `LC_ALL=C` changes only the query's regex matching. Its one Minor, older than this task, is fixed too: the references `git` is now made absolute in `ReferenceAuthority` and in `run_git_reference`'s fallback, as ShadowRepoService does.
+  - **Accepted:** a missed `required` driver fails with the generic Git-failure message rather than the remedy text, because that is fail-closed. ADR-084 says so.
+- **Message.** "configured filters selected by Git attributes (remove the filter= attribute or its filter config)". The Console shows it as "⚠ change tracking failed for <root>: <error>".
+- **Plumbing.**
+  - `ShadowRepo._native_command` passes stdin.
+  - The references runner accepts `input_data`.
+  - Each references invocation qualifies a copy of the environment.
+- **Tests.**
+  - Red first, against the old any-filter rule:
+    - no selecting path (capture publishes);
+    - `@diff` with a sentinel driver nothing selects;
+    - an ignored force-staged path that selects one (refused; without the stdin paths the helper really ran).
+  - Red against 80f7b33ad6, all three:
+    - detection forced to miss (the driver never runs);
+    - a filter configured only inside a submodule (`@diff` never enters it);
+    - the app's cwd in a subdirectory (refused, never run).
+  - The reference refusal cases now write a selecting `.gitattributes`, and include a dotted, mixed-case driver name.
+- **Cost.** Two extra Git calls per filter-capable invocation, only when a filter is configured. That took about 0.16 s over this repo's ~42k paths, measured by the reviewer.
+- **Docs.** ADR-084, ADR-285 and `Docs/Architecture/console.md` are amended.
+- **Live check (AC #3, owner-requested, 2026-11-19).** Run on the fu2/lfs-filters worktree.
+  - **Setup:**
+    - a scratch HOME under `sandbox-exec`, with writes to the real profile denied;
+    - a stdlib fake OpenAI server serving llama.cpp;
+    - a global `[filter "lfs"]` with a sentinel program and `required = true`.
+  - **First run: the AC failed.** Enabling Change Review on a workspace whose `.gitattributes` selects `lfs` showed only "Change history preparation failed for 1 folder(s)". The turn showed only "⚠ change review skipped …: Change history preparation failed; this turn continues without it.". The refusal happens at preparation, before any capture, and `ChangeReviewConsentService` replaced every preparation error with that generic reason. The earlier capture-path test had pinned the text of a different path.
+  - **Fix:**
+    - `native_git.ACTIONABLE_REFUSALS` maps each user-actionable refusal (Git too old, partial-clone remotes, filters selected by attributes) to a plain sentence. The text is authored, with no config names or paths.
+    - `_complete` and `_fail` use `_failed_reason`, which shows that sentence and keeps every other error generic, so a private path in an arbitrary error still never shows.
+    - The Settings failed row appends the sentence.
+  - **After the fix, live** (first wording): both surfaces named the cause, and following it (empty the `filter=` line, then "Retry failed preparation") turned the folder ready. A second workspace whose files select nothing was ready at once and recorded a clean snapshot (`agent_runs.db` `turn` 120adcd8→d2fa19d6). The sentinel filter never ran in the whole session, and nothing under the real profile changed.
+  - **Review of that fix:**
+    - **Remedy wording (Important):** it told users to "remove the filter= attribute or its filter config". For a Git LFS repository that would store large files as ordinary blobs, or break LFS everywhere. The sentence now states the trade-off instead: "Files here use configured Git filters (such as Git LFS), which Change Review never runs. Removing their filter= attribute or configuration would let it prepare, but changes how Git stores those files." The exception text drops the remedy, and the turn row and Settings no longer show the internal "native change review unavailable:" jargon.
+    - **Git version (Minor):** "requires Git >=2.36" is now raised only for a parsed old version. A failing or unparseable `git --version` (e.g. the macOS developer-tools stub) gets the generic message.
+    - **User Guide (Minor):** the claim is scoped to preparation and capture, because Undo restores with Git's normal checkout (ADR-084 keeps that unchanged).
+  - **Tests:** `test_actual_native_initializer_uses_helper_refusing_git` now pins the reason, for both filter and partial-clone. `test_a_selected_git_filter_names_its_cause_and_remedy` (Settings journey, real selected filter) pins the row. Both fail without the change.
+  - **Follow-up:** TASK-42111. One post-restart turn showed no skipped row at all. Seen once, not traced.
+<!-- SECTION:NOTES:END -->

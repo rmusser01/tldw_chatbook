@@ -600,7 +600,7 @@ class ChangeReviewConsentService:
                 RootReadinessState.READY
                 if error is None
                 else RootReadinessState.FAILED,
-                "" if error is None else self._FAILED_REASON,
+                "" if error is None else self._failed_reason(error),
             )
 
     def _fail(self, work, error=None):
@@ -616,13 +616,26 @@ class ChangeReviewConsentService:
         elif isinstance(error, (Full, CapacityRefused)):
             reason = self._QUEUE_FULL_REASON
         else:
-            reason = self._FAILED_REASON
+            reason = self._failed_reason(error)
         with self._lock:
             if self._pending(work):
                 self._admission_revision += 1
                 self._readiness[(work.workspace_id, work.root)] = _ReadinessEntry(
                     work.alias, work.revision, state, reason
                 )
+
+    @classmethod
+    def _failed_reason(cls, error) -> str:
+        """Name an actionable Git refusal; anything else stays generic."""
+        from .native_git import ACTIONABLE_REFUSALS
+
+        sentence = ACTIONABLE_REFUSALS.get(str(error)) if error is not None else None
+        if sentence is None:
+            return cls._FAILED_REASON
+        return (
+            f"Change history preparation failed. {sentence} "
+            "This turn continues without it."
+        )
 
     def _discard_workspace_readiness_locked(self, workspace_id: str) -> None:
         for key in tuple(self._readiness):

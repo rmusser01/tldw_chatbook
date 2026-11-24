@@ -18,6 +18,7 @@ Two invariants carry the safety (AC#7 + AC#3):
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import shutil
 import subprocess
@@ -414,7 +415,9 @@ def run_git_reference(
         raise RuntimeError("the git repository is outside the allowed workspace roots")
     if kind not in _SPECIAL_TOKENS:
         raise RuntimeError("unsupported git reference")
-    executable = executable or shutil.which("git")
+    if not executable:
+        found = shutil.which("git")
+        executable = os.path.abspath(found) if found else None  # see ReferenceAuthority
     if executable is None:
         raise RuntimeError("git executable unavailable")
     environment = (
@@ -422,7 +425,7 @@ def run_git_reference(
     )
     environment["GIT_TERMINAL_PROMPT"] = "0"
 
-    def run_process(cmd, env, *, binary=False):
+    def run_process(cmd, env, *, binary=False, input_data=None):
         if require_current is not None:
             require_current()
         if producer is None:
@@ -430,6 +433,7 @@ def run_git_reference(
                 cmd,
                 cwd=str(cwd),
                 env=env,
+                input=input_data,
                 capture_output=True,
                 timeout=timeout,
                 text=not binary,
@@ -449,7 +453,7 @@ def run_git_reference(
                     producer,
                     cmd,
                     env,
-                    None,
+                    input_data,
                     cwd=str(cwd),
                     timeout_seconds=timeout,
                 )
@@ -462,15 +466,16 @@ def run_git_reference(
         return subprocess.CompletedProcess(cmd, code, stdout, stderr)
 
     def run_at(root, args):
+        env = dict(environment)  # qualification adds this invocation's filter pins
         cmd = qualified_git_command(
             executable,
             ["-C", str(root)],
             args,
-            environment,
+            env,
             run_process,
             RuntimeError,
         )
-        result = run_process(cmd, environment)
+        result = run_process(cmd, env)
         if result.returncode:
             raise RuntimeError("git reference command failed")
         return result.stdout

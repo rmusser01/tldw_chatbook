@@ -407,9 +407,12 @@ class ShadowRepoService:
 
             data_dir = get_user_data_dir() / "change_review"
         self._data_dir = Path(data_dir)
-        self._git = (
-            git_executable if git_executable is not None else shutil.which("git")
-        )
+        if git_executable is None:
+            # Absolute: Git runs at the workspace root, which an agent can write
+            # to, so a relative PATH entry must not resolve inside it.
+            found = shutil.which("git")
+            git_executable = os.path.abspath(found) if found else None
+        self._git = git_executable
 
     @property
     def available(self) -> bool:
@@ -529,7 +532,7 @@ class ShadowRepo:
             env = self._env()
             if source is not None:
                 source.validate_root(self.root)
-                cmd = self._native_command(args, env)
+                cmd = self._native_command(args, env, input_data)
             try:
                 proc = self._run_process(cmd, env, input_data=input_data, binary=binary)
             except subprocess.TimeoutExpired as exc:
@@ -572,6 +575,7 @@ class ShadowRepo:
         if source is None and undo is None:
             return subprocess.run(
                 cmd,
+                cwd=str(self.root),
                 capture_output=True,
                 env=env,
                 input=input_data,
@@ -603,7 +607,10 @@ class ShadowRepo:
                     cmd,
                     env,
                     payload,
-                    cwd=os.getcwd(),
+                    # The work tree, not the app's cwd: from a subdirectory, Git
+                    # would scope `add -- .`, stdin paths and the filter check
+                    # to that subdirectory (TASK-42101 review).
+                    cwd=str(self.root),
                     timeout_seconds=_GIT_TIMEOUT_SECONDS,
                 )
             )
@@ -614,7 +621,7 @@ class ShadowRepo:
             )
         return subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
 
-    def _native_command(self, args, env):
+    def _native_command(self, args, env, input_data=None):
         """Apply the shared native policy to this actual shadow repository."""
         from .native_git import qualified_git_command
 
@@ -625,6 +632,7 @@ class ShadowRepo:
             env,
             self._run_process,
             ChangeTrackingUnavailableError,
+            payload=input_data,
         )
 
     def _locked(self):

@@ -119,9 +119,26 @@ Both failed publication attempts expose an unresolved disposition, separate from
 physical retirement and any workflow acknowledgement (ADR-285).
 
 Native capture supports Git >=2.36 with per-invocation hooks, signing, fsmonitor,
-GC/maintenance and external diff/textconv suppression. Configured external
-clean/process/smudge filters and promisor/partial-clone remotes make capture visibly
-unavailable before helper-capable entry, including implicit object fetch.
+GC/maintenance and external diff/textconv suppression. Promisor/partial-clone
+remotes make capture visibly unavailable before helper-capable entry, including
+implicit object fetch. A configured external clean/process/smudge filter does the
+same only when a path the invocation can reach selects that driver through Git
+attributes (owner decision, TASK-42101, 2026-11-19). Before each filter-capable
+invocation (add, update-index, rm, commit, diff, ls-files -m, and cat-file
+--filters), the same job asks `git check-attr filter` over the tracked and
+non-ignored untracked paths plus any exact paths staged from stdin, with Git run
+at the work tree rather than the app's cwd. A driver no path selects, such as Git
+LFS installed in the user's global config for a workspace that tracks no LFS path,
+no longer refuses capture. That refusal decides the outcome but is not the
+guarantee. Every configured driver is also emptied for the command itself
+(through GIT_CONFIG_COUNT, so names stay out of argv and Git children inherit it),
+and `diff` never starts Git inside a submodule (`--ignore-submodules=dirty`,
+`--submodule=short`), where config this qualification never reads would apply. Git
+therefore runs no configured filter program even if an attribute changes between
+check and command. A selected path then fails a `required` driver, with the
+generic Git-failure message, or is captured unfiltered. The config query runs
+under `LC_ALL=C`, so a driver or remote name holding invalid UTF-8 is still found.
+`cat-file --textconv` and a non-`-z` `update-index --stdin` are refused outright.
 Configuration discovery stays private; global ignore/privacy rules, existing
 history/restore and user Git configuration remain unchanged. Known native opaque
 coordination does not isolate external OS configuration edits. The standalone

@@ -6,6 +6,17 @@
 
 **What to do.** Before you design a fix for a filed finding, or remove a path a review called dead, mark its route live on current dev: one launch, zero-wrap markers on the functions in question, plus the thread each runs on. Do it whenever the finding is older than the last few merges to the code around it (`git log --since=<filed> -- <paths>`). Report what moved, and which commit moved it, before you report a fix.
 
+## A test that pins the right message on the wrong path passes while the user sees nothing (TASK-42101, 2026-11-19)
+
+**Incident.** TASK-42101's AC #3 said a user refused because of a selected Git filter must see the cause and the remedy. A test pinned that text in the capture path's `tracking_error`, and I proposed ticking the AC from it. The owner asked for a live check instead. It ran on a scratch profile under `sandbox-exec`, with a stdlib fake llama.cpp server and a global LFS-style filter whose program was a sentinel. The check failed:
+- Enabling Change Review refuses at *preparation*, before any capture.
+- `ChangeReviewConsentService` replaced every preparation error with "Change history preparation failed", so Settings and the turn's "change review skipped" row named no cause.
+- The pinned capture path is reached only after preparation has succeeded.
+
+A review of the first fix then found its remedy ("remove the filter= attribute") harmful for the very users who see it, Git LFS repositories.
+
+**What to do.** Before ticking a user-visible AC from a test, trace which code path the user's first action actually reaches, and pin the text there. Then look at it live once. Read user-facing remedy text as the person who will hit it: here, someone whose repository depends on the thing the advice removes.
+
 ## Verify that a reused RAG fixture still has searchable vectors (TASK-40290, 2026-11-11)
 
 **Incident.** The reopened UAT profile listed the Juniper media fixture after a Library source refresh. RAG Answer still reported an empty index. Backfill returned zero indexed and one skipped because the tracking DB already had the fixture's timestamp. Reindexing that one disposable media entry restored the paraphrase match, and the Library Run action produced a live DeepSeek answer with a validated citation. [Walkthrough evidence](../../qa/uat-core-workflows-2026-11-11/deepseek-rag-fixed.txt)

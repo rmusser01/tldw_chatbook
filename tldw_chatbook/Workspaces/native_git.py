@@ -78,10 +78,102 @@ def scrubbed_git_environment() -> dict[str, str]:
     return env
 
 
+GIT_TOO_OLD = "native change review requires Git >=2.36"
+PARTIAL_CLONE_CONFIGURED = (
+    "native change review unavailable: configured partial-clone remotes"
+)
+FILTERS_SELECTED = (
+    "native change review unavailable: configured filters selected by Git attributes"
+)
+# Refusals a user can act on, with the plain sentence Settings and the turn's
+# "change review skipped" row show (TASK-42101). Authored text: no config names
+# or paths. The filter sentence states the trade-off rather than advising a
+# fix, because for a Git LFS repository removing the attribute or the
+# configuration changes how Git stores those files.
+ACTIONABLE_REFUSALS = {
+    GIT_TOO_OLD: "Change Review needs Git 2.36 or newer.",
+    PARTIAL_CLONE_CONFIGURED: (
+        "The folder's Git configuration uses partial-clone remotes, which could"
+        " fetch objects while Change Review reads them."
+    ),
+    FILTERS_SELECTED: (
+        "Files here use configured Git filters (such as Git LFS), which Change"
+        " Review never runs. Removing their filter= attribute or configuration"
+        " would let it prepare, but changes how Git stores those files."
+    ),
+}
+
+# Invocations that can hand work-tree content to a clean/smudge/process filter;
+# a configured driver a reachable path selects refuses them. Refusal decides the
+# outcome; it is not the guarantee -- every configured driver is also emptied for
+# the command itself (`_neutralize_filters`), so Git never runs one.
+_FILTER_CAPABLE = frozenset({"add", "update-index", "rm", "commit", "diff"})
+
+
+def _filter_capable(args) -> bool:
+    if args[0] == "cat-file":
+        return "--filters" in args
+    if args[0] == "ls-files":
+        return any(arg in ("-m", "--modified") for arg in args)
+    return args[0] in _FILTER_CAPABLE
+
+
+def _neutralize_filters(env, drivers) -> None:
+    """Empty every configured driver's commands for this one invocation.
+
+    Through GIT_CONFIG_COUNT rather than `-c`, so driver names stay out of
+    argv; Git children (submodule status) inherit it. A selected path whose
+    driver is `required` then fails the command instead of running anything.
+    """
+    count = int(env.get("GIT_CONFIG_COUNT") or 0)
+    for driver in sorted(drivers):
+        name = os.fsdecode(driver)
+        for part in ("clean", "smudge", "process"):
+            env[f"GIT_CONFIG_KEY_{count}"] = f"filter.{name}.{part}"
+            env[f"GIT_CONFIG_VALUE_{count}"] = ""
+            count += 1
+    env["GIT_CONFIG_COUNT"] = str(count)
+
+
+def _selects_configured_filter(prefix, args, env, run_process, drivers, payload):
+    """True when a path this invocation can reach selects a configured driver.
+
+    Git decides selection itself (`check-attr`, macros included) over every
+    tracked and non-ignored untracked path, plus the exact paths an
+    ``update-index --stdin`` stages by name, which may be ignored (TASK-42101).
+    """
+    # ponytail: O(paths) per filter-capable invocation, and only when a filter
+    # is configured; never cached, because attributes can change between
+    # invocations the same way config can.
+    listing = run_process(
+        [*prefix, "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        env,
+        binary=True,
+    )
+    paths = listing.stdout
+    if args[0] == "update-index" and "--stdin" in args and payload:
+        paths += os.fsencode(payload) if isinstance(payload, str) else payload
+    attributes = run_process(
+        [*prefix, "check-attr", "-z", "--stdin", "filter"],
+        env,
+        binary=True,
+        input_data=paths,
+    )
+    if listing.returncode or attributes.returncode:
+        return None
+    return any(value in drivers for value in attributes.stdout.split(b"\0")[2::3])
+
+
 def qualified_git_command(
-    executable, repository_prefix, args, env, run_process, unavailable
+    executable, repository_prefix, args, env, run_process, unavailable, payload=None
 ):
-    """Apply native Git version/config policy without exposing private config."""
+    """Apply native Git version/config policy without exposing private config.
+
+    A configured clean/process/smudge filter refuses the invocation only when a
+    path it can reach selects that driver (TASK-42101); partial-clone remotes
+    always refuse. When filters are configured, ``env`` (this invocation's own
+    copy) also gets every configured driver emptied for the returned command.
+    """
     allowed = {
         "init",
         "config",
@@ -98,6 +190,11 @@ def qualified_git_command(
         "check-ignore",
     }
     if not args or args[0] not in allowed:
+        raise unavailable("native change-review Git command unsupported")
+    if (args[0] == "cat-file" and "--textconv" in args) or (
+        # Detection reads stdin paths NUL-delimited; quoted lines would not match.
+        args[0] == "update-index" and "--stdin" in args and "-z" not in args
+    ):
         raise unavailable("native change-review Git command unsupported")
     pins = (
         "core.hooksPath=" + os.devnull,
@@ -116,12 +213,11 @@ def qualified_git_command(
     try:
         version = run_process([executable, "--version"], env)
         match = re.match(r"git version (\d+)\.(\d+)", version.stdout)
-        if (
-            version.returncode
-            or match is None
-            or tuple(map(int, match.groups())) < (2, 36)
-        ):
-            raise unavailable("native change review requires Git >=2.36")
+        if version.returncode or match is None:
+            # Not a version to judge (e.g. the macOS developer-tools stub).
+            raise unavailable("native change-review Git unavailable")
+        if tuple(map(int, match.groups())) < (2, 36):
+            raise unavailable(GIT_TOO_OLD)
         config = run_process(
             [
                 *prefix,
@@ -132,22 +228,51 @@ def qualified_git_command(
                 "--get-regexp",
                 r"^(filter\..*\.(clean|process|smudge)|remote\..*\.promisor|extensions\.partialclone)$",
             ],
-            env,
+            # Under a UTF-8 locale the regex matches no name holding invalid
+            # UTF-8, so such a driver or remote would pass unrefused.
+            {**env, "LC_ALL": "C"},
             binary=True,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         raise unavailable(
             "native change-review Git qualification unavailable"
         ) from error
-    if config.returncode == 0:
-        # Names stay private; even cat-file -e may lazily spawn a fetch.
-        if not any(name.startswith(b"filter.") for name in config.stdout.split(b"\0")):
-            raise unavailable(
-                "native change review unavailable: configured partial-clone remotes"
-            )
-        raise unavailable("native change review unavailable: configured filters")
-    if config.returncode != 1:
+    if config.returncode not in (0, 1):
         raise unavailable("native change-review Git configuration unavailable")
-    if args[0] in {"diff", "show"}:
-        args = (args[0], "--no-ext-diff", "--no-textconv", *args[1:])
+    # Names stay private; even cat-file -e may lazily spawn a fetch.
+    names = [name for name in config.stdout.split(b"\0") if name]
+    if any(not name.startswith(b"filter.") for name in names):
+        raise unavailable(PARTIAL_CLONE_CONFIGURED)
+    if names and _filter_capable(args):
+        drivers = {name[len(b"filter.") : name.rindex(b".")] for name in names}
+        try:
+            selected = _selects_configured_filter(
+                prefix, args, env, run_process, drivers, payload
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise unavailable(
+                "native change-review Git qualification unavailable"
+            ) from error
+        if selected is None:
+            raise unavailable("native change-review Git configuration unavailable")
+        if selected:
+            raise unavailable(FILTERS_SELECTED)
+    if names:
+        _neutralize_filters(
+            env, {name[len(b"filter.") : name.rindex(b".")] for name in names}
+        )
+    if args[0] == "diff":
+        # Git would otherwise start Git inside a submodule, under config this
+        # qualification never reads: `git status` for a dirty check, or a
+        # `diff.submodule=diff` child diff that drops --no-ext-diff/--no-textconv.
+        args = (
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--ignore-submodules=dirty",
+            "--submodule=short",
+            *args[1:],
+        )
+    elif args[0] == "show":
+        args = ("show", "--no-ext-diff", "--no-textconv", *args[1:])
     return [*prefix, *args]
