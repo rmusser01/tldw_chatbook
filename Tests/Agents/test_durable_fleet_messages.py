@@ -20,6 +20,10 @@ from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, SchemaError
 from tldw_chatbook.DB.private_sqlite import open_recovery_validation
 
+# Schema v81 (ADR-232, PR #3010) and later bumps left these pins at 80; the
+# migrations they check still end at the current schema (TASK-42514).
+CURRENT = CharactersRAGDB._CURRENT_SCHEMA_VERSION
+
 
 def source(index=0, chain="chain"):
     return MessageIdentity(f"handle-{index}", f"run-{index}", "parent", chain, "reader")
@@ -252,7 +256,7 @@ def test_chat_v76_installed_backup_and_shared_subscription_schema(tmp_path, requ
         core = next(
             a for a in core_adapters() if a.owner_id == "db.chachanotes.primary"
         )
-        assert core.schema_policy().schema_sql[0] == (80, actual)
+        assert core.schema_policy().schema_sql[0] == (CURRENT, actual)
         assert core.validate(path) == ()
         current = tmp_path / "core-current.sqlite"
         assert db.backup_database(str(current))
@@ -272,8 +276,8 @@ def test_chat_v76_installed_backup_and_shared_subscription_schema(tmp_path, requ
         assert old.read_bytes() == old_bytes
         with db.transaction() as cursor:
             cursor.execute(
-                "UPDATE db_schema_version SET version = 80 WHERE schema_name = ?",
-                (db._SCHEMA_NAME,),
+                "UPDATE db_schema_version SET version = ? WHERE schema_name = ?",
+                (CURRENT, db._SCHEMA_NAME),
             )
         subscriptions = SubscriptionsDB(path)
         try:
@@ -509,7 +513,7 @@ def test_existing_chat_migrates_and_progress_metadata_never_exposes_bodies(
                 (db._SCHEMA_NAME,),
             )
             .fetchone()[0]
-            == 80
+            == CURRENT
         )
         if version >= 74:
             assert tuple(
@@ -857,7 +861,7 @@ def test_v79_browse_index_migration_rolls_back_partial_ddl_then_retries(
         )
     db = CharactersRAGDB(path, "retry-upgrade")
     try:
-        assert db._get_db_version(db.get_connection()) == 80
+        assert db._get_db_version(db.get_connection()) == CURRENT
         assert tuple(
             db.get_connection()
             .execute(
