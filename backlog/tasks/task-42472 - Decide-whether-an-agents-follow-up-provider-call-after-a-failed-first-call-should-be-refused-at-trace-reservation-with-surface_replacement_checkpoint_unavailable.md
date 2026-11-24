@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-23 06:38
-updated_date: 2026-11-24 09:49
+updated_date: 2026-11-24 10:23
 labels:
 - follow-up
 - console
@@ -222,7 +222,9 @@ Found during round 22 of the follow-up burn-down (2026-11-23), by TASK-42412. Ch
 
 **Lanes (round 24).** Dev's two captured-retry files were red on the stack and on no lane.
 - "Run the admission-sensitive Console P0 regression tests", mid-list after `Tests/Chat/test_console_project_instruction_traces.py`, with `Tests/CI/test_response_rules_critical_gate.py` updated in the same order, and a dated comment above the step: `Tests/Chat/test_console_trace_model_retries.py`. It stays in this profile because it is `bootstrap_profile`: its harness reads the tool gates through config, and without the marker it fails 4 of 4. 4 passed in 10.2 s serially with the step's flags (`-p no:xdist --timeout=300`), at load 5.
-- "Run the sandboxed Console P0 regression tests" (review, 2026-11-24, for the admission profile's CI headroom), mid-list after the continuation destination identity file, with a dated comment and the contract list updated: `Tests/Chat/test_console_failed_call_retry_ownership.py`, the failed-call retry rule, also on no lane before. Nothing in it reads config, so its `bootstrap_profile` marker is dropped (59 passed without it). 59 passed in 32.3 s serially with the step's flags (`-p no:xdist --timeout=180`), at load 5.
+- "Run the Dreams tracking tests and unlaned riders" (second review, 2026-11-24): `Tests/Chat/test_console_failed_call_retry_ownership.py`, the failed-call retry rule, also on no lane before. It sits after `Tests/Tool_Packs` and before the character cadence file, has a dated comment above the step, and `DREAMS_TRACKING_RIDERS` is updated in the same order. 59 passed in 26.9 s serially with that step's flags (`--timeout=180 --tb=short`) at load 6.
+  - *Why it moved twice.* The first review round put it in the sandboxed Console P0 step with its `bootstrap_profile` marker dropped, on the claim that nothing in it reads config, because 59 passed without the marker. That claim was false. Its gateway reads `[model_catalog] use_models_dev` (`stream_chat` -> `prepare_chat_request` -> `get_model_capabilities` -> `models_dev_catalog._enabled`). Without the marker, each read raised `RecoveryRequired('raw_source_selection_changed')`, which `_enabled()` swallows (`except Exception: return False`). The tests passed only because that fallback equals the default (the TASK-32628 swallowed-admission trap). A temporary recorder on `get_cli_setting` (not committed; serial) counted, with the marker, 5 `model_catalog` reads and 0 `RecoveryRequired`; without it, 5 reads and 5 `RecoveryRequired`.
+  - *Where it is now.* The marker is back, with a comment that gives the reason. The file cannot return to the admission-sensitive Console P0 profile, which has no CI headroom (TASK-42533). It runs in the Dreams riders after Tool_Packs, because a `bootstrap_profile` file must never precede a sandboxed target there. Lesson: "Green without `bootstrap_profile` does not prove a file reads no config" in `backlog/docs/lessons-testing-evidence.md`.
 - UI census tail: `Tests/UI/test_console_captured_model_retry.py`, whole. 22.6 s serially with the UI lane's flags (`-p no:xdist --timeout=180 --durations=0`), at load 15-29. The floor is the measured entry count.
 
 **Size rows.** `console_agent_bridge.py` 10,170 -> 10,142, exact. `console_trace_runtime.py` and `console_trace_continuation.py` have no row; both are under 4,000 lines.
@@ -237,16 +239,27 @@ Found during round 22 of the follow-up burn-down (2026-11-23), by TASK-42412. Ch
   - "Run fast PR contract" (the size ratchet; `--timeout=180`): 4,873 passed, 4 skipped in 1,148 s.
 
 **Runs (review round, 2026-11-24, rebased onto fu/r24-p3517 f8880bc62c).** The rebase was clean and the replayed diff equals `d0a7e3badc..0306a7f634`. Load was 4-13.
-- *Soak,* 20 rounds at `-n 4`: the llama.cpp stream harness test (with its next send), the whole failed-call retry rule file (without its marker), the two changed rate-limit tests, and dev's two newly laned files. 20/20 rounds, 1,600/1,600 tests.
+- *Soak,* 20 rounds at `-n 4`: the llama.cpp stream harness test (with its next send), the whole failed-call retry rule file (without its marker at the time; it is back, see Lanes), the two changed rate-limit tests, and dev's two newly laned files. 20/20 rounds, 1,600/1,600 tests.
 - *Covering,* `-n 4`, the same file set as the first round: 1,950 passed, 36 failed. These are the same 36 ids that fail at the parent tip; the rebase changed only CI files.
 - `Tests/CI` `-n 4`: 1,948 passed, 2 skipped. `Tests/Architecture`, serial: 1,507 passed, 5 skipped. `preflight.sh`: all checks passed. `ruff check tldw_chatbook --select F`: clean. `Tests/lint/ruff_gate.py`: ratchet OK.
 - *Lane steps,* via `r19-step.sh` with each step's own flags:
   - "Run the sandboxed Console P0 regression tests" (`-p no:xdist --timeout=180`): 707 passed in 342 s;
-  - "Run the admission-sensitive Console P0 regression tests" (`-p no:xdist --timeout=300`): 529 passed in 1,394 s. That is 47 fewer than before, now that the rule file runs in the sandboxed step.
+  - "Run the admission-sensitive Console P0 regression tests" (`-p no:xdist --timeout=300`): 529 passed in 1,394 s. That is 47 fewer than before, now that the rule file is out of this step; it went to the sandboxed step first, then to the Dreams riders in the second review round.
 
 **Commits.**
 - First round, rebased: `5e7f3e36b4b26f0fc4714a834f37e2bbe2167b25` (the trace fix, the cut-off removal, their tests and the size row), `1bd14c64039a622b83bfaf92fdb9c5957d0b94a5` (lanes) and `a0b3805a77116d96e38ebde09ef1592b3a6dcd89` (docs).
 - Review round: `bfc8084e1a52113506fe3915ab4fa6149dd8754e` (the next-send fix and the shared helper), `1ab1a7333ac638d18b20f674fc8c6c6450755eb7` (the lane move), then this docs commit.
+
+**Second review round (2026-11-24).**
+- *What changed.* The rule file's `bootstrap_profile` marker is restored and the file moved to the Dreams tracking riders (see Lanes). TASK-42534 now inlines its probe and records the confirmed cause.
+- *Runs,* at load 6-14:
+  - the rule file, 20 times at `-n 4` with the marker: 20/20 rounds, 1,180/1,180;
+  - `Tests/CI` `-n 4`: 1,948 passed, 2 skipped;
+  - `Tests/Architecture`, serial: 1,507 passed, 5 skipped;
+  - `preflight.sh`: all checks passed; ruff F clean; `ruff_gate` OK;
+  - "Run the sandboxed Console P0 regression tests" (`-p no:xdist --timeout=180`): 648 passed in 260 s, 59 fewer now that the rule file is out;
+  - "Run the Dreams tracking tests and unlaned riders" (`-p no:xdist --timeout=180 --tb=short`): 1,323 passed, 6 skipped, in 693 s in total.
+- *Commit:* `fc88ba94306392a749f0fe8d281ab7e656fe2274` (the marker and the lane move), then this docs commit.
 
 **Filed follow-ups (review round).** IDs were checked unused across all refs, worktrees, history names and ref-tip blobs; 42528 and 42531 were taken.
 - TASK-42529: a streamed OpenAI 429 reads "unexpected provider error" (AC#18's streaming gap); Anthropic and Gemini are to be checked.
