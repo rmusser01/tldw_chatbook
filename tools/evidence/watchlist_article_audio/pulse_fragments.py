@@ -1,5 +1,6 @@
 """Linux PulseAudio monitor fragments. Only stream-frame positions have native custody."""
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from queue import Full, Queue
 import sys
@@ -24,6 +25,14 @@ class Fragment:
     data: np.ndarray
 
 
+@dataclass(frozen=True)
+class Route:
+    sink: bytes
+    sink_index: int
+    monitor: bytes
+    monitor_index: int
+
+
 _PULSE_DECLARATIONS = """
 struct tldw_timeval { long tv_sec; long tv_usec; };
 typedef struct pa_timing_info {
@@ -39,11 +48,31 @@ typedef struct pa_timing_info {
 } pa_timing_info;
 const pa_timing_info *pa_stream_get_timing_info(pa_stream *s);
 const pa_sample_spec *pa_stream_get_sample_spec(pa_stream *s);
+uint32_t pa_stream_get_device_index(const pa_stream *s);
 const char *pa_stream_get_device_name(const pa_stream *s);
 int pa_stream_is_suspended(const pa_stream *s);
 void pa_stream_set_moved_callback(pa_stream *, void (*)(pa_stream *, void *), void *);
 void pa_stream_set_suspended_callback(pa_stream *, void (*)(pa_stream *, void *), void *);
 void pa_operation_cancel(pa_operation *);
+// ABI prefix through proplist from libpulse introspect.h (stable since 0.9.11).
+typedef struct pa_sink_input_info {
+    uint32_t index;
+    const char *name;
+    uint32_t owner_module, client, sink;
+    pa_sample_spec sample_spec;
+    pa_channel_map channel_map;
+    pa_cvolume volume;
+    pa_usec_t buffer_usec, sink_usec;
+    const char *resample_method, *driver;
+    int mute;
+    pa_proplist *proplist;
+} pa_sink_input_info;
+typedef void (*pa_sink_input_info_cb_t)(pa_context *, const pa_sink_input_info *, int, void *);
+pa_operation *pa_context_get_sink_input_info(pa_context *, uint32_t, pa_sink_input_info_cb_t, void *);
+typedef void (*tldw_subscribe_cb_t)(pa_context *, int, uint32_t, void *);
+void pa_context_set_subscribe_callback(pa_context *, tldw_subscribe_cb_t, void *);
+pa_operation *pa_context_subscribe(pa_context *, int, pa_context_success_cb_t, void *);
+
 """
 
 
@@ -59,7 +88,7 @@ def verify_route(default_sink, sink, source):
         or source != (monitor, monitor_index, name, index)
     ):
         raise PulseError("pulse_monitor_mismatch")
-    return monitor
+    return Route(name, index, monitor, monitor_index)
 
 
 def _operation(ffi, api, pulse, start):
@@ -84,6 +113,156 @@ def _operation(ffi, api, pulse, start):
     finally:
         with pulse._lock_mainloop():
             api.pa_operation_unref(operation)
+
+
+# libpulse def.h subscription event types for the sink-input facility.
+SINK_INPUT = 2
+NEW = 0
+CHANGE = 0x10
+REMOVE = 0x20
+
+
+@dataclass
+class InputEvent:
+    kind: int
+    index: int
+    pid: bytes | None = None
+    sink: int | None = None
+    complete: bool = False
+    superseded: bool = False
+
+
+class PlayerRouteHistory:
+    """Private, case-scoped sink-input events. Only the verdict enters a receipt."""
+
+    def __init__(self):
+        self.events = []
+        self.lost = False
+
+    def verdict(self, pid: int, sink_index: int) -> str:
+        unavailable = "pulse_player_route_unavailable"
+        target = str(pid).encode()
+        indexes = {event.index for event in self.events if event.pid == target}
+        if self.lost or pid <= 0 or len(indexes) != 1:
+            return unavailable
+        owned = [event for event in self.events if event.index in indexes]
+        observations = [event for event in owned if event.kind != REMOVE]
+        if any(
+            event.pid == target and event.sink != sink_index for event in observations
+        ):
+            return "pulse_player_route_changed"
+        if (
+            owned[0].kind != NEW
+            or owned[-1].kind != REMOVE
+            or any(event.kind != CHANGE for event in owned[1:-1])
+            or any(
+                not event.complete or event.superseded or event.pid != target
+                for event in observations
+            )
+        ):
+            return unavailable
+        # An unattributed new input might also belong to this player.
+        attributed = {event.index for event in self.events if event.pid}
+        if any(
+            event.kind == NEW and event.index not in attributed for event in self.events
+        ):
+            return unavailable
+        return "verified"
+
+
+@contextmanager
+def watch_player_route(ffi, api, pulse):
+    """Subscribe before launch, resolve event snapshots off the Pulse mainloop."""
+    history = PlayerRouteHistory()
+    pending = Queue(maxsize=128)
+    last = {}
+
+    @ffi.callback("tldw_subscribe_cb_t")
+    def notify(context, event_type, index, userdata):
+        if event_type & 15 != SINK_INPUT or history.lost:
+            return
+        kind = event_type & 0x30
+        if len(history.events) >= 128 or kind not in (NEW, CHANGE, REMOVE):
+            history.lost = True
+            return
+        previous = last.get(index)
+        # A later event before our previous snapshot can hide an intermediate route.
+        if previous is not None and previous.kind != REMOVE and previous.sink is None:
+            previous.superseded = True
+        event = InputEvent(kind, index)
+        history.events.append(event)
+        last[index] = event
+        if kind != REMOVE:
+            pending.put_nowait(event)
+
+    def snapshot(event):
+        @ffi.callback("pa_sink_input_info_cb_t")
+        def info(context, entry, eol, userdata):
+            if eol:
+                event.complete = eol > 0 and event.pid is not None
+            elif (
+                entry
+                and entry.index == event.index
+                and entry.proplist
+                and event.sink is None
+            ):
+                prop = api.pa_proplist_gets(entry.proplist, b"application.process.id")
+                if prop:
+                    event.pid = ffi.string(prop)
+                event.sink = int(entry.sink)
+
+        _operation(
+            ffi,
+            api,
+            pulse,
+            lambda: api.pa_context_get_sink_input_info(
+                pulse.context, event.index, info, ffi.NULL
+            ),
+        )
+
+    def observe():
+        while (event := pending.get()) is not None:
+            try:
+                snapshot(event)
+            except Exception:
+                history.lost = True
+
+    def subscribe(mask):
+        ok = False
+
+        @ffi.callback("pa_context_success_cb_t")
+        def completed(context, success, userdata):
+            nonlocal ok
+            ok = bool(success)
+
+        _operation(
+            ffi,
+            api,
+            pulse,
+            lambda: api.pa_context_subscribe(pulse.context, mask, completed, ffi.NULL),
+        )
+        if not ok:
+            raise PulseError("pulse_player_route_unavailable")
+
+    observer = threading.Thread(target=observe, daemon=True)
+    observer.start()
+    with pulse._lock_mainloop():
+        api.pa_context_set_subscribe_callback(pulse.context, notify, ffi.NULL)
+    try:
+        subscribe(1 << SINK_INPUT)
+        yield history
+        # The server reply fences preceding input events, including ordinary REMOVE.
+        subscribe(0)
+    finally:
+        with pulse._lock_mainloop():
+            api.pa_context_set_subscribe_callback(pulse.context, ffi.NULL, ffi.NULL)
+        try:
+            pending.put(None, timeout=0.2)
+            observer.join(timeout=1.1)
+        except Full:
+            history.lost = True
+        if observer.is_alive():
+            history.lost = True
 
 
 def _route(ffi, api, pulse):
@@ -132,7 +311,7 @@ def _route(ffi, api, pulse):
 
     sink = endpoint(default[0], "sink", "monitor_source_name", "monitor_source")
     source = endpoint(sink[2], "source", "monitor_of_sink_name", "monitor_of_sink")
-    return default[0], verify_route(default[0], sink, source)
+    return verify_route(default[0], sink, source)
 
 
 def wait_for_active(api, pulse, stream):
@@ -150,14 +329,15 @@ def wait_for_active(api, pulse, stream):
         time.sleep(0.005)
 
 
-def stream_geometry(ffi, api, stream, monitor):
+def stream_geometry(ffi, api, stream, route):
     """Read the connected stream geometry and reject unreliable native state (locked)."""
     device = api.pa_stream_get_device_name(stream)
     if (
         api.pa_stream_get_state(stream) != api.PA_STREAM_READY
         or api.pa_stream_is_suspended(stream) != 0
         or not device
-        or ffi.string(device) != monitor
+        or ffi.string(device) != route.monitor
+        or api.pa_stream_get_device_index(stream) != route.monitor_index
     ):
         raise PulseError("pulse_capture_route_unavailable")
     spec = api.pa_stream_get_sample_spec(stream)
@@ -222,9 +402,7 @@ def read_fragment(ffi, api, stream, readable, capacity, expected_frame):
     return Fragment(before // FRAME_BYTES, data)
 
 
-def _drain(
-    ffi, api, pulse, stream, sink, monitor, duration_s, block_frames, pending, finish
-):
+def _drain(ffi, api, pulse, stream, route, duration_s, block_frames, pending, finish):
     changed = False
 
     @ffi.callback("void(pa_stream *, void *)")
@@ -244,7 +422,7 @@ def _drain(
     total_frames = 0
     timing_ok = False
     with pulse._lock_mainloop():
-        capacity, fragsize = stream_geometry(ffi, api, stream, monitor)
+        capacity, fragsize = stream_geometry(ffi, api, stream, route)
         api.pa_stream_set_moved_callback(stream, route_changed, ffi.NULL)
         api.pa_stream_set_suspended_callback(stream, route_changed, ffi.NULL)
     try:
@@ -260,14 +438,14 @@ def _drain(
                     "channels": 2,
                     "sample_format": "float32le",
                 },
-                sink.decode(),
+                route.sink.decode(),
             )
         )
         signed_latency_min = signed_latency_max = None
         bracket_max = 0.0
         while time.perf_counter() < end:
             with pulse._lock_mainloop():
-                if changed or stream_geometry(ffi, api, stream, monitor) != (
+                if changed or stream_geometry(ffi, api, stream, route) != (
                     capacity,
                     fragsize,
                 ):
@@ -290,7 +468,10 @@ def _drain(
             if not timing_ok:
                 raise PulseError("pulse_timing_update_failed")
             with pulse._lock_mainloop():
-                if changed:
+                if changed or stream_geometry(ffi, api, stream, route) != (
+                    capacity,
+                    fragsize,
+                ):
                     raise PulseError("pulse_capture_route_changed")
                 readable = int(api.pa_stream_readable_size(stream))
                 fragment = read_fragment(
@@ -338,7 +519,7 @@ def _drain(
             api.pa_stream_set_suspended_callback(stream, ffi.NULL, ffi.NULL)
 
 
-def capture_fragments(connection, duration_s, requested_frames, finish):
+def capture_fragments(connection, duration_s, requested_frames, finish, player_pid):
     """Capture in a killable Linux-only process, with one bounded FIFO to the parent."""
     if sys.platform != "linux":
         raise PulseError("pulse_requires_linux")
@@ -347,7 +528,7 @@ def capture_fragments(connection, duration_s, requested_frames, finish):
     if _ffi.sizeof("long") != 8 or _ffi.sizeof("void *") != 8:
         raise PulseError("pulse_unsupported_timeval_abi")
     _ffi.cdef(_PULSE_DECLARATIONS)
-    sink, monitor = _route(_ffi, _pa, _pulse)
+    route = _route(_ffi, _pa, _pulse)
     pending = Queue(maxsize=64)
 
     def send():
@@ -363,20 +544,25 @@ def capture_fragments(connection, duration_s, requested_frames, finish):
     sender = threading.Thread(target=send, daemon=True)
     sender.start()
     try:
-        with _Recorder(monitor.decode(), RATE, 2, requested_frames) as recorder:
+        with (
+            watch_player_route(_ffi, _pa, _pulse) as player_route,
+            _Recorder(route.monitor.decode(), RATE, 2, requested_frames) as recorder,
+        ):
             _drain(
                 _ffi,
                 _pa,
                 _pulse,
                 recorder.stream,
-                sink,
-                monitor,
+                route,
                 duration_s,
                 requested_frames,
                 pending,
                 finish,
             )
-        terminal = ("pulse_complete",)
+        terminal = (
+            "pulse_complete",
+            player_route.verdict(player_pid.value, route.sink_index),
+        )
     except PulseError as error:
         terminal = ("error", str(error))
     except Full:

@@ -6,6 +6,7 @@ owned by a killable process; no microphone fallback is permitted.
 """
 
 import argparse
+from bisect import bisect_right
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -28,7 +29,7 @@ import warnings
 
 import numpy as np
 from scipy.signal import butter, correlate, resample_poly, sosfiltfilt
-from pulse_fragments import CLOCK_REASON, PulseError, capture_fragments
+from pulse_fragments import CLOCK_REASON, Fragment, PulseError, capture_fragments
 from wasapi_packets import MAX_POLL_GAP_S, content_span, drain_recorder, quiet_window
 
 RATE = 48000
@@ -256,6 +257,7 @@ def _capture_worker(
     capture_buffer_frames: int = BLOCK,
     capture_clock: str = "legacy",
     finish=None,
+    player_pid=None,
 ) -> None:
     """Capture only the exact render loopback; emit sanitized numerical telemetry."""
     output = open(os.devnull, "w")
@@ -280,7 +282,9 @@ def _capture_worker(
                 )
             )
             if capture_clock == "pulse-fragment":
-                capture_fragments(connection, duration_s, capture_buffer_frames, finish)
+                capture_fragments(
+                    connection, duration_s, capture_buffer_frames, finish, player_pid
+                )
                 return
             import soundcard as sc
 
@@ -575,6 +579,25 @@ def _match_fragments(fragments, source):
     return match, metrics
 
 
+def _recent_fragments(fragments, first_postlaunch):
+    if first_postlaunch == len(fragments):
+        return []
+    last = fragments[-1]
+    start = max(
+        fragments[first_postlaunch].frame,
+        last.frame + len(last.data) - round(0.2 * RATE),
+    )
+    first = (
+        bisect_right(
+            fragments, start, lo=first_postlaunch, key=lambda fragment: fragment.frame
+        )
+        - 1
+    )
+    recent = fragments[first:]
+    recent[0] = Fragment(start, recent[0].data[start - recent[0].frame :])
+    return recent
+
+
 def _fragment_quiet(fragments, tail_frames=None):
     result = {"status": "unqualified", "rms": None, "frames": 0}
     if not fragments:
@@ -645,6 +668,7 @@ def run_case(
     }
     context = mp.get_context("spawn")
     finish = context.Event() if pulse_mode else None
+    player_pid = context.RawValue("I", 0) if pulse_mode else None
     if pulse_mode:
         result["telemetry_reason"] = CLOCK_REASON
         if stop_after is not None:
@@ -658,7 +682,7 @@ def run_case(
     if native_mode:
         capture_args += (capture_clock,)
     if pulse_mode:
-        capture_args += (finish,)
+        capture_args += (finish, player_pid)
     capture = context.Process(
         target=_capture_worker,
         args=capture_args,
@@ -723,6 +747,7 @@ def run_case(
                     if not finish.is_set():
                         result["reason"] = "capture_monitor_ended_early"
                         return result
+                    result["player_route"] = message[1]
                     pulse_complete = True
                     break
                 if message[0] == "fragment" and pulse_mode:
@@ -828,6 +853,8 @@ def run_case(
                     **player_options,
                 )
                 result["launched"] = True
+                if pulse_mode:
+                    player_pid.value = process.pid
                 if padded:
                     playing_ready_deadline = time.perf_counter() + 30
                     deadline = playing_ready_deadline + len(source) / RATE + 0.25 + 6
@@ -864,9 +891,7 @@ def run_case(
                     ):
                         if pulse_mode:
                             last_checked_blocks = len(fragments)
-                            recent = fragments[
-                                max(baseline_count, len(fragments) - 4) :
-                            ]
+                            recent = _recent_fragments(fragments, baseline_count)
                             matcher = _match_fragments
                         else:
                             last_checked_blocks = len(packets)
@@ -996,9 +1021,23 @@ def run_case(
                 return result
             playback_fragments = fragments[baseline_count:]
             measurement, final_metrics = _match_fragments(playback_fragments, source)
+            quiet_suffix = _fragment_quiet(
+                playback_fragments, tail_frames=round(RATE * 0.2)
+            )
             if stop_at is not None:
-                result["engine_quiet_samples"] = _fragment_quiet(
-                    playback_fragments, tail_frames=round(RATE * 0.2)
+                result["engine_quiet_samples"] = quiet_suffix
+            if result["player_route"] != "verified":
+                result["reason"] = result["player_route"]
+                return result
+            if measurement is not None:
+                quiet_frames = (
+                    result["capture_end_frame"] - measurement["capture_end_frame"]
+                )
+                result["source_end_boundary"] = (
+                    "pass"
+                    if quiet_frames >= quiet_suffix["frames"]
+                    and quiet_suffix["status"] == "pass"
+                    else "unqualified"
                 )
         elif packet_mode:
             result.update(
@@ -1122,6 +1161,14 @@ def run_case(
             return result
         result["endpoint_loopback"] = "pass"
         result["measurement"] = measurement
+        error = measurement["start_source_s"] - offset
+        result["seek_error_s"] = error
+        result["seek"] = "pass" if abs(error) <= 0.250 else "fail"
+        if pulse_mode and result["source_end_boundary"] != "pass":
+            result["reason"] = "pulse_source_end_unobserved"
+            if stop_after is not None:
+                result["bookmark_alignment"] = "unqualified"
+            return result
         if stop_after is not None:
             result.update(
                 bookmark_alignment(
@@ -1130,9 +1177,6 @@ def run_case(
                     content_duration_s=len(source) / RATE if native_mode else None,
                 )
             )
-        error = measurement["start_source_s"] - offset
-        result["seek_error_s"] = error
-        result["seek"] = "pass" if abs(error) <= 0.250 else "fail"
         remaining = len(source) / RATE - measurement["end_source_s"]
         result["missing_tail_s"] = remaining
         if stop_after is None:
