@@ -278,7 +278,10 @@ subheadings:
   chat: they choose which groups Full agent tools adds. Off by default
   (`[tools] full_agent_tools_enabled`); turning it on gives chat sub-agents,
   skills, web search and fetch, Watchlists, workspace tools, character
-  cards, Canvas, chat forks and chatbook's own MCP tools on the next send.
+  cards, Canvas, chat forks and chatbook's own MCP tools on the next send,
+  except a built-in MCP tool whose own switch is off (`create_note` while
+  **Create note** is off; `create_character`/`update_character` while
+  character tools or the local master are off).
   A profile from before the light tool surface that already used agent
   features finds it switched on after the upgrade ([how that is
   decided](console/agent-runs-and-tools.md#what-plain-chat-offers--the-light-tool-surface)).
