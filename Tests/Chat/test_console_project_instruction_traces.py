@@ -704,7 +704,9 @@ async def test_a_captured_llamacpp_stream_retries_after_its_fallback_fails(
     call in place. The trace checked that retry against the failed fallback,
     the segment's latest call, and refused it: the run ended on 'Trace capture
     could not start' instead of the provider's error. Two failed rounds then a
-    reply recover; a failure that never clears ends on the provider's error.
+    reply recover, and the user's next message is sent: the failed resends
+    are part of the run's history, not foreign calls in it. A failure that
+    never clears ends on the provider's error.
     """
     async with _project_console(
         tmp_path,
@@ -732,6 +734,13 @@ async def test_a_captured_llamacpp_stream_retries_after_its_fallback_fails(
             assert [m.content for m in messages if m.role.value == "assistant"] == [
                 "Fixture reply"
             ]
+            follow_up = await app.controller.submit_draft(
+                "And now?", session_id=app.session.id
+            )
+            assert follow_up.accepted
+            assert app.reservation_errors == []
+            assert app.controller.run_state.status.value == "completed"
+            assert len(app.attempts) == 6
         else:
             assert app.controller.run_state.status.value == "failed"
             assert len(app.attempts) == 6

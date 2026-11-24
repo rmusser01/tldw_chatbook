@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import sqlite3
 
+    from .console_trace_repository import ConsoleTraceRepository
     from .console_trace_service import (
         CompletedToolTurnWitness,
         SurfaceNodeRecord,
@@ -475,6 +476,91 @@ def prepare_live_native_advance(
         rendered_system=rendered_system(),
     )
     return admission, boundary
+
+
+def is_failed_stream_fallback(
+    streamed: TraceCallRecord, fallback: TraceCallRecord
+) -> bool:
+    """Whether ``fallback`` records the failed resend of the failed ``streamed``.
+
+    A llama.cpp stream that fails before any content is sent once more without
+    streaming, on its own ``llama_fallback`` call with its own run id
+    (task-19324). When that resend fails too, it adds nothing to the run: the
+    agent's in-place retry repeats ``streamed``, and the run's history is the
+    streamed call's (TASK-42472 AC#8). The caller proves that ``fallback``'s
+    call boundary directly follows ``streamed``'s.
+
+    Args:
+        streamed: The call whose boundary directly precedes ``fallback``'s.
+        fallback: The candidate resend.
+
+    Returns:
+        True only for an errored, settled fallback of an errored call on the
+        same owner, segment, turn, policy and surface.
+    """
+    from tldw_chatbook.Chat.console_trace_models import TraceCallState
+
+    return (
+        fallback.route_identity == "llama_fallback"
+        and streamed.state is TraceCallState.ERROR
+        and fallback.state is TraceCallState.ERROR
+        and fallback.outcome == TraceCallState.ERROR.value
+        and fallback.settled_at is not None
+        and (
+            fallback.owner_id,
+            fallback.segment_id,
+            fallback.turn_id,
+            fallback.policy_id,
+            fallback.surface_node_id,
+        )
+        == (
+            streamed.owner_id,
+            streamed.segment_id,
+            streamed.turn_id,
+            streamed.policy_id,
+            streamed.surface_node_id,
+        )
+    )
+
+
+def failed_stream_fallback_parent(
+    repository: ConsoleTraceRepository,
+    cursor: sqlite3.Cursor,
+    fallback_call_id: str,
+) -> TraceCallRecord | None:
+    """Return the call that ``fallback_call_id`` failed to resend, if it is one.
+
+    Args:
+        repository: The trace repository.
+        cursor: Cursor for the caller-owned transaction.
+        fallback_call_id: The candidate ``llama_fallback`` call.
+
+    Returns:
+        The streamed call whose call boundary directly precedes the fallback's,
+        when ``is_failed_stream_fallback`` holds for the pair; else ``None``.
+    """
+    fallback = repository.get_call(cursor, fallback_call_id)
+    if fallback is None:
+        return None
+    boundaries = cursor.execute(
+        "SELECT sequence FROM console_trace_events WHERE segment_id = ? "
+        "AND event_type = 'call_boundary' AND call_id = ? LIMIT 2",
+        (fallback.segment_id, fallback.call_id),
+    ).fetchall()
+    before = (
+        cursor.execute(
+            "SELECT call_id FROM console_trace_events WHERE segment_id = ? "
+            "AND event_type = 'call_boundary' AND sequence < ? "
+            "ORDER BY sequence DESC LIMIT 1",
+            (fallback.segment_id, boundaries[0][0]),
+        ).fetchone()
+        if len(boundaries) == 1
+        else None
+    )
+    streamed = None if before is None else repository.get_call(cursor, before[0])
+    if streamed is None or not is_failed_stream_fallback(streamed, fallback):
+        return None
+    return streamed
 
 
 def validate_completed_tool_turn(
@@ -1069,12 +1155,12 @@ def validate_completed_tool_turn(
     ):
         raise ValueError("completed_tool_turn_lineage")
     foreign = cursor.execute(
-        """SELECT 1 FROM console_trace_events e
+        """SELECT c.call_id FROM console_trace_events e
                  JOIN console_trace_calls c ON c.call_id = e.call_id
                 WHERE e.segment_id = ? AND e.event_type = 'call_boundary'
                   AND e.sequence > ? AND e.sequence <= ?
                   AND (c.owner_id != ? OR c.run_id != ? OR c.turn_id != ? OR c.policy_id != ?)
-                LIMIT 1""",
+                LIMIT 257""",
         (
             segment_id,
             origin_event_sequence,
@@ -1084,8 +1170,18 @@ def validate_completed_tool_turn(
             terminal.turn_id,
             terminal.policy_id,
         ),
-    ).fetchone()
-    if foreign is not None:
+    ).fetchall()
+    # TASK-42472: a failed llama.cpp stream resend has its own run id but is
+    # part of this run; any other call in the span is foreign.
+    if len(foreign) > 256 or any(
+        getattr(
+            failed_stream_fallback_parent(self.repository, cursor, row[0]),
+            "run_id",
+            None,
+        )
+        != chain_terminal.run_id
+        for row in foreign
+    ):
         raise ValueError("completed_tool_turn_lineage")
 
 

@@ -12,7 +12,10 @@ from datetime import datetime, timezone
 
 from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
-from tldw_chatbook.Chat.console_trace_continuation import LiveNativeContinuationCustody
+from tldw_chatbook.Chat.console_trace_continuation import (
+    LiveNativeContinuationCustody,
+    failed_stream_fallback_parent,
+)
 from tldw_chatbook.Chat.console_trace_errors import (
     TraceReservationRefused,
     TraceSurfaceChangeRefused,
@@ -41,7 +44,6 @@ from tldw_chatbook.Chat.console_trace_provenance import (
 from tldw_chatbook.Chat.console_trace_repository import (
     ConsoleTraceRepository,
     TraceCallRecord,
-    TraceEventRecord,
 )
 from tldw_chatbook.Chat.console_trace_service import (
     ConsoleTraceCallBoundary,
@@ -298,62 +300,6 @@ class ConsoleTraceBoundaryFactory:
                 return recovered
         except Exception:  # noqa: BLE001 - recovery errors are content-free owned failures
             raise TraceCallPersistenceError(boundary=boundary) from None
-
-    def _is_failed_stream_fallback_of(
-        self,
-        cursor: sqlite3.Cursor,
-        previous: TraceCallRecord,
-        latest: TraceEventRecord,
-    ) -> bool:
-        """Whether ``latest`` is the failed non-streaming resend of ``previous``.
-
-        A llama.cpp stream that fails before any content is sent once more
-        without streaming, on its own ``LLAMA_FALLBACK`` call (task-19324).
-        When that fails too, the agent's in-place retry repeats ``previous``,
-        the streamed call, so it is checked against ``previous`` and not the
-        fallback (TASK-42472 AC#8). Only an errored fallback whose call
-        boundary directly follows an errored ``previous``, on the same owner,
-        segment, turn, policy and surface, qualifies.
-
-        Args:
-            cursor: Cursor for the caller-owned transaction.
-            previous: The retried call (the run's preceding logical call).
-            latest: The segment's latest call boundary.
-
-        Returns:
-            True only for that failed fallback.
-        """
-        fallback = self.repository.get_call(cursor, latest.call_id)
-        before = cursor.execute(
-            "SELECT call_id FROM console_trace_events WHERE segment_id = ? "
-            "AND event_type = 'call_boundary' AND sequence < ? "
-            "ORDER BY sequence DESC LIMIT 1",
-            (latest.segment_id, latest.sequence),
-        ).fetchone()
-        return (
-            fallback is not None
-            and before is not None
-            and before[0] == previous.call_id
-            and fallback.route_identity == ConsoleRequestRoute.LLAMA_FALLBACK.value
-            and previous.state is TraceCallState.ERROR
-            and fallback.state is TraceCallState.ERROR
-            and fallback.outcome == TraceCallState.ERROR.value
-            and fallback.settled_at is not None
-            and (
-                fallback.owner_id,
-                fallback.segment_id,
-                fallback.turn_id,
-                fallback.policy_id,
-                fallback.surface_node_id,
-            )
-            == (
-                previous.owner_id,
-                previous.segment_id,
-                previous.turn_id,
-                previous.policy_id,
-                previous.surface_node_id,
-            )
-        )
 
     def __call__(
         self,
@@ -666,9 +612,16 @@ class ConsoleTraceBoundaryFactory:
                         or latest_call is None
                         or (
                             latest_call.call_id != previous.call_id
-                            and not self._is_failed_stream_fallback_of(
-                                cursor, previous, latest_call
+                            # TASK-42472 AC#8: the retry repeats the streamed
+                            # call, not its failed llama.cpp resend.
+                            and getattr(
+                                failed_stream_fallback_parent(
+                                    self.repository, cursor, latest_call.call_id
+                                ),
+                                "call_id",
+                                None,
                             )
+                            != previous.call_id
                         )
                         # Agent response settlement may still be queued when
                         # its next tool call begins; a response-bearing call

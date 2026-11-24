@@ -30,7 +30,8 @@ from tldw_chatbook.Chat.console_trace_provenance import (
 )
 from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
 
-pytestmark = pytest.mark.bootstrap_profile
+# No bootstrap_profile (TASK-42472, 2026-11-24): nothing here reads config, so
+# the file runs in the per-test sandbox and the sandboxed Console P0 step.
 make_database = _make_database_fixture
 make_gateway = _make_gateway_fixture
 
@@ -227,6 +228,7 @@ async def test_failed_call_retry_requires_exact_durable_chain(
         "second_round",
         "fallback_completed",
         "other_chain_fallback",
+        "other_chain_failure",
         "changed_model",
         "changed_temperature",
         "changed_surface",
@@ -249,6 +251,7 @@ async def test_a_retry_after_a_failed_llama_stream_fallback_is_checked_against_t
     script = {
         "fallback_completed": [503, 200],
         "other_chain_fallback": [503, 503, 503, 503],
+        "other_chain_failure": [503, 503],
         "second_round": [503, 503, 503, 503],
     }.get(scenario, [503, 503])
     requests = []
@@ -280,7 +283,9 @@ async def test_a_retry_after_a_failed_llama_stream_fallback_is_checked_against_t
         execution_key="llama_cpp",
         model="qwen3.7-27b",
         base_url="http://localhost:8080",
-        streaming=True,
+        # A non-streaming call has no resend: the failed call directly after
+        # this run's is another run's own call, never a fallback of it.
+        streaming=scenario != "other_chain_failure",
     )
     messages, descriptors = [{"role": "user", "content": "hello"}], [revision]
 
@@ -314,8 +319,9 @@ async def test_a_retry_after_a_failed_llama_stream_fallback_is_checked_against_t
     if scenario == "second_round":
         with pytest.raises(httpx.HTTPStatusError):
             await send(ConsoleRequestRoute.TOOL_LOOP)
-    elif scenario == "other_chain_fallback":
-        # Another run's failed stream and fallback, after this run's.
+    elif scenario in {"other_chain_fallback", "other_chain_failure"}:
+        # Another run's failed call (and resend, when streaming) after this
+        # run's.
         with pytest.raises(httpx.HTTPStatusError):
             await send(
                 ConsoleRequestRoute.AGENT_FIRST, new_opaque_id(), new_opaque_id()
@@ -331,6 +337,7 @@ async def test_a_retry_after_a_failed_llama_stream_fallback_is_checked_against_t
         "fallback_completed": [("agent_first", "error"), ("llama_fallback", "complete")],
         "second_round": [*failed, ("tool_loop", "error"), ("llama_fallback", "error")],
         "other_chain_fallback": [*failed, *failed],
+        "other_chain_failure": [("agent_first", "error")] * 2,
     }.get(scenario, failed)
     sent = len(requests)
     if scenario == "changed_model":
@@ -351,3 +358,82 @@ async def test_a_retry_after_a_failed_llama_stream_fallback_is_checked_against_t
         with pytest.raises(TraceCallPersistenceError):
             await send(ConsoleRequestRoute.TOOL_LOOP)
         assert len(requests) == sent
+
+
+def _call_record(**changes):
+    from tldw_chatbook.Chat.console_trace_models import (
+        TraceCallState,
+        TraceReservationProvenance,
+    )
+    from tldw_chatbook.Chat.console_trace_repository import TraceCallRecord
+
+    values = dict(
+        call_id="streamed",
+        owner_id="owner",
+        segment_id="segment",
+        turn_id="turn",
+        run_id="run",
+        call_sequence=0,
+        idempotency_key="key",
+        policy_id="policy",
+        state=TraceCallState.ERROR,
+        surface_node_id="surface",
+        request_header_id="header",
+        provider_name="llama_cpp",
+        model_name="qwen3.7-27b",
+        route_identity="agent_first",
+        dispatch_started_at="2026-11-24T00:00:00Z",
+        response_started_at=None,
+        settled_at="2026-11-24T00:00:01Z",
+        provider_inactive_at=None,
+        outcome="error",
+        usage=None,
+        integrity_state="complete",
+        omission_reason_code=None,
+        reservation_provenance=TraceReservationProvenance.CRASH_DURABLE_RESERVED,
+        import_reason_code=None,
+    )
+    values.update(changes)
+    return TraceCallRecord(**values)
+
+
+@pytest.mark.parametrize(
+    ("which", "changes"),
+    [
+        ("none", {}),
+        ("fallback", {"route_identity": "tool_loop"}),
+        ("streamed", {"state": "complete"}),
+        ("fallback", {"state": "complete"}),
+        ("fallback", {"outcome": "complete"}),
+        ("fallback", {"settled_at": None}),
+        ("fallback", {"owner_id": "other"}),
+        ("fallback", {"segment_id": "other"}),
+        ("fallback", {"turn_id": "other"}),
+        ("fallback", {"policy_id": "other"}),
+        ("fallback", {"surface_node_id": "other"}),
+    ],
+    ids=lambda value: value if isinstance(value, str) else "-".join(value) or "valid",
+)
+def test_only_an_errored_resend_of_an_errored_call_is_its_failed_stream_fallback(
+    which, changes
+):
+    """TASK-42472: the shared predicate the factory's retry check and the
+    completed-turn lineage check both use. One differing condition refuses."""
+    from tldw_chatbook.Chat.console_trace_continuation import is_failed_stream_fallback
+    from tldw_chatbook.Chat.console_trace_models import TraceCallState
+
+    changes = {
+        key: TraceCallState(value) if key == "state" else value
+        for key, value in changes.items()
+    }
+    streamed = _call_record(**(changes if which == "streamed" else {}))
+    fallback = _call_record(
+        **{
+            "call_id": "fallback",
+            "run_id": "resend",
+            "route_identity": "llama_fallback",
+            **(changes if which == "fallback" else {}),
+        }
+    )
+
+    assert is_failed_stream_fallback(streamed, fallback) is (which == "none")
