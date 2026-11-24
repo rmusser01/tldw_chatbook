@@ -1135,10 +1135,7 @@ async def test_configured_runtime_still_starting_is_not_offered_as_ready() -> No
 
     assert controller.choose_relationship("keep_synced") == "choose"
     assert controller.snapshot.phase == "choose"
-    assert (
-        controller.snapshot.status_line
-        == "Keeping a folder synced isn't ready on this profile yet."
-    )
+    assert controller.snapshot.status_line == "Preparing folder sync…"
 
     # The start settles: the next chooser re-reads it as ready.
     current = NotesSyncRuntimeSnapshot("active", "sync_now", (root,))

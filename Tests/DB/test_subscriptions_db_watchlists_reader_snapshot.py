@@ -201,6 +201,33 @@ def test_reader_first_page_metadata_and_rows_share_one_wal_read_snapshot(
         reader.close()
 
 
+def test_reader_selects_page_keys_before_building_previews(db: SubscriptionsDB):
+    source = _source(db, "page-keys")
+    older = _item(db, source, "older", published="2026-01-01T00:00:00Z")
+    newest = _item(db, source, "newest", content="x" * 2400)
+    _item(db, source, "ignored", status="ignored")
+    statuses = ("new", "reviewed", "ingested")
+    statements: list[str] = []
+    db.conn.set_trace_callback(statements.append)
+    try:
+        first = _page(db, statuses=statuses, limit=1)
+        pinned = _page(db, statuses=statuses, snapshot_max_item_id=older, limit=1)
+    finally:
+        db.conn.set_trace_callback(None)
+
+    assert first.snapshot_count == 2 and first.snapshot_max_item_id == newest
+    assert first.items[0]["id"] == newest
+    assert first.items[0]["content_preview"] == "x" * 2000
+    assert pinned.snapshot_count == 1 and pinned.items[0]["id"] == older
+
+    queries = [" ".join(sql.split()) for sql in statements if "content_preview" in sql]
+    assert len(queries) == 2
+    for sql in queries:
+        assert sql.startswith("WITH page AS MATERIALIZED ( SELECT i.id ")
+        assert sql.index("LIMIT") < sql.index("content_preview")
+    assert "i.id <=" not in queries[0] and f"i.id <= {older}" in queries[1]
+
+
 def test_reader_snapshot_excludes_later_inserts_and_survives_deleted_mounted_row(
     db: SubscriptionsDB,
 ) -> None:

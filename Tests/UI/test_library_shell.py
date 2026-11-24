@@ -1572,7 +1572,18 @@ async def test_library_full_lifecycle_landing_preserves_counts_search_and_empty_
     try:
         async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
             screen = host.screen_stack[-1]
-            await _wait_for_evidence_round(pilot, gates)
+            if lifecycle is LibraryLifecycle.GRADUATED:
+                await _wait_for_condition(
+                    pilot,
+                    lambda: (
+                        screen._library_onboarding_status
+                        is LibraryEvidenceStatus.SETTLED
+                    ),
+                    message="Saved graduation did not settle",
+                )
+                assert not any(gates.calls.values())
+            else:
+                await _wait_for_evidence_round(pilot, gates)
 
             assert screen.query_one("#library-hub-counts", Static)
             assert screen.query_one("#library-hub-action-search", Button)
@@ -1958,10 +1969,11 @@ async def test_library_onboarding_unmount_flushes_latest_lifecycle(
 async def test_library_onboarding_positive_retrieves_concurrent_loser_exceptions(
     monkeypatch,
 ) -> None:
+    # An unsaved graduation keeps evidence available for each losing owner.
     monkeypatch.setattr(
         library_screen_module,
         "save_setting_to_cli_config",
-        lambda *_args: True,
+        lambda _section, _key, lifecycle: lifecycle != LibraryLifecycle.GRADUATED.value,
     )
     owners = (*_LibraryEvidenceGates.ASYNC_OWNERS, "collections")
     gates = _LibraryEvidenceGates(
@@ -2193,9 +2205,10 @@ async def test_library_onboarding_restart_restores_each_settled_lifecycle(
 
     try:
         async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-            await _wait_for_evidence_round(pilot, gates)
+            if lifecycle is not LibraryLifecycle.GRADUATED:
+                await _wait_for_evidence_round(pilot, gates)
+                gates.release_round(0)
             assert screen._library_lifecycle is lifecycle
-            gates.release_round(0)
             await _wait_for_condition(
                 pilot,
                 lambda: (
@@ -2203,12 +2216,9 @@ async def test_library_onboarding_restart_restores_each_settled_lifecycle(
                 ),
                 message="restored lifecycle evidence did not settle",
             )
-            expected = (
-                LibraryLifecycle.GRADUATED
-                if lifecycle is LibraryLifecycle.GRADUATED
-                else lifecycle
-            )
-            assert screen._library_lifecycle is expected
+            assert screen._library_lifecycle is lifecycle
+            if lifecycle is LibraryLifecycle.GRADUATED:
+                assert not any(gates.calls.values())
     finally:
         gates.release_all()
 
@@ -2579,8 +2589,15 @@ async def test_library_persisted_graduated_restart_has_no_transition_announcemen
 
     try:
         async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-            await _wait_for_evidence_round(pilot, gates)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_onboarding_status is LibraryEvidenceStatus.SETTLED
+                ),
+                message="Saved graduation did not settle",
+            )
             await pilot.pause()
+            assert not any(gates.calls.values())
 
             lifecycle_status = screen.query_one("#library-lifecycle-status", Static)
             assert "Library tools are now available." not in str(
@@ -3212,7 +3229,7 @@ async def test_library_onboarding_back_requires_fresh_empty_evidence_and_focuses
 
 @pytest.mark.asyncio
 async def test_library_onboarding_graduated_never_offers_back_to_starter() -> None:
-    """Sticky graduation denies Back even when a later read is all empty."""
+    """A saved graduation keeps Back absent without an empty-evidence round."""
     gates = _LibraryEvidenceGates()
     app = _new_library_onboarding_app(gates)
     app.library_new_profile_admission = False
@@ -3222,13 +3239,14 @@ async def test_library_onboarding_graduated_never_offers_back_to_starter() -> No
 
     try:
         async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-            await _wait_for_evidence_round(pilot, gates)
-            gates.release_round(0)
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_onboarding_all_empty,
-                message="empty evidence did not settle",
+                lambda: (
+                    screen._library_onboarding_status is LibraryEvidenceStatus.SETTLED
+                ),
+                message="Saved graduation did not settle",
             )
+            assert not any(gates.calls.values())
             assert screen._library_lifecycle is LibraryLifecycle.GRADUATED
             assert not screen.query("#library-rail-back-to-starter")
     finally:
@@ -18975,6 +18993,106 @@ async def test_library_shell_notes_rail_badge_degrades_without_count_seam():
         await _wait_for_library_shell(screen, pilot)
         rail_label = str(screen.query_one("#library-row-browse-notes").label)
         assert "(2+)" in rail_label
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "outcome", ["ready", "count-failed", "denied", "other-profile", "custom-count"]
+)
+async def test_native_library_notes_snapshot_reuses_one_worker_connection(
+    tmp_path, monkeypatch, outcome
+):
+    from tldw_chatbook.Backup_Recovery import storage_admission
+    from tldw_chatbook.DB import ChaChaNotes_DB
+    from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+    from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
+
+    profile_db = CharactersRAGDB(tmp_path / "library.db", "profile")
+    profile_db.add_note("First", "First complete body")
+    profile_db.add_note("Second", "Second complete body")
+    removed = profile_db.add_note("Deleted", "Deleted body")
+    assert profile_db.soft_delete_note(removed, 1)
+    expected_page = tuple(profile_db.list_notes(limit=1))
+    profile_db.close_connection()
+    local_notes = NotesInteropService(tmp_path, "library", profile_db)
+    actions = []
+    loop_thread = threading.get_ident()
+
+    def require_allowed(*, action_id):
+        actions.append(action_id)
+        if outcome == "denied":
+            raise PolicyDeniedError(
+                action_id=action_id,
+                reason_code="local_policy",
+                user_message="Local Notes access is disabled.",
+                effective_source="local",
+                authority_owner="profile",
+            )
+
+    app = _build_test_app()
+    if outcome == "other-profile":
+        other_db = CharactersRAGDB(tmp_path / "other.db", "other")
+        other_db.add_note("Other profile", "Different source")
+        other_db.close_connection()
+        app.chachanotes_db = other_db
+    else:
+        app.chachanotes_db = profile_db
+    app.notes_scope_service = NotesScopeService(
+        local_notes_service=local_notes,
+        server_service=None,
+        policy_enforcer=SimpleNamespace(require_allowed=require_allowed),
+    )
+    custom_count = Mock(return_value=7)
+    if outcome == "custom-count":
+        monkeypatch.setattr(app.notes_scope_service, "count_notes", custom_count)
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    monkeypatch.setitem(library_screen_module.LIBRARY_SOURCE_PAGE_SIZES, "notes", 1)
+    opens = []
+    original_open = ChaChaNotes_DB.connect_private_sqlite
+
+    def observe_open(owner, path, **kwargs):
+        if Path(path) == profile_db.db_path:
+            opens.append(threading.get_ident())
+        return original_open(owner, path, **kwargs)
+
+    monkeypatch.setattr(ChaChaNotes_DB, "connect_private_sqlite", observe_open)
+    if outcome == "count-failed":
+        monkeypatch.setattr(
+            profile_db, "count_notes", Mock(side_effect=OSError("count unavailable"))
+        )
+    try:
+        records, counts, total_known, error, recovery, _ = (
+            await LibraryScreen(app)._list_local_source_snapshot()
+        )
+        assert actions and set(actions) == {"notes.list.local"}
+        assert loop_thread not in opens
+        if outcome == "denied":
+            assert recovery is not None
+            assert recovery.why == "Local Notes access is disabled."
+            assert error == recovery.visible_copy
+            assert not opens and not records["notes"]
+        else:
+            assert error is None
+            assert records["notes"] == expected_page
+            assert counts["notes"] == {"count-failed": 1, "custom-count": 7}.get(
+                outcome, 2
+            )
+            if outcome == "custom-count":
+                custom_count.assert_called_once()
+            assert total_known["notes"] is (outcome != "count-failed")
+            assert len(opens) == (2 if outcome == "other-profile" else 1)
+            assert bool(local_notes._db_instances) is (
+                outcome in {"other-profile", "custom-count"}
+            )
+        with storage_admission._lock:
+            assert not any(
+                lease.resource_path == profile_db.db_path
+                for lease in storage_admission._live_leases
+            )
+    finally:
+        local_notes.close_all_user_connections()
+        profile_db.close_connection()
 
 
 class _FakePromptScopeService:

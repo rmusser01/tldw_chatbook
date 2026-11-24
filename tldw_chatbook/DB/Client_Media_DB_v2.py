@@ -2651,7 +2651,8 @@ class MediaDatabase:
         offset: Optional[int] = None,
         library_summary: bool = False,
         chunking_status: Optional[str] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
+        include_total: bool = True,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
         """
         Searches media items based on a variety of criteria, supporting text search,
         filtering, and sorting.
@@ -2731,15 +2732,12 @@ class MediaDatabase:
                 projected ``has_analysis`` flag). Generic callers retain the
                 broad row.
             chunking_status (Optional[str]): Exact Media chunking status to include.
+            include_total (bool): Count all matches when the caller needs pagination.
 
         Returns:
-            Tuple[List[Dict[str, Any]], int]: A tuple containing:
-                - results_list (List[Dict[str, Any]]): A list of dictionaries,
-                  each representing a matching media item for the current page.
-                  Includes standard media fields. If FTS was active and sort_by
-                  was 'relevance', a 'relevance_score' key may also be present.
-                - total_matches (int): The total number of items matching all
-                  criteria across all pages.
+            The matching media page and the exact total across all pages.
+            When the caller omits the count, the total is None.
+            Relevance-sorted FTS rows can include a 'relevance_score'.
 
         Raises:
             ValueError: If `page` or `results_per_page` are less than 1,
@@ -3238,23 +3236,10 @@ class MediaDatabase:
         join_clause = " ".join(list(dict.fromkeys(joins)))  # Unique joins
         where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
 
-        # TASK-21593: the COUNT half of an FTS search had its join order
-        # inverted. With no `sqlite_stat1` the planner made Media the outer
-        # loop and probed `media_fts` once per live media row -- measured
-        # 276 ms against 29 ms for the same answer with `media_fts` outside,
-        # on a 20,000-media corpus. (The ROWS half already gets fts-first on
-        # its own, because its ORDER BY on `fts.rank` forces the issue; it is
-        # deliberately left alone.) A plain `FROM media_fts fts JOIN Media m`
-        # does NOT fix it -- the planner reorders straight back, measured
-        # 266 ms. CROSS JOIN is the only spelling SQLite treats as an order
-        # instruction rather than a suggestion.
-        #
-        # It is applied ONLY when no id allowlist is in play, and that
-        # exception is measured, not defensive: with a five-id
-        # `media_ids_filter` Media really is the cheap side and pinning
-        # fts first costs 0.10 -> 1.92 ms. Every other predicate
-        # (type facet, chunking_status, date range) leaves Media-first
-        # 3.3-9.5x slower, so they keep the pin.
+        # TASK-21593: CROSS JOIN pins the count to the FTS outer loop even
+        # without sqlite_stat1, saving 276 -> 29 ms on 20,000 items. Plain
+        # JOIN lets SQLite reverse the order. A small id allowlist makes
+        # Media the cheaper outer loop (0.10 vs 1.92 ms with five IDs).
         count_from_clause = f"{base_from} {join_clause}"
         if fts_search_active and not media_ids_filter:
             count_from_clause = (
@@ -3268,10 +3253,12 @@ class MediaDatabase:
         )
         try:
             with self.transaction() as connection:
-                count_row = connection.execute(count_sql, tuple(params)).fetchone()
-                total_matches = count_row[0] if count_row else 0
+                total_matches = None
+                if include_total:
+                    count_row = connection.execute(count_sql, tuple(params)).fetchone()
+                    total_matches = count_row[0] if count_row else 0
                 results_list = []
-                if total_matches > 0 and resolved_offset < total_matches:
+                if total_matches is None or resolved_offset < total_matches:
                     page_params = tuple(params + [results_per_page, resolved_offset])
                     results_list = [
                         dict(row)

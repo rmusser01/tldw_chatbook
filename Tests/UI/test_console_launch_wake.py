@@ -12,17 +12,14 @@ inference in the fires report's §9; `Tests/UI/test_probe_launch_wake.py`
 executed it: with Console never opened the runtime holds
 `chat_controller=None, chat_store=None, agent_bridge=None`.)
 
-The owner's ruling, implemented literally and pinned here:
+The launch contract (ADR-135):
 
-* wake at launch is **YES**, and **mark-gated** -- one cheap indexed read,
-  and delivery only for a conversation that already carries a
-  `FLEET_UNSEEN` mark AND an owed `agent_runs` row;
+* one off-loop discovery checks existing `agent_runs` for owed results;
+  `FLEET_UNSEEN` is a projection;
 * it stays behind the existing `[agents] autowake_enabled`; there is no
   separate launch switch;
-* **when there are no marks, construct NOTHING** -- startup is
-  byte-identical to before. That is
-  `test_a_launch_with_no_marks_constructs_nothing_and_reads_once`, and it
-  is the pin that protects every user who never touches the fleet.
+* when no work is owed, discovery settles without constructing a store,
+  bridge, gateway, or controller, or creating an agent runs database.
 
 Rig notes:
 
@@ -40,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import threading
 import time
 import weakref
 from types import SimpleNamespace
@@ -666,24 +664,12 @@ async def test_a_launch_built_controller_is_not_sticky_when_console_opens(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_a_launch_with_no_marks_constructs_nothing_and_reads_once(tmp_path):
-    """With no marks, a launch does ONE indexed read and nothing else.
+async def test_a_launch_with_no_marks_constructs_nothing_and_reads_once(
+    tmp_path, monkeypatch
+):
+    """One deferred worker checks for owed results without creating any owners."""
+    from tldw_chatbook.Chat import console_launch_wake as launch
 
-    Four independent observations, because "nothing was constructed" is
-    exactly the claim a weak test states and never checks:
-
-    1. the marks service saw exactly ONE `list_marked_conversation_ids`
-       call, for `fleet_unseen`;
-    2. the runtime holds no store, no gateway, no bridge, no controller;
-    3. **no `agent_runs.db` file exists on disk** -- constructing the
-       bridge opens (and creates) it, so the filesystem is an observer the
-       production code cannot lie to;
-    4. no `deferred_launch_wake` task was ever created.
-
-    The control against vacuity is
-    `test_the_startup_cost_pin_is_not_vacuous` below, which runs the same
-    probes WITH a mark and sees every one of them flip.
-    """
     app = _build_test_app("library")
     marks = _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
@@ -695,21 +681,35 @@ async def test_a_launch_with_no_marks_constructs_nothing_and_reads_once(tmp_path
         return real_list(mark_type, **kwargs)
 
     marks.list_marked_conversation_ids = recording_list
-    task_names: list[str] = []
+    discoveries = []
+    tasks = []
+    loop_thread = threading.get_ident()
     real_create = type(app)._create_deferred_startup_task
+    real_discover = launch._read_pending_launch_conversations
+
+    def recording_discover(path):
+        discoveries.append((path, threading.get_ident()))
+        return real_discover(path)
 
     def recording_create(self, coroutine, *, name):
-        task_names.append(name)
-        return real_create(self, coroutine, name=name)
+        task = real_create(self, coroutine, name=name)
+        if name == launch.LAUNCH_WAKE_TASK_NAME:
+            tasks.append(task)
+        return task
 
-    type(app)._create_deferred_startup_task = recording_create
-    try:
+    with monkeypatch.context() as patch:
+        patch.setattr(type(app), "_create_deferred_startup_task", recording_create)
+        patch.setattr(launch, "_read_pending_launch_conversations", recording_discover)
         async with app.run_test(size=(120, 40)) as pilot:
             assert await _settle(pilot, lambda: getattr(app, "_ui_ready", False)), (
                 "harness precondition: the app never became ready, so the "
                 "deferred startup work never ran and this pin proves nothing"
             )
-            await pilot.pause(0.2)
+            assert await _settle(pilot, lambda: bool(tasks) and tasks[0].done())
+            (task,) = tasks
+            assert task.result() == 0
+            ((source, worker_thread),) = discoveries
+            assert source == app.chachanotes_db.db_path and worker_thread != loop_thread
             _assert_console_never_mounted(app)
             assert calls == [], (
                 "durable wake discovery must not treat attention marks as authority"
@@ -729,18 +729,11 @@ async def test_a_launch_with_no_marks_constructs_nothing_and_reads_once(tmp_path
                 "a launch with no marks opened the agent runs DB -- the bridge "
                 "was constructed after all"
             )
-            assert "deferred_launch_wake" not in task_names, (
-                f"a launch with no marks scheduled the wake task: {task_names}"
-            )
-    finally:
-        type(app)._create_deferred_startup_task = real_create
 
 
 @pytest.mark.asyncio
 async def test_the_startup_cost_pin_is_not_vacuous(tmp_path):
-    """The control for the pin above: with a mark present, every one of its
-    four observations flips. Without this, a launch hook that never ran at
-    all would satisfy the pin perfectly."""
+    """An owed result on disk reaches the provider and constructs its owners."""
     conversation_id, _run_id, rows = await _seed_a_finished_background_job(tmp_path)
     app, _marks, gateway = _launch_app(
         tmp_path, tree=_fixture_tree(conversation_id, rows)

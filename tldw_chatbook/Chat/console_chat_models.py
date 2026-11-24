@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from collections.abc import KeysView
 from dataclasses import dataclass, field, fields, replace
 from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any, Iterable, Literal, Mapping
@@ -1354,7 +1355,7 @@ class ConsoleChatMessage:
 
 
 #: Field names per message class, for ``copy_console_message``.
-_MESSAGE_FIELD_NAMES: dict[type, tuple[str, ...]] = {}
+_MESSAGE_FIELD_NAMES: dict[type, KeysView[str]] = {}
 
 
 def copy_console_message(message: ConsoleChatMessage) -> ConsoleChatMessage:
@@ -1381,10 +1382,15 @@ def copy_console_message(message: ConsoleChatMessage) -> ConsoleChatMessage:
     if names is None:
         if hasattr(cls, "__post_init__") or not all(f.init for f in fields(cls)):
             return replace(message)
-        names = _MESSAGE_FIELD_NAMES[cls] = tuple(f.name for f in fields(cls))
+        names = _MESSAGE_FIELD_NAMES[cls] = dict.fromkeys(
+            f.name for f in fields(cls)
+        ).keys()
     values = message.__dict__
     copied = object.__new__(cls)
-    copied.__dict__.update({name: values[name] for name in names})
+    if cls is ConsoleChatMessage and values.keys() == names:
+        copied.__dict__ = values.copy()
+    else:
+        copied.__dict__.update({name: values[name] for name in names})
     return copied
 
 

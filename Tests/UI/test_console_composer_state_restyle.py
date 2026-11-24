@@ -378,12 +378,17 @@ async def test_a_focus_change_restyles_the_bar_and_its_draft_text_only(monkeypat
         assert len(others) > 10
 
         def moved(focused: bool):
-            # The Console's activation focus restore can hand focus back to
-            # the bar after it leaves, so move it again until it stays.
+            # Screen focus changes before the widget handles its focus event.
+            # A queued activation restore can leave the previous flag in place.
             def check() -> bool:
-                if composer.has_focus is not focused:
-                    screen.set_focus(composer if focused else outside)
-                return composer.has_focus is focused
+                target = composer if focused else outside
+                if screen.focused is not target:
+                    screen.set_focus(target)
+                    return False
+                return (
+                    composer.has_focus is focused
+                    and composer.has_class(composer.INTERACTION_CLASSES[0]) is focused
+                )
 
             return check
 

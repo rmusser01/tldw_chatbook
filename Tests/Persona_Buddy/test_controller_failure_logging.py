@@ -207,6 +207,10 @@ EXCEPTION_TYPE_BIND_SITES = frozenset(
             "run_workspace_agent_backfill",
         ),
         (
+            "tldw_chatbook/Workspaces/display_state.py",
+            "build_library_workspace_depth_state",
+        ),
+        (
             "tldw_chatbook/Workspaces/registry_service.py",
             "LocalWorkspaceRegistryService._provision_created_workspace_agent",
         ),
@@ -435,6 +439,7 @@ EXCEPTION_TYPE_TOKEN_ROWS: dict[tuple[str, str, str], tuple[int, str]] = {
     ("tldw_chatbook/Utils/persistent_diagnostics.py", "<module>", "string"): (1, "persistent-diagnostics allowed field name"),
     ("tldw_chatbook/Workspaces/agent_provisioning.py", "WorkspaceAgentProvisioner.provision", "keyword"): (1, "loguru bind; also held to a class name by the bind-site census above"),
     ("tldw_chatbook/Workspaces/agent_provisioning.py", "run_workspace_agent_backfill", "keyword"): (1, "loguru bind; also held to a class name by the bind-site census above"),
+    ("tldw_chatbook/Workspaces/display_state.py", "build_library_workspace_depth_state", "keyword"): (1, "grouped membership fallback binds only the exception class name"),
     ("tldw_chatbook/Workspaces/registry_service.py", "LocalWorkspaceRegistryService._provision_created_workspace_agent", "keyword"): (2, "loguru bind; also held to a class name by the bind-site census above"),
     ("tldw_chatbook/Workspaces/registry_service.py", "_assistant_defaults_from_json", "keyword"): (1, "loguru bind; also held to a class name by the bind-site census above"),
     ("tldw_chatbook/app_ingest_queue.py", "LibraryIngestQueueMixin._run_library_ingest_queue", "string"): (1, "ingest error detail field, not loguru extra"),

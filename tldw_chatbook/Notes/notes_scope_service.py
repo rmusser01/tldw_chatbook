@@ -5,7 +5,7 @@ Scope-aware routing for local notes, server notes, and workspace notes.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import nullcontext
 from enum import Enum
 from typing import Any, NoReturn, Optional
@@ -2568,3 +2568,54 @@ class NotesScopeService:
             if value is not None
         }
         return await self.server_service.delete_note_link(edge_id, **preconditions)
+
+
+def library_notes_snapshot_reader(
+    owner: Any, app: Any
+) -> Callable[..., dict[str, Any]] | None:
+    """Return a combined reader for the stock file-backed local Notes route."""
+    if (
+        type(owner) is not NotesScopeService
+        or not {"list_notes", "count_notes"}.isdisjoint(vars(owner))
+    ):
+        return None
+
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+
+    try:
+        profile_db = app.chachanotes_db
+    except AttributeError:
+        return None
+    service = owner.local_notes_service
+    if (
+        type(profile_db) is not CharactersRAGDB
+        or profile_db.is_memory_db
+        or type(service) is not NotesInteropService
+        or service.unified_db_template is not profile_db
+        or not {"_get_db", "list_notes", "count_notes"}.isdisjoint(vars(service))
+    ):
+        return None
+
+    def read(
+        *, scope: ScopeType | str, limit: int, offset: int, user_id: str | None
+    ) -> dict[str, Any]:
+        if owner._normalize_scope(scope) != ScopeType.LOCAL_NOTE:
+            raise ValueError("Library note counts require Local Notes.")
+        action = owner._note_action_id(ScopeType.LOCAL_NOTE, "list")
+        owner._enforce_policy(action)
+        local_user = owner._require_user_id(user_id)
+        db = service._get_db(local_user, profile_read_db=profile_db)
+        items = service._list_notes(local_user, limit, offset, db=db)
+        try:
+            owner._enforce_policy(action)
+            total = service._count_notes(local_user, db=db)
+        except Exception as exc:
+            logger.warning(
+                "Library Notes count unavailable (exception_type={}). Using sample count.",
+                type(exc).__name__,
+            )
+            total = None
+        return {"items": items, "total": total if isinstance(total, int) else None}
+
+    return read

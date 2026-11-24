@@ -1759,6 +1759,33 @@ def test_store_buffers_stream_chunks_until_messages_are_materialized():
     assert materialized.status == "streaming"
 
 
+def test_stream_snapshot_only_materializes_buffered_active_rows(monkeypatch):
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    user = store.append_message(session.id, role=ConsoleMessageRole.USER, content="ask")
+    reply = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    store.append_stream_chunk(reply.id, "answer")
+    folded = []
+    materialize = store._materialize_stream_buffer_deferred
+
+    def record(message):
+        folded.append(message.id)
+        materialize(message)
+
+    monkeypatch.setattr(store, "_materialize_stream_buffer_deferred", record)
+    rows = store.messages_for_session(session.id)
+
+    assert [(row.id, row.content) for row in rows] == [
+        (user.id, "ask"),
+        (reply.id, "answer"),
+    ]
+    assert folded == [reply.id]
+    rows[1].content = "outside mutation"
+    assert store.get_message(reply.id).content == "answer"
+
+
 def test_reset_stream_content_discards_leaked_prose_but_keeps_streaming_status():
     """Plan-B Task 5 Finding A: once a streamed turn is classified as a tool
     call, any prose already streamed to the store for it must be discarded

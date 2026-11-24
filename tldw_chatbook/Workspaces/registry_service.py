@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 import base64
 from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
 import inspect
+from itertools import batched
 import json
 from pathlib import Path, PurePosixPath
 import re
@@ -64,6 +65,7 @@ from .change_review_consent import (
 
 
 _STORAGE_FAILURE_MESSAGE = "Workspace registry storage failed."
+_MEMBERSHIP_KEYS_PER_QUERY = 200  # Two SQL parameters per key.
 _OMITTED_ASSISTANT_DEFAULTS = object()
 _QUICK_NOTE_LEASE_SECONDS = 30
 _QUICK_NOTE_ABANDON_SECONDS = 7 * 24 * 60 * 60
@@ -1625,6 +1627,55 @@ class LocalWorkspaceRegistryService:
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return tuple(_membership_from_row(row) for row in rows)
+
+    def get_memberships_for_items(
+        self, items: Iterable[tuple[str, str]]
+    ) -> dict[tuple[str, str], tuple[WorkspaceMembership, ...]]:
+        """Read memberships for exact item pairs under one admitted connection.
+
+        Args:
+            items: Item type and ID pairs to normalize and look up.
+
+        Returns:
+            Memberships keyed by normalized pair, in the single-item ordering.
+            Pairs with no memberships are omitted.
+
+        Raises:
+            ValueError: A pair contains an invalid item type or ID.
+            WorkspaceRegistryServiceError: The registry could not be read.
+        """
+        keys = dict.fromkeys(
+            (
+                _normalize_required_text(item_type, "item_type"),
+                _normalize_required_text(item_id, "item_id"),
+            )
+            for item_type, item_id in items
+        )
+        if not keys:
+            return {}
+
+        grouped: dict[tuple[str, str], list[WorkspaceMembership]] = {}
+        try:
+            with self.db.connection() as conn:
+                for batch in batched(keys, _MEMBERSHIP_KEYS_PER_QUERY):
+                    placeholders = ", ".join(["(?, ?)"] * len(batch))
+                    params = tuple(value for pair in batch for value in pair)
+                    rows = conn.execute(
+                        f"""
+                        SELECT *
+                        FROM workspace_memberships
+                        WHERE (item_type, item_id) IN (VALUES {placeholders})
+                        ORDER BY created_at ASC, workspace_id ASC, role ASC
+                        """,
+                        params,
+                    ).fetchall()
+                    for row in rows:
+                        membership = _membership_from_row(row)
+                        key = (membership.item_type, membership.item_id)
+                        grouped.setdefault(key, []).append(membership)
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        return {key: tuple(memberships) for key, memberships in grouped.items()}
 
     def list_workspace_memberships(
         self,

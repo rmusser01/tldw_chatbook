@@ -30,16 +30,42 @@ are absent or still describe the older widget set. Settled canvases retain the
 in-place patch path. This keeps the current generation/route completion fence
 intact when onboarding refreshes the retained landing during snapshot rendering.
 
+Library visits with saved graduation keep the full rail and refresh the live
+source snapshot and landing attention. The onboarding refresh settles without
+starting the separate content-evidence worker. First-time visits and graduation
+awaiting a successful save still gather evidence through the existing
+generation-fenced worker and retain the persistence retry (ADR-076).
+
+A source count refresh can update the mounted full rail when its controls and
+diagnostics are stable, including on the graduated landing. This keeps the
+Library search input and rail rows in place while the counts arrive. A queued
+or running recompose or its focus follow-up keeps ownership of the rail's
+children.
+
+The desktop Library snapshot reads the local Notes page and exact total on
+one finite worker connection. The stock route reuses the matching initialized
+profile database until a per-user owner exists. Both queries retain the
+local Notes list policy check, and worker completion retires connections
+opened by that worker. A count failure leaves the page available with an
+unknown total. In-memory and custom services use their configured callbacks.
+
+The Workspace panel reads memberships for the visible source snapshot by exact
+`(item_type, item_id)` pairs through the existing workspace registry connection
+(ADR-353). It projects every source in display order using the same workspace
+labels and Console handoff eligibility rules. If the grouped read fails, the
+projection retries individual sources through the existing recovery path.
+
 ## Notes-sync preparation
 
 Library construction reuses an already-built Notes-sync owner without invoking
-the app's lazy property. When needed, the first mounted refresh prepares the
-original safe reader through the finite Library service worker, then attaches
-the same app-owned runtime to the sync controller on the UI loop. Until then the
-sync view is preparing; construction failures retain their distinct failed
-status. Unmounting discards late presentation, while runtime lifecycle remains
-owned by the app. Direct Notes attention/location reads also prepare the owner
-through that finite-worker boundary. Synchronous listener access reads only an
+the app's lazy property. The preparing projection uses shared snapshot models
+that carry no dependency on the runtime or executor. When needed, the first
+mounted refresh calls the safe reader through the finite Library service worker,
+then attaches the same app-owned runtime to the sync controller on the UI loop.
+Construction failures retain their distinct failed status. Unmounting discards
+late presentation, while runtime lifecycle remains owned by the app. Direct Notes
+attention/location reads also prepare the owner through that finite-worker
+boundary. Synchronous listener access reads only an
 already-built owner; a failed preparation preserves known attention. The app's
 safe reader serializes failure publication as well as construction so concurrent
 initial readers share one outcome.

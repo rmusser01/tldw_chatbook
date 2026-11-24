@@ -799,6 +799,7 @@ from ..Library_Modules.canvas_sync import (
 from ..Library_Modules.screen_helpers import (
     _library_screen_is_current,
     library_note_persisted_title,
+    refresh_library_onboarding_evidence,
     _ingestible_file_filters,
     _transcribe_cpp_gguf_filters,
     _library_carries_forward_line,  # noqa: F401 -- live defining globals for extracted helpers
@@ -13042,7 +13043,12 @@ class LibraryScreen(BaseAppScreen):
         list_media = getattr(media_service, "list_media_items", None)
         list_conversations = getattr(conversation_service, "list_conversations", None)
         count_notes = getattr(notes_service, "count_notes", None)
-        count_notes_available = callable(count_notes)
+        from tldw_chatbook.Notes.notes_scope_service import library_notes_snapshot_reader
+
+        native_notes = library_notes_snapshot_reader(notes_service, self.app_instance)
+        if native_notes is not None:
+            list_notes = native_notes
+            count_notes = None
         count_decks = getattr(study_service, "count_decks", None)
         count_due_flashcards = getattr(study_service, "count_due_flashcards", None)
         count_quizzes = getattr(quiz_service, "count_quizzes", None)
@@ -13118,7 +13124,7 @@ class LibraryScreen(BaseAppScreen):
         # grows -- see ``_notes_true_count_or_none``/``_study_count_or_none``
         # for the per-count degrade-to-None contract.
         optional_calls: list[tuple[str, Any]] = []
-        if count_notes_available:
+        if callable(count_notes):
             optional_calls.append(
                 (
                     "notes_true_count",
@@ -20110,27 +20116,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_onboarding_status_copy = ""
 
     def _refresh_library_onboarding_evidence(self) -> Worker | None:
-        """Start one fresh, generation-fenced content evidence read."""
-        self._library_onboarding_generation += 1
-        generation = self._library_onboarding_generation
-        back_was_admitted = (
-            self._library_lifecycle is LibraryLifecycle.EXPANDED
-            and self._library_onboarding_all_empty
-        )
-        self._library_onboarding_all_empty = False
-        self._library_onboarding_status = LibraryEvidenceStatus.LOADING
-        self._sync_library_onboarding_status_copy()
-        if not self.is_attached:
-            return None
-        if back_was_admitted:
-            self._sync_library_rail_lifecycle_presentation()
-        elif self.is_mounted:
-            self._sync_library_landing_lifecycle_presentation()
-        return self.run_worker(
-            self._gather_library_onboarding_evidence(generation),
-            group="library_onboarding_evidence",
-            exclusive=True,
-        )
+        return refresh_library_onboarding_evidence(self)
 
     def _sync_library_rail_state(
         self, rail: LibraryRail, shell: LibraryShellState | None = None

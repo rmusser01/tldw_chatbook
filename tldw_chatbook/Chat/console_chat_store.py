@@ -11955,11 +11955,10 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
     def messages_for_session(self, session_id: str) -> list[ConsoleChatMessage]:
         """Return messages for a session in transcript order."""
         self._session_or_raise(session_id)
+        # TASK-33081: fold buffered text here and defer its SQLite writes.
         for message in self._messages_by_session[session_id]:
-            # task-33081: this read runs on the UI event loop from the 0.2s
-            # Console tick -- fold in memory, persist the pending row off the
-            # calling thread so sqlite writer contention cannot stall the loop.
-            self._materialize_stream_buffer_deferred(message)
+            if self._stream_chunks_by_message.get(message.id):
+                self._materialize_stream_buffer_deferred(message)
         return [
             self._snapshot(message) for message in self._messages_by_session[session_id]
         ]

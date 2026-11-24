@@ -464,6 +464,32 @@ def _run_census(tmp_path: Path, script: str = _CENSUS_SCRIPT, *args: str) -> dic
     return json.loads(payloads[-1])
 
 
+def test_library_construction_projects_notes_sync_without_importing_the_engine(
+    tmp_path: Path,
+) -> None:
+    _run_census(
+        tmp_path,
+        """
+import sys
+
+from tldw_chatbook.app import TldwCli
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+engine = {
+    "tldw_chatbook.Notes.notes_sync_runtime",
+    "tldw_chatbook.Notes.notes_sync_executor",
+}
+app = TldwCli()
+assert not engine.intersection(sys.modules)
+screen = LibraryScreen(app)
+snapshot = screen._library_notes_sync_controller._runtime.snapshot()
+assert (snapshot.status, snapshot.next_action, snapshot.roots) == ("starting", "wait", ())
+assert not engine.intersection(sys.modules), engine.intersection(sys.modules)
+print("BUDGET_JSON:{}")
+""",
+    )
+
+
 def _route_table(census: dict) -> str:
     rows = sorted(census["routes"], key=lambda r: -r["added_loc"])
     return "\n".join(

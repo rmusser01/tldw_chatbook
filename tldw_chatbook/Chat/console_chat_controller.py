@@ -17684,6 +17684,10 @@ class ConsoleChatController:
             self, session_id, record_user_stop=record_user_stop
         ):
             return True
+        from .console_native_commit import request_ordinary_native_commit_stop
+
+        if request_ordinary_native_commit_stop(self, session_id):
+            return True
         from .console_preparation_reads import preparation_tasks_for
 
         # TASK-33621.22: an accepted run's setup owns its Stop; a read then in
@@ -17702,18 +17706,6 @@ class ConsoleChatController:
                     self._cancel_task_on_owner_loop(task)
             # A concurrent read must not consume Stop for a live response.
             review_stopped = True
-        native_tasks = self._ordinary_native_commit_tasks(session_id)
-        if native_tasks:
-            with self._active_submit_tasks_lock:
-                for owner in self._ordinary_native_commits.values():
-                    if owner.session.id == session_id:
-                        owner.explicit_stop = True
-            self._signal_stop(session_id=session_id)
-            self.prompt_queue_coordinator.pause_for_stop(session_id)
-            for task in native_tasks:
-                if task is not asyncio.current_task():
-                    task.cancel()
-            return True
         if self.prompt_queue_coordinator.stop_pending_continuation(session_id):
             self._signal_stop(session_id=session_id)
             return True

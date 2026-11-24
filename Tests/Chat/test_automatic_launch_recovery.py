@@ -3,9 +3,10 @@
 import asyncio
 import sqlite3
 import threading
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 import pytest
+from loguru import logger
 
 from Tests.DB.test_automatic_wake_attempts import claim, survivor
 from Tests.DB.test_automatic_work_budget import chain
@@ -61,6 +62,88 @@ def test_discovery_reads_unmarked_claimed_results_without_recovery(native):
     )
     assert db.automatic_work.snapshot(chain_id).status == "active"
     assert not hasattr(app, "_console_runtime")
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(
+    "outcome", ["current", "new-source", "disabled", "closing", "cancelled"]
+)
+async def test_app_launch_discovery_retires_on_a_worker_before_delivery(
+    native, monkeypatch, outcome
+):
+    from tldw_chatbook.Backup_Recovery import storage_admission
+    from tldw_chatbook.app import TldwCli
+
+    app, db = native
+    survivor(db, chain(db))
+    db.close()
+    app._deferred_startup_tasks = set()
+    app.loguru_logger = logger
+    app._create_deferred_startup_task = MethodType(
+        TldwCli._create_deferred_startup_task, app
+    )
+    loop_thread = threading.get_ident()
+    started, release = threading.Event(), threading.Event()
+    discovery_threads = []
+    delivery_threads = []
+
+    def held_connect(owner, path, **kwargs):
+        thread = threading.get_ident()
+        discovery_threads.append(thread)
+        assert owner == "chat.launch_wake" and path == db.db_path
+        assert kwargs == {"read_only": True, "must_exist": True}
+        started.set()
+        if thread != loop_thread:
+            assert release.wait(5)
+        return connect_private_sqlite(owner, path, **kwargs)
+
+    def observe_delivery(current_app):
+        assert current_app is app
+        delivery_threads.append(threading.get_ident())
+
+    monkeypatch.setattr(launch, "connect_private_sqlite", held_connect)
+    monkeypatch.setattr(launch, "_ensure_launch_runtime", observe_delivery)
+    try:
+        TldwCli._schedule_launch_wake(app)
+        assert discovery_threads == [], "scheduling opened SQLite on the app loop"
+        (startup,) = app._deferred_startup_tasks
+        assert startup.get_name() == launch.LAUNCH_WAKE_TASK_NAME
+        assert await asyncio.to_thread(started.wait, 5)
+        assert discovery_threads != [loop_thread]
+        assert delivery_threads == []
+        assert not startup.done()
+
+        if outcome == "new-source":
+            app.chachanotes_db = SimpleNamespace(
+                db_path=db.db_path.parent / "replacement" / "notes.sqlite"
+            )
+        elif outcome == "disabled":
+            monkeypatch.setattr(launch, "autowake_enabled", lambda: False)
+        elif outcome == "closing":
+            app._shutting_down = True
+        elif outcome == "cancelled":
+            startup.cancel()
+            await asyncio.sleep(0)
+            assert not startup.done()
+
+        release.set()
+        if outcome == "cancelled":
+            with pytest.raises(asyncio.CancelledError):
+                await startup
+        else:
+            assert await startup == 0
+        assert delivery_threads == ([loop_thread] if outcome == "current" else [])
+        (worker_thread,) = discovery_threads
+        with storage_admission._lock:
+            assert not any(
+                lease.resource_path == db.db_path
+                and lease.resource_thread.ident == worker_thread
+                for lease in storage_admission._live_leases
+            )
+    finally:
+        release.set()
+        await asyncio.gather(*app._deferred_startup_tasks, return_exceptions=True)
 
 
 @pytest.mark.asyncio

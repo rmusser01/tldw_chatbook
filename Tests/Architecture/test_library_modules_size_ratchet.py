@@ -819,7 +819,8 @@ _BUDGETS: dict[str, int] = {
     # decision): P1-B's .17 begin_add_from_files / release-on-exit and .71
     # availability re-derive on top of P1-C's .16 activation hold, measured
     # on the rebased tree: 2415 -> 2461.
-    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2468,
+    # 2026-11-18, TASK-41605: 2467 + 14 for lazy runtime imports.
+    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2481,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based

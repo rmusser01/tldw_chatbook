@@ -25,6 +25,7 @@ What this pins:
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import tomllib
 import uuid
 from contextlib import contextmanager
@@ -468,6 +469,53 @@ def _lease_threads(db) -> list[str]:
             for lease in storage_admission._live_leases
             if lease.resource_path == path
         )
+
+
+@pytest.mark.parametrize("busy", [False, True], ids=["idle", "active-transaction"])
+async def test_app_unmount_retires_idle_evals_and_subscriptions_startup_handles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, busy: bool
+) -> None:
+    from tldw_chatbook.DB.Evals_DB import EvalsDB
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+
+    evals = EvalsDB(tmp_path / "evals.db")
+    subscriptions = SubscriptionsDB(tmp_path / "subscriptions.db")
+    stores = ((evals, "connection"), (subscriptions, "conn"))
+    handles = [getattr(db._local, slot) for db, slot in stores]
+    settled_leases = []
+    owner = _unmount_owner(
+        monkeypatch,
+        on_workers_settled=lambda: settled_leases.append(
+            [_lease_threads(db) for db, _ in stores]
+        ),
+        evaluation_orchestrator=SimpleNamespace(db=evals),
+        subscriptions_db=subscriptions,
+    )
+    try:
+        if busy:
+            for conn in handles:
+                conn.execute("BEGIN")
+                conn.execute("CREATE TABLE quit_probe (value INTEGER)")
+
+        await owner.on_unmount()
+
+        assert settled_leases == [[["MainThread"], ["MainThread"]]]
+        for (db, slot), conn in zip(stores, handles, strict=True):
+            if busy:
+                assert getattr(db._local, slot) is conn
+                assert conn.in_transaction
+                assert conn.execute("SELECT * FROM quit_probe").fetchall() == []
+                assert _lease_threads(db) == ["MainThread"]
+            else:
+                assert getattr(db._local, slot, None) is None
+                assert _lease_threads(db) == []
+                with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                    conn.execute("SELECT 1")
+    finally:
+        for db, slot in stores:
+            if busy and (conn := getattr(db._local, slot, None)) is not None:
+                conn.rollback()
+            db.close()
 
 
 @pytest.mark.parametrize("store", ["media", "dreams", "guardian"])

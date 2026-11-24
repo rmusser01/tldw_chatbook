@@ -604,26 +604,54 @@ def build_library_workspace_depth_state(
             recovery_copy="Select a workspace to preview workspace-specific context eligibility.",
         )
 
+    source_items: list[tuple[str, str, Mapping[str, Any]]] = []
+    for source_type, records in source_records.items():
+        item_type = _library_workspace_item_type(source_type)
+        for record in records:
+            item_id = _library_source_record_id(record)
+            if item_id is not None:
+                source_items.append((item_type, item_id, record))
+
+    memberships_by_item = None
+    read_memberships = getattr(registry_service, "get_memberships_for_items", None)
+    if source_items and callable(read_memberships):
+        try:
+            memberships_by_item = read_memberships(
+                (item_type, item_id) for item_type, item_id, _ in source_items
+            )
+        except Exception as exc:
+            logger.bind(exception_type=type(exc).__name__).warning(
+                "Grouped Library workspace membership read failed"
+            )
+
     workspace_name_cache: dict[str, str] = {}
     rows: list[LibraryWorkspaceSourceRow] = []
     # TASK-34000.24: resolved BEFORE the row loop so every row's recovery
     # copy names the workspace the same way the panel heading does.
     workspace_display_name = library_workspace_display_name(active_workspace)
     row_workspace_name = (
-        "" if workspace_display_name == NAMELESS_WORKSPACE_LABEL else workspace_display_name
+        ""
+        if workspace_display_name == NAMELESS_WORKSPACE_LABEL
+        else workspace_display_name
     )
-    for source_type, records in source_records.items():
-        for record in records:
-            row = _library_workspace_source_row(
+    for item_type, item_id, record in source_items:
+        memberships = (
+            _safe_item_memberships(registry_service, item_type, item_id)
+            if memberships_by_item is None
+            else memberships_by_item.get((item_type, item_id), ())
+        )
+        rows.append(
+            _library_workspace_source_row(
                 registry_service,
                 active_workspace,
-                source_type,
+                item_type,
+                item_id,
                 record,
+                memberships,
                 workspace_name_cache,
                 active_workspace_name=row_workspace_name,
             )
-            if row is not None:
-                rows.append(row)
+        )
     if not rows:
         return LibraryWorkspaceDepthState(
             heading="Workspaces",
@@ -939,18 +967,15 @@ def library_workspace_display_name(workspace: WorkspaceRecord) -> str:
 def _library_workspace_source_row(
     registry_service: Any,
     active_workspace: WorkspaceRecord,
-    source_type: str,
+    item_type: str,
+    item_id: str,
     record: Mapping[str, Any],
+    memberships: tuple[WorkspaceMembership, ...],
     workspace_name_cache: dict[str, str],
     *,
     active_workspace_name: str = "",
-) -> LibraryWorkspaceSourceRow | None:
-    item_type = _library_workspace_item_type(source_type)
-    item_id = _library_source_record_id(record)
-    if not item_id:
-        return None
+) -> LibraryWorkspaceSourceRow:
     title = _library_source_record_title(record, item_id)
-    memberships = _safe_item_memberships(registry_service, item_type, item_id)
     workspace_ids = tuple(membership.workspace_id for membership in memberships)
     decision = evaluate_workspace_eligibility(
         active_workspace_id=active_workspace.workspace_id,

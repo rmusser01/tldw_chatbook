@@ -6,6 +6,7 @@ This document describes the lasting file↔DB notes sync: the runtime owner, the
 
 | File | Role |
 | --- | --- |
+| `Notes/notes_sync_models.py` | Shared validated models, including the path-free root and runtime snapshots used during cold Library construction |
 | `Notes/notes_sync_runtime.py` | `NotesSyncRuntimeOwner` — app-owned runtime: `start`, `_reconcile`, `review_setup`, `check_root`, `request_sync_now`, `apply_reviewed`, `pause_root`/`resume_root`/`activate_root`, `shutdown` |
 | `Notes/notes_sync_reconciler.py` | `plan_reconciliation()` — classifies immutable observations **without selecting winners** |
 | `Notes/notes_sync_executor.py` | `NotesSyncExecutor` — durable, recovery-first execution of reviewed actions |

@@ -214,6 +214,39 @@ def real_fts_app(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_native_media_keyword_search_omits_unused_count() -> None:
+    db = MediaDatabase(":memory:", client_id="media-keyword-page")
+    try:
+        for title in ("Kestrel north", "Kestrel south", "Kestrel east", "Unrelated"):
+            media_id, _, _ = db.add_media_with_keywords(
+                title=title, media_type="document", content=f"Report: {title}."
+            )
+            assert media_id is not None
+        scope = MediaReadingScopeService(LocalMediaReadingService(db), None)
+        app = SimpleNamespace(media_reading_scope_service=scope)
+        query = "kestrel"
+        expected = await scope.search_media(
+            query=query, limit=2, fts_match_query=build_fts_match_query(query)
+        )
+        connection = db.get_connection()
+        traced = []
+        connection.set_trace_callback(traced.append)
+        try:
+            payload = await LibraryLocalRagSearchService(app).search(
+                query, ("media",), "search", top_k=2
+            )
+        finally:
+            connection.set_trace_callback(None)
+        assert expected["total"] == 3
+        assert [row["source_id"] for row in payload["results"]] == [
+            str(row["source_id"]) for row in expected["items"]
+        ]
+        assert not any("COUNT(m.id)" in sql for sql in traced)
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "query",
     [

@@ -234,6 +234,35 @@ def group_console_transcript_messages(
     return tuple(units)
 
 
+def build_transcript_unit_spans(
+    messages: list[ConsoleChatMessage],
+    units: Iterable[ConsoleTranscriptUnit] | None = None,
+) -> tuple[tuple[int, int, str, tuple[str, ...]], ...]:
+    """Build one causal span lookup entry per message index."""
+    index_by_id = {message.id: offset for offset, message in enumerate(messages)}
+    spans: list[tuple[int, int, str, tuple[str, ...]] | None] = [None] * len(messages)
+    if units is None:
+        units = group_console_transcript_messages(messages)
+    for unit in units:
+        if unit.standalone is not None:
+            standalone = unit.standalone
+            start = index_by_id[standalone.id]
+            spans[start] = (start, start + 1, standalone.id, (standalone.id,))
+            continue
+        turn = unit.assistant_turn
+        assert turn is not None
+        start = index_by_id[turn.assistant.id]
+        end = start + len(turn.owned_message_ids)
+        span = (start, end, turn.assistant.id, turn.owned_message_ids)
+        spans[start:end] = [span] * (end - start)
+    return tuple(
+        span
+        if span is not None
+        else (index, index + 1, messages[index].id, (messages[index].id,))
+        for index, span in enumerate(spans)
+    )
+
+
 def visual_messages(
     units: Iterable[ConsoleTranscriptUnit],
 ) -> Iterator[ConsoleChatMessage]:

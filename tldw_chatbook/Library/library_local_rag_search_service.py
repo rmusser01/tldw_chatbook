@@ -733,11 +733,23 @@ class LibraryLocalRagSearchService:
         service = getattr(self._app, "media_reading_scope_service", None)
         if service is None:
             return SeamState.UNAVAILABLE, []
-        # Forward the allowlist only when provided so an unscoped call
-        # keeps the exact legacy call shape (byte-identical, spec D2).
-        allowlist_kwargs = (
+        from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+        from tldw_chatbook.Media.local_media_reading_service import (
+            LocalMediaReadingService,
+        )
+        from tldw_chatbook.Media.media_reading_scope_service import (
+            MediaReadingScopeService,
+        )
+
+        search_kwargs: dict[str, Any] = (
             {"id_allowlist": id_allowlist} if id_allowlist is not None else {}
         )
+        if (
+            type(service) is MediaReadingScopeService
+            and type(service.local_service) is LocalMediaReadingService
+            and type(service.local_service.media_db) is MediaDatabase
+        ):
+            search_kwargs["include_total"] = False
 
         async def run_match(fts_match_query: str) -> list[dict[str, Any]]:
             payload = await service.search_media(
@@ -746,7 +758,7 @@ class LibraryLocalRagSearchService:
                 limit=top_k,
                 offset=0,
                 fts_match_query=fts_match_query,
-                **allowlist_kwargs,
+                **search_kwargs,
             )
             items = payload.get("items", []) if isinstance(payload, Mapping) else []
             return [_media_row(item) for item in items if isinstance(item, Mapping)]

@@ -37,6 +37,16 @@ App-level state includes the DB handles (`media_db`, `prompts_db`, `subscription
 
 `action_quit` runs as `run_worker(group="application-quit", exclusive=True, exit_on_error=False)`, consults the current screen's `confirm_quit`/`prepare_for_quit` and the console-runtime quit confirmation; any pre-quit failure keeps the app alive with a notify.
 
+### Main database retirement
+
+On ordinary Quit, the unmount path settles app-owned work before retiring idle
+file-backed database handles. Stores with an idle registry retire through that
+registry. The Evals and Subscriptions startup handles use their native
+calling-thread `close()` on the UI thread. The quit checkpoint uses the existing
+bounded SQLite wait. An active transaction keeps its connection, and worker
+connections retain their original owners. See
+[ADR-126](../../backlog/decisions/126-complete-local-backup-and-recovery.md).
+
 ## Navigation system
 
 ### Bug report action
