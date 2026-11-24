@@ -1881,42 +1881,25 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             prompt.scroll_visible, animate=False, immediate=True, force=True
         )
 
-    def apply_pane_width(self, pane_width: int) -> None:
-        """Take a freshly resolved Items width; re-shape only if it shrank.
+    def apply_pane_width(self, pane_width: int) -> bool:
+        """Record the resolved Items width and recompose a clipped toolbar.
 
-        task-32557: ``pane_width`` used to arrive only with a state sync, so
-        after a resize the toolbar kept deciding its shape from the width it
-        had at its last compose. Live, a 235-column list merged its two
-        action groups (pane 138), the terminal was narrowed to 60, and the
-        merged row stayed -- painting "Add from files…" as "Add from"
-        against the grip of a 50-column pane. The screen now hands the
-        resolved width straight over.
-
-        Only a SHRINK re-shapes, and that asymmetry is the point: a shape
-        too wide for its pane paints half words, which is a correctness
-        defect and has to be answered this frame; a shape too narrow for its
-        pane only leaves space, and can wait for the compose that is coming
-        anyway (compose always reads the current width). Re-shaping on
-        growth too would recompose on every breakpoint crossing and cost the
-        in-place responsive path its widget identity -- pinned by
-        ``test_library_note_compact_labels_round_trip_without_recompose``.
-
-        A GROWN width is still RECORDED, without refreshing (review M1).
-        ``_effective_pane_width`` gives this attribute priority over the
-        measured width, so dropping a grown width on the floor left
-        235 -> 60 -> 235 composing the 50-cell shape into a 138-cell pane
-        until an unrelated state sync re-stamped it -- a state dev never
-        reaches, because dev's ``pane_width`` never moves off its compose
-        value. Recording it means the next compose reads the true width.
+        Task-32557: on shrink the old rows can clip actions like "Add from
+        files…". Growth records the width for the next compose and keeps
+        the live widgets. The caller can queue a restore on the repaint
+        that actually replaces the rows.
 
         Args:
             pane_width: The Items width the reader layout just resolved.
+
+        Returns:
+            Whether a recompose was requested.
         """
         if pane_width <= 0:
-            return
+            return False
         if self.pane_width and pane_width >= self.pane_width:
             self.pane_width = pane_width
-            return
+            return False
         before = self._toolbar_decisions(self._effective_pane_width())
         self.pane_width = pane_width
         if self.mode == "list" and (
@@ -1924,6 +1907,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             or self._tree_actions_need_repack()
         ):
             self.refresh(recompose=True)
+            return True
+        return False
 
     def _effective_work_width(self) -> int:
         """The width the editor header shapes itself to.

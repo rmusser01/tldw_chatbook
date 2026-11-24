@@ -2270,25 +2270,24 @@ class LibraryNotesController:
         return True
 
     def _restore_library_notes_after_targeted_sync(
-        self, identity: LibraryNotesFocusIdentity
+        self,
+        identity: LibraryNotesFocusIdentity,
+        guard: _LibraryNotesRestoreGuard | None = None,
     ) -> None:
         """Restore portable Notes focus + scroll after a canvas-scoped sync.
 
-        task-15457 review round 1. The whole-screen seam does this through
-        ``_rehydrate_library_notes_after_recompose``; a canvas-scoped sync
-        never reaches ``LibraryScreen.refresh``, so it needs its own entry
-        into the same restore. No ``_LibraryNotesRestoreGuard`` is passed:
-        the guard exists to invalidate a DEFERRED restore that a newer
-        navigation intent has superseded, and this one runs synchronously
-        from the canvas's own ``recompose``, against the state that was
-        captured moments earlier in the same handler.
+        The canvas owns the recompose (task-15457). A late resize repaint
+        carries a guard so newer focus or scroll intent wins.
 
         Args:
             identity: The portable identity captured before the sync.
-
-        Returns:
-            None.
+            guard: The captured resize intent when restoring a resize.
         """
+        if guard is not None and (
+            not self._library_notes_restore_guard_is_current(guard)
+            or self._file_notes_active()
+        ):
+            return
         # task-32052 AC#1: never replay an identity captured on a DIFFERENT
         # surface. ``_sync_library_canvas``'s own skip only watches the WORK
         # pane's mode, so a list -> create switch slipped through and the
@@ -2323,19 +2322,19 @@ class LibraryNotesController:
             # land on a hidden Database control.
             or self._file_notes_active()
         ):
-            self._restore_library_notes_focus_identity(identity)
+            self._restore_library_notes_focus_identity(identity, guard)
             # Review r15lf-rev3: name this landing; an entry armed by the
             # sync's own ``then`` must not be revoked by its focus event.
             self._screen._library_entry_restore_landing = self.focused
-        # Scroll SECOND and deferred. The restore above already attempts it,
-        # but at this point the freshly mounted children have not been laid
-        # out yet -- the container's max scroll is still 0, so ``scroll_to``
-        # clamps the offset away (measured: a 12-row offset restored as 0).
-        # The whole-screen seam never hits this because it restores from
-        # ``call_after_refresh``, i.e. after a display refresh; re-applying
-        # from the same primitive here gives the offset a laid-out container
-        # to land in. Idempotent, so the earlier attempt costs nothing.
-        self.call_after_refresh(self._restore_library_notes_scroll_offset, identity)
+        # A freshly mounted list has no scroll range until layout. The
+        # resize path also watches the owner if that layout arrives later.
+        if guard is None:
+            self.call_after_refresh(self._restore_library_notes_scroll_offset, identity)
+        else:
+            self.call_after_refresh(
+                self._restore_library_notes_scroll_after_layout, identity, guard
+            )
+
     def _restore_library_notes_scroll_offset(
         self,
         identity: LibraryNotesFocusIdentity,
@@ -5576,10 +5575,10 @@ class LibraryNotesController:
         # as pressing Dismiss would.
         self._library_note_delete_receipt = None
         self._evacuate_library_notes_authority_focus("database")
-        self._supersede_library_notes_navigation()
-        # Database Notes and Folder Files are independent retained authorities.
-        # The database coordinator has already flushed above; keep its loaded
-        # selection/editor projection so returning from Folder Files resumes it.
+        self._supersede_library_notes_navigation(render=False)
+        _sync_library_canvas(
+            self, "notes", allow_screen_fallback=False, sync_notes_work=False
+        )
         if self._library_file_notes_workspace is None:
             self._library_file_notes_workspace = (
                 self._library_file_notes_workspace_factory()

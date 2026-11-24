@@ -5223,7 +5223,11 @@ class LibraryScreen(BaseAppScreen):
                 self._notes_state.interaction_focus,
                 self._notes_state.last_presented_focus,
             ):
-                if cached is not None and cached.region == "navigator":
+                if (
+                    cached is not None
+                    and cached.region == "navigator"
+                    and cached.semantic_role
+                ):
                     focus = cached
                     break
         notes_list = self._library_notes_scroll_owner("navigator")
@@ -5232,6 +5236,24 @@ class LibraryScreen(BaseAppScreen):
             if notes_list is not None
             else focus.scroll_offset
         )
+        # Keep a resize-clamped offset for the wide return until the user scrolls.
+        resize_focus = self._notes_state.responsive_focus_memory
+        if (
+            self._notes_state.compact
+            and notes_list is not None
+            and scroll_offset is not None
+            and resize_focus is not None
+            and resize_focus.scroll_offset is not None
+            and focus.stage == resize_focus.stage == "notes"
+            and focus.region == resize_focus.region == "navigator"
+            and focus.note_id == resize_focus.note_id
+            and focus.semantic_role == resize_focus.semantic_role
+            and self._notes_state.scroll_intent_generation
+            == self._notes_state.transition_scroll_generation
+            and scroll_offset[1] == notes_list.max_scroll_y
+            and scroll_offset[1] < resize_focus.scroll_offset[1]
+        ):
+            scroll_offset = (scroll_offset[0], resize_focus.scroll_offset[1])
         resolved_note_id = note_id or str(focus.note_id or "")
         semantic_role = focus.semantic_role or "filter"
         if resolved_note_id:
@@ -5348,12 +5370,8 @@ class LibraryScreen(BaseAppScreen):
                 force=True,
                 immediate=True,
             )
-        # task-32055: repeat the restore once layout has settled -- the
-        # caller used to queue this itself with a ``receipt.focus`` that
-        # does not exist (it raised instead, taking the whole Escape/back
-        # handler with it). The identity is the one built above, so the
-        # settled pass restores the same row AND its scroll offset, which
-        # the first pass loses to the post-switch layout.
+        # The first restore can precede layout; reapply the same tuple once
+        # the row and scroll owner have usable geometry (task-32055).
         self._queue_library_notes_settled_focus_restore(focus, guard)
 
     async def _reload_library_notes_browse_return_receipt(
@@ -6256,21 +6274,9 @@ class LibraryScreen(BaseAppScreen):
             LIBRARY_NOTES_READER_PROFILE,
             previous=previous,
             priority=priority,
-            # task-32127: while the work pane holds only "Select a note to
-            # edit it here.", its width belongs to the list. Opening a note
-            # hands it straight back.
-            #
-            # task-32544/32547: the New note view is the OTHER thing that
-            # fills the work pane, and it is not a ``view`` at all -- the
-            # canvas switches to create mode on ``_library_selected_row_id``
-            # while ``_notes_state.view`` stays "list" (see
-            # ``_build_library_notes_state``'s mode ladder, and
-            # ``_library_notes_focus_region``'s first branch). Reading only
-            # ``view`` therefore told the resolver the work pane was empty:
-            # at 235 the empty list kept 138 columns while "Ready · Next:
-            # Press Blank note, or choose a template." wrapped inside 48,
-            # and at 60 the ``list_first_when_empty`` rule kept the list on
-            # the whole stage so Blank note never appeared at all.
+            # The empty reader gives width to the list (task-32127).
+            # New note needs the reader while view still says "list"
+            # (tasks 32544 and 32547).
             reader_has_item=(
                 self._notes_state.view != "list"
                 or self._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE
@@ -6278,18 +6284,27 @@ class LibraryScreen(BaseAppScreen):
         )
         shell.sync_layout(layout, manual_reopen=manual_reopen)
         self._notes_state.reader_layout = layout
-        # task-32557: the canvas used to learn its pane width only from the
-        # next state sync, so after a resize its toolbar kept the shape the
-        # PREVIOUS width chose -- a merged row inside a pane 88 cells
-        # narrower, painting "Add from files…" as "Add from". Hand the
-        # resolved width straight over; the canvas re-shapes only when it
-        # shrank (see ``apply_pane_width``).
+        # A toolbar recompose can replace the rows after the resize restore.
+        focused = self.focused
         for canvas in self.query("#library-notes-canvas"):
-            canvas.apply_pane_width(layout.items_width)
-        # TASK-34000.8: and the EDITOR pane's width to the work pane, so the
-        # note header's shape follows the pane it lives in (one row or
-        # stacked), not the shell's 120-column breakpoint -- at 120x36 the
-        # pane is 48 cells and Save was painted off the terminal.
+            if (
+                canvas.apply_pane_width(layout.items_width)
+                and self._notes_state.resize_settling
+                and self._notes_state.view == "list"
+                and focused is not None
+                and canvas in focused.ancestors
+            ):
+                canvas.queue_default_after_recompose(
+                    partial(
+                        self._notes_controller._restore_library_notes_after_targeted_sync,
+                        self._capture_library_notes_focus_identity(),
+                        _LibraryNotesRestoreGuard(
+                            scroll_generation=self._notes_state.scroll_intent_generation,
+                            focus_generation=self._notes_state.focus_intent_generation,
+                        ),
+                    )
+                )
+        # The editor header follows its own pane width (TASK-34000.8).
         for work_pane in self.query("#library-note-work-pane"):
             work_pane.apply_work_width(layout.reader_width)
 
@@ -20939,13 +20954,7 @@ class LibraryScreen(BaseAppScreen):
         return self._notes_controller._handle_file_notes_root_changed(event)
 
     async def _return_to_library_database_notes(self) -> None:
-        """Leave File Notes and return to the Database Notes view.
-
-        Shared by the "Database" strip button and the Files-mode Escape key
-        (task-2850) so both exits honor the identical flush/leave-guard
-        sequence -- one seam, not a parallel key-driven path that could
-        drift from the button's.
-        """
+        """Return through the same guarded exit for the source button and Escape."""
         if self._prompts_state.mutation_in_flight:
             return
         if self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE:
@@ -20996,19 +21005,10 @@ class LibraryScreen(BaseAppScreen):
             if self._notes_state.view == "editor":
                 pass
             elif receipt is None:
-                # task-2856 AC1: this lands on the Notes LIST (never Files'
-                # own editor state), so re-focus its first row the same way
-                # every other "enter/return to a list" seam does.
+                # Land on the first Database row when there is no receipt.
                 self._arm_library_list_entry_focus()
             elif retained_switch:
-                # task-32055: this used to queue a second, settled restore
-                # with ``receipt.focus`` -- an attribute
-                # ``LibraryNotesTreeReceipt`` has never had, so leaving
-                # Files with a captured browse receipt raised
-                # ``AttributeError`` and killed the Escape/back handler
-                # outright (found the moment Escape stopped being swallowed
-                # by a folder change). The restore below already rebuilds
-                # the focus identity from the receipt and queues it.
+                # The retained canvas needs no screen refresh before replay.
                 self.call_later(
                     self._restore_library_notes_browse_return_receipt,
                     receipt,
