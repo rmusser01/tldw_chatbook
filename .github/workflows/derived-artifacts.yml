@@ -1551,6 +1551,11 @@ jobs:
     # provider failure copy file (whole file on the bootstrap profile through
     # Tests/conftest.py, so after Tool_Packs), 18 tests, 8.8 s at load 12. This
     # job's last PR runs took 7.1-10.3 min of the 20; +~2.3 min at 2.6x.
+    # TASK-42516 (2026-11-24): the v77 and v75 ChaChaNotes migration files, red
+    # on dev unseen. Tests/conftest.py keeps Tests/DB on the bootstrap profile
+    # (the v75 file is also marked), so after Tool_Packs; run sandboxed with a
+    # RecoveryRequired recorder, neither read config. 50 tests 27.2 s and
+    # 6 tests 4.5 s serially with this step's flags at load 13-14.
     name: Dreams tracking tests and unlaned riders
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -1608,6 +1613,8 @@ jobs:
             Tests/Chat/test_console_trace_retry_recovery_proof.py \
             Tests/Chat/test_console_failed_call_retry_ownership.py \
             Tests/Chat/test_console_provider_failure_copy.py \
+            Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py \
+            Tests/DB/test_chachanotes_v75_hook_continuation_receipts_migration.py \
             Tests/Backup_Recovery/test_character_presentation_cadence.py \
             --timeout=180 \
             --tb=short

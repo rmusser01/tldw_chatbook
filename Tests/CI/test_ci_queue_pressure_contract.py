@@ -533,6 +533,10 @@ DREAMS_TRACKING_RIDERS = (
     # TASK-42515 (round 25): bootstrap_profile (Tests/conftest.py keeps the
     # whole file on it), so after Tool_Packs.
     "Tests/Chat/test_console_provider_failure_copy.py",
+    # TASK-42516 (round 25): Tests/conftest.py keeps Tests/DB on the bootstrap
+    # profile, so after Tool_Packs.
+    "Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py",
+    "Tests/DB/test_chachanotes_v75_hook_continuation_receipts_migration.py",
     # TASK-42468: bootstrap_profile, so after Tool_Packs (nothing sandboxed
     # may follow it).
     "Tests/Backup_Recovery/test_character_presentation_cadence.py",
