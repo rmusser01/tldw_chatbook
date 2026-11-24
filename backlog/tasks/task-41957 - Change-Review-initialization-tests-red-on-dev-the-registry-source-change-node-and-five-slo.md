@@ -51,5 +51,7 @@ The light CI tier (TASK-42521) ran this file whole on #3688 and stopped it. Chec
 
 **Fix.** `Workspaces/change_review_ownership.py::_SnapshotTicket.returned` still tries the source's scope first. If the scope refuses, the operation finishes under the original owner's activation instead, so a replaced source can no longer keep its slot.
 
-**Evidence.** The file goes from 5 failed / 21 passed to 26 passed. Comparing the related Change Review suites with dev: see the PR.
+**Evidence.**
+- The file goes from 5 failed / 21 passed to 26 passed, on macOS and on Linux.
+- 14 related files (Change Review consent, git, custody, ownership and initialization; unproven cleanup; turn context and admission; workflow scheduling; the opener, runtime-ownership and Settings UI files), at `-n 4` against a clean dev export: 46 failed on this branch and 54 on dev. Only the 9 repaired nodes differ, apart from `test_native_change_review_ownership.py::test_original_opaque_claim_is_borrowed_and_bounded_claim_refuses`, which is flaky on both trees (run alone: dev failed 3 of 3, this branch 2 of 3).
 <!-- SECTION:NOTES:END -->
