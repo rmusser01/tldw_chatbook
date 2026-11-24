@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-23 06:38
-updated_date: 2026-11-23 20:23
+updated_date: 2026-11-24 01:53
 labels:
 - follow-up
 - console
@@ -33,12 +33,13 @@ Found during round 22 of the follow-up burn-down (2026-11-23), by TASK-42412 and
 **A second gap.** `_rolled_back_refusal` (`Chat/console_trace_runtime.py:84`) re-raises a coded `ValueError` as `TraceReservationRefused(code)` from it. The cause walk records the innermost exception, so the diagnostic never shows that the Send was refused at reservation.
 
 The set is code-owned on purpose (its comment, line 20: never derive a token from arbitrary error text), so the fix keeps codes exact and logs no free text.
+**AC amendment (2026-11-23, round-24 review).** AC#1 and AC#2 now cover every `Chat/console_trace_*.py` module, and the codes the typed refusals carry themselves. Why: review found that `_rolled_back_refusal`'s own fallback code, `trace_reservation_refused`, was missing from the set, because the scan matched only bare `ValueError` calls. The coordinator also chose to burn down the other trace modules' codes here, rather than file them as a follow-up; they reach the reservation through the same `TraceReservationRefused` wrapper.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 Every coded `ValueError` the two trace modules raise is either logged under its own code by the send diagnostic, or listed in the notes with the reason it stays `validation`
-- [x] #2 A test fails when a trace module raises a coded `ValueError` the diagnostic does not know, so the set cannot drift again; it is shown red with one code removed from the set
+- [x] #1 Every coded `ValueError`, `TraceReservationRefused` or `TraceSurfaceChangeRefused` that a `Chat/console_trace_*.py` module raises is either logged under its own code by the send diagnostic, or listed in the notes with the reason it stays `validation`
+- [x] #2 A test fails when any trace module raises a coded `ValueError` or typed refusal (including a `code or "<literal>"` fallback) the diagnostic does not know, so the set cannot drift again; it is shown red with one code removed from the set
 - [x] #3 A Send refused at trace reservation logs both the refusal (`TraceReservationRefused`) and its code; a test shows it and fails on the current code
 - [x] #4 No free error text reaches the diagnostic, and the existing send-diagnostic tests pass unedited
 <!-- AC:END -->
@@ -50,33 +51,55 @@ The set is code-owned on purpose (its comment, line 20: never derive a token fro
 3. Cause walk: stop at the first exception that names a trace refusal: the typed refusals `TraceReservationRefused` / `TraceSurfaceChangeRefused` (always), or a plain `ValueError` whose code is in the set. Log its type and code, so a reservation refusal reads `exception_type=TraceReservationRefused error_category=<code>`.
 4. Red/green: a real refused reservation through the gateway's `_reserve_trace_call`, inside a send-diagnostic scope, logs both; red on base (it logs `ValueError`).
 5. Run the existing send-diagnostic tests unedited, plus the covering trace tests.
+6. (Review, AC#1/#2 amended.) Widen the scan to every `Chat/console_trace_*.py`, to `builtins.ValueError`, and to the typed refusals' constructors, including `code or "<literal>"` and module-constant arguments. List every non-literal raise site it cannot check, with a reason. Add the new codes, including `trace_reservation_refused`, and set the floor to the measured count.
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-The send diagnostic now names every coded refusal the two trace modules raise, and a reservation refusal logs as `exception_type=TraceReservationRefused error_category=<code>`.
+The send diagnostic now names every code-shaped refusal that a `Chat/console_trace_*.py` module raises: 209 codes from 22 modules. A reservation refusal logs as `exception_type=TraceReservationRefused error_category=<code>`.
 
 **Approach.**
-- *The set.* `_TRACE_FAILURE_CATEGORIES` (`Chat/console_send_diagnostics.py`) stays an exact, code-owned list, because the module's rule is that no token is ever derived from error text. It now holds all 86 literal `ValueError("<code>")` codes in `Chat/console_trace_service.py` and `Chat/console_trace_runtime.py`, plus `provider_name` and `model_name` (88 in all). Those two are the literal field names that `_required_string` raises as `ValueError(field_name)`. No code stays `validation` (AC#1).
-- *The drift guard* is `test_every_coded_trace_refusal_has_a_send_diagnostic_category`. It AST-scans both modules for every `ValueError(<str literal>)` and every `_required_string(..., "<field>")`, and fails on a code the set lacks. It also fails on any `ValueError(...)` whose argument is not a literal (outside `_required_string`), since nothing could check that one. A floor (`> 80` codes) keeps an empty scan from passing. I chose a test-time derivation over a runtime one: a runtime parse of the 6.7k-line module would cost every first failure, and a regex match would derive tokens from text.
-- *The cause walk.* It stops at the first exception that names a trace refusal: a `TraceReservationRefused` or `TraceSurfaceChangeRefused` (always), or a plain `ValueError` whose argument is a known code. Before, it went on to the innermost exception. A typed refusal's argument is logged only when it is a known code; any other argument logs `validation` (AC#4).
-- *Side effect, intended.* A coded `ValueError` raised `from` another error now logs its code instead of the inner error's type. For example, `surface_value_unavailable` or `request_header_component_invalid` raised from a `json.JSONDecodeError` used to log `JSONDecodeError`/`validation`. Neither module raises a code inside a `sqlite3` handler, so no `sqlite_code` is lost.
-- *Import.* `console_trace_errors` is a dependency-free leaf that is already boot-resident (`ui_ready_modules.txt`), so the new import adds no module to the first-send warm-up.
+- *The set.* `_TRACE_FAILURE_CATEGORIES` (`Chat/console_send_diagnostics.py`) stays an exact list written by hand, because the module's rule is never to make a token from error text. It holds:
+  - every code-shaped literal (`[a-z][a-z0-9_]*`) passed to `ValueError`, `builtins.ValueError`, `TraceReservationRefused` or `TraceSurfaceChangeRefused`, including the `code or "<literal>"` fallback (`trace_reservation_refused`) and module-constant arguments (`custom_pii_invalid_batch`);
+  - the literal field names passed to `_required_string` (`provider_name`, `model_name`).
+- *The drift guard* is `test_every_coded_trace_refusal_has_a_send_diagnostic_category`, with `_trace_refusal_codes()` in the same file. It reads every `console_trace_*.py` file's syntax tree (AST) and:
+  - fails on a code the set lacks;
+  - fails on any raise whose argument it cannot prove literal, unless that site is in `_UNCODED_TRACE_VALUE_ERRORS`;
+  - fails below a floor of 209 codes, the count measured on 2026-11-23, so a scan that finds nothing cannot pass.
+
+  I chose a test-time derivation over a runtime one: parsing the modules at runtime would cost every first failure, and matching a regex would make tokens from text.
+- *The cause walk.* It stops at the first exception that names a trace refusal: a `TraceReservationRefused` or `TraceSurfaceChangeRefused` (always), or a plain `ValueError` whose argument is a known code. Before, it went on to the innermost exception. A typed refusal's argument is logged only when it is a known code; any other argument logs `validation` (AC#4). The code is now held in `trace_code`, so the name `code` is used only for the sqlite error code (review M3).
+- *Side effect, intended.* A coded `ValueError` raised `from` another error now logs its code instead of the inner error's type. For example, `surface_value_unavailable` raised from a `json.JSONDecodeError` used to log `JSONDecodeError`/`validation`. No trace module raises a code inside a `sqlite3` handler, so no `sqlite_code` is lost.
+- *Import.* `console_trace_errors` is a dependency-free leaf that is already loaded at boot (`ui_ready_modules.txt`), so the import adds no module to the first-send warm-up.
+
+**What stays `validation`, and why (AC#1).**
+- *Non-literal raise sites*, listed in `_UNCODED_TRACE_VALUE_ERRORS`:
+  - `console_trace_service._required_string`: its callers' literal names are scanned as codes.
+  - `console_trace_maintenance._validate_utc_timestamp`, and `console_trace_repository._validate_token`, `_nonempty`, `_json_object` and `_canonical_json_value`: each raises the name of a malformed field of an internal record. Some callers pass that name through a variable (for example a loop at `console_trace_repository.py:566`), so no scan can prove it.
+  - `console_trace_redaction.__init__` and `redact_pii_value`, and `console_trace_regex_worker.__post_init__`: each raises a constructor bound's name taken from a literal `(value, name)` table.
+  - `console_trace_projection._decode_legacy_row`: a legacy capture row's field name, from a read path, not a Send.
+- *Formatted messages* (f-strings, 9 sites in `console_trace_models` validators): free text, never a code.
+- *Two bare `raise ValueError`* (`console_trace_regex_worker.py:406` and `:426`): no argument, so no code.
+- *42 prose literals.* A message with spaces cannot be a log token: the persistent schema's token rule would write it as `invalid`. They are: `available provider shadow is content-bearing`; `checkpoint unavailable`; `content_kind must not be empty`; `credential_filter_version must not be empty`; `duplicate flags`; `invalid revision`; `masked key collision`; `omitted_count must be a non-negative integer`; `pii_ruleset_revision_id is required when PII redaction is enabled`; the eight `promoted call/aggregate ...` messages; `reason must be a TraceOmissionReason`; `replacement range must be ordered`; the 16 `report ...` messages; `route must be a ConsoleRequestRoute`; `sanitized key collision`; `settlement timestamps`; `source must be a TraceProvenanceSource`; `trace lineage cycle`; `trace lineage unavailable`; `transform must be a TraceTransformKind`.
 
 **Red/green.**
-- AC#2, the parity test:
-  - Red at base: `assert ['available_b...y_value', ...] == []` (73 codes missing).
-  - Red with only `surface_replacement_checkpoint_unavailable` removed from the set: `assert ['surface_rep..._unavailable'] == []`.
-  - Green with the full set.
-- AC#3, `test_a_refused_reservation_logs_the_refusal_and_its_code`: a real refused reservation (`trace_revision_unavailable`) through `ConsoleProviderGateway._reserve_trace_call`, inside a send-diagnostic scope. It is red at base (`assert 'ValueError' == 'TraceReservationRefused'`) and green now. It also asserts that neither the draft text nor the opaque revision id reaches the recorded fields.
-- Live check, using TASK-42412's forced reproduction: a temporary 8 s sleep in `_read_default_stop`, with the test's stop-path wait removed. Both edits were reverted. The child's line read `error_category=surface_replacement_checkpoint_unavailable exception_type=TraceReservationRefused phase=trace_reservation`; base logged `ValueError`/`validation`.
+- AC#2, the scan:
+  - First version (two modules): red at base, `assert ['available_b...y_value', ...] == []`, 73 codes missing. Red with only `surface_replacement_checkpoint_unavailable` removed from the set.
+  - Widened version: red against the first version's 88-code set, 121 codes missing, among them `trace_reservation_refused` and `custom_pii_invalid_batch`. Red with only `trace_reservation_refused` removed: `assert ['trace_reservation_refused'] == []`.
+  - Green with the full set. Each of the ten `_UNCODED_TRACE_VALUE_ERRORS` rows is used: emptying the table lists 17 unchecked sites.
+- AC#3, `test_a_refused_reservation_logs_the_refusal_and_its_code`: a real refused reservation (`trace_revision_unavailable`) through `ConsoleProviderGateway._reserve_trace_call`, inside a send-diagnostic scope. Red at base (`assert 'ValueError' == 'TraceReservationRefused'`), green now. It also asserts that neither the draft text nor the opaque revision id reaches the recorded fields.
+- Live check, using TASK-42412's forced reproduction (a temporary 8 s sleep in `_read_default_stop`, the stop-path wait removed, both reverted): the child's line read `error_category=surface_replacement_checkpoint_unavailable exception_type=TraceReservationRefused phase=trace_reservation`. Base logged `ValueError`/`validation`.
 
-**Runs (`-n 4`, load 15-33).**
-- New file + `Tests/Chat/test_console_send_diagnostics.py` + `Tests/Chat/test_console_trace_surface_refusal_diagnostics.py`: soaked 20 times, 20/20 runs and 400/400 tests passed at load 15-22. The last two files are unedited (AC#4).
-- Trace runtime/service, submit blocker, capture triggers, durable-commit diagnostics and the other `record_send_stage` callers' test files: 341 passed.
-- Known local failures, all red at base with the same command (base `console_send_diagnostics.py` swapped in): `Tests/UI/test_console_send_diagnostic_flow.py` (plain: `RecoveryRequired`; under a temporary `@private_profile_test`: `phase=ui_action status=awaiting_review` and `assert 0 == 1`, in both trees) and `Tests/Performance/test_console_native_pause_probe.py` (`Tests.Performance.console_native_pause_seams` was never committed). Neither file is in a PR lane.
+**Runs.**
+- *Soak (`-n 4`).* The changed file + `Tests/Chat/test_console_send_diagnostics.py` + `Tests/Chat/test_console_trace_surface_refusal_diagnostics.py`, 20 times each round:
+  - First version: 20/20 runs, 400/400 tests, load 15-22.
+  - After review: 20/20 runs, 400/400 tests, load 41-95.
+  - The last two files are unedited (AC#4).
+- *Covering Chat trace and diagnostic files:* 341 passed (first version).
+- *Fast lane.* "Run fast PR contract", serial with its flags, through the fixed `r19-step.sh`: 4739 passed, 4 skipped. This file is a rider of that step.
+- *Known local failures, red at base with the same command* (base `console_send_diagnostics.py` swapped in). Neither file is in a PR lane.
+  - `Tests/UI/test_console_send_diagnostic_flow.py`: plain, it hits `RecoveryRequired`. Under a temporary `@private_profile_test` it fails with `phase=ui_action status=awaiting_review` and `assert 0 == 1`, in both trees.
+  - `Tests/Performance/test_console_native_pause_probe.py`: `Tests.Performance.console_native_pause_seams` was never committed.
 
-**Scope note.** Codes raised by the other `Chat/console_trace_*.py` modules (about 137 more, e.g. `console_trace_continuation`, `console_trace_final_values`, `console_trace_repository`) can also be wrapped into `TraceReservationRefused` at reservation. They now log `exception_type=TraceReservationRefused error_category=validation`. Adding them would be one more entry in the scan's module tuple plus their codes.
-
-**Files.** `tldw_chatbook/Chat/console_send_diagnostics.py`; `Tests/Chat/test_console_trace_missing_revision_diagnostic.py` (two tests; this file is already a PR Fast Lane rider, so no lane edit is needed: 1.4 s and 0.1 s locally).
+**Files.** `tldw_chatbook/Chat/console_send_diagnostics.py`; `Tests/Chat/test_console_trace_missing_revision_diagnostic.py` (two tests plus the scan helper). That file is already a PR Fast Lane rider, so no lane edit is needed.
 <!-- SECTION:NOTES:END -->
