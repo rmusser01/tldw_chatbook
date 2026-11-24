@@ -32,9 +32,8 @@ from tldw_chatbook.Chat.console_display_state import (
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.console_rail_state import ConsoleRailState
 from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsSummaryState
-from tldw_chatbook.Chat.provider_test_evidence import shared_connection_evidence
-# Looked up at call time, as the poll does (chat_screen.py), so a test that
-# replaces these names on the module is seen by the wait too.
+# The credential poll looks these up at call time (chat_screen.py), so the
+# pending-work pin test replaces them on the module.
 from tldw_chatbook.LLM_Calls import anthropic_subscription
 from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
 from tldw_chatbook.UI.Console_Modules.rail_section_layout import outer_hint_required
@@ -434,7 +433,11 @@ async def _settle(pilot, passes: int = 5) -> None:
 
 
 async def _wait_for_inspector_quiet(
-    pilot, screen, rail: ConsoleInspectorRail, *, owner_passes_after: int
+    pilot,
+    screen,
+    rail: ConsoleInspectorRail,
+    *,
+    owner_passes_after: int | None,
 ) -> None:
     """Wait until the open Inspect rail and the Console's own syncs are quiet.
 
@@ -444,42 +447,23 @@ async def _wait_for_inspector_quiet(
     a five-pause settle and counted a second local-then-outer pair. Quiet
     means, on two polls in a row: the rail open with nothing scheduled on it
     or its sections, the owner-pass count unchanged and past
-    ``owner_passes_after`` (so the awaited pass has run), attach reconciled,
-    no Console sync running, requested or scheduled, no config retry owed, no
-    app worker left (TASK-42148's signal, widened), and the credential poll
-    settled: the background credential read has completed and the poll has
-    committed the gate it would read now. A first read that settles later
-    bumps the revision, and the poll then re-syncs the settings summary and
-    the run inspector.
+    ``owner_passes_after`` (so the awaited pass has run), and the screen's
+    own pending startup work empty (``console_pending_startup_work``,
+    TASK-42475: attach, Console syncs, the credential read and poll pass,
+    config retries and the screen's workers).
+
+    ``owner_passes_after=None`` requires no owner pass.
     """
 
-    def credential_gate() -> tuple[object, ...]:
-        # The poll's own pre-gate (ChatScreen._poll_console_credential_readiness),
-        # which reads the credential only for a chat on the subscription (TASK-42478).
-        return (
-            anthropic_subscription.subscription_credential_status(background=True)
-            if screen._console_subscription_selected
-            else None,
-            anthropic_subscription.subscription_readiness_revision(),
-            getattr(shared_connection_evidence(lambda: screen.app), "version", 0),
-        )
-
     def pending() -> list[str]:
-        gate = credential_gate()
+        passes = rail._outer_owner_reconcile_count
         flags = (
             ("rail closed", not rail.display),
             ("outer reconcile scheduled", rail._outer_reconcile_scheduled),
-            ("attach not reconciled", not screen._console_attach_reconciled),
-            ("sync in progress", screen._console_sync_in_progress),
-            ("sync requested", screen._console_sync_requested),
             (
-                "control-bar sync scheduled",
-                getattr(screen, "_console_control_bar_sync_scheduled", False),
+                "owner pass",
+                owner_passes_after is not None and passes <= owner_passes_after,
             ),
-            ("credential read", gate[0] == "pending"),
-            ("credential poll pass", screen._console_credential_pre_gate != gate),
-            ("config retry", bool(getattr(screen, "_console_config_retries", None))),
-            ("owner pass", rail._outer_owner_reconcile_count <= owner_passes_after),
         )
         return (
             [name for name, busy in flags if busy]
@@ -488,7 +472,7 @@ async def _wait_for_inspector_quiet(
                 for section in rail.query(ConsoleBoundedSection)
                 if section._reconcile_scheduled
             ]
-            + [f"worker {worker.name or worker.group}" for worker in screen.workers]
+            + list(screen.console_pending_startup_work())
         )
 
     deadline = time.monotonic() + 15.0
@@ -2261,6 +2245,92 @@ async def test_chat_screen_inspector_mutation_paths_delegate_one_owner_request(
         assert section.viewport.content_region.height == min(
             section.desired_content_lines, 20
         )
+
+
+@pytest.mark.asyncio
+async def test_console_pending_startup_work_names_each_pending_producer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-42475: each producer, driven pending, is named; a quiet Console names none.
+
+    The checks run with no await in between, so no tick sees the patched
+    state. A producer renamed or dropped in the product leaves its name out.
+    """
+    from tldw_chatbook import config as tldw_config
+    from tldw_chatbook.UI.Console_Modules import console_spend_projection as spend
+    from tldw_chatbook.UI.Console_Modules.config_sync import replay_whole_console_sync
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _ProductionConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        rail = await _open_production_inspector(host, pilot)
+        screen = host.screen_stack[-1]
+
+        def pending() -> tuple[str, ...]:
+            return screen.console_pending_startup_work()
+
+        async def quiet() -> None:
+            await _wait_for_inspector_quiet(pilot, screen, rail, owner_passes_after=None)
+            assert pending() == ()
+
+        await quiet()
+        for attribute, value, name in (
+            ("_console_attach_reconciled", False, "attach not reconciled"),
+            ("_console_sync_in_progress", True, "sync in progress"),
+            ("_console_sync_requested", True, "sync requested"),
+        ):
+            with monkeypatch.context() as patch:
+                patch.setattr(screen, attribute, value)
+                assert pending() == (name,)
+
+        screen._request_console_control_bar_sync(delayed=True)
+        assert pending() == ("control-bar sync scheduled",)
+        await quiet()
+        replay_whole_console_sync(screen)
+        assert "control-bar replay owed" in pending()
+        await quiet()
+
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                anthropic_subscription,
+                "subscription_credential_status",
+                lambda *, background=False: "pending",
+            )
+            patch.setattr(screen, "_console_subscription_selected", True)
+            assert pending() == ("credential read", "credential poll pass")
+        revision = anthropic_subscription.subscription_readiness_revision()
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                anthropic_subscription,
+                "subscription_readiness_revision",
+                lambda: revision + 1,
+            )
+            assert pending() == ("credential poll pass",)
+            await quiet()  # The real poll commits the gate it reads now.
+        await quiet()
+
+        refreshed = []
+
+        @spend.retry_after_config_rebuild
+        def _probe_config_refresh(_screen) -> None:
+            refreshed.append(_screen)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(tldw_config, "config_read_would_wait", lambda: True)
+            _probe_config_refresh(screen)
+        assert pending() == ("config retry _probe_config_refresh",)
+        await quiet()
+        assert refreshed == [screen]
+
+        release = asyncio.Event()
+        screen.run_worker(release.wait(), name="console-probe")
+        app_worker = screen.app.run_worker(release.wait(), name="app-probe")
+        assert pending() == ("worker console-probe",)  # Not the app's own.
+        release.set()
+        await app_worker.wait()
+        await quiet()
 
 
 @pytest.mark.asyncio
