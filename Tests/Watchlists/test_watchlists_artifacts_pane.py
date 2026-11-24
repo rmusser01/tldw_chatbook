@@ -4549,6 +4549,7 @@ async def test_a_failed_audio_rows_error_text_paints_literally_never_as_markup(
         assert "\x1b[1;31m" not in ansi, "and `[bold red]` must not be applied"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_play_calls_the_player_with_the_rows_path_and_stop_stops_it(
     monkeypatch, tmp_path
@@ -4601,6 +4602,7 @@ async def test_play_calls_the_player_with_the_rows_path_and_stop_stops_it(
         assert fake_player.stopped is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stop_does_not_silence_a_different_currently_playing_file(monkeypatch):
     """Trap #3 (`tts_events.stop_audio_playback_if_current`'s own
