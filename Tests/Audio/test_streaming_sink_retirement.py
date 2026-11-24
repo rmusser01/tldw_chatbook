@@ -220,6 +220,135 @@ def test_failed_abort_and_successful_close_preserves_uncertain_interruption():
     assert stream.closes == 1
 
 
+@pytest.mark.parametrize("operation", ["abort", "close"])
+def test_interrupted_native_teardown_quarantines_before_reraising(operation):
+    class Interrupted(Device):
+        def abort(self):
+            super().abort()
+            if operation == "abort" and self.aborts == 1:
+                raise asyncio.CancelledError
+
+        def close(self):
+            super().close()
+            if operation == "close" and self.closes == 1:
+                raise asyncio.CancelledError
+
+    stream = Interrupted()
+    events = []
+    sink = audio.StreamingPcmSink(
+        on_event=events.append, stream_factory=lambda **_: stream
+    )
+    sink.open(24000)
+    with pytest.raises(asyncio.CancelledError):
+        sink.stop()
+    assert not sink.stop()
+    assert sink.quarantined and not sink.retirement_confirmed
+    assert stream.closes == 1
+    assert len([event for event in events if isinstance(event, audio.SinkStopped)]) == 1
+    sink._notify_thread.join(1)
+    assert not sink._notify_thread.is_alive()
+    assert audio._LIVE_SINK is not sink
+
+
+def test_failed_start_retires_before_blocking_failure_listener():
+    entered, resume = threading.Event(), threading.Event()
+
+    class BadStart(Device):
+        def start(self):
+            raise OSError("start unconfirmed")
+
+    def listen(event):
+        if isinstance(event, audio.SinkFailed):
+            entered.set()
+            assert resume.wait(4)
+
+    stream = BadStart()
+    sink = audio.StreamingPcmSink(on_event=listen, stream_factory=lambda **_: stream)
+    opener = threading.Thread(target=sink.open, args=(24000,))
+    opener.start()
+    try:
+        assert entered.wait(2)
+        assert stream.aborts == stream.closes == 1
+        assert sink.retirement_confirmed and sink.stop()
+        assert opener.is_alive()
+    finally:
+        resume.set()
+        opener.join(2)
+
+
+@pytest.mark.parametrize("drained", [True, False])
+def test_interrupted_notify_thread_close_publishes_terminal_and_exits(
+    monkeypatch, drained
+):
+    thread_errors = []
+    monkeypatch.setattr(
+        threading, "excepthook", lambda args: thread_errors.append(args.exc_value)
+    )
+    stream = Device()
+    native = {}
+    events = []
+
+    def factory(**kwargs):
+        native.update(kwargs)
+        return stream
+
+    def close():
+        stream.closed = True
+        raise asyncio.CancelledError
+
+    stream.close = close
+    sink = audio.StreamingPcmSink(on_event=events.append, stream_factory=factory)
+    sink.open(24000)
+    if drained:
+        import numpy as np
+
+        sink.close()
+        assert native["callback"](np.zeros(480, dtype=np.int16), 480, None, None)
+    # An unexpected finished notification also takes the callback-failure path.
+    native["finished_callback"]()
+    sink._notify_thread.join(2)
+    assert not sink._notify_thread.is_alive()
+    assert sink.settle() and audio._LIVE_SINK is not sink
+    assert sink.terminal_reason == "failed" and sink.quarantined
+    assert any(isinstance(event, audio.SinkFailed) for event in events)
+    assert len(thread_errors) == 1 and isinstance(
+        thread_errors[0], asyncio.CancelledError
+    )
+
+
+@pytest.mark.parametrize("allocated", [True, False])
+def test_native_constructor_retains_the_pointer_from_the_output_slot(
+    monkeypatch, allocated
+):
+    # Model sounddevice's PaStream** before it assigns the dereferenced
+    # PaStream* to _ptr. CFFI's NULL is an object, distinct from None.
+    import cffi
+
+    ffi = cffi.FFI()
+    ffi.cdef("typedef void PaStream;")
+    ptr = ffi.cast("PaStream *", 1) if allocated else ffi.NULL
+    closed = []
+
+    class Output:
+        def __init__(self, **kwargs):
+            self._ptr = ffi.new("PaStream **", ptr)
+            raise OSError("Pa_OpenStream failed")
+
+        def close(self, *, ignore_errors):
+            assert not ignore_errors
+            closed.append(self._ptr)
+
+    monkeypatch.setattr(
+        audio,
+        "_import_sounddevice",
+        lambda: SimpleNamespace(OutputStream=Output, _ffi=ffi),
+    )
+    sink = audio.StreamingPcmSink(on_event=lambda _: None)
+    sink.open(24000)
+    assert sink.state == "failed" and sink.retirement_confirmed
+    assert closed == ([ptr] if allocated else [])
+
+
 @pytest.mark.parametrize("failure", ["constructor", "close"])
 def test_default_backend_retains_partial_resource_and_checks_native_status(
     monkeypatch, failure
