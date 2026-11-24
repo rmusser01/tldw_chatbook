@@ -13,7 +13,7 @@ references:
 dependencies:
   - TASK-41181
 documentation:
-  - backlog/decisions/366-watchlist-article-listening-and-controlled-playback.md
+  - backlog/decisions/367-watchlist-article-listening-and-controlled-playback.md
   - Docs/superpowers/specs/2026-11-15-watchlist-article-listening-design.md
   - Docs/superpowers/plans/2026-11-15-watchlist-article-listening.md
 ---

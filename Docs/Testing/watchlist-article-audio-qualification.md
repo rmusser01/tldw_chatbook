@@ -3,7 +3,7 @@
 Date: 2026-11-23
 Status: Windows-first playback gate passed; portable gate open
 Task: [TASK-41176](../../backlog/tasks/task-41176%20-%20Qualify-ffplay-controlled-WAV-playback.md)
-ADR: [366](../../backlog/decisions/366-watchlist-article-listening-and-controlled-playback.md)
+ADR: [367](../../backlog/decisions/367-watchlist-article-listening-and-controlled-playback.md)
 Plan: [Task 1](../superpowers/plans/2026-11-15-watchlist-article-listening.md)
 
 ## Windows-first release gate, 2026-11-23
@@ -231,7 +231,7 @@ age of PipeWire's underlying process snapshot or a bound on acquisition-time
 uncertainty. The [numerical preflight](evidence/watchlist-article-audio/linux-native-preflight.json)
 therefore records native frame custody separately from unqualified native
 playback and wall-clock timing. The matrix used the native fragment capture
-path described in ADR366, source revision `ee3cc6ffee`.
+path described in ADR367, source revision `ee3cc6ffee`.
 
 The installed client libpulse is 17.0.0. A separate silent-player identity
 control matched the actual child PID to the expected hardware sink in 40

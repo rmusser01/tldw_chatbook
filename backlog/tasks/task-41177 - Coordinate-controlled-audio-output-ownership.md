@@ -14,7 +14,7 @@ dependencies:
 references:
   - https://github.com/rmusser01/tldw_chatbook/issues/2864
 documentation:
-  - backlog/decisions/366-watchlist-article-listening-and-controlled-playback.md
+  - backlog/decisions/367-watchlist-article-listening-and-controlled-playback.md
   - Docs/superpowers/specs/2026-11-15-watchlist-article-listening-design.md
   - Docs/superpowers/plans/2026-11-15-watchlist-article-listening.md
 priority: high
@@ -40,7 +40,7 @@ Make article listening coexist predictably with existing speech and media output
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
-ADR path: backlog/decisions/366-watchlist-article-listening-and-controlled-playback.md
+ADR path: backlog/decisions/367-watchlist-article-listening-and-controlled-playback.md
 Reason: existing accepted output ownership and Windows-first capability contract; no new architectural boundary.
 1. Initial bounded increment: implement only AudioOutputOwnership and exact host-issued leases, disconnected from production callers. Use event-driven RED/GREEN tests for replacement ordering, revocation, same-label identities, stale releases, blocked retirement, cancellation custody and concurrent intents. Record the tested branch base.
 2. Run targeted ownership tests, relevant import/architecture checks and Ruff; independent spec/quality review the increment. Keep the task In Progress and all whole-task AC open.
