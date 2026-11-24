@@ -896,3 +896,238 @@ async def test_a_resend_of_a_tool_loop_call_repeats_its_failed_call(
     with pytest.raises(TraceReservationRefused) as refused:
         factory(prepared, resolution, ConsoleRequestRoute.LLAMA_FALLBACK)
     assert refused.value.args[0] == "trace_tool_chain_unavailable"
+
+
+_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "calculator",
+        "description": "Evaluate an arithmetic expression.",
+        "parameters": {
+            "type": "object",
+            "properties": {"expression": {"type": "string"}},
+            "required": ["expression"],
+        },
+    },
+}
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "valid",
+        "unchanged_resend",
+        "changed_model",
+        "changed_temperature",
+        "changed_surface",
+    ],
+)
+@pytest.mark.parametrize("path", ["self_hosted", "llama_tools"])
+async def test_a_streamed_retry_after_a_failed_in_chain_resend_repeats_the_stream(
+    tmp_path, make_database, make_gateway, path, scenario
+):
+    """TASK-42532: the retry repeats the streamed call, not its failed resend.
+
+    A self-hosted server's refused stream (TASK-37421), and a llama.cpp stream
+    with tools in the request, are sent once more without streaming as the
+    run's next TOOL_LOOP call. When that resend failed too, the agent's
+    in-place retry streams again; it was compared with the resend
+    (`streaming=False`) and refused. It is compared with the streamed call
+    the resend repeated: only that True -> False flip is the resend's, and
+    any other change of target, settings or surface is still refused.
+    """
+    import functools
+
+    from tldw_chatbook.Chat import Chat_Functions
+    from tldw_chatbook.Provider_Contract import ChatProviderError
+
+    database = make_database(tmp_path / "resend-retry.sqlite", "resend-retry")
+    conversation = database.add_conversation({"title": "retry"})
+    _, revision = _saved_message(database, conversation, "hello")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    actor, chain = new_opaque_id(), new_opaque_id()
+    provider = "vllm" if path == "self_hosted" else "llama_cpp"
+    calls = []
+
+    @functools.wraps(Chat_Functions.chat_api_call)
+    def handler(*_args, **kwargs):
+        calls.append(kwargs.get("streaming"))
+        if len(calls) == 1:
+            # The server refuses to stream.
+            raise ChatProviderError(
+                "fixture refusal", provider=provider, status_code=400
+            )
+        if len(calls) == 2:
+            raise ChatProviderError("fixture busy", provider=provider, status_code=503)
+        return {"choices": [{"message": {"role": "assistant", "content": "recovered"}}]}
+
+    gateway = make_gateway(
+        chat_api_call_fn=handler,
+        trace_call_boundary_factory=ConsoleTraceBoundaryFactory(database),
+    )
+    resolution = ConsoleProviderResolution(
+        ready=True,
+        provider=provider,
+        execution_key=provider,
+        model="qwen3.7-27b",
+        base_url="http://localhost:8080",
+        streaming=True,
+    )
+    tools = [_TOOL_SCHEMA] if path == "llama_tools" else []
+    messages, descriptors = [{"role": "user", "content": "hello"}], [revision]
+
+    async def send(route, resolution):
+        from tldw_chatbook.Chat.console_prepared_request import build_console_request
+        from tldw_chatbook.Chat.console_trace_provenance import (
+            request_route_provenance,
+        )
+
+        request = build_console_request(
+            messages,
+            tools=tools,
+            message_provenance=tuple(descriptors),
+            memory_provenance=(),
+            mandatory_provenance=(),
+            tool_provenance=tuple(
+                ProviderArtifactTraceProvenance(
+                    TraceProvenanceSource.TOOL_DEFINITION, policy
+                )
+                for _ in tools
+            ),
+            metadata_provenance=(
+                request_route_provenance(route, actor_id=actor, chain_id=chain),
+            ),
+            capture_policy=policy,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+        items = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                request,
+                route=route,
+                route_actor_id=actor,
+                route_chain_id=chain,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ]
+        return "".join(item for item in items if isinstance(item, str))
+
+    with pytest.raises(ChatProviderError) as failure:
+        await send(ConsoleRequestRoute.AGENT_FIRST, resolution)
+    assert failure.value.status_code == 503
+    assert calls == [True, False]
+    with database.transaction() as cursor:
+        routes = cursor.execute(
+            "SELECT c.route_identity, c.state FROM console_trace_events e "
+            "JOIN console_trace_calls c ON c.call_id = e.call_id "
+            "WHERE e.event_type = 'call_boundary' ORDER BY e.sequence"
+        ).fetchall()
+    # The resend is the run's own next call, not a llama_fallback run.
+    assert [tuple(row) for row in routes] == [
+        ("agent_first", "error"),
+        ("tool_loop", "error"),
+    ]
+    retry = resolution
+    if scenario == "unchanged_resend":
+        retry = replace(resolution, streaming=False)
+    elif scenario == "changed_model":
+        retry = replace(resolution, model="qwen3.7-8b")
+    elif scenario == "changed_temperature":
+        retry = replace(resolution, temperature=0.25)
+    elif scenario == "changed_surface":
+        messages = messages + [
+            {"role": "tool", "content": "unobserved addition", "tool_call_id": "forged"}
+        ]
+        descriptors = descriptors + [
+            ProviderArtifactTraceProvenance(TraceProvenanceSource.TOOL_RESULT, policy)
+        ]
+    if scenario in {"valid", "unchanged_resend"}:
+        assert await send(ConsoleRequestRoute.TOOL_LOOP, retry) == "recovered"
+        assert calls == [True, False, retry.streaming]
+    else:
+        with pytest.raises(TraceCallPersistenceError):
+            await send(ConsoleRequestRoute.TOOL_LOOP, retry)
+        assert calls == [True, False]
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("failed_resends", [1, 99], ids=["recovered", "exhausted"])
+async def test_a_captured_run_retries_a_refused_stream_whose_resend_failed(
+    tmp_path, monkeypatch, failed_resends
+):
+    """TASK-42532: the run retries in place and ends on the provider's error.
+
+    A self-hosted server refuses every stream (HTTP 400); each is sent once
+    more without streaming, and that resend fails with a 503. The agent's
+    in-place retry streams again. It was refused at trace reservation, so
+    the run ended on the trace card instead of the provider's error.
+    """
+    import functools
+
+    from Tests.Chat.test_console_project_instruction_traces import _project_console
+    from tldw_chatbook.Chat import Chat_Functions
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+        ConsoleEgressClass,
+        ConsoleResolvedDestination,
+    )
+    from tldw_chatbook.Provider_Contract import ChatProviderError
+
+    async with _project_console(tmp_path, monkeypatch) as app:
+        calls = []
+
+        @functools.wraps(Chat_Functions.chat_api_call)
+        def handler(*_args, **kwargs):
+            calls.append(kwargs.get("streaming"))
+            if kwargs.get("streaming"):
+                raise ChatProviderError(
+                    "fixture refusal", provider="vllm", status_code=400
+                )
+            if calls.count(False) <= failed_resends:
+                raise ChatProviderError(
+                    "fixture busy", provider="vllm", status_code=503
+                )
+            return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+        async def resolve(_selection):
+            return ConsoleProviderResolution(
+                ready=True,
+                provider="vllm",
+                execution_key="vllm",
+                model="qwen3.7-27b",
+                base_url="http://localhost:8000",
+                api_key="fixture",
+                streaming=True,
+                resolved_destination=ConsoleResolvedDestination(
+                    provider="vllm",
+                    model="qwen3.7-27b",
+                    endpoint_identity="http://localhost:8000",
+                    egress_class=ConsoleEgressClass.ON_DEVICE,
+                ),
+            )
+
+        monkeypatch.setattr(app.gateway, "resolve_for_send", resolve)
+        monkeypatch.setattr(app.gateway, "_chat_api_call_fn", handler)
+        result = await app.controller.submit_draft("Hello", session_id=app.session.id)
+
+        assert result.accepted
+        assert app.reservation_errors == []
+        assert app.store.dispatch_recovery_for_session(app.session.id) is None
+        turn_id = app.store.get_message(result.user_message_id).persisted_message_id
+        lineage = [(row[1], row[2]) for row in _turn_calls(app, turn_id)[0]]
+        failed_round = [_FAILED, _FAILED]
+        if failed_resends == 1:
+            assert app.controller.run_state.status.value == "completed"
+            assert calls == [True, False, True, False]
+            assert lineage == [
+                ("agent_first", "error"),
+                _FAILED,
+                _FAILED,
+                ("tool_loop", "complete"),
+            ]
+        else:
+            assert app.controller.run_state.status.value == "failed"
+            assert calls == [True, False] * 3
+            assert lineage == [("agent_first", "error"), _FAILED, *failed_round * 2]
+            copy = app.controller.run_state.visible_copy
+            assert "503" in copy and "trace" not in copy.lower(), copy

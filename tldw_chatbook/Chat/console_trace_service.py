@@ -2106,6 +2106,41 @@ class ConsoleTraceService:
                 prior_header = self.repository.get_request_header(
                     cursor, previous.request_header_id
                 )
+                streamed = (
+                    self.repository.get_call_by_logical_identity(
+                        cursor,
+                        owner_id=reserved_call.owner_id,
+                        segment_id=reserved_call.segment_id,
+                        turn_id=reserved_call.turn_id,
+                        run_id=reserved_call.run_id,
+                        call_sequence=previous.call_sequence - 1,
+                    )
+                    if prior_header is not None
+                    and previous.call_sequence > 0
+                    and prior_header.generation_parameters.get("streaming") is False
+                    and header.generation_parameters.get("streaming") is True
+                    else None
+                )
+                streamed_header = (
+                    self.repository.get_request_header(
+                        cursor, streamed.request_header_id
+                    )
+                    if streamed is not None and streamed.state is TraceCallState.ERROR
+                    else None
+                )
+                if (
+                    streamed_header is not None
+                    and streamed_header.generation_parameters.get("streaming") is True
+                    and _artifact_bytes(
+                        {**streamed_header.generation_parameters, "streaming": False}
+                    )
+                    == _artifact_bytes(prior_header.generation_parameters)
+                ):
+                    # TASK-42532: ``previous`` was the failed non-streaming
+                    # resend of the streamed call before it (it was admitted
+                    # only as that verified flip). A streamed in-place retry
+                    # repeats that call, so it is compared with it.
+                    prior_header = streamed_header
                 if prior_header is None or (
                     prior_header.provider_name != header.provider_name
                     or prior_header.model_name != header.model_name
