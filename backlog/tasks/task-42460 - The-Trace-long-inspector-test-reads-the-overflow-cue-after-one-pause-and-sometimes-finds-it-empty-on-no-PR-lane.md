@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-23 06:38
-updated_date: 2026-11-23 21:31
+updated_date: 2026-11-24 00:47
 labels:
 - follow-up
 - trace
@@ -66,3 +66,38 @@ Found during round 22 of the follow-up burn-down (2026-11-23), in TASK-42414's c
 **Lane (AC #4).** `test_trace_responsive.py` is a whole-file entry at the tail of the census: 37 tests in 55.6 s serially with the lane's flags, at load 48.8 (heavily loaded).
 
 **Files.** `tldw_chatbook/UI/Screens/trajectory_screen.py`, `Tests/UI/test_trace_responsive.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `backlog/docs/lessons-textual.md`.
+
+**Lane entries split (coordinator review).**
+- UI census entries work to about 30 s each, so the whole-file entry for `test_trace_responsive.py` is now 31 node ids, one per test function.
+- Times are serial with the lane's flags, summed over setup, call, teardown and every case. The file took 68.9 s in all at load 73, on a heavily loaded host.
+  - `Tests/UI/test_trace_responsive.py::test_trace_harness_uses_latest_dev_consolidated_production_css`: 3.00 s
+  - `Tests/UI/test_trace_responsive.py::test_trace_ledger_uses_in_bounds_responsive_columns`: 6.74 s
+  - `Tests/UI/test_trace_responsive.py::test_responsive_rebuild_preserves_stable_event_selection_and_filters`: 1.74 s
+  - `Tests/UI/test_trace_responsive.py::test_long_inspector_is_focusable_scrolls_to_painted_bottom_and_full_pane`: 2.74 s
+  - `Tests/UI/test_trace_responsive.py::test_overflow_cue_reconciles_into_the_100x30_compositor_frame`: 1.60 s
+  - `Tests/UI/test_trace_responsive.py::test_title_uses_trace_and_moves_conversation_id_into_inspector_metadata`: 1.76 s
+  - `Tests/UI/test_trace_responsive.py::test_record_kinds_are_humanized_in_ledger_but_raw_kind_remains_in_detail`: 1.13 s
+  - `Tests/UI/test_trace_responsive.py::test_explicit_empty_filtered_imported_incomplete_and_no_timing_states`: 5.79 s
+  - `Tests/UI/test_trace_responsive.py::test_loading_state_is_visible_until_real_render_worker_lands`: 1.44 s
+  - `Tests/UI/test_trace_responsive.py::test_render_failure_is_payload_safe_and_r_retries_real_worker`: 2.00 s
+  - `Tests/UI/test_trace_responsive.py::test_render_retry_is_visible_single_flight_and_recovers_after_failure`: 2.60 s
+  - `Tests/UI/test_trace_responsive.py::test_successful_render_retry_clears_failure_when_filter_makes_specs_stale`: 1.28 s
+  - `Tests/UI/test_trace_responsive.py::test_live_failure_is_visible_and_retry_uses_snapshot_builder`: 2.93 s
+  - `Tests/UI/test_trace_responsive.py::test_stale_live_failure_cannot_replace_newer_revision_success`: 1.33 s
+  - `Tests/UI/test_trace_responsive.py::test_open_import_marks_the_pushed_production_screen_read_only_shared`: 2.05 s
+  - `Tests/UI/test_trace_responsive.py::test_live_following_and_paused_states_are_visible_and_actionable`: 1.17 s
+  - `Tests/UI/test_trace_responsive.py::test_empty_ledgers_do_not_advertise_row_only_actions`: 0.93 s
+  - `Tests/UI/test_trace_responsive.py::test_projected_generic_retrieval_payload_is_preserved_as_safe_json`: 1.51 s
+  - `Tests/UI/test_trace_responsive.py::test_full_detail_keeps_visible_inspector_focus_and_compact_hints`: 1.19 s
+  - `Tests/UI/test_trace_responsive.py::test_x_clears_search_and_timeline_brush_together`: 1.32 s
+  - `Tests/UI/test_trace_responsive.py::test_search_focus_keeps_x_as_text_until_escape_enables_recovery`: 1.82 s
+  - `Tests/UI/test_trace_responsive.py::test_focus_only_transitions_refresh_filter_recovery_truth`: 1.55 s
+  - `Tests/UI/test_trace_responsive.py::test_inspector_scroll_survives_same_event_refresh_and_resets_on_change`: 2.07 s
+  - `Tests/UI/test_trace_responsive.py::test_empty_modes_and_compound_state_truth_are_painted_at_60_columns`: 2.22 s
+  - `Tests/UI/test_trace_responsive.py::test_compact_state_prioritizes_filter_recovery_before_secondary_facts`: 1.11 s
+  - `Tests/UI/test_trace_responsive.py::test_paused_live_append_retains_selected_event_outside_newest_page`: 1.39 s
+  - `Tests/UI/test_trace_responsive.py::test_legacy_identity_survives_insertion_when_provider_distinguishes_rows`: 1.37 s
+  - `Tests/UI/test_trace_responsive.py::test_legacy_identity_survives_pending_to_completed_mutation`: 0.97 s
+  - `Tests/UI/test_trace_responsive.py::test_legacy_collision_keys_survive_distinct_collider_inserted_ahead`: 0.93 s
+  - `Tests/UI/test_trace_responsive.py::test_six_digit_record_identity_is_fully_painted_without_horizontal_scroll`: 4.84 s
+  - `Tests/UI/test_trace_responsive.py::test_record_label_prefers_projection_label_then_generic_sentence_case`: 1.16 s

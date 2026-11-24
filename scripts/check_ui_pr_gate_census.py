@@ -1280,6 +1280,10 @@ MINIMUM_FILES = 2531
 # the inspector), red or flaky on no lane until now. The floor is the
 # measured entry count.
 MINIMUM_FILES = 2534
+# 2026-11-23, TASK-42457 and TASK-42460 review: those three whole files are
+# split into one node id per test function (79), each well under 30 s, so the
+# rebalancer can deal them. The floor is the measured entry count.
+MINIMUM_FILES = 2610
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 

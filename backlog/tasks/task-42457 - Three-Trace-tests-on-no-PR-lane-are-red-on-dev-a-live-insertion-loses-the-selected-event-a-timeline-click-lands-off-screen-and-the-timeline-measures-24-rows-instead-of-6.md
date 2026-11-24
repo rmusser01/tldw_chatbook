@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-23 06:38
-updated_date: 2026-11-23 21:31
+updated_date: 2026-11-24 00:47
 labels:
 - follow-up
 - trace
@@ -71,3 +71,56 @@ Found during round 22 of the follow-up burn-down (2026-11-23): TASK-42414's cove
 **Soak.** 32 of 32 runs green (157 tests each, load 49-89; one combined serial run of the four Trace census files with the lane's flags: 124 passed in 222.9 s at load ~74-85): five Trace files at `-n 4` (`test_trace_responsive`, `test_trace_filters_navigation`, `test_trajectory_timeline_integration`, `test_trajectory_live`, `test_trajectory_screen`).
 
 **Files.** `Tests/UI/test_trajectory_screen.py`, `Tests/UI/test_trace_filters_navigation.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
+
+**Lane entries split (coordinator review).**
+- UI census entries work to about 30 s each, and these files took 35-48 s serially, so both whole-file entries are now one node id per test function. A parametrized function is one entry that runs all its cases.
+- Times are serial with the lane's flags (`-p no:xdist --timeout=180 --durations=0 --durations-min=0`), summed over setup, call and teardown and over every case. They were measured on a heavily loaded host: `test_trace_filters_navigation.py` 47.5 s in all at load 62, `test_trajectory_timeline_integration.py` 44.6 s at load 66.
+- Each file's first entry also carries the app's first-test warm-up.
+  - `Tests/UI/test_trace_filters_navigation.py::test_trace_filter_state_matches_every_dimension_with_and_semantics`: 3.11 s
+  - `Tests/UI/test_trace_filters_navigation.py::test_trace_filter_state_derives_options_and_active_summary`: 0.30 s
+  - `Tests/UI/test_trace_filters_navigation.py::test_filter_bar_uses_one_state_owner_in_compact_and_wide_layouts`: 3.85 s
+  - `Tests/UI/test_trace_filters_navigation.py::test_wide_filter_bar_paints_visible_and_total_counts`: 1.65 s
+  - `Tests/UI/test_trace_filters_navigation.py::test_wide_filter_controls_are_contained_and_every_tab_target_is_visible`: 2.28 s
+  - `Tests/UI/test_trace_filters_navigation.py::test_wide_tab_chain_has_no_inert_filter_bar_stop`: 1.14 s
+  - `Tests/UI/test_trace_filters_navigation.py::test_focused_timeline_outline_does_not_clip_semantic_content`: 4.23 s
+  - `Tests/UI/test_trace_filters_navigation.py::test_compact_filter_action_opens_keyboard_dismissible_dialog`: 1.24 s
+  - `Tests/UI/test_trace_filters_navigation.py::test_compact_filter_bar_is_actionable_with_enter_and_paints_cue`: 1.39 s
+  - `Tests/UI/test_trace_filters_navigation.py::test_compact_filter_dialog_contains_all_controls_and_actions_at_60x18`: 1.33 s
+  - `Tests/UI/test_trace_filters_navigation.py::test_structured_dimensions_filter_the_ledger_and_report_counts`: 1.08 s
+  - `Tests/UI/test_trace_filters_navigation.py::test_search_filter_and_timeline_time_range_compose_with_and_semantics`: 1.06 s
+  - `Tests/UI/test_trace_filters_navigation.py::test_clear_all_clears_search_structured_filters_and_brush_truth`: 1.09 s
+  - `Tests/UI/test_trace_filters_navigation.py::test_navigation_bindings_cover_both_directions_for_every_family`: 0.92 s
+  - `Tests/UI/test_trace_filters_navigation.py::test_compact_contextual_hints_fit_without_duplicate_navigation_copy`: 1.09 s
+  - `Tests/UI/test_trace_filters_navigation.py::test_next_previous_match_use_filtered_order_and_wrap_explicitly`: 1.15 s
+  - `Tests/UI/test_trace_filters_navigation.py::test_error_navigation_preserves_order_and_wraps_across_multiple_members`: 0.98 s
+  - `Tests/UI/test_trace_filters_navigation.py::test_anomaly_navigation_expands_collapsed_owning_turn_before_cursor_move`: 1.29 s
+  - `Tests/UI/test_trace_filters_navigation.py::test_child_navigation_uses_agent_run_lineage_and_excludes_primary_steps`: 1.36 s
+  - `Tests/UI/test_trace_filters_navigation.py::test_anomaly_navigation_wraps_both_directions_on_filtered_records`: 4.64 s
+  - `Tests/UI/test_trace_filters_navigation.py::test_live_insertion_before_selection_preserves_event_id_filters_and_viewport`: 1.49 s
+  - `Tests/UI/test_trace_filters_navigation.py::test_live_refresh_preserves_disappearing_filter_options_and_select_values`: 1.37 s
+  - `Tests/UI/test_trace_filters_navigation.py::test_filter_counts_distinguish_mounted_matches_from_total_matches`: 3.36 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_timeline_mounts_between_search_and_table`: 6.22 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_timeline_renders_bars_for_timed_snapshot`: 1.13 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_timeline_focus_exposes_truthful_keyboard_equivalents_for_mouse_actions`: 0.96 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_timeline_shows_placeholder_without_timing`: 1.07 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_escape_clears_active_range_before_dismiss_even_from_ledger`: 1.53 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_filter_owner_time_clear_also_clears_the_visual_brush`: 1.19 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_brush_filters_ledger_to_active_records`: 1.31 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_brush_composes_with_search_as_and`: 1.18 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_brush_clear_restores_all_rows`: 1.25 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_widget_drag_seam_posts_brush_that_filters`: 1.40 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_brush_reveals_collapsed_turn_with_active_children`: 1.73 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_bar_select_moves_ledger_cursor_and_highlights`: 1.46 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_click_outside_active_brush_atomically_clears_time_and_selects`: 1.65 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_keyboard_enter_outside_active_brush_uses_same_selection_transaction`: 1.48 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_bar_message_hidden_by_search_restores_shared_ledger_selection`: 1.41 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_timeline_enter_hidden_by_provider_restores_shared_selection`: 1.69 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_bar_select_pages_in_older_record`: 2.37 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_ledger_cursor_move_highlights_timeline_bar`: 1.45 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_live_refresh_feeds_timeline_and_preserves_brush`: 1.43 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_live_refresh_clears_brush_outside_new_domain`: 1.10 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_widget_clock_formats_local_time_like_ledger`: 0.64 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_one_drag_gesture_rebuilds_the_ledger_once`: 1.71 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_a_drag_that_ends_where_it_paused_still_reaches_the_ledger`: 1.44 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_a_drag_abandoned_without_a_mouse_up_still_reaches_the_ledger`: 1.50 s
+  - `Tests/UI/test_trajectory_timeline_integration.py::test_a_non_drag_brush_still_reaches_the_ledger_immediately`: 1.17 s
