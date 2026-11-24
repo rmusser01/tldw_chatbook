@@ -372,8 +372,9 @@ height exceeds the terminal. The cues tell you which area to move:
 Tab and Shift+Tab continue in normal order through controls, an overflowing
 section, and controls inside it; sections that fit do not become extra Tab
 stops. In the Inspector, `n` and `p` move to the next or previous named section
-without wrapping. They work only while the Inspector has focus and never take
-over an editable field. The footer shows **n/p Sections** while this is active,
+without wrapping, and scroll the rail so that section's name sits at its top,
+even when the section is taller than the rail. They work only while the
+Inspector has focus and never take over an editable field. The footer shows **n/p Sections** while this is active,
 and **F1** shows the full shortcut list.
 
 On short terminals, scroll Context as a whole to reach every header and

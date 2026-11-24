@@ -1295,6 +1295,11 @@ MINIMUM_FILES = 2677
 # containment test at the tail, one entry per size (about 64 s serial as one).
 # The floor is the measured entry count.
 MINIMUM_FILES = 2683
+# 2026-11-24, TASK-42462: the Inspector navigation file, in no lane before,
+# at the tail as one node per green test function, by case where a function
+# ran over 30 s serially (TASK-24705's still-red responsive hide/reveal node
+# is left out). The floor is the measured entry count.
+MINIMUM_FILES = 2721
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 
