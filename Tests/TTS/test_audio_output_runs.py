@@ -1,6 +1,7 @@
 """App-owned attempts use exact native custody, independent of UI observers."""
 
 import asyncio
+import os
 import sys
 import threading
 from types import SimpleNamespace
@@ -165,6 +166,33 @@ async def test_second_file_run_cannot_use_another_runs_live_lease(tmp_path):
         assert await other.retire() and lease.is_current()
     finally:
         await owner.retire()
+
+
+async def test_posix_file_exec_refusal_admits_successor(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+
+    from tldw_chatbook.TTS import audio_player
+
+    monkeypatch.setattr(audio_player.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(
+        audio_player, "os", SimpleNamespace(**(vars(os) | {"name": "posix"}))
+    )
+    monkeypatch.setattr(
+        audio_player.shutil,
+        "which",
+        lambda name: sys.executable if name == "aplay" else None,
+    )
+    popen = Mock(side_effect=FileNotFoundError("interpreter disappeared"))
+    monkeypatch.setattr(audio_player.subprocess, "Popen", popen)
+    path = tmp_path / "clip.wav"
+    path.touch()
+    host = AudioOutputOwnership()
+    run = await runs.FileOutputRun.prepare(path)
+    assert not await run.start(await host.acquire("file", run.retire))
+    popen.assert_called_once()
+    assert run.retirement_confirmed and host.owner is None and not host.blocked
+    assert host.handoff_epoch is None
+    assert (await host.acquire("next", run.retire)).is_current()
 
 
 async def test_eager_stop_before_worker_entry_never_launches(tmp_path):
@@ -364,7 +392,7 @@ async def test_opaque_launch_exception_plus_idle_projection_keeps_file_lease(tmp
     host, player = AudioOutputOwnership(), FilePlayer()
 
     def unknown(*args, **kwargs):
-        raise OSError("unknown native outcome")
+        raise FileNotFoundError("post-dispatch observation file disappeared")
 
     player.play_prepared = unknown
     run = await runs.FileOutputRun.prepare(tmp_path / "unknown.wav", player=player)
@@ -654,7 +682,61 @@ async def test_failed_media_partial_start_retries_private_pipeline(monkeypatch):
     assert pipeline.current is None and pipeline.expected[-1] is None
 
 
-async def test_opaque_audio_process_birth_keeps_the_app_lease(monkeypatch):
+@pytest.mark.parametrize(
+    "leg,hold_demux", [("ffmpeg", False), ("ffplay", False), ("ffplay", True)]
+)
+async def test_posix_media_exec_refusal_admits_successor(monkeypatch, leg, hold_demux):
+    from tldw_chatbook.Media_Playback import player_pipeline
+
+    attempts, reaped = [], []
+
+    def initialize(child, cmd, **kwargs):
+        attempts.append(cmd[0])
+        if cmd[0] == leg:
+            raise FileNotFoundError("interpreter disappeared")
+        child.stdout = None
+        child.terminate = lambda: None
+        child.kill = lambda: None
+
+        def wait(timeout):
+            if hold_demux:
+                raise OSError("demux reap unconfirmed")
+            reaped.append(cmd[0])
+            return 0
+
+        child.wait = wait
+
+    monkeypatch.setattr(player_pipeline.subprocess.Popen, "__init__", initialize)
+    monkeypatch.setattr(
+        player_pipeline,
+        "os",
+        SimpleNamespace(name="posix", pipe=os.pipe, close=os.close),
+    )
+    monkeypatch.setattr(runs, "audio_pipe_supported", lambda: True)
+    host = AudioOutputOwnership()
+    media = runs.MediaOutputRun("clip.mp4", PlayerProbe(16, 16, 2.0, True))
+    lease = await host.acquire("media", media.retire)
+    with pytest.raises(
+        OSError,
+        match="demux reap unconfirmed" if hold_demux else "interpreter disappeared",
+    ):
+        await media.start(lease)
+    if hold_demux:
+        assert not await media.retire() and host.blocked and host.owner == "media"
+        assert not reaped
+        with pytest.raises(OutputBlocked):
+            await host.acquire("next", media.retire)
+        hold_demux = False
+        assert await host.stop(lease)
+    assert await media.retire()
+    assert attempts == (["ffmpeg"] if leg == "ffmpeg" else ["ffmpeg", "ffplay"])
+    assert reaped == ([] if leg == "ffmpeg" else ["ffmpeg"])
+    assert host.owner is None and not host.blocked and host.handoff_epoch is None
+    assert (await host.acquire("next", media.retire)).is_current()
+
+
+@pytest.mark.parametrize("leg", ["ffmpeg", "ffplay"])
+async def test_opaque_audio_process_birth_keeps_the_app_lease(monkeypatch, leg):
     from Tests.Media_Playback.test_player_pipeline import _SpawnRecorder
     from tldw_chatbook.Media_Playback import player_pipeline
 
@@ -662,12 +744,17 @@ async def test_opaque_audio_process_birth_keeps_the_app_lease(monkeypatch):
 
     def spawn(cmd, **kwargs):
         child = fake(cmd, **kwargs)
-        if cmd[0] == "ffplay":
-            raise OSError("after audio child birth")
+        if cmd[0] == leg:
+            raise FileNotFoundError("after audio child birth")
         return child
 
     monkeypatch.setattr(runs, "audio_pipe_supported", lambda: True)
     monkeypatch.setattr(player_pipeline, "audio_pipe_supported", lambda: True)
+    monkeypatch.setattr(
+        player_pipeline,
+        "os",
+        SimpleNamespace(name="posix", pipe=os.pipe, close=os.close),
+    )
     host = AudioOutputOwnership()
     media = runs.MediaOutputRun(
         "clip.mp4",
@@ -680,7 +767,9 @@ async def test_opaque_audio_process_birth_keeps_the_app_lease(monkeypatch):
     with pytest.raises(OSError, match="after audio child birth"):
         await media.start(lease)
     assert not await host.stop(lease) and host.blocked and host.owner == "media"
-    assert fake.calls[0].terminated and not fake.calls[1].terminated
+    if leg == "ffplay":
+        assert fake.calls[0].terminated
+    assert not fake.calls[-1].terminated
 
 
 @pytest.mark.parametrize("held_leg", ["ffplay", "ffmpeg"])

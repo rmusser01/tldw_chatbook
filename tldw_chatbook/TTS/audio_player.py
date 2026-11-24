@@ -408,13 +408,19 @@ class SimpleAudioPlayer:
                         return self._refuse_unstarted(token)
                     self._retired_token = None
                     current.birth_uncertain = True
-                    process = subprocess.Popen(
-                        plan.argv,
-                        stdin=subprocess.PIPE if plan.name == "mplayer" else None,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        start_new_session=(os.name == "posix"),
-                    )
+                    try:
+                        process = subprocess.Popen(
+                            plan.argv,
+                            stdin=subprocess.PIPE if plan.name == "mplayer" else None,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            start_new_session=(os.name == "posix"),
+                        )
+                    except FileNotFoundError:
+                        if os.name == "posix":
+                            # The executable or its interpreter disappeared before exec.
+                            return self._refuse_unstarted(token)
+                        raise
                     if process is None:
                         raise RuntimeError("File player spawn returned no child")
                     if plan.external:

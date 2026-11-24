@@ -397,12 +397,18 @@ Run the explicit affected targets from a normal user terminal with a verified
 private parent, for example:
 
 ```powershell
+$env:PYTHONUTF8 = "1"
 python -B tools/run_guarded_pytest.py $env:USERPROFILE Tests/TTS/test_audio_output_ownership.py
 ```
 
-The launcher verifies that parent, creates a unique disposable child, sets only
-the pytest process's TEMP/TMP/TMPDIR and basetemp, and removes its owned child
-after pytest exits. It keeps normal conftest and real-profile guards enabled.
+The launcher verifies the parent, creates a unique disposable directory for
+TEMP/TMP/TMPDIR and pytest's basetemp, and removes that directory after pytest
+exits. Pass explicit paths below `Tests/`, including individual `::` node IDs.
+It accepts `-k` and `-m` selectors and console reporting options such as
+`--tb=short`, `--show-capture=no`, `-v`, `-ra` and `-W`. It uses the repository
+pytest configuration, normal conftest discovery and real-profile guards.
+The child ignores inherited `PYTEST_ADDOPTS`, `PYTEST_PLUGINS` and
+`PYTEST_DISABLE_PLUGIN_AUTOLOAD` settings.
 It does not repair permissions or modify an existing profile. If native parent
 verification fails, select a genuinely private parent under the normal account.
 

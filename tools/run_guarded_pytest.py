@@ -3,13 +3,14 @@
 Usage (from a normal user terminal):
     python tools/run_guarded_pytest.py PRIVATE_PARENT Tests/TTS/test_example.py
 
-This changes only the child process's temporary-directory environment. It does
-not change existing ACLs, profiles, recovery policy, or pytest's conftest loading.
+The child uses repository pytest configuration, normal conftest discovery and
+private temporary storage. Pass selectors and reporting options only.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,12 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
+
+REPORT_CHOICES = {
+    "--tb": {"auto", "long", "short", "line", "native", "no"},
+    "--show-capture": {"no", "stdout", "stderr", "log", "all"},
+    "--color": {"yes", "no", "auto"},
+}
 
 
 def verify_temp_parent(parent: Path) -> None:
@@ -28,6 +35,40 @@ def verify_temp_parent(parent: Path) -> None:
     _native_close(fd)
 
 
+def check_arguments(args: list[str]) -> None:
+    """Allow explicit repository tests, selectors and console reporting only."""
+    tests = (REPO / "Tests").resolve(strict=True)
+    has_target = False
+    remaining = iter(args)
+    for arg in remaining:
+        if arg.startswith("Tests/"):
+            path = (REPO / arg.partition("::")[0]).resolve(strict=True)
+            if path.is_relative_to(tests) and path != tests:
+                has_target = True
+                continue
+        elif arg in {"-k", "-m", "-W"}:
+            value = next(remaining, "")
+            if value and not value.startswith(("-", "@")):
+                continue
+        elif arg.partition("=")[0] in REPORT_CHOICES:
+            option, separator, value = arg.partition("=")
+            if not separator:
+                value = next(remaining, "")
+            if value in REPORT_CHOICES[option]:
+                continue
+        elif arg in {
+            "-s",
+            "-x",
+            "-l",
+            "--showlocals",
+            "--disable-warnings",
+        } or re.fullmatch(r"-(?:q+|v+|r[aAfEsxXwpP]+)", arg):
+            continue
+        raise RuntimeError(f"unsupported guarded pytest argument: {arg}")
+    if not has_target:
+        raise RuntimeError("explicit guarded test targets required")
+
+
 def main() -> int:
     """Run targeted tests, then remove only this invocation's owned directory."""
     if len(sys.argv) < 3:
@@ -36,10 +77,7 @@ def main() -> int:
         raise RuntimeError("refusing to reuse an inherited test profile")
     parent = Path(sys.argv[1]).resolve(strict=True)
     targets = sys.argv[2:]
-    if "--noconftest" in targets or not any(
-        arg.startswith("Tests/") for arg in targets
-    ):
-        raise RuntimeError("explicit guarded test targets required")
+    check_arguments(targets)
     print("Checking proposed temp parent:", parent, flush=True)
     verify_temp_parent(parent)
     print("Native path verification passed.", flush=True)
@@ -47,12 +85,20 @@ def main() -> int:
     try:
         verify_temp_parent(temp)
         env = {**os.environ, "TMPDIR": str(temp), "TEMP": str(temp), "TMP": str(temp)}
+        for key in (
+            "PYTEST_ADDOPTS",
+            "PYTEST_PLUGINS",
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+        ):
+            env.pop(key, None)
         return subprocess.run(
             [
                 sys.executable,
                 "-B",
                 "-m",
                 "pytest",
+                "-c",
+                str(REPO / "pyproject.toml"),
                 "-q",
                 "-p",
                 "no:cacheprovider",

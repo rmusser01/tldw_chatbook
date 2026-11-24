@@ -216,8 +216,11 @@ async def test_guarded_stop_timeout_blocks_replacement_until_late_physical_reap(
     async def successor_retire():
         return True
 
-    await run.start(await host.acquire("article", run.retire))
+    old_lease = await host.acquire("article", run.retire)
+    await run.start(old_lease)
     try:
+        assert not await run.retire()
+        assert host.owner == "article" and host.blocked and old_lease.revoked
         with pytest.raises(RuntimeError, match="blocked"):
             await host.acquire("next", successor_retire)
         assert attempted.is_set()
@@ -226,7 +229,9 @@ async def test_guarded_stop_timeout_blocks_replacement_until_late_physical_reap(
         child.exit(1)
     await asyncio.wait_for(run.completion, 4)
     assert host.owner is None and not host.blocked
-    assert (await host.acquire("next", successor_retire)).is_current()
+    successor = await host.acquire("next", successor_retire)
+    old_lease.release()
+    assert successor.is_current() and not host.blocked
 
 
 async def test_cancel_preparation_retires_late_pins(retained, monkeypatch):
@@ -362,6 +367,7 @@ async def test_held_launch_times_out_logically_but_keeps_physical_custody(
             result.evidence.retired_at_s is None
             and lease.revoked
             and host.owner == "article"
+            and host.blocked
         )
         await task
         assert not await run.retire()
@@ -409,6 +415,7 @@ async def test_ambiguous_process_birth_refuses_replacement(
         await run.start(await host.acquire("article", run.retire))
         result = await run.completion
         assert result.kind.value == "uncertain" and result.evidence.retired_at_s is None
+        assert host.owner == "article" and host.blocked
         if known_child:
             (child,) = births
             assert child.done.is_set() and child._handle.closed and child.closed

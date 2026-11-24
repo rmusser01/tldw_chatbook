@@ -205,7 +205,7 @@ class PlayerPipeline:
         *,
         target_fps: float = PLAYER_TARGET_FPS,
         volume: int = 100,
-        spawn=subprocess.Popen,
+        spawn=None,
     ) -> None:
         self._source = str(source)
         self._probe = probe
@@ -224,6 +224,16 @@ class PlayerPipeline:
         self._generation = 0
 
     # -- lifecycle ---------------------------------------------------------
+
+    def _spawn_child(self, cmd: list[str], **kwargs: Any) -> subprocess.Popen:
+        if self._spawn is not None:
+            return self._spawn(cmd, **kwargs)
+        try:
+            return subprocess.Popen(cmd, **kwargs)  # nosec B603 # fixed player argv
+        except FileNotFoundError:
+            if os.name == "posix":
+                self._birth_uncertain = False  # exec refused before child startup
+            raise
 
     def start(
         self,
@@ -305,7 +315,7 @@ class PlayerPipeline:
             try:
                 check_authority()
                 self._birth_uncertain = True
-                self._ffmpeg = self._spawn(
+                self._ffmpeg = self._spawn_child(
                     ffmpeg_cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
@@ -340,7 +350,7 @@ class PlayerPipeline:
                     ]
                     check_authority()
                     self._birth_uncertain = True
-                    self._ffplay = self._spawn(
+                    self._ffplay = self._spawn_child(
                         ffplay_cmd,
                         stdin=audio_r,
                         stdout=subprocess.DEVNULL,

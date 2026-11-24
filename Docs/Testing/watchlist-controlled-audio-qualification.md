@@ -35,7 +35,7 @@ The original source matcher processes the entire captured left channel for the o
 | PCM → controlled WAV | Active | 78.317 / 98.070 / 88.093 |
 | PCM → PCM | Active | 236.689 / 246.448 / 236.333 |
 
-Every final-matrix row records positive final retirement of both runs, revocation of the old lease, release of ownership and capture reap. The six PCM successors reported `drained` before final checked retirement. Their later `new_retirement_confirmed` fields provide the physical-custody evidence. Windows ordinary file playback hands off to the OS. Acknowledgement and supersession are covered by mounted UI tests. The acoustic matrix exercises the application's controlled WAV and streaming PCM adapters. Windows audible inherited-descriptor media is unsupported. Linux and macOS controlled playback remain unqualified.
+Every final-matrix row records positive final retirement of both runs, revocation of the old lease, release of ownership and capture reap. The six PCM successors reported `drained` before final checked retirement. Their later `new_retirement_confirmed` fields provide the physical-custody evidence. Windows ordinary file playback hands off to the OS. Acknowledgement and supersession are covered by mounted UI tests. The endpoint-loopback matrix exercises the application's controlled WAV and streaming PCM adapters. Windows audible inherited-descriptor media is unsupported. Linux and macOS controlled playback remain unqualified.
 
 ## Decision thresholds
 

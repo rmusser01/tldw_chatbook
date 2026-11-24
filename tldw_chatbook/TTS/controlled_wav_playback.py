@@ -145,6 +145,7 @@ class ControlledWavPlayback:
         except TimeoutError:
             interrupted = self._interrupted()
             self._interrupt()
+            lease.block()
             self._publish(
                 CompletionKind.STOPPED if interrupted else CompletionKind.UNCERTAIN,
                 "interrupted" if interrupted else "startup_deadline_exceeded",
@@ -173,6 +174,8 @@ class ControlledWavPlayback:
         try:
             return await asyncio.wait_for(asyncio.shield(self._retired), _STOP_WAIT_S)
         except TimeoutError:
+            if self._lease is not None:
+                self._lease.block()
             return False
 
     def _interrupted(self) -> bool:
@@ -224,7 +227,7 @@ class ControlledWavPlayback:
             if retired:
                 self._lease.release()
             else:
-                self._lease.revoke()
+                self._lease.block()
         if not self._retired.done():
             self._retired.set_result(retired)
 
