@@ -1,11 +1,11 @@
 ---
 id: TASK-41176
 title: Qualify ffplay controlled WAV playback
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-11-15'
-updated_date: '2026-11-24T00:09:00Z'
+updated_date: '2026-11-24T03:54:00Z'
 labels:
   - watchlists
   - tts
@@ -30,7 +30,7 @@ Establish whether an installed player can meet article listening resume, complet
 <!-- AC:BEGIN -->
 - [x] #1 A reproducible synthetic-WAV qualification tool and deterministic parser/measurement tests record executable build and reject invalid or stale progress without retaining unbounded output.
 - [x] #2 Native seek, short-clip, final-content, startup-stop and playing-stop measurements are reported separately from process exit and from physical or listener confirmation.
-- [ ] #3 Windows, macOS and Linux each have explicit pass, fail or unqualified results; the full gate passes only after supported native builds meet the 250 ms seek target and completion/stop contract.
+- [x] #3 The Windows-first gate passes only after the supported Windows profile meets the 250 ms seek target and completion/stop contract, including current-profile startup Stop and separate listener confirmation; Linux/macOS remain explicitly unqualified and unsupported until independent qualification.
 - [x] #4 Targeted tests, lint, independent review and a sanitized evidence report document exact run scope and any unresolved gate; no application runtime dependency or provider request is introduced.
 <!-- AC:END -->
 
@@ -47,6 +47,7 @@ Reason: qualify the provisional controlled-playback contract before dependent li
 5. User-authorized Windows follow-up: qualify a fixed 250 ms trailing-zero PCM tail with three repeated short-clip, near-EOF and resume matrices. Keep original content duration distinct from padded physical duration; test fresh Stop bookmarks against the identical retained WAV/digest, and preserve unpadded controls. Update ADR366 and evidence from measured results only. No dependent application feature work or non-Windows qualification is authorized by this follow-up.
 6. Reproduce the Windows capture gaps, measure against native packet positions and timestamps, and rerun the same 21 planned cases with the same thresholds. Preserve earlier receipts and record the observed Windows result in ADR366 and the evidence report.
 7. User-authorized listener/Linux follow-up: record a Windows listener confirmation, inspect the supplied native Linux host, isolate capture-only dependencies, and qualify exact hardware-output routing and measurement timing before repeating the same 21 cases plus startup Stop. Test and amend ADR366 before changing the measuring contract; retain original thresholds, no microphone or system audio reconfiguration, and no dependent feature implementation.
+8. User-authorized Windows-first amendment: fix measured telemetry failure masking with RED/GREEN regressions, remove duplicate evidence keys without changing values, and update ADR366/spec/plan before dependent code. Complete three current-profile launch-relative startup-Stop controls with unchanged silence/timing/cleanup thresholds; preserve rejected attempts. Windows passes unlock TASK-41177 only; Linux/macOS remain unsupported and the portable gate stays open.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -95,5 +96,9 @@ The final Linux matrix has 21 planned rows, 18 launched players and three prereq
 
 All 68 focused tests passed on native Linux in 24.147 s. Windows passed the same 68 with process-local single-thread BLAS in 41.240 s after five unchanged 15 s CLI startup timeouts on the default run; cause is undetermined and no baseline attribution is claimed. Exact failures and validation are in Docs/Testing/evidence/watchlist-article-audio/listener-linux-verification.json. Ruff lint/format and numerical receipt checks passed. All native resources were reaped; the private Linux environment was removed after downloaded/member hashes verified.
 
-ADR required: yes; existing ADR366 amended before measurement-contract changes. ADR366, the implementation plan, Docs/Testing/watchlist-article-audio-qualification.md and durable Linux/listener receipts record scope and remaining uncertainty. Task remains In Progress with AC3 open; dependent application tasks have not started. Full qualification still requires Linux route/timing evidence, Linux audible confirmation and native macOS evidence.
+ADR required: yes; existing ADR366 amended before measurement-contract changes. ADR366, the implementation plan, Docs/Testing/watchlist-article-audio-qualification.md and durable Linux/listener receipts record scope and remaining uncertainty. Task remains In Progress with AC3 open; dependent application tasks have not started. Portable qualification still requires Linux route/timing evidence, Linux audible confirmation and native macOS evidence.
+
+2026-11-23 Windows-first amendment: user approved Windows-only controlled article listening; Linux/macOS remain unqualified and unsupported, with the portable gate open. ADR366, spec and plan updated before behavior changes. Commit 1128d94be2 preserves measured telemetry failures and separates launch-relative Stop from WAV padding. RED/GREEN regressions, 72 focused tests and Ruff passed; independent source review approved. Duplicate evidence keys were removed with parsed values unchanged. The original Windows 21-case receipt still passes the corrected grader. Three startup supplemental attempts are preserved: noisy-baseline rejection; two passes and one unqualified unmatched-PCM timing observation; diagnostic repeat with three passes and zero packet/prelaunch/post-Stop RMS. Actual Stop requests 20.079-22.168 ms after launch, maximum process retirement 4.507 ms, all nine player/capture pairs reaped. No threshold or matcher/grader change in the diagnostic repeat; earlier unmatched PCM source remains unknown. Windows-first release gate receipt binds matrix/listener/startup evidence by digest. Exact EOF, padding transitions and actual adapter/app-wide ownership remain TASK-41177/41180 work. ADR required: yes; existing backlog/decisions/366-watchlist-article-listening-and-controlled-playback.md. Evidence closeout review and final CLI transition pending.
+
+Final Windows-first evidence audit approved: all gate digests, 9 raw-to-public control projections, exact executable/artifact identity, timing, quiet criteria and owned retirement independently verified. No open Critical/Important finding. Windows-first qualification is complete; the portable gate remains unqualified. This completion does not qualify the future application adapter or production ownership integration. TASK-41177 may now start under the amended scope.
 <!-- SECTION:NOTES:END -->

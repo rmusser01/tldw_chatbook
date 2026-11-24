@@ -1,7 +1,7 @@
 # ADR-366: Watchlists owns saved article listening state
 
 Date: 2026-11-15
-Status: Accepted architecture; ffplay backend provisional until qualified
+Status: Accepted architecture; recorded Windows-first backend qualified, portable expansion deferred
 Issue: [#2864](https://github.com/rmusser01/tldw_chatbook/issues/2864)
 Design: [article listening](../../Docs/superpowers/specs/2026-11-15-watchlist-article-listening-design.md)
 Plan: [implementation plan](../../Docs/superpowers/plans/2026-11-15-watchlist-article-listening.md)
@@ -63,8 +63,9 @@ timing, so a bookmark cannot safely refer to newly generated audio.
    bounded transient `-stats` observations. Its output is a compatibility adapter,
    not a promised machine protocol. Native qualification must establish seek
    accuracy within 250 ms, short clips, final content, completion, stale/invalid
-   telemetry, and Stop during startup on supported Windows, macOS and Linux
-   builds. Simulation, SDL dummy output and process exit alone cannot establish
+   telemetry, and Stop during startup on the supported Windows build. The first
+   delivery is Windows-only; Linux/macOS stay unsupported until independently
+   qualified. Simulation, SDL dummy output and process exit alone cannot establish
    audible playback. Separate endpoint-loopback evidence from acoustic/listener
    evidence. If qualification fails, revisit this backend before dependent
    persistence/UI implementation. Keep the promised resume semantics.
@@ -96,6 +97,43 @@ timing, so a bookmark cannot safely refer to newly generated audio.
     limits. No speculative prefetch or new application runtime dependency is
     required. A qualification-only capture helper may be isolated outside the
     application's environment and must not enter packaged dependencies.
+
+## Windows-first delivery scope, 2026-11-23
+
+The user selected a Windows-first delivery after review of PR #3741. The release
+gate now requires the retained Windows 21-case endpoint matrix, its separate
+listener confirmation, and a passing startup-Stop control using the current
+WASAPI packet capture and fixed-tail profile. Preserve all existing thresholds.
+Linux/macOS results remain unqualified and do not block this first delivery;
+the portable gate remains open. Do not advertise or start controlled article
+listening on those platforms, including before any synthesis request. Ordinary
+existing playback keeps its current platform support.
+
+The initial controlled adapter accepts only validated PCM16 stereo 48 kHz WAVs
+with the qualified 250 ms trailing-zero policy. Article preparation must normalize
+other provider output to that shape before publication, count conversion copies
+against the existing memory bound, and bind the bookmark/digest to the resulting
+retained artifact. Qualifying additional formats or platforms is later capability
+work, not an implicit consequence of this Windows pass.
+
+TASK-41177 owns exact logical-EOF Resume (no player launch), Stop during padding
+(never a natural-completion callback), and startup cancellation/owner transfer
+regressions. TASK-41180 owns their session/queue transitions. Only after the
+Windows gate and review fixes pass may TASK-41177 begin; storage/UI tasks keep
+their existing dependency order. This scope change supersedes earlier statements
+that Linux/macOS qualification blocks all dependent implementation.
+
+The current-profile three-round startup-Stop supplement passed on source
+`1128d94be2`: all packet/prelaunch/post-Stop RMS values were zero, Stop requests
+occurred 20.079–22.168 ms after launch, maximum process retirement was 4.507 ms,
+and every owned player/capture retired. The initial noisy attempt and subsequent
+two-pass/one-unqualified attempt remain preserved; the unmatched nonzero PCM in
+that latter row has no attributed source. The diagnostic repeat added numerical
+packet RMS observations only, without changing the matcher or grader. The
+[Windows release gate](../../Docs/Testing/evidence/watchlist-article-audio/windows-first-release-gate.json)
+therefore passes for the recorded build/route/shape. The portable gate remains
+unqualified. TASK-41177 may begin under this scope; it still must qualify its
+actual adapter and all production ownership transfers before completion.
 
 ## Windows fixed-tail profile: endpoint qualification passed, portable gate open
 
@@ -139,7 +177,7 @@ and 59.5 ms stopped-bookmark error. All started players/capture workers retired.
 
 Those wrapper-based runs lacked reliable timeline evidence for all cases.
 The packet-based follow-up below establishes the Windows endpoint pass.
-The portable feature gate and macOS/Linux/listener qualification remain open;
+The portable gate and macOS/Linux endpoint/listener qualification remain open;
 the profile has not been adopted in application code.
 
 ## Packet-clock investigation and rerun, 2026-11-23
@@ -190,8 +228,9 @@ passed endpoint checks and the user confirmed audible playback, clean Stop
 and finished Resume. This is human listener confirmation, not an instrumented
 acoustic recording. It remains unqualified on macOS/Linux and other output
 routes. The portable
-feature gate remains open and dependent application implementation stays
-gated. The [evidence report](../../Docs/Testing/watchlist-article-audio-qualification.md)
+feature gate remains open. Under the Windows-first amendment, dependent
+implementation is unlocked by the passing current-profile startup-Stop supplement.
+The [evidence report](../../Docs/Testing/watchlist-article-audio-qualification.md)
 links the numerical controls and all three packet matrices.
 
 ## Native Linux measurement boundary, 2026-11-23
@@ -257,8 +296,9 @@ does not qualify the Linux playback profile. Separate controls cover natural,
 playing-Stop and 20 ms startup-Stop process behavior. The user has no connected
 Linux output and no available macOS host; neither inherits the Windows
 listener pass. All receipts were retained before removing the isolated
-remote environment. Task 41176 and dependent application implementation
-remain gated. See the updated [evidence report](../../Docs/Testing/watchlist-article-audio-qualification.md).
+remote environment. Linux remains unqualified and unsupported for the first
+delivery; the Windows-first amendment defines the revised Task 41176 gate.
+See the updated [evidence report](../../Docs/Testing/watchlist-article-audio-qualification.md).
 
 ## Alternatives
 
@@ -291,6 +331,7 @@ controls and the wrapper-based Windows matrix remain insufficient for adoption.
 The first packet-based attempts rejected the active background mix under the
 existing baseline limit. After the user muted that session, all 21 Windows
 cases passed with unchanged thresholds. This qualifies the recorded Windows
-profile only. Dependent feature implementation remains gated while other
-platforms await qualification. Windows now has explicit human listener
+profile only. The Windows-first amendment's current-profile startup-Stop
+supplement now passes and unlocks dependent implementation. Other platforms
+await independent qualification. Windows now has explicit human listener
 confirmation; no instrumented acoustic measurement was performed.

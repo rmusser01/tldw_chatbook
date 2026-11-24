@@ -1,10 +1,56 @@
 # Watchlist article audio: controlled-playback qualification
 
 Date: 2026-11-23
-Status: Windows endpoint/listener passed; Linux matrix unqualified; portable gate open
+Status: Windows-first playback gate passed; portable gate open
 Task: [TASK-41176](../../backlog/tasks/task-41176%20-%20Qualify-ffplay-controlled-WAV-playback.md)
 ADR: [366](../../backlog/decisions/366-watchlist-article-listening-and-controlled-playback.md)
 Plan: [Task 1](../superpowers/plans/2026-11-15-watchlist-article-listening.md)
+
+## Windows-first release gate, 2026-11-23
+
+The user authorized a Windows-first delivery after PR #3741 review. The retained
+Windows 21-case endpoint matrix and separate listener pass remain evidence for
+the recorded executable/default-render route/PCM16 stereo 48 kHz/250 ms tail
+profile. The three-round startup-Stop supplement passed on that current
+profile with the same grader and unchanged numerical thresholds. Linux/macOS remain unqualified and unsupported for
+controlled article listening; the portable gate stays open and does not block
+the Windows-first delivery. Historical sections below preserve their original
+run scope and are not retrospective portable passes.
+
+Review identified aggregate grading that ignored measured telemetry failures in
+short clips and playing Stop. Commit `1128d94be2` preserves every actual failure
+while keeping existing missing-observation eligibility rules. The retained Windows
+21-case receipt already has passing telemetry for every row, so its result is
+not changed by that correction. Duplicate same-valued JSON keys were removed
+without changing the parsed numerical evidence.
+
+The [Windows-first release-gate receipt](evidence/watchlist-article-audio/windows-first-release-gate.json)
+binds the retained 21-case matrix, listener confirmation and
+[passing startup supplement](evidence/watchlist-article-audio/windows-startup-stop-qualified.json)
+by file digest. Stop was requested 20.079–22.168 ms after the pre-spawn launch
+anchor; maximum process-retirement latency after that request was 4.507 ms.
+All three prelaunch/post-Stop RMS measurements and all measured packet RMS
+values were zero. No marker was detected in the endpoint capture, consistent with cancellation
+during startup. All three players and capture workers retired; no later packet
+discontinuities or timestamp errors were reported. This is observed endpoint
+silence, not an instrumented acoustic recording or new listener observation.
+
+Every prior attempt remains retained. The
+[first supplement](evidence/watchlist-article-audio/windows-startup-stop-noisy.json)
+had three noisy baselines (RMS 0.01077–0.01132). After the user paused audio,
+the [second supplement](evidence/watchlist-article-audio/windows-startup-stop-quiet-partial.json)
+had two passing controls and one unqualified post-Stop timing observation:
+that capture contained nonzero unmatched PCM, with no detected active marker
+frames. Its source remains unknown. A diagnostic repeat added only numeric
+per-packet RMS measurements around the unchanged matcher; all three captures
+were zero and passed the unchanged grader. No rejected row was converted into
+a pass. All nine control players/capture workers retired.
+
+The fixed runner passed 72 focused tests and Ruff lint/format. Independent
+source review approved the fix and Stop-clock separation with no open
+Critical/Important finding. Exact logical-EOF/padding transitions and production
+output integration remain TASK-41177/41180 acceptance work; they are not
+established by this synthetic qualification.
 
 ## Evidence boundary
 
@@ -84,7 +130,8 @@ retains the per-case measurements and retirement evidence.
 The fixed 250 ms profile passes for this Windows build, PCM16 stereo 48 kHz,
 ffplay executable and default-render route. Native macOS/Linux and other output
 routes remain unqualified. The Windows listener check below passed. The portable
-feature gate remains open and dependent implementation remains gated. No application
+feature gate remains open; the current-profile startup supplement above supplies
+the additional Windows-first gate evidence for dependent implementation. No application
 playback behavior or runtime dependency changed.
 
 ### Preserved background-audio rejections
