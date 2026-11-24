@@ -2669,6 +2669,7 @@ def build_console_controllers(
         clear_voice_preview=lambda: _clear_voice_preview(screen),
     )
     screen._realtime = ConsoleRealtimeController(
+        audio_app_accessor=lambda: screen.app_instance,
         ensure_session_settings=(
             lambda: screen._session._ensure_active_console_session_settings()
         ),
@@ -3968,3 +3969,31 @@ def _refresh_approval_feedback(screen, session_id: str, run_id: str) -> None:
             refresh_status=lambda: screen._sync_console_mode_bar(),
         )
     screen._approval_feedback.refresh(session_id, run_id)
+
+
+def console_audio_confirmation_owner(screen: Any) -> str | None:
+    """Identify the Console producer covered by its own external-playback prompt."""
+    app = getattr(screen, "app_instance", None)
+    if app is None or not vars(app).get("_audio_output_prompt"):
+        return None
+    from ...TTS.audio_output_admission import is_audio_confirmation_for
+
+    if len(app.screen_stack) < 2 or app.screen_stack[-2] is not screen:
+        return None
+    hands_free = screen._hands_free
+    session = hands_free._console_hands_free
+    candidates = (
+        ("message", screen._message.audio_intent),
+        ("hands_free", hands_free._qualified_audio_intent),
+        ("hands_free", getattr(session, "audio_intent", None)),
+        ("hands_free", getattr(session, "status_intent", None)),
+        ("realtime", getattr(screen._realtime.session, "audio_intent", None)),
+    )
+    return next(
+        (
+            kind
+            for kind, ticket in candidates
+            if ticket is not None and is_audio_confirmation_for(app, ticket)
+        ),
+        None,
+    )

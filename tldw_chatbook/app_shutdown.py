@@ -3,6 +3,43 @@
 from __future__ import annotations
 
 
+def begin_audio_shutdown(app):
+    """Close future audio admission synchronously, including an unused lazy host."""
+    app._audio_output_closed = True
+    owner = vars(app).get("_audio_output")
+    observation = owner.begin_shutdown() if owner is not None else None
+    for release in tuple(vars(app).get("_retired_handoff_files", ())):
+        try:
+            release()
+        except Exception as error:
+            from loguru import logger
+
+            logger.warning(
+                "Retired audio file cleanup failed type={}", type(error).__name__
+            )
+    return observation
+
+
+async def observe_audio_shutdown(app, budget_seconds: float) -> bool:
+    """Observe checked local retirement within the caller's shutdown budget."""
+    import asyncio
+    from loguru import logger
+
+    observation = begin_audio_shutdown(app)
+    if observation is None:
+        return True
+    owner = app._audio_output
+    try:
+        confirmed = await asyncio.wait_for(observation, budget_seconds)
+    except TimeoutError:
+        confirmed = False
+    if owner.handoff_epoch is not None:
+        logger.info("Audio was handed to an external player")
+    if not confirmed:
+        logger.warning("Audio retirement unconfirmed for owner {}", owner.owner)
+    return confirmed
+
+
 async def _drain_app_unmount_services(
     self, primary_error: BaseException | None
 ) -> None:
@@ -21,13 +58,7 @@ async def _drain_app_unmount_services(
         if deferred_tasks:
             await _owner.asyncio.gather(*deferred_tasks, return_exceptions=True)
 
-        # Stop audio player if it exists
-        if hasattr(self, "audio_player"):
-            try:
-                await self.audio_player.cleanup()
-                self.loguru_logger.info("Audio player cleaned up")
-            except Exception as e:
-                self.loguru_logger.error(f"Error cleaning up audio player: {e}")
+        await observe_audio_shutdown(self, 1.5)
 
         # Clean up handler-owned TTS tasks and files if initialized.
         if hasattr(self, "_tts_handler") and self._tts_handler:

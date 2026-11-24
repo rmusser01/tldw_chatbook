@@ -266,6 +266,8 @@ class FakeSink:
     """
 
     def __init__(self, order: list[str] | None = None) -> None:
+        self.sink = self
+        self.lease = None
         self._order = order if order is not None else []
         self.opened: tuple[int, int] | None = None
         self.fed: list[bytes] = []
@@ -275,6 +277,21 @@ class FakeSink:
         self.bytes_per_second = 48000
         self.buffered_seconds = 30.0
         self.settled = 0
+
+    async def start(self, lease):
+        self.lease = lease
+        self.open(24000, 1)
+        return True
+
+    def retire(self):
+        self.stop()
+        if self.lease is not None:
+            self.lease.release()
+
+        async def confirmed():
+            return True
+
+        return confirmed()
 
     def open(self, sample_rate: int, channels: int = 1) -> None:
         self.opened = (sample_rate, channels)

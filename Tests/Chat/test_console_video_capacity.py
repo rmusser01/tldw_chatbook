@@ -445,7 +445,11 @@ class _OutcomeHarness:
         self.opened: list[Path] = []
         self.notifications: list[tuple[str, str | None]] = []
         self.chat_store = SimpleNamespace(append_video_message=self._append)
-        self.app_instance = SimpleNamespace(notify=self._notify)
+        from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership
+
+        self.app_instance = SimpleNamespace(
+            notify=self._notify, audio_output=AudioOutputOwnership()
+        )
 
     def _append(self, *args, **kwargs) -> None:
         self.appended.append((args, kwargs))
@@ -1950,6 +1954,16 @@ async def test_external_open_failure_keeps_saved_file_and_reports_sanitized_noti
     artifact = _artifact(b"saved bytes")
     target = tmp_path / "saved.mp4"
     harness = _OutcomeHarness(actions=["save_external", target], video_store=object())
+
+    def save_for_open(artifact, destination, identity, *, publication_gate):
+        # This test starts at a successful save. The pinned-directory copy has
+        # separate platform-specific tests and requires POSIX dir_fd support.
+        assert identity is None
+        artifact.stream.seek(0)
+        destination.write_bytes(artifact.stream.read())
+        return "saved"
+
+    harness._copy_pending_video_external = save_for_open
 
     def fail_open(_path: Path) -> None:
         raise OSError("PRIVATE-PATH")

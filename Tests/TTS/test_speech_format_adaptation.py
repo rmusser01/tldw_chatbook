@@ -13,6 +13,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.TTS import audio_output_runs
+from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership
+
 from tldw_chatbook.TTS import playback_capability as pc
 from tldw_chatbook.TTS.effective_settings import TTSSelectionOverrides
 from tldw_chatbook.TTS.request_admission import TTSRequestAdmissionCoordinator
@@ -173,6 +176,7 @@ class TestGenerateTtsConsoleSpeechAdaptation:
         _machine(monkeypatch, sink=True, players={})
         service = _FakeTTSService(preferences_format="mp3")
         handler = TTSEventHandler()
+        handler.app = SimpleNamespace(audio_output=AudioOutputOwnership())
         handler._tts_service = service
         monkeypatch.setattr(
             handler,
@@ -199,6 +203,7 @@ class TestGenerateTtsConsoleSpeechAdaptation:
         _machine(monkeypatch, sink=False, players={"mpv": {"mp3", "wav"}})
         service = _FakeTTSService(preferences_format="mp3")
         handler = TTSEventHandler()
+        handler.app = SimpleNamespace(audio_output=AudioOutputOwnership())
         handler._tts_service = service
         monkeypatch.setattr(
             handler,
@@ -224,6 +229,7 @@ class TestGenerateTtsConsoleSpeechAdaptation:
         _machine(monkeypatch, sink=True, players={})
         service = _FakeTTSService(preferences_format="mp3")
         handler = TTSEventHandler()
+        handler.app = SimpleNamespace(audio_output=AudioOutputOwnership())
         handler._tts_service = service
         await handler.handle_tts_request(TTSRequestEvent(text="hello"))
         # The ad-hoc branch is fire-and-forget (`_admit_tts_generation`'s
@@ -259,6 +265,7 @@ class TestPlaybackFailureRemedy:
         _machine(monkeypatch, sink=False, players={})
         service = _FakeTTSService(preferences_format="mp3")
         handler = TTSEventHandler()
+        handler.app = SimpleNamespace(audio_output=AudioOutputOwnership())
         handler._tts_service = service
 
         events: list[object] = []
@@ -273,6 +280,7 @@ class TestPlaybackFailureRemedy:
             raise AssertionError("play() must not run for an unplayable format")
 
         monkeypatch.setattr(ap_module, "get_audio_player", _no_player_spawn)
+        monkeypatch.setattr(audio_output_runs, "SimpleAudioPlayer", _no_player_spawn)
 
         outcomes: list[bool] = []
         await handler.speak_utterance("first sentence.", on_finished=outcomes.append)
@@ -315,11 +323,13 @@ class TestBrokenSinkRemedy:
         # any real sink attempt fails -- exactly the broken-audio world.
         # The legacy player exists but cannot start (no capable binary).
         dead_player = MagicMock()
-        dead_player.play.return_value = False
+        dead_player.prepare.return_value = None
+        monkeypatch.setattr(audio_output_runs, "SimpleAudioPlayer", lambda: dead_player)
         monkeypatch.setattr(ap_module, "get_audio_player", lambda: dead_player)
 
         service = _FakeTTSService(preferences_format="mp3")
         handler = tts_events.TTSEventHandler()
+        handler.app = SimpleNamespace(audio_output=AudioOutputOwnership())
         handler._tts_service = service
         events: list[object] = []
 

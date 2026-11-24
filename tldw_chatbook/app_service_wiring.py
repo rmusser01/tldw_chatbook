@@ -341,6 +341,7 @@ from tldw_chatbook.Writing_Interop import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership
     from tldw_chatbook.app_services import ApplicationServices
     from tldw_chatbook.Library.collections_capture_models import (
         ExternalMediaReference,  # noqa: F401 - retained original importing/patch slot
@@ -778,6 +779,24 @@ class ServiceWiringMixin(
     """
 
     services: "ApplicationServices"
+
+    @property
+    def audio_output(self) -> "AudioOutputOwnership":
+        """Return this app's loop-local output admission coordinator."""
+        owner = vars(self).get("_audio_output")
+        if owner is None:
+            from tldw_chatbook.TTS.audio_output_ownership import (
+                AudioOutputOwnership,
+                OutputClosed,
+            )
+
+            if any(
+                vars(self).get(flag)
+                for flag in ("_audio_output_closed", "_shutting_down", "_exit")
+            ):
+                raise OutputClosed("Audio output admission has closed")
+            owner = self._audio_output = AudioOutputOwnership()
+        return owner
 
     @property
     def terminal_session_manager(self) -> "TerminalSessionManager":

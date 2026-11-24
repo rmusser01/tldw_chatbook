@@ -172,6 +172,7 @@ class _FakeHandsFreeTtsHandler:
         quiet: bool = False,
         presentation=None,
         validator=None,
+        audio_intent=None,
     ) -> None:
         self.calls.append((text, quiet))
         self.presentations.append(presentation)
@@ -513,14 +514,22 @@ async def test_segment_no_final_consumes_latch_so_the_next_real_final_still_arms
 
 
 @pytest.mark.asyncio
-async def test_spoken_feedback_false_still_speaks_reply(monkeypatch):
+@private_profile_test
+async def test_spoken_feedback_false_still_speaks_reply(monkeypatch, request):
     """Reply speech is intrinsic to hands-free -- it must not read
     `dictation.spoken_feedback` (which governs status acks only)."""
 
-    def _fake_cli_setting(section, key=None, default=None):
-        if (section, key) == ("dictation", "spoken_feedback"):
+    from tldw_chatbook.Chat import console_hands_free
+
+    # This real profile capture can exceed the silent-send watchdog before the
+    # fake gateway is called on Windows. The watchdog has separate FSM tests.
+    monkeypatch.setattr(console_hands_free, "AWAITING_REPLY_DEADLINE_SECONDS", 90)
+    read_setting = chat_screen_module.get_cli_setting
+
+    def _fake_cli_setting(section, *args, **kwargs):
+        if section == "dictation.spoken_feedback" or (section, *args[:1]) == ("dictation", "spoken_feedback"):
             return False
-        return default
+        return read_setting(section, *args, **kwargs)
 
     monkeypatch.setattr(chat_screen_module, "get_cli_setting", _fake_cli_setting)
     service = FakeDictationService()
@@ -549,9 +558,11 @@ async def test_spoken_feedback_false_still_speaks_reply(monkeypatch):
         service.emit_final("please reply")
         await pilot.pause()
 
-        deadline = time.monotonic() + _ASYNC_SETTLE_TIMEOUT
+        deadline = time.monotonic() + console_hands_free.AWAITING_REPLY_DEADLINE_SECONDS
         while time.monotonic() < deadline and not tts.calls:
             await pilot.pause(0.02)
+
+        assert gateway.sent_messages, "The dictated reply never reached the fake provider"
         assert tts.calls
         assert any("Spoken despite" in text for text, _quiet in tts.calls)
 
@@ -798,7 +809,11 @@ async def test_spoken_send_mid_reply_acoustic_mode_ends_capture_and_exits(
         await _wait_for_mic_label(composer, pilot, "Dictate")
 
 
-def test_silence_speech_posts_stop_unconditionally_even_with_nothing_in_flight():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_silence_speech_posts_stop_unconditionally_even_with_nothing_in_flight(
+    request,
+):
     """Task-5 review M9: a `_speak_status` ack ("Sent.", "Discarded.", ...)
     bypasses the sequencer entirely -- `SilenceSpeech`'s handler must post
     the both-ways stop UNCONDITIONALLY, not only via `flush()`'s own

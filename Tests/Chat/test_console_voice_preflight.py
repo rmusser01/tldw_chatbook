@@ -212,7 +212,9 @@ async def process_failure_session(monkeypatch, failure="provider"):
         _console_dictation_state="idle",
         _hands_free=SimpleNamespace(_qualified_voice_generation=1),
     )
-    app = SimpleNamespace(notify=lambda message, **kw: notices.append(message))
+    from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership
+
+    app = SimpleNamespace(audio_output=AudioOutputOwnership(), notify=lambda message, **kw: notices.append(message))
     monkeypatch.setattr(
         console_voice_input,
         "resolve",
@@ -310,15 +312,17 @@ async def process_failure_session(monkeypatch, failure="provider"):
     finally:
         try:
             child.fence_all()
-            await parent._effects.aclose()
-            # Actual parent receipts, never fabricated child cleanup completion.
-            for state in child.attempts.values():
-                if not state.cleanup.done():
-                    await asyncio.wait_for(asyncio.shield(state.cleanup), 1)
-            await audio.fence_and_close(ControlKind.TEARDOWN)
-            for task in tuple(child.tasks):
-                task.cancel()
-            await asyncio.gather(*tuple(child.tasks), return_exceptions=True)
+            try:
+                await parent._effects.aclose()
+                # Actual parent receipts, never fabricated child cleanup completion.
+                for state in child.attempts.values():
+                    if not state.cleanup.done():
+                        await asyncio.wait_for(asyncio.shield(state.cleanup), 1)
+            finally:
+                await audio.fence_and_close(ControlKind.TEARDOWN)
+                for task in tuple(child.tasks):
+                    task.cancel()
+                await asyncio.gather(*tuple(child.tasks), return_exceptions=True)
         finally:
             parent.pipe.stop()
             pipe.stop()
@@ -329,6 +333,7 @@ async def process_failure_session(monkeypatch, failure="provider"):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_process_helper_closes_private_pipes_after_cleanup_error(monkeypatch):
     with pytest.raises(RuntimeError, match="fixture cleanup failure"):
         async with process_failure_session(monkeypatch) as h:

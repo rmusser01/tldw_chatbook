@@ -2316,10 +2316,10 @@ class ConsoleDictationController:
         # below ever reaches the recorder, so an in-flight clip cannot bleed
         # into the recognizer and get transcribed into this capture's draft.
         from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
-            TTSPlaybackEvent,
+            post_speech_stop,
         )
 
-        self.app_instance.post_message(TTSPlaybackEvent(action="stop"))
+        post_speech_stop(self.app_instance)
         self.run_worker(
             self._start_console_dictation(),
             exclusive=True,
