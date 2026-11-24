@@ -4,7 +4,7 @@ title: "Console test harnesses re-point `controller.app` at a never-run TldwCli;
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-24 04:09'
+updated_date: '2026-11-24 15:33'
 created_date: '2026-11-19 07:30'
 labels:
 - follow-up
@@ -120,6 +120,7 @@ Owner decision 2026-11-23: "Fix the harnesses (Recommended)", over TASK-42465's 
    - `ruff --select F tldw_chatbook` and on the touched test files: clean. `ruff_gate.py`: rc 0.
    - Lane step "Run admission-sensitive suites", serial: 711 passed, 2 skipped, 3 xfailed.
    - Lane step "Run admission-sensitive suites 4", serial. The first run had 598 passed and 1 failed: `test_console_right_rail.py::test_mounted_inspector_semantic_census_matches_actual_right_rail_order`, with the Inspector row order at index 4 differing. That test then passed 5/5 alone on this tree and 3/3 on base, and its file passed 6/6 serially. A rerun of the step: 599 passed.
+    - *Explained 2026-11-24 (round 24):* a race in the test itself, there since it was written (9efde6c6101), not this change. It swapped in its own Inspector state while a Console control-bar sync owed from startup was still pending; under load that sync ran after the swap (`run_coalesced_control_bar_sync` -> `_sync_console_control_bar` -> `inspector_data._sync_console_pending_display`), pushed the screen's own state into the inspector, and the census read it ("More" at index 4, three items short). Holding those syncs until after the rail's recompose reproduced the exact CI diff 4/4 on this branch and 3/3 on the branch below. The test now waits until `ChatScreen.console_pending_startup_work()` is empty (two quiet polls) before the swap and before the read, and asserts the inspector still holds its state; every census assertion is kept. Under the hold: green 6/6. Soak: the file 20/20 at `-n 4` (load 10-15), and in review 12/12 at `-n 4` and 16/16 at `-n 8` (load 8-10); the full suites-4 step 606 passed.
    - The `run_on_host` docstring also stops saying the controller "runs on" the host.
 <!-- SECTION:NOTES:END -->
 
