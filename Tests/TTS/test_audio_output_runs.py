@@ -11,6 +11,7 @@ from tldw_chatbook.Media_Playback.player_pipeline import PlayerProbe, PlayerRun
 from tldw_chatbook.TTS import audio_output_runs as runs
 from tldw_chatbook.TTS.audio_output_ownership import (
     AudioOutputOwnership,
+    OutputBlocked,
     OutputHandoffRequired,
 )
 from tldw_chatbook.TTS.audio_player import PlaybackState
@@ -80,6 +81,10 @@ class FilePlayer:
     def get_position(self):
         return 0.25
 
+    def get_duration(self):
+        self.worker_threads.append(threading.get_ident())
+        return 2.5
+
 
 async def wait_until(predicate):
     async with asyncio.timeout(3):
@@ -96,6 +101,7 @@ async def test_same_path_attempts_stop_only_their_own_child(tmp_path):
     assert await first.start(await host.acquire("first", first.retire))
     assert await first.pause() and await first.resume()
     assert await first.get_position() == 0.25
+    assert await first.get_duration() == 2.5
     lease = await host.acquire("second", second.retire)
     assert await second.start(lease)
     assert await first.stop()
@@ -249,6 +255,88 @@ async def test_file_stop_joins_its_completion_observer(tmp_path):
     assert await run.start(await host.acquire("file", run.retire))
     assert await run.stop()
     assert not (asyncio.all_tasks() - prior)
+
+
+@pytest.mark.parametrize("terminal", [PlaybackState.FINISHED, PlaybackState.ERROR])
+async def test_public_terminal_before_next_monitor_poll_survives_retire(
+    tmp_path, terminal
+):
+    host, player = AudioOutputOwnership(), FilePlayer()
+    run = await runs.FileOutputRun.prepare(tmp_path / "clip.wav", player=player)
+    parked, release = asyncio.Event(), asyncio.Event()
+    read = run.get_state
+
+    async def hold_first_monitor_read():
+        state = await read()
+        if asyncio.current_task() is run._monitor and not parked.is_set():
+            parked.set()
+            await release.wait()
+        return state
+
+    run.get_state = hold_first_monitor_read
+    try:
+        assert await run.start(await host.acquire("file", run.retire))
+        await asyncio.wait_for(parked.wait(), 2)
+        player.state = terminal
+        assert await run.get_state() is terminal
+        stop = run.retire()
+        release.set()
+        assert await stop
+        assert await run.get_state() is terminal
+    finally:
+        release.set()
+        await run.retire()
+
+
+@pytest.mark.parametrize("automatic", [False, True])
+async def test_local_failed_retirement_blocks_unrelated_acquire(tmp_path, automatic):
+    host, player = AudioOutputOwnership(), FilePlayer()
+    run = await runs.FileOutputRun.prepare(tmp_path / "clip.wav", player=player)
+    lease = await host.acquire("file", run.retire)
+    assert await run.start(lease)
+    player.can_stop = False
+    if automatic:
+        player.state = PlaybackState.FINISHED
+        await wait_until(lambda: run._retirement is not None)
+        assert not await run._retirement
+    else:
+        assert not await run.retire()
+    player.can_stop = True
+    with pytest.raises(OutputBlocked):
+        await host.acquire("unrelated", run.retire)
+    assert host.blocked and host.owner == "file" and player.stops == [player.token]
+    assert await host.stop(lease)
+    assert not host.blocked and host.owner is None and len(player.stops) == 2
+
+
+async def test_local_retirement_timeout_blocks_until_late_exact_cleanup(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(runs, "_RETIRE_TIMEOUT", 0.03)
+    host, player = AudioOutputOwnership(), FilePlayer()
+    entered, release = threading.Event(), threading.Event()
+    stop = player.stop
+
+    def delayed_stop(*, expected_token):
+        entered.set()
+        assert release.wait(4)
+        return stop(expected_token=expected_token)
+
+    player.stop = delayed_stop
+    run = await runs.FileOutputRun.prepare(tmp_path / "clip.wav", player=player)
+    lease = await host.acquire("file", run.retire)
+    assert await run.start(lease)
+    try:
+        retired = run.retire()
+        assert await asyncio.to_thread(entered.wait, 2)
+        assert not await retired
+        assert host.blocked and host.owner == "file"
+        with pytest.raises(OutputBlocked):
+            await host.acquire("unrelated", run.retire)
+    finally:
+        release.set()
+        assert await run._retirement
+    assert player.stops == [player.token] and host.owner is None and not host.blocked
 
 
 async def test_file_revoked_after_retained_launch_before_observer_resumes(tmp_path):
@@ -463,7 +551,8 @@ class Pipeline:
     def pause(self):
         self.controls.append(("pause", threading.get_ident()))
 
-    def resume(self):
+    def resume(self, *, start_authority):
+        assert start_authority()
         self.controls.append(("resume", threading.get_ident()))
 
     def start(self, *, offset_seconds, start_authority):
@@ -592,3 +681,51 @@ async def test_opaque_audio_process_birth_keeps_the_app_lease(monkeypatch):
         await media.start(lease)
     assert not await host.stop(lease) and host.blocked and host.owner == "media"
     assert fake.calls[0].terminated and not fake.calls[1].terminated
+
+
+@pytest.mark.parametrize("held_leg", ["ffplay", "ffmpeg"])
+async def test_native_media_resume_rechecks_revocation_after_child_poll(
+    monkeypatch, held_leg
+):
+    from Tests.Media_Playback.test_player_pipeline import _SpawnRecorder
+    from tldw_chatbook.Media_Playback import player_pipeline
+
+    entered, release = threading.Event(), threading.Event()
+    children, signals = _SpawnRecorder(), []
+    monkeypatch.setattr(runs, "audio_pipe_supported", lambda: True)
+    monkeypatch.setattr(player_pipeline, "audio_pipe_supported", lambda: True)
+    monkeypatch.setattr(player_pipeline.signal, "SIGCONT", 18, raising=False)
+    monkeypatch.setattr(
+        player_pipeline.os, "kill", lambda pid, signal: signals.append((pid, signal))
+    )
+    host = AudioOutputOwnership()
+    media = runs.MediaOutputRun(
+        "clip.mp4",
+        PlayerProbe(16, 16, 2.0, True),
+        pipeline_factory=lambda source, probe: player_pipeline.PlayerPipeline(
+            source, probe, spawn=children
+        ),
+    )
+    lease = await host.acquire("media", media.retire)
+    await media.start(lease)
+    assert await media.pause()
+    signals.clear()
+    demux, playback = children.calls
+
+    def held_poll():
+        entered.set()
+        assert release.wait(4)
+        return None
+
+    (playback if held_leg == "ffplay" else demux).poll = held_poll
+    try:
+        resume = asyncio.create_task(media.resume())
+        assert await asyncio.to_thread(entered.wait, 2)
+        stop = media.retire()
+        release.set()
+        assert not await resume and await stop
+        assert signals == ([] if held_leg == "ffplay" else [(playback.pid, 18)])
+        assert demux.terminated and playback.terminated
+    finally:
+        release.set()
+        await media.retire()

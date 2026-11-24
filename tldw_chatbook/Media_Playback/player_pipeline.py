@@ -493,21 +493,25 @@ class PlayerPipeline:
                         except (OSError, ProcessLookupError):
                             pass
 
-    def resume(self) -> None:
+    def resume(self, *, start_authority: Callable[[], bool] | None = None) -> None:
         """Unfreeze both processes; paused wall time is folded out of the clock."""
         with self._lifecycle_lock:
             run = self._current_run
             if run is None or run.pause_started is None:
                 return
-            run.paused_total += time.monotonic() - run.pause_started
-            run.pause_started = None
+            if start_authority is not None and not start_authority():
+                return
             if hasattr(signal, "SIGCONT"):
                 for proc in (self._ffplay, self._ffmpeg):
                     if proc is not None and proc.poll() is None:
+                        if start_authority is not None and not start_authority():
+                            return
                         try:
                             os.kill(proc.pid, signal.SIGCONT)
                         except (OSError, ProcessLookupError):
                             pass
+            run.paused_total += time.monotonic() - run.pause_started
+            run.pause_started = None
 
     def stop(self, *, expected_run: PlayerRun | None = None) -> bool:
         """Reap this pair, returning False for a stale run. Failure retains custody."""

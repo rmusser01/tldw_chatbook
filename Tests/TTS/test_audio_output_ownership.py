@@ -20,6 +20,53 @@ async def retired() -> bool:
     return True
 
 
+async def test_only_the_exact_held_lease_can_publish_unconfirmed_retirement():
+    host = AudioOutputOwnership()
+    first = await host.acquire("first", retired)
+    copy.copy(first).block()
+    assert not host.blocked and first.is_current()
+    first.block()
+    assert host.blocked and first.revoked
+    with pytest.raises(OutputBlocked):
+        await host.acquire("unrelated", retired)
+    assert await host.stop(first)
+    next_run = await host.acquire("next", retired)
+    first.block()
+    assert not host.blocked and next_run.is_current()
+
+
+@pytest.mark.parametrize("explicit_stop", [False, True])
+async def test_transfer_callback_rechecks_block_published_before_its_entry(
+    explicit_stop,
+):
+    host, calls = AudioOutputOwnership(), []
+
+    async def retry():
+        calls.append("retry")
+        return True
+
+    lease = await host.acquire("old", retry)
+    loop = asyncio.get_running_loop()
+    previous = loop.get_task_factory()
+    loop.set_task_factory(asyncio.eager_task_factory)
+    try:
+        transfer = asyncio.create_task(host.acquire("next", retired))
+        assert lease.revoked and not calls
+        # A direct or automatic retirement finishes after the transfer has
+        # published its callback task but before that task invokes the run.
+        lease.block()
+        if explicit_stop:
+            assert await host.stop(lease)
+            assert (await transfer).is_current() and calls == ["retry"]
+        else:
+            with pytest.raises(OutputBlocked):
+                await transfer
+            assert not calls and host.blocked
+            assert await host.stop(lease) and calls == ["retry"]
+    finally:
+        loop.set_task_factory(previous)
+
+
 @pytest.mark.asyncio
 async def test_exact_revocation_visible_to_native_worker_before_retirement():
     host = AudioOutputOwnership()

@@ -36,8 +36,15 @@ _PCM_BLOCK_MS = 20
 _T = TypeVar("_T")
 
 
-class _OutputRun:
-    """Keep submitted native work and its exact cleanup through observer cancellation."""
+class PreparedOutputRun:
+    """Retain one prepared attempt's worker jobs and exact physical cleanup.
+
+    Subclasses bind the issued lease on the loop with `_bind`, submit their
+    native work with `_submit`, and check `_authorized` at worker-side commit.
+    For an external handoff, record actual OS acceptance in the submitted job
+    on the loop before it returns. Implement `_close_native` to acknowledge
+    physical cleanup after all submitted jobs have settled.
+    """
 
     def __init__(self, *, audible: bool = True) -> None:
         self.audible = audible
@@ -116,6 +123,8 @@ class _OutputRun:
             try:
                 return await asyncio.wait_for(asyncio.shield(task), _RETIRE_TIMEOUT)
             except TimeoutError:
+                if self.lease is not None:
+                    self.lease.block()
                 return False
 
         return observe()
@@ -132,18 +141,20 @@ class _OutputRun:
         try:
             confirmed = await self._close_native()
         except (Exception, asyncio.CancelledError):
-            return False
+            confirmed = False
         if confirmed is True:
             self.retirement_confirmed = True
             if self.lease is not None:
                 self.lease.release()
+        elif self.lease is not None:
+            self.lease.block()
         return self.retirement_confirmed
 
     async def _close_native(self) -> bool:
         raise NotImplementedError
 
 
-class FileOutputRun(_OutputRun):
+class FileOutputRun(PreparedOutputRun):
     """One prepared artifact, private player and exact native attempt token."""
 
     def __init__(self, player: SimpleAudioPlayer, plan: FilePlaybackPlan) -> None:
@@ -218,7 +229,6 @@ class FileOutputRun(_OutputRun):
                 return
             if state in (PlaybackState.FINISHED, PlaybackState.ERROR):
                 if self._authorized():
-                    self._terminal = state
                     self._begin_retirement()
                 return
             try:
@@ -232,12 +242,17 @@ class FileOutputRun(_OutputRun):
         state = await asyncio.to_thread(
             self._player.get_state, expected_token=self._token
         )
+        if state in (PlaybackState.FINISHED, PlaybackState.ERROR):
+            self._terminal = state
         return (
             self._terminal if state is PlaybackState.IDLE and self._terminal else state
         )
 
     async def get_position(self) -> float:
         return await asyncio.to_thread(self._player.get_position)
+
+    async def get_duration(self) -> float | None:
+        return await asyncio.to_thread(self._player.get_duration)
 
     async def _transport(self, action: Callable[..., bool]) -> bool:
         if not self._authorized():
@@ -274,7 +289,7 @@ class FileOutputRun(_OutputRun):
         return await asyncio.to_thread(close)
 
 
-class PcmOutputRun(_OutputRun):
+class PcmOutputRun(PreparedOutputRun):
     """A managed PCM sink whose feed and pump interfaces remain native."""
 
     def __init__(
@@ -339,7 +354,7 @@ class PcmOutputRun(_OutputRun):
         return await self.sink.retire()
 
 
-class MediaOutputRun(_OutputRun):
+class MediaOutputRun(PreparedOutputRun):
     """One private demux pipeline, including its unpublished partial starts."""
 
     def __init__(
@@ -416,7 +431,9 @@ class MediaOutputRun(_OutputRun):
         return await self._transport(self.pipeline.pause)
 
     async def resume(self) -> bool:
-        return await self._transport(self.pipeline.resume)
+        return await self._transport(
+            lambda: self.pipeline.resume(start_authority=self._authorized)
+        )
 
     async def _close_native(self) -> bool:
         confirmed = await asyncio.to_thread(
