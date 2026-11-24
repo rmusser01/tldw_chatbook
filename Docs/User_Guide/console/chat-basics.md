@@ -1029,11 +1029,15 @@ and follows new events while you are at the bottom of its ledger (its state
 line reads "LIVE · FOLLOWING"). If you move the selection or search while a
 long Trace is still loading, the ledger is drawn at once and LOADING clears;
 after moving the selection it opens on the row you picked. Scroll up and it
-pauses ("PAUSED · f resume"): new events keep arriving below, and the rows you
-are reading stay where they are, including the oldest rows of a long Trace.
-A scroll made at the very moment an update is drawn can be undone by that
-update; scroll again. Press **f** to jump to the newest events and follow
-again.
+pauses at once ("PAUSED · f resume"), even while an update is being drawn: new
+events keep arriving below, and the rows you are reading stay where they are,
+including the oldest rows of a long Trace. Once a paused ledger shows 1,000
+events, new events wait instead of redrawing it ("PAUSED · new events waiting
+· f resume"), and an export still includes them. Press **f** to jump to the
+newest events and follow again: the ledger goes back to its newest 500 events,
+and the selection moves to the newest row if its row is no longer shown.
+Scrolling back to the bottom also follows again, and shows waiting events the
+way **f** does.
 
 ## Related settings & docs
 

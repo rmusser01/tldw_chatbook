@@ -69,8 +69,9 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
-from textual.events import DescendantFocus
+from textual.events import DescendantFocus, MouseScrollDown, MouseScrollUp
 from textual.screen import ModalScreen
+from textual.scrollbar import ScrollDown, ScrollTo, ScrollUp
 from textual.widgets import DataTable, Input, Static
 
 from tldw_chatbook.Chat.trajectory import (
@@ -169,6 +170,64 @@ class _TraceInspector(VerticalScroll):
         super().watch_scroll_y(old_value, new_value)
         if old_value != new_value:
             self._on_scroll_changed()
+
+
+class _TraceTable(DataTable):
+    """The ledger table; reports reader scrolls to the screen.
+
+    The screen queues its own scrolls (the tail, or a paused reader's rows)
+    and cannot tell a reader's scroll from its own by position alone, so the
+    wheel, key and scrollbar paths tell it directly, with the direction:
+    True is toward older rows.
+    """
+
+    def __init__(self, *, on_reader_scroll: Callable[[bool], None], **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._on_reader_scroll = on_reader_scroll
+
+    # Each handler runs before DataTable's own, which then scrolls.
+    def on_mouse_scroll_up(self, event: MouseScrollUp) -> None:
+        if not (event.ctrl or event.shift):
+            self._on_reader_scroll(True)
+
+    def on_mouse_scroll_down(self, event: MouseScrollDown) -> None:
+        if not (event.ctrl or event.shift):
+            self._on_reader_scroll(False)
+
+    def on_scroll_up(self, event: ScrollUp) -> None:  # scrollbar, above the thumb
+        self._on_reader_scroll(True)
+
+    def on_scroll_down(self, event: ScrollDown) -> None:  # scrollbar, below it
+        self._on_reader_scroll(False)
+
+    def on_scroll_to(self, message: ScrollTo) -> None:  # scrollbar drag
+        # Against the target: an animated scroll has not moved scroll_y yet.
+        if message.y is not None and message.y != self.scroll_target_y:
+            self._on_reader_scroll(message.y < self.scroll_target_y)
+
+    def action_cursor_up(self) -> None:
+        self._on_reader_scroll(True)
+        super().action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        self._on_reader_scroll(False)
+        super().action_cursor_down()
+
+    def action_page_up(self) -> None:
+        self._on_reader_scroll(True)
+        super().action_page_up()
+
+    def action_page_down(self) -> None:
+        self._on_reader_scroll(False)
+        super().action_page_down()
+
+    def action_scroll_top(self) -> None:
+        self._on_reader_scroll(True)
+        super().action_scroll_top()
+
+    def action_scroll_bottom(self) -> None:
+        self._on_reader_scroll(False)
+        super().action_scroll_bottom()
 
 
 def _fmt_clock(unix: float | None) -> str:
@@ -377,6 +436,13 @@ class TrajectoryScreen(ModalScreen[None]):
         #: table's scroll position is mid-change (a re-render resets it to the
         #: top), so it says nothing about where the reader is.
         self._scrolls_pending = 0
+        #: Bumped by a reader scroll toward older rows while a ledger scroll
+        #: is queued: a queued scroll from an older epoch lands on the
+        #: reader's rows instead of the tail.
+        self._scroll_epoch = 0
+        #: A paused reader's live snapshot, held instead of rendered once the
+        #: window reaches WORKER_THRESHOLD records; ``f`` shows it.
+        self._held_snapshot: TrajectorySnapshot | None = None
         #: Where the reader was when the scroll last stood still: see
         #: ``_top_row``. A paused rebuild scrolls back to it.
         self._reading_row: tuple[str | None, int, int] = (None, 0, 0)
@@ -440,7 +506,11 @@ class TrajectoryScreen(ModalScreen[None]):
             yield Input(placeholder="Search trace events…", id="trajectory-search")
             yield self._filter_bar
             yield self._timeline  # always mounted: zoom state survives
-            table = DataTable(id="trajectory-table", cursor_type="row")
+            table = _TraceTable(
+                on_reader_scroll=self._reader_scrolled,
+                id="trajectory-table",
+                cursor_type="row",
+            )
             table.cell_padding = 0
             yield table
             inspector = _TraceInspector(on_scroll_changed=self._refresh_inspector_cue)
@@ -472,6 +542,12 @@ class TrajectoryScreen(ModalScreen[None]):
         else:
             self._render_ledger()
         table.focus()
+        # The fold cue follows the inspector's geometry, so reconcile it in the
+        # layout that gives the inspector its overflow, not in a pass queued
+        # behind it (TASK-42460).
+        self.screen_layout_refresh_signal.subscribe(
+            self, lambda _screen: self._refresh_inspector_cue(), immediate=True
+        )
         if self._revision_provider is not None and self._snapshot_builder is not None:
             try:
                 self._last_revision = self._revision_provider()
@@ -488,11 +564,6 @@ class TrajectoryScreen(ModalScreen[None]):
         self._configure_columns()
         self._filter_bar.set_compact(self.size.width < 100)
         self._apply_height_budget()
-        try:
-            self.query_one("#trajectory-inspector", VerticalScroll)
-            self._schedule_inspector_cue()
-        except Exception:  # noqa: BLE001 - resize may precede composition
-            pass
 
     def _apply_height_budget(self) -> None:
         """Keep state, timeline, ledger, and both hint rows reachable at 18 rows."""
@@ -696,6 +767,8 @@ class TrajectoryScreen(ModalScreen[None]):
         if self._snapshot_builder is not None:
             parts.extend(("LIVE", "FOLLOWING" if self._follow else "PAUSED"))
             if not self._follow:
+                if self._held_snapshot is not None:
+                    parts.append("new events waiting")
                 parts.append("f resume")
         if self._import_in_flight:
             parts.extend(("IMPORTING", "Validating shared Trace…"))
@@ -740,6 +813,10 @@ class TrajectoryScreen(ModalScreen[None]):
         if self._revision_provider is None:
             return
         self._sync_follow_from_scroll()
+        if self._follow and self._held_snapshot is not None:
+            # The reader scrolled back to the tail: show what is held, as f
+            # does. Deferred, so the render is not part of the poll tick.
+            self.call_later(self._resume_if_still_at_tail)
         try:
             revision = self._revision_provider()
         except Exception:  # noqa: BLE001 - provider is external state
@@ -756,6 +833,12 @@ class TrajectoryScreen(ModalScreen[None]):
             group="trajectory-live",
             exclusive=True,
         )
+
+    def _resume_if_still_at_tail(self) -> None:
+        """The deferred half of the poll's resume: the reader may have left."""
+        self._sync_follow_from_scroll()
+        if self._follow and self._held_snapshot is not None:
+            self.action_resume_follow()
 
     def _live_rebuild_worker(self, revision: int | None) -> None:
         """Worker-thread half of the live rebuild (video-player pattern)."""
@@ -807,16 +890,34 @@ class TrajectoryScreen(ModalScreen[None]):
         # they may have scrolled up since: re-read it before the re-render
         # resets the scroll, or the tail scroll below snaps them back.
         self._sync_follow_from_scroll()
-        reading_key = self._note_reading_row()[0]
-        selected_key = self._cursor_key()
-        self._snapshot = snapshot
-        self._turns = snapshot.turns
-        self._rebuild_record_keys()
         if self._retry_target == "live":
             self._loading = False
             self._failure = None
             self._retry_target = None
             self._retry_in_flight = False
+        if self._held_snapshot is not None or (
+            not self._follow and self._visible_count >= WORKER_THRESHOLD
+        ):
+            # Past this many records a synchronous re-render stalls the UI
+            # (TASK-42459 measured 118-232 ms a rebuild at 2000-4000), so a
+            # paused reader keeps their rows and new events wait for ``f``.
+            # Once something is held, the newest snapshot is what is held,
+            # and a reader back at the tail gets it as ``f`` would.
+            self._held_snapshot = snapshot
+            if self._follow:
+                self.action_resume_follow()
+            else:
+                self._refresh_state()
+            return
+        self._install_live_snapshot(snapshot)
+
+    def _install_live_snapshot(self, snapshot: TrajectorySnapshot) -> None:
+        """Render ``snapshot`` keeping the reader's rows, or follow the tail."""
+        reading_key = self._note_reading_row()[0]
+        selected_key = self._cursor_key()
+        self._snapshot = snapshot
+        self._turns = snapshot.turns
+        self._rebuild_record_keys()
         self._turn_numbers = _number_logical_turns(self._turns)
         # Feed the strip the same data the ledger renders. set_snapshot
         # resets the widget's brush/selection WITHOUT posting, so keep an
@@ -854,7 +955,13 @@ class TrajectoryScreen(ModalScreen[None]):
                     self._visible_count = max(self._visible_count, window)
                     if key == selected_key:
                         self._pending_restore_key = key
+        table = self.query_one("#trajectory-table", DataTable)
+        top = table.scroll_target_y
         self._render_ledger()
+        # Hold the view the reader had until the queued scroll lands, so a
+        # wheel or key in between moves from there, not from the top the
+        # re-render reset it to (TASK-42458).
+        table.scroll_to(y=top, animate=False)
         try:
             self.query_one("#trajectory-title", Static).update(self._title_text())
         except Exception:  # noqa: BLE001 - pre-mount refresh
@@ -881,9 +988,11 @@ class TrajectoryScreen(ModalScreen[None]):
         far the anchor sits below the top.
         """
         try:
-            top = int(self.query_one("#trajectory-table", DataTable).scroll_y)
+            table = self.query_one("#trajectory-table", DataTable)
         except Exception:  # noqa: BLE001 - pre-mount refresh
             return None, 0, 0
+        # Where the scroll is going: an animated one has not moved yet.
+        top = int(table.scroll_target_y)
         keys = self._visible_keys
         gap = 1 if top < len(keys) and keys[top] == LOAD_EARLIER_ROW_KEY else 0
         anchor = top + gap
@@ -916,10 +1025,25 @@ class TrajectoryScreen(ModalScreen[None]):
             table = self.query_one("#trajectory-table", DataTable)
         except Exception:  # noqa: BLE001 - pre-mount refresh
             return
-        scroll = table.scroll_end if tail else self._scroll_to_reading_row
-        if table.call_after_refresh(
-            scroll, animate=False, on_complete=self._ledger_scroll_landed
-        ):
+        epoch = self._scroll_epoch
+
+        def land() -> None:
+            # A reader scroll since this was queued outranks the tail.
+            if tail and epoch == self._scroll_epoch:
+                table.scroll_end(
+                    animate=False,
+                    immediate=True,
+                    on_complete=self._ledger_scroll_landed,
+                )
+            else:
+                self._scroll_to_reading_row(
+                    animate=False, on_complete=self._ledger_scroll_landed
+                )
+
+        # The tail waits a second refresh for the new max_scroll_y, as
+        # Widget.scroll_end does on its own.
+        first = (lambda: table.call_after_refresh(land)) if tail else land
+        if table.call_after_refresh(first):
             self._scrolls_pending += 1
 
     def _ledger_scroll_landed(self) -> None:
@@ -939,16 +1063,70 @@ class TrajectoryScreen(ModalScreen[None]):
             return
         if table.max_scroll_y <= 0 or self._scrolls_pending:
             return
-        following = table.scroll_y >= table.max_scroll_y - 1
+        following = table.scroll_target_y >= table.max_scroll_y - 1
         if following != self._follow:
             self._follow = following
             self._refresh_state()
 
+    def _reader_moved_cursor(self) -> None:
+        """A navigation key or a timeline click moved the cursor.
+
+        The view follows the cursor, so this counts as a reader scroll, and
+        always as one toward older rows: a follower's cursor sits above the
+        view as rows append, so even a move to a newer row scrolls the view
+        up. With a ledger scroll queued, follow pauses and the next tick
+        resumes it if the view is still at the bottom; otherwise the follow
+        check reads the view at once.
+        """
+        self._reader_scrolled(True)
+
+    def _reader_scrolled(self, toward_older: bool) -> None:
+        """A wheel, key or scrollbar scroll, before the table applies it.
+
+        While one of the screen's own scrolls is queued, the table's position
+        says nothing about the reader, so this is the only way to see them:
+        the queued scroll lands on the rows the reader scrolled to, and a
+        scroll toward older rows pauses follow at once (TASK-42458). While
+        following, a scroll toward the tail goes where the queued tail scroll
+        goes, so it changes nothing.
+        """
+        table = self.query_one("#trajectory-table", DataTable)
+        if table.max_scroll_y <= 0:
+            return  # nothing to scroll away from: it keeps following
+        if not self._scrolls_pending:
+            table.call_next(self._sync_follow_from_scroll)  # the label, at once
+        elif toward_older or not self._follow:
+            self._scroll_epoch += 1
+            if self._follow:
+                self._follow = False
+                self._refresh_state()
+            table.call_next(self._note_reader_row)  # once the table has scrolled
+
+    def _note_reader_row(self) -> None:
+        self._reading_row = self._top_row()
+
     def action_resume_follow(self) -> None:
         """Re-enable tail-follow and jump to the newest records (``f``)."""
         self._follow = True
-        self._queue_ledger_scroll(tail=True)
-        self._refresh_state()
+        held, self._held_snapshot = self._held_snapshot, None
+        page = min(self._total_records, PAGE_SIZE)
+        if held is None and (
+            self._snapshot_builder is None or self._visible_count <= page
+        ):
+            self._queue_ledger_scroll(tail=True)
+            self._refresh_state()
+            return
+        # Back to the newest page: a window a paused reader grew would
+        # otherwise be re-rendered on every live rebuild (TASK-42459).
+        cursor = self._cursor_key()
+        self._visible_count = page
+        if held is not None:
+            self._install_live_snapshot(held)
+        else:
+            self._render_ledger()
+            self._queue_ledger_scroll(tail=True)
+        if cursor not in self._visible_keys and self._visible_keys:
+            self._move_cursor_to_key(self._visible_keys[-1])
 
     def _title_text(self) -> str:
         parts = ["Trace"]
@@ -1631,7 +1809,6 @@ class TrajectoryScreen(ModalScreen[None]):
             inspector.scroll_home(animate=False)
         if focus:
             inspector.focus()
-        self._schedule_inspector_cue()
         self._refresh_hints()
 
     def _refresh_inspector(self) -> None:
@@ -1662,24 +1839,15 @@ class TrajectoryScreen(ModalScreen[None]):
             cue = self.query_one("#trajectory-inspector-overflow", Static)
         except Exception:  # noqa: BLE001 - layout may be tearing down
             return
-        if not inspector.display:
-            cue.display = False
-            cue.update("")
-            return
-        cue.display = True
+        cue.display = inspector.display
         has_more = (
-            inspector.max_scroll_y > 0 and inspector.scroll_y < inspector.max_scroll_y
+            inspector.display
+            and inspector.max_scroll_y > 0
+            and inspector.scroll_y < inspector.max_scroll_y
         )
-        cue.update("▼ more — scroll…" if has_more else "")
-
-    def _schedule_inspector_cue(self) -> None:
-        """Reconcile fold geometry after the class-driven layout has settled."""
-
-        self.call_after_refresh(self._refresh_inspector_cue)
-        # Opening detail also hides the timeline, which may settle in the next
-        # compositor cycle at a responsive boundary. This bounded second pass
-        # prevents a one-frame missing cue without polling or repaint loops.
-        self.set_timer(0.01, self._refresh_inspector_cue)
+        text = "▼ more — scroll…" if has_more else ""
+        if cue.content != text:  # an update lays out, which runs this again
+            cue.update(text)
 
     # -- events -----------------------------------------------------------------
 
@@ -1809,6 +1977,7 @@ class TrajectoryScreen(ModalScreen[None]):
         # on both synchronous and future worker-backed paths.
         if key in self._visible_keys:
             self._move_cursor_to_key(key)
+            self._reader_moved_cursor()
 
     def _move_cursor_to_key(self, key: str) -> None:
         """Best-effort cursor move to the row with ``key``."""
@@ -1871,7 +2040,6 @@ class TrajectoryScreen(ModalScreen[None]):
             inspector.display = True
             cue.display = True
             inspector.focus()
-            self._schedule_inspector_cue()
         self._refresh_hints()
 
     def action_toggle_detail_full(self) -> None:
@@ -1886,7 +2054,6 @@ class TrajectoryScreen(ModalScreen[None]):
         self._detail_full = not self._detail_full
         self.set_class(self._detail_full, "trace-detail-full")
         inspector.focus()
-        self._schedule_inspector_cue()
         self._refresh_hints()
 
     def action_load_earlier(self) -> None:
@@ -1938,6 +2105,7 @@ class TrajectoryScreen(ModalScreen[None]):
             self._pending_restore_key = key
             self._render_ledger()
         self._move_cursor_to_key(key)
+        self._reader_moved_cursor()
 
     def action_next_match(self) -> None:
         self._navigate_records(lambda _record: True, 1)
@@ -2074,7 +2242,10 @@ class TrajectoryScreen(ModalScreen[None]):
         )
 
         self.app.push_screen(
-            TraceExportDialog(self._snapshot), self._trace_export_finished
+            TraceExportDialog(
+                self._snapshot if self._held_snapshot is None else self._held_snapshot
+            ),
+            self._trace_export_finished,
         )
 
     def _trace_export_finished(self, written: Path | None) -> None:

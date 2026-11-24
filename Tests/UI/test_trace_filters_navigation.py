@@ -553,11 +553,14 @@ async def test_live_insertion_before_selection_preserves_event_id_filters_and_vi
         bar = screen.query_one(module.TraceFilterBar)
         bar.set_state(module.TraceFilterState(provider="openai"))
         await pilot.pause()
-        screen._move_cursor_to_key("event:3")
+        before = filter_snapshot().turns[0].records
+        # Row keys carry the record namespace (0dd6fc3b14); a bare event id
+        # matches no row and the move would silently do nothing.
+        screen._move_cursor_to_key(screen._record_key(screen._all_records()[2]))
+        assert _cursor_record(screen).event_id == "event:3"
         screen._timeline.zoom_at(2.0)
         viewport = screen._timeline.viewport
 
-        before = filter_snapshot().turns[0].records
         inserted = _record(99, "system", actor_kind="system", start=5.0)
         renumbered = tuple(
             record if record.event_id == "event:3" else record for record in before
