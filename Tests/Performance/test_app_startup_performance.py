@@ -203,8 +203,20 @@ def test_tool_pack_facade_export_is_lazy(tmp_path: Path) -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("barrier_failure", "barrier_error"),
+    [
+        (None, None),
+        ("root", "os_error"),
+        ("parent", "os_error"),
+        ("root", "value_error"),
+        ("parent", "value_error"),
+    ],
+)
 def test_tool_pack_implementation_imports_only_in_deferred_worker(
     tmp_path: Path,
+    barrier_failure: str | None,
+    barrier_error: str | None,
 ) -> None:
     """App import stays cheap; the post-ready worker owns composition and I/O."""
 
@@ -233,7 +245,37 @@ def test_tool_pack_implementation_imports_only_in_deferred_worker(
         root = Path(__import__("os").environ["XDG_DATA_HOME"])
         # TASK-33011: the tool-pack composition moved to app_service_wiring.
         import tldw_chatbook.app_service_wiring as wiring_module
-        wiring_module.get_user_data_dir = lambda: root
+        environment = __import__("os").environ
+        barrier_failure = environment["TOOL_PACK_TEST_BARRIER"] or None
+        barrier_error = environment["TOOL_PACK_TEST_BARRIER_ERROR"] or None
+        receipt_root = root / "tool_pack_receipts"
+        failed_path = {"root": receipt_root, "parent": root}.get(barrier_failure)
+        directory_syncs = []
+        completed_syncs = []
+        injected_failures = []
+        root_resolutions = []
+
+        def receipt_data_root():
+            root_resolutions.append(str(root))
+            # The real worker imported this owner before resolving its root.
+            receipt_module = sys.modules["tldw_chatbook.Tool_Packs.receipt_store"]
+            store = receipt_module.ToolPackReceiptStore
+            real_sync = store._fsync_directory
+
+            def sync_directory(path):
+                directory_syncs.append(str(path))
+                if path == failed_path:
+                    injected_failures.append(str(path))
+                    if barrier_error == "value_error":
+                        raise ValueError("windows_path_too_long")
+                    raise OSError("controlled_receipt_directory_barrier")
+                real_sync(path)
+                completed_syncs.append(str(path))
+
+            store._fsync_directory = staticmethod(sync_directory)
+            return root
+
+        wiring_module.get_user_data_dir = receipt_data_root
 
         class Registry:
             def __init__(self, guard): self.guard = guard
@@ -285,8 +327,16 @@ def test_tool_pack_implementation_imports_only_in_deferred_worker(
             "reconciliation_reason": fake.tool_pack_receipt_reconciliation_unavailable_reason,
             "guard_active": bootstrap.active_guard is not None,
             "guard_unchanged": registry.guard is bootstrap,
+            "directory_syncs": directory_syncs,
+            "completed_syncs": completed_syncs,
+            "injected_failures": injected_failures,
+            "root_resolutions": root_resolutions,
         }))
         """,
+        extra_env={
+            "TOOL_PACK_TEST_BARRIER": barrier_failure or "",
+            "TOOL_PACK_TEST_BARRIER_ERROR": barrier_error or "",
+        },
     )
 
     assert result.returncode == 0, result.stderr
@@ -301,8 +351,23 @@ def test_tool_pack_implementation_imports_only_in_deferred_worker(
         "tldw_chatbook.Tool_Packs.receipt_store",
         "tldw_chatbook.Tool_Packs.removal",
     ]
-    if os.name == "nt":
-        # Native Windows receipt durability remains unqualified (ADR-107).
+    receipt_root = tmp_path / "data" / "tool_pack_receipts"
+    expected_syncs = [str(receipt_root)]
+    if barrier_failure != "root":
+        expected_syncs.append(str(receipt_root.parent))
+    assert payload["directory_syncs"] == expected_syncs
+    assert payload["completed_syncs"] == (
+        expected_syncs[:-1] if barrier_failure is not None else expected_syncs
+    )
+    assert payload["root_resolutions"] == [str(receipt_root.parent)]
+    failed_path = {"root": receipt_root, "parent": receipt_root.parent}.get(
+        barrier_failure
+    )
+    assert payload["injected_failures"] == (
+        [str(failed_path)] if barrier_failure is not None else []
+    )
+    if barrier_failure is not None:
+        # Every mandatory root/parent barrier refusal must prevent activation.
         assert payload["attached"] is False
         assert payload["root"] is None
         assert payload["unavailable_reason"] == "composition_unavailable"
@@ -312,6 +377,10 @@ def test_tool_pack_implementation_imports_only_in_deferred_worker(
         return
     assert payload["attached"] is True
     assert payload["root"] == str(tmp_path / "data" / "tool_pack_receipts")
+    assert payload["unavailable_reason"] is None
+    assert payload["reconciliation_reason"] is None
+    assert payload["guard_active"] is True
+    assert payload["guard_unchanged"] is True
 
 
 @pytest.mark.parametrize(("enabled", "expected_tasks"), [(False, 0), (True, 1)])
