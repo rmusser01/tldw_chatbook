@@ -5943,3 +5943,32 @@ checks then admitted exactly one run (49 requests/3 children). Keep one-use
 preparations, grants and evidence durable; recover provenance and execution history
 before treating a lost scope as safe to replace. Missing historical raw logs stay
 missing. See Docs/superpowers/qa/2026-11-07-review-completion-recovery/README.md.
+
+## Off-loop parsing can still freeze the loop: the GIL goes to the loop only when Python code runs (TASK-33910.44, PR #3518, 2026-11-24)
+
+**Incident.** PR #3518's ADR-011 runs timed a 9 MB lore import. Its threaded
+`json.loads` held the Roleplay loop for 115-225 ms (the "parse window" gap), though
+the parse ran in `asyncio.to_thread`. With a Python-level `object_hook` in the
+call, the same window measured 44-63 ms. The same runs logged generation-2
+collections of 44-87 ms during the threaded write and landing phases, each coinciding
+with a loop gap.
+
+**Why (checked locally, CPython 3.12.11, a 16 MB document parsed in a thread while
+the main thread slept 1 ms in a loop).** Without a hook the C scanner never returns
+to the eval loop, so it never offers the GIL: the loop's worst gap was 27.7 ms and
+25.5 ms against a 30-31 ms parse. With `object_hook=lambda d: d` the C scanner calls
+back into Python once per object, the interpreter yields on its 5 ms switch
+interval, and the worst gap fell to 9.0 ms (parse wall 31 to 32-33 ms). A
+`gc.collect(2)` called from a worker thread stalled the same heartbeat for 18.4 ms of
+its 18 ms wall. A generation-2 pass holds the GIL whichever thread triggers it, so a
+worker that allocates enough to trigger one stalls the loop for the length of the
+pass.
+
+**What to do.** Do not read `to_thread` as "the loop is free". For a long
+call that stays in C (`json.loads` is the verified case) check the loop's gap
+during the call, and, when it is big, hand the GIL back with a cheap Python
+callback (a no-op `object_hook`) or split the work. When
+the loop stalls during a threaded phase with a heap this size, record the
+collection records (generation, duration) with the heartbeat, and expect a
+worker's allocations to produce loop stalls. The ADR-011 JSON does not tag a pass's
+thread, so that last attribution is by timing only.
