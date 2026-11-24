@@ -270,6 +270,10 @@ def _qualified_sqlite_connect_calls(source_path: Path) -> Counter[str]:
                 elif alias.name == "*":
                     callable_aliases.update({"connect", "Connection"})
 
+    # Rebindings can only extend aliases found in the imports above.
+    if not module_aliases and not callable_aliases:
+        return Counter()
+
     def is_raw_callable(expression: ast.expr) -> bool:
         if isinstance(expression, ast.Name):
             return expression.id in callable_aliases
@@ -371,15 +375,14 @@ def _qualified_private_sqlite_calls(
     )
     module_aliases: set[str] = set()
     callable_aliases: dict[str, str] = {}
-    if validation_transport:
-        callable_aliases.update(
-            (node.name, node.name)
-            for node in ast.walk(tree)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name in seam_names
-        )
-
+    local_seams: set[str] = set()
     for node in ast.walk(tree):
+        if (
+            validation_transport
+            and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name in seam_names
+        ):
+            local_seams.add(node.name)
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name == "tldw_chatbook.DB.private_sqlite" or (
@@ -411,6 +414,13 @@ def _qualified_private_sqlite_calls(
                         validation_transport and alias.name == "sqlite_validation"
                     ):
                         module_aliases.add(alias.asname or alias.name)
+
+    # Imports took precedence over locally declared names before the scans
+    # were combined. No alias resolution can add a name without either seed.
+    for name in local_seams:
+        callable_aliases.setdefault(name, name)
+    if not module_aliases and not callable_aliases:
+        return []
 
     def seam_callable_name(expression: ast.expr) -> str | None:
         if isinstance(expression, ast.Name):
@@ -1633,6 +1643,11 @@ def _assert_direct_backup_census(
 ) -> None:
     calls: Counter[tuple[str, str, str]] = Counter()
     for module, tree in sources:
+        if not any(
+            isinstance(node, ast.Attribute) and node.attr == "backup"
+            for node in ast.walk(tree)
+        ):
+            continue
         visitor = _QualifiedCallNodeVisitor(
             lambda call: (
                 isinstance(call.func, ast.Attribute) and call.func.attr == "backup"
