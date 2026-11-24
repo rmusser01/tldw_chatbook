@@ -2521,17 +2521,7 @@ class ConsoleHandsFreeController:
         self._close_qualified_console_voice(ControlKind.NAVIGATION)
 
     def teardown(self) -> None:
-        """Abandon the pipeline loop's timer during screen unmount.
-
-        Moved out of `ChatScreen.on_unmount` (wave-2 console decomposition,
-        task 1), where this was two inline statements; `on_unmount` now
-        calls this as one line, mirroring `ConsoleDictationController.
-        teardown`'s own precedent. Direct timer stop + state drop, not the
-        full `ExitLoop` intent path: unmount is abandon teardown (V2-style,
-        per the design doc's error-handling section), not a graceful exit --
-        no further TTS/dictation calls are safe to issue against a screen
-        that is being torn down.
-        """
+        """Fence this loop’s speech, stop its timer, and release the session."""
         from ...Chat.console_voice_controls import (
             ControlKind,
         )
@@ -2542,6 +2532,16 @@ class ConsoleHandsFreeController:
         if isinstance(hands_free, ConsoleSpeculativeHandsFreeSession):
             self._close_qualified_console_voice(ControlKind.TEARDOWN)
             return
-        if hands_free is not None and hands_free.tick_timer is not None:
-            hands_free.tick_timer.stop()
+        if hands_free is not None:
+            from ...Event_Handlers.TTS_Events.tts_events import post_speech_stop
+
+            if (
+                hands_free.status_intent is not None
+                or hands_free.audio_intent is not None
+            ):
+                post_speech_stop(
+                    self.app_instance, hands_free.status_intent, hands_free.audio_intent
+                )
+            if hands_free.tick_timer is not None:
+                hands_free.tick_timer.stop()
         self._console_hands_free = None

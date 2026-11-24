@@ -339,6 +339,7 @@ async def _deliver_tts_complete_event(app: TldwCli, event: TTSCompleteEvent) -> 
                     TTSPlaybackEvent(
                         action="play",
                         message_id=event.message_id,
+                        expected_path=event.audio_file,
                         playback_lifecycle=playback_lifecycle,
                         presentation=event.presentation,
                         audio_intent=getattr(event, "audio_intent", None),

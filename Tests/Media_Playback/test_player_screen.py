@@ -1311,3 +1311,46 @@ async def test_a_time_boxed_player_under_a_quit_prompt_closes_once_uncovered(
             assert app.is_running
     finally:
         release.set()
+
+
+@pytest.mark.asyncio
+async def test_frame_eof_preserves_audible_tail_until_pair_exits(monkeypatch):
+    from tldw_chatbook.TTS import audio_output_runs
+
+    eof, tail_finished, stopped = Event(), Event(), Event()
+
+    class TailPipeline(_Pipeline):
+        def start(self, **kwargs):
+            return super().start()
+
+        def iter_frames(self, run):
+            run.eof = True
+            eof.set()
+            return iter(())
+
+        def pair_exited(self, expected_run):
+            assert expected_run is self.runs[0]
+            return tail_finished.is_set()
+
+        def stop(self, **kwargs):
+            stopped.set()
+            return True
+
+    monkeypatch.setattr(audio_output_runs, "audio_pipe_supported", lambda: True)
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.video_player_screen.PlayerPipeline", TailPipeline
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.video_player_screen.probe_file",
+        lambda _: PlayerProbe(1, 1, 2.0, True),
+    )
+    app = _PlayerApp()
+    async with app.run_test() as pilot:
+        await _wait(eof)
+        await pilot.pause()
+        try:
+            assert app.audio_output.owner is not None and not stopped.is_set()
+            tail_finished.set()
+            await _wait(stopped)
+        finally:
+            tail_finished.set()

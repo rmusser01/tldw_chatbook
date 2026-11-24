@@ -138,7 +138,7 @@ from .send_price import ConsoleSendPriceController
 from .session import ConsoleSessionController
 from .skill import ConsoleSkillController, _sync_console_skill_popup
 from .transcript import ConsoleChangeReviewProjection
-from .video import ConsoleVideoController
+from .video import ConsoleVideoController, resolve_external_video_opener
 from .workspace import (
     ConsoleWorkspaceController,
     persist_console_workspace_tree_expansion_preferences,
@@ -1573,6 +1573,9 @@ def build_console_controllers(
     )
 
     screen._video = ConsoleVideoController(
+        playback_visit=lambda: screen._console_attach_visit_generation
+        if screen.is_mounted and screen.app.screen is screen
+        else None,
         app_instance=screen.app_instance,
         sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
         ensure_console_chat_store=lambda: screen._ensure_console_chat_store(),
@@ -1580,6 +1583,7 @@ def build_console_controllers(
             lambda modal: screen._wait_for_console_screen_result(modal)
         ),
         open_video_with_os=lambda path: screen._open_video_with_os(path),
+        preflight_external_video=resolve_external_video_opener,
         append_native_console_system_message=(
             lambda *args, **kwargs: screen._append_native_console_system_message(
                 *args, **kwargs
@@ -2853,13 +2857,21 @@ def build_console_controllers(
                 )
             )
         ),
+        reserve_audio_intent=lambda: screen.app_instance.audio_output.begin_intent(
+            tentative=True
+        ),
         issue_message_speech=(
-            lambda message_id, outcome_callback, expected_destination, retry_failed_auto: (
+            lambda message_id,
+            outcome_callback,
+            expected_destination,
+            retry_failed_auto,
+            audio_intent: (
                 screen._message.request_console_message_speech(
                     message_id,
                     outcome_callback,
                     expected_destination,
                     retry_failed_auto,
+                    audio_intent,
                 )
             )
         ),

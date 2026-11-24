@@ -39,14 +39,51 @@ from ...Video_Generation.video_store import (
 from ...Widgets.Console.console_video_card import ConsoleVideoCardSpec
 
 
-async def _delegate_video(app, ticket, path: Path, opener, current) -> bool:
+class ExternalVideoNotLaunched(OSError):
+    """The platform launcher positively refused or was absent before dispatch."""
+
+
+def resolve_external_video_opener() -> str | None:
+    """Resolve the POSIX launcher, or select the Windows shell, before admission."""
+    import shutil
+    import sys
+
+    if sys.platform.startswith("win"):
+        return None
+    executable = shutil.which("open" if sys.platform == "darwin" else "xdg-open")
+    if executable is None:
+        raise ExternalVideoNotLaunched("No system video opener is available")
+    return executable
+
+
+def open_external_video(path: Path):
+    """Submit the file to the current platform launcher."""
+    import subprocess
+
+    executable = resolve_external_video_opener()
+    if executable is None:
+        try:
+            os.startfile(str(path))
+        except OSError as error:
+            raise ExternalVideoNotLaunched() from error
+        return None
+    return subprocess.Popen([executable, str(path)])  # nosec B603
+
+
+async def _delegate_video(
+    app, ticket, path: Path, opener, current, *, preflight=None
+) -> bool:
     """Retain one committed OS launch through cancellation and late acceptance."""
     from ...TTS.audio_output_admission import acquire_audio_output
     from ...TTS.audio_output_runs import PreparedOutputRun
 
-    identity = await asyncio.to_thread(
-        ConsoleVideoController._external_video_target_identity, path
-    )
+    def prepare():
+        identity = ConsoleVideoController._external_video_target_identity(path)
+        if identity is not None and preflight is not None:
+            preflight()
+        return identity
+
+    identity = await asyncio.to_thread(prepare)
     if (
         identity is None
         or not stat.S_ISREG(identity[-1])
@@ -74,9 +111,8 @@ async def _delegate_video(app, ticket, path: Path, opener, current) -> bool:
                 self.uncertain = True
                 try:
                     return True, opener(path)
-                except OSError:
-                    if os.name == "nt":
-                        self.uncertain = False  # ShellExecute explicitly refused.
+                except ExternalVideoNotLaunched:
+                    self.uncertain = False
                     raise
 
             async def launch():
@@ -131,6 +167,8 @@ class ConsoleVideoController:
         default_console_session_settings: Callable[[], Any],
         console_composer_or_none: Callable[[], Any | None],
         clear_console_composer_draft: Callable[[], None],
+        playback_visit: Callable[[], int | None] = lambda: None,
+        preflight_external_video: Callable[[], Any] | None = None,
     ) -> None:
         """Build the generated-video controller.
 
@@ -145,9 +183,13 @@ class ConsoleVideoController:
             default_console_session_settings: Return default session settings.
             console_composer_or_none: Return the mounted composer when available.
             clear_console_composer_draft: Clear the current composer draft.
+            playback_visit: Current mounted visit generation, or None while covered.
+            preflight_external_video: Check the configured OS opener on a worker.
         """
         self.app_instance = app_instance
         self._producer_lifetime = ProducerLifetime()
+        self._playback_visit = playback_visit
+        self._preflight_external_video = preflight_external_video
         self._sync_native_console_chat_ui_fn = sync_native_console_chat_ui
         self._ensure_console_chat_store_fn = ensure_console_chat_store
         self._wait_for_console_screen_result_fn = wait_for_console_screen_result
@@ -1078,6 +1120,7 @@ class ConsoleVideoController:
                             external_path,
                             self._open_video_with_os,
                             lambda: self._owns_pending_console_video(artifact),
+                            preflight=getattr(self, "_preflight_external_video", None),
                         ):
                             self.app_instance.notify(
                                 "Video saved. Playback did not start.",
@@ -1451,7 +1494,12 @@ class ConsoleVideoController:
                     return False
 
             await _delegate_video(
-                self.app_instance, ticket, path, self._open_video_with_os, current
+                self.app_instance,
+                ticket,
+                path,
+                self._open_video_with_os,
+                current,
+                preflight=self._preflight_external_video,
             )
         except Exception as exc:
             logger.warning(
@@ -1635,6 +1683,14 @@ class ConsoleVideoController:
                 "Usage: /stream-video <url>"
             )
             return
+        store = self._ensure_console_chat_store()
+        session_id, session_epoch = (
+            store.active_session_id,
+            store.active_session_epoch(),
+        )
+        visit = self._playback_visit()
+        if visit is None:
+            return
         ticket = self.app_instance.audio_output.begin_intent(tentative=True)
         from tldw_chatbook.Media_Playback.stream_resolve import (
             MAX_STREAM_SECONDS,
@@ -1666,6 +1722,14 @@ class ConsoleVideoController:
             return
         from tldw_chatbook.UI.Screens.video_player_screen import VideoPlayerScreen
 
+        if (
+            visit != self._playback_visit()
+            or self._ensure_console_chat_store() is not store
+            or store.active_session_id != session_id
+            or store.active_session_epoch() != session_epoch
+        ):
+            ticket.cancel()
+            return
         self.app_instance.push_screen(
             VideoPlayerScreen(
                 resolution.final_url,

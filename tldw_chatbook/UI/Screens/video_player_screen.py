@@ -331,12 +331,25 @@ class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
 
     def _start_pump(self, token: int, pipeline: PlayerPipeline, run: PlayerRun) -> None:
         self.run_worker(
-            partial(self._pump_loop, token, pipeline, run),
+            partial(
+                self._pump_loop,
+                token,
+                pipeline,
+                run,
+                wait_for_audio_tail=self._media_output is not None,
+            ),
             thread=True,
             group="video-player-pump",
         )
 
-    def _pump_loop(self, token: int, pipeline: PlayerPipeline, run: PlayerRun) -> None:
+    def _pump_loop(
+        self,
+        token: int,
+        pipeline: PlayerPipeline,
+        run: PlayerRun,
+        *,
+        wait_for_audio_tail: bool = False,
+    ) -> None:
         """Drive exactly one immutable playback generation."""
         try:
             for pts, data in pipeline.iter_frames(run):
@@ -358,6 +371,11 @@ class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
                 if dispatched is False:
                     return
             if run.eof:
+                if wait_for_audio_tail:
+                    while (exited := pipeline.pair_exited(run)) is False:
+                        time.sleep(_STATUS_INTERVAL_SECONDS)
+                    if exited is None:
+                        return
                 self._bridge(self._finish_run, token, pipeline, run)
         except Exception as exc:
             _log_failure("pump", exc)
@@ -509,6 +527,7 @@ class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
         # reconnect flags are what actually resumes them.
         if (
             state == "▶ playing"
+            and not run.eof
             and self._last_frame_wall is not None
             and time.monotonic() - self._last_frame_wall > _STALL_THRESHOLD_SECONDS
         ):

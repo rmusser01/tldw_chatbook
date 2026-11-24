@@ -300,3 +300,151 @@ async def test_cancelled_file_play_settles_pending_action_before_native_dispatch
         await asyncio.gather(task, return_exceptions=True)
     assert outcomes == [False] and not handler._speech_outputs and path.exists()
     await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
+async def test_deferred_status_play_uses_exact_artifact_and_rejects_older_publication(
+    tmp_path, monkeypatch
+):
+    from Tests.TTS.test_console_speak_autoplay import _FakeApp
+    from tldw_chatbook.app import TldwCli
+    from Tests.TTS.owned_output_fakes import ConsoleFilePlayer
+    from tldw_chatbook.TTS import audio_output_runs
+
+    app = _FakeApp()
+    handler = events.TTSEventHandler()
+    handler.app = app
+    first, second = tmp_path / "first.wav", tmp_path / "second.wav"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+    stale = events.begin_speech_intent(app)
+    current = events.begin_speech_intent(app)
+    token = events._speech_intent.set(current)
+    try:
+        await handler._cache_audio_file("adhoc", second, None)
+        assert await handler._post_tts_message(
+            events.TTSCompleteEvent("adhoc", audio_file=second)
+        )
+        await TldwCli.handle_tts_complete_event(app, app.posted.pop())
+        play = app.posted[-1]
+        events._speech_intent.set(stale)
+        assert await handler._cache_audio_file("adhoc", first, None) is False
+        assert await handler._cache_audio_file("adhoc", second, None) is False
+        assert second.read_bytes() == b"second"
+        player = ConsoleFilePlayer()
+        monkeypatch.setattr(audio_output_runs, "SimpleAudioPlayer", lambda: player)
+        await handler.handle_tts_playback(play)
+        await asyncio.gather(*tuple(handler._active_tasks))
+        assert player.paths == [second] and not first.exists()
+        assert play.expected_path == second
+    finally:
+        events._speech_intent.reset(token)
+        await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
+async def test_handsfree_fallback_revalidates_owner_after_preparation(
+    tmp_path, monkeypatch
+):
+    from Tests.TTS.owned_output_fakes import ConsoleFilePlayer
+    from tldw_chatbook.TTS import audio_output_runs, playback_capability
+
+    handler = events.TTSEventHandler()
+    handler.app = SimpleNamespace(audio_output=AudioOutputOwnership())
+    valid = [True]
+    lifecycle = events.TTSPlaybackLifecycle(
+        message_id="hf",
+        request_id=1,
+        validator=lambda: valid[0],
+        callback=lambda _: None,
+    )
+    file = tmp_path / "hf.wav"
+    file.write_bytes(b"clip")
+    handler._audio_files["hf"] = file
+    started, release = asyncio.Event(), asyncio.Event()
+    player = ConsoleFilePlayer()
+    prepare = FileOutputRun.prepare
+
+    async def held(cls, path):
+        started.set()
+        await release.wait()
+        return await prepare(path, player=player)
+
+    monkeypatch.setattr(playback_capability, "format_playable_locally", lambda _: True)
+    monkeypatch.setattr(audio_output_runs.FileOutputRun, "prepare", classmethod(held))
+    outcomes = []
+
+    async def play():
+        await handler._play_utterance_legacy_artifact(
+            "hf", file, "hello", outcomes.append, playback_lifecycle=lifecycle
+        )
+
+    task = asyncio.create_task(play())
+    try:
+        await asyncio.wait_for(started.wait(), 1)
+        valid[0] = False
+        release.set()
+        await task
+        assert not player.paths and outcomes == [False]
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
+async def test_handsfree_teardown_fences_and_retires_only_its_live_stream():
+    from tldw_chatbook.UI.Console_Modules.hands_free import ConsoleHandsFreeController
+    from tldw_chatbook.TTS.audio_output_runs import PreparedOutputRun
+
+    class Stream(PreparedOutputRun):
+        async def _close_native(self):
+            return True
+
+    handler = events.TTSEventHandler()
+    posted = []
+    host = AudioOutputOwnership()
+    app = handler.app = SimpleNamespace(
+        audio_output=host, _tts_handler=handler, post_message=posted.append
+    )
+    ticket = events.begin_speech_intent(app)
+    attempt = handler._prepare_output("reply", None, ticket=ticket)
+    run = attempt.run = Stream()
+    lease = await host.acquire("reply", run.retire, intent=ticket)
+    run._bind(lease)
+    owner = SimpleNamespace(
+        app_instance=app,
+        _qualified_voice_startup_generation=None,
+        _console_hands_free=SimpleNamespace(
+            tick_timer=None, status_intent=None, audio_intent=ticket
+        ),
+    )
+    ConsoleHandsFreeController.teardown(owner)
+    assert lease.revoked and not ticket.is_current()
+    for stop in posted:
+        await handler.handle_tts_playback(stop)
+    assert run.retirement_confirmed and host.owner is None
+
+
+@pytest.mark.asyncio
+async def test_stale_deferred_play_discards_its_exact_file_before_newer_generation_finishes(
+    tmp_path,
+):
+    handler = events.TTSEventHandler()
+    host = AudioOutputOwnership()
+    handler.app = SimpleNamespace(audio_output=host)
+    path = tmp_path / "old.wav"
+    path.write_bytes(b"old")
+    ticket = host.begin_intent()
+    token = events._speech_intent.set(ticket)
+    try:
+        assert await handler._cache_audio_file("adhoc", path, None)
+        event = events.TTSPlaybackEvent(
+            "play", "adhoc", expected_path=path, audio_intent=ticket
+        )
+        host.begin_intent()
+        await handler.handle_tts_playback(event)
+        assert not path.exists() and "adhoc" not in handler._audio_files
+    finally:
+        events._speech_intent.reset(token)
+        await handler.cleanup_tts_resources()

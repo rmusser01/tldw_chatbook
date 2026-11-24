@@ -768,3 +768,44 @@ def test_failure_sanitization_excludes_keys_payload_audio_and_private_transcript
     assert "payload" not in visible
     assert session.failure_text == "Incorrect API key provided (invalid_api_key)"
     assert persisted[0][1]["error_category"] == "invalid_credentials"
+
+
+@pytest.mark.asyncio
+async def test_uncertain_realtime_retirement_keeps_reply_pending_until_exact_positive_proof(
+    monkeypatch,
+):
+    from tldw_chatbook.Audio import streaming_sink
+    from tldw_chatbook.TTS.audio_output_runs import PreparedOutputRun
+
+    events = []
+    controller = _controller(events=events)
+    session = controller.session = _session(state="speaking")
+    host = controller._audio_app_accessor().audio_output
+
+    class Held(PreparedOutputRun):
+        can_close = False
+        sink = object()
+
+        async def start(self, lease):
+            self._bind(lease)
+            return True
+
+        async def _close_native(self):
+            return self.can_close
+
+    output = session.output_run = Held()
+    session.audio_intent = host.begin_intent()
+    session.generation_done = session.playback_pending = True
+
+    async def drained(*_):
+        return SimpleNamespace(outcome="drained")
+
+    monkeypatch.setattr(streaming_sink, "pump", drained)
+    await controller._pump_console_realtime_audio(
+        session, session.reply_token, output, asyncio.Queue()
+    )
+    assert session.playback_pending and not session.controller.calls and host.blocked
+    output.can_close = True
+    assert await host.stop(output.lease)
+    assert not session.playback_pending
+    assert [name for name, _ in session.controller.calls] == ["reply_done"]

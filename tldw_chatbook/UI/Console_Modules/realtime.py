@@ -1764,9 +1764,8 @@ class ConsoleRealtimeController:
         signal the V3 TTS path waits on before reporting an utterance
         finished. It blocks, so it runs off-thread.
 
-        Whatever the outcome, this reply's audio is over exactly once, so
-        `_console_realtime_playback_finished` is called on every exit --
-        it owns the decision about whether that means anything to the FSM.
+        Release the reply's microphone gate only after checked retirement of
+        this exact output. An uncertain close keeps the gate until a late receipt.
         """
         from ...Audio.streaming_sink import pump
         from ...TTS.audio_output_admission import acquire_audio_output
@@ -1824,8 +1823,12 @@ class ConsoleRealtimeController:
                 await self._audio_app_accessor().audio_output.stop(lease)
             # Exit owns the tap -> provider -> output close order.
             if self.session is session:
-                await output.retire()
-            self._console_realtime_playback_finished(session, token)
+                if await output.retire() is True:
+                    self._console_realtime_playback_finished(session, token)
+                else:
+                    output.on_retired(
+                        lambda: self._console_realtime_playback_finished(session, token)
+                    )
 
     def _end_console_realtime_reply_audio(
         self, session: ConsoleRealtimeSession, *, abort: bool

@@ -837,6 +837,9 @@ async def test_console_markdown_reaches_adapter_through_speech_controls(
     monkeypatch.setattr(tts_events_module, "sink_available", lambda: True)
     controller.app_instance.post_message.side_effect = post
     coordinator = ConsoleAutoSpeakCoordinator(
+        reserve_audio_intent=lambda: controller.app_instance.audio_output.begin_intent(
+            tentative=True
+        ),
         store_accessor=lambda: store,
         resolve_destination=handler.resolve_console_speech_destination,
         issue_message_speech=lambda *args: (
@@ -1158,7 +1161,9 @@ async def test_terminal_failed_completion_still_reports_actionable_error() -> No
 
 
 @pytest.mark.asyncio
-async def test_superseding_request_fences_old_completion_and_posts_stop() -> None:
+async def test_superseding_request_fences_unstarted_completion_without_stopping_output() -> (
+    None
+):
     store = ConsoleChatStore()
     session = store.create_session()
     first = store.append_message(
@@ -1172,7 +1177,6 @@ async def test_superseding_request_fences_old_completion_and_posts_stop() -> Non
 
     await ConsoleMessageController.request_console_message_speech(controller, first.id)
     first_request = controller.app_instance.post_message.call_args.args[0]
-    first_request.playback_lifecycle.report("playing")
     await asyncio.sleep(0)
 
     await ConsoleMessageController.request_console_message_speech(controller, second.id)
@@ -1180,9 +1184,7 @@ async def test_superseding_request_fences_old_completion_and_posts_stop() -> Non
         call.args[0] for call in controller.app_instance.post_message.call_args_list
     ]
 
-    assert isinstance(posted[-2], TTSPlaybackEvent)
-    assert posted[-2].action == "stop"
-    assert posted[-2].message_id == first.id
+    assert not any(isinstance(event, TTSPlaybackEvent) for event in posted)
     assert isinstance(posted[-1], TTSMessageSpeechRequestEvent)
     assert posted[-1].message_id == second.id
     assert first_request.playback_lifecycle.is_current() is False
@@ -1202,42 +1204,61 @@ async def test_superseding_request_fences_old_completion_and_posts_stop() -> Non
 
 
 @pytest.mark.asyncio
-async def test_rejected_prior_stop_aborts_new_speech_request() -> None:
+async def test_failed_manual_replacement_keeps_healthy_native_owner_and_its_stop_target(
+    tmp_path, monkeypatch
+):
     store = ConsoleChatStore()
     session = store.create_session()
-    first = store.append_message(
-        session.id, role=ConsoleMessageRole.ASSISTANT, content="First."
-    )
-    second = store.append_message(
-        session.id, role=ConsoleMessageRole.ASSISTANT, content="Second."
-    )
-    posted: list[object] = []
-
-    def post(message: object) -> bool:
-        posted.append(message)
-        return not isinstance(message, TTSPlaybackEvent)
-
+    first, second = [
+        store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content=text
+        )
+        for text in ("first", "second")
+    ]
     controller = _SpeechRequestControllerStub(store, True)
-    controller.app_instance.post_message.side_effect = post
-    assert await ConsoleMessageController.request_console_message_speech(
-        controller, first.id
+    post = controller.app_instance.post_message
+    speak = ConsoleMessageController.request_console_message_speech
+    assert await speak(controller, first.id)
+    a = post.call_args.args[0]
+    handler = _new_handler(controller.app_instance)
+    controller.app_instance._tts_handler = handler
+    sink, stream, finish = await _start_test_stream(
+        handler, monkeypatch, a.playback_lifecycle, ticket=a.audio_intent
     )
-    first_request = posted[-1]
-    first_request.playback_lifecycle.report("playing")
-
-    issued = await ConsoleMessageController.request_console_message_speech(
-        controller, second.id
-    )
-
-    assert issued is False
-    assert controller._console_speaking_message_id == first.id
-    assert controller._console_speech_owner is first_request.playback_lifecycle
-    assert controller._console_speech_states[first.id] == "playing"
-    assert not any(
-        isinstance(message, TTSMessageSpeechRequestEvent)
-        and message.message_id == second.id
-        for message in posted
-    )
+    lease = handler._speech_outputs[0].run.lease
+    try:
+        assert await speak(controller, second.id)
+        b = post.call_args.args[0]
+        assert b.message_id == second.id
+        assert not any(
+            isinstance(call.args[0], TTSPlaybackEvent) for call in post.call_args_list
+        )
+        path = tmp_path / "replacement.wav"
+        path.write_bytes(b"clip")
+        no_plan = AsyncMock(return_value=None)
+        monkeypatch.setattr(audio_output_runs.FileOutputRun, "prepare", no_plan)
+        await handler._cache_audio_file(second.id, path, b.playback_lifecycle)
+        await handler.handle_tts_playback(
+            TTSPlaybackEvent(
+                "play",
+                second.id,
+                expected_path=path,
+                playback_lifecycle=b.playback_lifecycle,
+                audio_intent=b.audio_intent,
+            )
+        )
+        await wait_for_condition(lambda: b.playback_lifecycle.state == "failed")
+        no_plan.assert_awaited_once_with(path)
+        assert lease.is_current() and sink.state == "open"
+        assert controller._console_speech_owner is a.playback_lifecycle
+        assert controller._console_speaking_message_id == first.id
+        assert a.playback_lifecycle.is_current()
+        assert await _stop_file(handler, controller._console_speech_owner) == [True]
+        assert sink.state == "stopped" and handler.app.audio_output.owner is None
+    finally:
+        finish.set()
+        await stream
+        await handler.cleanup_tts_resources()
 
 
 @pytest.mark.asyncio

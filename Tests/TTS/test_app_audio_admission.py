@@ -251,3 +251,43 @@ async def test_mounted_chat_preserves_request_lifetime_only_for_its_own_prompt(r
         await app.push_screen(ModalScreen())
         await pilot.pause()
         assert not current()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_unrelated_cover_retires_mounted_handsfree_stream(request):
+    from unittest.mock import Mock
+    from textual.screen import ModalScreen
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_console_fleet_wake_hidden_screen import _mount_chat
+    from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSEventHandler
+    from tldw_chatbook.TTS.audio_output_runs import PcmOutputRun
+    from tldw_chatbook.UI.Console_Modules.hands_free import ConsoleHandsFreeSession
+
+    app = _build_test_app()
+    async with app.run_test(size=(140, 44)) as pilot:
+        console = await _mount_chat(app, pilot)
+        handler = app._tts_handler or TTSEventHandler()
+        handler.app = app
+        app._tts_handler = handler
+        ticket = app.audio_output.begin_intent()
+        stream = Mock()
+        run = PcmOutputRun(
+            24000, on_event=lambda _: None, stream_factory=lambda **_: stream
+        )
+        output = handler._prepare_output("mounted reply", None, ticket=ticket)
+        output.run = run
+        lease = await app.audio_output.acquire(
+            "mounted reply", run.retire, intent=ticket
+        )
+        assert await run.start(lease)
+        console._hands_free._console_hands_free = ConsoleHandsFreeSession(
+            controller=Mock(state="speaking"), sequencer=Mock(), audio_intent=ticket
+        )
+        await app.push_screen(ModalScreen())
+        await pilot.pause()
+        async with asyncio.timeout(3):
+            while not run.retirement_confirmed:
+                await asyncio.sleep(0.01)
+        assert lease.revoked and stream.close.called and app.audio_output.owner is None
+        assert console._hands_free._console_hands_free is None

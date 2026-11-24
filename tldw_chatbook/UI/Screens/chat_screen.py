@@ -19044,15 +19044,9 @@ class ChatScreen(BaseAppScreen):
     @staticmethod
     def _open_video_with_os(path: Path):
         """Launch a video path with the platform default player."""
-        import subprocess
-        import sys
+        from ..Console_Modules.video import open_external_video
 
-        if sys.platform == "darwin":
-            return subprocess.Popen(["open", str(path)])  # nosec B603
-        elif sys.platform.startswith("win"):
-            os.startfile(str(path))  # type: ignore[attr-defined]  # nosec B606
-        else:
-            return subprocess.Popen(["xdg-open", str(path)])  # nosec B603
+        return open_external_video(path)
 
     async def _console_command_stream_video(self, parse: CommandParse) -> None:
         """Delegate the registry-bound stream command to its controller."""

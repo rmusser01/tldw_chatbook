@@ -100,12 +100,15 @@ class _SpeechOutput:
     ticket: "AudioOutputIntent"
     path: Path | None = None
     run: Any = None
+    validator: Callable[[], bool] | None = None
     waiting_for_retirement: bool = False
     retirement: asyncio.Future[bool] | None = None
 
     def current(self):
-        return self.ticket.is_current() and (
-            self.lifecycle is None or self.lifecycle.is_current()
+        return (
+            self.ticket.is_current()
+            and (self.validator is None or self.validator())
+            and (self.lifecycle is None or self.lifecycle.is_current())
         )
 
 
@@ -516,6 +519,7 @@ class TTSPlaybackEvent(Message):
         *,
         playback_lifecycle: TTSPlaybackLifecycle | None = None,
         outcome_callback: Callable[[bool], None] | None = None,
+        expected_path: Path | None = None,
         audio_intent: "AudioOutputIntent | None" = None,
         presentation: "SpeechPresentation | None" = None,
     ):
@@ -527,6 +531,7 @@ class TTSPlaybackEvent(Message):
             raise ValueError("playback_lifecycle must match message_id")
         if outcome_callback is not None and not callable(outcome_callback):
             raise ValueError("outcome_callback must be callable or None")
+        self.expected_path = expected_path
         self.action = action  # "play", "pause", "stop"
         self.audio_intent = audio_intent
         self.message_id = message_id
@@ -788,6 +793,7 @@ class TTSEventHandler:
         self._audio_file_owners: Dict[
             str, TTSPlaybackLifecycle | None
         ] = {}  # Same bounded key set as _audio_files; None is legacy ownership.
+        self._audio_file_intents: dict[str, AudioOutputIntent | None] = {}
         self._artifact_cleanup_retry: set[Path] = set()
         self._retained_tts_io_tasks: set[asyncio.Task] = set()
         self._retained_tts_cleanup_tasks: set[asyncio.Task] = set()
@@ -2597,11 +2603,16 @@ class TTSEventHandler:
                 artifact_path = None
                 outcome_code = "superseded"
                 return
-            await self._cache_audio_file(
+            cached = await self._cache_audio_file(
                 normalized_message_id,
                 artifact_path,
                 playback_lifecycle if on_finished is None else None,
             )
+
+            if cached is False:
+                artifact_path = None
+                outcome_code = "superseded"
+                return
 
             await self._post_tts_message(
                 TTSProgressEvent(
@@ -2665,6 +2676,7 @@ class TTSEventHandler:
                     artifact_path,
                     text,
                     on_finished,
+                    playback_lifecycle=playback_lifecycle,
                     speed=effective_speed,
                     presentation=presentation,
                 )
@@ -3393,6 +3405,7 @@ class TTSEventHandler:
         text,
         on_finished,
         *,
+        playback_lifecycle=None,
         speed=1.0,
         presentation=None,
     ) -> None:
@@ -3406,6 +3419,8 @@ class TTSEventHandler:
             on_finished(False)
             return
         attempt = self._prepare_output(message_id, None, path=audio_file)
+        if playback_lifecycle is not None:
+            attempt.validator = playback_lifecycle.is_current
         finished = await self._play_file_output(
             attempt, presentation, _legacy_playback_timeout_seconds(len(text), speed)
         )
@@ -3756,20 +3771,33 @@ class TTSEventHandler:
         message_id: str,
         artifact_path: Path,
         artifact_owner: TTSPlaybackLifecycle | None,
-    ) -> None:
+    ) -> bool:
         """Publish one path and its exact lifecycle owner as one cache record."""
+        ticket = _speech_intent.get()
         async with self._audio_files_lock:
-            replaced_path = self._audio_files.get(message_id)
-            replaced_owner = self._audio_file_owners.get(message_id)
-            self._audio_files[message_id] = artifact_path
-            self._audio_file_owners[message_id] = artifact_owner
+            current = ticket is None or ticket.is_current()
+            if current:
+                replaced_path = self._audio_files.get(message_id)
+                replaced_owner = self._audio_file_owners.get(message_id)
+                self._audio_files[message_id] = artifact_path
+                self._audio_file_owners[message_id] = artifact_owner
+                self._audio_file_intents[message_id] = ticket
 
+        if not current:
+            await self._discard_tts_artifact(
+                message_id,
+                artifact_path,
+                artifact_owner=artifact_owner,
+                expected_intent=ticket,
+            )
+            return False
         if replaced_path is not None and replaced_path != artifact_path:
             await self._discard_tts_artifact(
                 message_id,
                 replaced_path,
                 artifact_owner=replaced_owner,
             )
+        return True
 
     async def _release_audio_file_if_current(
         self,
@@ -3785,6 +3813,7 @@ class TTSEventHandler:
             ):
                 del self._audio_files[message_id]
                 self._audio_file_owners.pop(message_id, None)
+                self._audio_file_intents.pop(message_id, None)
 
     def _schedule_audio_file_release_if_current(
         self,
@@ -3834,6 +3863,7 @@ class TTSEventHandler:
         artifact_path: Path | None,
         *,
         artifact_owner: TTSPlaybackLifecycle | None | object = _ANY_ARTIFACT_OWNER,
+        expected_intent: "AudioOutputIntent | None" = None,
     ) -> None:
         """Remove one failed or cancelled artifact from cache and disk."""
         if artifact_path is None:
@@ -3843,6 +3873,12 @@ class TTSEventHandler:
             cached_owner = self._audio_file_owners.get(message_id)
             if (
                 cached_path == artifact_path
+                and expected_intent is not None
+                and (self._audio_file_intents.get(message_id) is not expected_intent)
+            ):
+                return
+            if (
+                cached_path == artifact_path
                 and artifact_owner is not _ANY_ARTIFACT_OWNER
                 and cached_owner is not artifact_owner
             ):
@@ -3850,6 +3886,7 @@ class TTSEventHandler:
             if cached_path == artifact_path:
                 del self._audio_files[message_id]
                 self._audio_file_owners.pop(message_id, None)
+                self._audio_file_intents.pop(message_id, None)
             self._artifact_cleanup_retry.add(artifact_path)
 
         # TASK-39040 fix round 3: a regenerated clip replaces one the default
@@ -4226,6 +4263,8 @@ class TTSEventHandler:
             try:
                 async with self._audio_files_lock:
                     path = self._audio_files.get(event.message_id)
+                    if event.expected_path is not None and event.expected_path != path:
+                        path = None
                     owner = self._audio_file_owners.get(event.message_id)
                     if (
                         owner is None
@@ -4249,6 +4288,17 @@ class TTSEventHandler:
                         "failed" if attempt.ticket.is_current() else "stopped"
                     )
                 event.report_outcome(False)
+                if (
+                    event.expected_path is not None
+                    and event.audio_intent is not None
+                    and not event.audio_intent.is_current()
+                ):
+                    await self._discard_tts_artifact(
+                        event.message_id,
+                        event.expected_path,
+                        artifact_owner=lifecycle,
+                        expected_intent=event.audio_intent,
+                    )
                 return
             task = asyncio.create_task(
                 self._play_file_output(

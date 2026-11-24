@@ -1004,3 +1004,22 @@ def test_unsupported_inherited_fd_refuses_before_partial_spawn(monkeypatch):
     silent = pp.PlayerPipeline("silent.mp4", _probe(has_audio=False), spawn=spawn)
     assert silent.start() is silent.current_run
     assert silent.stop()
+
+
+def test_natural_tail_observes_only_exact_known_children_across_seek():
+    spawn = _SpawnRecorder()
+    pipeline = pp.PlayerPipeline("clip.mp4", _probe(), spawn=spawn)
+    prior = pipeline.start()
+    assert pipeline.pair_exited(prior) is False
+    demux, audio = spawn.calls
+    demux.poll = lambda: 0
+    assert pipeline.pair_exited(prior) is False and not audio.terminated
+    audio.poll = lambda: 0
+    assert pipeline.pair_exited(prior) is True
+    fresh = pipeline.seek(1.0, expected_run=prior)
+    assert fresh is not None and pipeline.pair_exited(prior) is None
+    assert pipeline.pair_exited(fresh) is False
+    assert not any(proc.terminated for proc in spawn.calls[2:])
+    pipeline._birth_uncertain = True
+    assert pipeline.pair_exited(fresh) is None
+    pipeline.stop(expected_run=fresh)

@@ -153,3 +153,86 @@ async def test_late_os_acceptance_after_revocation_requires_confirmation_before_
     finally:
         finish.set()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_missing_posix_opener_refuses_before_process_birth_and_keeps_local_audio_available(
+    tmp_path, monkeypatch
+):
+    import asyncio
+    import shutil
+    import subprocess
+    import sys
+    from tldw_chatbook.Media_Playback import player_pipeline
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    file = tmp_path / "clip.mp4"
+    file.touch()
+    app = _App()
+    screen = ChatScreen.__new__(ChatScreen)
+    controller = _controller_with_video(app, screen._open_video_with_os, file)
+    from tldw_chatbook.UI.Console_Modules.video import resolve_external_video_opener
+
+    controller._preflight_external_video = resolve_external_video_opener
+    monkeypatch.setattr(
+        player_pipeline, "playback_tools_available", lambda: (False, "missing")
+    )
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(shutil, "which", lambda _: None)
+    attempted = []
+
+    def unexpected(*args, **kwargs):
+        attempted.append(True)
+        raise FileNotFoundError()
+
+    monkeypatch.setattr(subprocess, "Popen", unexpected)
+    prior = await app.audio_output.acquire(
+        "already playing", lambda: asyncio.sleep(0, result=True)
+    )
+    await controller._play_console_video("m1")
+    assert prior.is_current()
+    assert not attempted and app.audio_output.handoff_epoch is None
+    assert (
+        await app.audio_output.acquire("local", lambda: asyncio.sleep(0, result=True))
+    ).is_current()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["session", "visit"])
+async def test_stale_stream_resolution_cannot_open_another_chat(monkeypatch, change):
+    import asyncio
+    import threading
+    from tldw_chatbook.Media_Playback import stream_resolve
+
+    app = _App()
+    pushed = []
+    app.push_screen = pushed.append
+    ctrl = _controller_with_video(app, lambda _: None, None)
+    store = SimpleNamespace(active_session_id="a", active_session_epoch=lambda: 1)
+    ctrl._ensure_console_chat_store = lambda: store
+    visit = [1]
+    ctrl._playback_visit = lambda: visit[0]
+    started, release = asyncio.Event(), threading.Event()
+    loop = asyncio.get_running_loop()
+
+    def resolve(_):
+        loop.call_soon_threadsafe(started.set)
+        assert release.wait(3)
+        return SimpleNamespace(final_url="fixture", seekable=False)
+
+    monkeypatch.setattr(stream_resolve, "resolve_stream_url", resolve)
+    task = asyncio.create_task(
+        ctrl._console_command_stream_video(SimpleNamespace(args="fixture"))
+    )
+    try:
+        await asyncio.wait_for(started.wait(), 1)
+        if change == "session":
+            store.active_session_id = "b"
+        else:
+            visit[0] += 1
+        release.set()
+        await task
+        assert not pushed and app.audio_output.owner is None
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)

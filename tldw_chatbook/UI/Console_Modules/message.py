@@ -174,6 +174,7 @@ from ...Widgets.Console import (
 
 if TYPE_CHECKING:
     from tldw_chatbook.Audio.speech_presentation import SpeechPresentation
+    from tldw_chatbook.TTS.audio_output_ownership import AudioOutputIntent
 
     from ..Screens.chat_screen import ChatScreen
     from ...Chat.console_message_delete import ConsoleDeleteScope
@@ -449,6 +450,7 @@ class ConsoleMessageController:
         self._console_speech_request_generation = 0
         self._console_speech_lifetime_generation = 0
         self._console_speech_owner: Any | None = None
+        self._active_console_speech = None
         self.audio_intent = None
         self._speech_presentation: SpeechPresentation | None = None
         self._speech_presentation_validator: Callable[[], bool] | None = None
@@ -1113,12 +1115,12 @@ class ConsoleMessageController:
         outcome_callback: Callable[[bool], None] | None = None,
         expected_destination_fingerprint: str | None = None,
         retry_failed_auto: bool = False,
+        audio_intent: AudioOutputIntent | None = None,
     ) -> bool:
         """Dispatch Manual Speak's exact trusted snapshot/event path."""
         from tldw_chatbook.Chat.console_speech import ConsoleSpeechSnapshotRejected
         from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
             TTSMessageSpeechRequestEvent,
-            TTSPlaybackEvent,
             TTSPlaybackLifecycle,
         )
 
@@ -1165,45 +1167,11 @@ class ConsoleMessageController:
             begin_speech_intent,
         )
 
-        audio_intent = begin_speech_intent(self.app_instance)
-        prior_message_id = self._console_speaking_message_id
-        prior_owner = self._console_speech_owner
-        if prior_message_id is not None:
-            prior_generation = self._console_speech_request_generation
-            prior_stop_outcome: bool | None = None
-            self._console_speech_pending_stop = (
-                prior_message_id,
-                prior_generation,
-            )
-
-            def settle_prior_stop(accepted: bool) -> None:
-                nonlocal prior_stop_outcome
-                prior_stop_outcome = accepted is True
-                pending = (prior_message_id, prior_generation)
-                if self._console_speech_pending_stop != pending:
-                    return
-                self._console_speech_pending_stop = None
-                if accepted and self._console_speech_states.get(prior_message_id) in {
-                    "generating",
-                    "playing",
-                }:
-                    self._settle_console_speech_presentation(
-                        prior_message_id,
-                        prior_generation,
-                        state="stopped",
-                    )
-
-            stop_event = TTSPlaybackEvent(
-                action="stop",
-                message_id=prior_message_id,
-                playback_lifecycle=prior_owner,
-                outcome_callback=settle_prior_stop,
-            )
-            await self._dispatch_console_speech_stop_event(stop_event)
-            if prior_stop_outcome is not True or not audio_intent.is_current():
-                self._console_speech_pending_stop = None
-                report_outcome(False)
-                return False
+        if audio_intent is None:
+            audio_intent = begin_speech_intent(self.app_instance)
+        elif not audio_intent.is_current():
+            report_outcome(False)
+            return False
 
         request_generation = self._begin_console_speech_presentation(message_id)
         lifetime_generation = self._console_speech_lifetime_generation
@@ -1213,7 +1181,11 @@ class ConsoleMessageController:
         def playback_is_current() -> bool:
             if getattr(self.app_instance, "chachanotes_db", None) is not scope_token:
                 return False
-            if self._console_speech_request_generation != request_generation:
+            if (
+                self._console_speech_request_generation != request_generation
+                and getattr(self, "_active_console_speech", None)
+                is not playback_lifecycle
+            ):
                 return False
             if self._console_speech_lifetime_generation != lifetime_generation:
                 return False
@@ -1248,12 +1220,33 @@ class ConsoleMessageController:
                         terminal=state in {"stopped", "failed"},
                     )
                 )
-            if current:
+            active = getattr(self, "_active_console_speech", None)
+            if state == "playing" and current:
+                self._active_console_speech = playback_lifecycle
+            if (
+                current
+                and self._console_speech_request_generation == request_generation
+            ):
                 self._settle_console_speech_presentation(
-                    message_id,
-                    request_generation,
-                    state=state,
+                    message_id, request_generation, state=state
                 )
+            if state in {"failed", "stopped"}:
+                if active is playback_lifecycle:
+                    self._active_console_speech = None
+                    if self._console_speech_owner is playback_lifecycle:
+                        self._console_speech_owner = None
+                        self._console_speaking_message_id = None
+                    if current and self._console_speaking_message_id != message_id:
+                        self._console_speech_states[message_id] = state
+                        self._schedule_console_speech_state_sync()
+                elif current and active is not None and active.is_current():
+                    # A failed/prematurely cancelled replacement still has a
+                    # healthy predecessor. Its exact Stop remains available.
+                    self._console_speech_owner = active
+                    self._console_speaking_message_id = active.message_id
+                    self._console_speech_states[active.message_id] = "playing"
+                    self._speech_presentation = active.presentation
+                    self._speech_presentation_validator = active.is_current
             if state == "stopped":
                 report_outcome(True)
             elif state == "failed":
@@ -1283,9 +1276,7 @@ class ConsoleMessageController:
                 None,
             )
         )
-        playback_is_current = self.bind_speech_presentation(
-            presentation, playback_is_current
-        )
+        self.bind_speech_presentation(presentation, playback_is_current)
         playback_lifecycle = TTSPlaybackLifecycle(
             message_id=message_id,
             request_id=request_generation,
@@ -1353,12 +1344,13 @@ class ConsoleMessageController:
         event.report_outcome(False)
 
     def _begin_console_speech_presentation(self, message_id: str) -> int:
-        """Start one owned request and invalidate every older callback."""
-        prior_message_id = self._console_speaking_message_id
+        """Show the new preparation while its predecessor retains the active output."""
+        active = getattr(self, "_active_console_speech", None)
+        active_message_id = active.message_id if active is not None else None
         for other_id, state in tuple(self._console_speech_states.items()):
             if other_id == message_id:
                 continue
-            if other_id != prior_message_id or state in {"stopped", "failed"}:
+            if other_id != active_message_id or state in {"stopped", "failed"}:
                 self._console_speech_states.pop(other_id, None)
         self._console_speech_request_generation += 1
         self._console_speech_states[message_id] = "generating"
@@ -1399,9 +1391,21 @@ class ConsoleMessageController:
 
         message_id = self._console_speaking_message_id
         owner = self._console_speech_owner
+        active = getattr(self, "_active_console_speech", None)
+        active_stop = (
+            TTSPlaybackEvent("stop", active.message_id, playback_lifecycle=active)
+            if active is not None and active is not owner
+            else None
+        )
         self._console_speech_lifetime_generation += 1
         if message_id is None:
             self._console_speech_states.clear()
+            if active_stop is not None:
+                return asyncio.create_task(
+                    self._dispatch_console_speech_stop_event(
+                        active_stop, post_first=True
+                    )
+                )
             return None
         generation = self._console_speech_request_generation
         store = self._ensure_console_chat_store()
@@ -1457,13 +1461,24 @@ class ConsoleMessageController:
             playback_lifecycle=owner,
             outcome_callback=settle_invalidation_stop,
         )
-        try:
-            return asyncio.create_task(
-                self._dispatch_console_speech_stop_event(
-                    stop_event,
-                    post_first=True,
+
+        async def stop_owned_speech():
+            if active_stop is not None:
+                await asyncio.gather(
+                    self._dispatch_console_speech_stop_event(
+                        active_stop, post_first=True
+                    ),
+                    self._dispatch_console_speech_stop_event(
+                        stop_event, post_first=True
+                    ),
                 )
-            )
+            else:
+                await self._dispatch_console_speech_stop_event(
+                    stop_event, post_first=True
+                )
+
+        try:
+            return asyncio.create_task(stop_owned_speech())
         except RuntimeError:
             stop_event.report_outcome(False)
             return None
@@ -1731,6 +1746,13 @@ class ConsoleMessageController:
             was_speaking = self._console_speaking_message_id == message.id
             stop_generation = self._console_speech_request_generation
             stop_owner = self._console_speech_owner
+            active = getattr(self, "_active_console_speech", None)
+            if (
+                active is not None
+                and active.message_id == message.id
+                and not was_speaking
+            ):
+                stop_owner = active
             stop_pending = (message.id, stop_generation)
             if was_speaking:
                 self._console_speech_pending_stop = stop_pending
@@ -1742,6 +1764,11 @@ class ConsoleMessageController:
                     return
                 self._console_speech_pending_stop = None
                 if self._console_speech_request_generation != stop_generation:
+                    return
+                if (
+                    self._console_speech_owner is not None
+                    and self._console_speech_owner is not stop_owner
+                ):
                     return
                 retryable_owner = bool(
                     not accepted

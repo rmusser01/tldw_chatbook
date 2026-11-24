@@ -537,6 +537,21 @@ class PlayerPipeline:
             # reaped all available handles, but cannot certify that birth.
             return not self._birth_uncertain
 
+    def pair_exited(self, expected_run: PlayerRun) -> bool | None:
+        """Poll a naturally finishing audible pair; None means the pair is no longer observable."""
+        with self._lifecycle_lock:
+            if (
+                self._current_run is not expected_run
+                or self._owned_run is not expected_run
+                or self._birth_uncertain
+                or self._ffplay is None
+                or self._ffmpeg is None
+            ):
+                return None
+            audio_exit = self._ffplay.poll()
+            video_exit = self._ffmpeg.poll()
+            return audio_exit is not None and video_exit is not None
+
     @property
     def at_eof(self) -> bool:
         run = self.current_run
