@@ -154,7 +154,7 @@ The final whole-task review and one scoped fix re-review are clear. The last
 178-case selection passes; after rebasing both drafts onto dev `6fa2635c14`,
 199 affected checks pass with three platform skips. All 106 reviewed source/test/
 tool blobs and all public numerical receipts remain unchanged by that rebase.
-TASK-41177 is complete in draft PR #3742. TASK-41178 is in progress on a
+TASK-41177 is complete in draft PR #3742. TASK-41178 is complete on a
 separate child branch; TASK-41179 and later have not begun.
 
 ### Task 3: Persist listening state and source-owned assets safely (TASK-41178)
@@ -186,16 +186,28 @@ from a retained physical borrow. The focused integration selection passed 59
 cases; three further discriminator-bound controls passed after their RED run.
 The private WAV asset increment is also independently approved. Its 48-case
 focused module covers same-object custody, rejected-stage recovery and refusing
-elective pruning before metadata changes on an unqualified volume. Recovery
-integration is implemented, with its initial independent review corrections in
-progress. The complete task still requires recovery clearance and a whole-task
-review before its four acceptance criteria can be closed.
+elective pruning before metadata changes on an unqualified volume. Recovery and
+the whole-task review are clear of Critical/Important findings after correction.
+The final 150-case Windows selection covers constructors, read-only state,
+store/assets, citations, shared-root installation, source census and layer rules.
+The recovery neighbors also cover historical subscriptions catalogs, detached
+restore and single-selector rollback. Seven broader tests already fail on the
+parent: one Windows casefold assertion, and six primary-database fixtures that
+hide separate stale v80 expectations despite the current v87 schema.
+
+Shared article roots support verified selected participants and reviewed split
+or common destinations. Later rollback of a replacement-created multi-selector
+root remains an explicit conservative refusal with state preserved; ADR367 and
+the user recovery guide document that boundary. One nonblocking performance
+follow-up remains: detached import can stage an unclaimed private WAV before its
+final dependency check refuses sealing. No synthesis, transport or listening UI
+was added by Task 3.
 
 - [x] **Step 1: Write failing real-SQLite/file tests.** Exercise old-profile upgrade and migration rollback, two independently opened DBs, revision collisions, atomic cursor/two-bookmark updates, source deletion during candidate admission and artifact publication, source-bound sharing, all-unavailable replacement, missing/corrupt WAV, publication failure/orphans, lock crash release, and fail-busy destructive mutation. Deleting membership preserves sources; deleting a brief preserves an unrelated valid foreground reading.
 - [x] **Step 2: Observe RED.** Run only the two new Subscriptions test files and selected migration nodes. Expect missing tables/contracts, with existing base migration cases still green.
 - [x] **Step 3: Implement store, migration and asset lifecycle.** Allocate next schema version at the implementation base (v3 here), add its SQL artifact and indexes/allowlists. Enforce source existence/generation transactionally, use existing private atomic writers/path validation, and reconcile only after ownership. Enforce seven-day/512 MiB unreferenced LRU while protecting references.
-- [ ] **Step 4: Integrate backup atomically.** Extend `Subscriptions/recovery.py::_BriefingAudio`'s `subscriptions.assets` declaration, `DB/recovery_operations.py::_SubscriptionsAdapter`'s exact schema catalogs/versions, migration policy, discover/relocate/dependency validation and SQLite authorizer, core dependency discovery, inventory/census, detached layout and staging. Register publication in `RuntimeMaintenance.settle_producers/resume` and `acquire_storage`. Test owners present AND absent, DB-only backup, assets backup, rollback and relocation; restoration never starts audio. Missing files retain regenerable entries with offsets reset only by explicit regeneration. Existing focused suites include `test_briefing_audio_dependencies.py`, `test_briefing_audio_restore.py`, `test_detached_layout.py`, `test_runtime_maintenance.py` under `Tests/Backup_Recovery/` and `Tests/Architecture/test_backup_owner_inventory.py`.
-- [ ] **Step 5: Observe GREEN and review.** Run targeted Subscriptions/migration tests and all changed Backup_Recovery owner suites, including optional-owner absence cases. Run relevant derived-artifact guards and Ruff. Record any baseline failures separately with a base comparison before calling them pre-existing. Review and commit `feat: persist watchlist listening and owned audio assets`.
+- [x] **Step 4: Integrate backup atomically.** Extend `Subscriptions/recovery.py::_BriefingAudio`'s `subscriptions.assets` declaration, `DB/recovery_operations.py::_SubscriptionsAdapter`'s exact schema catalogs/versions, migration policy, discover/relocate/dependency validation and SQLite authorizer, core dependency discovery, inventory/census, detached layout and staging. Register publication in `RuntimeMaintenance.settle_producers/resume` and `acquire_storage`. Test owners present AND absent, DB-only backup, assets backup, rollback and relocation; restoration never starts audio. Missing files retain regenerable entries with offsets reset only by explicit regeneration. Existing focused suites include `test_briefing_audio_dependencies.py`, `test_briefing_audio_restore.py`, `test_detached_layout.py`, `test_runtime_maintenance.py` under `Tests/Backup_Recovery/` and `Tests/Architecture/test_backup_owner_inventory.py`.
+- [x] **Step 5: Observe GREEN and review.** Run targeted Subscriptions/migration tests and all changed Backup_Recovery owner suites, including optional-owner absence cases. Run relevant derived-artifact guards and Ruff. Record any baseline failures separately with a base comparison before calling them pre-existing. Review and commit `feat: persist watchlist listening and owned audio assets`.
 
 ### Task 4: Prepare bounded article speech and frozen-voice audio (TASK-41179)
 
