@@ -1984,7 +1984,9 @@ Pilot pins were green.
   - **Overriding the private `Screen._reset_focus` worked, but was ruled
     out.** It changed every prune and blur landing screen-wide: Media and
     Conversations read the same generation. A Textual rename would also have
-    silently dropped the override.
+    silently dropped the override. (TASK-42473 later overrides it only to
+    record where the reset lands, leaving the landing itself alone; see that
+    entry.)
 - **Rule.** Any "has the user moved focus since X?" counter must not count
   Textual's reset after a removal, which every recompose of the focused
   control produces and which looks exactly like a click. Prefer parking focus
@@ -2831,3 +2833,15 @@ cancellation reaches its code as a `WorkerCancelled` exception, not a
 - In a test, wait with a deadline for any scroll you did not apply with `immediate=True` (`end`, `scroll_home`, a focus reveal). One pause is not enough on a loaded host.
 - To force the inversion, pause the screen's update timer and swap `_Screen__update_timer` for an object whose `resume`, `pause` and `stop` do nothing. Restore it after a fixed time. A permanent hold also blocks every scroll queued behind a refresh, so the test cannot finish.
 - To hold one widget's queued work, patch its `call_after_refresh` to collect the calls. Let calls through once you release them, because a released callback can queue its next hop through the same patched attribute. The Trace re-render counts its scroll reset with `table.call_after_refresh(table.call_after_refresh, ...)`. TASK-42458's first test version collected that second hop after the release and never ran it, so `_scrolls_pending` never reached 0.
+
+## A field's mount echo is checked against the form, so one that arrives after the form changed reads as an edit (TASK-41723, 2026-11-23)
+
+**Incident.** `test_library_shell_ingest_canvas_submit_clears_path_and_title_keeps_metadata` failed in 13 of 26 push-to-dev Library shell runs, each time with the submitted path and title back in the form and a second pre-check reporting the file already in the Library. A probe that logged every write to the form's path and title caught it once in 3 runs at load 18. Start's pre-check result was structural, so the screen rebuilt the canvas with the path and title still in the form. The readiness check's result runs as an asyncio callback, and during that rebuild's mount it submitted and cleared both fields. The rebuilt `Input`s then announced the values they had been composed with (Textual posts a `Changed` for a non-empty `value=`). The screen's guard drops an echo only when it equals the form's current value, which was now empty, so it took both as edits and restored them. Holding the screen's recompose after the rebuild and submitting in that hold failed 8 of 8 at base.
+
+**What to do.** Recognise a mount echo by the value the widget was composed with, not by the current model. `LibraryIngestCanvas` drops each form field's first `Changed` when it equals that value. Only the first counts: Clear empties the path without a message, so retyping the same path must still be an edit. A "last value rendered or passed on" record, the rule the option fields use, failed that case 3 of 3.
+
+## "Focus landed on a grip" does not say who put it there; record Textual's reset itself (TASK-42473, 2026-11-23)
+
+**Incident.** Media's list entry was disarmed by Textual's reset onto a pane grip, and Notes is exempt from that. Giving Media the Notes rule (any grip landing in the entry window keeps the entry armed) failed 9 Media tests that passed at base. Media focuses grips itself (the resize hand-off to the Items grip), tests focus grips in code, and a kept window later took focus back to row 0 from a bulk-delete Undo. A second cut, "a grip landing while the control that had focus is being removed", still cleared a test's own `grip.focus()` (2 compact Trash tests): a repaint happened to be removing the old control at that moment. What held: `LibraryScreen._reset_focus` calls Textual's reset unchanged and records where it landed, only when the reset actually moved focus; the handler counts only that landing, once, and only before the entry has landed a row. Each condition has a failing pin when removed. This does not contradict the TASK-34000.28 entry, which ruled out overriding `Screen._reset_focus`: that override changed where the reset lands, screen-wide, and a rename would have dropped it silently. This one only records the landing, and a rename turns the AC#1 test (`test_a_reset_onto_a_grip_inside_the_media_entry_window_keeps_the_entry`) red.
+
+**What to do.** To tell the framework's focus move from the app's or the user's, record the framework's move where it happens, and do not infer it from the state around the landing.

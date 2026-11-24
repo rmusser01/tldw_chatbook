@@ -13140,6 +13140,15 @@ async def test_library_media_initial_error_is_unknown_and_retry_is_unique() -> N
         assert page_status == "No page loaded · Total unavailable"
         assert "private-media-failure" not in _visible_text(screen)
 
+        # TASK-41723/42473: a real Enter or click on Retry disarms the Media
+        # list-entry window first; this code-driven press does not, so wait
+        # the window out. Pressed inside it, the entry took focus to row 0
+        # once the retried rows arrived.
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen._library_pending_list_entry_focus,
+            message="The Media list-entry window never closed.",
+        )
         retry = screen.query_one("#library-media-retry", Button)
         retry.focus()
         retry.press()

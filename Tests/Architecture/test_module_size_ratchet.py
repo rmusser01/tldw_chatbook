@@ -179,7 +179,11 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-06, TASK-38954 (owner size waiver: a fix over a size ratchet
     # raises the row): 5021 -> 5057 (+36) -- the Research startup work is
     # queued from the asynchronous restore's completion, not before it.
-    "tldw_chatbook/app_ingest_queue.py": 5057,
+    # 2026-11-23, TASK-42470 (raise by the change's own lines): 5057 -> 5072
+    # (+15) -- parse-pool teardown kills workers that outlive the SIGTERM.
+    # 2026-11-23, TASK-42470 review: the kill logs a warning with the pids:
+    # 5072 -> 5081 (+9).
+    "tldw_chatbook/app_ingest_queue.py": 5081,
     # TASK-33011: TldwCli's service composition moved verbatim out of app.py.
     # It was governed there; without its own row, wiring code could regrow in
     # the mixin unchecked.
