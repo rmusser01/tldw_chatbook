@@ -532,6 +532,7 @@ from .study_scope_models import (
 
 if TYPE_CHECKING:
     # Type-only: the shared modal owns the runtime acquisition-plan import.
+    from ...Library.review_set_service import ReviewSetService
     from ...Library.review_set_state import ReviewProgress
     from ...Model_Artifacts.acquisition import PreflightReport
     from ...Notes.note_import_executor import NoteImportExecutor
@@ -972,6 +973,29 @@ _LIBRARY_SYNC_ROOTS_ENTER_LABELS = {
     "retarget": "",
     "disconnect": "",
 }
+
+
+class _Forward:
+    """A public ``LibraryScreen`` name that reads its private member on access.
+
+    TASK-41757: the media controller calls the screen's public protocol
+    members; the screen and its tests keep the private names. Each access
+    resolves ``_x`` afresh, so a patch of the private name, on the instance or
+    the class, reaches callers of either name from then on. A callback taken
+    before the patch (through ``call_next``, ``call_after_refresh``,
+    ``functools.partial`` or ``then=``) keeps the method it took, so a test
+    must patch ``_x`` before that callback is scheduled.
+    Patch and autospec the private name, not the public one:
+    ``create_autospec`` keeps ``self`` in a ``_Forward`` member's signature,
+    and ``monkeypatch``'s undo of the public name leaves an instance
+    attribute that shadows later patches of ``_x``.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __get__(self, obj: Any, owner: type | None = None) -> Any:
+        return getattr(owner if obj is None else obj, self.name)
 
 
 class LibraryScreen(BaseAppScreen):
@@ -3070,6 +3094,8 @@ class LibraryScreen(BaseAppScreen):
         # wave-7 task 2 (media series 2/3): constructed right after the
         # Prompts controller, matching every other controller in this
         # file. Imported function-locally above, per the born-lazy rule.
+        # TASK-41757: its shell services are this screen's own protocol
+        # members (the block at the end of this class), not callbacks.
         self._media_controller = LibraryMediaController(
             self,
             media_state_accessor=lambda: self._media_state,
@@ -3154,134 +3180,6 @@ class LibraryScreen(BaseAppScreen):
             ),
             library_media_trash_browse_controller_accessor=(
                 lambda: self._library_media_trash_browse_controller
-            ),
-            # -- general Library-wide shell helpers, not moved.
-            acknowledge_library_destination_change=(
-                lambda *a, **k: self._acknowledge_library_destination_change(*a, **k)
-            ),
-            action_library_narrow_stage_return=(
-                lambda *a, **k: self.action_library_narrow_stage_return(*a, **k)
-            ),
-            active_review_set_banner=(
-                lambda *a, **k: self._active_review_set_banner(*a, **k)
-            ),
-            apply_library_open_item_surface=(
-                lambda *a, **k: self._apply_library_open_item_surface(*a, **k)
-            ),
-            arm_library_list_entry_focus=(
-                lambda *a, **k: self._arm_library_list_entry_focus(*a, **k)
-            ),
-            arm_stage_pick_landing=(
-                lambda *a, **k: self._arm_stage_pick_landing(*a, **k)
-            ),
-            cancel_pending_review_set_resume=(
-                lambda *a, **k: self._cancel_pending_review_set_resume(*a, **k)
-            ),
-            close_open_library_choice_strip=(
-                lambda *a, **k: self._close_open_library_choice_strip(*a, **k)
-            ),
-            disarm_library_list_entry_focus=(
-                lambda *a, **k: self._disarm_library_list_entry_focus(*a, **k)
-            ),
-            focus_library_control=(
-                lambda *a, **k: self._focus_library_control(*a, **k)
-            ),
-            focus_library_list_entry=(
-                lambda *a, **k: self._focus_library_list_entry(*a, **k)
-            ),
-            focus_library_list_entry_if_current=(
-                lambda *a, **k: self._focus_library_list_entry_if_current(*a, **k)
-            ),
-            focus_library_rail_action=(
-                lambda *a, **k: self._focus_library_rail_action(*a, **k)
-            ),
-            invalidate_library_workspace_depth_state=(
-                lambda *a, **k: self._invalidate_library_workspace_depth_state(*a, **k)
-            ),
-            land_stage_pick=lambda *a, **k: self._land_stage_pick(*a, **k),
-            library_adaptive_reader_allocation_is_current=(
-                lambda *a, **k: self._library_adaptive_reader_allocation_is_current(
-                    *a, **k
-                )
-            ),
-            library_entry_route_key=(
-                lambda *a, **k: self._library_entry_route_key(*a, **k)
-            ),
-            library_open_choice_strip=(
-                lambda *a, **k: self._library_open_choice_strip(*a, **k)
-            ),
-            library_source_total=lambda *a, **k: self._library_source_total(*a, **k),
-            library_workspace_depth_state=(
-                lambda *a, **k: self._library_workspace_depth_state(*a, **k)
-            ),
-            notify_review_set=(lambda *a, **k: self._notify_review_set(*a, **k)),
-            open_library_export_canvas=(
-                lambda *a, **k: self._open_library_export_canvas(*a, **k)
-            ),
-            open_library_item_by_id=(
-                lambda *a, **k: self._open_library_item_by_id(*a, **k)
-            ),
-            register_footer_shortcuts=(
-                lambda *a, **k: self._register_footer_shortcuts(*a, **k)
-            ),
-            review_dismiss_receipt_name=(
-                lambda *a, **k: self._review_dismiss_receipt_name(*a, **k)
-            ),
-            review_dismiss_undo_worker=(
-                lambda *a, **k: self._review_dismiss_undo_worker(*a, **k)
-            ),
-            review_selected_worker=(
-                lambda *a, **k: self._review_selected_worker(*a, **k)
-            ),
-            review_set_picker_worker=(
-                lambda *a, **k: self._review_set_picker_worker(*a, **k)
-            ),
-            review_set_service=(
-                lambda *a, **k: self._review_set_service(*a, **k)
-            ),
-            review_these_worker=(lambda *a, **k: self._review_these_worker(*a, **k)),
-            run_library_service_call=(
-                lambda *a, **k: self._run_library_service_call(*a, **k)
-            ),
-            safe_text=lambda *a, **k: self._safe_text(*a, **k),
-            schedule_library_entry_reconcile=(
-                lambda *a, **k: self._schedule_library_entry_reconcile(*a, **k)
-            ),
-            select_library_rail_row=(
-                lambda *a, **k: self._select_library_rail_row(*a, **k)
-            ),
-            source_record_id=lambda *a, **k: self._source_record_id(*a, **k),
-            sync_library_conversation_reader_layout_from_shell=(
-                lambda *a, **k: (
-                    self._sync_library_conversation_reader_layout_from_shell(*a, **k)
-                )
-            ),
-            sync_library_notes_reader_layout_from_shell=(
-                lambda *a, **k: self._sync_library_notes_reader_layout_from_shell(
-                    *a, **k
-                )
-            ),
-            sync_library_prompts_reader_layout_from_shell=(
-                lambda *a, **k: self._sync_library_prompts_reader_layout_from_shell(
-                    *a, **k
-                )
-            ),
-            sync_library_skills_reader_layout_from_shell=(
-                lambda *a, **k: self._sync_library_skills_reader_layout_from_shell(
-                    *a, **k
-                )
-            ),
-            toggle_reviewed_unguarded=(
-                lambda *a, **k: self._toggle_reviewed_unguarded(*a, **k)
-            ),
-            update_library_ingest_dynamic_regions=(
-                lambda *a, **k: self._update_library_ingest_dynamic_regions(*a, **k)
-            ),
-            walk_active_review_set=(
-                lambda *a, **k: self._walk_active_review_set(*a, **k)
-            ),
-            request_library_reader_layout_refresh=(
-                lambda *a, **k: self.request_library_reader_layout_refresh(*a, **k)
             ),
         )
         # wave-8 task 2 (notes series 2/N): constructed right after the
@@ -29652,7 +29550,7 @@ class LibraryScreen(BaseAppScreen):
     def action_library_media_prev_item(self) -> None:
         return self._media_controller.action_library_media_prev_item()
 
-    def _review_set_service(self):
+    def _review_set_service(self) -> ReviewSetService | None:
         """Return the review-set service, or ``None`` when storage is absent.
 
         Lazily built from the app's Library collections DB and cached on the
@@ -30036,7 +29934,7 @@ class LibraryScreen(BaseAppScreen):
     def action_library_media_toggle_reviewed(self) -> None:
         return self._media_controller.action_library_media_toggle_reviewed()
 
-    def _toggle_reviewed_unguarded(self, service) -> None:
+    def _toggle_reviewed_unguarded(self, service: ReviewSetService) -> None:
         """The toggle body; storage exceptions are the caller's to surface."""
         review_set = service.get_active_review_set()
         if review_set is None:
@@ -32738,6 +32636,54 @@ class LibraryScreen(BaseAppScreen):
             ),
             action_label="Use in Console",
         )
+
+    # TASK-41757 (owner ruling 2026-11-22, "the screen implements protocols"):
+    # the media controller's host protocols (`LibraryMediaHost` and the four it
+    # extends, `library_media_controller.py`). The `action_`/`request_` members
+    # are already public; these 41 forward to the methods above on each access
+    # (`_Forward`), so a patch of a private name reaches the media controller.
+    acknowledge_library_destination_change = _Forward("_acknowledge_library_destination_change")
+    active_review_set_banner = _Forward("_active_review_set_banner")
+    apply_library_open_item_surface = _Forward("_apply_library_open_item_surface")
+    arm_library_list_entry_focus = _Forward("_arm_library_list_entry_focus")
+    arm_stage_pick_landing = _Forward("_arm_stage_pick_landing")
+    cancel_pending_review_set_resume = _Forward("_cancel_pending_review_set_resume")
+    close_open_library_choice_strip = _Forward("_close_open_library_choice_strip")
+    disarm_library_list_entry_focus = _Forward("_disarm_library_list_entry_focus")
+    focus_library_control = _Forward("_focus_library_control")
+    focus_library_list_entry = _Forward("_focus_library_list_entry")
+    focus_library_list_entry_if_current = _Forward("_focus_library_list_entry_if_current")
+    focus_library_rail_action = _Forward("_focus_library_rail_action")
+    invalidate_library_workspace_depth_state = _Forward("_invalidate_library_workspace_depth_state")
+    land_stage_pick = _Forward("_land_stage_pick")
+    library_adaptive_reader_allocation_is_current = _Forward("_library_adaptive_reader_allocation_is_current")
+    library_entry_route_key = _Forward("_library_entry_route_key")
+    library_open_choice_strip = _Forward("_library_open_choice_strip")
+    library_source_total = _Forward("_library_source_total")
+    library_workspace_depth_state = _Forward("_library_workspace_depth_state")
+    notify_review_set = _Forward("_notify_review_set")
+    open_library_export_canvas = _Forward("_open_library_export_canvas")
+    open_library_item_by_id = _Forward("_open_library_item_by_id")
+    # Not `register_footer_shortcuts`: BaseAppScreen's own takes the shortcuts.
+    register_library_footer_shortcuts = _Forward("_register_footer_shortcuts")
+    review_dismiss_receipt_name = _Forward("_review_dismiss_receipt_name")
+    review_dismiss_undo_worker = _Forward("_review_dismiss_undo_worker")
+    review_selected_worker = _Forward("_review_selected_worker")
+    review_set_picker_worker = _Forward("_review_set_picker_worker")
+    review_set_service = _Forward("_review_set_service")
+    review_these_worker = _Forward("_review_these_worker")
+    run_library_service_call = _Forward("_run_library_service_call")
+    safe_text = _Forward("_safe_text")
+    schedule_library_entry_reconcile = _Forward("_schedule_library_entry_reconcile")
+    select_library_rail_row = _Forward("_select_library_rail_row")
+    source_record_id = _Forward("_source_record_id")
+    sync_library_conversation_reader_layout_from_shell = _Forward("_sync_library_conversation_reader_layout_from_shell")
+    sync_library_notes_reader_layout_from_shell = _Forward("_sync_library_notes_reader_layout_from_shell")
+    sync_library_prompts_reader_layout_from_shell = _Forward("_sync_library_prompts_reader_layout_from_shell")
+    sync_library_skills_reader_layout_from_shell = _Forward("_sync_library_skills_reader_layout_from_shell")
+    toggle_reviewed_unguarded = _Forward("_toggle_reviewed_unguarded")
+    update_library_ingest_dynamic_regions = _Forward("_update_library_ingest_dynamic_regions")
+    walk_active_review_set = _Forward("_walk_active_review_set")
 
 
 # task 8: classmethod dependency binding -- `_conversation_workspace_label`/

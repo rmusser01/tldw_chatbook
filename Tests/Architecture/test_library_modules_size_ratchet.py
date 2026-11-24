@@ -577,7 +577,16 @@ _BUDGETS: dict[str, int] = {
     # prose (+21).
     # 2026-11-18, TASK-36952.3.8 fix round 2: 11084 -> 11085 (+1), the module
     # docstring's prune count rewrapped (40 delegators, by commit).
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 11085,
+    # 2026-11-22, TASK-41757 (owner ruling 2026-11-22, "the screen implements
+    # protocols"): 11085 -> 11136 (+51): the four shell-service protocols
+    # `LibraryMediaHost` now extends, with their type-only imports (+125),
+    # the host's bases (+1); the 43 callback parameters with their group
+    # comment (-44) and their stored callables (-45) out; prose (+14).
+    # TASK-41757 fix round 1 (review M4): 11136 -> 11140 (+4), the R4
+    # paragraph's present-tense host claim corrected and the forwarding noted.
+    # TASK-41757 fix round 2 (review N1): 11140 -> 11141 (+1), the forwarding
+    # sentence says "on each access" and names the captured-callback case.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 11141,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only

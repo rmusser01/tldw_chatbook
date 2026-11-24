@@ -385,11 +385,12 @@ is empty):
    for the reason the skills series established: six movers reach it, and an
    unbound ``getattr(self, "focused", None)`` returns its default silently,
    forever.
-2. **Everything else** is a NAMED constructor dependency: (a) 43 general
+2. **Everything else** is a NAMED dependency: (a) 43 general
    Library-wide shell helpers a moved body calls with explicit arguments (24
    at wave 7; TASK-36952.3.1 added five, TASK-36952.3.3 four,
    TASK-36952.3.5 one, TASK-36952.3.6 two, TASK-36952.3.7 five,
-   TASK-36952.3.8 two) --
+   TASK-36952.3.8 two), constructor callbacks until TASK-41757 made them the
+   host's four service protocols --
    including the five review-set entry points the One Home Rule kept on the
    screen (``_active_review_set_banner``, ``_review_dismiss_receipt_name``,
    ``_review_selected_worker``, ``_review_set_picker_worker``,
@@ -616,7 +617,8 @@ multi-subsystem reader-pane dispatcher.
 Ruling R4 (the parent's AC #2): the constructor takes a ``LibraryMediaHost``
 (the Protocol above this class) instead of ``LibraryScreen``, and this
 module no longer imports ``LibraryScreen``, even for type checking. Every
-read through the host is one of the Protocol's framework services. The
+read through the host was then one of the Protocol's framework services
+(TASK-41757 added the four shell-service protocols below). The
 direct screen reaches became named dependencies: ``_library_media_unfiltered_total``'s
 four shell-state reads go through the ``_library_source_total`` shell
 helper; the TASK-38981 stage-pick landing reads the
@@ -628,6 +630,20 @@ delegator for it. The three per-field Notes getters (``_library_notes_compact``,
 read the bound ``_notes_state``. No constructor argument calls a
 media-named screen method; the remaining shell, review-set, Notes and
 workspace callbacks are not media behaviour.
+
+**TASK-41757 (2026-11-22): the shell callbacks became host protocols.**
+Owner ruling 2026-11-22: "The screen implements protocols." The 43
+group-(a) callbacks left the constructor. ``LibraryMediaHost`` now extends
+four typed protocols (``LibraryShellServices``, ``LibraryReviewSetServices``,
+``LibraryReaderLayoutSync``, ``LibraryWorkspaceDepthServices``) whose public
+members ``LibraryScreen`` implements, and each group-(a) property returns
+the host's member under the private name the moved bodies spell. No
+constructor argument calls a screen method any more; the remaining ones are
+single-field accessors and setters. Every read through the host is a
+framework service or a member of those protocols. The screen's public names
+resolve its private methods on each access, so a test's patch of the private
+name reaches this controller too; a callback taken before the patch keeps
+the method it took.
 """
 from __future__ import annotations
 
@@ -638,7 +654,7 @@ import webbrowser
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from contextlib import suppress
 from functools import partial
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from loguru import logger
 from textual import on
@@ -775,15 +791,141 @@ from .screen_support_types import (
     _LibraryMediaSuccessfulFocusOwnership,
 )
 
+if TYPE_CHECKING:
+    from ...Library.review_set_service import ReviewSetService
+    from ...Utils.adaptive_reader_state import PaneName
+    from ...Workspaces.display_state import LibraryWorkspaceDepthState
 
-class LibraryMediaHost(Protocol):
+
+# TASK-41757 (owner ruling 2026-11-22: "the screen implements protocols"):
+# the Library shell services this controller calls, which it used to take as
+# 43 constructor callbacks into LibraryScreen's private methods. LibraryScreen
+# implements all four; LibraryMediaHost below extends them, so the host the
+# controller already holds carries them.
+class LibraryShellServices(Protocol):
+    """Rail and list-entry focus, routing, surfaces and shared helpers."""
+
+    def acknowledge_library_destination_change(self) -> None: ...
+    def action_library_narrow_stage_return(self) -> None: ...
+    async def apply_library_open_item_surface(
+        self, build: Callable[[], Widget], *, then: Callable[[], None] | None = None
+    ) -> None: ...
+    def arm_library_list_entry_focus(
+        self,
+        *,
+        media_return: _LibraryMediaReturnReceipt | None = None,
+        empty_target: str = "#library-notes-filter",
+    ) -> None: ...
+    def arm_stage_pick_landing(self, destination: str, item_id: object) -> None: ...
+    def close_open_library_choice_strip(self) -> bool: ...
+    def disarm_library_list_entry_focus(self) -> None: ...
+    def focus_library_control(self, selector: str) -> None: ...
+    def focus_library_list_entry(self) -> None: ...
+    def focus_library_list_entry_if_current(self, generation: int) -> None: ...
+    def focus_library_rail_action(self, selector: str) -> None: ...
+    def land_stage_pick(
+        self, destination: str, item_id: object, shell_selector: str
+    ) -> None: ...
+    def library_adaptive_reader_allocation_is_current(self, reader: Widget) -> bool: ...
+    def library_entry_route_key(self) -> tuple[object, ...]: ...
+    def library_open_choice_strip(self) -> tuple[str, str, str] | None: ...
+    def library_source_total(self, source_type: str) -> int | None: ...
+    async def open_library_export_canvas(self, scope: ExportScope) -> None: ...
+    async def open_library_item_by_id(
+        self,
+        source_type: str,
+        record_id: str,
+        *,
+        display_name: str = "",
+        entry_origin: bool = False,
+        required_database: Any | None = None,
+        required_authority: str = "",
+    ) -> LibraryEntryReconcileResult | None: ...
+    def register_library_footer_shortcuts(self) -> None: ...
+    def request_library_reader_layout_refresh(self, generation: int) -> None: ...
+    @staticmethod
+    async def run_library_service_call(
+        callable_obj: Any, *args: Any, isolate_in_worker: bool = False, **kwargs: Any
+    ) -> Any: ...
+    @staticmethod
+    def safe_text(value: Any, fallback: str = "", *, max_length: int = 500) -> str: ...
+    def schedule_library_entry_reconcile(
+        self, generation: int, route_key: tuple[object, ...]
+    ) -> None: ...
+    async def select_library_rail_row(self, row_id: str) -> None: ...
+    @classmethod
+    def source_record_id(cls, record: Mapping[str, Any]) -> str | None: ...
+    def update_library_ingest_dynamic_regions(
+        self, allow_structural_recompose: bool = True, allow_screen_fallback: bool = True
+    ) -> None: ...
+
+
+class LibraryReviewSetServices(Protocol):
+    """The review-set entry points the One Home Rule keeps on the screen."""
+
+    def active_review_set_banner(self) -> str | None: ...
+    def cancel_pending_review_set_resume(self) -> None: ...
+    def notify_review_set(
+        self, message: str, *, severity: str = "information"
+    ) -> None: ...
+    def review_dismiss_receipt_name(self) -> str: ...
+    async def review_dismiss_undo_worker(self, receipt: tuple[str, str, bool]) -> None: ...
+    async def review_selected_worker(self, backing_ids: tuple[int, ...]) -> None: ...
+    async def review_set_picker_worker(self) -> None: ...
+    def review_set_service(self) -> ReviewSetService | None: ...
+    async def review_these_worker(self) -> None: ...
+    def toggle_reviewed_unguarded(self, service: ReviewSetService) -> None: ...
+    def walk_active_review_set(self, direction: int) -> bool: ...
+
+
+class LibraryReaderLayoutSync(Protocol):
+    """The sibling routes' adaptive reader-layout syncs, run from the shell."""
+
+    def sync_library_conversation_reader_layout_from_shell(
+        self,
+        priority: Literal["library", "items"] | None = None,
+        *,
+        manual_reopen: PaneName | None = None,
+    ) -> None: ...
+    def sync_library_notes_reader_layout_from_shell(
+        self,
+        priority: Literal["library", "items"] | None = None,
+        *,
+        manual_reopen: PaneName | None = None,
+        ignore_previous: bool = False,
+    ) -> None: ...
+    def sync_library_prompts_reader_layout_from_shell(
+        self, priority: Literal["library", "items"] | None = None
+    ) -> None: ...
+    def sync_library_skills_reader_layout_from_shell(
+        self, priority: Literal["library", "items"] | None = None
+    ) -> None: ...
+
+
+class LibraryWorkspaceDepthServices(Protocol):
+    """The shell's cached workspace-depth state."""
+
+    def invalidate_library_workspace_depth_state(self) -> None: ...
+    def library_workspace_depth_state(
+        self, *, refresh: bool = False
+    ) -> LibraryWorkspaceDepthState: ...
+
+
+class LibraryMediaHost(
+    LibraryShellServices,
+    LibraryReviewSetServices,
+    LibraryReaderLayoutSync,
+    LibraryWorkspaceDepthServices,
+    Protocol,
+):
     """The DOM node this controller works through (coordinator ruling R4).
 
     ``LibraryScreen`` implements it. This controller owns no DOM of its own,
-    so it reads these framework services off the host and nothing else; the
-    shell state and shell helpers it needs arrive as named constructor
-    dependencies instead. The host's identity matters too: the four
-    ``<widget>.ancestors`` membership checks (ruling R2(a)) test it.
+    so it reads the framework services below off the host, and calls the
+    shell services of the four protocols it extends (TASK-41757); the shell
+    state it needs arrives as named constructor accessors. The host's
+    identity matters too: the four ``<widget>.ancestors`` membership checks
+    (ruling R2(a)) test it.
     """
 
     @property
@@ -906,50 +1048,6 @@ class LibraryMediaController:
         #    deliberately kept off `LibraryMediaState` (group (c)).
         library_media_browse_controller_accessor,
         library_media_trash_browse_controller_accessor,
-        # -- general Library-wide shell helpers, not moved (group (a)).
-        acknowledge_library_destination_change,
-        action_library_narrow_stage_return,
-        active_review_set_banner,
-        apply_library_open_item_surface,
-        arm_library_list_entry_focus,
-        arm_stage_pick_landing,
-        cancel_pending_review_set_resume,
-        close_open_library_choice_strip,
-        disarm_library_list_entry_focus,
-        focus_library_control,
-        focus_library_list_entry,
-        focus_library_list_entry_if_current,
-        focus_library_rail_action,
-        invalidate_library_workspace_depth_state,
-        land_stage_pick,
-        library_adaptive_reader_allocation_is_current,
-        library_entry_route_key,
-        library_open_choice_strip,
-        library_source_total,
-        library_workspace_depth_state,
-        notify_review_set,
-        open_library_export_canvas,
-        open_library_item_by_id,
-        register_footer_shortcuts,
-        review_dismiss_receipt_name,
-        review_dismiss_undo_worker,
-        review_selected_worker,
-        review_set_picker_worker,
-        review_set_service,
-        review_these_worker,
-        run_library_service_call,
-        safe_text,
-        schedule_library_entry_reconcile,
-        select_library_rail_row,
-        source_record_id,
-        sync_library_conversation_reader_layout_from_shell,
-        sync_library_notes_reader_layout_from_shell,
-        sync_library_prompts_reader_layout_from_shell,
-        sync_library_skills_reader_layout_from_shell,
-        toggle_reviewed_unguarded,
-        update_library_ingest_dynamic_regions,
-        walk_active_review_set,
-        request_library_reader_layout_refresh,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -967,7 +1065,9 @@ class LibraryMediaController:
             screen: The host, a ``LibraryMediaHost`` (``LibraryScreen``
                 implements it; TASK-36952.3.8, coordinator ruling R4). Used
                 only for the host's framework services (the eighteen
-                properties below, plus ``focus_chain`` read directly) and,
+                properties below, plus ``focus_chain`` read directly), the
+                43 shell services of the four protocols it extends, reached
+                through the group-(a) properties below (TASK-41757), and,
                 since TASK-36952.3.7, as the identity the four moved
                 ``<widget>.ancestors`` membership checks test (ruling
                 R2(a)) -- this cluster owns no DOM of its own.
@@ -1006,51 +1106,6 @@ class LibraryMediaController:
         self._set_review_dismiss_undo_in_flight_fn = set_review_dismiss_undo_in_flight
         self._library_media_browse_controller_accessor = library_media_browse_controller_accessor
         self._library_media_trash_browse_controller_accessor = library_media_trash_browse_controller_accessor
-        self._acknowledge_library_destination_change_fn = acknowledge_library_destination_change
-        self.action_library_narrow_stage_return_fn = action_library_narrow_stage_return
-        self._active_review_set_banner_fn = active_review_set_banner
-        self._apply_library_open_item_surface_fn = apply_library_open_item_surface
-        self._arm_library_list_entry_focus_fn = arm_library_list_entry_focus
-        self._arm_stage_pick_landing_fn = arm_stage_pick_landing
-        self._cancel_pending_review_set_resume_fn = cancel_pending_review_set_resume
-        self._close_open_library_choice_strip_fn = close_open_library_choice_strip
-        self._disarm_library_list_entry_focus_fn = disarm_library_list_entry_focus
-        self._focus_library_control_fn = focus_library_control
-        self._focus_library_list_entry_fn = focus_library_list_entry
-        self._focus_library_list_entry_if_current_fn = focus_library_list_entry_if_current
-        self._focus_library_rail_action_fn = focus_library_rail_action
-        self._invalidate_library_workspace_depth_state_fn = invalidate_library_workspace_depth_state
-        self._land_stage_pick_fn = land_stage_pick
-        self._library_adaptive_reader_allocation_is_current_fn = (
-            library_adaptive_reader_allocation_is_current
-        )
-        self._library_entry_route_key_fn = library_entry_route_key
-        self._library_open_choice_strip_fn = library_open_choice_strip
-        self._library_source_total_fn = library_source_total
-        self._library_workspace_depth_state_fn = library_workspace_depth_state
-        self._notify_review_set_fn = notify_review_set
-        self._open_library_export_canvas_fn = open_library_export_canvas
-        self._open_library_item_by_id_fn = open_library_item_by_id
-        self._register_footer_shortcuts_fn = register_footer_shortcuts
-        self._review_dismiss_receipt_name_fn = review_dismiss_receipt_name
-        self._review_dismiss_undo_worker_fn = review_dismiss_undo_worker
-        self._review_selected_worker_fn = review_selected_worker
-        self._review_set_picker_worker_fn = review_set_picker_worker
-        self._review_set_service_fn = review_set_service
-        self._review_these_worker_fn = review_these_worker
-        self._run_library_service_call_fn = run_library_service_call
-        self._safe_text_fn = safe_text
-        self._schedule_library_entry_reconcile_fn = schedule_library_entry_reconcile
-        self._select_library_rail_row_fn = select_library_rail_row
-        self._source_record_id_fn = source_record_id
-        self._sync_library_conversation_reader_layout_from_shell_fn = sync_library_conversation_reader_layout_from_shell
-        self._sync_library_notes_reader_layout_from_shell_fn = sync_library_notes_reader_layout_from_shell
-        self._sync_library_prompts_reader_layout_from_shell_fn = sync_library_prompts_reader_layout_from_shell
-        self._sync_library_skills_reader_layout_from_shell_fn = sync_library_skills_reader_layout_from_shell
-        self._toggle_reviewed_unguarded_fn = toggle_reviewed_unguarded
-        self._update_library_ingest_dynamic_regions_fn = update_library_ingest_dynamic_regions
-        self._walk_active_review_set_fn = walk_active_review_set
-        self.request_library_reader_layout_refresh_fn = request_library_reader_layout_refresh
 
     # -- framework services: live-read properties, never snapshotted ------
 
@@ -1321,179 +1376,180 @@ class LibraryMediaController:
         return self._library_media_trash_browse_controller_accessor()
 
 
-    # -- general Library-wide shell helpers (group (a)) --------------------
+    # -- general Library-wide shell helpers (group (a)): the host's shell
+    #    services (TASK-41757), under the private names the moved bodies spell.
 
     @property
     def _acknowledge_library_destination_change(self) -> Any:
-        return self._acknowledge_library_destination_change_fn
+        return self._screen.acknowledge_library_destination_change
 
     @property
     def action_library_narrow_stage_return(self) -> Any:
-        return self.action_library_narrow_stage_return_fn
+        return self._screen.action_library_narrow_stage_return
 
     @property
     def _active_review_set_banner(self) -> Any:
-        return self._active_review_set_banner_fn
+        return self._screen.active_review_set_banner
 
     @property
     def _apply_library_open_item_surface(self) -> Any:
-        return self._apply_library_open_item_surface_fn
+        return self._screen.apply_library_open_item_surface
 
     @property
     def _arm_library_list_entry_focus(self) -> Any:
-        return self._arm_library_list_entry_focus_fn
+        return self._screen.arm_library_list_entry_focus
 
     @property
     def _arm_stage_pick_landing(self) -> Any:
-        return self._arm_stage_pick_landing_fn
+        return self._screen.arm_stage_pick_landing
 
     @property
     def _cancel_pending_review_set_resume(self) -> Any:
-        return self._cancel_pending_review_set_resume_fn
+        return self._screen.cancel_pending_review_set_resume
 
     @property
     def _close_open_library_choice_strip(self) -> Any:
-        return self._close_open_library_choice_strip_fn
+        return self._screen.close_open_library_choice_strip
 
     @property
     def _disarm_library_list_entry_focus(self) -> Any:
-        return self._disarm_library_list_entry_focus_fn
+        return self._screen.disarm_library_list_entry_focus
 
     @property
     def _focus_library_control(self) -> Any:
-        return self._focus_library_control_fn
+        return self._screen.focus_library_control
 
     @property
     def _focus_library_list_entry(self) -> Any:
-        return self._focus_library_list_entry_fn
+        return self._screen.focus_library_list_entry
 
     @property
     def _focus_library_list_entry_if_current(self) -> Any:
-        return self._focus_library_list_entry_if_current_fn
+        return self._screen.focus_library_list_entry_if_current
 
     @property
     def _focus_library_rail_action(self) -> Any:
-        return self._focus_library_rail_action_fn
+        return self._screen.focus_library_rail_action
 
     @property
     def _invalidate_library_workspace_depth_state(self) -> Any:
-        return self._invalidate_library_workspace_depth_state_fn
+        return self._screen.invalidate_library_workspace_depth_state
 
     @property
     def _land_stage_pick(self) -> Any:
-        return self._land_stage_pick_fn
+        return self._screen.land_stage_pick
 
     @property
     def _library_adaptive_reader_allocation_is_current(self) -> Any:
-        return self._library_adaptive_reader_allocation_is_current_fn
+        return self._screen.library_adaptive_reader_allocation_is_current
 
     @property
     def _library_entry_route_key(self) -> Any:
-        return self._library_entry_route_key_fn
+        return self._screen.library_entry_route_key
 
     @property
     def _library_open_choice_strip(self) -> Any:
-        return self._library_open_choice_strip_fn
+        return self._screen.library_open_choice_strip
 
     @property
     def _library_source_total(self) -> Any:
-        return self._library_source_total_fn
+        return self._screen.library_source_total
 
     @property
     def _library_workspace_depth_state(self) -> Any:
-        return self._library_workspace_depth_state_fn
+        return self._screen.library_workspace_depth_state
 
     @property
     def _notify_review_set(self) -> Any:
-        return self._notify_review_set_fn
+        return self._screen.notify_review_set
 
     @property
     def _open_library_export_canvas(self) -> Any:
-        return self._open_library_export_canvas_fn
+        return self._screen.open_library_export_canvas
 
     @property
     def _open_library_item_by_id(self) -> Any:
-        return self._open_library_item_by_id_fn
+        return self._screen.open_library_item_by_id
 
     @property
     def _register_footer_shortcuts(self) -> Any:
-        return self._register_footer_shortcuts_fn
+        return self._screen.register_library_footer_shortcuts
 
     @property
     def _review_dismiss_receipt_name(self) -> Any:
-        return self._review_dismiss_receipt_name_fn
+        return self._screen.review_dismiss_receipt_name
 
     @property
     def _review_dismiss_undo_worker(self) -> Any:
-        return self._review_dismiss_undo_worker_fn
+        return self._screen.review_dismiss_undo_worker
 
     @property
     def _review_selected_worker(self) -> Any:
-        return self._review_selected_worker_fn
+        return self._screen.review_selected_worker
 
     @property
     def _review_set_picker_worker(self) -> Any:
-        return self._review_set_picker_worker_fn
+        return self._screen.review_set_picker_worker
 
     @property
     def _review_set_service(self) -> Any:
-        return self._review_set_service_fn
+        return self._screen.review_set_service
 
     @property
     def _review_these_worker(self) -> Any:
-        return self._review_these_worker_fn
+        return self._screen.review_these_worker
 
     @property
     def _run_library_service_call(self) -> Any:
-        return self._run_library_service_call_fn
+        return self._screen.run_library_service_call
 
     @property
     def _safe_text(self) -> Any:
-        return self._safe_text_fn
+        return self._screen.safe_text
 
     @property
     def _schedule_library_entry_reconcile(self) -> Any:
-        return self._schedule_library_entry_reconcile_fn
+        return self._screen.schedule_library_entry_reconcile
 
     @property
     def _select_library_rail_row(self) -> Any:
-        return self._select_library_rail_row_fn
+        return self._screen.select_library_rail_row
 
     @property
     def _source_record_id(self) -> Any:
-        return self._source_record_id_fn
+        return self._screen.source_record_id
 
     @property
     def _sync_library_conversation_reader_layout_from_shell(self) -> Any:
-        return self._sync_library_conversation_reader_layout_from_shell_fn
+        return self._screen.sync_library_conversation_reader_layout_from_shell
 
     @property
     def _sync_library_notes_reader_layout_from_shell(self) -> Any:
-        return self._sync_library_notes_reader_layout_from_shell_fn
+        return self._screen.sync_library_notes_reader_layout_from_shell
 
     @property
     def _sync_library_prompts_reader_layout_from_shell(self) -> Any:
-        return self._sync_library_prompts_reader_layout_from_shell_fn
+        return self._screen.sync_library_prompts_reader_layout_from_shell
 
     @property
     def _sync_library_skills_reader_layout_from_shell(self) -> Any:
-        return self._sync_library_skills_reader_layout_from_shell_fn
+        return self._screen.sync_library_skills_reader_layout_from_shell
 
     @property
     def _toggle_reviewed_unguarded(self) -> Any:
-        return self._toggle_reviewed_unguarded_fn
+        return self._screen.toggle_reviewed_unguarded
 
     @property
     def _update_library_ingest_dynamic_regions(self) -> Any:
-        return self._update_library_ingest_dynamic_regions_fn
+        return self._screen.update_library_ingest_dynamic_regions
 
     @property
     def _walk_active_review_set(self) -> Any:
-        return self._walk_active_review_set_fn
+        return self._screen.walk_active_review_set
 
     @property
     def request_library_reader_layout_refresh(self) -> Any:
-        return self.request_library_reader_layout_refresh_fn
+        return self._screen.request_library_reader_layout_refresh
 
 
     # -- moved cluster methods (140), byte-for-byte, original file order --
