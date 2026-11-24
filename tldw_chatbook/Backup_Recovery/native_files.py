@@ -6,11 +6,15 @@ import stat
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from tldw_chatbook.Utils.platform_files import os
 
 from .native_platform import flush_directory, flush_file, rename_noreplace
 from .qualification import _qualified_identity, native_identity, qualified_for
+
+if TYPE_CHECKING:
+    from ..Utils.windows_files import HeldRegularFile
 
 
 @contextmanager
@@ -76,6 +80,44 @@ def create_private_file(destination: Path) -> Iterator[int]:
             flush_directory(parent)
         finally:
             os.close(fd)
+
+
+def require_regular_file_effects(parent_fd: int) -> None:
+    """Require qualified same-object regular-file effects on the pinned volume."""
+    if os.name != "nt":
+        raise OSError("regular_file_effects_unqualified")
+    identity = native_identity(parent_fd)
+    if identity["os"] != "Windows" or identity["filesystem"] != "NTFS":
+        raise OSError("regular_file_effects_unqualified")
+    for operation in ("publish_new", "publish_file"):
+        allowed, reason = _qualified_identity(operation, identity)
+        if not allowed:
+            raise OSError(reason)
+
+
+@contextmanager
+def held_regular_file(
+    parent_fd: int, name: str, *, create: bool = False
+) -> Iterator[HeldRegularFile]:
+    """Acquire a qualified leaf beneath the caller's retained private directory."""
+    require_regular_file_effects(parent_fd)
+    from ..Utils.windows_files import hold_regular
+
+    with hold_regular(parent_fd, name, create=create) as held:
+        yield held
+
+
+def flush_regular_parent(parent_fd: int) -> None:
+    """Prove directory durability, including after an ambiguous prior unlink."""
+    require_regular_file_effects(parent_fd)
+    info = os.fstat(parent_fd)
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or info.st_uid != os.geteuid()
+        or info.st_mode & 0o077
+    ):
+        raise PermissionError("private_custody_directory_required")
+    flush_directory(parent_fd)
 
 
 def _rename_new(

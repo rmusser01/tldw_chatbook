@@ -26,8 +26,10 @@ import platform
 import re
 import stat as _stat
 import struct
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
+from typing import BinaryIO
 
 _U32 = C.c_uint32
 _I32 = C.c_int32
@@ -52,6 +54,7 @@ _WRITE_THROUGH = 2
 _REPARSE = 0x400
 _DIRECTORY = 0x10
 _SHARE_ALL = 7
+_VOLUME_GUID_ROOT = r"\\\\\?\\Volume\{[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\}\\"
 _FILE_RENAME_REPLACE_IF_EXISTS = 0x00000001
 _FILE_RENAME_POSIX_SEMANTICS = 0x00000002
 _FILE_RENAME_INFORMATION_EX = 65
@@ -749,7 +752,7 @@ class WindowsReadPin:
             if index == 0:
                 root = _volume_root_name(parent)
                 if not re.fullmatch(
-                    r"\\\\\?\\Volume\{[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\}\\",
+                    _VOLUME_GUID_ROOT,
                     root,
                     re.IGNORECASE,
                 ):
@@ -1160,28 +1163,16 @@ class WindowsOS:
                 name, parent=source, metadata=True, extra_access=_DELETE
             )
             try:
-                encoded = new_name.encode("utf-16-le")
-                size = C.sizeof(_RenameInfo) + len(encoded)
-                buffer = C.create_string_buffer(size)
-                info = _RenameInfo.from_buffer(buffer)
-                info.flags, info.root, info.length = (
-                    (_FILE_RENAME_REPLACE_IF_EXISTS if replace else 0)
-                    | (_FILE_RENAME_POSIX_SEMANTICS if posix else 0),
+                _set_relative_name(
+                    native,
+                    handle,
                     target,
-                    len(encoded),
-                )
-                C.memmove(
-                    C.addressof(buffer) + _RenameInfo.name.offset, encoded, len(encoded)
-                )
-                status = _IOStatus()
-                native.ntcheck(
-                    native.nt.NtSetInformationFile(
-                        handle,
-                        C.byref(status),
-                        buffer,
-                        size,
-                        11 if link else (_FILE_RENAME_INFORMATION_EX if posix else 10),
-                    )
+                    new_name,
+                    flags=(_FILE_RENAME_REPLACE_IF_EXISTS if replace else 0)
+                    | (_FILE_RENAME_POSIX_SEMANTICS if posix else 0),
+                    information_class=11
+                    if link
+                    else (_FILE_RENAME_INFORMATION_EX if posix else 10),
                 )
 
             finally:
@@ -1211,13 +1202,7 @@ class WindowsOS:
                     errno.EISDIR if actual else errno.ENOTDIR,
                     "unexpected_windows_object_type",
                 )
-            # POSIX semantics unlink now while existing share-delete handles live.
-            flags = _U32(1 | 2)  # FILE_DISPOSITION_DELETE | POSIX_SEMANTICS
-            native.check(
-                native.kernel.SetFileInformationByHandle(
-                    handle, 21, C.byref(flags), C.sizeof(flags)
-                )
-            )
+            _dispose_handle(native, handle)
         finally:
             native.kernel.CloseHandle(handle)
 
@@ -1388,6 +1373,205 @@ def native_identity(fd: int) -> dict[str, str | int]:
         "filesystem": filesystem.value,
         "flags": flags.value,
     }
+
+
+def _set_relative_name(
+    native, handle, target, new_name, *, flags=0, information_class=10
+):
+    encoded = new_name.encode("utf-16-le")
+    size = C.sizeof(_RenameInfo) + len(encoded)
+    buffer = C.create_string_buffer(size)
+    info = _RenameInfo.from_buffer(buffer)
+    info.flags, info.root, info.length = flags, target, len(encoded)
+    C.memmove(C.addressof(buffer) + _RenameInfo.name.offset, encoded, len(encoded))
+    status = _IOStatus()
+    native.ntcheck(
+        native.nt.NtSetInformationFile(
+            handle,
+            C.byref(status),
+            buffer,
+            size,
+            information_class,
+        )
+    )
+
+
+def _dispose_handle(native, handle):
+    # Remove the visible name on close of the disposition handle.
+    flags = _U32(1 | 2)  # FILE_DISPOSITION_DELETE | POSIX_SEMANTICS
+    native.check(
+        native.kernel.SetFileInformationByHandle(
+            handle, 21, C.byref(flags), C.sizeof(flags)
+        )
+    )
+
+
+def _private_identity(handle: int, *, directory: bool) -> tuple[int, int, int]:
+    """Read the NTFS identity and exact FILETIME creation ticks from this handle."""
+    native = _native()
+    info = native.info(handle)
+    if bool(info.attributes & _DIRECTORY) != directory or (
+        not directory and info.links != 1
+    ):
+        raise OSError("unexpected_custody_object")
+    uid, mode = native.security(handle, directory)
+    if uid != 1000 or mode & 0o077:
+        raise PermissionError("private_custody_object_required")
+    return (
+        info.volume,
+        (info.index_high << 32) | info.index_low,
+        (info.created[1] << 32) | info.created[0],
+    )
+
+
+def _final_name(handle: int, volume_format: int) -> str:
+    native = _native()
+    buffer = C.create_unicode_buffer(32768)
+    size = native.check(
+        native.kernel.GetFinalPathNameByHandleW(
+            handle, buffer, len(buffer), volume_format
+        )
+    )
+    if size >= len(buffer):
+        raise OSError("custody_path_too_long")
+    return buffer.value
+
+
+@contextlib.contextmanager
+def _hold_private_parent(parent_fd: int) -> Iterator[int]:
+    """Lock names from the physical volume through the borrowed directory."""
+    native = _native()
+    original = native.handle(parent_fd)
+    identity = _private_identity(original, directory=True)
+    path = Path(_final_name(original, 1))  # VOLUME_NAME_GUID, FILE_NAME_NORMALIZED
+    if not re.fullmatch(_VOLUME_GUID_ROOT, path.anchor, re.IGNORECASE):
+        raise OSError("physical_volume_root_required")
+
+    def close(handle):
+        native.check(native.kernel.CloseHandle(handle))
+
+    with contextlib.ExitStack() as stack:
+        parent = None
+        for name in ("\\??\\" + path.anchor[4:], *map(_component, path.parts[1:])):
+            parent = native.open_handle(
+                name, parent=parent, directory=True, share_mode=3
+            )
+            stack.callback(close, parent)
+            uid, mode = native.security(parent, True)
+            if uid not in (0, 1000) or mode & 0o022 and not mode & _stat.S_ISVTX:
+                raise PermissionError("unsafe_custody_directory")
+        if _private_identity(parent, directory=True) != identity:
+            raise OSError("custody_parent_changed")
+        yield parent
+
+
+class HeldRegularFile:
+    """A seekable file and exclusive NTFS effect handle in one borrowed scope."""
+
+    def __init__(
+        self, parent_fd: int, parent_handle: int, stream: BinaryIO, name: str
+    ) -> None:
+        self._parent_fd = parent_fd
+        self._parent_handle = parent_handle
+        self._stream = stream
+        self._name = name
+        self._deleted = False
+        self._proof = self._inspect(_native().handle(stream.fileno()))
+
+    def __copy__(self):
+        raise TypeError("exclusive_regular_file_owner")
+
+    def __deepcopy__(self, memo):
+        raise TypeError("exclusive_regular_file_owner")
+
+    @property
+    def stream(self) -> BinaryIO:
+        """Borrow the unbuffered file stream within the open custody context."""
+        return self._stream
+
+    def _inspect(self, handle):
+        leaf = _private_identity(handle, directory=False)
+        parent = _private_identity(self._parent_handle, directory=True)
+        if leaf[0] != parent[0]:
+            raise OSError("cross_volume_custody_unqualified")
+        # Normalized name of the open object, including actual NTFS spelling.
+        if ntpath.basename(_final_name(handle, 4)) != self._name:
+            raise OSError("custody_name_changed")
+        return parent, leaf
+
+    def _verified_handle(self):
+        handle = _native().handle(self.stream.fileno())
+        if self._inspect(handle) != self._proof:
+            raise OSError("custody_identity_changed")
+        return handle
+
+    @property
+    def identity(self) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+        """Verify the live parent and leaf against their proofs at acquisition."""
+        self._verified_handle()
+        return self._proof
+
+    def flush_file(self) -> None:
+        """Persist verified bytes using this handle's own write access."""
+        native = _native()
+        native.check(native.kernel.FlushFileBuffers(self._verified_handle()))
+
+    def rename_new(self, target_name: str) -> None:
+        """Flush and rename this exact file within its parent, preserving collisions."""
+        target_name = _component(target_name)
+        if target_name.casefold() == self._name.casefold():
+            raise FileExistsError("destination_exists")
+        self.flush_file()
+        native = _native()
+        _set_relative_name(
+            native,
+            self._verified_handle(),
+            self._parent_handle,
+            target_name,
+        )
+        self._name = target_name
+        flush_directory(self._parent_fd)
+
+    def delete(self) -> None:
+        """Dispose this exact file, close its delete handle, then persist removal."""
+        if self._deleted:
+            return
+        _dispose_handle(_native(), self._verified_handle())
+        self.stream.close()
+        flush_directory(self._parent_fd)
+        self._deleted = True
+
+
+@contextlib.contextmanager
+def hold_regular(
+    parent_fd: int, name: str, *, create: bool = False
+) -> Iterator[HeldRegularFile]:
+    """Retain one parent and its exclusive, no-follow regular-file effect handle."""
+    native = _native()
+    name = _component(name)
+    with _hold_private_parent(parent_fd) as parent:
+        flags = _os.O_RDWR | (_os.O_CREAT | _os.O_EXCL if create else 0)
+        handle = native.open_handle(
+            name,
+            parent=parent,
+            flags=flags,
+            extra_access=_DELETE | 0x40000000,  # GENERIC_WRITE for FlushFileBuffers
+            share_mode=0,
+        )
+        try:
+            fd = native.crt.open_osfhandle(
+                handle, (_os.O_RDWR if create else _os.O_RDONLY) | _os.O_BINARY
+            )
+        except BaseException:
+            native.check(native.kernel.CloseHandle(handle))
+            raise
+        try:
+            stream = _os.fdopen(fd, "r+b" if create else "rb", buffering=0)
+        except BaseException:
+            _os.close(fd)
+            raise
+        with stream:
+            yield HeldRegularFile(parent_fd, parent, stream, name)
 
 
 def rename_noreplace(src_fd: int, src: str, dst_fd: int, dst: str) -> None:
