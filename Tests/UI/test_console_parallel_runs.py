@@ -702,9 +702,16 @@ async def test_park_toast_survives_a_viewed_run_completion_re_invocation(
     park B, run A to a real terminal COMPLETED transition via
     ``_set_run_state`` (the established seam other tests in this file use
     to drive "real" terminal transitions), then a second invocation of the
-    shared park seam for B's own round, unchanged -- and asserts the toast
-    still fires exactly once total. Must fail on HEAD (pre-TASK-1141):
-    the second invocation was unconditional and always re-toasted.
+    shared park seam for B's own round, unchanged.
+
+    What it pins now: B's own announcement fires exactly once, through
+    A's completion and the seam re-invocation. A retained approval round
+    announces itself through the controller's app-owned notice ("... needs
+    approval to use a tool ..."), not through the seam, so that is the toast
+    counted. The re-invoked seam adds a toast of its own ("Agent in ...
+    needs approval."), since it dedupes only rounds it toasted itself; this
+    test does not count it. That toast went to an unrecorded object until
+    TASK-41948 removed this test's ``controller.app = host`` re-point.
     """
     app = _build_test_app()
     host = ConsoleHarness(app)

@@ -92,6 +92,7 @@ Owner decision 2026-11-23: "Fix the harnesses (Recommended)", over TASK-42465's 
 - There are no new census entries and no User Guide change: the shipped app's `controller.app` was always running.
 
 **Files.** `Tests/UI/app_factory.py`, `tldw_chatbook/Chat/console_interrupt_rounds.py`, `Tests/Chat/test_console_runtime_lifetime.py`, `Tests/UI/test_console_session_tab_close.py`, the 21 harness files, `backlog/decisions/314-indefinite-human-approval-waits.md`, and `backlog/docs/lessons-testing-evidence.md`. The lessons file has a new entry, and the TASK-42424 and TASK-42481 entries no longer give the retired waiting advice.
+
 **Review round (2026-11-24, six Minors).**
 1. Shutdown order. `run_on_host` cleared the factory app's marshal before awaiting the host's `_shutdown`. The shipped app's marshal keeps landing until `_shutdown` returns, and the Console runtime drain (`app_lifecycle.py` `_shutdown_console_runtime`) relies on that.
    - Fix: the wrapper now clears the running mark, awaits the host's shutdown, and restores the app's own marshal in `finally`.
