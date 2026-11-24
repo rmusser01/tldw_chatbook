@@ -40,7 +40,14 @@ SELECTION = {
     ],
 }
 INHERITED = {
-    "Run the restore Console P0 regression tests": ["pytest", "--timeout=180", "--tb=short"],
+    "Run the restore Console P0 regression tests": [
+        "pytest",
+        # TASK-34100.16.1 (round-24 port): the registered-root file, on no
+        # lane before, rides this profile's headroom.
+        "Tests/Backup_Recovery/test_registered_root_removed.py",
+        "--timeout=180",
+        "--tb=short",
+    ],
     "Run the sandboxed Console P0 regression tests": [
         "pytest",
         "Tests/Console/test_console_markdown_export.py",

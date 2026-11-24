@@ -1227,6 +1227,13 @@ jobs:
             --tb=short
 
       # The restore selectors alone took 25m46s in run 43496035687.
+      # Round 24 (TASK-34100.16.1's port): the registered-root file (5 tests,
+      # sandboxed, reading config in-process; Create backup, the refused start
+      # and a Replace restore with later rollback in a child process), on no
+      # lane before: 113.7 s serially with this step's flags at load 22-33.
+      # This profile ran at most 2.0 of its 35 min over 27 PR runs to
+      # 2026-11-24, where dreams-tracking had about 4 min left with all three
+      # round-24 branches' riders.
       - name: Run the restore Console P0 regression tests
         if: ${{ !cancelled() && matrix.profile == 'restore' }}
         run: |
@@ -1234,6 +1241,7 @@ jobs:
             Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant \
             Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_import_preparation_disables_only_qualified_selected_payload \
             "Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_historical_restore_migrates_only_disposable_copy[76]" \
+            Tests/Backup_Recovery/test_registered_root_removed.py \
             --timeout=180 \
             --tb=short
 
@@ -1486,17 +1494,16 @@ jobs:
     # load 39-41, 74.0 s for 121 of them at load 30-34) forces a committed
     # write and a held write lock into every fixed site. The whole step:
     # 881 tests, 1035.5 s at load 52-75 (875 took 741.8 s at load 30-48).
-    # Round 24 (TASK-34100.16.1's port): four Backup_Recovery files on no lane
-    # before (sandboxed, reading config in-process). Serially with this step's
-    # flags at load 22-33: group issues 1.0 s (14 tests), tokenizer write
-    # admission 3.0 s (5), finite DB retirement 37.3 s (61), registered root
-    # removed 113.7 s (5); 155 s together. The whole step took 687 s here (839
-    # tests, load 22-50), and this job's PR runs to 2026-11-24 took at most
-    # 9.8 min, so expect about 12.5 of the 20. They run right after the Dreams
-    # file, ahead of the Workspaces riders: the create-handler and reconcile
-    # files each leave a storage lease a backup's local pause cannot drain, and
-    # 18 finite-retirement cases failed "a backup's local pause could not drain"
-    # when they ran after them.
+    # Round 24 (TASK-34100.16.1's port): three Backup_Recovery files on no
+    # lane before (sandboxed, reading config in-process). Serially with this
+    # step's flags at load 22-33: group issues 1.0 s (14 tests), tokenizer
+    # write admission 3.0 s (5), finite DB retirement 37.3 s (61). This job's
+    # PR runs to 2026-11-24 took at most 10.4 min of the 20. They run right
+    # after the Dreams file, ahead of the Workspaces riders: the create-handler
+    # and reconcile files each leave a storage lease a backup's local pause
+    # cannot drain, and 18 finite-retirement cases failed "a backup's local
+    # pause could not drain" when they ran after them. Its fourth file, the
+    # slower registered-root one, runs in console-p0-gate's restore profile.
     name: Dreams tracking tests and unlaned riders
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -1521,7 +1528,6 @@ jobs:
             Tests/Backup_Recovery/test_group_issues.py \
             Tests/Backup_Recovery/test_tokenizer_write_admission.py \
             Tests/Backup_Recovery/test_finite_db_retirement.py \
-            Tests/Backup_Recovery/test_registered_root_removed.py \
             Tests/Workspaces/test_console_workspace_create_handler.py \
             Tests/Workspaces/test_console_workspace_reconcile.py \
             Tests/Workspaces/test_workspace_create_modal.py \

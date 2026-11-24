@@ -464,16 +464,16 @@ DREAMS_TRACKING_TARGET = "Tests/Dreams/test_track_service.py"
 #: statically, so TOOL_PACKS_BOOTSTRAP_NODES pins the enrolling nodes instead:
 #: a new one widens the window and must be looked at.
 DREAMS_TRACKING_RIDERS = (
-    # TASK-34100.16.1 (round-24 port): the Backup_Recovery files it adds or
-    # extends that ran on no lane. Sandboxed and reading config in-process,
-    # so before Tool_Packs; and before the Workspaces riders, because the
-    # create-handler and reconcile files each leave a storage lease a backup's
-    # local pause cannot drain, which fails the finite-retirement file's drain
-    # checks when it runs after them in this serial process.
+    # TASK-34100.16.1 (round-24 port): Backup_Recovery files it extends that
+    # ran on no lane (its registered-root file runs in console-p0-gate's
+    # restore profile). Sandboxed and reading config in-process, so before
+    # Tool_Packs; and before the Workspaces riders, because the create-handler
+    # and reconcile files each leave a storage lease a backup's local pause
+    # cannot drain, which fails the finite-retirement file's drain checks when
+    # it runs after them in this serial process.
     "Tests/Backup_Recovery/test_group_issues.py",
     "Tests/Backup_Recovery/test_tokenizer_write_admission.py",
     "Tests/Backup_Recovery/test_finite_db_retirement.py",
-    "Tests/Backup_Recovery/test_registered_root_removed.py",
     "Tests/Workspaces/test_console_workspace_create_handler.py",
     "Tests/Workspaces/test_console_workspace_reconcile.py",
     "Tests/Workspaces/test_workspace_create_modal.py",
