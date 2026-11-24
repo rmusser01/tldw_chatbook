@@ -107,8 +107,8 @@ async def test_physical_fallback_outcomes_bound_retry_recovery(
                     capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
                 ):
                     pass
-            # vLLM may retry a 429 inside its nonstreaming adapter. Every
-            # such request is refused; no new request may come from recovery.
+            # Every non-streaming request is refused; no new request may come
+            # from recovery.
             assert server.stream_flags[0] is True
             assert server.stream_flags[1:] and not any(server.stream_flags[1:])
             posts_before_recovery = list(server.stream_flags)
@@ -149,9 +149,13 @@ async def test_physical_fallback_outcomes_bound_retry_recovery(
                     )
             scope = gateway._trace_preparation_scope(signals)
             assert scope.provider_dispatches == 2
-            # Exhausted vLLM 429 retries have no response-owned final error;
-            # they remain unproven, even though our server observed rejection.
-            expected_rejections = (0 if provider == "vllm" else 1) if empty_stream else 2
+            # TASK-34100.2 AC#18: no adapter retries a 429 in its transport,
+            # so vLLM's 429 reaches raise_for_status as a response-owned
+            # refusal and counts, as llama.cpp's does. (Before, urllib3's
+            # exhausted 429 retry raised a RetryError with no response, so it
+            # stayed unproven.) The empty 200 still answered, so neither mode
+            # recovers above.
+            expected_rejections = 1 if empty_stream else 2
             assert scope.provider_rejections == expected_rejections
             assert scope.provider_answered is empty_stream
             assert server.stream_flags == posts_before_recovery
