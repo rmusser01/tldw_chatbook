@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-23 06:38
-updated_date: 2026-11-23 22:10
+updated_date: 2026-11-24 00:57
 labels:
 - follow-up
 - console
@@ -61,9 +61,16 @@ Only `test_running_harness_retires_actual_borrowed_database_connections` from th
 
 **Red/green (AC#3).** At base the four nodes failed in a `-n 4` run of the file (9 failed, 18 passed; the other five are TASK-35830's). After the fix, each node alone passed (7.4, 7.7, 7.7 and 3.4 s), and the file at `-n 4` gave 22 passed, 5 failed: only TASK-35830's five setup-assertion reds (the four `test_send_refuses_and_keeps_the_draft_when_the_composer_is_bound_elsewhere` cases and `test_send_refuses_when_the_composer_chat_is_off_screen_after_two_switches`), which this task leaves to TASK-35830.
 
-**Lane (AC#4).** Only `test_running_harness_retires_actual_borrowed_database_connections` was censused. The other 13 green test functions join the UI census tail as node ids (all their parameter cases); TASK-35830's two red functions stay out. Serially with the UI lane's flags (`-p no:xdist --timeout=180 --durations=0`) the 13 entries (21 tests) took 233.7 s at load 58-77 (setup+call+teardown per entry: workspace switch paths 52.9 s, strip buttons 30.1 s, sync-pass binds 26.2 s, lost click 22.6 s, second quick click 17.4 s, two waiting clicks 13.5 s, session tab keyboard 12.9 s, Enter after click 12.6 s, held activation keys 12.3 s, Redirect refusal 10.9 s, tab click highlight 10.6 s, and under 0.01 s each for the two stub tests). The census floor is the measured entry count (shared with TASK-42469's two entries).
+**Lane (AC#4).** Only `test_running_harness_retires_actual_borrowed_database_connections` was censused. The other 13 green test functions join the UI census tail as node ids (all their parameter cases; the two slowest were later split by parameter, see "Review fixes" below); TASK-35830's two red functions stay out. Serially with the UI lane's flags (`-p no:xdist --timeout=180 --durations=0`) the 13 entries (21 tests) took 233.7 s at load 58-77 (setup+call+teardown per entry: workspace switch paths 52.9 s, strip buttons 30.1 s, sync-pass binds 26.2 s, lost click 22.6 s, second quick click 17.4 s, two waiting clicks 13.5 s, session tab keyboard 12.9 s, Enter after click 12.6 s, held activation keys 12.3 s, Redirect refusal 10.9 s, tab click highlight 10.6 s, and under 0.01 s each for the two stub tests). The census floor is the measured entry count (shared with TASK-42469's two entries).
 
 **Load flake in two laned nodes, found in the final check (fixed).** A final `-n 4` run of every touched file (load about 52) failed `test_pressing_tab_strip_buttons_leaves_the_keyboard_in_the_composer[close-a]`, and a repro loop of the file's green tests (6 runs, load 45-51) failed `test_pressing_a_session_tab_leaves_the_keyboard_in_the_composer` once: `{'composer': 'Reply with the single word ECHO.'} != {'composer': 'Reply with the single word ECHO.y'}`. That is 2 failures in 8 loaded `-n 4` runs. Both send the "y" through the driver and then read the composer after one `pilot.pause()`. That pause returns once the process looks idle (`wait_for_idle` compares process CPU with wall time), and a CPU-starved worker looks idle before the Key reaches the composer: test synchronisation, not a product race. With the key delivered 0.5 s late (temporary edit, reverted), the old waits failed 4 of 4 cases at the composer check; the fixed waits passed 4 of 4. The fix, `_until_key_lands`, waits up to 10 s until the draft changes or Trace opens, then the unchanged assertion says where the key went. Soak of the file's 22 green tests after the fix: 20 of 20 runs at `-n 4` passed (two concurrent loops of 10, load 38-52).
 
 **Files.** `Tests/UI/test_console_tab_switch_binds_composer.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
+
+**Review fixes (2026-11-23).**
+- Census: the two composer functions over the ~30 s entry budget are now listed by parameter, as TASK-42416 did. Serial seconds per entry (setup+call+teardown, UI lane flags, load 87-106):
+  - `test_workspace_switch_paths_bind_the_composer_during_a_sync_pass`: `[workspace_switch]` 15.0, `[workspace_new_session]` 14.5, `[failed_open_restore]` 13.7, `[resume]` 12.8.
+  - `test_pressing_tab_strip_buttons_leaves_the_keyboard_in_the_composer`: `[close-a]` 14.8, `[console-new-chat-tab]` 13.4, `[console-new-temporary-tab]` 12.8.
+  The other 11 composer entries keep the times recorded above. The file's green tests are now 18 entries.
+- The key-landing wait no longer has its own helper. Both tests use the file's imported `until` inside `contextlib.suppress(AssertionError)` (10 s), so the unchanged assertion still says where the key went. With the key delivered 0.5 s late (temporary edit, reverted), the two tests' 4 cases passed 4 of 4, as with the old helper; the single-pause version had failed 4 of 4. Soak of the file's 22 green tests after the change: 20 of 20 runs at `-n 4` (two loops of 10, load 63-136).
 <!-- SECTION:NOTES:END -->
