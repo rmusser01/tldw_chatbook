@@ -97,7 +97,7 @@ timing, so a bookmark cannot safely refer to newly generated audio.
     required. A qualification-only capture helper may be isolated outside the
     application's environment and must not enter packaged dependencies.
 
-## Windows fixed-tail profile: qualification not passed
+## Windows fixed-tail profile: endpoint qualification passed, portable gate open
 
 The Windows follow-up evaluates **250 ms of local zero PCM appended once to the
 retained WAV**, after all original content frames. It does not request more speech
@@ -128,8 +128,8 @@ capture buffer (100 ms), still emitting 480-frame reads, showed no discontinuiti
 in that control and passed a same-file Stop/resume. This supports the safer
 measurement setup; it is not alone a repeated Windows workaround pass.
 
-The [repeated result](../../Docs/Testing/watchlist-article-audio-qualification.md)
-does **not qualify the workaround**. Three rounds produced 21 planned rows and
+The earlier [wrapper-based repeated result](../../Docs/Testing/watchlist-article-audio-qualification.md)
+did **not qualify the workaround**. Three rounds produced 21 planned rows and
 20 actual launches: 13 natural playbacks and two Stops matched successfully,
 including two same-artifact saved-bookmark resumes. Three natural recordings and
 one Stop were unmatched, and one natural recording had a noisy baseline/two capture
@@ -137,12 +137,59 @@ discontinuities. The unmatched Stop prevented one Resume.
 Passing measurements had maximum 2.438 ms seek error, 2.417 ms original-tail error
 and 59.5 ms stopped-bookmark error. All started players/capture workers retired.
 
-Keep the 250 ms policy provisional. Passing tails support the hypothesis, but
-unresolved capture/mix/timeline gaps prevent reliable repeated Windows
-qualification. Do not widen matching tolerances, count skipped cases as passes,
-or wire the workaround into production from this subset. Resolve that measurement
-ambiguity before a fresh unchanged matrix. The portable feature gate and
-macOS/Linux/physical-listener qualification remain open.
+Those wrapper-based runs lacked reliable timeline evidence for all cases.
+The packet-based follow-up below establishes the Windows endpoint pass.
+The portable feature gate and macOS/Linux/listener qualification remain open;
+the profile has not been adopted in application code.
+
+## Packet-clock investigation and rerun, 2026-11-23
+
+The gap investigation reproduced two capture mechanisms. SoundCard 0.4.6
+inserts elapsed-time-derived zeros after an empty poll. A native 500 ms control
+traced 3,871 added frames inside a matched source interval while the source
+and device advanced exactly the same number of frames. Both waveform edges
+correlated above 0.99999, and the wrapper timeline was 80.646 ms too long.
+A second undelayed control lost 10,560 native frames and reported a
+discontinuity. Existing legacy receipts are preserved.
+
+Use native WASAPI packet frame positions, first-frame QPC timestamps, and
+flags for Windows qualification. The pinned SoundCard setup still opens
+the default-render loopback device. The measurement reader bypasses its
+estimated-silence path, drains packets independently of analysis, validates
+frame continuity and QPC timing, and counts stream-origin and subsequent
+discontinuities separately. A native silent packet has measured frames.
+Empty polls are monitoring observations. Quiet windows require drain coverage
+within actual endpoint buffer capacity and a subsequent drain. Reject
+unreliable timestamps and PCM samples.
+
+The 500 ms and playing Stop preflights matched with zero alignment drift,
+zero later discontinuities, and zero timestamp-error flags. The same 21-case
+matrix then ran with the original 250 ms seek/bookmark, 20 ms tail/drift,
+correlation, and 1.5 s Stop thresholds. All 18 launched cases had active
+prelaunch audio, with RMS 0.004150–0.018304 against the 0.0002 quiet limit.
+The three dependent resumes were skipped. All players and capture workers
+retired, and native records reported zero later discontinuities or timestamp
+errors. An active Windows render session was identified independently. A
+retry after the user's initial pause still rejected all 18 base cases at
+RMS 0.001626–0.009073 and skipped three resumes; the session still had a
+nonzero peak. Both rejected receipts remain preserved.
+
+After the user muted that session, the identical 21-case matrix passed all
+Windows endpoint-loopback checks with every threshold unchanged. All 18
+natural playbacks, including three dependent saved resumes, and three playing
+Stops passed their applicable checks. Maximum absolute errors were 3.250 ms seek,
+2.417 ms natural-content tail, 69.542 ms bookmark alignment and 25.492 ms
+telemetry. Maximum process Stop latency was 10.003 ms and last detected
+signal after Stop was 32.633 ms. All quiet measurements were zero RMS;
+all source spans had zero alignment drift and no later discontinuities or
+timestamp errors. All 21 players and capture workers retired.
+
+The 250 ms profile therefore passes for this Windows build, executable,
+PCM16 stereo 48 kHz and default-render route. It remains unqualified on
+macOS/Linux, other output routes and acoustic/listener output. The portable
+feature gate remains open and dependent application implementation stays
+gated. The [evidence report](../../Docs/Testing/watchlist-article-audio-qualification.md)
+links the numerical controls and all three packet matrices.
 
 ## Alternatives
 
@@ -171,6 +218,9 @@ remaining deliverables to focused regression tests and mounted/native evidence.
 
 Initial [Windows qualification evidence](../../Docs/Testing/watchlist-article-audio-qualification.md)
 found missing final content despite successful process exits. Subsequent fixed-tail
-controls and the repeated Windows matrix remain insufficient for adoption;
-ffplay stays provisional and dependent feature implementation remains gated.
-Other platforms and listener/physical output have not been qualified.
+controls and the wrapper-based Windows matrix remain insufficient for adoption.
+The first packet-based attempts rejected the active background mix under the
+existing baseline limit. After the user muted that session, all 21 Windows
+cases passed with unchanged thresholds. This qualifies the recorded Windows
+profile only. Dependent feature implementation remains gated while other
+platforms and listener/physical output await qualification.
