@@ -48,3 +48,13 @@ Reason: existing accepted output ownership and Windows-first capability contract
 4. Integrate every actual output and exact retirement boundary, including ordinary/preview file and PCM, provider realtime, speculative duplex, Speech Lab/wizard samples, Watchlists/Library/artifact replay, media including seek, and quick/full exit. Failed physical cleanup retains custody. Preserve external handoff acknowledgement and existing platform support for ordinary playback.
 5. Validate native Windows takeover and cross-surface races, configured adapter playback, shutdown and affected targeted regressions. Update architecture/docs and mark Done only after all task AC and required native evidence pass. No provider, queue, storage or UI feature work belongs to this task.
 <!-- SECTION:PLAN:END -->
+
+## Progress — initial ownership increment
+
+Implemented the isolated stdlib `AudioOutputOwnership` / `AudioOutputLease` in `9a6e4360ec`, with the eager-callback ordering fix in `cd66a8aa10`. Exact lease identity and generation fencing prevent stale release/start authority. Replacement waits for positive retirement; cancellation retains one shielded cleanup task and failed retirement preserves blocked custody. The primitive is disconnected from all production callers.
+
+Eleven event-driven tests pass with asyncio debug enabled, including Textual's eager task factory. Ruff lint/format and the import-closure check pass. Independent spec/quality review found a P1 publication race in the initial version; its RED/GREEN eager-loop regression and scoped re-review confirm it addressed, with no open Critical/Important finding.
+
+The normal pytest bootstrap stopped before collection with `recovery_scope_uncertain`; its cause and baseline behavior were not established. Pure coordinator checks used `--noconftest`, without changing recovery policy or user profile data. Native playback, the controlled adapter, all production producer integration and app-wide takeover evidence remain unverified. Task stays In Progress and every whole-task AC remains open.
+
+Existing ADR366 governs this increment. Living internals are updated in `Docs/Architecture/speech.md`; the eager-publication incident is recorded in `backlog/docs/lessons-testing-evidence.md`. The tested implementation base is `3e08f979ea`; rebase onto current dev and rerun affected targeted checks before production caller integration.
