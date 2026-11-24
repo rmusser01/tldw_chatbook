@@ -1415,7 +1415,8 @@ _BUDGETS: dict[str, int] = {
     # replacement proof accepts the binding a Retry's re-dispatch keeps
     # (DB/console_prompt_mixins.redispatches_bound_call).
     # 2026-11-24: re-measured after rebasing onto dev 578222f272 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6747 -> 6757.
-    "tldw_chatbook/Chat/console_trace_service.py": 6774,
+    # 2026-11-24: re-measured after rebasing onto dev 9fa2bf1b1d (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6774 -> 6784.
+    "tldw_chatbook/Chat/console_trace_service.py": 6784,
     # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
     # approved child trace segments (ADR-337 amendment 2026-11-17): create and
