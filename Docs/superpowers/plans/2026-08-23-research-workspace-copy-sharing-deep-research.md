@@ -200,7 +200,7 @@ server-only sharing, overlay exclusion, and Deep Research ownership/return.
 
 - Create: `tldw_chatbook/tldw_api/workspace_migration_schemas.py`
 - Modify: `tldw_chatbook/tldw_api/__init__.py`
-- Modify: `tldw_chatbook/tldw_api/client.py`
+- Create: `tldw_chatbook/tldw_api/workspace_migration_client.py`
 - Create: `tldw_chatbook/Research_Workspace/server_migration_receipts.py`
 - Test: `Tests/tldw_api/test_workspace_migration_client.py`
 - Test: `Tests/Research_Workspace/test_server_migration_receipts.py`
@@ -217,11 +217,14 @@ server-only sharing, overlay exclusion, and Deep Research ownership/return.
    `WorkspaceMigrationCreateRequest`, chunk declaration/upload/receipt,
    finalize request, and response fields. Use `source_product="tldw-chatbook"`.
 3. Add the six client methods using `_request`, segment validation, existing
-   auth/error normalization, and exact response validation. Do not create a
-   second HTTP client.
+   auth/error normalization, and exact response validation. The migration
+   adapter uses the authenticated root HTTP client.
 4. Implement `ServerMigrationReceiptService.begin`, `ack_item`, `status`, and
    `finalize`. The server migration session is an audit/recovery owner; actual
-   content is written through canonical destination APIs in Task 4.
+   content is written through canonical destination APIs in Task 4. The
+   migration create route also upserts the destination name and Study policy.
+   New sessions require a newly minted Server workspace ID. Existing sessions
+   are recovered by ID without repeating the workspace upsert.
 5. Map one acknowledged Copy item to one declared/accepted chunk whose SHA,
    byte count, and metadata identify the manifest item but contain no payload.
    Finalize only after every non-omitted declared item has a server receipt.
