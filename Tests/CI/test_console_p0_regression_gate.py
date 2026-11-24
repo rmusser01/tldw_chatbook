@@ -193,11 +193,14 @@ P0_REGRESSION_TESTS: dict[str, tuple[str, ...]] = {
         "Tests/Chat/test_continuation_unwritten_store_failures.py",
         "Tests/UI/test_console_activity_sync_race.py",
         "Tests/UI/test_console_trace_retry_refusal.py",
-        # The Kimi pilot file is about 17 min serially: three functions whole,
-        # the two smoke-matrix functions one case per census entry.
+        # The Kimi pilot file is about 17 min serially: its two single-case
+        # functions whole, every other case one per census entry.
         _KIMI + "test_unstored_reasoning_checkpoint_keeps_the_reply",
         _KIMI + "test_destination_refused_reasoning_checkpoint_fails_the_reply",
-        _KIMI + "test_continue_and_regenerate_keep_one_row_per_reply",
+        *(
+            f"{_KIMI}test_continue_and_regenerate_keep_one_row_per_reply[{case}]"
+            for case in ("moonshot-kimi-k3", "moonshot-kimi-k2.6", "openai-gpt-4.1")
+        ),
         *(
             f"{_KIMI}{function}[{case}]"
             for function in (
