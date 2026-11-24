@@ -6,10 +6,6 @@ assignee:
   - '@codex'
 created_date: '2026-08-24 05:54'
 updated_date: '2026-08-24 10:08'
-status: To Do
-assignee: []
-created_date: '2026-08-24 05:54'
-updated_date: '2026-08-24 05:54'
 labels:
   - research
   - workspace
@@ -19,7 +15,7 @@ dependencies: []
 references:
   - Docs/superpowers/specs/2026-08-23-research-workspace-design.md
   - Docs/superpowers/plans/2026-08-23-research-workspace-foundation.md
-  - backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md
+  - backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md
 priority: high
 ---
 
@@ -39,14 +35,6 @@ Add the durable Research destination and a real Workspace screen whose Local/Ser
 - [x] #6 Wide, medium, narrow, and short-height layouts meet the approved pane-count and minimum-content contracts at the exact verification sizes, with hidden panes removed from the focus cycle and responsive overrides restoring preferences when width returns.
 - [x] #7 A private, bounded, atomically written device-overlay store keys pane preferences by qualified authority/profile/principal/workspace identity, recovers per-record corruption without blocking the canonical workspace, and stores no secrets or canonical content.
 - [x] #8 Targeted unit, mounted Textual, command-palette, navigation, persistence, inverse, and geometry checks pass; generated CSS is rebuilt from source and no full-suite claim is made.
-- [ ] #1 Research is a fourteenth shell destination after Library and before Artifacts; its primary route is `research_workspace`, direct `research` callers still mount Research Runs, existing destination shortcuts do not shift, and F10 opens Research Workspace.
-- [ ] #2 Workspace and Runs mount one shared Research mode bar and navigate between separate real screens while preserving each screen's own saved state.
-- [ ] #3 The Workspace screen exposes an explicit `Workspace data: Local | Server` selector and authority-qualified workspace identities; unavailable Server state fails closed with recovery and never reads, displays, or mutates Local as fallback.
-- [ ] #4 Local and Server adapters implement one normalized, capability-aware read/lifecycle contract without reusing `WorkspaceAuthority` as the data-source discriminator or merging results from both owners.
-- [ ] #5 Sources and Studio use exact `<---` / `--->` collapse/reveal labels, deterministic focus relocation, separate stored preference versus effective responsive state, and Chat maximizes when both side panes are closed.
-- [ ] #6 Wide, medium, narrow, and short-height layouts meet the approved pane-count and minimum-content contracts at the exact verification sizes, with hidden panes removed from the focus cycle and responsive overrides restoring preferences when width returns.
-- [ ] #7 A private, bounded, atomically written device-overlay store keys pane preferences by qualified authority/profile/principal/workspace identity, recovers per-record corruption without blocking the canonical workspace, and stores no secrets or canonical content.
-- [ ] #8 Targeted unit, mounted Textual, command-palette, navigation, persistence, inverse, and geometry checks pass; generated CSS is rebuilt from source and no full-suite claim is made.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -54,16 +42,16 @@ Add the durable Research destination and a real Workspace screen whose Local/Ser
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no new ADR
 
-ADR path: `backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md`
+ADR path: `backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md`
 
-Reason: This task directly implements the accepted shell, authority, adapter, overlay, and responsive-layout boundaries in ADR-078. A new ADR is required only if implementation changes those owners or allows automatic cross-authority fallback.
+Reason: This task directly implements the accepted shell, authority, adapter, overlay, and responsive-layout boundaries in ADR-322. A new ADR is required only if implementation changes those owners or allows automatic cross-authority fallback.
 
 Follow `Docs/superpowers/plans/2026-08-23-research-workspace-foundation.md` task-by-task with test-first checkpoints and one scoped commit per completed plan task.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
-Completed the ADR-078 foundation with stable Research routing, normalized Local
+Completed the ADR-322 foundation with stable Research routing, normalized Local
 and Server adapters, qualified controller state, private device-only pane
 preferences, responsive Workspace/Run screens, and an explicit mounted
 `Workspace data: Local | Server` selector. Task 5 late-binds only the active
@@ -79,7 +67,7 @@ checks passed. The detector's brief-relative `.agents` path is absent from the
 isolated worktree, so the identical repository detector was run from the main
 checkout with no findings. Known unrelated Library failures in the broad
 navigation file were excluded by the approved selected-node boundary, and
-full pytest was not run. No new ADR was required; ADR-078 remains the governing
+full pytest was not run. No new ADR was required; ADR-322 remains the governing
 decision.
 
 ### Fix Round 1
@@ -102,7 +90,7 @@ are closed.
 Fix Round 1 verification passed `318 passed` with only the accepted
 `RequestsDependencyWarning`; all six inverse guards passed separately, and CSS
 reproduction, Ruff, format, compile, diff, detector, and affected rendered
-geometry checks passed. ADR-078 remains the governing decision, no new ADR was
+geometry checks passed. ADR-322 remains the governing decision, no new ADR was
 required, the known unrelated Library failures remain out of scope, and full
 pytest was not run.
 
@@ -128,7 +116,7 @@ state.
 Fix Round 2 verification passed `320 passed` with only the accepted
 `RequestsDependencyWarning`; the amended slice passed `125 passed`, all six
 inverse guards passed, and CSS reproduction, Ruff, format, compile, diff,
-detector, and affected rendered geometry checks passed. ADR-078 remains the
+detector, and affected rendered geometry checks passed. ADR-322 remains the
 governing decision, no new ADR was required, known unrelated Library failures
 remain out of scope, and full pytest was not run.
 
@@ -153,5 +141,5 @@ Fix Round 3 verification passed `321 passed` with only the accepted
 `RequestsDependencyWarning`; the amended slice passed `126 passed`, all six
 inverse guards passed, and CSS reproduction, Ruff, format, compile, diff,
 detector, conflict/stale-load guards, and affected rendered geometry checks
-passed. ADR-078 remains the governing decision, no new ADR was required, known
+passed. ADR-322 remains the governing decision, no new ADR was required, known
 unrelated Library failures remain out of scope, and full pytest was not run.
