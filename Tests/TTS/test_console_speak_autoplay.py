@@ -1610,7 +1610,7 @@ async def test_playback_handler_reports_player_start_failure(
         assert outcomes == [False]
         assert states == ["failed"]
         assert handler.app.audio_output.owner is None
-        assert player.stops == [player.refused_token]
+        assert player.stops == [player.retired_token]
     finally:
         await handler.cleanup_tts_resources()
 

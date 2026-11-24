@@ -17,13 +17,14 @@ class ConsoleFilePlayer(FilePlayer):
         super().__init__(external=state is PlaybackState.HANDED_OFF)
         self.state_after_play = state
         self.paths = []
-        self.refused_token = None
+        self.retired_token = None
 
     def play_prepared(self, plan, *, attempt_token, start_authority):
         self.paths.append(plan.file_path)
+        self.retired_token = None
         if self.state_after_play is None:
             assert start_authority()
-            self.refused_token = attempt_token
+            self.retired_token = attempt_token
             return False
         if super().play_prepared(
             plan, attempt_token=attempt_token, start_authority=start_authority
@@ -32,8 +33,17 @@ class ConsoleFilePlayer(FilePlayer):
             return True
         return False
 
+    def stop(self, *, expected_token):
+        if self.state is PlaybackState.IDLE:
+            self.stops.append(expected_token)
+            return False
+        if super().stop(expected_token=expected_token):
+            self.retired_token = expected_token
+            return True
+        return False
+
     def retirement_confirmed(self, *, expected_token):
-        return self.refused_token is not None and expected_token is self.refused_token
+        return self.retired_token is not None and expected_token is self.retired_token
 
 
 @pytest.fixture(autouse=True)

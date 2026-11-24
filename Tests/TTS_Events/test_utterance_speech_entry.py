@@ -497,35 +497,71 @@ async def test_completion_waits_for_the_poll_to_observe_finished_before_firing(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cancel_old", [False, True], ids=["completion", "cancellation"]
+)
 async def test_completion_reports_false_when_other_output_takes_over(
-    handler, monkeypatch, tmp_path
+    handler, monkeypatch, tmp_path, cancel_old
 ):
     handler._tts_service = _FakeService(
         _FakeResponse([b"ID3", b"audio"], audio_format="mp3", sample_rate=None)
     )
     old_player = ConsoleFilePlayer(PlaybackState.PLAYING)
     monkeypatch.setattr(audio_output_runs, "SimpleAudioPlayer", lambda: old_player)
+    poll_entered, release_poll = asyncio.Event(), asyncio.Event()
+    get_state = audio_output_runs.FileOutputRun.get_state
+
+    async def gated_state(run):
+        if run.path in old_player.paths and asyncio.current_task() is not run._monitor:
+            # Only the handler's observer waits. The owned-run monitor must still retire.
+            poll_entered.set()
+            await release_poll.wait()
+        return await get_state(run)
+
+    monkeypatch.setattr(audio_output_runs.FileOutputRun, "get_state", gated_state)
     outcomes = []
     task = asyncio.create_task(
         handler.speak_utterance("Discarded.", on_finished=outcomes.append)
     )
-    await wait_for_condition(lambda: old_player.launches == 1)
-
-    new_player = ConsoleFilePlayer(PlaybackState.PLAYING)
-    run = await audio_output_runs.FileOutputRun.prepare(
-        tmp_path / "unrelated.wav", player=new_player
-    )
     host = handler.app.audio_output
-    lease = await host.acquire("Other surface", run.retire, intent=host.begin_intent())
+    lease = None
     try:
+        await asyncio.wait_for(poll_entered.wait(), timeout=3)
+        next_path = tmp_path / "unrelated.wav"
+        next_audio = b"RIFF successor fixture"
+        next_path.write_bytes(next_audio)
+        new_player = ConsoleFilePlayer(PlaybackState.PLAYING)
+        run = await audio_output_runs.FileOutputRun.prepare(
+            next_path, player=new_player
+        )
+        lease = await host.acquire(
+            "Other surface", run.retire, intent=host.begin_intent()
+        )
         assert old_player.stops == [old_player.token]
         assert await run.start(lease)
-        await task
+        assert not task.done()
+        assert outcomes == []
+        if cancel_old:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=3)
+        else:
+            release_poll.set()
+            await asyncio.wait_for(task, timeout=3)
+
         assert outcomes == [False]
         assert host.owner == "Other surface"
+        assert lease.is_current()
+        assert await run.get_state() is PlaybackState.PLAYING
         assert not new_player.stops
+        assert next_path.read_bytes() == next_audio
     finally:
-        await host.stop(lease)
+        release_poll.set()
+        if lease is not None:
+            await host.stop(lease)
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.asyncio
@@ -541,7 +577,7 @@ async def test_utterance_is_registered_before_native_start_and_stop_fences_it(
             entered.set()
             assert release.wait(5)
             if not start_authority():
-                self.refused_token = attempt_token
+                self.retired_token = attempt_token
                 return False
             return super().play_prepared(
                 plan, attempt_token=attempt_token, start_authority=start_authority
