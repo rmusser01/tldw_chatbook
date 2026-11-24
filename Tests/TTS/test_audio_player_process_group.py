@@ -166,7 +166,8 @@ def test_stop_never_signals_the_apps_own_process_group(monkeypatch):
     player._current.process = _StuckProcess()
     player._current.state = PlaybackState.PLAYING
 
-    assert player.stop() is True
+    assert player.stop() is False
+    assert player.get_state() is PlaybackState.BLOCKED
     assert signalled == [], (
         f"stop() SIGKILLed the app's own process group: {signalled}"
     )
@@ -198,7 +199,9 @@ def test_a_real_spawn_lands_the_player_in_its_own_process_group(
     # `sh -c <script> <arg>` puts the trailing file path in $0, so the
     # production `self._player_cmd + [str(file_path)]` stays intact.
     player._player_cmd = ["/bin/sh", "-c", "sleep 30"]
-    monkeypatch.setattr(player, "_select_player_for_artifact", lambda _p: None)
+    monkeypatch.setattr(
+        player, "_player_for", lambda _fmt: ("ffplay", player._player_cmd.copy(), False)
+    )
 
     assert player.play(audio) is True
     process = player._current.process

@@ -683,6 +683,7 @@ class PortraitPerformanceController:
                 "Configure TTS in Settings to hear a sample. Imports, generation and Apply remain available."
             )
             return False
+        ticket = screen.app_instance.audio_output.begin_intent(tentative=True)
         handler = await ensure()
         if not await self._source_current(authority, draft, epoch):
             return False
@@ -761,9 +762,13 @@ class PortraitPerformanceController:
         ):
             self._presentation = None
             return False
+        if not ticket.promote():
+            self._presentation = None
+            return False
         task = self._speech_task = asyncio.create_task(
             handler.speak_guarded_utterance(
                 "Hello. This is a portrait preview. Notice the pauses.",
+                audio_intent=ticket,
                 assistant_kind="character",
                 character_ref=character,
                 expected_destination_fingerprint=destination.fingerprint,

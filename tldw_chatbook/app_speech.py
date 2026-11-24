@@ -40,6 +40,7 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
 )
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+    begin_speech_intent,
     TTSCompleteEvent,
     TTSEventHandler,
     TTSGlobalOverrideDecisionEvent,
@@ -115,6 +116,8 @@ async def handle_tts_request_event(app: TldwCli, event: TTSRequestEvent) -> None
         event: The request carrying the text (and optional voice) to speak.
     """
     app.loguru_logger.info(f"TTS request received for text: '{event.text[:50]}...'")
+    if event.audio_intent is None:
+        event.audio_intent = begin_speech_intent(app)
     handler = await app._ensure_tts_handler()
     if handler:
         await handler.handle_tts_request(event)
@@ -135,6 +138,8 @@ async def handle_tts_message_speech_request_event(
     """Route a trusted Console snapshot without logging private content."""
     app.loguru_logger.info("Trusted Console speech request received")
     try:
+        if event.audio_intent is None:
+            event.audio_intent = begin_speech_intent(app)
         handler = await app._ensure_tts_handler()
     except asyncio.CancelledError:
         event.report_outcome(False)
@@ -334,8 +339,10 @@ async def _deliver_tts_complete_event(app: TldwCli, event: TTSCompleteEvent) -> 
                     TTSPlaybackEvent(
                         action="play",
                         message_id=event.message_id,
+                        expected_path=event.audio_file,
                         playback_lifecycle=playback_lifecycle,
                         presentation=event.presentation,
+                        audio_intent=getattr(event, "audio_intent", None),
                     ),
                 )
                 if accepted is False and playback_lifecycle is not None:
@@ -373,6 +380,8 @@ async def handle_tts_playback_event(app: TldwCli, event: TTSPlaybackEvent) -> No
 async def control_tts_playback(app: TldwCli, event: TTSPlaybackEvent) -> None:
     """Run playback control directly and preserve handler callback order."""
     try:
+        if event.action == "play" and event.audio_intent is None:
+            event.audio_intent = begin_speech_intent(app)
         if event.action == "play" and getattr(app, "_speech_delivery_paused", False):
             if event in getattr(app, "_speech_delivery_pending", set()):
                 app._defer_speech_playback(event)
@@ -380,9 +389,21 @@ async def control_tts_playback(app: TldwCli, event: TTSPlaybackEvent) -> None:
                 event.report_outcome(False)
             return
         if event.action == "stop":
+            if getattr(event, "target_captured", False) and event.audio_intent is None:
+                event.report_outcome(False)
+                return
             deferred = getattr(app, "_speech_delivery_deferred", [])
             for pending in tuple(deferred):
-                if event.message_id is None or pending.message_id == event.message_id:
+                if (
+                    event.audio_intent is None
+                    or pending.audio_intent is event.audio_intent
+                ) and (
+                    event.message_id is None
+                    or (
+                        pending.message_id == event.message_id
+                        and pending.playback_lifecycle is event.playback_lifecycle
+                    )
+                ):
                     deferred.remove(pending)
                     pending.report_outcome(False)
                     if pending.playback_lifecycle is not None:

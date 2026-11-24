@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import ast
 import os
+import sys
 import threading
 from contextvars import ContextVar, copy_context
 from pathlib import Path
@@ -52,6 +53,11 @@ def test_play_does_not_raise_unbound_local_error_on_a_non_darwin_afplay_path(
     player._player_name = "aplay"
     player._player_cmd = ["aplay", "-q"]
     player._supports_pause = False
+    monkeypatch.setattr(
+        audio_player.shutil,
+        "which",
+        lambda name: sys.executable if name == "aplay" else None,
+    )
 
     audio_file = tmp_path / "clip.wav"
     audio_file.write_bytes(b"fake audio data")
@@ -76,9 +82,13 @@ def test_play_does_not_raise_unbound_local_error_on_a_non_darwin_afplay_path(
 def test_macos_opus_uses_a_compatible_player(tmp_path, monkeypatch):
     player = SimpleAudioPlayer()
     player._system = "Darwin"
+    ffplay = tmp_path / "ffplay"
+    ffplay.touch()
+    ffplay.chmod(0o700)
+    monkeypatch.setattr(audio_player, "_AFPLAY_EXECUTABLE", sys.executable)
     monkeypatch.setattr(
         "tldw_chatbook.TTS.audio_player.shutil.which",
-        lambda name: "/test/ffplay" if name == "ffplay" else None,
+        lambda name: str(ffplay) if name == "ffplay" else None,
     )
     commands = []
 
@@ -94,9 +104,9 @@ def test_macos_opus_uses_a_compatible_player(tmp_path, monkeypatch):
         path = tmp_path / f"reply.{suffix}"
         path.write_bytes(b"fixture")
         assert player.play(path)
-    assert commands[0][0] == "/test/ffplay"
+    assert commands[0][0] == str(ffplay)
     assert "-autoexit" in commands[0] and "-nodisp" in commands[0]
-    assert commands[1][0] == "/usr/bin/afplay"
+    assert commands[1][0] == sys.executable
     player.cleanup()
 
 
@@ -151,9 +161,19 @@ def test_previous_monitor_cannot_finish_next_clip():
 #: Space-free names that cmd.exe would have parsed as command syntax.
 _SHELL_METACHARACTER_NAMES = (
     "a&calc&.mp3",
-    "a|calc.mp3",
+    pytest.param(
+        "a|calc.mp3",
+        marks=pytest.mark.skipif(
+            os.name == "nt", reason="Windows forbids | in filenames"
+        ),
+    ),
     "x^calc.mp3",
-    "a&b|c^d.wav",
+    pytest.param(
+        "a&b|c^d.wav",
+        marks=pytest.mark.skipif(
+            os.name == "nt", reason="Windows forbids | in filenames"
+        ),
+    ),
     "%COMSPEC%.mp3",
 )
 
@@ -263,6 +283,12 @@ def test_windows_media_player_argv_is_unchanged_when_it_is_installed(
 ):
     """The legacy wmplayer.exe route keeps its list argv (no shell), and the
     hand-off is not used when that player exists."""
+    executable = tmp_path / "wmplayer.exe"
+    executable.touch()
+    executable.chmod(0o700)
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.windows_audio_launch.WMPLAYER_PATH", executable
+    )
     spawned, opened = _windows_host(monkeypatch, wmplayer=True)
     clip = tmp_path / "a&calc&.mp3"
     clip.write_bytes(b"fixture")
@@ -474,7 +500,11 @@ def _speech_host():
     host.app.call_from_thread = lambda callback, *args, **kwargs: callback(
         *args, **kwargs
     )
-    host.app.audio_player = audio_player.AsyncAudioPlayer()
+    from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership
+
+    host.app.audio_output = AudioOutputOwnership()
+    host.is_attached = True
+    host.screen = host.app.screen
     host.init_playback_state()
     host.query_one = MagicMock(return_value=MagicMock())
     host._sync_idle_transport_actions = MagicMock()
@@ -483,12 +513,14 @@ def _speech_host():
     return host
 
 
+async def _play_speech_file(host, clip, release):
+    host.current_audio_file = clip
+    attempt = host._file_output.begin(host.app, host.app.audio_output.begin_intent())
+    await host._play_audio_async(attempt, None, clip, release)
+
+
 async def _settle_speech_host(host) -> None:
-    await host._retire_progress_timer()
-    retire_retention = getattr(host, "_retire_hand_off_retention", None)
-    if retire_retention is not None:
-        await retire_retention()
-    await host.app.audio_player.cleanup()
+    await host.on_unmount()
 
 
 def _speech_messages(host) -> list[str]:
@@ -519,8 +551,8 @@ async def test_speech_playground_reports_no_pause_or_stop_after_a_hand_off(
     host = _speech_host()
     token = _active_app_var().set(host.app)
     try:
-        await host._play_audio_async(clip, lambda: None)
-        await host._pause_audio_async()
+        await _play_speech_file(host, clip, lambda: None)
+        await host._pause_audio_async(host._file_output.latest)
         assert await host._stop_audio_async() is True
     finally:
         _active_app_var().reset(token)
@@ -552,15 +584,14 @@ async def test_speech_playground_stop_after_a_hand_off_keeps_the_copy_for_the_bo
     host = _speech_host()
     token = _active_app_var().set(host.app)
     try:
-        assert await host.app.audio_player.play(clip) is True
-        host._active_playback_release = _deleting_release(clip, released)
+        await _play_speech_file(host, clip, _deleting_release(clip, released))
 
         assert await host._stop_audio_async() is True
 
         assert released == [] and clip.exists(), "Stop deleted a playing clip"
-        assert host._active_playback_release is None, "the in-app slot is free"
+        assert host._file_output.latest.run.retirement_confirmed, "the in-app slot is free"
         assert "Playback stopped" not in _speech_messages(host)
-        assert await host.app.audio_player.get_state() is PlaybackState.IDLE
+        assert host.app.audio_output.owner is None
         await asyncio.sleep(0.5)
         assert released == [True] and not clip.exists(), "not released at the bound"
         assert host._hand_off_releases == {}
@@ -588,7 +619,7 @@ async def test_speech_playground_progress_polling_ends_on_a_hand_off(
     host = _speech_host()
     token = _active_app_var().set(host.app)
     try:
-        await host._play_audio_async(clip, _deleting_release(clip, released))
+        await _play_speech_file(host, clip, _deleting_release(clip, released))
         timer = host._progress_timer_task
         assert timer is not None
         await asyncio.wait_for(timer, timeout=1.0)
@@ -607,7 +638,7 @@ async def test_speech_playground_progress_polling_ends_on_a_hand_off(
         assert released == [] and clip.exists(), (
             "the copy was freed under the default app"
         )
-        assert host._active_playback_release is None
+        assert host._file_output.latest.run.retirement_confirmed
         assert "Playback complete" not in _speech_messages(host)
         await asyncio.sleep(0.5)
         assert released == [True] and not clip.exists()
@@ -632,16 +663,15 @@ async def test_speech_playground_exit_releases_a_retained_hand_off_copy_at_once(
     host = _speech_host()
     token = _active_app_var().set(host.app)
     try:
-        assert await host.app.audio_player.play(clip) is True
-        host._active_playback_release = _deleting_release(clip, released)
+        await _play_speech_file(host, clip, _deleting_release(clip, released))
         assert await host._stop_audio_async() is True
         assert released == [] and len(host._hand_off_releases) == 1
 
-        await host._retire_hand_off_retention()
+        await host.on_unmount()
 
         assert released == [True] and not clip.exists()
         assert host._hand_off_releases == {}
-        await host._retire_hand_off_retention()
+        await host.on_unmount()
         assert released == [True], "a retained release must run once"
     finally:
         _active_app_var().reset(token)

@@ -547,6 +547,17 @@ def _seed_audio_report(
     return briefing_id, audio_path
 
 
+def _use_test_audio_directory(monkeypatch, tmp_path):
+    from tldw_chatbook.Subscriptions import briefing_audio
+    from tldw_chatbook.UI.Screens import artifacts_screen
+
+    root = tmp_path / "briefing_audio"
+    root.mkdir()
+    monkeypatch.setattr(briefing_audio, "briefing_audio_dir", lambda: root)
+    monkeypatch.setattr(artifacts_screen, "briefing_audio_dir", lambda: root)
+
+
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_play_button_validates_path_and_plays_normalized_result(
     tmp_path, monkeypatch
@@ -555,16 +566,18 @@ async def test_play_button_validates_path_and_plays_normalized_result(
     the player receives the validator's normalized result."""
     from unittest.mock import Mock
 
-    from tldw_chatbook.UI.Screens import artifacts_screen
 
+    _use_test_audio_directory(monkeypatch, tmp_path)
     app = _build_test_app(configured_default="artifacts")
     app.notify = Mock()
     briefing_id, _audio_path = _seed_audio_report(app, file_exists=True)
     played: list[Path] = []
-    monkeypatch.setattr(artifacts_screen, "play_audio_file", played.append)
+    from Tests.UI.file_output_fakes import capture_file_playback
+
+    capture_file_playback(monkeypatch, played)
 
     async with _open_artifacts(app) as (screen, pilot):
-        await _wait_for_rows(screen, pilot)
+        await _wait_until(pilot, lambda: screen.query(f"#artifacts-report-play-{briefing_id}"), what="mounted Play button")
         screen.query_one(f"#artifacts-report-play-{briefing_id}", Button).press()
         await _wait_until(pilot, lambda: len(played) == 1, what="playback call")
     assert len(played) == 1
@@ -572,23 +585,26 @@ async def test_play_button_validates_path_and_plays_normalized_result(
     app.notify.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_play_button_missing_file_warns_through_the_validator(monkeypatch):
+async def test_play_button_missing_file_warns_through_the_validator(monkeypatch, tmp_path):
     """Qodo #1: a missing file is the validator's rejection, surfaced as the
     existing "no longer exists" warning -- and nothing is handed to the
     player."""
     from unittest.mock import Mock
 
-    from tldw_chatbook.UI.Screens import artifacts_screen
 
+    _use_test_audio_directory(monkeypatch, tmp_path)
     app = _build_test_app(configured_default="artifacts")
     app.notify = Mock()
     briefing_id, _audio_path = _seed_audio_report(app, file_exists=False)
     played: list[Path] = []
-    monkeypatch.setattr(artifacts_screen, "play_audio_file", played.append)
+    from Tests.UI.file_output_fakes import capture_file_playback
+
+    capture_file_playback(monkeypatch, played)
 
     async with _open_artifacts(app) as (screen, pilot):
-        await _wait_for_rows(screen, pilot)
+        await _wait_until(pilot, lambda: screen.query(f"#artifacts-report-play-{briefing_id}"), what="mounted Play button")
         screen.query_one(f"#artifacts-report-play-{briefing_id}", Button).press()
         await _wait_until(
             pilot, lambda: app.notify.call_count == 1, what="missing-file warning"
@@ -619,24 +635,27 @@ async def _press_play_and_read_refusal(app, screen, pilot, briefing_id, played):
     return str(call.args[0]), call.kwargs
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_play_button_refuses_a_row_outside_the_audio_dir(tmp_path, monkeypatch):
     """A cached row whose path now points outside `briefing_audio_dir()` is
     refused with a literal toast that never carries the path."""
     from unittest.mock import Mock
 
-    from tldw_chatbook.UI.Screens import artifacts_screen
 
+    _use_test_audio_directory(monkeypatch, tmp_path)
     app = _build_test_app(configured_default="artifacts")
     app.notify = Mock()
     briefing_id, _audio_path = _seed_audio_report(app, file_exists=True)
     outside = tmp_path / "outside&calc.wav"
     outside.write_bytes(b"RIFF....WAVEfmt ")
     played: list[Path] = []
-    monkeypatch.setattr(artifacts_screen, "play_audio_file", played.append)
+    from Tests.UI.file_output_fakes import capture_file_playback
+
+    capture_file_playback(monkeypatch, played)
 
     async with _open_artifacts(app) as (screen, pilot):
-        await _wait_for_rows(screen, pilot)
+        await _wait_until(pilot, lambda: screen.query(f"#artifacts-report-play-{briefing_id}"), what="mounted Play button")
         row = next(r for r in screen._daily_reports if r["id"] == briefing_id)
         row["audio_file_path"] = str(outside)
         with _captured_logs() as logged:
@@ -672,6 +691,7 @@ def _captured_logs():
 # confined result of `validate_path(raw, briefing_audio_dir())`.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_play_button_plays_a_relative_row_from_inside_the_audio_dir(
     tmp_path, monkeypatch
@@ -680,20 +700,21 @@ async def test_play_button_plays_a_relative_row_from_inside_the_audio_dir(
     and the player receives that file's absolute path."""
     from unittest.mock import Mock
 
-    from tldw_chatbook.Subscriptions.briefing_audio import briefing_audio_dir
-    from tldw_chatbook.UI.Screens import artifacts_screen
 
     monkeypatch.chdir(tmp_path)
+    _use_test_audio_directory(monkeypatch, tmp_path)
     app = _build_test_app(configured_default="artifacts")
     app.notify = Mock()
     briefing_id, audio_path = _seed_audio_report(
         app, file_exists=True, stored_name="relative-clip.wav"
     )
     played: list[Path] = []
-    monkeypatch.setattr(artifacts_screen, "play_audio_file", played.append)
+    from Tests.UI.file_output_fakes import capture_file_playback
+
+    capture_file_playback(monkeypatch, played)
 
     async with _open_artifacts(app) as (screen, pilot):
-        await _wait_for_rows(screen, pilot)
+        await _wait_until(pilot, lambda: screen.query(f"#artifacts-report-play-{briefing_id}"), what="mounted Play button")
         screen.query_one(f"#artifacts-report-play-{briefing_id}", Button).press()
         await _wait_until(
             pilot, lambda: bool(played) or app.notify.call_count, what="the press"
@@ -701,10 +722,11 @@ async def test_play_button_plays_a_relative_row_from_inside_the_audio_dir(
 
     assert played == [audio_path.resolve()]
     assert played[0].is_absolute()
-    assert played[0].parent == briefing_audio_dir().resolve()
+    assert played[0].parent == (tmp_path / "briefing_audio").resolve()
     app.notify.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_play_button_never_plays_a_relative_row_from_the_working_directory(
     tmp_path, monkeypatch
@@ -713,10 +735,10 @@ async def test_play_button_never_plays_a_relative_row_from_the_working_directory
     not in the audio folder, so nothing is played."""
     from unittest.mock import Mock
 
-    from tldw_chatbook.UI.Screens import artifacts_screen
 
     monkeypatch.chdir(tmp_path)
     (tmp_path / "cwd-only-clip.wav").write_bytes(b"RIFF....WAVEfmt ")
+    _use_test_audio_directory(monkeypatch, tmp_path)
     app = _build_test_app(configured_default="artifacts")
     app.notify = Mock()
     briefing_id, audio_path = _seed_audio_report(
@@ -724,10 +746,12 @@ async def test_play_button_never_plays_a_relative_row_from_the_working_directory
     )
     audio_path.unlink(missing_ok=True)
     played: list[Path] = []
-    monkeypatch.setattr(artifacts_screen, "play_audio_file", played.append)
+    from Tests.UI.file_output_fakes import capture_file_playback
+
+    capture_file_playback(monkeypatch, played)
 
     async with _open_artifacts(app) as (screen, pilot):
-        await _wait_for_rows(screen, pilot)
+        await _wait_until(pilot, lambda: screen.query(f"#artifacts-report-play-{briefing_id}"), what="mounted Play button")
         screen.query_one(f"#artifacts-report-play-{briefing_id}", Button).press()
         await _wait_until(
             pilot, lambda: bool(played) or app.notify.call_count, what="the press"
@@ -737,6 +761,7 @@ async def test_play_button_never_plays_a_relative_row_from_the_working_directory
     assert "no longer exists" in str(app.notify.call_args.args[0])
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_play_button_never_hands_a_dash_leading_name_to_the_player_as_an_option(
     tmp_path, monkeypatch
@@ -746,6 +771,7 @@ async def test_play_button_never_hands_a_dash_leading_name_to_the_player_as_an_o
     option. Only `audio_player`'s own `subprocess` reference is faked, so the
     app's other processes are untouched."""
     import subprocess
+    import sys
     import types
     from unittest.mock import MagicMock, Mock
 
@@ -753,6 +779,7 @@ async def test_play_button_never_hands_a_dash_leading_name_to_the_player_as_an_o
 
     monkeypatch.chdir(tmp_path)
     (tmp_path / "-clip.wav").write_bytes(b"RIFF....WAVEfmt ")
+    _use_test_audio_directory(monkeypatch, tmp_path)
     app = _build_test_app(configured_default="artifacts")
     app.notify = Mock()
     briefing_id, _audio_path = _seed_audio_report(
@@ -764,6 +791,7 @@ async def test_play_button_never_hands_a_dash_leading_name_to_the_player_as_an_o
         spawned.append([str(part) for part in argv])
         process = MagicMock()
         process.poll.return_value = None
+        process.kill.side_effect = lambda: setattr(process.poll, "return_value", 0)
         process.wait.side_effect = lambda *a, **k: 0
         return process
 
@@ -778,11 +806,12 @@ async def test_play_button_never_hands_a_dash_leading_name_to_the_player_as_an_o
         ),
     )
     player = audio_player.SimpleAudioPlayer()
-    player._system = "Darwin"  # afplay: deterministic on any host, no PATH probe
-    monkeypatch.setattr(audio_player, "_audio_player_instance", player)
+    player._system = "Darwin"
+    monkeypatch.setattr(audio_player, "_AFPLAY_EXECUTABLE", sys.executable)
+    monkeypatch.setattr("tldw_chatbook.TTS.audio_output_runs.SimpleAudioPlayer", lambda: player)
 
     async with _open_artifacts(app) as (screen, pilot):
-        await _wait_for_rows(screen, pilot)
+        await _wait_until(pilot, lambda: screen.query(f"#artifacts-report-play-{briefing_id}"), what="mounted Play button")
         screen.query_one(f"#artifacts-report-play-{briefing_id}", Button).press()
         await _wait_until(
             pilot, lambda: bool(spawned) or app.notify.call_count, what="the press"
@@ -795,6 +824,7 @@ async def test_play_button_never_hands_a_dash_leading_name_to_the_player_as_an_o
     assert Path(argv[-1]).is_absolute() and Path(argv[-1]).name == "-clip.wav"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_play_button_refuses_a_symlink_that_escapes_the_audio_dir(
     tmp_path, monkeypatch
@@ -803,23 +833,30 @@ async def test_play_button_refuses_a_symlink_that_escapes_the_audio_dir(
     listing: the press resolves the link and refuses it."""
     from unittest.mock import Mock
 
-    from tldw_chatbook.UI.Screens import artifacts_screen
 
+    _use_test_audio_directory(monkeypatch, tmp_path)
     app = _build_test_app(configured_default="artifacts")
     app.notify = Mock()
     briefing_id, audio_path = _seed_audio_report(app, file_exists=False)
     outside = tmp_path / "outside.wav"
     outside.write_bytes(b"RIFF....WAVEfmt ")
     played: list[Path] = []
-    monkeypatch.setattr(artifacts_screen, "play_audio_file", played.append)
+    from Tests.UI.file_output_fakes import capture_file_playback
+
+    capture_file_playback(monkeypatch, played)
 
     async with _open_artifacts(app) as (screen, pilot):
-        await _wait_for_rows(screen, pilot)
+        await _wait_until(pilot, lambda: screen.query(f"#artifacts-report-play-{briefing_id}"), what="mounted Play button")
         # The session shares one user data dir, so an earlier test may have
         # left a regular file at this name; replace it, and leave none behind.
         audio_path.parent.mkdir(parents=True, exist_ok=True)
         audio_path.unlink(missing_ok=True)
-        audio_path.symlink_to(outside)
+        try:
+            audio_path.symlink_to(outside)
+        except OSError as error:
+            if getattr(error, "winerror", None) == 1314:
+                pytest.skip("Windows symlink privilege unavailable")
+            raise
         try:
             message, kwargs = await _press_play_and_read_refusal(
                 app, screen, pilot, briefing_id, played

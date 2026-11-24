@@ -118,6 +118,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -328,6 +329,8 @@ class ConsoleHandsFreeSession:
     sequencer: SentenceSequencer
     tick_timer: Any = None
     reply_id: str | None = None
+    audio_intent: Any = None
+    status_intent: Any = None
     toast_shown_for_reply: bool = False
     countdown_remaining: float = 0.0
     pending_session_id: str | None = None
@@ -596,6 +599,7 @@ class ConsoleHandsFreeController:
             ConsoleHandsFreeSession | ConsoleSpeculativeHandsFreeSession | None
         ) = None
         self._qualified_voice_generation = 0
+        self._qualified_audio_intent = None
         self._qualified_voice_startup_generation: int | None = None
         #: True once `_install_console_hands_free_store_tap` has wrapped the
         #: store's `append_stream_chunk`/`mark_message_*` methods. The store
@@ -957,11 +961,13 @@ class ConsoleHandsFreeController:
         *,
         capture_live: bool,
         generation: int,
+        audio_intent,
     ) -> None:
         """Load, compose, and enter one generation without a cold UI-loop import."""
         from ...Chat.console_voice_controls import (
             ControlKind,
         )
+        from ..audio_output_admission import acquire_audio_output
 
         try:
             from ...Chat.console_voice_preflight import VoicePreparationError
@@ -998,6 +1004,15 @@ class ConsoleHandsFreeController:
                     {
                         "worker": runtime.voice_worker,
                         "process_supervisor": runtime.voice_process_supervisor,
+                        "admit_audio": partial(
+                            acquire_audio_output,
+                            self.app_instance,
+                            audio_intent,
+                            "Hands-free voice",
+                        ),
+                        "on_displaced": lambda: self._close_qualified_console_voice(
+                            ControlKind.TEARDOWN, expected_generation=generation
+                        ),
                         "entry_current": lambda: (
                             self._qualified_console_voice_is_current(generation)
                             and self._console_dictation_state == "idle"
@@ -1084,9 +1099,11 @@ class ConsoleHandsFreeController:
             return True
         self._sync_hands_free_switch(True)
         self._project_qualified_voice_phase(generation, "preparing")
+        self._qualified_audio_intent = self.app_instance.audio_output.begin_intent()
         startup = self._construct_qualified_console_voice(
             capture_live=capture_live,
             generation=generation,
+            audio_intent=self._qualified_audio_intent,
         )
         if not self._run_qualified_console_voice_result(startup):
             self._fail_qualified_console_voice_entry(generation)
@@ -1724,10 +1741,10 @@ class ConsoleHandsFreeController:
         if session is None:
             return
         from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
-            TTSPlaybackEvent,
+            post_speech_stop,
         )
 
-        self.app_instance.post_message(TTSPlaybackEvent(action="stop"))
+        post_speech_stop(self.app_instance, session.status_intent, session.audio_intent)
         session.sequencer.flush()
 
     def _console_hands_free_open_capture(self) -> None:
@@ -1798,6 +1815,9 @@ class ConsoleHandsFreeController:
         if session is None:
             return
         session.sequencer.begin_reply()
+        if session.audio_intent is not None:
+            session.audio_intent.cancel()
+        session.audio_intent = None
         session.reply_id = None
         session.toast_shown_for_reply = False
         session.utterances_dispatched = 0
@@ -2234,6 +2254,12 @@ class ConsoleHandsFreeController:
         if session is None:
             return
         session.controller.on_first_utterance()
+        if session.audio_intent is None:
+            from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+                begin_speech_intent,
+            )
+
+            session.audio_intent = begin_speech_intent(self.app_instance)
         session.utterances_dispatched += 1
         token = session.sequencer.current_utterance_token
         presentation = None
@@ -2279,6 +2305,7 @@ class ConsoleHandsFreeController:
                 text,
                 token,
                 session,
+                audio_intent=session.audio_intent,
                 presentation=presentation,
                 validator=validator,
             ),
@@ -2293,6 +2320,7 @@ class ConsoleHandsFreeController:
         token: int | None,
         dispatching_session: "ConsoleHandsFreeSession",
         *,
+        audio_intent=None,
         presentation: SpeechPresentation | None = None,
         validator: Callable[[], bool] | None = None,
     ) -> None:
@@ -2356,6 +2384,7 @@ class ConsoleHandsFreeController:
 
         await handler.speak_utterance(
             text,
+            audio_intent=audio_intent,
             on_finished=_on_finished,
             quiet=quiet,
             presentation=presentation,
@@ -2368,10 +2397,12 @@ class ConsoleHandsFreeController:
         legacy player) -- see `_request_console_dictation_start`'s
         identical use for the mic/speaker exclusion invariant."""
         from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
-            TTSPlaybackEvent,
+            post_speech_stop,
         )
 
-        self.app_instance.post_message(TTSPlaybackEvent(action="stop"))
+        session = self._console_hands_free
+        if session is not None:
+            post_speech_stop(self.app_instance, session.audio_intent)
 
     def _on_console_hands_free_sequencer_drained(self) -> None:
         """`SentenceSequencer.on_drained`: nothing left queued or in flight."""
@@ -2497,17 +2528,7 @@ class ConsoleHandsFreeController:
         self._close_qualified_console_voice(ControlKind.NAVIGATION)
 
     def teardown(self) -> None:
-        """Abandon the pipeline loop's timer during screen unmount.
-
-        Moved out of `ChatScreen.on_unmount` (wave-2 console decomposition,
-        task 1), where this was two inline statements; `on_unmount` now
-        calls this as one line, mirroring `ConsoleDictationController.
-        teardown`'s own precedent. Direct timer stop + state drop, not the
-        full `ExitLoop` intent path: unmount is abandon teardown (V2-style,
-        per the design doc's error-handling section), not a graceful exit --
-        no further TTS/dictation calls are safe to issue against a screen
-        that is being torn down.
-        """
+        """Fence this loop’s speech, stop its timer, and release the session."""
         from ...Chat.console_voice_controls import (
             ControlKind,
         )
@@ -2518,6 +2539,16 @@ class ConsoleHandsFreeController:
         if isinstance(hands_free, ConsoleSpeculativeHandsFreeSession):
             self._close_qualified_console_voice(ControlKind.TEARDOWN)
             return
-        if hands_free is not None and hands_free.tick_timer is not None:
-            hands_free.tick_timer.stop()
+        if hands_free is not None:
+            from ...Event_Handlers.TTS_Events.tts_events import post_speech_stop
+
+            if (
+                hands_free.status_intent is not None
+                or hands_free.audio_intent is not None
+            ):
+                post_speech_stop(
+                    self.app_instance, hands_free.status_intent, hands_free.audio_intent
+                )
+            if hands_free.tick_timer is not None:
+                hands_free.tick_timer.stop()
         self._console_hands_free = None

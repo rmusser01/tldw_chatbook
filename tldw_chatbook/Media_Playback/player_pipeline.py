@@ -29,6 +29,7 @@ import shutil
 import signal
 import subprocess  # nosec B404 # pipelines invoke probed system binaries with fixed argv
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock, RLock
@@ -56,6 +57,11 @@ def playback_tools_available() -> tuple[bool, str]:
         return True, ""
     missing = [tool for tool in ("ffmpeg", "ffplay") if shutil.which(tool) is None]
     return False, f"Missing {', '.join(missing)}. {PLAYBACK_TOOLS_GUIDANCE}"
+
+
+def audio_pipe_supported() -> bool:
+    """Whether ffmpeg can inherit the separate PCM output fd on this host."""
+    return os.name == "posix"
 
 
 @dataclass(frozen=True)
@@ -199,7 +205,7 @@ class PlayerPipeline:
         *,
         target_fps: float = PLAYER_TARGET_FPS,
         volume: int = 100,
-        spawn=subprocess.Popen,
+        spawn=None,
     ) -> None:
         self._source = str(source)
         self._probe = probe
@@ -208,7 +214,9 @@ class PlayerPipeline:
         self._spawn = spawn
         self._ffmpeg: subprocess.Popen | None = None
         self._ffplay: subprocess.Popen | None = None
+        self._birth_uncertain = False
         self._current_run: PlayerRun | None = None
+        self._owned_run: PlayerRun | None = None  # includes unpublished partial starts
         self._idle_stats = SyncStats()
         self._lifecycle_lock = RLock()
         #: Bumped by every start(); the frame pump treats a generation change
@@ -217,18 +225,39 @@ class PlayerPipeline:
 
     # -- lifecycle ---------------------------------------------------------
 
-    def start(self, *, offset_seconds: float = 0.0) -> PlayerRun:
+    def _spawn_child(self, cmd: list[str], **kwargs: Any) -> subprocess.Popen:
+        if self._spawn is not None:
+            return self._spawn(cmd, **kwargs)
+        try:
+            return subprocess.Popen(cmd, **kwargs)  # nosec B603 # fixed player argv
+        except FileNotFoundError:
+            if os.name == "posix":
+                self._birth_uncertain = False  # exec refused before child startup
+            raise
+
+    def start(
+        self,
+        *,
+        offset_seconds: float = 0.0,
+        start_authority: Callable[[], bool] | None = None,
+    ) -> PlayerRun:
         """Start (or restart, for seek) the demux pair at ``offset_seconds``."""
+
+        def check_authority() -> None:
+            if start_authority is not None and not start_authority():
+                raise RuntimeError("Media playback start authority revoked")
+
         with self._lifecycle_lock:
-            self.stop()
             offset = max(0.0, offset_seconds)
-            generation = self._generation + 1
+            if self._probe.has_audio and not audio_pipe_supported():
+                raise RuntimeError("In-app media audio requires POSIX inherited pipes")
+            check_authority()
+            if not self.stop():
+                raise RuntimeError("Media process birth remains unconfirmed")
             audio_r: int | None = None
             audio_w: int | None = None
-            ffmpeg: subprocess.Popen | None = None
-            ffplay: subprocess.Popen | None = None
-            run: PlayerRun | None = None
-            failure: Exception | None = None
+            self._generation += 1
+            run = PlayerRun(self._generation, None, offset)
             if self._probe.has_audio:
                 audio_r, audio_w = os.pipe()
             seek_args = ["-ss", f"{offset:.3f}"] if offset else []
@@ -282,14 +311,22 @@ class PlayerPipeline:
                     f"pipe:{audio_w}",
                 ]
                 pass_fds = (audio_w,)
+            failure: BaseException | None = None
             try:
-                ffmpeg = self._spawn(
+                check_authority()
+                self._birth_uncertain = True
+                self._ffmpeg = self._spawn_child(
                     ffmpeg_cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     pass_fds=pass_fds,
                 )
-                run = PlayerRun(generation, ffmpeg.stdout, offset)
+                self._birth_uncertain = self._ffmpeg is None
+                if self._birth_uncertain:
+                    raise RuntimeError("Media spawn returned no ffmpeg child")
+                self._owned_run = run
+                run.stdout = self._ffmpeg.stdout
+                check_authority()
                 if audio_w is not None:
                     inherited_audio_w = audio_w
                     audio_w = None
@@ -311,13 +348,18 @@ class PlayerPipeline:
                         "-i",
                         "pipe:0",
                     ]
-                    ffplay = self._spawn(
+                    check_authority()
+                    self._birth_uncertain = True
+                    self._ffplay = self._spawn_child(
                         ffplay_cmd,
                         stdin=audio_r,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                     )
-            except Exception as exc:
+                    self._birth_uncertain = self._ffplay is None
+                    if self._birth_uncertain:
+                        raise RuntimeError("Media spawn returned no ffplay child")
+            except BaseException as exc:
                 failure = exc
             for fd in (audio_r, audio_w):
                 if fd is not None:
@@ -326,35 +368,13 @@ class PlayerPipeline:
                     except Exception as exc:
                         if failure is None:
                             failure = exc
-            if failure is not None:
-                if ffplay is not None:
-                    try:
-                        self._stop_process(ffplay)
-                    except Exception:
-                        pass
-                if ffmpeg is not None:
-                    try:
-                        self._stop_process(ffmpeg)
-                    except Exception:
-                        pass
-                if run is not None:
-                    try:
-                        run.close_stdout_once()
-                    except Exception:
-                        pass
-                elif ffmpeg is not None and ffmpeg.stdout is not None:
-                    try:
-                        ffmpeg.stdout.close()
-                    except Exception:
-                        pass
-                self._ffmpeg = None
-                self._ffplay = None
-                self._current_run = None
-                raise failure
-            assert ffmpeg is not None and run is not None
-            self._generation = generation
-            self._ffmpeg = ffmpeg
-            self._ffplay = ffplay
+            try:
+                if failure is not None:
+                    raise failure
+                check_authority()
+            except BaseException:
+                self.stop()  # keep an unconfirmed child even on partial startup
+                raise
             self._current_run = run
             return run
 
@@ -365,18 +385,11 @@ class PlayerPipeline:
             proc.terminate()
             proc.wait(timeout=2)
         except Exception:
-            terminal_failure: Exception | None = None
             try:
                 proc.kill()
-            except Exception as exc:
-                terminal_failure = exc
-            try:
-                proc.wait()
-            except Exception as exc:
-                if terminal_failure is None:
-                    terminal_failure = exc
-            if terminal_failure is not None:
-                raise terminal_failure
+            except Exception:
+                pass  # an exited child can refuse the signal; the wait decides
+            proc.wait(timeout=0.5)
 
     @property
     def current_run(self) -> PlayerRun | None:
@@ -457,12 +470,23 @@ class PlayerPipeline:
 
     # -- control -------------------------------------------------------------
 
-    def seek(self, offset_seconds: float) -> PlayerRun:
+    def seek(
+        self,
+        offset_seconds: float,
+        *,
+        expected_run: PlayerRun | None = None,
+        start_authority: Callable[[], bool] | None = None,
+    ) -> PlayerRun:
         """Restart the demux pair at ``offset_seconds`` (AC3)."""
         duration = self._probe.duration_seconds
         if duration is not None:
             offset_seconds = min(offset_seconds, max(0.0, duration))
-        return self.start(offset_seconds=offset_seconds)
+        with self._lifecycle_lock:
+            if expected_run is not None and self._current_run is not expected_run:
+                raise RuntimeError("Media playback run is no longer current")
+            return self.start(
+                offset_seconds=offset_seconds, start_authority=start_authority
+            )
 
     def pause(self) -> None:
         """Freeze both processes and stop the sync clock (POSIX only)."""
@@ -479,53 +503,64 @@ class PlayerPipeline:
                         except (OSError, ProcessLookupError):
                             pass
 
-    def resume(self) -> None:
+    def resume(self, *, start_authority: Callable[[], bool] | None = None) -> None:
         """Unfreeze both processes; paused wall time is folded out of the clock."""
         with self._lifecycle_lock:
             run = self._current_run
             if run is None or run.pause_started is None:
                 return
-            run.paused_total += time.monotonic() - run.pause_started
-            run.pause_started = None
+            if start_authority is not None and not start_authority():
+                return
             if hasattr(signal, "SIGCONT"):
                 for proc in (self._ffplay, self._ffmpeg):
                     if proc is not None and proc.poll() is None:
+                        if start_authority is not None and not start_authority():
+                            return
                         try:
                             os.kill(proc.pid, signal.SIGCONT)
                         except (OSError, ProcessLookupError):
                             pass
+            run.paused_total += time.monotonic() - run.pause_started
+            run.pause_started = None
 
-    def stop(self) -> None:
-        """Terminate the pair (idempotent)."""
+    def stop(self, *, expected_run: PlayerRun | None = None) -> bool:
+        """Reap this pair, returning False for a stale run. Failure retains custody."""
         with self._lifecycle_lock:
-            ffplay = self._ffplay
-            ffmpeg = self._ffmpeg
-            run = self._current_run
-            self._ffplay = None
-            self._ffmpeg = None
-            self._current_run = None
+            run = self._owned_run
+            if expected_run is not None and run is not expected_run:
+                return False
             if run is not None:
                 run.eof = True
-        failure: Exception | None = None
-        if ffplay is not None:
             try:
-                self._stop_process(ffplay)
-            except Exception as exc:
-                failure = exc
-        if ffmpeg is not None:
-            try:
-                self._stop_process(ffmpeg)
-            except Exception as exc:
-                if failure is None:
-                    failure = exc
-        if run is not None:
-            try:
-                run.close_stdout_once()
-            except Exception as exc:
-                if failure is None:
-                    failure = exc
-        if failure is not None:
-            raise failure
+                if self._ffplay is not None:
+                    self._stop_process(self._ffplay)
+                    self._ffplay = None
+            finally:
+                if self._ffmpeg is not None:
+                    self._stop_process(self._ffmpeg)
+                    self._ffmpeg = None
+                if run is not None:
+                    run.close_stdout_once()
+            self._current_run = None
+            self._owned_run = None
+            # A constructor can raise after native process creation. We have
+            # reaped all available handles, but cannot certify that birth.
+            return not self._birth_uncertain
+
+    def pair_exited(self, expected_run: PlayerRun) -> bool | None:
+        """Poll a naturally finishing audible pair; None means the pair is no longer observable."""
+        with self._lifecycle_lock:
+            if (
+                self._current_run is not expected_run
+                or self._owned_run is not expected_run
+                or self._birth_uncertain
+                or self._ffplay is None
+                or self._ffmpeg is None
+            ):
+                return None
+            audio_exit = self._ffplay.poll()
+            video_exit = self._ffmpeg.poll()
+            return audio_exit is not None and video_exit is not None
 
     @property
     def at_eof(self) -> bool:

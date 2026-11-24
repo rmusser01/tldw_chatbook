@@ -22,6 +22,7 @@ from tldw_chatbook.Chat.console_auto_speak import (
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.TTS.audio_output_ownership import AudioOutputIntent
     from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
         ConsoleTTSDestination,
     )
@@ -227,8 +228,10 @@ class ConsoleAutoSpeakCoordinator:
         resolve_destination: Callable[
             [str | None, object | None], Awaitable[ConsoleTTSDestination | None]
         ],
+        reserve_audio_intent: Callable[[], AudioOutputIntent],
         issue_message_speech: Callable[
-            [str, Callable[[bool], None], str | None, bool], Awaitable[bool]
+            [str, Callable[[bool], None], str | None, bool, AudioOutputIntent],
+            Awaitable[bool],
         ],
         open_consent: Callable[[AutoSpeakConsentModal, Callable[[bool], None]], None],
         hands_free_active: Callable[[], bool],
@@ -238,6 +241,7 @@ class ConsoleAutoSpeakCoordinator:
     ) -> None:
         self._store_accessor = store_accessor
         self._resolve_destination_fn = resolve_destination
+        self._reserve_audio_intent = reserve_audio_intent
         self._issue_message_speech = issue_message_speech
         self._open_consent_fn = open_consent
         self._hands_free_active = hands_free_active
@@ -254,7 +258,9 @@ class ConsoleAutoSpeakCoordinator:
         self._enable_operation_generation: int | None = None
         self._next_dispatch_generation = 1
         self._inflight_dispatches: dict[tuple[str, str], tuple[int, int]] = {}
-        self._pending_completions: dict[tuple[str, str], tuple[int, int, int]] = {}
+        self._pending_completions: dict[
+            tuple[str, str], tuple[int, int, int, AudioOutputIntent]
+        ] = {}
         self._observed_completion_generations: dict[tuple[str, str], int] = {}
         self.failed_message_ids: dict[str, str] = {}
 
@@ -512,7 +518,11 @@ class ConsoleAutoSpeakCoordinator:
             return
         generation = self._reserve_operation()
         active_epoch = self._store_accessor().active_session_epoch()
-        self._schedule_work(self._retry(session.id, generation, active_epoch))
+        self._schedule_work(
+            self._retry(
+                session.id, generation, active_epoch, self._reserve_audio_intent()
+            )
+        )
 
     def _on_message_completed(self, token: tuple[str, str]) -> None:
         if not self._mounted:
@@ -542,6 +552,7 @@ class ConsoleAutoSpeakCoordinator:
                 generation,
                 completion_generation,
                 active_epoch,
+                self._reserve_audio_intent(),
             )
         )
 
@@ -812,6 +823,7 @@ class ConsoleAutoSpeakCoordinator:
         operation_generation: int,
         completion_generation: int,
         active_epoch: int,
+        audio_intent: AudioOutputIntent,
     ) -> None:
         if self._modal_open:
             return
@@ -828,6 +840,7 @@ class ConsoleAutoSpeakCoordinator:
                 operation_generation,
                 completion_generation,
                 active_epoch,
+                audio_intent,
                 destination=destination,
                 expected_preference_epoch=preference_epoch,
                 revalidated=True,
@@ -844,6 +857,7 @@ class ConsoleAutoSpeakCoordinator:
                 operation_generation,
                 completion_generation,
                 active_epoch,
+                audio_intent,
             )
 
     async def _disposition(
@@ -908,6 +922,7 @@ class ConsoleAutoSpeakCoordinator:
         operation_generation: int,
         completion_generation: int,
         active_epoch: int,
+        audio_intent: AudioOutputIntent,
     ) -> None:
         generation = self._begin_modal()
 
@@ -952,6 +967,7 @@ class ConsoleAutoSpeakCoordinator:
                         operation_generation,
                         completion_generation,
                         active_epoch,
+                        audio_intent,
                         destination=current,
                         expected_preference_epoch=preference_epoch,
                         revalidated=True,
@@ -981,6 +997,7 @@ class ConsoleAutoSpeakCoordinator:
         operation_generation: int,
         completion_generation: int,
         active_epoch: int,
+        audio_intent: AudioOutputIntent,
         *,
         destination: ConsoleTTSDestination | None = None,
         expected_preference_epoch: int | None = None,
@@ -997,6 +1014,7 @@ class ConsoleAutoSpeakCoordinator:
                     completion_generation,
                     operation_generation,
                     active_epoch,
+                    audio_intent,
                 )
             return
         if not revalidated:
@@ -1041,6 +1059,8 @@ class ConsoleAutoSpeakCoordinator:
             is not AutoSpeakDisposition.SPEAK
         ):
             return
+        if not audio_intent.promote():
+            return
         dispatch_generation = self._next_dispatch_generation
         self._next_dispatch_generation += 1
         self._inflight_dispatches[token] = (
@@ -1062,13 +1082,19 @@ class ConsoleAutoSpeakCoordinator:
             pending = self._pending_completions.pop(token, None)
             if pending is None:
                 return
-            pending_completion, pending_operation, pending_active_epoch = pending
+            (
+                pending_completion,
+                pending_operation,
+                pending_active_epoch,
+                pending_intent,
+            ) = pending
             self._schedule_work(
                 self._handle_completion(
                     token,
                     pending_operation,
                     pending_completion,
                     pending_active_epoch,
+                    pending_intent,
                 )
             )
 
@@ -1078,6 +1104,7 @@ class ConsoleAutoSpeakCoordinator:
                 on_outcome,
                 destination.fingerprint,
                 False,
+                audio_intent,
             )
         except Exception:  # noqa: BLE001 - dispatch failures become paused state
             issued = False
@@ -1125,6 +1152,7 @@ class ConsoleAutoSpeakCoordinator:
         session_id: str,
         operation_generation: int,
         active_epoch: int,
+        audio_intent: AudioOutputIntent,
     ) -> None:
         if not self._operation_is_current(
             operation_generation, session_id, active_epoch
@@ -1179,6 +1207,8 @@ class ConsoleAutoSpeakCoordinator:
         ):
             return
 
+        if not audio_intent.promote():
+            return
         settled = False
 
         def failed_retry_is_current() -> bool:
@@ -1217,6 +1247,7 @@ class ConsoleAutoSpeakCoordinator:
                 on_outcome,
                 destination.fingerprint,
                 True,
+                audio_intent,
             )
         except Exception:  # noqa: BLE001 - retry remains safely paused
             issued = False

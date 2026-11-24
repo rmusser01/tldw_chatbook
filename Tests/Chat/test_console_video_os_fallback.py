@@ -15,10 +15,12 @@ from types import SimpleNamespace
 import pytest
 
 from tldw_chatbook.UI.Console_Modules.video import ConsoleVideoController
+from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership
 
 
 class _App:
     def __init__(self) -> None:
+        self.audio_output = AudioOutputOwnership()
         self.notifications: list[tuple[str, str]] = []
 
     def notify(self, message, severity="information"):
@@ -69,6 +71,22 @@ async def test_the_fallback_calls_the_os_launcher(tmp_path, monkeypatch):
     await controller._play_console_video("m1")
 
     assert opened == [video_path], "the OS launcher was not called"
+    assert app.audio_output.handoff_epoch is not None
+
+
+def test_actual_bound_screen_opener_invokes_windows_shell(monkeypatch, tmp_path):
+    import os
+    import sys
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    path = tmp_path / "movie.mp4"
+    path.touch()
+    opened = []
+    screen = ChatScreen.__new__(ChatScreen)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(os, "startfile", opened.append, raising=False)
+    screen._open_video_with_os(path)
+    assert opened == [str(path)]
 
 
 @pytest.mark.asyncio
@@ -95,3 +113,172 @@ async def test_a_failing_launcher_is_logged_and_surfaced_not_swallowed(
     assert any(sev == "error" for _msg, sev in app.notifications), (
         f"a failed launch was swallowed: {app.notifications}"
     )
+
+
+@pytest.mark.asyncio
+async def test_late_os_acceptance_after_revocation_requires_confirmation_before_in_app_output(
+    tmp_path,
+):
+    import asyncio
+    import threading
+    from tldw_chatbook.UI.Console_Modules.video import _delegate_video
+    from tldw_chatbook.TTS.audio_output_ownership import OutputHandoffRequired
+
+    app = _App()
+    host = app.audio_output
+    path = tmp_path / "video.mp4"
+    path.touch()
+    entered, finish = asyncio.Event(), threading.Event()
+    loop = asyncio.get_running_loop()
+
+    def open_os(_):
+        loop.call_soon_threadsafe(entered.set)
+        assert finish.wait(3)
+
+    task = asyncio.create_task(
+        _delegate_video(app, host.begin_intent(), path, open_os, lambda: True)
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        takeover = asyncio.create_task(
+            host.acquire("speaker", lambda: asyncio.sleep(0, result=True))
+        )
+        await asyncio.sleep(0)
+        assert not takeover.done()
+        finish.set()
+        assert await task
+        with pytest.raises(OutputHandoffRequired) as refusal:
+            await takeover
+        assert host.handoff_epoch is refusal.value.epoch
+    finally:
+        finish.set()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_missing_posix_opener_refuses_before_process_birth_and_keeps_local_audio_available(
+    tmp_path, monkeypatch
+):
+    import asyncio
+    import shutil
+    import subprocess
+    import sys
+    from tldw_chatbook.Media_Playback import player_pipeline
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    file = tmp_path / "clip.mp4"
+    file.touch()
+    app = _App()
+    screen = ChatScreen.__new__(ChatScreen)
+    controller = _controller_with_video(app, screen._open_video_with_os, file)
+    from tldw_chatbook.UI.Console_Modules.video import resolve_external_video_opener
+
+    controller._preflight_external_video = resolve_external_video_opener
+    monkeypatch.setattr(
+        player_pipeline, "playback_tools_available", lambda: (False, "missing")
+    )
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(shutil, "which", lambda _: None)
+    attempted = []
+
+    def unexpected(*args, **kwargs):
+        attempted.append(True)
+        raise FileNotFoundError()
+
+    monkeypatch.setattr(subprocess, "Popen", unexpected)
+    prior = await app.audio_output.acquire(
+        "already playing", lambda: asyncio.sleep(0, result=True)
+    )
+    await controller._play_console_video("m1")
+    assert prior.is_current()
+    assert not attempted and app.audio_output.handoff_epoch is None
+    assert (
+        await app.audio_output.acquire("local", lambda: asyncio.sleep(0, result=True))
+    ).is_current()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("concrete_exec", [True, False])
+async def test_exec_refusal_releases_only_at_concrete_posix_launcher(
+    tmp_path, monkeypatch, concrete_exec
+):
+    import errno
+    import shutil
+    import subprocess
+    import sys
+    from tldw_chatbook.Media_Playback import player_pipeline
+    from tldw_chatbook.TTS.audio_output_ownership import OutputBlocked
+    from tldw_chatbook.UI.Console_Modules.video import resolve_external_video_opener
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    video = tmp_path / "video.mp4"
+    video.touch()
+    app = _App()
+    calls = []
+
+    def refused(command):
+        calls.append(command)
+        raise FileNotFoundError(errno.ENOENT, "missing interpreter")
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/xdg-open")
+    monkeypatch.setattr(subprocess, "Popen", refused)
+    monkeypatch.setattr(
+        player_pipeline, "playback_tools_available", lambda: (False, "missing")
+    )
+    opener = ChatScreen._open_video_with_os if concrete_exec else refused
+    controller = _controller_with_video(app, opener, video)
+    controller._preflight_external_video = resolve_external_video_opener
+    await controller._play_console_video("m1")
+    assert calls == ([["/usr/bin/xdg-open", str(video)]] if concrete_exec else [video])
+    assert app.audio_output.handoff_epoch is None
+
+    async def retired():
+        return True
+
+    if concrete_exec:
+        assert (await app.audio_output.acquire("local", retired)).is_current()
+    else:
+        with pytest.raises(OutputBlocked):
+            await app.audio_output.acquire("local", retired)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["session", "visit"])
+async def test_stale_stream_resolution_cannot_open_another_chat(monkeypatch, change):
+    import asyncio
+    import threading
+    from tldw_chatbook.Media_Playback import stream_resolve
+
+    app = _App()
+    pushed = []
+    app.push_screen = pushed.append
+    ctrl = _controller_with_video(app, lambda _: None, None)
+    store = SimpleNamespace(active_session_id="a", active_session_epoch=lambda: 1)
+    ctrl._ensure_console_chat_store = lambda: store
+    visit = [1]
+    ctrl._playback_visit = lambda: visit[0]
+    started, release = asyncio.Event(), threading.Event()
+    loop = asyncio.get_running_loop()
+
+    def resolve(_):
+        loop.call_soon_threadsafe(started.set)
+        assert release.wait(3)
+        return SimpleNamespace(final_url="fixture", seekable=False)
+
+    monkeypatch.setattr(stream_resolve, "resolve_stream_url", resolve)
+    task = asyncio.create_task(
+        ctrl._console_command_stream_video(SimpleNamespace(args="fixture"))
+    )
+    try:
+        await asyncio.wait_for(started.wait(), 1)
+        if change == "session":
+            store.active_session_id = "b"
+        else:
+            visit[0] += 1
+        release.set()
+        await task
+        assert not pushed and app.audio_output.owner is None
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)

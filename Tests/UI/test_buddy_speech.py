@@ -13,6 +13,7 @@ from Tests.Chat.console_interrupt_test_bindings import (
 )
 from tldw_chatbook.Persona_Buddy.interaction import BuddyBinding
 from tldw_chatbook.UI.Navigation.buddy_speech import BuddySpeechCoordinator
+from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -52,6 +53,7 @@ def setup():
     handler = Handler()
     host = InterruptRoundHost(SimpleNamespace(store=store))
     app = SimpleNamespace(
+        audio_output=AudioOutputOwnership(),
         app_config={},
         console_runtime=SimpleNamespace(
             chat_store=store,
@@ -126,7 +128,7 @@ async def test_explicit_consent_revalidates_changed_destination_before_speech():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "change", ["assistant", "close", "profile", "binding", "content"]
+    "change", ["assistant", "close", "profile", "binding", "content", "newer_audio"]
 )
 async def test_owner_revalidated_after_destination_await(change):
     app, store, owner, other, message, handler = setup()
@@ -146,6 +148,8 @@ async def test_owner_revalidated_after_destination_await(change):
             app.console_runtime = None
         elif change == "content":
             store.update_message_content(message.id, "Edited while preparing speech")
+        elif change == "newer_audio":
+            app.audio_output.begin_intent()
         else:
             speech.configure(BuddyBinding.for_session(other), True)
         handler.resolving.set()
@@ -214,6 +218,7 @@ async def test_rebind_dismisses_owned_destination_confirmation_without_consent()
 
     app, _, owner, other, _, handler = setup()
     ui = App()
+    ui.audio_output = app.audio_output
     ui.app_config = app.app_config
     ui.console_runtime = app.console_runtime
     ui._ensure_tts_handler = app._ensure_tts_handler

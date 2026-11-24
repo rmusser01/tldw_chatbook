@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import stat
 import threading
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -38,6 +39,119 @@ from ...Video_Generation.video_store import (
 from ...Widgets.Console.console_video_card import ConsoleVideoCardSpec
 
 
+class ExternalVideoNotLaunched(OSError):
+    """The platform launcher positively refused or was absent before dispatch."""
+
+
+def resolve_external_video_opener() -> str | None:
+    """Resolve the POSIX launcher, or select the Windows shell, before admission."""
+    import shutil
+    import sys
+
+    if sys.platform.startswith("win"):
+        return None
+    executable = shutil.which("open" if sys.platform == "darwin" else "xdg-open")
+    if executable is None:
+        raise ExternalVideoNotLaunched("No system video opener is available")
+    return executable
+
+
+def open_external_video(path: Path):
+    """Submit the file to the current platform launcher."""
+    import subprocess
+
+    executable = resolve_external_video_opener()
+    if executable is None:
+        try:
+            os.startfile(str(path))
+        except OSError as error:
+            raise ExternalVideoNotLaunched() from error
+        return None
+    try:
+        return subprocess.Popen([executable, str(path)])  # nosec B603
+    except FileNotFoundError as error:
+        # POSIX reports an absent executable or shebang interpreter before exec.
+        raise ExternalVideoNotLaunched() from error
+
+
+async def _delegate_video(
+    app, ticket, path: Path, opener, current, *, preflight=None
+) -> bool:
+    """Retain one committed OS launch through cancellation and late acceptance."""
+    from ..audio_output_admission import acquire_audio_output
+    from ...TTS.audio_output_runs import PreparedOutputRun
+
+    def prepare():
+        identity = ConsoleVideoController._external_video_target_identity(path)
+        if identity is not None and preflight is not None:
+            preflight()
+        return identity
+
+    identity = await asyncio.to_thread(prepare)
+    if (
+        identity is None
+        or not stat.S_ISREG(identity[-1])
+        or not current()
+        or not ticket.promote()
+    ):
+        return False
+
+    class ExternalVideoRun(PreparedOutputRun):
+        def __init__(self):
+            super().__init__()
+            self.uncertain = False
+            self.launcher = None
+
+        async def start(self, lease):
+            self._bind(lease)
+
+            def dispatch():
+                if (
+                    ConsoleVideoController._external_video_target_identity(path)
+                    != identity
+                    or not self._authorized()
+                ):
+                    return False, None
+                self.uncertain = True
+                try:
+                    return True, opener(path)
+                except ExternalVideoNotLaunched:
+                    self.uncertain = False
+                    raise
+
+            async def launch():
+                accepted, self.launcher = await asyncio.to_thread(dispatch)
+                if accepted:
+                    lease.record_handoff()
+                    self.uncertain = False
+                return accepted
+
+            return await self._submit(launch, external_handoff=True)
+
+        async def _close_native(self):
+            if self.launcher is not None:
+                # OS tools may outlive the request or forward to another player.
+                # A daemon reaps only the launcher returned by this exact dispatch.
+                threading.Thread(target=self.launcher.wait, daemon=True).start()
+                self.launcher = None
+            return not self.uncertain
+
+    run = ExternalVideoRun()
+    lease = None
+    try:
+        lease = await acquire_audio_output(
+            app, ticket, "External video", run, current=current, external=True
+        )
+        if lease is None or not current() or not ticket.is_current():
+            return False
+        return await run.start(lease)
+    finally:
+        if lease is not None and run.lease is None:
+            await app.audio_output.stop(lease)
+        else:
+            await run.retire()
+
+
 class ConsoleVideoController:
     """Own generated-video state, publication, and orchestration.
 
@@ -52,11 +166,13 @@ class ConsoleVideoController:
         sync_native_console_chat_ui: Callable[[], Any],
         ensure_console_chat_store: Callable[[], Any],
         wait_for_console_screen_result: Callable[[Any], Any],
-        open_video_with_os: Callable[[Path], None],
+        open_video_with_os: Callable[[Path], Any],
         append_native_console_system_message: Callable[..., Any],
         default_console_session_settings: Callable[[], Any],
         console_composer_or_none: Callable[[], Any | None],
         clear_console_composer_draft: Callable[[], None],
+        playback_visit: Callable[[], int | None] = lambda: None,
+        preflight_external_video: Callable[[], Any] | None = None,
     ) -> None:
         """Build the generated-video controller.
 
@@ -71,9 +187,13 @@ class ConsoleVideoController:
             default_console_session_settings: Return default session settings.
             console_composer_or_none: Return the mounted composer when available.
             clear_console_composer_draft: Clear the current composer draft.
+            playback_visit: Current mounted visit generation, or None while covered.
+            preflight_external_video: Check the configured OS opener on a worker.
         """
         self.app_instance = app_instance
         self._producer_lifetime = ProducerLifetime()
+        self._playback_visit = playback_visit
+        self._preflight_external_video = preflight_external_video
         self._sync_native_console_chat_ui_fn = sync_native_console_chat_ui
         self._ensure_console_chat_store_fn = ensure_console_chat_store
         self._wait_for_console_screen_result_fn = wait_for_console_screen_result
@@ -139,8 +259,8 @@ class ConsoleVideoController:
         result = self._wait_for_console_screen_result_fn(screen)
         return await result if inspect.isawaitable(result) else result
 
-    def _open_video_with_os(self, path: Path) -> None:
-        self._open_video_with_os_fn(path)
+    def _open_video_with_os(self, path: Path):
+        return self._open_video_with_os_fn(path)
 
     async def _append_native_console_system_message(
         self, *args: Any, **kwargs: Any
@@ -987,6 +1107,7 @@ class ConsoleVideoController:
                 if choice != "keep" and choice != "save_external":
                     return
                 if choice == "save_external":
+                    ticket = self.app_instance.audio_output.begin_intent(tentative=True)
                     external_path = await self._save_pending_console_video_external(
                         artifact
                     )
@@ -997,7 +1118,18 @@ class ConsoleVideoController:
                     if external_path is False:
                         continue
                     try:
-                        self._open_video_with_os(external_path)
+                        if not await _delegate_video(
+                            self.app_instance,
+                            ticket,
+                            external_path,
+                            self._open_video_with_os,
+                            lambda: self._owns_pending_console_video(artifact),
+                            preflight=getattr(self, "_preflight_external_video", None),
+                        ):
+                            self.app_instance.notify(
+                                "Video saved. Playback did not start.",
+                                severity="information",
+                            )
                     except Exception as exc:  # noqa: BLE001 - OS launcher boundary
                         logger.warning(
                             "Console video operation={} failed error_type={}",
@@ -1318,6 +1450,7 @@ class ConsoleVideoController:
         meta = getattr(message, "video_metadata", None)
         if meta is None:
             return
+        ticket = self.app_instance.audio_output.begin_intent(tentative=True)
         extension = canonical_video_extension(meta.container)
         status, path = self._ensure_console_video_store().resolve_state(
             self._video_storage_message_id(message),
@@ -1343,11 +1476,35 @@ class ConsoleVideoController:
         if tools_ok:
             from tldw_chatbook.UI.Screens.video_player_screen import VideoPlayerScreen
 
-            self.app_instance.push_screen(VideoPlayerScreen(str(path), title=meta.name))
+            self.app_instance.push_screen(
+                VideoPlayerScreen(str(path), title=meta.name, audio_intent=ticket)
+            )
             return
         self.app_instance.notify(guidance, severity="information")
+        session_id = getattr(store, "active_session_id", None)
         try:
-            self._open_video_with_os(path)
+
+            def current():
+                try:
+                    snapshot = store.get_message(message_id)
+                    return (
+                        not self._pending_video_artifacts_closed
+                        and getattr(store, "active_session_id", None) == session_id
+                        and self._video_storage_message_id(snapshot)
+                        == self._video_storage_message_id(message)
+                        and snapshot.video_metadata == meta
+                    )
+                except KeyError:
+                    return False
+
+            await _delegate_video(
+                self.app_instance,
+                ticket,
+                path,
+                self._open_video_with_os,
+                current,
+                preflight=self._preflight_external_video,
+            )
         except Exception as exc:
             logger.warning(
                 "Console video operation={} failed error_type={}",
@@ -1530,6 +1687,15 @@ class ConsoleVideoController:
                 "Usage: /stream-video <url>"
             )
             return
+        store = self._ensure_console_chat_store()
+        session_id, session_epoch = (
+            store.active_session_id,
+            store.active_session_epoch(),
+        )
+        visit = self._playback_visit()
+        if visit is None:
+            return
+        ticket = self.app_instance.audio_output.begin_intent(tentative=True)
         from tldw_chatbook.Media_Playback.stream_resolve import (
             MAX_STREAM_SECONDS,
             StreamResolutionError,
@@ -1560,11 +1726,20 @@ class ConsoleVideoController:
             return
         from tldw_chatbook.UI.Screens.video_player_screen import VideoPlayerScreen
 
+        if (
+            visit != self._playback_visit()
+            or self._ensure_console_chat_store() is not store
+            or store.active_session_id != session_id
+            or store.active_session_epoch() != session_epoch
+        ):
+            ticket.cancel()
+            return
         self.app_instance.push_screen(
             VideoPlayerScreen(
                 resolution.final_url,
                 title="stream",
                 seekable=resolution.seekable,
                 max_seconds=MAX_STREAM_SECONDS,
+                audio_intent=ticket,
             )
         )

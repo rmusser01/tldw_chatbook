@@ -257,7 +257,7 @@ def test_every_replacement_progress_timer_retires_its_predecessor() -> None:
                 "before it in the same coroutine; the outgoing loop's exit "
                 "block repaints the same three widgets the new one writes"
             )
-    assert starts == 2, f"expected both start sites, found {starts}"
+    assert starts == 1, "the run starts one timer spanning pause and resume"
 
     # And no site may go back to cancelling it by hand.
     cancels = [
@@ -272,192 +272,39 @@ def test_every_replacement_progress_timer_retires_its_predecessor() -> None:
 
 
 @pytest.mark.unit
-def test_replacement_playback_retires_the_old_timer_before_it_leases() -> None:
-    """Qodo #2813 finding 2, as a source-order invariant.
-
-    The progress loop releases whatever sits in `_active_playback_release`
-    the moment it observes an idle or finished player. So the outgoing timer
-    has to be DEAD before the replacement lease is installed -- otherwise it
-    can free the new lease, and on the PCM path securely delete the WAV copy
-    that is playing. (The behavioural drive below is the real pin; this one
-    names the ordering so a reader of the source sees why it is that way.)
-    """
+def test_progress_timer_polls_only_the_captured_run_without_artifact_release() -> None:
     tree = _playback_mixin_tree()
-    play = next(f for f in _async_functions(tree) if f.name == "_play_audio_async")
-    retires = _awaited_retire_linenos(play)
-    assert retires, "_play_audio_async no longer retires the outgoing timer"
-    barrier = min(retires)
-
-    leases = [
-        node.lineno
-        for node in ast.walk(play)
-        if isinstance(node, ast.Assign)
-        and any(
-            isinstance(target, ast.Attribute)
-            and target.attr == "_active_playback_release"
-            for target in node.targets
-        )
-    ]
-    assert leases, "_play_audio_async no longer installs a playback lease"
-    for lease in leases:
-        assert barrier < lease, (
-            f"the replacement lease is installed at line {lease}, before the "
-            f"outgoing progress timer is retired at line {barrier}; that timer "
-            "releases whatever it finds in _active_playback_release when it "
-            "sees an idle player, so it can free the NEW artifact"
-        )
-    for start in _timer_start_linenos(play):
-        assert barrier < start, (
-            f"a replacement timer starts at line {start} before the barrier "
-            f"at line {barrier}"
-        )
+    timer = next(
+        f for f in _async_functions(tree) if f.name == "_update_progress_timer"
+    )
+    assert [arg.arg for arg in timer.args.args] == ["self", "attempt"]
+    calls = {ast.unparse(n.func) for n in ast.walk(timer) if isinstance(n, ast.Call)}
+    assert {"run.get_state", "run.get_position", "run.get_duration"} <= calls
+    assert not any("release" in call for call in calls)
 
 
-class _FakeAudioPlayer:
-    """The player behaviours the playback paths depend on, and nothing else.
-
-    `stop()` deliberately does NOT flip the reported state: a real backend's
-    state machine lags the stop call, and that lag is precisely the window
-    the outgoing progress loop used to keep running in.
-    """
-
-    def __init__(self, state: Any) -> None:
-        self.state = state
-        self.on_stop: Any = None
-        self.on_play: Any = None
-        self.observed: list[Any] = []
-
-    async def get_state(self) -> Any:
-        await asyncio.sleep(0)
-        return self.state
-
-    async def stop(self) -> bool:
-        if self.on_stop is not None:
-            self.observed.append(self.on_stop())
-        return True
-
-    async def play(self, path: Any) -> bool:
-        from tldw_chatbook.TTS.audio_player import PlaybackState
-
-        if self.on_play is not None:
-            self.observed.append(self.on_play())
-        # A real window for anything still running to interleave in.
-        await asyncio.sleep(0.05)
-        self.state = PlaybackState.PLAYING
-        return True
-
-    async def get_position(self) -> float:
-        return 0.0
-
-    async def get_duration(self) -> float:
-        return 10.0
-
-    async def is_playing(self) -> bool:
-        return True
-
-
-def _playback_host(player: _FakeAudioPlayer) -> Any:
-    """A bare `SpeechPlaybackMixin` wired to `player`, with only the widget
-    lookups stubbed -- the playback coroutines, the retire barrier and the
-    progress loop are all the real ones."""
+@pytest.mark.asyncio
+async def test_replaced_progress_timer_cannot_repaint_or_release_successor():
+    from types import SimpleNamespace
     from unittest.mock import MagicMock
+    from tldw_chatbook.TTS.audio_player import PlaybackState
 
+    entered, finish = asyncio.Event(), asyncio.Event()
+
+    async def old_state():
+        entered.set()
+        await finish.wait()
+        return PlaybackState.FINISHED
+
+    old = SimpleNamespace(run=SimpleNamespace(handed_off=False, get_state=old_state))
     host = SpeechPlaybackMixin.__new__(SpeechPlaybackMixin)
-    host.app = MagicMock()
-    host.app.audio_player = player
-    host._progress_timer_task = None
-    host._active_playback_release = None
-    host._play_worker_task = None
-    host._result_transition_operation_id = None
-    host.query_one = MagicMock(return_value=MagicMock())
-    host._sync_idle_transport_actions = MagicMock()
-    host._sync_active_transport_actions = MagicMock()
-    host._current_result_status_copy = MagicMock(return_value="Ready")
-    return host
-
-
-async def _start_real_progress_loop(host: Any) -> Any:
-    """Install the REAL progress loop as the outgoing timer and let it reach
-    its first sleep, so it is genuinely mid-flight."""
-    task = asyncio.create_task(host._update_progress_timer())
-    host._progress_timer_task = task
-    await asyncio.sleep(0.02)
-    assert not task.done(), "the outgoing progress loop exited before the test began"
-    return task
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_new_playback_never_starts_while_the_old_timer_can_still_release(
-    tmp_path: Any,
-) -> None:
-    """Qodo #2813 finding 2, driven through the real `_play_audio_async`.
-
-    This is also the integration coverage finding 6 asked for: the public
-    playback coroutine, the real progress loop and the real barrier wired
-    together, rather than the private helper poked on its own.
-
-    The outgoing loop releases whatever sits in `_active_playback_release`
-    the moment it observes an idle or finished player. It used to stay alive
-    across the PCM copy and the entire `play()` await, i.e. across the point
-    where the REPLACEMENT lease is installed -- so a late wake-up could free
-    the new lease, and on the PCM path securely delete the WAV copy that is
-    playing.
-    """
-    from tldw_chatbook.TTS.audio_player import PlaybackState
-
-    audio = tmp_path / "speech.wav"
-    audio.write_bytes(b"RIFF....WAVE")
-
-    player = _FakeAudioPlayer(PlaybackState.PLAYING)
-    host = _playback_host(player)
-
-    old_released: list[str] = []
-    host._active_playback_release = lambda: old_released.append("old")
-    old_timer = await _start_real_progress_loop(host)
-
-    player.on_play = lambda: (host._progress_timer_task, old_timer.done())
-
-    new_released: list[str] = []
-    await host._play_audio_async(audio, lambda: new_released.append("new"))
-
-    assert player.observed, "play() was never reached"
-    timer_field, old_timer_done = player.observed[0]
-    assert timer_field is None and old_timer_done, (
-        "the outgoing progress timer was still alive when the replacement "
-        "playback started (_progress_timer_task="
-        f"{timer_field!r}, old timer done={old_timer_done}); it releases "
-        "whatever is in _active_playback_release when it sees an idle player, "
-        "so it can free the NEW lease"
-    )
-    assert old_released == ["old"], "the outgoing artifact was not released once"
-    assert new_released == [], "the new playback lease was released mid-play"
-    assert host._active_playback_release is not None, "the new lease was dropped"
-    assert host._progress_timer_task is not None, "no replacement timer started"
-
-    await host._retire_progress_timer()
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_stopping_playback_unwinds_the_timer_before_touching_the_player() -> None:
-    """Teardown half of finding 6, through the real `_stop_audio_async`.
-
-    The loop's own exit block repaints `#audio-player-transport` and
-    `#audio-player-status`, so it has to be fully unwound before the stop
-    path repaints them -- otherwise the transport comes straight back.
-    """
-    from tldw_chatbook.TTS.audio_player import PlaybackState
-
-    player = _FakeAudioPlayer(PlaybackState.PLAYING)
-    host = _playback_host(player)
-    old_timer = await _start_real_progress_loop(host)
-    player.on_stop = lambda: old_timer.done()
-
-    assert await host._stop_audio_async() is True
-
-    assert player.observed == [True], (
-        "stop() reached the player with the progress loop still unwinding; "
-        "its exit block repaints the transport the stop path is about to hide"
-    )
-    assert host._progress_timer_task is None
+    host.init_playback_state()
+    host.is_attached = True
+    host.query_one = MagicMock()
+    host._file_output.latest = old
+    timer = asyncio.create_task(host._update_progress_timer(old))
+    await asyncio.wait_for(entered.wait(), 2)
+    host._file_output.latest = object()
+    finish.set()
+    await timer
+    host.query_one.assert_not_called()

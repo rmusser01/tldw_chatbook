@@ -110,6 +110,21 @@ class _Store:
 class _Sink:
     def __init__(self, events: list[str]) -> None:
         self.events = events
+        self.sink = self
+        self.lease = None
+
+    async def start(self, lease):
+        self.lease = lease
+        self.open(24000, 1)
+        return True
+
+    def retire(self):
+        self.stop()
+
+        async def confirmed():
+            return True
+
+        return confirmed()
 
     def open(self, sample_rate: int, channels: int) -> None:
         self.events.append(f"sink-open:{sample_rate}:{channels}")
@@ -194,7 +209,11 @@ def _controller(
                 awaitable.close()
             return _Worker(events)
 
+    from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership
+
+    app = SimpleNamespace(audio_output=AudioOutputOwnership())
     return ConsoleRealtimeController(
+        audio_app_accessor=lambda: app,
         ensure_session_settings=lambda: SimpleNamespace(system_prompt="system"),
         chat_store_accessor=lambda: store,
         runtime_accessor=lambda: runtime,
@@ -235,6 +254,39 @@ def _async_worker_runner(tasks: list[asyncio.Task[Any]]):
 async def _drain_workers(tasks: list[asyncio.Task[Any]]) -> None:
     while pending := [task for task in tasks if not task.done()]:
         await asyncio.wait_for(asyncio.gather(*pending), timeout=2.0)
+
+
+@pytest.mark.asyncio
+async def test_reply_cannot_open_before_admission_and_overflow_mutes_it(monkeypatch):
+    from tldw_chatbook.Audio import streaming_sink
+
+    events = []
+    built = []
+    workers = []
+
+    def schedule(coro, **_kwargs):
+        workers.append(coro)
+        return _Worker([])
+
+    def build():
+        built.append(True)
+        return _Sink(events)
+
+    controller = _controller(events=events, sink_factory=build, run_worker=schedule)
+    session = controller.session = _session(state="thinking")
+    monkeypatch.setattr(streaming_sink, "BUFFER_CAP_SECONDS", 1)
+    try:
+        controller._on_console_realtime_audio_delta(session, bytes(48000))
+        assert not events and len(built) == 1
+        queue = session.audio_queue
+        controller._on_console_realtime_audio_delta(session, b"over")
+        controller._on_console_realtime_audio_delta(session, b"late")
+        assert session.audio_failed_for_reply and len(built) == 1
+        assert queue.get_nowait() == bytes(48000)
+        assert queue.get_nowait() is None
+    finally:
+        for worker in workers:
+            worker.close()
 
 
 def _install_buffering_tap(monkeypatch, events: list[str]):
@@ -464,7 +516,8 @@ async def test_initial_connect_preserves_first_words_and_builds_one_sink_per_rep
     assert len(sink_instances) == 2
     assert session.sink is sink_instances[1]
     assert session.sink is not first_sink
-    assert events.count("sink-open:24000:1") == 2
+    # This harness closes the pump worker without scheduling it.
+    assert events.count("sink-open:24000:1") == 0
 
 
 @pytest.mark.asyncio
@@ -659,6 +712,7 @@ async def test_active_teardown_releases_exact_buddy_generation_and_resource_orde
     session.tap = RecordingTap(events)
     session.session = _Provider(events)
     session.sink = _Sink(events)
+    session.output_run = session.sink
     session.audio_queue = asyncio.Queue()
     controller.session = session
 
@@ -714,3 +768,44 @@ def test_failure_sanitization_excludes_keys_payload_audio_and_private_transcript
     assert "payload" not in visible
     assert session.failure_text == "Incorrect API key provided (invalid_api_key)"
     assert persisted[0][1]["error_category"] == "invalid_credentials"
+
+
+@pytest.mark.asyncio
+async def test_uncertain_realtime_retirement_keeps_reply_pending_until_exact_positive_proof(
+    monkeypatch,
+):
+    from tldw_chatbook.Audio import streaming_sink
+    from tldw_chatbook.TTS.audio_output_runs import PreparedOutputRun
+
+    events = []
+    controller = _controller(events=events)
+    session = controller.session = _session(state="speaking")
+    host = controller._audio_app_accessor().audio_output
+
+    class Held(PreparedOutputRun):
+        can_close = False
+        sink = object()
+
+        async def start(self, lease):
+            self._bind(lease)
+            return True
+
+        async def _close_native(self):
+            return self.can_close
+
+    output = session.output_run = Held()
+    session.audio_intent = host.begin_intent()
+    session.generation_done = session.playback_pending = True
+
+    async def drained(*_):
+        return SimpleNamespace(outcome="drained")
+
+    monkeypatch.setattr(streaming_sink, "pump", drained)
+    await controller._pump_console_realtime_audio(
+        session, session.reply_token, output, asyncio.Queue()
+    )
+    assert session.playback_pending and not session.controller.calls and host.blocked
+    output.can_close = True
+    assert await host.stop(output.lease)
+    assert not session.playback_pending
+    assert [name for name, _ in session.controller.calls] == ["reply_done"]

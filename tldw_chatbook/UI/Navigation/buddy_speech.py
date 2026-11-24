@@ -312,6 +312,7 @@ class BuddySpeechCoordinator:
         if ensure is None:
             self.notice = "Configure speech in Settings before enabling Buddy speech."
             return False
+        ticket = self.app.audio_output.begin_intent(tentative=True)
         handler = await ensure()
         if handler is None or not current():
             return False
@@ -329,8 +330,11 @@ class BuddySpeechCoordinator:
             self.notice = "Confirm the speech destination in Buddy speech controls."
             return False
         self.notice = ""
+        if not ticket.promote():
+            return False
         return await handler.speak_guarded_utterance(
             item.named_text,
+            audio_intent=ticket,
             assistant_kind=identity.assistant_kind,
             character_ref=identity.character_ref,
             expected_destination_fingerprint=destination.fingerprint,

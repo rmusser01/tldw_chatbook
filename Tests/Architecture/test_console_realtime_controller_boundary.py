@@ -109,6 +109,7 @@ REALTIME_CONTROLLER_DEPENDENCIES = frozenset(
         "recorder_factory_accessor",
         "provider_session_factory_accessor",
         "sink_factory_accessor",
+        "audio_app_accessor",
         "notify",
         "ui_thread_id_accessor",
         "event_loop_accessor",
@@ -120,6 +121,7 @@ REALTIME_CONTROLLER_DEPENDENCIES = frozenset(
     }
 )
 REALTIME_CONTROLLER_LAMBDA_TEMPLATES = {
+    "audio_app_accessor": "lambda: screen.app_instance",
     "ensure_session_settings": "lambda: screen._session._ensure_active_console_session_settings()",
     "chat_store_accessor": "lambda: screen._ensure_console_chat_store()",
     "runtime_accessor": "lambda: screen._console_runtime()",

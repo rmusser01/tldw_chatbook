@@ -33,6 +33,8 @@ start is not newly serialized or automatically bounded (TASK-33621.111).
 | Profiles | `TTS/profile_repository.py`, `profile_schema.py`, `profile_service.py`, `profile_types.py` | `TTSProfileRepository` (one serialized connection), `TTSGenerationProfile` (revision-CAS), `TTSProfileVerificationEvidence` |
 | Backends | `TTS/backends/` | openai, elevenlabs, alltalk, kokoro (ONNX/PyTorch), chatterbox (+ isolated subprocess variant), higgs |
 | Playback | `Audio/streaming_sink.py`, `TTS/pcm_stream.py`, `TTS/audio_player.py`, `TTS/playback_capability.py` | `StreamingPcmSink`, `sink_plan()`, `SimpleAudioPlayer`/`AsyncAudioPlayer`, `locally_playable_formats()` |
+| App output admission | `TTS/audio_output_ownership.py`, `TTS/audio_output_runs.py`, `UI/audio_output_admission.py`, `app_service_wiring.py` | `AudioOutputOwnership`, exact intent/lease, prepared file/PCM/media runs, `acquire_audio_output()` |
+| Controlled Windows WAV | `TTS/controlled_wav_profile.py`, `controlled_wav_progress.py`, `controlled_wav_playback.py`, `_controlled_wav_windows.py` | retained artifact/bookmark, bounded telemetry, `ControlledWavPlayback`, checked native process birth and retirement |
 | STT catalogue | `Utils/local_stt_providers.py` | `LOCAL_PROVIDER_MODULES` — the single source of truth for local STT providers |
 | Dictation | `Audio/dictation_service.py`, `Chat/console_voice_input.py`, `UI/Console_Modules/dictation.py` | `DictationService` FSM, headless `ConsoleVoiceInputController` (probe/resolve/classify), `ConsoleDictationController` |
 | TTS event handler | `Event_Handlers/TTS_Events/tts_events.py` | `TTSEventHandler`, `TTSMessageSpeechRequestEvent`, `TTSPlaybackEvent`, `TTSGlobalOverrideDecisionEvent`, `ConsoleTTSDestination` |
@@ -73,7 +75,61 @@ a discarded import emits no success notification (TASK-36363).
 
 ## Playback model
 
-Two paths, never concurrently for one response: **PCM output** through `StreamingPcmSink` (raw streaming or an eligible complete PCM16 WAV body; PortAudio, prebuffered, `stop()` must reach silence within two audio blocks, no PortAudio stream operations from the callback), or an **artifact file** played by an external player (`afplay`/mpv/…; format catalogues are deliberately conservative — `afplay` excludes opus/ogg because it silently "succeeds" without decoding). PCM is sink-only (no external player decodes bare PCM); `locally_playable_formats()` is re-probed at every call so mid-run player installs take effect. Legacy playback completion is a poll with a text-length-derived timeout because `AudioPlayerInfo.duration` is never populated.
+The app lazily owns one `app.audio_output` admission service under
+[TASK-41177 / ADR-367](../../backlog/decisions/367-watchlist-article-listening-and-controlled-playback.md).
+`TTS/audio_output_ownership.py` separates a pending action's `AudioOutputIntent`
+from an active `AudioOutputLease`. Reserve the action before asynchronous
+preparation; a tentative action promotes only when eligible. Preparing a new
+request does not stop healthy output. Once prepared, acquire registers that exact
+run's retirement callback, revokes the previous lease and waits for positive
+physical retirement. `lease.authorizes(run.retire)` prevents another attempt
+from reusing its authority. Native workers only read the one-way revoked flag;
+the app loop makes admission, Stop, handoff and shutdown decisions.
+
+`TTS/audio_output_runs.py` retains private file, PCM and media starts across
+cancelled observers, including native work that returns late. File runs use a
+private `SimpleAudioPlayer`, a prepared launch plan and exact attempt token. PCM
+runs open a managed `StreamingPcmSink` off-loop after grant; callback drain and
+checked abort/close are separate from logical playback events. Bare PCM is copied
+to WAV through an owned descriptor with native private permissions before bytes
+are written. Ordinary format selection remains platform-specific: macOS afplay
+excludes Opus/Ogg, and available format support is re-probed. A finite legacy
+playback poll can acknowledge a started clip while its exact run, lease and file
+stay retained until native retirement.
+
+Failed or timed-out retirement preserves a blocked owner. An explicit Stop may
+retry that exact attempt; an unrelated Play cannot silently retry it. Late positive
+proof releases only the issuing lease. `on_retired` observers release artifact
+holds after that proof, including after their UI has gone. Speech Lab progress,
+Watchlists Stop messages, wizard samples and report replay address their own
+attempt, rather than a path or global player. The speculative voice process holds
+one lease throughout its listening session and retires through its complete
+native/child/tree/pipes/resource close evidence. Audible media owns its process
+pair through seeks and natural drain; silent video consumes no audio lease.
+
+Windows default-player launches and other OS delegation create an unresolved
+handoff epoch. Launcher exit, idle state, file-retention expiry and leaving a view
+cannot establish external silence. `UI/audio_output_admission.py` uses the
+canonical Cancel-focused confirmation before later in-app output, accepting only
+the exact current action and epoch. Consecutive explicit external opens remain
+supported. Accepted external files have a separate TTL and app-exit cleanup
+owner. Standalone legacy player helpers remain compatibility APIs; live app
+producers use the app service. Shutdown fences admission before producer/view
+cleanup and keeps native work retained beyond a short observer timeout.
+
+`TTS/controlled_wav_profile.py` and `controlled_wav_playback.py` supply Windows
+controlled listening for a retained PCM16 stereo 48 kHz WAV with 12,000 trailing
+zero frames. The descriptor and bookmark bind the full digest and logical frame
+position. Preparation pins the qualified executable, file and physical volume
+ancestry before takeover. The private Windows launcher retains native process
+birth and cleanup evidence. Exact logical EOF starts no player. Fresh advancing
+source clocks, validated padding and checked spontaneous exit corroborate Natural;
+Stop during padding remains Stopped, and weak evidence remains Uncertain. A
+qualified 250 ms post-reap guard is distinct from process exit itself. See the
+[controlled-adapter evidence](../Testing/watchlist-controlled-audio-qualification.md)
+for measured Windows scope and limitations. Linux/macOS controlled listening and
+Windows audible media's inherited-fd route remain unavailable; ordinary platform
+file playback and explicit OS handoff retain their own support.
 
 ## Pure speech presentation contracts
 

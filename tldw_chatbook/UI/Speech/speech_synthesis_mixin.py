@@ -712,6 +712,11 @@ class SpeechSynthesisMixin:
             studio_draft=studio_draft,
             studio_preferences=studio_preferences,
         )
+        self._autoplay_intent = (
+            (request.operation_id, self.app.audio_output.begin_intent())
+            if getattr(studio_preferences, "auto_play", False) is True
+            else None
+        )
         self._generation_operation_id = request.operation_id
         self._profile_save_suppressed = True
         self._sync_save_profile_action()

@@ -73,6 +73,7 @@ class AutoSpeakHarness:
             outcome_callback: Callable[[bool], None],
             expected_destination_fingerprint: str | None,
             retry_failed_auto: bool = False,
+            audio_intent=None,
         ) -> bool:
             if self.issue_error:
                 raise RuntimeError("bounded dispatch failure")
@@ -96,7 +97,11 @@ class AutoSpeakHarness:
                 raise RuntimeError("screen scheduler rejected work")
             self.tasks.append(asyncio.create_task(coroutine))
 
+        from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership
+
+        host = AudioOutputOwnership()
         self.coordinator = ConsoleAutoSpeakCoordinator(
+            reserve_audio_intent=lambda: host.begin_intent(tentative=True),
             store_accessor=lambda: self.store,
             resolve_destination=resolve_destination,
             issue_message_speech=issue_speech,
@@ -1109,3 +1114,37 @@ class TestSuspendGuardUnit:
                 )
             finally:
                 console._console_auto_speak = real
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retry", [False, True])
+async def test_older_automatic_action_cannot_displace_newer_audio_during_destination_lookup(
+    retry,
+):
+    from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership
+
+    harness = AutoSpeakHarness()
+    host = AudioOutputOwnership()
+    harness.coordinator._reserve_audio_intent = lambda: host.begin_intent(
+        tentative=True
+    )
+    await harness.enable()
+    if retry:
+        await harness.complete_reply("retry")
+        harness.outcomes.pop()(False)
+        harness.spoken.clear()
+    harness.destination_gate = asyncio.Event()
+    count = harness.destination_resolutions
+    if retry:
+        harness.coordinator.request_retry()
+    else:
+        msg = harness.begin_reply()
+        harness.store.append_stream_chunk(msg.id, "automatic")
+        harness.store.mark_message_complete(msg.id)
+    async with asyncio.timeout(2):
+        while harness.destination_resolutions == count:
+            await asyncio.sleep(0)
+    newer = host.begin_intent()
+    harness.destination_gate.set()
+    await harness.drain()
+    assert not harness.spoken and newer.is_current()

@@ -503,30 +503,26 @@ async def test_an_older_sample_finishing_playback_keeps_the_newer_status(
     monkeypatch,
 ) -> None:
     _state(monkeypatch, "ready")
-    playing = asyncio.Event()
-    finish = asyncio.Event()
 
     async def sample(*_a, **_k):
         return vs.VoiceSampleResult(b"RIFF....WAVE", "audio/wav", "wav", True)
 
-    class SlowPlayer:
-        async def play(self, _path):
-            playing.set()
-            await finish.wait()
-            return True
+    from Tests.TTS.test_audio_output_runs import FilePlayer
 
+    player = FilePlayer()
+    player.release.clear()
+    monkeypatch.setattr("tldw_chatbook.TTS.audio_output_runs.SimpleAudioPlayer", lambda: player)
     monkeypatch.setattr(vs, "run_omnivoice_sample", sample)
     step = _step()
     host = _Host(step)
-    host.audio_player = SlowPlayer()
     async with host.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         await _select_omnivoice(step, pilot)
         step.query_one("#setup-voice-test", Button).press()
-        await asyncio.wait_for(playing.wait(), timeout=2)
+        assert await asyncio.to_thread(player.entered.wait, 2)
         step._test_generation += 1  # a newer test/control change took over
         step.query_one("#setup-voice-status", Static).update("newer")
-        finish.set()
+        player.release.set()
         await pilot.pause(0.2)
         assert str(step.query_one("#setup-voice-status", Static).renderable) == "newer"
 

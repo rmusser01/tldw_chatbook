@@ -1,5 +1,23 @@
 # Lessons: what counts as evidence a change works
 
+## A network sentinel can block Windows event-loop initialization (TASK-41177 follow-up, 2026-11-24)
+
+**Incident.** A mounted default-factory check failed with `transport_failed`.
+An independent private-child startup failed before its prepare acknowledgement,
+and a stdlib-only probe traced the fixture's `forbidden_network` assertion to
+`ProactorEventLoop._make_self_pipe` and its fallback socketpair. Production
+process, child-entry, I/O and lifetime blobs were unchanged. The fixture also
+assumed POSIX launch flags and watchdog calls on Windows. After initializing
+the standard loop with `asyncio.Runner` before installing the sentinel, both
+the process-start and mounted close/restart checks passed in 26.60 seconds.
+
+**What to do.** Separate interpreter/event-loop bootstrap from guarded application
+work. Keep network and device/model guards installed before application imports
+and execution. Diagnose the child failure independently before changing product
+transport, and make fake launch flags and bounded cleanup match the actual OS.
+The fixture lives in `Tests/Audio/fakes/voice_process_child.py`; this evidence
+uses simulated endpoints and does not qualify audible output or microphones.
+
 ## A double attached to a mounted Console is read by the Console's own tick too, so its flakes looked random (TASK-42469, 2026-11-23)
 
 **Incident.** `Tests/UI/test_console_agent_rail.py`'s full-log tests failed run to run under load, each with a different message: `'Bridge' object has no attribute 'live_snapshot'`, a stubbed `_current_console_rail_state` rejecting `inspector_state`, a recorder holding `[False, False]` where the test expected `[False]`, and `WorkerCancelled` out of `host.workers.wait_for_complete()`. None came from the test's own calls. After mount the Console keeps ticking, and its control-bar sync and tick projection (`_sync_console_rail_and_controls`) read the Agent section's lines, fleet rows and rail state from whatever the test attached, and sync the section the test was counting. One forced `console._sync_console_rail_and_controls()` right after a double was attached reproduced the first three every time; restarting the workspace tray's exclusive alias worker during the wait reproduced the fourth. The forced tick also found seven more tests with the same exposure that had not failed yet.
@@ -385,6 +403,12 @@ Three traps cost a run each while finding it:
 **Incident.** A head run and a base run over the same 99 `Tests/Backup_Recovery` and `Tests/Notes` files, each `-n 4`, wrote 8.1 GB and 8.9 GB of pytest temp in about 25 minutes. The volume reached 179 MB free. Both runs died with `OSError: [Errno 28]` and printed no summary, so neither comparison existed. The Bash tool failed too: it could not open its own output file until space was freed. Pytest keeps its last three basetemps, and backup fixtures leave read-only directories its cleanup cannot delete.
 
 **What to do.** Check free space first with `diskutil info / | grep 'Container Free'`, not `df`, which reported a false "disk full" on this APFS volume on 2026-11-18 while the container had 57.7 GB free. Run one backup suite at a time with `--basetemp=<scratch dir>`, then delete that directory afterwards with `chmod -R u+w` before `rm -rf`. For the base comparison, rerun only the head's failing test ids on base, not the whole list.
+
+## Publish custody before an eager callback can reenter (TASK-41177, 2026-11-23)
+
+**Incident.** The first audio-output coordinator passed ten isolated tests on the default asyncio factory. Review reproduced lost physical ownership with the eager factory used by Textual: `create_task` ran an old owner's retirement before the assignment storing that task. The callback acknowledged release and dispatched a playlist start; the outer assignment then installed the old completed task over the new state. A following console start skipped the playlist's refusing retirement callback. The public-API probe showed only the old callback had run while a new lease was granted.
+
+**What to do.** Publish pending custody before allowing callbacks to execute. The fix makes retirement await an Event until its exact task is recorded. An eager-loop regression now requires the playlist callback to run, refuse replacement and retain blocked ownership. Exercise the actual application task factory for reentrant async ownership code; ordinary pytest scheduling alone does not establish publication order. See `TTS/audio_output_ownership.py` and `Tests/TTS/test_audio_output_ownership.py`, fix `cd66a8aa10`.
 
 ## A process-wide `os.close` spy also counts another thread's closes, so a profile change moved a "pin count" (TASK-39114, 2026-11-10)
 
@@ -26451,3 +26475,39 @@ and keep the first run and repeat beside the instrumented comparison.
 **Incident.** To free time in console-p0-gate's admission-sensitive profile, TASK-42472's first review round dropped `Tests/Chat/test_console_failed_call_retry_ownership.py`'s `bootstrap_profile` marker and moved the file to the sandboxed Console P0 step. The only evidence was that it stayed green: 59 passed without the marker. The second review recorded `get_cli_setting` calls and found the file does read config. Its gateway reads `[model_catalog] use_models_dev` (`stream_chat` -> `prepare_chat_request` -> `get_model_capabilities` -> `models_dev_catalog._enabled`). Without the marker every such read raised `RecoveryRequired: raw_source_selection_changed`, and `_enabled()`'s `except Exception: return False` swallowed it. The tests passed only because that fallback equals the default. A temporary recorder (serial) counted 5 `model_catalog` reads with 0 `RecoveryRequired` with the marker, and 5 reads with 5 `RecoveryRequired` without it.
 
 **What to do.** Before dropping `bootstrap_profile` or calling a file sandboxed, count the fail-closed admissions it hits. In a temporary autouse fixture, wrap `tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired.__init__` and count calls. Every admission refusal goes through it, whoever the caller (its subclasses either call `super().__init__` or inherit it). Then require zero `RecoveryRequired` without the marker before dropping it. Do not rely on wrapping `tldw_chatbook.config.get_cli_setting`: 70 `tldw_chatbook` modules import it at module level (35 by absolute import, 35 relative; counted with `ast` on 2026-11-24) and keep the original before any fixture runs, and reads through `load_settings` or other raw-participant sources never pass through it. This incident was caught that way only because `_enabled()` imports the function inside its body. If you also want the reads themselves, patch the `get_cli_setting` binding in every loaded `tldw_chatbook` module. Re-checked 2026-11-24 on this file: the class-level counter saw 0 with the marker and 5 without it. A pass/fail run cannot see an admission that a broad `except` swallowed (see "A broad except can dress `RecoveryRequired` up as an egress block").
+
+## A private pytest fixture needs an admitted native parent (TASK-41177, 2026-11-24)
+
+**Incident.** Normal pytest stopped before collection with
+`recovery_scope_uncertain`: the sandbox account could not open the Windows drive
+root through the native path verifier. Normal-user execution exposed a second
+failure, shared-writable ancestors in the default temporary location. A fresh
+native-verified subtree under the user home, with process-local TEMP/TMP/TMPDIR
+and pytest basetemp, passed the same ownership tests with normal conftest and
+real-profile guards. No existing profile, recovery marker or ACL was changed.
+
+**What to do.** Diagnose the actual failing native admission before modifying
+recovery policy or bypassing conftest. Use `tools/run_guarded_pytest.py` for
+explicit targeted runs on this Windows host; its private parent is checked
+before creating disposable test state and its cleanup checks the exact boundary.
+Final review also found that caller options could replace the verified basetemp
+or inherit `PYTEST_ADDOPTS` suppressing conftest. Stub-child regressions confirmed
+those inputs reached the old launcher; no unsafe option was executed by pytest.
+Keep storage/configuration authority in the launcher: resolve test targets under
+`Tests`, permit bounded selectors/reporting only, and control the child option
+environment. A final cleanup boundary cannot undo pytest's earlier directory reset.
+
+## Reconstruct measurement claims from their retained primitives (TASK-41177, 2026-11-24)
+
+**Incident.** The controlled-WAV captures contained correct source tails and
+separated transfers, but independent review copied the truncated negative
+control's matcher frames into a Natural row and the offline grader still passed
+its cached summary. Moving both absolute packet clocks also preserved a positive
+gap while detaching the evidence from the playback lifetime. Removing schema-2
+fixture metadata silently selected historical rules.
+
+**What to do.** Recompute edges from matcher frame fields, relate absolute clocks
+to launch/grant/Stop, and enforce the declared receipt schema before aggregating.
+Keep a deliberate early-exit control and mutate numerical receipts without
+replaying hardware. A valid recording and a grader resistant to false passes
+are separate pieces of evidence.

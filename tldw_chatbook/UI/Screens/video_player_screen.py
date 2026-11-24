@@ -14,9 +14,10 @@ shared with task-3401.9's preview registry).
 
 from __future__ import annotations
 
+import asyncio
 import time
 from functools import partial
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from loguru import logger
 from rich_pixels import Pixels
@@ -43,6 +44,10 @@ from tldw_chatbook.Media_Playback.render_mode import (
 )
 from tldw_chatbook.Widgets.Console.console_video_preview import ConsoleVideoPreview
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+
+if TYPE_CHECKING:
+    from tldw_chatbook.TTS.audio_output_ownership import AudioOutputIntent
+    from tldw_chatbook.TTS.audio_output_runs import MediaOutputRun
 
 SEEK_STEP_SECONDS = 5.0
 _STATUS_INTERVAL_SECONDS = 0.25
@@ -94,6 +99,7 @@ class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
         render_mode: RenderMode | None = None,
         seekable: bool = True,
         max_seconds: float | None = None,
+        audio_intent: AudioOutputIntent | None = None,
     ) -> None:
         super().__init__()
         self._file_path = file_path
@@ -104,6 +110,8 @@ class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
         #: AC5 (streams): session time-box; ``None`` for local files.
         self._max_seconds = max_seconds
         self._activation_token = 0
+        self._audio_intent = audio_intent
+        self._media_output: MediaOutputRun | None = None
         self._pipeline: PlayerPipeline | None = None
         self._run: PlayerRun | None = None
         self._probe: PlayerProbe | None = None
@@ -145,6 +153,8 @@ class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
 
     def on_mount(self) -> None:
         self._mounted = True
+        if self._audio_intent is None:
+            self._audio_intent = self.app.audio_output.begin_intent(tentative=True)
         ok, guidance = playback_tools_available()
         if not ok:
             self._notify_and_dismiss(guidance, severity="warning")
@@ -164,6 +174,9 @@ class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
         pipeline: PlayerPipeline | None = None
         try:
             probe = probe_file(self._file_path)
+            if probe.has_audio:
+                self._bridge(self._schedule_audible_activation, token, probe)
+                return
             pipeline = PlayerPipeline(self._file_path, probe)
             run = pipeline.start()
         except Exception as exc:
@@ -183,6 +196,47 @@ class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
         if accepted is not True:
             self._cleanup_pipeline(pipeline)
 
+    def _schedule_audible_activation(self, token: int, probe: PlayerProbe) -> None:
+        if self._mounted and token == self._activation_token:
+            self.run_worker(
+                self._activate_audible(token, probe), group="video-player-audio"
+            )
+
+    async def _activate_audible(self, token: int, probe: PlayerProbe) -> None:
+        from tldw_chatbook.UI.audio_output_admission import acquire_audio_output
+        from tldw_chatbook.TTS.audio_output_runs import MediaOutputRun
+
+        def current() -> bool:
+            return self._mounted and token == self._activation_token
+
+        if not current():
+            return
+        output = None
+        accepted = False
+        try:
+            output = MediaOutputRun(
+                self._file_path, probe, pipeline_factory=PlayerPipeline
+            )
+            self._media_output = output
+            ticket = self._audio_intent
+            if ticket is None or not ticket.promote():
+                return
+            lease = await acquire_audio_output(
+                self.app, ticket, "Video player", output, current=current
+            )
+            if lease is None or not current() or not lease.authorizes(output.retire):
+                return
+            run = await output.start(lease)
+            if current() and lease.is_current():
+                accepted = self._accept_activation(token, output.pipeline, run, probe)
+        except Exception as exc:
+            _log_failure("activation", exc)
+        finally:
+            if not accepted:
+                if output is not None:
+                    await output.retire()
+                self._activation_failed(token)
+
     def _accept_activation(
         self,
         token: int,
@@ -195,6 +249,8 @@ class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
         self._pipeline = pipeline
         self._run = run
         self._probe = probe
+        if not probe.has_audio and self._audio_intent is not None:
+            self._audio_intent.cancel()
         self._finished = False
         self._started_wall = time.monotonic()
         try:
@@ -226,6 +282,12 @@ class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
         self._mounted = False
         self._activation_token += 1
         pipeline = self._pipeline
+        if self._audio_intent is not None:
+            self._audio_intent.cancel()
+        output, self._media_output = self._media_output, None
+        if output is not None:
+            asyncio.ensure_future(output.stop())
+            pipeline = None
         self._pipeline = None
         self._run = None
         self._probe = None
@@ -269,12 +331,25 @@ class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
 
     def _start_pump(self, token: int, pipeline: PlayerPipeline, run: PlayerRun) -> None:
         self.run_worker(
-            partial(self._pump_loop, token, pipeline, run),
+            partial(
+                self._pump_loop,
+                token,
+                pipeline,
+                run,
+                wait_for_audio_tail=self._media_output is not None,
+            ),
             thread=True,
             group="video-player-pump",
         )
 
-    def _pump_loop(self, token: int, pipeline: PlayerPipeline, run: PlayerRun) -> None:
+    def _pump_loop(
+        self,
+        token: int,
+        pipeline: PlayerPipeline,
+        run: PlayerRun,
+        *,
+        wait_for_audio_tail: bool = False,
+    ) -> None:
         """Drive exactly one immutable playback generation."""
         try:
             for pts, data in pipeline.iter_frames(run):
@@ -296,6 +371,11 @@ class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
                 if dispatched is False:
                     return
             if run.eof:
+                if wait_for_audio_tail:
+                    while (exited := pipeline.pair_exited(run)) is False:
+                        time.sleep(_STATUS_INTERVAL_SECONDS)
+                    if exited is None:
+                        return
                 self._bridge(self._finish_run, token, pipeline, run)
         except Exception as exc:
             _log_failure("pump", exc)
@@ -358,6 +438,8 @@ class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
         if not self._matches(token, pipeline, run):
             return False
         self._finished = True
+        if self._media_output is not None:
+            asyncio.ensure_future(self._media_output.stop())
         self._refresh_status()
         return True
 
@@ -411,6 +493,16 @@ class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
         run = self._run
         if run is None:
             return
+        output = self._media_output
+        if (
+            output is not None
+            and output.lease is not None
+            and output.lease.revoked
+            and not self._finished
+        ):
+            self._invalidate_current()
+            self._notify_and_dismiss("Video playback stopped.", severity="information")
+            return
         # AC5: time-boxed stream sessions auto-stop at the cap.
         if self._max_seconds is not None and self._started_wall is not None:
             elapsed = time.monotonic() - self._started_wall
@@ -435,6 +527,7 @@ class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
         # reconnect flags are what actually resumes them.
         if (
             state == "▶ playing"
+            and not run.eof
             and self._last_frame_wall is not None
             and time.monotonic() - self._last_frame_wall > _STALL_THRESHOLD_SECONDS
         ):
@@ -459,6 +552,18 @@ class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
         pipeline = self._pipeline
         run = self._run
         if pipeline is None or run is None or self._finished:
+            return
+        output = self._media_output
+        if output is not None:
+
+            async def toggle() -> None:
+                paused = self._paused
+                changed = await (output.resume() if paused else output.pause())
+                if changed and self._media_output is output:
+                    self._paused = not paused
+                    self._refresh_status()
+
+            self.run_worker(toggle(), group="video-player-transport")
             return
         if self._paused:
             pipeline.resume()
@@ -498,6 +603,19 @@ class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
         self._activation_token += 1
         token = self._activation_token
         self._run = None
+        output = self._media_output
+        if output is not None:
+
+            async def seek_owned() -> None:
+                try:
+                    next_run = await output.seek(target)
+                    self._accept_seek(token, pipeline, next_run)
+                except Exception as exc:
+                    _log_failure("seek", exc)
+                    self._seek_failed(token, pipeline)
+
+            self.run_worker(seek_owned(), group="video-player-seek")
+            return
         self.run_worker(
             partial(self._seek, token, pipeline, target),
             thread=True,

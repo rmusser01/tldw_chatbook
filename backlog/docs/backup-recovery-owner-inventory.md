@@ -246,6 +246,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Agents/run_log.py | RunLogWriter._bind_under_scope | write_text | 1 | qualified | agents.history |
 | tldw_chatbook/Audio/recording_service.py | AudioRecordingService._pyaudio_recording_loop | open | 1 | process_artifact | process |
 | tldw_chatbook/Audio/recording_service.py | AudioRecordingService._save_audio_file | open | 1 | process_artifact | process |
+| tldw_chatbook/Audio/streaming_sink.py | StreamingPcmSink._open | open | 1 | process_artifact | process; sounddevice/PortAudio output stream; no file locator |
 | tldw_chatbook/Audio_Services_Interop/local_audio_services_service.py | LocalAudioServicesService._persist_history | mkdir | 1 | unsupported | files |
 | tldw_chatbook/Audio_Services_Interop/local_audio_services_service.py | LocalAudioServicesService._persist_history | write_text | 1 | unsupported | files |
 | tldw_chatbook/Backup_Recovery/chat_source_participants.py | sidecar_descriptor | open | 2 | generic_boundary | concrete chat source lifetime; runtime/capture validation pending |
@@ -452,7 +453,6 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Event_Handlers/STTS_Events/stts_events.py | STTSEventHandler.handle_audiobook_generate.progress_callback | write | 4 | unsupported | miscellaneous |
 | tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py | TTSEventHandler._append_tts_artifact_chunk | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py | TTSEventHandler._append_tts_artifact_chunk | write | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py | TTSEventHandler._stream_response_via_sink | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Event_Handlers/notes_events.py | load_note_templates | open | 1 | external_input | shipped immutable fallback template read; user source uses Notes.template_store |
 | tldw_chatbook/Image_Generation/adapters/comfyui_image_adapter.py | ComfyUIImageAdapter._download_output | open | 2 | unsupported | miscellaneous |
 | tldw_chatbook/Image_Generation/adapters/comfyui_image_adapter.py | _load_packaged_workflow | open | 1 | unsupported | miscellaneous |
@@ -675,6 +675,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/TTS/TTS_Generation.py | TTSService._restart_audio_cpp | write | 1 | unsupported | tts |
 | tldw_chatbook/TTS/TTS_Generation.py | TTSService._run_preferences_publication | write | 2 | unsupported | tts |
 | tldw_chatbook/TTS/TTS_Generation.py | TTSService._transition_audio_cpp_lifecycle | write | 1 | unsupported | tts |
+| tldw_chatbook/TTS/_controlled_wav_windows.py | spawn_player | open | 1 | process_artifact | process; Windows `os.devnull` (NUL) for child stdin/stdout; stderr uses a pipe |
 | tldw_chatbook/TTS/audio_cpp_artifact_catalog.py | load_audio_cpp_artifact_source_manifest | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/audio_cpp_guided_launch.py | AudioCppGeneratedLaunchArtifact.validate | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/audio_cpp_guided_launch.py | _create_artifact | mkdir | 1 | unsupported | tts |
@@ -683,6 +684,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/TTS/audio_cpp_guided_launch.py | _create_artifact | write | 1 | unsupported | tts |
 | tldw_chatbook/TTS/audio_cpp_managed_config.py | _read_server_json | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/audio_cpp_package_scanner.py | _inspect_file | open | 1 | unsupported | tts |
+| tldw_chatbook/TTS/audio_output_runs.py | PcmOutputRun.start.open_sink | open | 1 | process_artifact | process; lease-bound `StreamingPcmSink` output device used by TTS and Console realtime; no file locator |
 | tldw_chatbook/TTS/audio_player.py | SimpleAudioPlayer.pause | connect | 1 | unsupported | tts |
 | tldw_chatbook/TTS/audio_player.py | SimpleAudioPlayer.pause | write | 1 | unsupported | tts |
 | tldw_chatbook/TTS/audio_player.py | SimpleAudioPlayer.resume | connect | 1 | unsupported | tts |
@@ -815,7 +817,6 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/UI/STTS_Window.py | AudioBookGenerationWidget._preview_chapter_audio | write | 2 | unsupported | miscellaneous |
 | tldw_chatbook/UI/STTS_Window.py | AudioBookGenerationWidget._update_voice_options | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/STTS_Window.py | AudioBookGenerationWidget.audiobook_generation_complete | write | 3 | unsupported | miscellaneous |
-| tldw_chatbook/UI/Console_Modules/realtime.py | ConsoleRealtimeController._begin_console_realtime_reply_audio | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Console_Modules/realtime.py | ConsoleRealtimeController._connect_console_realtime | connect | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/chat_screen.py | ChatScreen._write_sidebar_state_snapshot | dump | 1 | unsupported | phase7 async source lifetime; runtime composition pending |
 | tldw_chatbook/UI/Screens/image_gen_demo_screen.py | ImageGenDemoScreen._decode_result | open | 1 | unsupported | miscellaneous |
@@ -839,7 +840,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Backup_Recovery/settings_backup_helpers.py | write_backup_manifest | dump | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Voice_Cloning_Window.py | VoiceCloningWindow._test_generate_voice | write | 2 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Wizards/ChatbookCreationWizard.py | ProgressStep._export_chatbook | secure_private_directory | 1 | unsupported | miscellaneous |
-| tldw_chatbook/UI/Wizards/first_run_voice_omnivoice.py | OmniVoiceStepBase._play_sample | write | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Wizards/first_run_voice_omnivoice.py | OmniVoiceStepBase._play_sample.write_sample | write | 1 | process_artifact | process; writes only the exact temporary first-run sample handle returned by `NamedTemporaryFile` |
 | tldw_chatbook/UI/stts_profile_library.py | STTSProfileLibrary._write_profile_export | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Splash_Screens/custom/custom_image.py | CustomImageEffect._load_and_convert_image | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/Utils.py | FileProcessor.detect_encoding | open | 1 | unsupported | miscellaneous |
@@ -3169,7 +3170,7 @@ subprocess writer is the owner review's job, not the census's.
 | tldw_chatbook/Tools/remote_worker_bundle.py | _atomic_write_target | os.replace_open_target | 1 | external_input | external |
 | tldw_chatbook/Tools/remote_worker_bundle.py | _atomic_write_target | os.unlink | 2 | external_input | external |
 | tldw_chatbook/UI/Navigation/buddy_management.py | BuddyManagementCoordinator._review_petdex | TemporaryDirectory | 1 | unsupported | miscellaneous |
-| tldw_chatbook/UI/Wizards/first_run_voice_omnivoice.py | OmniVoiceStepBase._play_sample | NamedTemporaryFile | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Wizards/first_run_voice_omnivoice.py | OmniVoiceStepBase._play_sample.write_sample | NamedTemporaryFile | 1 | process_artifact | process; `tempfile`-selected first-run audition file; attempt cleanup, playback retirement or external handoff retention |
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_copy | mkstemp | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_bytes | mkstemp | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_text | mkstemp | 1 | generic_boundary | generic |
@@ -4019,6 +4020,8 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/TTS/backends/omnivoice.py | _load_audio_mono | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/omnivoice.py | _wav_bytes | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/voice_manager_base.py | VoiceManagerBase.save_profiles | dump | 1 | unsupported | tts |
+| tldw_chatbook/TTS/controlled_wav_profile.py | _pin_executable | open | 1 | external_input | external; read-only `WindowsReadPin` of explicit, Chocolatey or PATH ffplay executable; checked against the qualified hash |
+| tldw_chatbook/TTS/controlled_wav_profile.py | _validate | open | 1 | generic_boundary | generic; read-only `WindowsReadPin` of caller-supplied `RetainedWav.path`; private ancestry, digest and WAV checked; inherits source ownership |
 | tldw_chatbook/TTS/omnivoice_voice_manager.py | OmniVoiceVoiceManager._probe_duration | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/omnivoice_voice_manager.py | OmniVoiceVoiceManager._read_profile | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/omnivoice_voice_manager.py | OmniVoiceVoiceManager._write_profile | dump | 1 | unsupported | tts |
@@ -4033,6 +4036,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/TTS/omnivoice_voice_manager.py | OmniVoiceVoiceManager.import_profile | copy2 | 1 | unsupported | tts |
 | tldw_chatbook/TTS/omnivoice_voice_manager.py | OmniVoiceVoiceManager.import_profile | mkdir | 1 | unsupported | tts |
 | tldw_chatbook/TTS/omnivoice_voice_manager.py | OmniVoiceVoiceManager.import_profile | open | 1 | unsupported | tts |
+| tldw_chatbook/TTS/pcm_playback.py | create_pcm16_wav_copy | NamedTemporaryFile | 1 | process_artifact | process; `tempfile`-selected playback WAV copy; owner-only descriptor before audio writes; TTS fallback cache or Speech Lab release owns cleanup |
 | tldw_chatbook/TTS/pcm_playback.py | create_pcm16_wav_copy | open | 2 | unsupported | tts |
 | tldw_chatbook/TTS/profile_sqlite_proof.py | TTSProof.initialize | connect | 1 | unsupported | tts |
 | tldw_chatbook/Utils/db_upgrade_notice.py | print_db_upgrade_notice_if_pending | connect_private_sqlite | 1 | unsupported | utils.db_upgrade_notice |

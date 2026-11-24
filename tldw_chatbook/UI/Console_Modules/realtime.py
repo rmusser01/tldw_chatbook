@@ -263,6 +263,9 @@ class ConsoleRealtimeSession:
     tap: Any = None
     session: Any = None
     sink: Any = None
+    output_run: Any = None
+    audio_intent: Any = None
+    queued_bytes: int = 0
     audio_queue: Any = None
     pump_worker: Any = None
     tick_timer: Any = None
@@ -303,6 +306,7 @@ class ConsoleRealtimeController:
         recorder_factory_accessor: Callable[[], Any],
         provider_session_factory_accessor: Callable[[], Any],
         sink_factory_accessor: Callable[[], Any],
+        audio_app_accessor: Callable[[], Any],
         notify: Callable[..., Any],
         ui_thread_id_accessor: Callable[[], int],
         event_loop_accessor: Callable[[], asyncio.AbstractEventLoop | None],
@@ -322,6 +326,7 @@ class ConsoleRealtimeController:
         self._recorder_factory_accessor = recorder_factory_accessor
         self._provider_session_factory_accessor = provider_session_factory_accessor
         self._sink_factory_accessor = sink_factory_accessor
+        self._audio_app_accessor = audio_app_accessor
         self._notify = notify
         self._ui_thread_id_accessor = ui_thread_id_accessor
         self._event_loop_accessor = event_loop_accessor
@@ -1298,6 +1303,8 @@ class ConsoleRealtimeController:
         )
         session.assistant_row_id = row_id
         session.last_reply_row_id = row_id or session.last_reply_row_id
+        if session.output_run is not None:
+            self._end_console_realtime_reply_audio(session, abort=True)
         session.fed_bytes = 0
         # A fresh attempt at the output device for this reply: the latch is
         # per-reply, not per-loop (the toast is the per-loop half).
@@ -1616,18 +1623,25 @@ class ConsoleRealtimeController:
         """
         if not pcm:
             return
-        if session.audio_failed_for_reply:
+        if session.audio_failed_for_reply or session.barged or session.generation_done:
             return
         if session.audio_queue is None:
             self._begin_console_realtime_reply_audio(session)
         queue = session.audio_queue
         if queue is None:
             return
+        from ...Audio.streaming_sink import BUFFER_CAP_SECONDS
+
+        if (
+            session.queued_bytes + len(pcm)
+            > BUFFER_CAP_SECONDS * CONSOLE_REALTIME_BYTES_PER_SECOND
+        ):
+            self._note_console_realtime_audio_unavailable(session)
+            self._end_console_realtime_reply_audio(session, abort=True)
+            return
+        session.queued_bytes += len(pcm)
         session.fed_bytes += len(pcm)
-        try:
-            queue.put_nowait(pcm)
-        except Exception:  # noqa: BLE001 - a full/closed queue is not fatal
-            logger.opt(exception=True).debug("Console realtime: dropped an audio chunk")
+        queue.put_nowait(pcm)
 
     def _begin_console_realtime_reply_audio(
         self, session: ConsoleRealtimeSession
@@ -1646,33 +1660,29 @@ class ConsoleRealtimeController:
         conversation the user is still having.
         """
         try:
-            sink = self._build_console_realtime_sink()
+            ticket = self._audio_app_accessor().audio_output.begin_intent()
+            output = self._build_console_realtime_sink()
         except Exception:  # noqa: BLE001 - the conversation survives mute audio
-            sink = None
+            output = None
             logger.opt(exception=True).warning(
                 "Console realtime: could not build the audio sink"
             )
-        if sink is None:
-            self._note_console_realtime_audio_unavailable(session)
-            return
-        try:
-            sink.open(CONSOLE_REALTIME_SAMPLE_RATE, 1)
-        except Exception:  # noqa: BLE001 - the conversation survives mute audio
-            logger.opt(exception=True).warning(
-                "Console realtime: could not open the audio sink"
-            )
+        if output is None:
             self._note_console_realtime_audio_unavailable(session)
             return
         queue: asyncio.Queue = asyncio.Queue()
-        session.sink = sink
+        session.output_run = output
+        session.audio_intent = ticket
+        session.sink = output.sink
         session.audio_queue = queue
+        session.queued_bytes = 0
         session.fed_bytes = 0
         # From here until the pump reports back, this reply is not over --
         # however long ago the provider stopped generating it.
         session.playback_pending = True
         session.pump_worker = self._run_worker(
             self._pump_console_realtime_audio(
-                session, session.reply_token, sink, queue
+                session, session.reply_token, output, queue
             ),
             exclusive=False,
             group="console-realtime-audio",
@@ -1708,9 +1718,28 @@ class ConsoleRealtimeController:
         factory = self._sink_factory_accessor()
         if callable(factory):
             return factory()
-        from ...Audio.streaming_sink import StreamingPcmSink
+        from ...TTS.audio_output_runs import PcmOutputRun
+        from ...Audio.streaming_sink import SinkFailed, SinkStopped
 
-        return StreamingPcmSink(on_event=self._on_console_realtime_sink_event)
+        loop = asyncio.get_running_loop()
+        session = self.session
+
+        def ended():
+            if (
+                session is not None
+                and self.session is session
+                and session.output_run is run
+            ):
+                session.audio_failed_for_reply = True
+                self._end_console_realtime_reply_audio(session, abort=False)
+
+        def on_event(event):
+            self._on_console_realtime_sink_event(event)
+            if isinstance(event, (SinkFailed, SinkStopped)):
+                loop.call_soon_threadsafe(ended)
+
+        run = PcmOutputRun(CONSOLE_REALTIME_SAMPLE_RATE, on_event=on_event)
+        return run
 
     def _on_console_realtime_sink_event(self, event: object) -> None:
         """Sink lifecycle events. Logged only -- fired on the sink's own
@@ -1718,7 +1747,7 @@ class ConsoleRealtimeController:
         logger.debug(f"Console realtime: sink event: op=sink_event event={event!r}")
 
     async def _pump_console_realtime_audio(
-        self, session: ConsoleRealtimeSession, token: int, sink: Any, queue: Any
+        self, session: ConsoleRealtimeSession, token: int, output: Any, queue: Any
     ) -> None:
         """Feed one reply's queued audio into `sink`, then report playback end.
 
@@ -1735,30 +1764,71 @@ class ConsoleRealtimeController:
         signal the V3 TTS path waits on before reporting an utterance
         finished. It blocks, so it runs off-thread.
 
-        Whatever the outcome, this reply's audio is over exactly once, so
-        `_console_realtime_playback_finished` is called on every exit --
-        it owns the decision about whether that means anything to the FSM.
+        Release the reply's microphone gate only after checked retirement of
+        this exact output. An uncertain close keeps the gate until a late receipt.
         """
         from ...Audio.streaming_sink import pump
+        from ..audio_output_admission import acquire_audio_output
+
+        ticket = session.audio_intent
+
+        def current():
+            return (
+                self.session is session
+                and session.reply_token == token
+                and session.output_run is output
+                and not session.barged
+                and not session.audio_failed_for_reply
+            )
 
         async def _chunks():
             while True:
                 chunk = await queue.get()
                 if chunk is None:
                     return
+                if session.output_run is output:
+                    session.queued_bytes -= len(chunk)
                 yield chunk
 
+        lease = None
         try:
-            await pump(sink, _chunks())
+            if not current():
+                return
+            lease = await acquire_audio_output(
+                self._audio_app_accessor(),
+                ticket,
+                "Realtime reply",
+                output,
+                current=current,
+            )
+            if lease is None or not current() or not await output.start(lease):
+                if current():
+                    self._note_console_realtime_audio_unavailable(session)
+                return
+            sink = output.sink
+            result = await pump(sink, _chunks())
+            if current() and result.outcome != "drained":
+                session.audio_failed_for_reply = True
             settle = getattr(sink, "settle", None)
             if callable(settle):
                 await asyncio.to_thread(settle)
         except Exception:  # noqa: BLE001 - a pump failure still ends playback
+            if current():
+                self._note_console_realtime_audio_unavailable(session)
             logger.opt(exception=True).warning(
                 "Console realtime: reply audio playback failed"
             )
         finally:
-            self._console_realtime_playback_finished(session, token)
+            if lease is not None and output.lease is None:
+                await self._audio_app_accessor().audio_output.stop(lease)
+            # Exit owns the tap -> provider -> output close order.
+            if self.session is session:
+                if await output.retire() is True:
+                    self._console_realtime_playback_finished(session, token)
+                else:
+                    output.on_retired(
+                        lambda: self._console_realtime_playback_finished(session, token)
+                    )
 
     def _end_console_realtime_reply_audio(
         self, session: ConsoleRealtimeSession, *, abort: bool
@@ -1784,14 +1854,11 @@ class ConsoleRealtimeController:
                 )
         if not abort:
             return
-        sink = session.sink
-        if sink is not None:
-            try:
-                sink.stop()
-            except Exception:  # noqa: BLE001
-                logger.opt(exception=True).warning(
-                    "Console realtime: could not stop the audio sink"
-                )
+        if session.audio_intent is not None:
+            session.audio_intent.cancel()
+        output, session.output_run = session.output_run, None
+        if output is not None:
+            asyncio.ensure_future(output.retire())
 
     def _on_console_realtime_first_audio(self, session: ConsoleRealtimeSession) -> None:
         """`on_first_audio`: reply audio started -- `thinking` -> `speaking`."""
@@ -2296,7 +2363,12 @@ class ConsoleRealtimeController:
                     "Console realtime: could not gate the mic tap for teardown"
                 )
         provider_session, session.session = session.session, None
-        sink, session.sink = session.sink, None
+        if session.audio_intent is not None:
+            session.audio_intent.cancel()
+        sink, session.output_run = session.output_run, None
+        if sink is not None and sink.lease is not None:
+            sink.lease.revoke()
+        session.sink = None
         queue, session.audio_queue = session.audio_queue, None
         session.pump_worker = None
         return tap, provider_session, sink, queue
@@ -2358,7 +2430,7 @@ class ConsoleRealtimeController:
             await self._close_console_realtime_session(provider_session)
         if sink is not None:
             try:
-                sink.stop()
+                await sink.retire()
             except Exception:  # noqa: BLE001
                 logger.opt(exception=True).debug(
                     "Console realtime: stopping the audio sink failed"

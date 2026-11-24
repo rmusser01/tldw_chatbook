@@ -9788,18 +9788,9 @@ class ChatScreen(BaseAppScreen):
     def _speak_status(self, text: str) -> None:
         """Speak a status/ack/error via TTS when spoken feedback is on and idle.
 
-        Posts `TTSRequestEvent(text)` iff `dictation.spoken_feedback` is
-        truthy (default `false`) AND the microphone is not open right now
-        (`_console_dictation_state == "idle"`). The state check is the hard
-        microphone/speaker mutual-exclusion rule (spec): speech overlapping a
-        live capture would be picked up by the recognizer and transcribed
-        straight into the user's own draft, so this must never fire
-        mid-capture regardless of the toggle.
-
-        "Capture started" is deliberately never routed through this method --
-        see `_request_console_dictation_start`'s unconditional
-        `TTSPlaybackEvent(stop)`, which handles the opposite direction
-        (silencing speech *before* a capture opens) instead.
+        Capture suppresses speech so the recognizer cannot transcribe the
+        acknowledgement into the user's draft. Beginning dictation also
+        fences the exact pending or audible speech before opening the mic.
 
         Args:
             text: The plain-text status, command acknowledgement, or error
@@ -9813,9 +9804,14 @@ class ChatScreen(BaseAppScreen):
             return
         from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
             TTSRequestEvent,
+            begin_speech_intent,
         )
 
-        self.app_instance.post_message(TTSRequestEvent(text=text))
+        ticket = begin_speech_intent(self.app_instance)
+        session = self._console_hands_free
+        if session is not None and hasattr(session, "status_intent"):
+            session.status_intent = ticket
+        self.app_instance.post_message(TTSRequestEvent(text=text, audio_intent=ticket))
 
     @on(ConsoleDictationEvent)
     def _handle_console_dictation_event(self, message: ConsoleDictationEvent) -> None:
@@ -19045,17 +19041,12 @@ class ChatScreen(BaseAppScreen):
         )
         return await worker.wait()
 
-    def _open_video_with_os(path: Path) -> None:
+    @staticmethod
+    def _open_video_with_os(path: Path):
         """Launch a video path with the platform default player."""
-        import subprocess
-        import sys
+        from ..Console_Modules.video import open_external_video
 
-        if sys.platform == "darwin":
-            subprocess.Popen(["open", str(path)])  # nosec B603
-        elif sys.platform.startswith("win"):
-            os.startfile(str(path))  # type: ignore[attr-defined]  # nosec B606
-        else:
-            subprocess.Popen(["xdg-open", str(path)])  # nosec B603
+        return open_external_video(path)
 
     async def _console_command_stream_video(self, parse: CommandParse) -> None:
         """Delegate the registry-bound stream command to its controller."""
@@ -22866,28 +22857,22 @@ class ChatScreen(BaseAppScreen):
         for timer in getattr(self, "_console_resume_handoff_timers", ()):
             timer.stop()
         self._console_resume_handoff_timers = []
-        self._message.invalidate_console_speech_context()
-        # TASK-32509 (UAT-found): skip the coordinator quiesce while ITS OWN
-        # consent modal is the screen that suspended us -- unmount tombstones
-        # the pending modal callback, so the user's Enable press would arrive
-        # dead and the consent would be silently discarded (switch snaps
-        # back OFF). A consent modal keeps the console semi-visible; the
-        # disposition gating still refuses speech for hidden turns.
-        # PR #2656 Qodo #1: guard on a PENDING modal result, not bare modal
-        # visibility -- after dismissal the async finish work runs with the
-        # callback consumed, and a suspend in that window must quiesce the
-        # coordinator or the hidden screen stays subscribed forever.
-        if not self._console_auto_speak.modal_result_pending:
+        confirmation = wiring.console_audio_confirmation_owner(self)
+        if confirmation != "message":
+            self._message.invalidate_console_speech_context()
+        # Keep pending consent and its requesting message alive across their own dialog.
+        if confirmation != "message" and not self._console_auto_speak.modal_result_pending:
             self._console_auto_speak.unmount()
         self._stop_console_transcript_sync_timer()
         self._fleet._stop_console_fleet_survivor_tick()
         self._context_spend._stop_console_cost_ttl_timer()
         self._console_draft_spend_refresh.stop()
-        self._hands_free.teardown()
+        if confirmation != "hands_free":
+            self._hands_free.teardown()
         # TASK-33626.1: a live capture survives Hands-free's own consent.
         keep_capture = self._console_auto_speak.hands_free_consent_pending
         self._console_suspend_flush_tasks = [
-            asyncio.ensure_future(self._realtime.teardown()),
+            *([] if confirmation == "realtime" else [asyncio.ensure_future(self._realtime.teardown())]),
             *([] if keep_capture else [asyncio.ensure_future(self._dictation.suspend())]),
         ]
         # Capture finding 7: the screen on top draws the app's notices, so a

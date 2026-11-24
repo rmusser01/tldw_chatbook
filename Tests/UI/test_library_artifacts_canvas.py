@@ -389,7 +389,7 @@ async def test_report_playback_uses_the_validated_audio_path(
     tmp_path, request, monkeypatch
 ):
     from tldw_chatbook.Subscriptions import briefing_audio
-    from tldw_chatbook.TTS import audio_player
+    from Tests.UI.file_output_fakes import capture_file_playback
 
     async with artifact_library(tmp_path) as (screen, pilot):
         controller = screen._artifacts_controller
@@ -399,7 +399,7 @@ async def test_report_playback_uses_the_validated_audio_path(
         audio_file.write_bytes(b"audio fixture")
         monkeypatch.setattr(briefing_audio, "briefing_audio_dir", lambda: audio_root)
         played = []
-        monkeypatch.setattr(audio_player, "play_audio_file", played.append)
+        capture_file_playback(monkeypatch, played)
         with screen.app_instance.subscriptions_db.transaction() as conn:
             script = conn.execute(
                 "INSERT INTO briefing_scripts(briefing_id, preset_name, status, roster_snapshot_json) VALUES (?, 'Cast', 'complete', '[]')",
@@ -415,9 +415,42 @@ async def test_report_playback_uses_the_validated_audio_path(
             if controller.detail and controller.detail.can_play:
                 break
         assert controller.detail.can_play
-        controller.action("play")
-        for _ in range(100):
-            await pilot.pause(0.02)
-            if played:
-                break
+        from Tests.TTS.test_audio_output_runs import FilePlayer
+        from tldw_chatbook.TTS.audio_output_runs import FileOutputRun
+        from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+        from textual.widgets import Button
+
+        host = screen.app.audio_output
+        external = await FileOutputRun.prepare(
+            audio_file, player=FilePlayer(external=True)
+        )
+        assert await external.start(
+            await host.acquire("external test file", external.retire, external=True)
+        )
+        epoch = host.handoff_epoch
+        for answer in ("cancel", "confirm"):
+            controller.action("play")
+            for _ in range(100):
+                await pilot.pause(0.02)
+                if (
+                    isinstance(screen.app.screen, ConfirmationDialog)
+                    and screen.app.screen.focused is not None
+                ):
+                    break
+            dialog = screen.app.screen
+            assert isinstance(dialog, ConfirmationDialog)
+            assert dialog.focused is not None and dialog.focused.id == "cancel-button"
+            dialog.query_one(f"#{answer}-button", Button).press()
+            await screen.app.workers.wait_for_complete()
+            await pilot.pause()
+            if answer == "cancel":
+                assert host.handoff_epoch is epoch
+                assert not played
         assert played == [audio_file.resolve()]
+        other = await FileOutputRun.prepare(audio_file, player=FilePlayer())
+        lease = await host.acquire("another surface", other.retire)
+        assert await other.start(lease)
+        controller.leave()
+        assert lease.is_current()
+        assert await host.stop(lease)

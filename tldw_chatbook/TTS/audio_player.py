@@ -4,16 +4,20 @@
 # Imports
 import asyncio
 import os
-import subprocess
 import platform
 import shutil
+import stat
+import subprocess
+import tempfile
 import threading
 import time
+from collections.abc import Callable
 from contextvars import copy_context
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Optional
-from enum import Enum
-from dataclasses import dataclass
+
 from loguru import logger
 
 #######################################################################################################################
@@ -21,7 +25,7 @@ from loguru import logger
 # Simple Audio Player for TUI
 
 #: File formats a player binary can definitely decode. macOS `afplay` and
-#: the Windows COM path play most of what the OS audio stack supports --
+#: Windows delegated playback cover what the OS audio stack supports --
 #: but NOT Ogg/Opus (observed on dev: `afplay` can exit successfully
 #: without decoding an Ogg/Opus body, which is worse than a clean
 #: failure, so opus/ogg are excluded from its set and route to ffplay).
@@ -35,6 +39,7 @@ _ALL_FILE_FORMATS: frozenset[str] = frozenset(
     {"mp3", "opus", "ogg", "aac", "flac", "wav"}
 )
 _AFPLAY_FORMATS: frozenset[str] = frozenset({"mp3", "aac", "flac", "wav"})
+_AFPLAY_EXECUTABLE = "/usr/bin/afplay"
 
 #: Linux player catalogue, in preference order: (name, base command,
 #: supports native pause, definitely-decodable formats).
@@ -67,7 +72,7 @@ def player_supported_formats(player_name: str | None) -> frozenset[str]:
     """Return the file formats `player_name` can definitely decode.
 
     macOS `afplay` maps to its OS-decodable subset (no Ogg/Opus); the
-    Windows COM path plays everything the OS supports, so it maps to the
+    Windows delegated path accepts the formats supported by the OS, including the
     full format set. Unknown names (including ``None``) map to no
     formats -- callers treat that as "cannot serve this format".
 
@@ -96,7 +101,7 @@ def find_player_for_format(audio_format: str | None) -> str | None:
     only): macOS resolves afplay-served formats to `afplay` and Ogg/Opus
     to `ffplay` when installed (afplay cannot decode those containers);
     Linux resolves to the first catalogue player that both exists on PATH
-    and can decode `audio_format`; Windows resolves to the built-in COM
+    and can decode `audio_format`; Windows resolves to the delegated player
     path; unknown platforms resolve to None. An unknown/``None`` format
     falls back to the first available player regardless of formats,
     matching the pre-catalogue selection for artifacts with unrecognized
@@ -135,11 +140,9 @@ class PlaybackState(Enum):
     PAUSED = "paused"
     FINISHED = "finished"
     ERROR = "error"
-    #: TASK-39040: the clip went to the default app through `os.startfile`.
-    #: There is no process, so nothing ever moves it to FINISHED; it stays
-    #: current until `stop()` or the next `play()` releases the slot. A
-    #: distinct state (fix round 2), so a caller can tell it from a clip it
-    #: can watch and stop polling for an end it will never see.
+    BLOCKED = "blocked"  # native retirement remains unconfirmed
+    #: Windows accepted the clip. A launcher handle cannot establish when
+    #: external sound stops, even if that launcher was our wmplayer child.
     HANDED_OFF = "handed_off"
 
 
@@ -165,6 +168,46 @@ class AudioPlayerInfo:
     total_pause_duration: float = 0.0  # Total time spent paused
     duration: Optional[float] = None  # Total duration of the file
     position: float = 0.0  # Current playback position in seconds
+    attempt_token: object | None = None
+    start_authority: Callable[[], bool] | None = None
+    plan: "FilePlaybackPlan | None" = None
+    birth_uncertain: bool = False
+
+
+def _file_identity(path: Path) -> tuple[int, int, int, int] | None:
+    info = path.stat()
+    if not stat.S_ISREG(info.st_mode):
+        return None
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
+
+
+@dataclass(frozen=True)
+class FilePlaybackPlan:
+    """Worker-prepared artifact identity and exact native launch choice."""
+
+    file_path: Path
+    identity: tuple[int, int, int, int]
+    name: str
+    argv: tuple[str, ...]
+    supports_pause: bool
+
+    @property
+    def external(self) -> bool:
+        return self.name in {"startfile", "wmplayer"}
+
+    def matches_file(self) -> bool:
+        """Recheck the prepared artifact after admission or native retirement."""
+        try:
+            return self.identity == _file_identity(self.file_path)
+        except (ValueError, OSError):
+            return False
+
+    def executable_available(self) -> bool:
+        """Check the selected executable without searching for another player."""
+        if self.name == "startfile":
+            return True
+        executable = self.argv[0]
+        return os.path.isfile(executable) and os.access(executable, os.X_OK)
 
 
 def _kill_player_process_group(process: "subprocess.Popen | None") -> None:
@@ -173,8 +216,8 @@ def _kill_player_process_group(process: "subprocess.Popen | None") -> None:
     TASK-32892 P0-3. A `Popen` child started without `start_new_session`
     inherits OUR process group, so `killpg(getpgid(child.pid))` is suicide:
     it takes down the TUI (and the terminal's whole foreground group) with
-    no shutdown, no `close_tts_resources()`, no DB quiesce. `play()`'s three
-    spawn sites now detach, and this refuses the signal anyway when the group
+    no shutdown, no `close_tts_resources()`, no DB quiesce. The owned player
+    starts in its own session, and this refuses the signal when the group
     still resolves to ours -- the same belt-and-braces pairing
     `Event_Handlers/LLM_Management_Events/server_lifecycle.py`
     `_signal_server_process_group` uses (TASK-32806.5).
@@ -195,9 +238,7 @@ def _kill_player_process_group(process: "subprocess.Popen | None") -> None:
         logger.debug(f"Failed to resolve player process group: {exc}")
         return
     if pgid <= 0 or pgid == os.getpgrp():
-        logger.warning(
-            f"Refusing to SIGKILL process group {pgid}: it is the app's own"
-        )
+        logger.warning(f"Refusing to SIGKILL process group {pgid}: it is the app's own")
         return
     try:
         os.killpg(pgid, signal.SIGKILL)
@@ -216,6 +257,7 @@ class SimpleAudioPlayer:
     def __init__(self):
         """Initialize audio player"""
         self._current: AudioPlayerInfo = AudioPlayerInfo()
+        self._retired_token: object | None = None
         self._system = platform.system()
         # TASK-38581: this lock MUST be reentrant. pause() and resume()
         # call other lock-taking methods while still holding it:
@@ -224,246 +266,240 @@ class SimpleAudioPlayer:
         # play() -> stop(). With a plain Lock those paths self-deadlock
         # permanently -- one Pause click wedged the call forever, and via
         # AsyncAudioPlayer's single-worker executor it wedged every later
-        # TTS audio call with it. (Scan of this file: pause()/resume() are
-        # the only nested-acquisition sites; every other `with self._lock`
-        # body only touches state directly.)
+        # TTS audio call with it.
         self._lock = threading.RLock()
-        self._supports_pause = False  # Whether the player supports native pause
-        self._find_player()
+        self._launchers: set[subprocess.Popen] = set()
+        self._player_name, self._player_cmd, self._supports_pause = self._player_for(
+            None
+        )
 
-    def _find_player(self) -> None:
-        """Find available audio player on the system"""
-        if self._system == "Darwin":  # macOS
-            self._player_cmd = ["/usr/bin/afplay"]
-            self._player_name = "afplay"
-            self._supports_pause = False  # afplay doesn't support pause
-        elif self._system == "Linux":
-            # Initial (format-agnostic) selection from the shared
-            # catalogue; `play()` re-selects per artifact format before
-            # spawning.
-            self._select_linux_player(lambda _formats: True)
-            if self._player_name is None:
-                logger.warning("No suitable audio player found on Linux")
-        elif self._system == "Windows":
-            # play() builds the argv or hands off. pause() has no Windows
-            # branch and returns False; True keeps it off stop-and-restart.
-            self._player_cmd = ["windows"]
-            self._player_name = "windows"
-            self._supports_pause = True
-        else:
-            self._player_cmd = None
-            self._player_name = None
-            self._supports_pause = False
-            logger.warning(f"Unsupported platform: {self._system}")
+    @property
+    def _mpv_socket(self) -> Path:
+        return Path(tempfile.gettempdir()) / f"mpv-socket-{id(self)}"
 
-    def _select_linux_player(self, formats_accepted) -> None:
-        """Point this player at the first catalogue entry matching the filter.
-
-        `formats_accepted` receives a candidate's decodable-format set and
-        returns whether it may serve the upcoming artifact; entries are
-        visited in the catalogue's preference order and PATH availability
-        is always required. Used both by `_find_player`'s format-agnostic
-        initial probe and by `play()`'s per-artifact format-aware
-        selection.
-        """
-        for name, cmd, supports_pause, formats in _LINUX_PLAYER_CATALOGUE:
-            if not formats_accepted(formats):
-                continue
-            if not shutil.which(name):
-                continue
-            self._player_cmd = list(cmd)
-            self._player_name = name
-            self._supports_pause = supports_pause
-            return
-        self._player_cmd = None
-        self._player_name = None
-        self._supports_pause = False
-
-    def _select_player_for_artifact(self, file_path: Path) -> None:
-        """Re-select the player for `file_path`'s audio format.
-
-        The artifact's extension decides the format; an unrecognized
-        extension keeps whatever player the initial probe selected (the
-        pre-catalogue behavior) rather than refusing a file this module
-        simply doesn't know the extension of. On macOS this owns the
-        Ogg/Opus routing dev observed: `afplay` can exit successfully
-        without decoding an Ogg/Opus body, so those containers go to
-        ffplay when installed and refuse cleanly when not.
-        """
-        audio_format = file_path.suffix.lstrip(".").lower() or None
-        if audio_format not in _ALL_FILE_FORMATS:
-            return
+    def _player_for(
+        self, audio_format: str | None
+    ) -> tuple[str | None, list[str], bool]:
+        if self._system == "Windows":
+            return "windows", ["windows"], False
         if self._system == "Darwin":
-            if audio_format in _AFPLAY_FORMATS:
-                # Reset to afplay even if a previous opus/ogg artifact
-                # left ffplay (or a clean refusal) selected -- same
-                # re-probe dev's inline special case performed.
-                self._player_cmd = ["/usr/bin/afplay"]
-                self._player_name = "afplay"
-                self._supports_pause = False
-                return
+            if audio_format is None or audio_format in _AFPLAY_FORMATS:
+                return "afplay", [_AFPLAY_EXECUTABLE], False
             ffplay = shutil.which("ffplay")
-            if ffplay is None:
-                logger.warning(
-                    "Opus playback requires ffplay; choose WAV output instead"
+            if ffplay:
+                return (
+                    "ffplay",
+                    [
+                        os.path.abspath(ffplay),
+                        "-nodisp",
+                        "-autoexit",
+                        "-loglevel",
+                        "error",
+                    ],
+                    False,
                 )
-                self._player_cmd = None
-                self._player_name = None
-                self._supports_pause = False
-                return
-            self._player_cmd = [ffplay, "-nodisp", "-autoexit", "-loglevel", "error"]
-            self._player_name = "ffplay"
-            self._supports_pause = False
-            return
-        if self._system != "Linux":
-            return
-        self._select_linux_player(
-            lambda formats: audio_format in formats,
-        )
+        if self._system == "Linux":
+            for name, cmd, supports_pause, formats in _LINUX_PLAYER_CATALOGUE:
+                if audio_format is not None and audio_format not in formats:
+                    continue
+                executable = shutil.which(name)
+                if executable:
+                    return name, [os.path.abspath(executable), *cmd[1:]], supports_pause
+        return None, [], False
 
-    def play(self, file_path: Path) -> bool:
-        """
-        Play an audio file.
-
-        Args:
-            file_path: Path to the audio file
-
-        Returns:
-            True if playback started successfully
-        """
-        logger.debug(f"SimpleAudioPlayer.play called with: {file_path}")
-        logger.debug(
-            f"Current state before stop: {self._current.state}, process: {self._current.process}"
-        )
-
-        # Stop any current playback
-        self.stop()
-
-        # Log state after stop
-        logger.debug(
-            f"State after stop: {self._current.state}, process: {self._current.process}"
-        )
-
-        # Validate file
-        if not file_path.exists() or not file_path.is_file():
-            logger.error(f"Audio file not found: {file_path}")
-            return False
-
-        # Format-aware player selection: the artifact's extension decides
-        # which player may serve it -- an .mp3 must not be handed to a
-        # WAV-only aplay, a box with no format-capable player must refuse
-        # here rather than spawn garbage, and (dev-observed) Ogg/Opus on
-        # macOS must route to ffplay because afplay exits successfully
-        # without decoding those containers.
-        self._select_player_for_artifact(file_path)
-
-        # Check if we have a player
-        if not self._player_cmd:
-            logger.error("No audio player available")
-            return False
-
-        # Ensure clean state - force cleanup any zombie process
-        if self._current.process:
-            try:
-                # Check if process is zombie/defunct
-                if self._current.process.poll() is not None:
-                    logger.debug(
-                        f"Found zombie process with return code: {self._current.process.poll()}"
-                    )
-                    self._current.process = None
-            except Exception as e:
-                logger.debug(f"Error checking process state: {e}")
-                self._current.process = None
-
-        # Add a small delay on macOS to ensure previous afplay is fully terminated
-        if self._system == "Darwin" and self._player_name == "afplay":
-            time.sleep(0.1)
-
+    def prepare(self, file_path: Path) -> FilePlaybackPlan | None:
+        """Check the artifact and choose its exact launch route without changing playback."""
         try:
-            if self._system == "Windows":
-                # TASK-39040: no shell parses the path (dev ran `cmd /c start`).
-                from .windows_audio_launch import hand_off, wmplayer_argv
+            identity = _file_identity(file_path)
+            if identity is None:
+                return None
+            audio_format = file_path.suffix.lstrip(".").lower()
+            name, cmd, supports_pause = self._player_for(
+                audio_format if audio_format in _ALL_FILE_FORMATS else None
+            )
+            if name is None:
+                return None
+            if name == "windows":
+                from .windows_audio_launch import can_hand_off, wmplayer_argv
 
-                cmd = wmplayer_argv(file_path)
-                if cmd is None:
-                    if not hand_off(file_path):
-                        return False
-                    with self._lock:
-                        self._current = AudioPlayerInfo(
-                            file_path,
-                            PlaybackState.HANDED_OFF,
-                            start_time=time.time(),
-                        )
-                    return True
-            else:
-                # Unix-like systems
-                cmd = self._player_cmd + [str(file_path)]
-
-            # Start playback in background
-            with self._lock:
-                # Special handling for players with pause support
-                if self._player_name == "mpv":
-                    # Create a unique socket for this instance
-                    import tempfile
-
-                    socket_path = Path(tempfile.gettempdir()) / f"mpv-socket-{id(self)}"
-                    cmd = self._player_cmd[:-1] + [
-                        f"--input-ipc-server={socket_path}",
-                        str(file_path),
-                    ]
-                    self._mpv_socket = socket_path
-                    self._current.process = subprocess.Popen(
-                        # TASK-32892 P0-3: session leader, so the child's
-                        # pid IS its group id and `stop()`'s last-resort
-                        # `killpg` cannot resolve to the APP's own group.
-                        cmd,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        start_new_session=(os.name == "posix"),
-                    )
-                elif self._player_name == "mplayer":
-                    # For mplayer slave mode, we need pipes
-                    self._current.process = subprocess.Popen(
-                        cmd,
-                        stdin=subprocess.PIPE,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        start_new_session=(os.name == "posix"),
-                    )
+                argv = wmplayer_argv(file_path)
+                if argv is None:
+                    if not can_hand_off(file_path):
+                        return None
+                    name, cmd = "startfile", []
                 else:
-                    self._current.process = subprocess.Popen(
-                        cmd,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        start_new_session=(os.name == "posix"),
-                    )
-
-                self._current.file_path = file_path
-                self._current.state = PlaybackState.PLAYING
-                self._current.start_time = time.time()
-                self._current.pause_time = None
-                self._current.total_pause_duration = 0.0
-                self._current.position = 0.0
-
-            # Start monitoring thread
-            monitor = threading.Thread(
-                target=self._monitor_playback,
-                args=(self._current.process,),
-                daemon=True,
+                    name, cmd = "wmplayer", argv
+            else:
+                if name == "mpv":
+                    cmd[-1] = f"--input-ipc-server={self._mpv_socket}"
+                cmd.append(str(file_path))
+            plan = FilePlaybackPlan(
+                file_path, identity, name, tuple(cmd), supports_pause
             )
-            monitor.start()
+            return plan if plan.executable_available() else None
+        except (ValueError, OSError):
+            return None
 
-            logger.info(
-                f"Started playback of {file_path.name} using {self._player_name}"
+    def play(
+        self,
+        file_path: Path,
+        *,
+        attempt_token: object | None = None,
+        start_authority: Callable[[], bool] | None = None,
+    ) -> bool:
+        """Prepare and start an ordinary file or delegate it to the OS."""
+        plan = self.prepare(file_path)
+        return plan is not None and self.play_prepared(
+            plan, attempt_token=attempt_token, start_authority=start_authority
+        )
+
+    def play_prepared(
+        self,
+        plan: FilePlaybackPlan,
+        *,
+        attempt_token: object | None = None,
+        start_authority: Callable[[], bool] | None = None,
+    ) -> bool:
+        """Commit a prepared route on a worker. Accepted external launches return True."""
+        token = attempt_token if attempt_token is not None else object()
+        with self._lock:
+            if not plan.matches_file() or not plan.executable_available():
+                return self._refuse_unstarted(token)
+            if start_authority is not None and not start_authority():
+                return self._refuse_unstarted(token)
+            self.stop()
+            if self._current.process is not None or self._current.birth_uncertain:
+                return self._refuse_unstarted(token)
+
+            self._player_name = plan.name
+            self._supports_pause = plan.supports_pause
+            if plan.name == "afplay":
+                time.sleep(0.1)
+            if not plan.matches_file():
+                return self._refuse_unstarted(token)
+
+            current = AudioPlayerInfo(
+                file_path=plan.file_path,
+                attempt_token=token,
+                start_authority=start_authority,
+                plan=plan,
+                start_time=time.time(),
             )
-            return True
+            try:
+                if plan.name == "startfile":
+                    from .windows_audio_launch import hand_off
 
-        except Exception as e:
-            logger.error(f"Failed to play audio: {e}")
-            self._current.state = PlaybackState.ERROR
-            return False
+                    def can_open() -> bool:
+                        permitted = plan.matches_file() and (
+                            start_authority is None or start_authority()
+                        )
+                        if permitted:
+                            current.birth_uncertain = True
+                            self._retired_token = None
+                        return permitted
 
-    def pause(self) -> bool:
+                    if not hand_off(
+                        plan.file_path, start_authority=can_open, notify=False
+                    ):
+                        # ShellExecute was refused or explicitly returned failure.
+                        return self._refuse_unstarted(token)
+                else:
+                    if start_authority is not None and not start_authority():
+                        return self._refuse_unstarted(token)
+                    self._retired_token = None
+                    current.birth_uncertain = True
+                    try:
+                        process = subprocess.Popen(
+                            plan.argv,
+                            stdin=subprocess.PIPE if plan.name == "mplayer" else None,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            start_new_session=(os.name == "posix"),
+                        )
+                    except FileNotFoundError:
+                        if os.name == "posix":
+                            # The executable or its interpreter disappeared before exec.
+                            return self._refuse_unstarted(token)
+                        raise
+                    if process is None:
+                        raise RuntimeError("File player spawn returned no child")
+                    if plan.external:
+                        self._launchers.add(process)
+                    else:
+                        current.process = process
+
+                current.birth_uncertain = False
+                self._current = current
+                if plan.external:
+                    # A launcher may forward to another app. The accepted OS open
+                    # remains a handoff even if authority was revoked inside Popen.
+                    current.state = PlaybackState.HANDED_OFF
+                    if plan.name == "wmplayer":
+                        threading.Thread(
+                            target=self._reap_launcher, args=(process,), daemon=True
+                        ).start()
+                    if start_authority is not None and not start_authority():
+                        logger.debug(
+                            "Windows accepted a file handoff during revocation"
+                        )
+                else:
+                    current.state = PlaybackState.PLAYING
+                    if start_authority is not None and not start_authority():
+                        self.stop(expected_token=token)
+                        return False
+                    threading.Thread(
+                        target=self._monitor_playback, args=(process,), daemon=True
+                    ).start()
+                    return True
+            except Exception as exc:
+                logger.warning(
+                    "Could not start or observe file player ({})", type(exc).__name__
+                )
+                if current.state is not PlaybackState.HANDED_OFF:
+                    if current.process is not None:
+                        if not self.stop(expected_token=token):
+                            return False  # retain BLOCKED and its unconfirmed child
+                        current.process = None
+                    current.state = PlaybackState.ERROR
+                    self._current = current
+                    return False
+
+        # This may synchronously marshal a toast to Textual. Release the player
+        # lock first so an app callback can safely observe the recorded outcome.
+        from .windows_audio_launch import HAND_OFF_NOTICE, notify_hand_off
+
+        notice = (
+            "Playing in Windows Media Player. Pause or stop it there."
+            if plan.name == "wmplayer"
+            else HAND_OFF_NOTICE
+        )
+        notify_hand_off(notice)
+        return True
+
+    def _refuse_unstarted(self, token: object) -> bool:
+        # A legacy caller can reuse a token that already owns native output.
+        if self._current.attempt_token is not token:
+            self._retired_token = token
+        return False
+
+    def retirement_confirmed(self, *, expected_token: object) -> bool:
+        """Check for this exact attempt's latest refusal or physical retirement."""
+        with self._lock:
+            return expected_token is not None and self._retired_token is expected_token
+
+    def _reap_launcher(self, launcher: subprocess.Popen) -> None:
+        """Observe only our launcher, independently of the external playback epoch."""
+        try:
+            launcher.wait()
+        except Exception as exc:
+            logger.warning(
+                "Could not observe audio launcher exit ({})", type(exc).__name__
+            )
+            return
+        with self._lock:
+            self._launchers.discard(launcher)
+
+    def pause(self, *, expected_token: object | None = None) -> bool:
         """
         Pause current playback.
 
@@ -471,6 +507,11 @@ class SimpleAudioPlayer:
             True if paused successfully
         """
         with self._lock:
+            if (
+                expected_token is not None
+                and self._current.attempt_token is not expected_token
+            ):
+                return False
             logger.debug(
                 f"Pause called - current state: {self._current.state}, supports pause: {self._supports_pause}"
             )
@@ -479,8 +520,14 @@ class SimpleAudioPlayer:
 
             if not self._supports_pause:
                 # For players without pause, we'll stop and track position
-                self._current.position = self.get_position()
-                self.stop()
+                current = self._current
+                position = self.get_position()
+                if not self.stop():
+                    return False
+                self._current = current
+                self._retired_token = None  # this paused run can still restart
+                current.process = None
+                current.position = position
                 self._current.state = PlaybackState.PAUSED
                 self._current.pause_time = time.time()
                 logger.info(
@@ -490,7 +537,7 @@ class SimpleAudioPlayer:
 
             # Native pause support
             try:
-                if self._player_name == "mpv" and hasattr(self, "_mpv_socket"):
+                if self._player_name == "mpv":
                     # Send pause command via socket
                     import socket
                     import json
@@ -523,7 +570,7 @@ class SimpleAudioPlayer:
                 logger.error(f"Failed to pause: {e}")
                 return False
 
-    def resume(self) -> bool:
+    def resume(self, *, expected_token: object | None = None) -> bool:
         """
         Resume paused playback.
 
@@ -531,6 +578,12 @@ class SimpleAudioPlayer:
             True if resumed successfully
         """
         with self._lock:
+            current = self._current
+            if (
+                expected_token is not None
+                and current.attempt_token is not expected_token
+            ):
+                return False
             if (
                 self._current.state != PlaybackState.PAUSED
                 or not self._current.file_path
@@ -543,20 +596,37 @@ class SimpleAudioPlayer:
                 logger.info(
                     f"Resuming from start (pause not supported by {self._player_name})"
                 )
-                self._current.total_pause_duration += (
-                    time.time() - self._current.pause_time
+                if current.plan is not None:
+                    return self.play_prepared(
+                        current.plan,
+                        attempt_token=current.attempt_token,
+                        start_authority=current.start_authority,
+                    )
+                return self.play(
+                    current.file_path,
+                    attempt_token=current.attempt_token,
+                    start_authority=current.start_authority,
                 )
-                return self.play(self._current.file_path)
 
             # Native resume support
             try:
-                if self._player_name == "mpv" and hasattr(self, "_mpv_socket"):
+                if (
+                    current.start_authority is not None
+                    and not current.start_authority()
+                ):
+                    return False
+                if self._player_name == "mpv":
                     # Send resume command via socket
                     import socket
                     import json
 
                     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
                         s.connect(str(self._mpv_socket))
+                        if (
+                            current.start_authority is not None
+                            and not current.start_authority()
+                        ):
+                            return False
                         s.send(
                             json.dumps(
                                 {"command": ["set_property", "pause", False]}
@@ -574,6 +644,12 @@ class SimpleAudioPlayer:
                 else:
                     return False
 
+                if (
+                    current.start_authority is not None
+                    and not current.start_authority()
+                ):
+                    self.stop(expected_token=current.attempt_token)
+                    return False
                 self._current.state = PlaybackState.PLAYING
                 self._current.total_pause_duration += (
                     time.time() - self._current.pause_time
@@ -586,84 +662,81 @@ class SimpleAudioPlayer:
                 logger.error(f"Failed to resume: {e}")
                 return False
 
-    def stop(self) -> bool:
-        """
-        Stop current playback.
-
-        Returns:
-            True if stopped successfully
-        """
-        with self._lock:
-            logger.debug(
-                f"Stop called - current state: {self._current.state}, process exists: {self._current.process is not None}"
-            )
-            if self._current.process or self._current.state in [
-                PlaybackState.PLAYING,
-                PlaybackState.PAUSED,
-                PlaybackState.FINISHED,
-                PlaybackState.HANDED_OFF,
-            ]:
-                # Only try to terminate if process exists
-                if self._current.process:
-                    try:
-                        # Check if process is still running
-                        if self._current.process.poll() is None:
-                            # For macOS afplay, use kill directly as terminate doesn't work well
-                            if (
-                                self._system == "Darwin"
-                                and self._player_name == "afplay"
-                            ):
-                                self._current.process.kill()
-                                self._current.process.wait(timeout=1)
-                            else:
-                                self._current.process.terminate()
-                                self._current.process.wait(timeout=2)
-                    except subprocess.TimeoutExpired:
-                        logger.debug("Process didn't terminate in time, force killing")
-                        self._current.process.kill()
-                        try:
-                            self._current.process.wait(timeout=0.5)
-                        except subprocess.TimeoutExpired:
-                            logger.warning("Process kill timed out")
-                            # For macOS, try using os.killpg if process is stuck
-                            if self._system == "Darwin":
-                                _kill_player_process_group(self._current.process)
-                    except Exception as e:
-                        logger.error(f"Error stopping playback: {e}")
-                    finally:
-                        # Always nullify the process handle
-                        self._current.process = None
-
-                # Clean up mpv socket if exists
-                if self._player_name == "mpv" and hasattr(self, "_mpv_socket"):
-                    try:
-                        Path(self._mpv_socket).unlink(missing_ok=True)
-                    except Exception:
-                        pass
-
-                # Always reset all state when cleaning up. A handed-off clip
-                # plays on in the default app, so it is released, not stopped;
-                # whether its file may go is the caller's call, bounded by
-                # HAND_OFF_RETENTION_SECONDS.
-                handed_off = self._current.state is PlaybackState.HANDED_OFF
-                self._current = AudioPlayerInfo()
-                logger.info("Playback stopped/cleaned up - all state reset")
-                return not handed_off
-            else:
-                logger.debug(
-                    f"Cannot stop - process exists: {self._current.process is not None}, state: {self._current.state}"
-                )
-
+    def _reap_current_process(self, process: subprocess.Popen) -> bool:
+        try:
+            if process.poll() is not None:
+                return True
+        except Exception:
+            pass  # still hold the handle and try a bounded wait
+        afplay = self._player_name == "afplay"
+        for signal_child, timeout in (
+            (process.kill if afplay else process.terminate, 1.0 if afplay else 2.0),
+            (process.kill, 0.5),
+        ):
+            try:
+                signal_child()
+            except Exception:
+                pass  # an exited child can refuse a signal; the wait decides
+            try:
+                process.wait(timeout=timeout)
+                return True
+            except Exception:
+                pass
+        if self._system == "Darwin":
+            _kill_player_process_group(process)
+            try:
+                process.wait(timeout=0.5)
+                return True
+            except Exception:
+                pass
         return False
+
+    def stop(self, *, expected_token: object | None = None) -> bool:
+        """Stop the exact attempt if supplied. False never certifies physical silence."""
+        with self._lock:
+            for launcher in tuple(self._launchers):
+                try:
+                    if launcher.poll() is not None:
+                        self._launchers.discard(launcher)
+                except Exception:
+                    pass  # preserve a launcher whose wait or observer failed
+            current = self._current
+            if (
+                expected_token is not None
+                and current.attempt_token is not expected_token
+            ):
+                return False
+            if current.birth_uncertain or (
+                current.process is not None
+                and not self._reap_current_process(current.process)
+            ):
+                current.state = PlaybackState.BLOCKED
+                logger.warning("File playback retirement has not been confirmed")
+                return False
+            if self._player_name == "mpv" and current.process is not None:
+                try:
+                    self._mpv_socket.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            self._current = AudioPlayerInfo()
+            if current.state in (PlaybackState.IDLE, PlaybackState.HANDED_OFF):
+                return False
+            self._retired_token = current.attempt_token
+            return True
 
     def is_playing(self) -> bool:
         """Check if audio is currently playing"""
         with self._lock:
             return self._current.state == PlaybackState.PLAYING
 
-    def get_state(self) -> PlaybackState:
-        """Get current playback state"""
+    def get_state(self, *, expected_token: object | None = None) -> PlaybackState:
+        """Get current state, returning IDLE for a different attempt."""
         with self._lock:
+            if (
+                expected_token is not None
+                and self._current.attempt_token is not expected_token
+            ):
+                return PlaybackState.IDLE
             return self._current.state
 
     def get_position(self) -> float:
@@ -736,13 +809,6 @@ class SimpleAudioPlayer:
     def cleanup(self) -> None:
         """Clean up resources - call this before app exit."""
         self.stop()
-        # Clean up any remaining resources
-        if hasattr(self, "_mpv_socket") and self._mpv_socket:
-            try:
-                Path(self._mpv_socket).unlink(missing_ok=True)
-            except Exception:
-                pass
-        logger.debug("Audio player cleaned up")
 
 
 # Global player instance
@@ -776,12 +842,19 @@ def play_audio_file(file_path: Path) -> bool:
 class AsyncAudioPlayer:
     """Async wrapper for use in Textual"""
 
-    def __init__(self):
-        self._player = get_audio_player()
+    def __init__(self, player: SimpleAudioPlayer | None = None):
+        self._player = player if player is not None else get_audio_player()
         self._executor = None
+        self._cleanup_task: asyncio.Task[None] | None = None
 
     def _get_executor(self):
-        """Get or create thread pool executor"""
+        """Return the transport executor while it accepts work.
+
+        During cleanup, getters can use asyncio's default executor (None).
+        They only read the underlying player's locked state.
+        """
+        if self._cleanup_task is not None and not self._cleanup_task.done():
+            return None
         if self._executor is None:
             import concurrent.futures
 
@@ -794,27 +867,30 @@ class AsyncAudioPlayer:
 
         return self._executor
 
+    async def _transport(self, operation: Callable[..., bool], *args: object) -> bool:
+        executor = self._get_executor()
+        if executor is None:
+            return False
+        # Keep the caller's Textual context for the Windows handoff notice.
+        return await asyncio.get_running_loop().run_in_executor(
+            executor, copy_context().run, operation, *args
+        )
+
     async def play(self, file_path: Path) -> bool:
         """Play audio file asynchronously"""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(  # caller's context: TASK-39040's toast
-            self._get_executor(), copy_context().run, self._player.play, file_path
-        )
+        return await self._transport(self._player.play, file_path)
 
     async def pause(self) -> bool:
         """Pause playback asynchronously"""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(self._get_executor(), self._player.pause)
+        return await self._transport(self._player.pause)
 
     async def resume(self) -> bool:
         """Resume playback asynchronously"""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(self._get_executor(), self._player.resume)
+        return await self._transport(self._player.resume)
 
     async def stop(self) -> bool:
         """Stop playback asynchronously"""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(self._get_executor(), self._player.stop)
+        return await self._transport(self._player.stop)
 
     async def is_playing(self) -> bool:
         """Check if playing asynchronously"""
@@ -841,32 +917,25 @@ class AsyncAudioPlayer:
         )
 
     async def cleanup(self) -> None:
-        """Clean up resources asynchronously"""
+        """Join the retained native cleanup even if another observer was cancelled."""
+        if self._cleanup_task is None or self._cleanup_task.done():
+            executor = self._get_executor()
+            self._cleanup_task = asyncio.create_task(self._cleanup_executor(executor))
+        await asyncio.shield(self._cleanup_task)
+
+    async def _cleanup_executor(self, executor) -> None:
         try:
-            # Stop any active playback
-            await self.stop()
-
-            # Clean up the underlying player
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(self._get_executor(), self._player.cleanup)
-
-            # Force cleanup any remaining threads
-            if self._executor:
-                try:
-                    # First try graceful shutdown with short timeout
-                    self._executor.shutdown(wait=True, cancel_futures=True)
-                except Exception:
-                    # If that fails, force shutdown
-                    self._executor.shutdown(wait=False)
-                finally:
-                    self._executor = None
-
-            logger.debug("AsyncAudioPlayer cleaned up successfully")
-        except Exception as e:
-            logger.error(f"Error during AsyncAudioPlayer cleanup: {e}")
-            # Force cleanup even on error
-            if self._executor:
-                self._executor.shutdown(wait=False)
+            await asyncio.get_running_loop().run_in_executor(
+                executor, self._player.cleanup
+            )
+        except Exception as exc:
+            logger.warning("Audio player cleanup failed ({})", type(exc).__name__)
+        finally:
+            try:
+                await asyncio.to_thread(
+                    executor.shutdown, wait=True, cancel_futures=True
+                )
+            finally:
                 self._executor = None
 
 

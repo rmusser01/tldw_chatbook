@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import math
-from collections.abc import Mapping
 from numbers import Real
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -27,7 +26,7 @@ import unicodedata
 
 from loguru import logger
 from textual.css.query import NoMatches
-from textual.worker import WorkerCancelled
+from textual.worker import WorkerCancelled, WorkerError
 from textual.widgets import Button, RichLog, Static, TextArea
 
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
@@ -38,6 +37,7 @@ from tldw_chatbook.Widgets.enhanced_file_picker import (
 
 from tldw_chatbook.TTS import STTSGeneratedAudio, STTSPlaygroundResultProjection
 from tldw_chatbook.TTS.playground_types import PROFILE_SAVE_BLOCK_PROVIDER_OPTIONS
+from tldw_chatbook.UI.file_output_attempt import FileOutputSurface
 from tldw_chatbook.Utils.secure_temp_files import secure_delete_file
 
 
@@ -141,7 +141,13 @@ class SpeechPlaybackMixin:
         timer = self._progress_timer_task
         timer_active = timer is not None and not timer.done()
         return bool(
-            worker_active or timer_active or self._active_playback_release is not None
+            worker_active
+            or timer_active
+            or (
+                self._file_output.active is not None
+                and self._file_output.active.run is not None
+                and not self._file_output.active.run.retirement_confirmed
+            )
         )
 
     async def _replace_result_after_playback(
@@ -151,24 +157,35 @@ class SpeechPlaybackMixin:
         """Retire older playback before publishing and optionally playing a result."""
 
         operation_id = artifact.operation_id
+        attempt = self._file_output.latest
+        worker = self._play_worker_task
+        autoplay = self._autoplay_intent
+        newer_play = (
+            autoplay is not None
+            and autoplay[0] == operation_id
+            and attempt is not None
+            and attempt.ticket.serial > autoplay[1].serial
+        )
+        stopping = None if newer_play else self._file_output.stop()
         try:
-            worker = self._play_worker_task
             if worker is not None and not worker.is_finished:
-                worker.cancel()
+                if not newer_play:
+                    worker.cancel()
                 try:
                     await worker.wait()
                 except WorkerCancelled:
                     pass
-                except Exception as error:
-                    logger.debug(
-                        "Prior playback worker retired with {}",
-                        type(error).__name__,
-                    )
                 finally:
                     if self._play_worker_task is worker:
                         self._play_worker_task = None
 
-            if not await self._stop_audio_async():
+            if newer_play:
+                # Keep the newer manual run and its controls until physical retirement.
+                if attempt.run is not None:
+                    retired = asyncio.Event()
+                    attempt.run.on_retired(retired.set)
+                    await retired.wait()
+            elif not await self._finish_stop(attempt, stopping):
                 self.app.notify(
                     "Could not replace the current result while audio is playing",
                     severity="warning",
@@ -203,9 +220,14 @@ class SpeechPlaybackMixin:
         result_hook = getattr(self, "_on_generation_result", None)
         if callable(result_hook):
             result_hook(artifact)
-        preferences = getattr(self, "studio_preferences", None)
-        if getattr(preferences, "auto_play", False) is True:
-            self._play_audio()
+        autoplay = self._autoplay_intent
+        if (
+            autoplay
+            and autoplay[0] == artifact.operation_id
+            and autoplay[1].is_current()
+        ):
+            self._autoplay_intent = None
+            self._play_audio(ticket=autoplay[1])
             self.call_after_refresh(
                 self._focus_current_result_action,
                 "stop-audio-btn",
@@ -228,12 +250,9 @@ class SpeechPlaybackMixin:
         #: cancelled when a new take starts or the pane unmounts.
         self._progress_timer_task: Any = None
         self._play_worker_task: Any = None
-        #: Releases the current artifact's hold; called before replacing it.
-        self._active_playback_release: Callable[[], None] | None = None
-        #: Releases deferred for clips handed to the default app (TASK-39040),
-        #: keyed by the timer that waits out `HAND_OFF_RETENTION_SECONDS`;
-        #: unmount cancels the timers and runs the releases itself.
-        self._hand_off_releases: dict[asyncio.Task, Callable[[], None]] = {}
+        self._file_output = FileOutputSurface()
+        self._autoplay_intent = None
+        self._hand_off_releases: dict[asyncio.TimerHandle, Callable[[], None]] = {}
         #: Result currently waiting for prior playback to stop before delivery.
         self._result_transition_operation_id: str | None = None
         #: A generation retired by an exact profile navigation.
@@ -419,6 +438,13 @@ class SpeechPlaybackMixin:
         stop.disabled = False
         stop.tooltip = "Stop playback"
 
+    def _sync_blocked_transport_actions(self) -> None:
+        self.query_one("#audio-play-btn", Button).disabled = True
+        self.query_one("#pause-audio-btn", Button).disabled = True
+        stop = self.query_one("#stop-audio-btn", Button)
+        stop.disabled = False
+        stop.tooltip = "Retry stopping playback"
+
     @staticmethod
     def _artifact_duration_seconds(
         artifact: STTSPlaygroundResultProjection | None,
@@ -595,428 +621,246 @@ class SpeechPlaybackMixin:
 
         return audio_path, release_once
 
-    def _release_playback_artifact(self) -> None:
-        """Release the artifact retained by the active playback, if any."""
-        release = self._active_playback_release
-        self._active_playback_release = None
-        if release is not None:
-            release()
-
-    def _retain_handed_off_release(self) -> None:
-        """Free the in-app slot but keep the active playback's file for the
-        hand-off bound.
-
-        TASK-39040 fix round 2 (Qodo): the clip went to the default app,
-        which the player cannot see finish. On `854e00b9e3` Stop released
-        the WAV copy (a secure delete) at once, under that app. The release
-        now waits out `HAND_OFF_RETENTION_SECONDS`, or runs at unmount
-        (`_retire_hand_off_retention`).
-        """
+    def _retain_handoff(self, release: Callable[[], None]) -> None:
         from tldw_chatbook.TTS.audio_player import HAND_OFF_RETENTION_SECONDS
 
-        release = self._active_playback_release
-        self._active_playback_release = None
-        if release is None:
+        if not self.is_attached:
+            release()
             return
 
-        def release_once() -> None:
-            nonlocal release
-            pending, release = release, None
-            if pending is not None:
-                pending()
-
-        async def release_after_bound() -> None:
-            await asyncio.sleep(HAND_OFF_RETENTION_SECONDS)
-            release_once()
-
-        # The release is held HERE, not in the task's `finally`: a timer
-        # cancelled before its first step never runs its body at all.
-        timer = asyncio.create_task(release_after_bound())
-        self._hand_off_releases[timer] = release_once
-        timer.add_done_callback(lambda done: self._hand_off_releases.pop(done, None))
-
-    async def _retire_hand_off_retention(self) -> None:
-        """Release every file retained for a hand-off now: the pane's exit
-        is its existing release point."""
-        retained = list(self._hand_off_releases.items())
-        for timer, _release in retained:
-            timer.cancel()
-        if retained:
-            await asyncio.gather(
-                *(timer for timer, _release in retained), return_exceptions=True
-            )
-        for _timer, release in retained:
+        def finish() -> None:
+            self._hand_off_releases.pop(timer, None)
             release()
 
-    def _play_audio(self) -> None:
-        """Play the generated audio"""
-        logger.debug(
-            f"_play_audio called, current_audio_file: {self.current_audio_file}"
+        timer = asyncio.get_running_loop().call_later(
+            HAND_OFF_RETENTION_SECONDS, finish
         )
+        self._hand_off_releases[timer] = release
 
+    def _play_audio(self, *, ticket=None) -> None:
         if self._result_transition_operation_id is not None:
-            logger.debug("Result replacement is stopping prior playback")
             return
-
-        # Check if we're already playing
-        if (
-            hasattr(self, "_play_worker_task")
-            and self._play_worker_task
-            and not self._play_worker_task.is_finished
-        ):
-            logger.debug("Play already in progress, ignoring request")
+        if self._play_worker_task and not self._play_worker_task.is_finished:
             return
-
+        ticket = self.app.audio_output.begin_intent() if ticket is None else ticket
+        if not ticket.is_current():
+            return
+        attempt = self._file_output.begin(self.app, ticket)
+        artifact = self.current_audio_artifact
         captured = self._capture_audio_for_action()
         if captured is None:
             self.app.notify("No audio file to play", severity="warning")
             return
-        audio_path, release_artifact = captured
+        path, release = captured
+        dispatched = False
+        self._sync_active_transport_actions()
+        self.query_one("#audio-player-status", Static).update("Playing current result…")
 
-        logger.debug(
-            f"Audio path: {audio_path}, exists: {audio_path.exists() if audio_path else False}"
+        async def dispatch():
+            nonlocal dispatched
+            dispatched = True
+            await self._play_audio_async(attempt, artifact, path, release)
+
+        def release_undispatched():
+            if not dispatched:
+                release()
+                if self._owns_transport_controls(attempt, artifact):
+                    self._play_worker_task = None
+                    self._restore_idle_transport()
+
+        try:
+            worker = self._play_worker_task = self.run_worker(
+                dispatch, group="stts-playback", exclusive=True
+            )
+        except BaseException:
+            release_undispatched()
+            raise
+
+        # Textual can cancel a queued worker before its coroutine enters.
+        async def observe_dispatch():
+            try:
+                await worker.wait()
+            except WorkerError:
+                pass
+            finally:
+                release_undispatched()
+
+        asyncio.create_task(observe_dispatch())
+
+    def _owns_transport_controls(self, attempt, artifact) -> bool:
+        return (
+            self.is_attached
+            and self._file_output.latest is attempt
+            and self.current_audio_artifact is artifact
         )
 
-        if not audio_path.exists():
-            release_artifact()
-            self.app.notify(
-                f"Audio file not found: {audio_path.name}", severity="warning"
-            )
-            return
+    def _restore_idle_transport(self) -> None:
+        self._sync_idle_transport_actions()
+        self.query_one("#audio-player-status", Static).update(
+            self._current_result_status_copy()
+        )
 
-        if self._ensure_audio_player():
-            # No cancel here (tier-2 review S21). This method is synchronous,
-            # so it could only fire-and-forget `.cancel()` -- and it also
-            # NULLED `_progress_timer_task`, which made the awaited barrier
-            # in `_play_audio_async` below a no-op: the old loop was still
-            # unwinding through its `except CancelledError` reset block,
-            # writing the same three widgets, while the new one started.
-            # `_play_audio_async` retires the old timer properly.
-            self._sync_active_transport_actions()
-            self.query_one("#audio-player-status", Static).update(
-                "Playing current result…"
+    async def _play_audio_async(self, attempt, artifact, path, release) -> None:
+        def current() -> bool:
+            return self._owns_transport_controls(attempt, artifact) and (
+                self.app.screen is self.screen or self._file_output.confirming()
             )
 
-            # Use the new audio player method
-            # Store the worker task so we can check if it's running
-            artifact = self.current_audio_artifact
-            pcm_metadata = (
-                artifact.metadata
-                if artifact is not None and artifact.path == audio_path
-                else None
-            )
-            playback = self._play_audio_async(
-                audio_path, release_artifact, pcm_metadata=pcm_metadata
-            )
-            try:
-                self._play_worker_task = self.run_worker(
-                    playback,
-                    group="stts-playback",
-                    exclusive=True,
-                )
-            except Exception:
-                playback.close()
-                release_artifact()
-                raise
-        else:
-            release_artifact()
-            self.app.notify("Audio playback not available", severity="warning")
-
-    async def _play_audio_async(
-        self,
-        audio_path: Path | None = None,
-        release_artifact: Callable[[], None] | None = None,
-        *,
-        pcm_metadata: Mapping[str, object] | None = None,
-    ) -> None:
-        """Play audio asynchronously using the audio player"""
         try:
-            if audio_path is None:
-                audio_path = self._current_generated_audio_path()
-                artifact = self.current_audio_artifact
-                if artifact is not None and artifact.path == audio_path:
-                    pcm_metadata = artifact.metadata
-            if audio_path is not None:
-                if audio_path.exists():
-                    # Get current player state before stopping
-                    current_state = await self.app.audio_player.get_state()
-                    logger.debug(f"Current player state before play: {current_state}")
+            await self._retire_progress_timer()
+            if not current() or not attempt.ticket.is_current():
+                if self._owns_transport_controls(attempt, artifact):
+                    self._restore_idle_transport()
+                return
+            if path.suffix.lower() == ".pcm":
+                from tldw_chatbook.TTS.pcm_playback import create_pcm16_wav_copy
 
-                    # Always force stop any existing playback first
-                    stop_result = await self.app.audio_player.stop()
-                    logger.debug(f"Stop result: {stop_result}")
-                    self._release_playback_artifact()
-
-                    import asyncio
-
-                    # Retire the OUTGOING progress timer here -- immediately
-                    # after the old player is stopped and its artifact
-                    # released, and before anything of the replacement is
-                    # prepared (Qodo #2813 finding 2). It used to be retired
-                    # only after `play()` succeeded, which left the old loop
-                    # alive across the PCM copy and the play() await; the
-                    # loop releases whatever sits in `_active_playback_release`
-                    # when it sees an idle player, so the only thing keeping
-                    # it off the REPLACEMENT lease was the accident that no
-                    # `await` separated the install below from the retire.
-                    # Retiring first makes the safety structural: no timer
-                    # from the previous playback is alive while the next one
-                    # is being set up, so none can free the new PCM copy.
-                    await self._retire_progress_timer()
-
-                    # Small delay to ensure clean state
-                    await asyncio.sleep(0.2)
-
-                    # Check state after stop
-                    state_after_stop = await self.app.audio_player.get_state()
-                    logger.debug(f"Player state after stop: {state_after_stop}")
-
-                    if audio_path.suffix.lower() == ".pcm":
-                        from tldw_chatbook.TTS.pcm_playback import create_pcm16_wav_copy
-
-                        metadata = pcm_metadata or {}
-                        copy_task = asyncio.create_task(
-                            asyncio.to_thread(
-                                create_pcm16_wav_copy,
-                                audio_path,
-                                metadata.get("sample_rate"),
-                                metadata.get("channels", 1),
-                            )
-                        )
-                        try:
-                            audio_path = await asyncio.shield(copy_task)
-                        except asyncio.CancelledError:
-                            # The source lease outlives its off-thread read.
-                            # Join local artifact I/O before deleting either file.
-                            while not copy_task.done():
-                                try:
-                                    await asyncio.shield(copy_task)
-                                except asyncio.CancelledError:
-                                    continue
-                                except (OSError, ValueError):
-                                    break
-                            if (
-                                not copy_task.cancelled()
-                                and copy_task.exception() is None
-                            ):
-                                secure_delete_file(copy_task.result())
-                            raise
-                        original_release = release_artifact
-                        playback_copy = audio_path
-
-                        def release_copy() -> None:
-                            try:
-                                secure_delete_file(playback_copy)
-                            finally:
-                                if original_release is not None:
-                                    original_release()
-
-                        release_artifact = release_copy
-
-                    # Attempt to play the audio file
-                    logger.info(f"Attempting to play audio file: {audio_path}")
-                    success = await self.app.audio_player.play(audio_path)
-                    logger.debug(f"Play result: {success}")
-
-                    if success:
-                        # Safe to install now: the outgoing timer was retired
-                        # to completion above, before play() was even called,
-                        # so nothing can observe an idle player and release
-                        # this lease out from under the audio that is playing.
-                        self._active_playback_release = release_artifact
-                        release_artifact = None
-
-                        # Start new progress timer
-                        self._progress_timer_task = asyncio.create_task(
-                            self._update_progress_timer()
-                        )
-                        logger.debug("Started new progress timer")
-
-                        # Wait a tiny bit to ensure the player has started
-                        await asyncio.sleep(0.1)
-
-                        # Double-check the player is actually playing
-                        is_playing = await self.app.audio_player.is_playing()
-                        logger.debug(
-                            f"Player is_playing check after start: {is_playing}"
-                        )
-
-                        # Clear the worker task reference as it's now running
-                        self._play_worker_task = None
-                    else:
-                        logger.error("Failed to start playback - play() returned False")
-                        self.app.notify("Failed to start playback", severity="error")
-                        # Reset button states on failure
-                        self._sync_idle_transport_actions()
-                        self.query_one("#audio-player-status", Static).update(
-                            "Playback failed"
-                        )
-                else:
-                    logger.warning(f"Audio file not found: {audio_path}")
-                    self.app.notify(
-                        f"Audio file not found: {audio_path.name}", severity="warning"
+                metadata = artifact.metadata if artifact is not None else {}
+                copy_task = asyncio.create_task(
+                    asyncio.to_thread(
+                        create_pcm16_wav_copy,
+                        path,
+                        metadata.get("sample_rate"),
+                        metadata.get("channels", 1),
                     )
-            else:
-                logger.warning("No audio file to play")
-                self.app.notify("No audio file to play", severity="warning")
-        except Exception as e:
-            logger.opt(exception=True).error(f"Error playing audio: {e}")
-            self.app.notify(f"Playback error: {str(e)}", severity="error")
-            # Reset button states on error
-            self._sync_idle_transport_actions()
-            self.query_one("#audio-player-status", Static).update("Playback error")
+                )
+                try:
+                    path = await asyncio.shield(copy_task)
+                except asyncio.CancelledError:
+                    source_release, release = release, None
+
+                    def finish_copy(task):
+                        try:
+                            if not task.cancelled() and task.exception() is None:
+                                secure_delete_file(task.result())
+                        finally:
+                            source_release()
+
+                    copy_task.add_done_callback(finish_copy)
+                    try:
+                        await asyncio.shield(copy_task)
+                    except (Exception, asyncio.CancelledError):
+                        pass
+                    raise
+                source_release = release
+
+                def release_copy() -> None:
+                    try:
+                        secure_delete_file(path)
+                    finally:
+                        source_release()
+
+                release = release_copy
+            run_release, release = release, None
+            started = await self._file_output.play(
+                attempt,
+                path,
+                "Speech Lab",
+                current,
+                release=run_release,
+                retain_handoff=self._retain_handoff,
+            )
+            if not self._owns_transport_controls(attempt, artifact):
+                return
+            if not started:
+                if not current() or not attempt.ticket.is_current():
+                    if attempt.lease is None or attempt.run.retirement_confirmed:
+                        self._restore_idle_transport()
+                    else:
+                        self._sync_blocked_transport_actions()
+                    return
+                self.app.notify("Failed to start playback", severity="error")
+                blocked = (
+                    attempt.lease is not None and not attempt.run.retirement_confirmed
+                )
+                if blocked:
+                    self._sync_blocked_transport_actions()
+                else:
+                    self._sync_idle_transport_actions()
+                self.query_one("#audio-player-status", Static).update(
+                    "Playback could not be stopped" if blocked else "Playback failed"
+                )
+                return
+            self._progress_timer_task = asyncio.create_task(
+                self._update_progress_timer(attempt)
+            )
+        except Exception as error:
+            if self.is_attached and self._file_output.latest is attempt:
+                self.app.notify(
+                    f"Playback error: {error}", severity="error", markup=False
+                )
+                self._sync_idle_transport_actions()
+                self.query_one("#audio-player-status", Static).update("Playback error")
         finally:
-            if release_artifact is not None:
-                release_artifact()
-
-    def _ensure_audio_player(self) -> bool:
-        """Ensure audio player is initialized (lazy loading)"""
-        if not hasattr(self.app, "audio_player"):
-            try:
-                from tldw_chatbook.TTS.audio_player import AsyncAudioPlayer
-
-                self.app.audio_player = AsyncAudioPlayer()
-                logger.info("Audio player initialized on first use")
-                return True
-            except Exception as e:
-                logger.error(f"Failed to initialize audio player: {e}")
-                self.app.notify("Failed to initialize audio player", severity="error")
-                return False
-        return True
+            if release is not None:
+                release()
+            if self._file_output.latest is attempt:
+                self._play_worker_task = None
 
     def _pause_audio(self) -> None:
-        """Pause audio playback"""
-        logger.debug("_pause_audio called")
-        if self._ensure_audio_player():
-            logger.debug("Audio player available, running pause worker")
+        attempt = self._file_output.latest
+        if attempt and attempt.run is not None:
             self.run_worker(
-                self._pause_audio_async,
-                group="stts-playback",
+                self._pause_audio_async(attempt),
+                group="speech-transport",
                 exclusive=True,
             )
-        else:
-            logger.debug("Audio player not available")
-            self.app.notify("Audio player not available", severity="warning")
 
-    async def _pause_audio_async(self) -> None:
-        """Pause audio playback asynchronously"""
-        try:
-            from tldw_chatbook.TTS.audio_player import PlaybackState
-            import asyncio
+    async def _pause_audio_async(self, attempt) -> None:
+        from tldw_chatbook.TTS.audio_player import PlaybackState
+        from tldw_chatbook.TTS.windows_audio_launch import HAND_OFF_NOTICE
 
-            logger.debug("_pause_audio_async called")
-            # Small delay to ensure UI is ready
-            await asyncio.sleep(0.1)
-
-            state = await self.app.audio_player.get_state()
-            logger.debug(f"Current playback state: {state}")
-            if state == PlaybackState.PLAYING:
-                success = await self.app.audio_player.pause()
-                if success:
-                    # Update button states
-                    self.query_one("#pause-audio-btn", Button).label = "Resume"
-                    self._sync_active_transport_actions()
-                    self.app.notify("Playback paused", severity="information")
-                else:
-                    self.app.notify("Failed to pause playback", severity="warning")
-            elif state == PlaybackState.HANDED_OFF:
-                # TASK-39040: the default app has the clip; the Pause this
-                # app cannot perform is answered with where to pause it.
-                from tldw_chatbook.TTS.windows_audio_launch import HAND_OFF_NOTICE
-
-                self.app.notify(HAND_OFF_NOTICE, severity="warning", markup=False)
-            elif state == PlaybackState.PAUSED:
-                success = await self.app.audio_player.resume()
-                if success:
-                    # Update button states
-                    self.query_one("#pause-audio-btn", Button).label = "Pause"
-                    self._sync_active_transport_actions()
-                    self.app.notify("Playback resumed", severity="information")
-                    # Retire the old timer to completion and restart. This
-                    # site previously cancelled with NO delay at all before
-                    # starting the replacement, so both loops wrote the same
-                    # three widgets while the first unwound.
-                    import asyncio
-
-                    await self._retire_progress_timer()
-                    self._progress_timer_task = asyncio.create_task(
-                        self._update_progress_timer()
-                    )
-                else:
-                    self.app.notify("Failed to resume playback", severity="warning")
-        except Exception as e:
-            logger.error(f"Error toggling pause: {e}")
-            from tldw_chatbook.Utils.input_validation import escape_markup as escape
-
-            self.app.notify(f"Error: {escape(str(e))}", severity="error")
+        run = attempt.run
+        state = await run.get_state()
+        if run.handed_off:
+            self.app.notify(HAND_OFF_NOTICE, severity="warning", markup=False)
+            return
+        if state not in (PlaybackState.PLAYING, PlaybackState.PAUSED):
+            return
+        paused = state is PlaybackState.PLAYING
+        changed = await run.pause() if paused else await run.resume()
+        if changed and self._file_output.latest is attempt and self.is_attached:
+            self.query_one("#pause-audio-btn", Button).label = (
+                "Resume" if paused else "Pause"
+            )
+            self._sync_active_transport_actions()
+            self.app.notify(
+                "Playback paused" if paused else "Playback resumed",
+                severity="information",
+            )
 
     def _stop_audio(self) -> None:
-        """Stop audio playback"""
-        logger.debug("_stop_audio called")
-        if self._ensure_audio_player():
-            logger.debug("Audio player available, running stop worker")
-            self.run_worker(
-                self._stop_audio_async,
-                group="stts-playback",
-                exclusive=True,
-            )
-        else:
-            logger.debug("Audio player not available")
-            self.app.notify("Audio player not available", severity="warning")
+        if self._autoplay_intent:
+            self._autoplay_intent[1].cancel()
+        stopping = self._stop_audio_async()
+        self.run_worker(stopping, group="speech-stop", exclusive=True)
 
-    async def _stop_audio_async(self) -> bool:
-        """Stop audio playback asynchronously and report a safe idle result."""
-        try:
-            logger.debug("_stop_audio_async called")
-            # Retire the progress timer to completion before touching the
-            # transport widgets below -- otherwise the loop's own exit block
-            # repaints them right back.
-            await self._retire_progress_timer()
+    def _stop_audio_async(self):
+        return self._finish_stop(self._file_output.latest, self._file_output.stop())
 
-            from tldw_chatbook.TTS.audio_player import PlaybackState
-
-            # TASK-39040 fix round 2: read before stop(), which frees the slot.
-            handed_off = (
-                await self.app.audio_player.get_state() is PlaybackState.HANDED_OFF
-            )
-            # Force stop any playback
-            success = await self.app.audio_player.stop()
-            logger.debug(f"Stop result: {success}")
-            if handed_off:
-                # The default app is still reading the copy; keep it for the
-                # bound instead of deleting it with the slot.
-                self._retain_handed_off_release()
-            else:
-                self._release_playback_artifact()
-
-            # Always reset button states regardless of success
-            # (audio may have already finished playing)
+    async def _finish_stop(self, attempt, stopping) -> bool:
+        stopped = all(await stopping)
+        if self._file_output.latest is not attempt or not self.is_attached:
+            return stopped
+        await self._retire_progress_timer()
+        if self._file_output.latest is not attempt:
+            return stopped
+        if stopped:
             self._sync_idle_transport_actions()
             self.query_one("#audio-player-transport").add_class("hidden")
+        else:
+            self._sync_blocked_transport_actions()
+        from tldw_chatbook.TTS.windows_audio_launch import HAND_OFF_NOTICE
 
-            if success:
-                self.query_one("#audio-player-status", Static).update(
-                    self._current_result_status_copy()
-                )
-                self.app.notify("Playback stopped", severity="information")
-            elif handed_off:
-                # Truthful: the app could not stop it, and it plays on there.
-                from tldw_chatbook.TTS.windows_audio_launch import HAND_OFF_NOTICE
-
-                self.query_one("#audio-player-status", Static).update(HAND_OFF_NOTICE)
-            else:
-                # Audio already finished or wasn't playing
-                self.query_one("#audio-player-status", Static).update(
-                    self._current_result_status_copy()
-                )
-                logger.debug("Audio may have already finished playing")
-            return True
-        except Exception as e:
-            logger.error(f"Error stopping playback: {e}")
-            from tldw_chatbook.Utils.input_validation import escape_markup as escape
-
-            self.app.notify(f"Error: {escape(str(e))}", severity="error")
-            return False
+        status = (
+            HAND_OFF_NOTICE
+            if attempt and attempt.run and attempt.run.handed_off
+            else self._current_result_status_copy()
+        )
+        self.query_one("#audio-player-status", Static).update(
+            status if stopped else "Playback could not be stopped"
+        )
+        return stopped
 
     def _export_audio(self) -> None:
         """Export the generated audio"""
@@ -1244,8 +1088,6 @@ class SpeechPlaybackMixin:
         result instead of re-raising it here, while a cancellation of the
         CALLER still propagates normally.
         """
-        import asyncio
-
         task = self._progress_timer_task
         self._progress_timer_task = None
         if task is None or task.done():
@@ -1253,22 +1095,34 @@ class SpeechPlaybackMixin:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
 
-    async def _update_progress_timer(self) -> None:
+    async def _update_progress_timer(self, attempt) -> None:
         """Update progress bar during playback"""
-        import asyncio
         from tldw_chatbook.TTS.audio_player import PlaybackState
         from textual.widgets import ProgressBar
 
-        # Ensure audio player exists
-        if not hasattr(self.app, "audio_player"):
-            return
+        run = attempt.run
+
+        def current() -> bool:
+            return self.is_attached and self._file_output.latest is attempt
 
         playback_failed = False
         #: A status the exit block shows instead of the result's own copy.
         exit_status: str | None = None
-        while True:
+        while current():
             try:
-                state = await self.app.audio_player.get_state()
+                state = (
+                    PlaybackState.HANDED_OFF
+                    if run.handed_off
+                    else await run.get_state()
+                )
+                if not current():
+                    return
+                if state is PlaybackState.BLOCKED:
+                    self._sync_blocked_transport_actions()
+                    self.query_one("#audio-player-status", Static).update(
+                        "Playback could not be stopped"
+                    )
+                    return
                 if state == PlaybackState.HANDED_OFF:
                     # TASK-39040 fix round 2 (Qodo): the clip plays in the
                     # default app with no process to end it, so this loop
@@ -1279,15 +1133,16 @@ class SpeechPlaybackMixin:
                     from tldw_chatbook.TTS.windows_audio_launch import HAND_OFF_NOTICE
 
                     exit_status = HAND_OFF_NOTICE
-                    self._retain_handed_off_release()
                     if self._result_transition_operation_id is None:
                         self.query_one("#audio-progress-bar").add_class("hidden")
                         self.query_one("#audio-time-display").add_class("hidden")
                     break
                 if state == PlaybackState.PLAYING:
-                    position = await self.app.audio_player.get_position()
-                    duration = await self.app.audio_player.get_duration()
+                    position = await run.get_position()
+                    duration = await run.get_duration()
 
+                    if not current():
+                        return
                     if duration and duration > 0:
                         # Update progress bar
                         progress_bar = self.query_one(
@@ -1311,7 +1166,6 @@ class SpeechPlaybackMixin:
                     PlaybackState.ERROR,
                 ):
                     playback_failed = state == PlaybackState.ERROR
-                    self._release_playback_artifact()
 
                     if self._result_transition_operation_id is None:
                         # Hide progress elements
@@ -1344,7 +1198,7 @@ class SpeechPlaybackMixin:
 
         # Ensure UI is reset on exit
         try:
-            if self._result_transition_operation_id is None:
+            if current() and self._result_transition_operation_id is None:
                 self._sync_idle_transport_actions()
                 self.query_one("#audio-player-transport").add_class("hidden")
                 self.query_one("#audio-player-status", Static).update(
@@ -1363,6 +1217,9 @@ class SpeechPlaybackMixin:
 
     async def on_unmount(self) -> None:
         """Clean up resources when widget is unmounted"""
+        stopping = self._file_output.stop()
+        if self._autoplay_intent:
+            self._autoplay_intent[1].cancel()
         try:
             invalidate_profile_mount = getattr(
                 self,
@@ -1387,26 +1244,11 @@ class SpeechPlaybackMixin:
             self.app.workers.cancel_group(self, "replace_tts_result_after_playback")
             # Cancel any active progress timer
             await self._retire_progress_timer()
-            # Release any copy kept for a hand-off (TASK-39040): the pane's
-            # exit is its release point, not the bound.
-            await self._retire_hand_off_retention()
-
-            # Cancel any active play worker
-            if (
-                hasattr(self, "_play_worker_task")
-                and self._play_worker_task
-                and not self._play_worker_task.is_finished
-            ):
-                self._play_worker_task.cancel()
-                await asyncio.sleep(0.05)
-
-            # Stop audio playback if active
-            if hasattr(self.app, "audio_player"):
-                await self.app.audio_player.stop()
-                self._release_playback_artifact()
-            else:
-                self._release_playback_artifact()
-
+            await stopping
+            retained, self._hand_off_releases = self._hand_off_releases, {}
+            for timer, release in retained.items():
+                timer.cancel()
+                release()
             logger.debug("Playground cleanup completed")
         except Exception as e:
             logger.error(f"Error during Playground cleanup: {e}")

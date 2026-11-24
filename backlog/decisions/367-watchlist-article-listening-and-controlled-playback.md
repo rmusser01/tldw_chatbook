@@ -135,6 +135,86 @@ therefore passes for the recorded build/route/shape. The portable gate remains
 unqualified. TASK-41177 may begin under this scope; it still must qualify its
 actual adapter and all production ownership transfers before completion.
 
+## Production output contract, 2026-11-23 continuation
+
+The user authorized the controlled adapter, complete production wiring and repair
+of the local pytest bootstrap workflow. This continues TASK-41177 beyond its
+isolated lease increment. Storage, synthesis orchestration and listening UI keep
+their later task boundaries. This record was renumbered from provisional 366 to
+367 after dev reserved 366 for CI; the playback evidence itself is unchanged.
+
+- The app owns one admission service. Issue an exact intent ticket at the play
+  action, before asynchronous preparation/probe or synthesis intended to play.
+  A slow older preparation cannot displace a newer intent. Prepare/validate before
+  physical takeover; exact logical EOF needs no player or replacement lease.
+- Keep lease authority decisions on the app loop and publish retained work before
+  eager callbacks can enter. A one-way thread-safe revocation flag is latched on
+  replacement, exact Stop/release and shutdown. A worker checks it at its spawn
+  commitment point. Already-committed native work stays owned until it returns
+  and its late resource is checked/retired; cancellation never invents absence.
+  A controlled start also checks that the exact lease holds that run's bound
+  retirement callback. Retain each cleanup task by identity while it settles;
+  a retry or confirmation attempt cannot let an earlier waiter grant authority.
+- Controlled preparation binds a full physical-file digest, source-frame bookmark,
+  content/physical frame counts, PCM16 stereo 48 kHz and versioned 250 ms zero
+  padding. Keep a read pin on the exact file and its path ancestry through launch
+  and playback, excluding writes, replacement and ancestor redirection. Reuse the
+  Windows native path layer with a narrow read-sharing pin; preserve its existing
+  default behavior. Recheck private artifact authority on the pinned ancestry.
+  Pin and hash the qualified executable too; no unqualified wrapper is executed.
+  Pathname consumers must use stable physical volume ancestry, or refuse aliases
+  whose DOS-device mapping is outside the retained pins. Check auxiliary handle
+  closes and retain ambiguous process births instead of assuming no child.
+  For this Windows-only controlled command, use a narrow private CreateProcessW
+  launcher with retained PROCESS_INFORMATION and an explicit inherited-handle
+  allowlist. Popen hides the birth result behind potentially raising pipe/thread
+  cleanup, preventing clean rejection from being distinguished from unknown birth.
+  Preserve its argument-list quoting, Unicode environment and checked wait/close
+  behavior; ordinary players keep their existing adapters. Native version probes
+  reject the extended `\\?\Volume{GUID}` executable spelling with error 87 but
+  accept the equivalent `\\.\Volume{GUID}` spelling. Derive that executable
+  spelling only from the pinned physical volume identity; retain full ancestry
+  pins and qualify the actual WAV consumer path independently.
+- Promote only the bounded stdlib progress parser. Keep physical progress distinct
+  from the clamped logical bookmark. Natural completion requires corroborating
+  advancing, current/fresh source clocks into validated padding, plausible elapsed
+  progression and spontaneous checked zero exit, with no Stop/revocation. A last
+  stats sample or exit alone is insufficient. Weak evidence is Uncertain; Stop in
+  padding is Stopped. The actual adapter's classifier must pass native short,
+  near-EOF, resume, EOF and deliberately early-exit controls before activation.
+  Validate adjacent as well as cumulative clock progression. Observe the startup
+  deadline independently of a pending native spawn, revoke further starts on
+  expiry, and keep physical custody until any late birth is checked and retired.
+- Reaping ffplay is separate from endpoint silence. Qualify a bounded post-reap
+  settling policy with actual old-source end versus successor onset, using the
+  production adapter. The candidate 250 ms settling guard was evaluated under
+  the unchanged 1.5 s Stop bound; the adapter measurements below qualify it only
+  for the recorded Windows profile. Runtime
+  retirement combines positive native custody/cleanup and that qualified policy;
+  it is not per-run acoustic measurement or a hard real-time/all-device guarantee.
+  Default Windows routing policy and the tested executable/PCM shape define the
+  first software capability; physical evidence remains scoped to its tested host.
+  Explicit alternate/dummy SDL/device routes stay unsupported.
+- Successful OS delegation, including unproven wmplayer launcher lifetimes and
+  external video opens, records an unresolved in-memory handoff epoch. Before
+  any later in-app output, require explicit user acknowledgement that external
+  playback has stopped. A newer delegation invalidates older acknowledgements;
+  no timer, launcher exit, unmount or artifact deletion clears it. Consecutive
+  explicit external opens keep working and accumulate the epoch. Retain/reap only
+  owned launcher handles; never kill an unrelated user's media application.
+- Lease the entire exact speculative duplex session while its device may render.
+  Takeover retires that session through existing close evidence/quarantine rather
+  than permanently closing the runtime supervisor. Ordinary PCM and media/file
+  adapters must retain uncertain native handles and request checked closes.
+  Native workers and process/stream waits run off the UI loop.
+- Video-only probes do not displace sound. Audible media joins before every launch
+  and seek; checked retirement precedes replacement. The pre-existing Windows
+  inherited-fd audio limitation must refuse before takeover until independently
+  supported; injected orchestration tests are not native video-audio evidence.
+- Approved shutdown closes admission before cancelling producers or tearing down
+  views. Exact cleanup cannot target another app/run, including quick quit and
+  direct unmount. Do not use process-name scans or killall as retirement proof.
+
 ## Windows fixed-tail profile: endpoint qualification passed, portable gate open
 
 The Windows follow-up evaluates **250 ms of local zero PCM appended once to the
@@ -153,8 +233,8 @@ qualification tail oracles.
   sufficient evidence of drain. Stop remains an interruption, not natural EOF.
 - This experiment uses PCM16 stereo at 48 kHz on the recorded Windows build and
   default-render route. It does not qualify other WAV shapes, other output
-  devices, macOS/Linux, or acoustic/listener output. Exact logical-EOF resume and
-  interruption inside padding remain later transport-boundary tests.
+  devices, macOS/Linux, or acoustic/listener output. The TASK-41177 controls below
+  separately test exact logical-EOF resume and interruption inside padding.
 - At the tested shape, padding adds 12,000 frames / 48,000 bytes per file. Apply
   existing physical-file/cache and aggregate-memory bounds to those bytes too.
 
@@ -177,8 +257,8 @@ and 59.5 ms stopped-bookmark error. All started players/capture workers retired.
 
 Those wrapper-based runs lacked reliable timeline evidence for all cases.
 The packet-based follow-up below establishes the Windows endpoint pass.
-The portable gate and macOS/Linux endpoint/listener qualification remain open;
-the profile has not been adopted in application code.
+The portable gate and macOS/Linux endpoint/listener qualification remain open.
+The TASK-41177 adapter below adopts this profile for Windows controlled output.
 
 ## Packet-clock investigation and rerun, 2026-11-23
 
@@ -299,6 +379,54 @@ listener pass. All receipts were retained before removing the isolated
 remote environment. Linux remains unqualified and unsupported for the first
 delivery; the Windows-first amendment defines the revised Task 41176 gate.
 See the updated [evidence report](../../Docs/Testing/watchlist-article-audio-qualification.md).
+
+## Controlled adapter and shared output evidence, 2026-11-24
+
+TASK-41177 implements the Windows retained-WAV adapter and app-owned admission
+boundary. The adapter is separate from ordinary OS file delegation. Its native
+controls and transfers are recorded in the
+[controlled-output report](../../Docs/Testing/watchlist-controlled-audio-qualification.md).
+The canonical 12 controls include seven independently matched Natural runs,
+one-frame remaining transport with waveform fidelity explicitly unqualified,
+exact logical EOF without launch, and startup/active/padding Stop. Saved Resume
+reuses the same file, digest and identity. An owned-process premature zero-exit
+fault truncates the observed source at 199.813 ms of 2,500 ms and returns
+Uncertain, rather than Natural.
+
+The six transfer conditions ran three times each through the actual controlled
+and streaming-PCM adapters. Fifteen independently matched old/new source pairs
+have positive endpoint gaps of 78.317–586.411 ms, beyond the unchanged 40 ms
+combined edge allowance. Three startup cases independently observed a quiet old
+channel. All final matrix rows record positive cleanup and zero channel-isolation
+RMS. This qualifies the 250 ms controlled post-reap settling guard for the
+recorded Windows default-render profile under the existing 1.5 s Stop bound.
+It does not establish a hard real-time bound, per-run acoustic silence, OS-player
+control, other devices or portable controlled playback.
+
+Production callers reserve intent before asynchronous preparation and retain
+exact native run ownership through cancellation. Failed replacement preparation
+preserves healthy output. Realtime keeps its microphone gated until positive
+output retirement; video EOF retains the audible process pair until it drains.
+An external handoff remains unresolved until the exact acknowledgement. These
+paths have guarded targeted tests; synthetic adapter/PCM endpoint transfers and
+mounted acknowledgement tests provide different evidence and are not conflated.
+
+The local `recovery_scope_uncertain` pytest failure was an execution-environment
+admission failure, not a recovery-policy defect. The normal account with a fresh,
+native-verified private home subtree and process-local TEMP/basetemp passes the
+unchanged conftest and real-profile guards. `tools/run_guarded_pytest.py` records
+that targeted workflow; no existing profile, marker or ACL is repaired or bypassed.
+It permits only resolved repository test targets and bounded selectors/reporting
+options, pins the repository pytest configuration and controls inherited pytest
+option/plugin variables. Conflicting storage or conftest inputs never reach a
+child process. Negative or expired controlled retirement publishes blocked
+custody immediately; late positive proof can release only that exact lease.
+The controlled adapter also checks native private permissions before reading.
+New PCM-to-WAV copies set native owner-only permissions on their retained new
+descriptor before writing any header or audio bytes.
+
+Article storage, synthesis/queue orchestration and listening controls remain
+TASK-41178 onward. This output foundation does not close issue #2864.
 
 ## Alternatives
 

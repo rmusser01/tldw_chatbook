@@ -387,6 +387,37 @@ pytest --cov=tldw_chatbook --cov-report=html
 
 ### Common Issues
 
+#### Windows private-profile bootstrap
+
+The normal conftest verifies native path ancestry before admitting a disposable
+profile. On a restricted Windows agent, a drive-root open can fail with
+`recovery_scope_uncertain`. A temporary directory whose ancestors grant another
+account destructive access can instead fail with `shared_writable_parent`.
+Run the explicit affected targets from a normal user terminal with a verified
+private parent, for example:
+
+```powershell
+$env:PYTHONUTF8 = "1"
+python -B tools/run_guarded_pytest.py $env:USERPROFILE Tests/TTS/test_audio_output_ownership.py
+```
+
+The launcher verifies the parent, creates a unique disposable directory for
+TEMP/TMP/TMPDIR and pytest's basetemp, and removes that directory after pytest
+exits. Pass explicit paths below `Tests/`, including individual `::` node IDs.
+It accepts `-k` and `-m` selectors and console reporting options such as
+`--tb=short`, `--show-capture=no`, `-v`, `-ra` and `-W`. It uses the repository
+pytest configuration, normal conftest discovery and real-profile guards.
+The child ignores inherited `PYTEST_ADDOPTS`, `PYTEST_PLUGINS` and
+`PYTEST_DISABLE_PLUGIN_AUTOLOAD` settings.
+It does not repair permissions or modify an existing profile. If native parent
+verification fails, select a genuinely private parent under the normal account.
+
+Mounted tests using `Tests.UI.app_factory._build_test_app` must also follow its
+profile contract: use `bootstrap_profile` only when the test neither saves config
+nor mutates `app.app_config`; otherwise use `private_profile_test`. A per-test
+config redirect after bootstrap can raise `raw_source_selection_changed` even
+when temporary-directory admission succeeded.
+
 #### Import Errors
 ```bash
 # Ensure PYTHONPATH includes project root

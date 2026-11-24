@@ -23,6 +23,7 @@ import functools
 import ntpath
 import os as _os
 import platform
+import re
 import stat as _stat
 import struct
 from pathlib import Path
@@ -249,6 +250,7 @@ class _Native:
             ),
             (self.kernel, "LocalFree", [_P], _P),
             (self.kernel, "GetCurrentProcess", [], _HANDLE),
+            (self.kernel, "GetFinalPathNameByHandleW", [_HANDLE, _P, _U32, _U32], _U32),
             (
                 self.kernel,
                 "GetFileInformationByHandle",
@@ -534,6 +536,7 @@ class _Native:
         directory=False,
         metadata=False,
         extra_access=0,
+        share_mode=_SHARE_ALL,
         _metadata_record=None,
     ):
         access = _READ_CONTROL | _READ_ATTRIBUTES | _SYNCHRONIZE | extra_access
@@ -580,7 +583,7 @@ class _Native:
                 C.byref(status),
                 None,
                 0x80,
-                _SHARE_ALL,
+                share_mode,
                 disposition,
                 options,
                 None,
@@ -691,6 +694,118 @@ class _AdmissionMetadataCloseError(OSError):
     def __init__(self, failed_handles):
         self.failed_handles = tuple(failed_handles)
         super().__init__(errno.EIO, "windows_admission_metadata_not_retired")
+
+
+def _volume_root_name(handle: int) -> str:
+    """Resolve the object actually opened for the DOS root to a volume GUID."""
+    native = _native()
+    buffer = C.create_unicode_buffer(64)  # a volume root needs only 49 characters
+    size = native.check(
+        native.kernel.GetFinalPathNameByHandleW(handle, buffer, len(buffer), 1)
+    )
+    if size >= len(buffer):
+        raise ValueError("physical_volume_root_required")
+    return buffer.value
+
+
+class WindowsReadPin:
+    """Hold a local NTFS file and its full name stable for a pathname consumer."""
+
+    # An ambiguous close must never retry a potentially recycled identifier.
+    # Keep custody even when an admission/readiness caller has gone away.
+    _uncertain_closes: list[object] = []
+
+    def __init__(self):
+        self._handles: list[_AdmissionMetadataHandle] = []
+        self.stream = None
+        self._failed = False
+        self.physical_path: Path | None = None
+
+    def open(self, path: Path) -> None:
+        """Open every component relative to its parent without following links."""
+        if self._handles or self.stream is not None or self._failed:
+            raise RuntimeError("windows_pin_in_use")
+        if (
+            not path.is_absolute()
+            or len(path.drive) != 2
+            or path.drive[1] != ":"
+            or not path.name
+        ):
+            raise ValueError("local_absolute_drive_file_required")
+        parts = [_component(part) for part in path.parts[1:]]
+        native = _native()
+        parent = None
+        for index, name in enumerate(["\\??\\" + path.drive + "\\", *parts]):
+            directory = index < len(parts)
+            record = _AdmissionMetadataHandle(native, path)
+            self._handles.append(record)
+            parent = native.open_handle(
+                name,
+                parent=parent,
+                directory=directory,
+                share_mode=3 if directory else 1,
+                _metadata_record=record,
+            )
+            if index == 0:
+                root = _volume_root_name(parent)
+                if not re.fullmatch(
+                    r"\\\\\?\\Volume\{[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\}\\",
+                    root,
+                    re.IGNORECASE,
+                ):
+                    raise ValueError("physical_volume_root_required")
+                self.physical_path = Path(root + "\\".join(parts))
+        if native.info(parent).attributes & _DIRECTORY:
+            raise ValueError("regular_file_required")
+        fd = native.crt.open_osfhandle(parent, _os.O_RDONLY | _os.O_BINARY)
+        self._handles[-1].handle = None  # ownership transferred to the CRT
+        try:
+            self.stream = _os.fdopen(fd, "rb")
+        except BaseException:
+            try:
+                _os.close(fd)
+            except OSError:
+                self._failed = True
+                self._uncertain_closes.append(fd)
+            raise
+
+    def verify_private(self) -> None:
+        """Validate ownership and ACLs on the retained objects without reopening names."""
+        from . import private_paths
+
+        win = private_paths.os
+        uid = win.geteuid()
+        for record in self._handles[:-1]:
+            info = win._stat_handle(record.handle)
+            if not private_paths._trusted_directory_owner(info, uid) or (
+                info.st_mode & 0o022 and not info.st_mode & _stat.S_ISVTX
+            ):
+                raise PermissionError("untrusted_private_ancestry")
+        info = win.fstat(self.stream.fileno())
+        if (
+            private_paths._classify_private_file_stat(info, expected_uid=uid)
+            or _stat.S_IMODE(info.st_mode) != 0o600
+        ):
+            raise PermissionError("private_file_required")
+
+    def close(self) -> bool:
+        """Close all acquired handles once, retaining uncertain closes."""
+        if self.stream is not None:
+            try:
+                self.stream.close()
+            except OSError:
+                self._failed = True
+                self._uncertain_closes.append(self.stream)
+            self.stream = None
+        while self._handles:
+            record = self._handles.pop()
+            if record.handle is not None:
+                try:
+                    record.native.check(record.native.kernel.CloseHandle(record.handle))
+                except OSError:
+                    self._failed = True
+                    self._uncertain_closes.append(record)
+        return not self._failed
 
 
 class WindowsOS:

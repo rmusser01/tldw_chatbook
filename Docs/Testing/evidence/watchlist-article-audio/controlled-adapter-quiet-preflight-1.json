@@ -1,0 +1,26 @@
+{
+  "baseline_monitor": {
+    "status": "pass",
+    "evidence": "monitored_no_packets",
+    "rms": null,
+    "packet_frames": 0
+  },
+  "capture_configuration": {
+    "actual_buffer_frames": 4800,
+    "requested_buffer_frames": 4800,
+    "device_period_s": 0.01,
+    "qpc_calibration_bracket_s": 6.00004568696022e-07,
+    "qpc_offset_s": -1.00000761449337e-07
+  },
+  "capture_metrics": {
+    "packet_count": 0,
+    "discontinuity_raw_count": 0,
+    "session_origin_discontinuity_count": 0,
+    "discontinuity_count": 0,
+    "timestamp_error_count": 0,
+    "poll_gap_max_s": 0.06171350000659004
+  },
+  "capture_error": null,
+  "capture_reaped": true,
+  "archived_raw_sha256": "8625034adf017f4182d1b6882bda2799e72ebc5c187ecfb562dd054e9a6cede3"
+}

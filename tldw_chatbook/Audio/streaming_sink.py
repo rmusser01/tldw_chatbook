@@ -45,20 +45,14 @@ dedicated per-sink daemon notify thread and delivered to `on_event` from
 there, never from the callback itself. Events that originate from a
 caller thread (`SinkBufferFull` from `feed()`, `SinkStopped` from
 `stop()`, `SinkFailed` from `open()`'s own failure paths) are delivered
-directly, synchronously, on whichever thread called the method -- there
-is no PortAudio-callback-reentrancy risk there.
+directly on a caller thread. An independent Stop caller delivers its logical
+interruption synchronously even during open. The opener itself defers its
+own terminal listener until native startup and checked cleanup have settled.
 
-`stop()` is NON-JOINING: it never waits for the notify thread to finish
-delivering already-queued work (it enqueues the exit sentinel, tears down
-the stream, clears the live-sink registry, and returns -- all fast paths
-bounded only by a lock acquisition and the stream's own `abort()`/
-`close()`). This is deliberate, not an oversight: `stop()` is called from
-listener callbacks (including reentrantly, from the notify thread
-itself) and, via `pump()`'s one-voice displacement, potentially from an
-asyncio event loop thread -- a context that cannot tolerate an unbounded
-block (an `App.call_from_thread` round-trip out of a slow listener would
-otherwise deadlock the loop against the notify thread waiting on it; see
-the streaming-pcm-sink plan's Task-2 review, H2). Callers that need a
+`stop()` does not join the notify thread, so listeners may request it
+reentrantly. Native abort/close may block. Async callers use `retire()`,
+which fences startup, dispatches checked cleanup to a worker, and shields
+that cleanup from a cancelled observer. Callers that need a
 deterministic guarantee that every event has actually reached `on_event`
 (tests, deterministic teardown) should call `settle()` instead, which
 polls with a timeout rather than blocking unboundedly. One consequence of
@@ -109,6 +103,7 @@ import queue
 import threading
 import time
 from collections import deque
+from contextvars import copy_context
 from dataclasses import dataclass, replace
 from importlib.util import find_spec
 from itertools import count
@@ -624,6 +619,47 @@ class _SpeechOutputObserver:
         self.poses.clear()
 
 
+class _SoundDeviceOutput:
+    """Keep custody through a partial sounddevice constructor or failed close."""
+
+    def __init__(self, backend: Any) -> None:
+        self.backend = backend
+        self.stream = backend.OutputStream.__new__(backend.OutputStream)
+        self.handle = None
+        self.started = False
+
+    def open(self, *, callback: Callable, **kwargs: Any) -> None:
+        def device_callback(outdata, frames, timing, status):
+            if callback(outdata, frames, timing, status):
+                raise self.backend.CallbackStop
+
+        try:
+            self.stream.__init__(dtype="int16", callback=device_callback, **kwargs)
+        finally:
+            # Pa_OpenStream can succeed before a later __init__ step raises.
+            # Match native_duplex_stream's handling of the pre-dereference ptr.
+            ffi = self.backend._ffi
+            ptr = getattr(self.stream, "_ptr", ffi.NULL)
+            if ffi.typeof(ptr) == ffi.typeof("PaStream **"):
+                ptr = ptr[0]
+                self.stream._ptr = ptr
+            self.handle = ptr
+
+    def start(self) -> None:
+        self.started = True
+        self.stream.start()
+
+    def abort(self) -> None:
+        if self.started:
+            self.stream.abort(ignore_errors=False)
+
+    def close(self) -> None:
+        if self.handle is None:
+            raise RuntimeError("uncertain PCM stream construction")
+        if self.handle != self.backend._ffi.NULL:
+            self.stream.close(ignore_errors=False)
+
+
 class StreamingPcmSink:
     """Plays a live stream of PCM16 audio chunks with low-latency interruption.
 
@@ -633,7 +669,8 @@ class StreamingPcmSink:
     `close()`/`stop()`/a failure, a new `StreamingPcmSink` must be created
     for further playback.
 
-    All public methods are safe to call from any thread. The audio device
+    Synchronous methods are thread-safe. Call async `retire()` on the
+    owning event loop. The audio device
     callback runs on a backend-owned realtime thread; it communicates
     buffer/state changes with the rest of the instance through a single
     lock, and hands off event delivery and stream teardown to a dedicated
@@ -650,6 +687,7 @@ class StreamingPcmSink:
         stream_factory: Optional[Callable[..., Any]] = None,
         presentation: SpeechPresentation | None = None,
         clock: Callable[[], float] = time.monotonic,
+        start_authority: Callable[[], bool] | None = None,
     ) -> None:
         """Initialize the sink.
 
@@ -673,10 +711,23 @@ class StreamingPcmSink:
             presentation: Optional exact-owner, latest-value speech observation.
             clock: Monotonic clock shared with the observation; defaults to the
                 process clock. Backend timestamp mapping occurs off the callback.
+            start_authority: Optional fast thread-safe grant check for managed
+                playback. Managed sinks do not join the standalone displacement slot.
         """
         self._emit_cb = on_event
         self._blocksize_ms = blocksize_ms
         self._factory = stream_factory
+        self._start_authority = start_authority
+        self._stop_requested = threading.Event()
+        self._open_done = threading.Event()
+        self._open_done.set()
+        self._opener: threading.Thread | None = None
+        self._open_terminal_event: SinkFailed | SinkStopped | None = None
+        self._native_lock = threading.RLock()
+        self._silence_confirmed = False
+        self._quarantined = False
+        self._cannot_retry = False
+        self._retiring: asyncio.Future[bool] | None = None
         self._presentation = presentation
         self._observer: _SpeechOutputObserver | None = None
         self._presentation_lock = threading.Lock()
@@ -713,6 +764,7 @@ class StreamingPcmSink:
         # tests can uniformly probe it.
         self._notify_q: "queue.Queue[Any]" = queue.Queue()
         self._notify_thread: Optional[threading.Thread] = None
+        self._notify_interruption: BaseException | None = None
 
     def _emit(self, event: object) -> None:
         """Fire-and-forget event dispatch that never raises.
@@ -726,25 +778,86 @@ class StreamingPcmSink:
         except Exception:
             logger.opt(exception=True).debug("sink event emit failed")
 
-    def _teardown_stream(self, *, abort: bool = True) -> None:
-        """Close a stream, aborting first for interruption/failure only.
+    def _teardown_stream(self, *, abort: bool = True) -> bool:
+        """Checked worker-side retirement, including an already-committed open."""
+        if not self._open_done.is_set():
+            return False  # open() adopts/cleans its late resource before returning.
+        with self._native_lock:
+            if self._cannot_retry:
+                return False
+            stream = self._stream
+            if stream is None:
+                return True
+            if not abort:
+                self._silence_confirmed = (
+                    True  # Acknowledged natural drain and DAC tail.
+                )
+            if not self._silence_confirmed:
+                try:
+                    stream.abort()
+                    self._silence_confirmed = True
+                except Exception:
+                    logger.warning("PCM stream abort was unconfirmed")
+                except BaseException as interrupted:
+                    self._quarantined = self._cannot_retry = True
+                    try:
+                        stream.close()
+                    except BaseException as close_error:
+                        raise interrupted from close_error
+                    raise
+            try:
+                stream.close()
+            except Exception:
+                # Only retry an alternate backend which positively reports
+                # its handle still open. _SoundDeviceOutput offers no such
+                # receipt: sounddevice may clear _ptr even when close raises.
+                self._quarantined = self._cannot_retry = True
+                try:
+                    self._cannot_retry = getattr(stream, "closed", None) is not False
+                except Exception:
+                    self._cannot_retry = True
+                logger.warning("PCM stream close was unconfirmed")
+                return False
+            except BaseException:
+                # A control-flow interruption can arrive after native close
+                # invalidated the handle. An idempotent retry proves nothing.
+                self._quarantined = self._cannot_retry = True
+                raise
+            if not self._silence_confirmed:
+                self._quarantined = self._cannot_retry = True
+                return False
+            self._quarantined = False
+            self._stream = None
+            return True
 
-        Safe to call from any thread and safe to call more than once (a
-        second call finds `self._stream` already `None` and does nothing).
-        Explicit Stop/failure aborts immediately. Natural completion passes
-        `abort=False` after native acknowledgement and any qualified DAC tail.
-        Never block on `stream.stop()` or discard a pending natural tail.
-        """
+    @property
+    def retirement_confirmed(self) -> bool:
+        """Whether terminal output has checked physical retirement evidence."""
         with self._lock:
-            stream, self._stream = self._stream, None
-        if stream is None:
-            return
+            return (
+                self._state in ("failed", "stopped")
+                and self._open_done.is_set()
+                and self._stream is None
+                and not self._quarantined
+            )
+
+    @property
+    def quarantined(self) -> bool:
+        """Whether construction or native retirement failed without confirmation."""
+        return self._quarantined
+
+    def _can_start(self) -> bool:
+        return not self._stop_requested.is_set() and (
+            self._start_authority is None or self._start_authority()
+        )
+
+    def _teardown_on_notify_thread(self, *, abort: bool = True) -> bool:
+        """Finish queued terminal work before propagating a native interruption."""
         try:
-            if abort:
-                stream.abort()
-            stream.close()
-        except Exception:
-            logger.opt(exception=True).debug("sink stream teardown raised")
+            return self._teardown_stream(abort=abort)
+        except BaseException as interrupted:
+            self._notify_interruption = interrupted
+            return False
 
     def _notify_loop(self) -> None:
         """Drain `self._notify_q`, delivering callback-thread-originated work.
@@ -778,6 +891,12 @@ class StreamingPcmSink:
                     if self._observer is not None:
                         with self._presentation_lock:
                             self._observer.release()
+                    if self._notify_interruption is not None:
+                        interrupted, self._notify_interruption = (
+                            self._notify_interruption,
+                            None,
+                        )
+                        raise interrupted
                     return
                 kind, event = job
                 if kind == "backend_finished":
@@ -788,7 +907,7 @@ class StreamingPcmSink:
                         event = SinkUnderrun(frames=self._underruns)
                         self._underrun_queued = False
                 if kind == "teardown_and_emit":
-                    self._teardown_stream()
+                    self._teardown_on_notify_thread()
                     self._end_presentation()
                     _clear_live_sink(self)
                 if isinstance(event, SinkStarted) and self._observer is not None:
@@ -854,17 +973,29 @@ class StreamingPcmSink:
                         logger.debug(
                             "Native output timing unavailable; using finished acknowledgement"
                         )
-                self._state = "stopped"
-                self._terminal_reason = "drained"
         if unexpected:
             self._fail(
                 "audio backend finished before end of stream", from_callback=True
             )
             return
-        self._teardown_stream(abort=False)
+        if not self._open_done.is_set():
+            return  # The notify loop revisits pending acknowledged drains.
+        closed = self._teardown_on_notify_thread(abort=False)
+        with self._lock:
+            if self._state != "draining":
+                return  # Explicit Stop won.
+            if closed:
+                self._state = "stopped"
+                self._terminal_reason = "drained"
+            else:
+                self._state = "failed"
+                self._terminal_reason = "failed"
+                self._fail_reason = "audio device close unconfirmed"
         self._end_presentation()
         _clear_live_sink(self)
-        self._emit(SinkDrained())
+        self._emit(
+            SinkDrained() if closed else SinkFailed("audio device close unconfirmed")
+        )
         self._notify_q.put_nowait(_NOTIFY_STOP)
 
     def open(self, sample_rate: int, channels: int = 1) -> None:
@@ -907,15 +1038,38 @@ class StreamingPcmSink:
                 rather than raising.
         """
         with self._lock:
-            if self._state != "idle":
+            if self._state != "idle" or not self._open_done.is_set():
                 return
-        # Validated OUTSIDE the lock above (and hence after re-confirming
-        # "idle" there first): `_fail()` below acquires `self._lock`
-        # itself, and `threading.Lock` is not reentrant, so calling it
-        # while still holding the lock would deadlock. Checking "idle"
-        # first means a bad call on an already-open/-failed/-stopped sink
-        # stays the documented no-op instead of clobbering that sink's
-        # real terminal state via `_fail()`.
+            self._open_done.clear()
+            self._opener = threading.current_thread()
+        try:
+            self._open(sample_rate, channels)
+        except Exception as exc:
+            self._fail(f"audio device open failed: {exc}")
+        except BaseException:
+            self._fail("audio device open interrupted")
+            raise
+        finally:
+            # A terminal open owns its late cleanup. A waiting retire joins
+            # the native lock after it observes _open_done.
+            event = None
+            try:
+                with self._native_lock:
+                    with self._lock:
+                        self._open_done.set()
+                        self._opener = None
+                        event, self._open_terminal_event = (
+                            self._open_terminal_event,
+                            None,
+                        )
+                        terminal = self._state in ("failed", "stopped")
+                    if terminal:
+                        self._teardown_stream()
+            finally:
+                if event is not None:
+                    self._publish_forced_terminal(event)
+
+    def _open(self, sample_rate: int, channels: int) -> None:
         if type(sample_rate) is not int or sample_rate <= 0:
             self._fail(f"invalid sample_rate: {sample_rate!r} (must be a positive int)")
             return
@@ -949,38 +1103,42 @@ class StreamingPcmSink:
             except Exception:  # noqa: BLE001 - optional observation cannot fail open.
                 logger.debug("Speech timing observation unavailable")
                 self._observer = None
-        factory = self._factory
-        if factory is None:
+        kwargs = dict(
+            samplerate=sample_rate,
+            channels=channels,
+            blocksize=frames_per_block,
+            callback=self._callback,
+            finished_callback=self._on_stream_finished,
+        )
+        if not self._can_start():
+            self.stop()
+            return
+        if self._factory is None:
             sd = _import_sounddevice()
             if sd is None:
                 self._fail("audio output unavailable (sounddevice not installed)")
                 return
 
-            def factory(**kw):
-                def callback(outdata, frames, timing, status):
-                    if kw["callback"](outdata, frames, timing, status):
-                        raise sd.CallbackStop
-
-                return sd.OutputStream(
-                    samplerate=kw["samplerate"],
-                    channels=kw["channels"],
-                    blocksize=kw["blocksize"],
-                    dtype="int16",
-                    callback=callback,
-                    finished_callback=kw["finished_callback"],
-                )
-
-        try:
-            self._stream = factory(
-                samplerate=sample_rate,
-                channels=channels,
-                blocksize=frames_per_block,
-                callback=self._callback,
-                finished_callback=self._on_stream_finished,
-            )
-            self._stream.start()
-        except Exception as exc:
-            self._fail(f"audio device open failed: {exc}")
+            if not self._can_start():
+                self.stop()
+                return
+            self._stream = _SoundDeviceOutput(sd)
+            self._stream.open(**kwargs)
+        else:
+            try:
+                self._stream = self._factory(**kwargs)
+                if self._stream is None:
+                    raise RuntimeError("PCM stream factory returned no handle")
+            except BaseException:
+                # An opaque factory can acquire a device before raising.
+                self._quarantined = self._cannot_retry = True
+                raise
+        if not self._can_start():
+            self.stop()
+            return
+        self._stream.start()
+        if not self._can_start():
+            self.stop()
             return
         with self._lock:
             finished_during_open = self._backend_finished_seen and self._state == "idle"
@@ -1007,7 +1165,8 @@ class StreamingPcmSink:
         # it means a sink whose stream_factory/`stream.start()` raises (the
         # `self._fail(...)` branches above) never evicts a still-healthy
         # previously-live sink for a voice that never played one sample.
-        _register_live_sink(self)
+        if self._start_authority is None:
+            _register_live_sink(self)
         with self._lock:
             still_open = self._state == "open"
         if not still_open:
@@ -1097,7 +1256,7 @@ class StreamingPcmSink:
             if self._observer is not None:
                 self._observer.end_input()
 
-    def stop(self) -> None:
+    def stop(self) -> bool:
         """Abort playback immediately and discard any buffered audio.
 
         Reaches audible silence within two audio blocks by calling
@@ -1115,11 +1274,11 @@ class StreamingPcmSink:
         somehow still present, defensively. Only the *event* emission is
         gated to "first call to reach a terminal state wins".
 
-        NON-JOINING (fix-round H2): this method never blocks waiting for
-        the notify thread to finish delivering already-queued work -- see
-        the module docstring's thread contract for why. It is therefore
-        safe to call from any context, including an asyncio event loop
-        thread. One consequence: if a `SinkStarted`/`SinkUnderrun` job is
+        Returns True only after checked physical retirement. False covers an
+        in-flight open and an unconfirmed abort/close. Use `retire()` on an
+        event loop to await native cleanup off-thread.
+
+        This method does not join the notify thread. If a `SinkStarted`/`SinkUnderrun` job is
         still queued (not yet delivered) on the notify thread at the
         moment an *unrelated* thread calls `stop()`, that job's delivery
         and this call's `SinkStopped` are no longer guaranteed to arrive
@@ -1130,6 +1289,7 @@ class StreamingPcmSink:
         the strict, deterministic ordering guarantee should call
         `settle()` after `stop()`.
         """
+        self._stop_requested.set()
         with self._lock:
             already_terminal = self._state in ("stopped", "failed")
             if not already_terminal:
@@ -1139,20 +1299,41 @@ class StreamingPcmSink:
             self._buffered_bytes = 0
             self._leftover = b""
             self._leftover_off = 0
-        self._teardown_stream()
-        self._end_presentation()
-        if already_terminal:
-            return
+        try:
+            return self._teardown_stream()
+        finally:
+            if not already_terminal:
+                self._publish_forced_terminal(SinkStopped())
+
+    def _publish_forced_terminal(self, event: SinkStopped | SinkFailed) -> None:
+        """Defer listeners on the opener so they cannot hold its native cleanup."""
+        with self._lock:
+            if self._opener is threading.current_thread():
+                self._open_terminal_event = event
+                return
         _clear_live_sink(self)
-        # Pushed unconditionally -- not gated on self._notify_thread being
-        # published yet (see N1). open() may still be mid-flight, between
-        # its own state flip to "open" and creating/publishing the notify
-        # thread; queuing the sentinel now means that thread, whenever it
-        # does start, finds it waiting and exits immediately instead of
-        # parking on get() forever. Queuing onto a queue nothing will ever
-        # read (open() never reaches "open" at all) is harmless.
         self._notify_q.put(_NOTIFY_STOP)
-        self._emit(SinkStopped())
+        self._end_presentation()
+        self._emit(event)
+
+    async def retire(self) -> bool:
+        """Fence starts and await checked native cleanup off the event loop.
+
+        Cancellation or a caller deadline leaves the exact worker in custody.
+        A later call can retry a failed close of a still-valid native handle.
+        """
+        self._stop_requested.set()
+        if self._retiring is None or self._retiring.done():
+            self._retiring = asyncio.get_running_loop().run_in_executor(
+                None, copy_context().run, self._stop_and_wait
+            )
+        return await asyncio.shield(self._retiring)
+
+    def _stop_and_wait(self) -> bool:
+        self.stop()
+        self._open_done.wait()
+        with self._native_lock:
+            return self.retirement_confirmed
 
     def settle(self, timeout: float = 5.0) -> bool:
         """Block until this sink's notify thread has delivered all queued work.
@@ -1229,10 +1410,10 @@ class StreamingPcmSink:
             self._notify_q.put(("teardown_and_emit", SinkFailed(reason=reason)))
             self._notify_q.put(_NOTIFY_STOP)
             return
-        self._teardown_stream()
-        self._end_presentation()
-        _clear_live_sink(self)
-        self._emit(SinkFailed(reason=reason))
+        try:
+            self._teardown_stream()
+        finally:
+            self._publish_forced_terminal(SinkFailed(reason=reason))
 
     def _callback(self, outdata, frames, _time, _status) -> bool:
         """Device audio callback: fill `outdata` with the next block of audio.
@@ -1584,9 +1765,8 @@ def stop_live_sink() -> None:
     legacy file player. Deliberately calls only the sink's own public
     `stop()` method, never touching a stream directly: `stop()` already
     owns its full teardown (abort, registry clear, event emission) and is
-    non-joining/safe to call from any thread, including the asyncio event
-    loop thread (see `StreamingPcmSink.stop`'s docstring). A no-op when no
-    sink is currently live.
+    synchronous. A no-op when no standalone sink is currently live. Managed
+    callers await the exact sink's `retire()`.
     """
     with _LIVE_SINK_LOCK:
         sink = _LIVE_SINK
@@ -1613,25 +1793,19 @@ _PUMP_SLICE_SECONDS = 1
 _DRAIN_WAIT_MARGIN_SECONDS = 5.0
 
 
-def _ensure_terminal(sink: StreamingPcmSink) -> None:
-    """H1/L9 fix-round: guarantee `sink` has a `terminal_reason`, forcing one if needed.
+async def _abort_sink(sink: StreamingPcmSink) -> None:
+    retire = getattr(sink, "retire", None)
+    if retire is None:
+        # Compatible pump sources may implement the original synchronous API.
+        await asyncio.shield(asyncio.to_thread(sink.stop))
+    else:
+        await retire()
 
-    The overwhelmingly common case is that `sink` is already terminal by
-    the time this is called -- a cheap, side-effect-free read. The one
-    case it is not is a sink `pump` never got to feed at all (still
-    `"idle"`: `open()` was never called, or is still mid-flight on
-    another thread) -- nothing else will ever terminalize that sink, so
-    `pump` does it itself by calling `stop()`. `stop()` on an
-    already-terminal sink is a safe, cheap no-op per the sink's own
-    contract (see `StreamingPcmSink.stop`), so calling it here
-    unconditionally whenever `terminal_reason` is still `None` can never
-    double-fire or race a "real" terminal transition that is genuinely
-    still in flight -- worst case, `pump`'s `stop()` is the one that wins
-    the transition, which is exactly the guarantee this function exists
-    to provide.
-    """
+
+async def _ensure_terminal(sink: StreamingPcmSink) -> None:
+    """Abort a nonterminal sink before relinquishing the chunk source."""
     if sink.terminal_reason is None:
-        sink.stop()
+        await _abort_sink(sink)
 
 
 def _result(sink: StreamingPcmSink, bytes_fed: int) -> PumpResult:
@@ -1771,11 +1945,10 @@ async def pump(
     `pump`'s own bookkeeping about whether *it* called `close()` -- is
     the single source of truth for why it stopped.
 
-    `pump` only ever calls `feed()`/`close()`/`stop()` from its own task,
-    never from a listener registered on the sink. Every one of those
-    calls is now non-blocking (`stop()` no longer joins the sink's notify
-    queue -- see the module docstring's thread contract, fix-round H2),
-    so `pump` never risks stalling the event loop it runs on.
+    Feeding and requesting a graceful drain run on the pump task. Native
+    abort/close for forced retirement runs off the event loop. A stopped
+    outcome describes logical interruption; output admission separately
+    checks the exact sink's physical retirement.
 
     Fix-round N4: `pump` returning does NOT imply the terminal *event*
     (`SinkDrained`/`SinkStopped`/`SinkFailed`) has already reached
@@ -1851,7 +2024,7 @@ async def pump(
             while chunk:
                 state = sink.state
                 if state not in ("open", "draining"):
-                    _ensure_terminal(sink)
+                    await _ensure_terminal(sink)
                     return _result(sink, bytes_fed)
                 if state == "draining":
                     # L10: this sink is already draining -- via someone
@@ -1881,7 +2054,7 @@ async def pump(
         deadline = time.monotonic() + sink.buffered_seconds + _DRAIN_WAIT_MARGIN_SECONDS
         while sink.terminal_reason is None:
             if time.monotonic() >= deadline:
-                sink.stop()
+                await _abort_sink(sink)
                 return PumpResult(
                     outcome="failed",
                     bytes_fed=bytes_fed,
@@ -1891,7 +2064,7 @@ async def pump(
         return _result(sink, bytes_fed)
     except Exception as exc:
         logger.opt(exception=True).debug("pump: chunk source raised")
-        sink.stop()
+        await _abort_sink(sink)
         return PumpResult(outcome="source_error", bytes_fed=bytes_fed, reason=str(exc))
     finally:
         # H1: unconditional terminal-call safety net. Every normal return
@@ -1904,5 +2077,7 @@ async def pump(
         # source is released, so a sink `stop()` forced here can't race a
         # source `aclose()` that might itself synchronously touch the
         # sink (defensive; no known real source does).
-        _ensure_terminal(sink)
-        await _aclose_source(chunks)
+        try:
+            await _ensure_terminal(sink)
+        finally:
+            await _aclose_source(chunks)

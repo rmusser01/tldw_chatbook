@@ -30,6 +30,7 @@ from textual.widgets import Switch
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("exit_kind", ["toggle", "navigation", "suspend", "unmount"])
 async def test_visible_default_factory_selects_attested_private_process(
     monkeypatch, tmp_path, exit_kind

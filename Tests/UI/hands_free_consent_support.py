@@ -52,6 +52,9 @@ async def accept_hands_free_consent(host, pilot, *, timeout: float = 5.0) -> Non
     """
     deadline = time.monotonic() + timeout
     modal = await wait_for_hands_free_consent(host, pilot, timeout=timeout)
+    while not modal.query("#console-auto-speak-consent-confirm"):
+        assert time.monotonic() < deadline, "the Hands-free Enable button never mounted"
+        await pilot.pause(0.02)
     modal.query_one("#console-auto-speak-consent-confirm", Button).press()
     while modal in host.screen_stack:
         assert time.monotonic() < deadline, "the Hands-free consent did not close"

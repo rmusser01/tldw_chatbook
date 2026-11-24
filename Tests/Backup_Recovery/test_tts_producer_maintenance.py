@@ -124,29 +124,45 @@ async def main():
         owner.maintenance_resume()
         lease=await registry.acquire("openai")
         await lease.release()
-    elif case == "legacy_playback":
-        import tldw_chatbook.Event_Handlers.TTS_Events.tts_events as module
-        import tldw_chatbook.TTS.audio_player as audio
-        owner=module.TTSEventHandler()
-        path=Path.home()/"clip.wav";path.write_bytes(b"audio")
-        player=SimpleNamespace(state=audio.PlaybackState.PLAYING)
-        player.get_current_file=lambda:path
-        player.get_state=lambda:player.state
-        audio.get_audio_player=lambda:player
-        module.play_audio_file=lambda p:None
-        owner._audio_files["m"]=path
-        cleanup_entered,cleanup_release=asyncio.Event(),asyncio.Event()
-        async def cleanup(*a,**kw):cleanup_entered.set();await cleanup_release.wait()
-        owner._cleanup_audio_file=cleanup
-        await owner.handle_tts_playback(module.TTSPlaybackEvent("play","m"))
+    elif case in {"legacy_playback", "native"}:
+        from Tests.TTS.test_audio_output_runs import FilePlayer
+        from tldw_chatbook.Event_Handlers.TTS_Events import tts_events as module
+        from tldw_chatbook.TTS import audio_output_runs as runs
+        from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership
+        from tldw_chatbook.TTS.audio_player import PlaybackState
+        owner = module.TTSEventHandler()
+        owner.app = SimpleNamespace(audio_output=AudioOutputOwnership())
+        player = FilePlayer()
+        runs.SimpleAudioPlayer = lambda: player
+        path = Path.home() / "clip.wav"
+        path.write_bytes(b"audio")
+        owner._audio_files["m"] = path
+        if case == "native":
+            runs._RETIRE_TIMEOUT = .01
+            player.release.clear()
+        cleanup_entered, cleanup_release = asyncio.Event(), asyncio.Event()
+
+        async def cleanup(*args, **kwargs):
+            cleanup_entered.set()
+            await cleanup_release.wait()
+
+        owner._cleanup_audio_file = cleanup
+        await owner.handle_tts_playback(module.TTSPlaybackEvent("play", "m"))
+        assert await asyncio.to_thread(player.entered.wait, 2)
         owner.maintenance_close_admission()
-        await cleanup_entered.wait()
         assert not await owner.maintenance_drain(time.monotonic())
-        player.state=audio.PlaybackState.FINISHED
-        await asyncio.sleep(.08)
+        if case == "native":
+            task, = owner._active_tasks
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            assert not await owner.maintenance_drain(time.monotonic())
+            player.release.set()
+        else:
+            player.state = PlaybackState.FINISHED
+        await asyncio.wait_for(cleanup_entered.wait(), 2)
         assert not await owner.maintenance_drain(time.monotonic())
         cleanup_release.set()
-        assert await owner.maintenance_drain(time.monotonic()+1)
+        assert await owner.maintenance_drain(time.monotonic() + 2)
         assert path.exists()
     elif case == "same_tick":
         from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSEventHandler,TTSRequestEvent
@@ -159,25 +175,6 @@ async def main():
         assert not owner.maintenance_ready
         await entered.wait();release.set()
         assert await owner.maintenance_drain(time.monotonic()+1)
-    elif case == "native":
-        import tldw_chatbook.Event_Handlers.TTS_Events.tts_events as module
-        owner=module.TTSEventHandler()
-        entered, release=threading.Event(),threading.Event()
-        def play(*a,**kw):
-            entered.set(); assert release.wait(4); return True
-        module._play_legacy_clip_and_await_completion=play
-        module._TTS_IO_CANCELLATION_JOIN_TIMEOUT_SECONDS=0.01
-        lifecycle=module.TTSPlaybackLifecycle(message_id="m",request_id=1,validator=lambda:True,callback=lambda state:None)
-        task=asyncio.create_task(owner._run_owned_file_playback("m",Path.home()/"a.wav",lifecycle,threading.Event(),threading.Event()))
-        owner._retain_active_task(task)
-        assert await asyncio.to_thread(entered.wait,2)
-        owner.maintenance_close_admission()
-        task.cancel()
-        try: await task
-        except asyncio.CancelledError: pass
-        assert not await owner.maintenance_drain(time.monotonic())
-        release.set()
-        assert await owner.maintenance_drain(time.monotonic()+2)
     elif case == "settings":
         from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import STTSEventHandler
         owner=STTSEventHandler()

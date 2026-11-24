@@ -46,6 +46,9 @@ class _PlayerApp(App[None]):
 
     def __init__(self, player: _ObservedPlayer | None = None) -> None:
         super().__init__()
+        from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership
+
+        self.audio_output = AudioOutputOwnership()
         self.player = player or _ObservedPlayer(PRIVATE_PATH, render_mode="ascii")
         self.action_count = 0
         self.action_seen = Event()
@@ -64,6 +67,62 @@ class _PlayerApp(App[None]):
     def notify(self, message: Any, *args: Any, **kwargs: Any) -> None:
         self.notifications.append(str(message))
         super().notify(message, *args, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_audible_video_loses_seek_and_resume_authority_on_takeover(monkeypatch):
+    from tldw_chatbook.TTS import audio_output_runs
+
+    opened, closed = Event(), Event()
+    transport_calls = []
+
+    class AudiblePipeline(_Pipeline):
+        def start(self, **kwargs):
+            opened.set()
+            return super().start()
+
+        def iter_frames(self, run):
+            closed.wait(5)
+            return iter(())
+
+        def seek(self, *args, **kwargs):
+            transport_calls.append("seek")
+            return super().seek(args[0])
+
+        def resume(self):
+            transport_calls.append("resume")
+
+        def stop(self, **kwargs):
+            closed.set()
+            return True
+
+    monkeypatch.setattr(audio_output_runs, "audio_pipe_supported", lambda: True)
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.video_player_screen.PlayerPipeline", AudiblePipeline
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.video_player_screen.probe_file",
+        lambda _: PlayerProbe(1, 1, 2.0, True),
+    )
+    app = _PlayerApp()
+
+    async def retire():
+        return True
+
+    async with app.run_test() as pilot:
+        try:
+            await _wait(opened)
+            await pilot.pause()
+            assert app.audio_output.owner is not None
+            successor = await app.audio_output.acquire("other", retire)
+            app.player._paused = True
+            app.player.action_toggle_pause()
+            app.player._seek_relative(5)
+            await pilot.pause()
+            assert successor.is_current() and closed.is_set()
+            assert not transport_calls
+        finally:
+            closed.set()
 
 
 class _Pipeline:
@@ -1094,6 +1153,9 @@ class _CoveredPlayerApp(App[None]):
 
     def __init__(self) -> None:
         super().__init__()
+        from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership
+
+        self.audio_output = AudioOutputOwnership()
         self.notifications: list[str] = []
 
     def notify(self, message: Any, *args: Any, **kwargs: Any) -> None:
@@ -1249,3 +1311,46 @@ async def test_a_time_boxed_player_under_a_quit_prompt_closes_once_uncovered(
             assert app.is_running
     finally:
         release.set()
+
+
+@pytest.mark.asyncio
+async def test_frame_eof_preserves_audible_tail_until_pair_exits(monkeypatch):
+    from tldw_chatbook.TTS import audio_output_runs
+
+    eof, tail_finished, stopped = Event(), Event(), Event()
+
+    class TailPipeline(_Pipeline):
+        def start(self, **kwargs):
+            return super().start()
+
+        def iter_frames(self, run):
+            run.eof = True
+            eof.set()
+            return iter(())
+
+        def pair_exited(self, expected_run):
+            assert expected_run is self.runs[0]
+            return tail_finished.is_set()
+
+        def stop(self, **kwargs):
+            stopped.set()
+            return True
+
+    monkeypatch.setattr(audio_output_runs, "audio_pipe_supported", lambda: True)
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.video_player_screen.PlayerPipeline", TailPipeline
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.video_player_screen.probe_file",
+        lambda _: PlayerProbe(1, 1, 2.0, True),
+    )
+    app = _PlayerApp()
+    async with app.run_test() as pilot:
+        await _wait(eof)
+        await pilot.pause()
+        try:
+            assert app.audio_output.owner is not None and not stopped.is_set()
+            tail_finished.set()
+            await _wait(stopped)
+        finally:
+            tail_finished.set()

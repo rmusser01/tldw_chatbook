@@ -47,7 +47,7 @@ from ...Subscriptions.briefing_service import (
 )
 from ...Subscriptions.html_text import strip_control_characters
 from ...Third_Party.textual_fspicker import FileSave
-from ...TTS.audio_player import play_audio_file
+from ..file_output_attempt import FileOutputSurface
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Utils.path_validation import validate_path, validate_path_simple
 from ...Widgets.destination_workbench import DestinationModeStrip
@@ -144,6 +144,7 @@ class ArtifactsScreen(BaseAppScreen):
         self._chatbook_refresh_generation = 0
         self._chatbook_unmounted = True
         self._daily_reports: list[dict[str, Any]] = []
+        self._file_output = FileOutputSurface()
         self._daily_reports_generation = 0
         self._daily_reports_worker: Worker[Any] | None = None
         # Dreams Phase 1: the same refresh trio shape as _daily_reports,
@@ -203,7 +204,12 @@ class ArtifactsScreen(BaseAppScreen):
             self._start_chatbook_refresh()
         self._render_share_banner()
 
+    def on_screen_suspend(self) -> None:
+        if not self._file_output.confirming():
+            self._file_output.stop()
+
     def on_unmount(self) -> None:
+        self._file_output.stop()
         self._chatbook_unmounted = True
         self._chatbook_refresh_generation += 1
         self._release_active_chatbook_claim()
@@ -2029,6 +2035,11 @@ class ArtifactsScreen(BaseAppScreen):
         )
         if report is None or not report.get("has_audio"):
             return
+        attempt = self._file_output.begin(
+            self.app, self.app.audio_output.begin_intent()
+        )
+        source = self.app_instance.subscriptions_db
+        raw = report.get("audio_file_path")
         # TASK-39040: on dev this press trusted the row the refresh cached and
         # played `validate_path_simple`'s UNRESOLVED path, which the player
         # opens against the working directory. Like the Library player, play
@@ -2055,4 +2066,21 @@ class ArtifactsScreen(BaseAppScreen):
                 "This audio file no longer exists on disk.", severity="warning"
             )
             return
-        play_audio_file(path)
+
+        def current() -> bool:
+            return (
+                self.is_attached
+                and (self.app.screen is self or self._file_output.confirming())
+                and self.app_instance.subscriptions_db is source
+                and any(
+                    r.get("id") == briefing_id
+                    and r.get("has_audio")
+                    and r.get("audio_file_path") == raw
+                    for r in self._daily_reports
+                )
+            )
+
+        self.run_worker(
+            self._file_output.play(attempt, path, "Daily report", current),
+            group="artifacts-report-play",
+        )

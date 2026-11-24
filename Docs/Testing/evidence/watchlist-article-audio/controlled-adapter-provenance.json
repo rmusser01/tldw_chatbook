@@ -1,0 +1,236 @@
+{
+  "publication_environment": {
+    "lookup_phase": "publication_time_readonly",
+    "date": "2026-11-24",
+    "platform": "Windows",
+    "os_version": "10.0.19045",
+    "architecture": "AMD64",
+    "python": "3.12.10",
+    "dependencies": {
+      "numpy": "2.2.6",
+      "scipy": "1.15.3",
+      "cffi": "2.1.1",
+      "SoundCard": "0.4.6",
+      "sounddevice": "0.5.6"
+    },
+    "portaudio": [
+      1246976,
+      "PortAudio V19.7.0-devel, revision unknown"
+    ]
+  },
+  "canonical_driver_commit": "f9e16bd94424c2bffc99c2d489a4e7ccd20f37ff",
+  "canonical_driver_blobs_byte_identical_to_capture": true,
+  "canonical_capture_manifest_files": 17,
+  "canonical_git_blob_matches_without_crlf_expansion": 9,
+  "canonical_git_blob_matches_with_crlf_expansion": 8,
+  "recorded_source_revisions": {
+    "81ba625ba0": "81ba625ba08eabf6f927dc3fcb6486e849b345c1",
+    "3bee94eae9": "3bee94eae90eba97c387e1b55c6a75bcfc1a1a1a",
+    "a723890926": "a723890926d4b4abf0a637ec08e21560a8e93f1b",
+    "7567277869": "75672778696283332ad2634d8bc2659f2a2f9e2b"
+  },
+  "publication_snapshot": {
+    "retained_controller_file_sha256": {
+      "windows_controlled_adapter.py": "9eacf1e7ce6039ef417041ea92b3f9bde8f18de3228a3fdedc6d515926453d4a",
+      "windows_output_transfers.py": "d38230563239a901eb6ce871eced1cfb9d7275f2712bcc17b3e02398d63136e5",
+      "windows_early_exit.py": "823a91ec7b7a08faa25a2114d8953ae41f160ff990db00f990924136d57672ce",
+      "guid_executable_probe.py": "a0790b449bfb7554f663af3f4230228a3eb70f03612b31755a0a68e1f9e18214"
+    },
+    "promoted_driver_and_numerical_oracle_file_sha256": {
+      "qualification.py": "0930654c9d650031dc7abc9a37253e033ac7bd41e2b1aa4625daf12fd4a32c4e",
+      "wasapi_packets.py": "5c3581a7dfa0b49ab2c6f3c749b6b265cf5880679687892d17b508dabb6543fc",
+      "pulse_fragments.py": "511f04dc81ceb4e7657fd489e01f32fa2e24c40df07a68cd4f6b2d9dff44ecd2",
+      "controlled_instrument.py": "db2bd27803c5f85443420a5e5338702a59d8e241a729e6092e7f4f27e28f7786",
+      "windows_controlled_adapter.py": "44dc5888e4bf72d17e511636cecfee57047d78e036c9aae8c0e52e5f85bd3649",
+      "windows_output_transfers.py": "aa31d339c9d91e31444e78c739237876b26307b84787b8698f7cea356a63741f",
+      "windows_early_exit.py": "eae354b3794e60139834a3a46599b0718d8a8e47b5ba39db545e525164d7ebf3"
+    },
+    "measured_runtime_file_sha256_at_publication": {
+      "TTS/_controlled_wav_windows.py": "f5e8af72b1bd99459b7c898da003890fee4825b31739ae6c94da7b8a5ad5a56a",
+      "TTS/controlled_wav_playback.py": "9b0bf35ac937b296300cc2c22b4032857a9e29f49cfebb630d968e8b1ec25831",
+      "TTS/controlled_wav_profile.py": "c03b3847f11e36d3bd7aed7d1458cda9d81d5c71a360a96977397eada309c8a8",
+      "TTS/controlled_wav_progress.py": "2c4bb66ed8c802eee1e3647dd7e21ffbbf038b86a1a33aca2132470262a8741a",
+      "TTS/audio_output_ownership.py": "f22aad513f95050d89644cd8a6f54358fba00851323f9155dc1f447b043bc2b0",
+      "TTS/audio_output_runs.py": "02a298cb5b0fa385cb9bef5716daf76f9a5a4a76ddfa9c3bca467a5874bfcfc7",
+      "Audio/streaming_sink.py": "ebbd8d0ed5dee62819378d50f1295822e0373943239244be8b433f4df196be07",
+      "Utils/windows_files.py": "adceaf5229ac05cd838580abd4840451189e7fe8c4ca1972d29a3e01ad61c169",
+      "Utils/private_paths.py": "cb6b8b0032c6087a17c44829d6220bb00da0dca9e7449b2f5671da5f21790203",
+      "Utils/platform_files.py": "964b544917439e2edb1ac5c5a1f0f348705d0988ae31022bc940fdd60da55b91"
+    }
+  },
+  "controller_recorded_events": {
+    "version_probe": {
+      "first_exception_ended_controller_without_explicit_pin_close": true,
+      "repeated_probe": [
+        {
+          "path_form": "extended_volume_guid",
+          "explicit_application_name": false,
+          "winerror": 87
+        },
+        {
+          "path_form": "extended_volume_guid",
+          "explicit_application_name": true,
+          "winerror": 87
+        },
+        {
+          "path_form": "device_volume_guid",
+          "explicit_application_name": false,
+          "exit_code": 0
+        },
+        {
+          "path_form": "device_volume_guid",
+          "explicit_application_name": true,
+          "exit_code": 0
+        },
+        {
+          "path_form": "globalroot_device",
+          "explicit_application_name": false,
+          "winerror": 87
+        },
+        {
+          "path_form": "globalroot_device",
+          "explicit_application_name": true,
+          "winerror": 87
+        }
+      ],
+      "repeated_probe_children_reaped_and_handles_closed": true,
+      "repeated_probe_pin_close_confirmed": true
+    },
+    "controls_2_after_last_persisted_row": {
+      "case": "natural_120ms",
+      "prepare_refused": true,
+      "launched": false,
+      "raw_row_recorded": false
+    },
+    "earlier_prepare_only_refusal": {
+      "exception": "PermissionError",
+      "reason": "private_file_required",
+      "raw_row_recorded": false
+    },
+    "prepare_only_repeat": {
+      "raw_log_sha256": "c92c391889b16b7b0fa7959942df1c1eb4b6061748d5a26e55df22f78d4436b4",
+      "observations": [
+        {
+          "duration": 0.5,
+          "prepared": true,
+          "retired": true
+        },
+        {
+          "duration": 0.12,
+          "prepared": true,
+          "retired": true
+        },
+        {
+          "duration": 0.5,
+          "prepared": true,
+          "retired": true
+        },
+        {
+          "duration": 0.12,
+          "prepared": true,
+          "retired": true
+        },
+        {
+          "duration": 0.5,
+          "prepared": true,
+          "retired": true
+        },
+        {
+          "duration": 0.12,
+          "prepared": true,
+          "retired": true
+        },
+        {
+          "duration": 0.5,
+          "prepared": true,
+          "retired": true
+        },
+        {
+          "duration": 0.12,
+          "prepared": true,
+          "retired": true
+        },
+        {
+          "duration": 0.5,
+          "prepared": true,
+          "retired": true
+        },
+        {
+          "duration": 0.12,
+          "prepared": true,
+          "retired": true
+        },
+        {
+          "duration": 0.5,
+          "prepared": true,
+          "retired": true
+        },
+        {
+          "duration": 0.12,
+          "prepared": true,
+          "retired": true
+        },
+        {
+          "duration": 0.5,
+          "prepared": true,
+          "retired": true
+        },
+        {
+          "duration": 0.12,
+          "prepared": true,
+          "retired": true
+        },
+        {
+          "duration": 0.5,
+          "prepared": true,
+          "retired": true
+        },
+        {
+          "duration": 0.12,
+          "prepared": true,
+          "retired": true
+        },
+        {
+          "duration": 0.5,
+          "prepared": true,
+          "retired": true
+        },
+        {
+          "duration": 0.12,
+          "prepared": true,
+          "retired": true
+        },
+        {
+          "duration": 0.5,
+          "prepared": true,
+          "retired": true
+        },
+        {
+          "duration": 0.12,
+          "prepared": true,
+          "retired": true
+        },
+        {
+          "duration": 0.5,
+          "prepared": true,
+          "retired": true
+        },
+        {
+          "duration": 0.12,
+          "prepared": true,
+          "retired": true
+        },
+        {
+          "duration": 0.5,
+          "prepared": true,
+          "retired": true
+        },
+        {
+          "duration": 0.12,
+          "prepared": true,
+          "retired": true
+        }
+      ]
+    }
+  }
+}

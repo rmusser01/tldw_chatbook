@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import os
 import wave
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
-from tldw_chatbook.Utils.secure_temp_files import (
-    create_secure_temp_file,
-    secure_delete_file,
-)
+from tldw_chatbook.Utils.platform_files import os
+from tldw_chatbook.Utils.secure_temp_files import secure_delete_file
 
 _COPY_BYTES = 64 * 1024
 _PCM16_SAMPLE_WIDTH_BYTES = 2
@@ -53,23 +51,26 @@ def create_pcm16_wav_copy(
             or size % frame_width_bytes
         ):
             raise ValueError("PCM playback requires complete signed 16-bit frames")
-        destination = Path(
-            create_secure_temp_file(b"", suffix=".wav", prefix="tts_pcm_playback_")
+        temporary = NamedTemporaryFile(
+            mode="wb", suffix=".wav", prefix="tts_pcm_playback_", delete=False
         )
+        destination = Path(temporary.name)
         try:
-            with wave.open(str(destination), "wb") as output:
-                output.setnchannels(channels)
-                output.setsampwidth(_PCM16_SAMPLE_WIDTH_BYTES)
-                output.setframerate(sample_rate)
-                remaining = size
-                while remaining:
-                    chunk = raw.read(min(_COPY_BYTES, remaining))
-                    if not chunk:
+            with temporary:
+                os.fchmod(temporary.fileno(), 0o600)
+                with wave.open(temporary, "wb") as output:
+                    output.setnchannels(channels)
+                    output.setsampwidth(_PCM16_SAMPLE_WIDTH_BYTES)
+                    output.setframerate(sample_rate)
+                    remaining = size
+                    while remaining:
+                        chunk = raw.read(min(_COPY_BYTES, remaining))
+                        if not chunk:
+                            raise ValueError("PCM source changed before playback")
+                        output.writeframesraw(chunk)
+                        remaining -= len(chunk)
+                    if raw.read(1):
                         raise ValueError("PCM source changed before playback")
-                    output.writeframesraw(chunk)
-                    remaining -= len(chunk)
-                if raw.read(1):
-                    raise ValueError("PCM source changed before playback")
             return destination
         except BaseException:
             secure_delete_file(destination)
