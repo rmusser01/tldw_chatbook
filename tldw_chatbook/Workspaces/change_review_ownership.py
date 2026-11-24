@@ -280,7 +280,13 @@ class _SnapshotTicket:
             ):
                 return
             self._retired = True
-        with self.activate():
+        with ExitStack() as stack:
+            try:
+                stack.enter_context(self.activate())
+            except Exception:  # noqa: BLE001 -- a refused scope must not keep the slot
+                # A replaced source refuses its storage scope; the original
+                # owner still returns its slot (TASK-41957).
+                stack.enter_context(self.owner.activate())
             self.operation.finish()
         if self.claim is not None:
             # Source/storage exits and availability callbacks inside finish
