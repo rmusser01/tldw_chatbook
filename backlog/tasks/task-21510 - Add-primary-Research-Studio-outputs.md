@@ -1,23 +1,24 @@
 ---
 id: TASK-21510
 title: Add primary Research Studio outputs
-status: To Do
-assignee: []
-created_date: '2026-08-24 05:54'
-updated_date: '2026-08-24 05:54'
+status: In Progress
+assignee:
+- '@codex'
+created_date: 2026-08-24 05:54
+updated_date: 2026-11-24 17:49
 labels:
-  - research
-  - workspace
-  - studio
-  - artifacts
+- research
+- workspace
+- studio
+- artifacts
 dependencies:
-  - TASK-21507
-  - TASK-21508
-  - TASK-21509
+- TASK-21507
+- TASK-21508
+- TASK-21509
 references:
-  - Docs/superpowers/specs/2026-08-23-research-workspace-design.md
-  - Docs/superpowers/plans/2026-08-23-research-workspace-primary-studio.md
-  - backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md
+- Docs/superpowers/specs/2026-08-23-research-workspace-design.md
+- Docs/superpowers/plans/2026-08-23-research-workspace-primary-studio.md
+- backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md
 priority: high
 ---
 

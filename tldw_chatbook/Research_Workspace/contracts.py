@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         ResearchQuickNote,
     )
     from .source_operations import ResearchSourceOperation
+    from .studio_models import ResearchStudioRequest, WorkspaceOutputRef
 
 
 MAX_RESEARCH_SELECTION_IDS = 10_100
@@ -725,3 +726,23 @@ class ResearchWorkspacePort(Protocol):
     async def stop_chat_turn(
         self, ref: QualifiedWorkspaceRef, turn_id: str
     ) -> bool: ...
+
+    async def list_outputs(
+        self, ref: QualifiedWorkspaceRef, *, limit: int = 20, offset: int = 0
+    ) -> BoundedPageResult[WorkspaceOutputRef]: ...
+
+    async def resolve_output(
+        self, output_ref: WorkspaceOutputRef
+    ) -> Mapping[str, object] | None: ...
+
+    async def generate_output(
+        self, request: ResearchStudioRequest, on_chunk: Callable[[str], None], cancel_event: Event
+    ) -> WorkspaceOutputRef: ...
+
+    async def cancel_output(self, ref: QualifiedWorkspaceRef, operation_id: str) -> bool: ...
+
+    async def retry_output(
+        self, ref: QualifiedWorkspaceRef, operation_id: str
+    ) -> WorkspaceOutputRef: ...
+
+    async def export_output(self, output_ref: WorkspaceOutputRef, format: str) -> bytes: ...
