@@ -64,6 +64,7 @@ from Tests.UI.test_console_native_chat_flow import (
     _configure_native_ready_console,
     _sync_console_control_bar_now,
 )
+from Tests.UI.test_console_shell_regions import click_inspect_rail_open
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -413,8 +414,7 @@ async def test_mounted_inspector_semantic_census_matches_actual_right_rail_order
     )
 
     async with make_console_pilot() as pilot:
-        await pilot.click("#console-inspector-rail-open")
-        await pilot.pause()
+        await click_inspect_rail_open(pilot)
         rail = pilot.app.screen.query_one("#console-right-rail")
         rail._inspector_state = exhaustive_state
         await rail.recompose()
@@ -450,8 +450,7 @@ async def test_mounted_inspector_semantic_census_matches_actual_right_rail_order
 @pytest.mark.asyncio
 async def test_new_specialized_sibling_fails_mounted_production_census():
     async with make_console_pilot() as pilot:
-        await pilot.click("#console-inspector-rail-open")
-        await pilot.pause()
+        await click_inspect_rail_open(pilot)
         rail = pilot.app.screen.query_one("#console-right-rail")
         for parent_selector, sibling_id in (
             ("#console-inspector-rail-body", "console-new-specialized-sibling"),
@@ -491,8 +490,7 @@ async def test_agent_fleet_section_lives_in_the_right_rail():
 @pytest.mark.asyncio
 async def test_sources_use_exact_twenty_line_content_ceiling():
     async with make_console_pilot(size=(235, 52)) as pilot:
-        await pilot.click("#console-inspector-rail-open")
-        await pilot.pause()
+        await click_inspect_rail_open(pilot)
         rail = pilot.app.screen.query_one("#console-right-rail")
         section = rail.query_one(
             "#console-bounded-section-sources", ConsoleBoundedSection
@@ -550,12 +548,7 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
     after_demand,
 ):
     async with make_console_pilot(size=(terminal_width, 52)) as pilot:
-        await pilot.click("#console-inspector-rail-open")
-        await _wait_for_right_rail_condition(
-            pilot,
-            lambda: _right_rail_open(pilot),
-            description="the Inspect rail to open after its handle click",
-        )
+        await click_inspect_rail_open(pilot)
         screen = pilot.app.screen
         rail = screen.query_one("#console-right-rail")
         live_root = rail.query_one("#console-live-work-section")
@@ -861,8 +854,7 @@ async def test_rail_recompose_retains_unknown_fingerprint_deduper(monkeypatch):
     )
 
     async with make_console_pilot() as pilot:
-        await pilot.click("#console-inspector-rail-open")
-        await pilot.pause()
+        await click_inspect_rail_open(pilot)
         rail = pilot.app.screen.query_one("#console-right-rail")
         initial = rail._inspector_state
         rail._inspector_state = replace(
@@ -956,8 +948,7 @@ async def test_clicking_open_then_collapse_toggles_visibility_and_persists():
             open_button.region.width - 1,
             open_button.region.height // 2,
         )
-        assert await pilot.click(open_button, offset=far_end)
-        await pilot.pause(0.2)
+        await click_inspect_rail_open(pilot, offset=far_end)
         assert _right_rail_open(pilot) is True
         assert _handle_visible(pilot) is False
 
@@ -997,9 +988,7 @@ async def test_inspector_header_is_one_full_width_collapse_button() -> None:
         await _wait_for_selector(
             pilot.app.screen, pilot, "#console-inspector-rail-open"
         )
-        open_button = pilot.app.screen.query_one("#console-inspector-rail-open", Button)
-        assert await pilot.click(open_button)
-        await pilot.pause(0.2)
+        await click_inspect_rail_open(pilot)
 
         screen = pilot.app.screen
         button = screen.query_one("#console-inspector-rail-collapse", Button)
@@ -1030,8 +1019,7 @@ async def test_inspector_root_pins_project_and_authority_above_outer_body(
     size,
 ) -> None:
     async with make_console_pilot(size=size) as pilot:
-        await pilot.click("#console-inspector-rail-open")
-        await pilot.pause()
+        await click_inspect_rail_open(pilot)
 
         rail = pilot.app.screen.query_one("#console-right-rail")
         assert tuple(child.id for child in rail.children) == (
@@ -1059,8 +1047,7 @@ async def test_control_sync_shares_one_inspector_snapshot_with_both_consumers(
     monkeypatch,
 ) -> None:
     async with make_console_pilot() as pilot:
-        await pilot.click("#console-inspector-rail-open")
-        await pilot.pause()
+        await click_inspect_rail_open(pilot)
 
         screen = pilot.app.screen
         summary = screen.query_one(
@@ -1131,8 +1118,7 @@ async def test_strict_inspector_rejection_keeps_authority_summary_at_prior_snaps
         "tldw_chatbook.Widgets.Console.console_inspector_ownership"
     )
     async with make_console_pilot() as pilot:
-        await pilot.click("#console-inspector-rail-open")
-        await pilot.pause()
+        await click_inspect_rail_open(pilot)
 
         screen = pilot.app.screen
         summary = screen.query_one(
@@ -1161,8 +1147,7 @@ async def test_strict_inspector_rejection_keeps_authority_summary_at_prior_snaps
 @pytest.mark.asyncio
 async def test_authority_focus_f1_discloses_all_five_complete_facts() -> None:
     async with make_console_pilot() as pilot:
-        await pilot.click("#console-inspector-rail-open")
-        await pilot.pause()
+        await click_inspect_rail_open(pilot)
 
         screen = pilot.app.screen
         summary = screen.query_one(
@@ -1185,8 +1170,7 @@ async def test_authority_focus_f1_discloses_all_five_complete_facts() -> None:
 @pytest.mark.asyncio
 async def test_authority_focus_f1_preserves_literal_rich_markup() -> None:
     async with make_console_pilot() as pilot:
-        await pilot.click("#console-inspector-rail-open")
-        await pilot.pause()
+        await click_inspect_rail_open(pilot)
 
         screen = pilot.app.screen
         summary = screen.query_one(
@@ -1217,8 +1201,7 @@ async def test_more_toggle_disappearance_recovers_to_next_inspector_boundary(
     monkeypatch,
 ) -> None:
     async with make_console_pilot() as pilot:
-        await pilot.click("#console-inspector-rail-open")
-        await pilot.pause()
+        await click_inspect_rail_open(pilot)
 
         screen = pilot.app.screen
         rail = screen.query_one("#console-right-rail")
@@ -1275,8 +1258,7 @@ async def test_more_toggle_disappearance_recovers_to_next_inspector_boundary(
 @pytest.mark.asyncio
 async def test_more_disappearance_does_not_steal_newer_context_focus() -> None:
     async with make_console_pilot() as pilot:
-        await pilot.click("#console-inspector-rail-open")
-        await pilot.pause()
+        await click_inspect_rail_open(pilot)
 
         screen = pilot.app.screen
         inspector = screen.query_one(
@@ -1309,8 +1291,7 @@ async def test_more_disappearance_does_not_steal_newer_context_focus() -> None:
 @pytest.mark.asyncio
 async def test_conditional_demotion_does_not_steal_newer_context_focus() -> None:
     async with make_console_pilot() as pilot:
-        await pilot.click("#console-inspector-rail-open")
-        await pilot.pause()
+        await click_inspect_rail_open(pilot)
 
         screen = pilot.app.screen
         inspector = screen.query_one(
@@ -1364,8 +1345,7 @@ async def test_conditional_demotion_does_not_steal_newer_context_focus() -> None
 @pytest.mark.asyncio
 async def test_more_toggle_persists_without_programmatic_repost() -> None:
     async with make_console_pilot() as pilot:
-        await pilot.click("#console-inspector-rail-open")
-        await pilot.pause()
+        await click_inspect_rail_open(pilot)
 
         screen = pilot.app.screen
         body = screen.query_one("#console-inspector-more-body")
@@ -1397,8 +1377,7 @@ async def test_clicking_inspector_header_title_start_collapses_the_rail() -> Non
         await _wait_for_selector(
             pilot.app.screen, pilot, "#console-inspector-rail-open"
         )
-        assert await pilot.click("#console-inspector-rail-open")
-        await pilot.pause(0.2)
+        await click_inspect_rail_open(pilot)
 
         button = pilot.app.screen.query_one("#console-inspector-rail-collapse", Button)
         assert "Inspect" in str(button.label)
@@ -1431,8 +1410,7 @@ async def test_clicking_the_collapse_button_clears_focus():
         await _wait_for_selector(
             pilot.app.screen, pilot, "#console-inspector-rail-open"
         )
-        await pilot.click("#console-inspector-rail-open")
-        await pilot.pause(0.2)
+        await click_inspect_rail_open(pilot)
 
         await pilot.click("#console-inspector-rail-collapse")
         await pilot.pause(0.2)
@@ -1451,8 +1429,7 @@ async def test_context_modal_refresh_factory_keeps_opening_session_after_switch(
             role=ConsoleMessageRole.USER,
             content="captured transcript",
         )
-        await pilot.click("#console-inspector-rail-open")
-        await pilot.pause()
+        await click_inspect_rail_open(pilot)
         await pilot.click("#console-project-instruction-status-button")
         await pilot.pause()
         modal = pilot.app.screen
@@ -1501,8 +1478,7 @@ async def test_context_modal_refresh_factory_keeps_opening_session_after_switch(
 async def test_project_status_remains_visible_in_real_thirty_column_rail(size):
     async with make_console_pilot(size=size) as pilot:
         if not _right_rail_open(pilot):
-            await pilot.click("#console-inspector-rail-open")
-            await pilot.pause()
+            await click_inspect_rail_open(pilot)
         rail = pilot.app.screen.query_one("#console-right-rail")
         rail.styles.width = 30
         rail.styles.min_width = 30
@@ -1623,8 +1599,7 @@ async def test_library_search_sits_with_the_empty_state_that_points_at_it():
     async with make_console_pilot(size=(120, 45)) as pilot:
         screen = pilot.app.screen
         await _wait_for_selector(screen, pilot, "#console-inspector-rail-open")
-        await pilot.click("#console-inspector-rail-open")
-        await pilot.pause(0.3)
+        await click_inspect_rail_open(pilot)
 
         tray = screen.query_one("#console-staged-context-tray")
         search = screen.query_one("#console-library-search-region")
@@ -1669,8 +1644,7 @@ async def test_readiness_card_picks_up_mcp_after_it_connects():
     async with make_console_pilot() as pilot:
         screen = pilot.app.screen
         await _wait_for_selector(screen, pilot, "#console-inspector-rail-open")
-        await pilot.click("#console-inspector-rail-open")
-        await pilot.pause(0.3)
+        await click_inspect_rail_open(pilot)
 
         mcp_row = screen.query_one("#console-live-work-source-mcp", Static)
         assert "Not wired" in str(mcp_row.renderable), str(mcp_row.renderable)
@@ -1715,8 +1689,7 @@ async def test_a_raising_acp_snapshot_cannot_take_down_the_console_sync_tick():
     async with make_console_pilot() as pilot:
         screen = pilot.app.screen
         await _wait_for_selector(screen, pilot, "#console-inspector-rail-open")
-        await pilot.click("#console-inspector-rail-open")
-        await pilot.pause(0.3)
+        await click_inspect_rail_open(pilot)
 
         screen.app_instance.console_mcp_tool_count = 4
         screen._sync_console_live_work_readiness_rows()

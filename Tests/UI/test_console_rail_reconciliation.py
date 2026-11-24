@@ -438,6 +438,7 @@ async def _wait_for_inspector_quiet(
     rail: ConsoleInspectorRail,
     *,
     owner_passes_after: int | None,
+    until: Callable[[], bool] | None = None,
 ) -> None:
     """Wait until the open Inspect rail and the Console's own syncs are quiet.
 
@@ -452,7 +453,10 @@ async def _wait_for_inspector_quiet(
     TASK-42475: attach, Console syncs, the credential read and poll pass,
     config retries and the screen's workers).
 
-    ``owner_passes_after=None`` requires no owner pass.
+    TASK-42463: ``owner_passes_after=None`` requires no owner pass, for a
+    half that asserts none happens. ``until`` is the state the awaited action
+    produces, for an action that leaves the quiet state unchanged until its
+    deferred work starts (TASK-42415's trap).
     """
 
     def pending() -> list[str]:
@@ -464,6 +468,7 @@ async def _wait_for_inspector_quiet(
                 "owner pass",
                 owner_passes_after is not None and passes <= owner_passes_after,
             ),
+            ("awaited state", until is not None and not until()),
         )
         return (
             [name for name, busy in flags if busy]
@@ -1234,9 +1239,15 @@ async def _open_production_inspector(host, pilot) -> ConsoleInspectorRail:
 
     screen = host.screen_stack[-1]
     rail = screen.query_one("#console-right-rail", ConsoleInspectorRail)
+    # TASK-42463: wait for the open (laid out, its reconcile run) and for the
+    # Console's startup syncs, not a fixed settle, so callers that capture the
+    # scheduler or count owner passes start from a quiet rail. An open makes
+    # an owner pass only when it changes an owner, so none is required.
     if not rail.display:
         screen.query_one("#console-inspector-rail-open", Button).press()
-        await _settle(pilot, passes=8)
+    await _wait_for_inspector_quiet(
+        pilot, screen, rail, owner_passes_after=None, until=lambda: rail.region.width > 0
+    )
     assert rail.display
     return rail
 
@@ -1496,8 +1507,12 @@ async def test_inspector_geometry_only_generation_reconciles_without_owner_pass(
         content = Static("geometry-only content", id="geometry-only-outer-demand")
         content.styles.height = 10
         await outer.mount(content)
+        screen = host.screen_stack[-1]
+        requested = inspector._outer_owner_reconcile_count
         inspector.request_outer_reconcile()
-        await _settle(pilot, passes=8)
+        await _wait_for_inspector_quiet(
+            pilot, screen, inspector, owner_passes_after=requested
+        )
         assert hint.display is False
         assert inspector._outer_reconcile_scheduled is False
         fitting_signature = (
@@ -1513,7 +1528,10 @@ async def test_inspector_geometry_only_generation_reconciles_without_owner_pass(
 
         content.styles.height = fitting_signature[1] + 2
         content.refresh(layout=True)
-        await _settle(pilot, passes=8)
+        # No owner pass may run; the layout's own reconcile shows the hint.
+        await _wait_for_inspector_quiet(
+            pilot, screen, inspector, owner_passes_after=None, until=lambda: hint.display
+        )
 
         overflow_signature = (
             max(
@@ -3234,8 +3252,12 @@ async def test_pure_inspector_scroll_never_relayouts_the_rail(
         content = Static("pure scroll content", id="pure-scroll-outer-demand")
         content.styles.height = outer.content_region.height + 8
         await outer.mount(content)
+        screen = host.screen_stack[-1]
+        requested = inspector._outer_owner_reconcile_count
         inspector.request_outer_reconcile()
-        await _settle(pilot, passes=8)
+        await _wait_for_inspector_quiet(
+            pilot, screen, inspector, owner_passes_after=requested
+        )
 
         assert hint.display is True
         assert _shows_outer_hint(hint.renderable)
@@ -3293,7 +3315,13 @@ async def test_pure_inspector_scroll_never_relayouts_the_rail(
         burst = list(observed)
         for _ in range(notches):
             _post_wheel(outer, down=True)
-        await _settle(pilot, passes=8)
+        await _wait_for_inspector_quiet(
+            pilot,
+            screen,
+            inspector,
+            owner_passes_after=None,
+            until=lambda: outer.scroll_y == outer.max_scroll_y,
+        )
         assert outer.scroll_y == outer.max_scroll_y
         assert str(hint.renderable) == ""
         assert observed == burst, (
@@ -3345,9 +3373,13 @@ async def test_inspector_section_collapse_still_runs_the_full_reconcile(
                 id="collapse-probe-content",
             )
         )
+        screen = host.screen_stack[-1]
+        requested = inspector._outer_owner_reconcile_count
         sources.request_reconcile()
         inspector.request_outer_reconcile()
-        await _settle(pilot, passes=10)
+        await _wait_for_inspector_quiet(
+            pilot, screen, inspector, owner_passes_after=requested
+        )
         assert sources.display is True
         assert hint.display is True
         assert inspector._outer_reconcile_scheduled is False
@@ -3358,13 +3390,21 @@ async def test_inspector_section_collapse_still_runs_the_full_reconcile(
         # reconcile request -- the collapse must reach the outer fold through
         # the body's own committed-geometry trigger, exactly as production does.
         sources.display = False
-        await _settle(pilot, passes=10)
+        await _wait_for_inspector_quiet(
+            pilot, screen, inspector, owner_passes_after=None, until=lambda: bool(observed)
+        )
         assert observed, "a section collapse must still take the full reconcile path"
         _assert_outer_fold_contract(inspector, outer, hint)
 
         collapsed_refreshes = len(observed)
         sources.display = True
-        await _settle(pilot, passes=10)
+        await _wait_for_inspector_quiet(
+            pilot,
+            screen,
+            inspector,
+            owner_passes_after=None,
+            until=lambda: len(observed) > collapsed_refreshes,
+        )
         assert len(observed) > collapsed_refreshes, (
             "re-expanding the section must reconcile the outer fold too"
         )
@@ -3423,8 +3463,11 @@ async def test_scroll_cost_probe_still_detects_pre_split_routing(
         content = Static("pre-split routing", id="pre-split-outer-demand")
         content.styles.height = outer.content_region.height + 8
         await outer.mount(content)
+        requested = inspector._outer_owner_reconcile_count
         inspector.request_outer_reconcile()
-        await _settle(pilot, passes=8)
+        await _wait_for_inspector_quiet(
+            pilot, host.screen_stack[-1], inspector, owner_passes_after=requested
+        )
         assert outer.max_scroll_y > 0
         assert inspector._outer_reconcile_scheduled is False
 
