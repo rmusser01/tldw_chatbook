@@ -372,7 +372,7 @@ def test_every_coded_trace_refusal_has_a_send_diagnostic_category() -> None:
     from tldw_chatbook.Chat.console_send_diagnostics import _TRACE_FAILURE_CATEGORIES
 
     raised, unchecked, used, counts = _trace_refusal_codes()
-    assert len(raised) >= 209  # measured 2026-11-23; the scan found the codes
+    assert len(raised) >= 210  # measured 2026-11-24 (dev #3670 added one); the scan found the codes
     assert unchecked == []
     assert used == set(_UNCODED_TRACE_VALUE_ERRORS)
     assert counts == _UNCODED_TRACE_RAISE_COUNTS

@@ -56,7 +56,7 @@ The set is code-owned on purpose (its comment, line 20: never derive a token fro
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-The send diagnostic now names every code-shaped refusal that a `Chat/console_trace_*.py` module raises: 209 codes from 22 modules. A reservation refusal logs as `exception_type=TraceReservationRefused error_category=<code>`.
+The send diagnostic now names every code-shaped refusal that a `Chat/console_trace_*.py` module raises: 210 codes from 22 modules (209 when written; dev's #3670 added `replacement_chain_link_inactive`). A reservation refusal logs as `exception_type=TraceReservationRefused error_category=<code>`.
 
 **Approach.**
 - *The set.* `_TRACE_FAILURE_CATEGORIES` (`Chat/console_send_diagnostics.py`) stays an exact list written by hand, because the module's rule is never to make a token from error text. It holds:
@@ -68,7 +68,7 @@ The send diagnostic now names every code-shaped refusal that a `Chat/console_tra
   - fails when a row is no longer used by any raise (the used rows must equal the table);
   - counts the raises that carry no code against pinned totals in `_UNCODED_TRACE_RAISE_COUNTS`: 9 formatted messages, 45 prose sites (42 distinct messages), 2 argument-less raises. A new one fails until it is reviewed;
   - accepts the `or` form only as `<Name> or "<literal>"`;
-  - fails below a floor of 209 codes, the count measured on 2026-11-23, so a scan that finds nothing cannot pass.
+  - fails below a floor of 210 codes, the count measured on 2026-11-24, so a scan that finds nothing cannot pass.
 
   I chose a test-time derivation over a runtime one: parsing the modules at runtime would cost every first failure, and matching a regex would make tokens from text.
 - *The cause walk.* It stops at the first exception that names a trace refusal: a `TraceReservationRefused` or `TraceSurfaceChangeRefused` (always), or a plain `ValueError` whose argument is a known code. Before, it went on to the innermost exception. A typed refusal's argument is logged only when it is a known code; any other argument logs `validation` (AC#4). The code is now held in `trace_code`, so the name `code` is used only for the sqlite error code (review M3).
