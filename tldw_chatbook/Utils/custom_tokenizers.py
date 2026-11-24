@@ -433,7 +433,7 @@ class CustomTokenizerManager:
 
             with acquire_storage(Path(self.tokenizers_dir)):
                 self._create_directory()
-            shutil.copy2(source, dest_path)
+                shutil.copy2(source, dest_path)
             logger.info(f"Installed tokenizer: {name}")
 
             # Clear cache to reload

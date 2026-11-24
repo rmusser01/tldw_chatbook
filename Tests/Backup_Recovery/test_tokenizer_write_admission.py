@@ -39,6 +39,37 @@ elif case == 'paused':
         assert owner._model_mappings == {}
         assert not (Path(owner.tokenizers_dir)/'mappings.json').exists()
     finally: pause.resume()
+elif case == 'install':
+    # TASK-34100.16.1 review: the tokenizer copy runs under the same lease
+    # that creates the folder, so a backup's pause waits for it.
+    import shutil
+    module.TOKENIZERS_AVAILABLE = False  # the copy is under test, not parsing
+    source = Path.home()/'source-tokenizer.json'
+    source.write_text('{}')
+    entered, release = threading.Event(), threading.Event()
+    original_copy = shutil.copy2
+    def copy2(*args, **kwargs):
+        entered.set()
+        assert release.wait(3)
+        return original_copy(*args, **kwargs)
+    shutil.copy2 = copy2
+    results = []
+    worker = threading.Thread(
+        target=lambda: results.append(owner.install_tokenizer(str(source), 'held'))
+    )
+    worker.start()
+    pause = None
+    try:
+        assert entered.wait(3)
+        pause = storage._begin_local_pause()
+        assert not pause.drain(time.monotonic()), 'tokenizer copy escaped native census'
+    finally:
+        release.set()
+        worker.join(4)
+        shutil.copy2 = original_copy
+        if pause is not None: pause.resume()
+    assert results == [True], results
+    assert (Path(owner.tokenizers_dir)/'held.json').read_text() == '{}'
 else:
     entered, release = threading.Event(), threading.Event()
     original = module.json.dump
@@ -85,6 +116,8 @@ print('retired and reopened')
 '''
 
 
-@pytest.mark.parametrize("case", ["paused", "writer", "failure", "nested", "constructor"])
+@pytest.mark.parametrize(
+    "case", ["paused", "writer", "failure", "nested", "constructor", "install"]
+)
 def test_tokenizer_write_admission(tmp_path, case):
     _run(tmp_path, case, "success", script=_SCRIPT)
