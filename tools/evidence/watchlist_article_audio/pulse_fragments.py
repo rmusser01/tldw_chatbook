@@ -117,6 +117,7 @@ def _operation(ffi, api, pulse, start):
 
 # libpulse def.h subscription event types for the sink-input facility.
 SINK_INPUT = 2
+PA_INVALID_INDEX = 0xFFFFFFFF
 NEW = 0
 CHANGE = 0x10
 REMOVE = 0x20
@@ -148,15 +149,24 @@ class PlayerRouteHistory:
         owned = [event for event in self.events if event.index in indexes]
         observations = [event for event in owned if event.kind != REMOVE]
         if any(
-            event.pid == target and event.sink != sink_index for event in observations
+            event.pid == target
+            and event.sink not in (None, PA_INVALID_INDEX, sink_index)
+            for event in observations
         ):
             return "pulse_player_route_changed"
         if (
             owned[0].kind != NEW
             or owned[-1].kind != REMOVE
             or any(event.kind != CHANGE for event in owned[1:-1])
+            or not any(event.sink == sink_index for event in observations)
             or any(
-                not event.complete or event.superseded or event.pid != target
+                not event.complete
+                or event.superseded
+                or event.pid != target
+                or (
+                    event.sink != sink_index
+                    and not (event.kind == NEW and event.sink == PA_INVALID_INDEX)
+                )
                 for event in observations
             )
         ):

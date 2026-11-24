@@ -1026,18 +1026,36 @@ def run_case(
             )
             if stop_at is not None:
                 result["engine_quiet_samples"] = quiet_suffix
-            if result["player_route"] != "verified":
-                result["reason"] = result["player_route"]
-                return result
+            end_observed = False
             if measurement is not None:
                 quiet_frames = (
                     result["capture_end_frame"] - measurement["capture_end_frame"]
                 )
-                result["source_end_boundary"] = (
-                    "pass"
-                    if quiet_frames >= quiet_suffix["frames"]
+                end_observed = (
+                    quiet_frames >= quiet_suffix["frames"]
                     and quiet_suffix["status"] == "pass"
-                    else "unqualified"
+                )
+            if result["player_route"] != "verified":
+                diagnostic = {
+                    "attribution": "unattributed",
+                    "matcher_stage": final_metrics["stage"],
+                    "end_boundary": "observed" if end_observed else "censored",
+                }
+                if measurement is not None:
+                    for key in (
+                        "start_source_s",
+                        "end_source_s",
+                        "early_score",
+                        "tail_score",
+                        "alignment_drift_s",
+                    ):
+                        diagnostic[key] = measurement[key]
+                result["diagnostics"]["unattributed_source_match"] = diagnostic
+                result["reason"] = result["player_route"]
+                return result
+            if measurement is not None:
+                result["source_end_boundary"] = (
+                    "pass" if end_observed else "unqualified"
                 )
         elif packet_mode:
             result.update(
