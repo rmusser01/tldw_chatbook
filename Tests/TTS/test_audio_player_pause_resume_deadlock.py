@@ -22,6 +22,7 @@ spawn could happen, and the pause test needs no process at all.
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from unittest.mock import MagicMock
@@ -134,6 +135,9 @@ def test_pause_on_no_native_pause_player_returns_promptly(tmp_path):
 
 def test_resume_on_no_native_pause_player_returns_promptly(tmp_path, monkeypatch):
     """resume() on afplay re-enters the lock via play() -> stop()."""
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.audio_player._AFPLAY_EXECUTABLE", sys.executable
+    )
     player = _no_native_pause_player()
     clip = tmp_path / "clip.wav"
     clip.write_bytes(b"fake audio data")
@@ -173,6 +177,9 @@ def test_pause_then_resume_cycle_on_no_native_pause_player(tmp_path, monkeypatch
     resume -- exactly what a live playback that resumed from restart
     needs.
     """
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.audio_player._AFPLAY_EXECUTABLE", sys.executable
+    )
     player = _no_native_pause_player()
     clip = tmp_path / "clip.wav"
     clip.write_bytes(b"fake audio data")

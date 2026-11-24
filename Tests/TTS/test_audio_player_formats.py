@@ -11,8 +11,10 @@ the format-aware selection contract.
 All tests are deterministic on any host OS: `platform.system` and
 `shutil.which` are monkeypatched inside `tldw_chatbook.TTS.audio_player`.
 """
+
 from __future__ import annotations
 
+import sys
 from unittest.mock import MagicMock
 
 import pytest
@@ -26,7 +28,7 @@ def _linux(monkeypatch: pytest.MonkeyPatch, available: set[str]) -> None:
     monkeypatch.setattr(
         audio_player.shutil,
         "which",
-        lambda name: f"/usr/bin/{name}" if name in available else None,
+        lambda name: sys.executable if name in available else None,
     )
 
 

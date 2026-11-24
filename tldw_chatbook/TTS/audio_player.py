@@ -39,6 +39,7 @@ _ALL_FILE_FORMATS: frozenset[str] = frozenset(
     {"mp3", "opus", "ogg", "aac", "flac", "wav"}
 )
 _AFPLAY_FORMATS: frozenset[str] = frozenset({"mp3", "aac", "flac", "wav"})
+_AFPLAY_EXECUTABLE = "/usr/bin/afplay"
 
 #: Linux player catalogue, in preference order: (name, base command,
 #: supports native pause, definitely-decodable formats).
@@ -200,6 +201,13 @@ class FilePlaybackPlan:
         except (ValueError, OSError):
             return False
 
+    def executable_available(self) -> bool:
+        """Check the selected executable without searching for another player."""
+        if self.name == "startfile":
+            return True
+        executable = self.argv[0]
+        return os.path.isfile(executable) and os.access(executable, os.X_OK)
+
 
 def _kill_player_process_group(process: "subprocess.Popen | None") -> None:
     """SIGKILL a wedged player's process group -- never the app's own.
@@ -276,20 +284,27 @@ class SimpleAudioPlayer:
             return "windows", ["windows"], False
         if self._system == "Darwin":
             if audio_format is None or audio_format in _AFPLAY_FORMATS:
-                return "afplay", ["/usr/bin/afplay"], False
+                return "afplay", [_AFPLAY_EXECUTABLE], False
             ffplay = shutil.which("ffplay")
             if ffplay:
                 return (
                     "ffplay",
-                    [ffplay, "-nodisp", "-autoexit", "-loglevel", "error"],
+                    [
+                        os.path.abspath(ffplay),
+                        "-nodisp",
+                        "-autoexit",
+                        "-loglevel",
+                        "error",
+                    ],
                     False,
                 )
         if self._system == "Linux":
             for name, cmd, supports_pause, formats in _LINUX_PLAYER_CATALOGUE:
-                if (audio_format is None or audio_format in formats) and shutil.which(
-                    name
-                ):
-                    return name, cmd.copy(), supports_pause
+                if audio_format is not None and audio_format not in formats:
+                    continue
+                executable = shutil.which(name)
+                if executable:
+                    return name, [os.path.abspath(executable), *cmd[1:]], supports_pause
         return None, [], False
 
     def prepare(self, file_path: Path) -> FilePlaybackPlan | None:
@@ -318,9 +333,10 @@ class SimpleAudioPlayer:
                 if name == "mpv":
                     cmd[-1] = f"--input-ipc-server={self._mpv_socket}"
                 cmd.append(str(file_path))
-            return FilePlaybackPlan(
+            plan = FilePlaybackPlan(
                 file_path, identity, name, tuple(cmd), supports_pause
             )
+            return plan if plan.executable_available() else None
         except (ValueError, OSError):
             return None
 
@@ -347,7 +363,7 @@ class SimpleAudioPlayer:
         """Commit a prepared route on a worker. Accepted external launches return True."""
         token = attempt_token if attempt_token is not None else object()
         with self._lock:
-            if not plan.matches_file():
+            if not plan.matches_file() or not plan.executable_available():
                 return False
             if start_authority is not None and not start_authority():
                 return False
@@ -373,8 +389,13 @@ class SimpleAudioPlayer:
                 if plan.name == "startfile":
                     from .windows_audio_launch import hand_off
 
+                    def can_open() -> bool:
+                        return plan.matches_file() and (
+                            start_authority is None or start_authority()
+                        )
+
                     if not hand_off(
-                        plan.file_path, start_authority=start_authority, notify=False
+                        plan.file_path, start_authority=can_open, notify=False
                     ):
                         return False
                 else:
@@ -419,8 +440,13 @@ class SimpleAudioPlayer:
                     "Could not start or observe file player ({})", type(exc).__name__
                 )
                 if current.state is not PlaybackState.HANDED_OFF:
-                    if current.process is not None:
-                        self.stop(expected_token=token)
+                    if current.process is not None and not self.stop(
+                        expected_token=token
+                    ):
+                        return False  # retain BLOCKED and its unconfirmed child
+                    self._current = AudioPlayerInfo(
+                        state=PlaybackState.ERROR, attempt_token=token
+                    )
                     return False
 
         # This may synchronously marshal a toast to Textual. Release the player
@@ -788,6 +814,7 @@ class AsyncAudioPlayer:
     def __init__(self, player: SimpleAudioPlayer | None = None):
         self._player = player if player is not None else get_audio_player()
         self._executor = None
+        self._cleanup_task: asyncio.Task[None] | None = None
 
     def _get_executor(self):
         """Get or create thread pool executor"""
@@ -850,8 +877,13 @@ class AsyncAudioPlayer:
         )
 
     async def cleanup(self) -> None:
-        """Clean up resources asynchronously"""
-        executor = self._get_executor()
+        """Join the retained native cleanup even if another observer was cancelled."""
+        if self._cleanup_task is None or self._cleanup_task.done():
+            executor = self._get_executor()
+            self._cleanup_task = asyncio.create_task(self._cleanup_executor(executor))
+        await asyncio.shield(self._cleanup_task)
+
+    async def _cleanup_executor(self, executor) -> None:
         try:
             await asyncio.get_running_loop().run_in_executor(
                 executor, self._player.cleanup
