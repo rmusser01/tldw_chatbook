@@ -477,6 +477,54 @@ def test_failed_owned_spawn_records_exact_error_attempt(linux, monkeypatch):
     assert player.get_state(expected_token=object()) is PlaybackState.IDLE
 
 
+def test_native_retirement_receipt_requires_exact_preflight_or_reaped_child(
+    linux, monkeypatch
+):
+    player, path = linux
+    plan = player.prepare(path)
+    old, new = object(), object()
+    assert not player.play_prepared(
+        plan, attempt_token=old, start_authority=lambda: False
+    )
+    assert player.retirement_confirmed(expected_token=old)
+    assert not player.retirement_confirmed(expected_token=new)
+    child = Child(resistant=True)
+    monkeypatch.setattr(audio_player.subprocess, "Popen", lambda *a, **kw: child)
+    try:
+        assert player.play_prepared(plan, attempt_token=old)
+        assert not player.retirement_confirmed(expected_token=old)
+        assert not player.stop(expected_token=old)
+        assert not player.retirement_confirmed(expected_token=old)
+    finally:
+        child.exited.set()
+    assert player.stop(expected_token=old)
+    assert not player.stop(expected_token=old)
+    assert player.retirement_confirmed(expected_token=old)
+
+
+@pytest.mark.parametrize("missing_handle", [False, True])
+def test_opaque_process_constructor_failure_never_issues_clean_receipt(
+    linux, monkeypatch, missing_handle
+):
+    player, path = linux
+    token = object()
+    calls = []
+
+    def opaque(*args, **kwargs):
+        calls.append("entered native launch")
+        if missing_handle:
+            return None
+        raise OSError("constructor failed after dispatch")
+
+    monkeypatch.setattr(audio_player.subprocess, "Popen", opaque)
+    assert not player.play(path, attempt_token=token)
+    assert player.get_state(expected_token=token) is PlaybackState.ERROR
+    assert not player.stop(expected_token=token)
+    assert not player.retirement_confirmed(expected_token=token)
+    assert not player.play(path, attempt_token=object())
+    assert calls == ["entered native launch"]
+
+
 @pytest.mark.parametrize("cancel_observer", [True, False])
 async def test_queued_cleanup_survives_cancellation_and_joins_once(
     linux, monkeypatch, cancel_observer

@@ -171,6 +171,7 @@ class AudioPlayerInfo:
     attempt_token: object | None = None
     start_authority: Callable[[], bool] | None = None
     plan: "FilePlaybackPlan | None" = None
+    birth_uncertain: bool = False
 
 
 def _file_identity(path: Path) -> tuple[int, int, int, int] | None:
@@ -237,9 +238,7 @@ def _kill_player_process_group(process: "subprocess.Popen | None") -> None:
         logger.debug(f"Failed to resolve player process group: {exc}")
         return
     if pgid <= 0 or pgid == os.getpgrp():
-        logger.warning(
-            f"Refusing to SIGKILL process group {pgid}: it is the app's own"
-        )
+        logger.warning(f"Refusing to SIGKILL process group {pgid}: it is the app's own")
         return
     try:
         os.killpg(pgid, signal.SIGKILL)
@@ -258,6 +257,7 @@ class SimpleAudioPlayer:
     def __init__(self):
         """Initialize audio player"""
         self._current: AudioPlayerInfo = AudioPlayerInfo()
+        self._retired_token: object | None = None
         self._system = platform.system()
         # TASK-38581: this lock MUST be reentrant. pause() and resume()
         # call other lock-taking methods while still holding it:
@@ -364,19 +364,19 @@ class SimpleAudioPlayer:
         token = attempt_token if attempt_token is not None else object()
         with self._lock:
             if not plan.matches_file() or not plan.executable_available():
-                return False
+                return self._refuse_unstarted(token)
             if start_authority is not None and not start_authority():
-                return False
+                return self._refuse_unstarted(token)
             self.stop()
-            if self._current.process is not None:  # unconfirmed retirement
-                return False
+            if self._current.process is not None or self._current.birth_uncertain:
+                return self._refuse_unstarted(token)
 
             self._player_name = plan.name
             self._supports_pause = plan.supports_pause
             if plan.name == "afplay":
                 time.sleep(0.1)
             if not plan.matches_file():
-                return False
+                return self._refuse_unstarted(token)
 
             current = AudioPlayerInfo(
                 file_path=plan.file_path,
@@ -390,17 +390,24 @@ class SimpleAudioPlayer:
                     from .windows_audio_launch import hand_off
 
                     def can_open() -> bool:
-                        return plan.matches_file() and (
+                        permitted = plan.matches_file() and (
                             start_authority is None or start_authority()
                         )
+                        if permitted:
+                            current.birth_uncertain = True
+                            self._retired_token = None
+                        return permitted
 
                     if not hand_off(
                         plan.file_path, start_authority=can_open, notify=False
                     ):
-                        return False
+                        # ShellExecute was refused or explicitly returned failure.
+                        return self._refuse_unstarted(token)
                 else:
                     if start_authority is not None and not start_authority():
-                        return False
+                        return self._refuse_unstarted(token)
+                    self._retired_token = None
+                    current.birth_uncertain = True
                     process = subprocess.Popen(
                         plan.argv,
                         stdin=subprocess.PIPE if plan.name == "mplayer" else None,
@@ -408,11 +415,14 @@ class SimpleAudioPlayer:
                         stderr=subprocess.DEVNULL,
                         start_new_session=(os.name == "posix"),
                     )
+                    if process is None:
+                        raise RuntimeError("File player spawn returned no child")
                     if plan.external:
                         self._launchers.add(process)
                     else:
                         current.process = process
 
+                current.birth_uncertain = False
                 self._current = current
                 if plan.external:
                     # A launcher may forward to another app. The accepted OS open
@@ -440,13 +450,12 @@ class SimpleAudioPlayer:
                     "Could not start or observe file player ({})", type(exc).__name__
                 )
                 if current.state is not PlaybackState.HANDED_OFF:
-                    if current.process is not None and not self.stop(
-                        expected_token=token
-                    ):
-                        return False  # retain BLOCKED and its unconfirmed child
-                    self._current = AudioPlayerInfo(
-                        state=PlaybackState.ERROR, attempt_token=token
-                    )
+                    if current.process is not None:
+                        if not self.stop(expected_token=token):
+                            return False  # retain BLOCKED and its unconfirmed child
+                        current.process = None
+                    current.state = PlaybackState.ERROR
+                    self._current = current
                     return False
 
         # This may synchronously marshal a toast to Textual. Release the player
@@ -460,6 +469,17 @@ class SimpleAudioPlayer:
         )
         notify_hand_off(notice)
         return True
+
+    def _refuse_unstarted(self, token: object) -> bool:
+        # A legacy caller can reuse a token that already owns native output.
+        if self._current.attempt_token is not token:
+            self._retired_token = token
+        return False
+
+    def retirement_confirmed(self, *, expected_token: object) -> bool:
+        """Check for this exact attempt's latest refusal or physical retirement."""
+        with self._lock:
+            return expected_token is not None and self._retired_token is expected_token
 
     def _reap_launcher(self, launcher: subprocess.Popen) -> None:
         """Observe only our launcher, independently of the external playback epoch."""
@@ -499,6 +519,7 @@ class SimpleAudioPlayer:
                 if not self.stop():
                     return False
                 self._current = current
+                self._retired_token = None  # this paused run can still restart
                 current.process = None
                 current.position = position
                 self._current.state = PlaybackState.PAUSED
@@ -679,8 +700,9 @@ class SimpleAudioPlayer:
                 and current.attempt_token is not expected_token
             ):
                 return False
-            if current.process is not None and not self._reap_current_process(
-                current.process
+            if current.birth_uncertain or (
+                current.process is not None
+                and not self._reap_current_process(current.process)
             ):
                 current.state = PlaybackState.BLOCKED
                 logger.warning("File playback retirement has not been confirmed")
@@ -691,7 +713,10 @@ class SimpleAudioPlayer:
                 except OSError:
                     pass
             self._current = AudioPlayerInfo()
-            return current.state not in (PlaybackState.IDLE, PlaybackState.HANDED_OFF)
+            if current.state in (PlaybackState.IDLE, PlaybackState.HANDED_OFF):
+                return False
+            self._retired_token = current.attempt_token
+            return True
 
     def is_playing(self) -> bool:
         """Check if audio is currently playing"""

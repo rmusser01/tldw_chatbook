@@ -214,6 +214,7 @@ class PlayerPipeline:
         self._spawn = spawn
         self._ffmpeg: subprocess.Popen | None = None
         self._ffplay: subprocess.Popen | None = None
+        self._birth_uncertain = False
         self._current_run: PlayerRun | None = None
         self._owned_run: PlayerRun | None = None  # includes unpublished partial starts
         self._idle_stats = SyncStats()
@@ -241,7 +242,8 @@ class PlayerPipeline:
             if self._probe.has_audio and not audio_pipe_supported():
                 raise RuntimeError("In-app media audio requires POSIX inherited pipes")
             check_authority()
-            self.stop()  # raises while either prior child is still unconfirmed
+            if not self.stop():
+                raise RuntimeError("Media process birth remains unconfirmed")
             audio_r: int | None = None
             audio_w: int | None = None
             self._generation += 1
@@ -302,12 +304,16 @@ class PlayerPipeline:
             failure: BaseException | None = None
             try:
                 check_authority()
+                self._birth_uncertain = True
                 self._ffmpeg = self._spawn(
                     ffmpeg_cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     pass_fds=pass_fds,
                 )
+                self._birth_uncertain = self._ffmpeg is None
+                if self._birth_uncertain:
+                    raise RuntimeError("Media spawn returned no ffmpeg child")
                 self._owned_run = run
                 run.stdout = self._ffmpeg.stdout
                 check_authority()
@@ -333,12 +339,16 @@ class PlayerPipeline:
                         "pipe:0",
                     ]
                     check_authority()
+                    self._birth_uncertain = True
                     self._ffplay = self._spawn(
                         ffplay_cmd,
                         stdin=audio_r,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                     )
+                    self._birth_uncertain = self._ffplay is None
+                    if self._birth_uncertain:
+                        raise RuntimeError("Media spawn returned no ffplay child")
             except BaseException as exc:
                 failure = exc
             for fd in (audio_r, audio_w):
@@ -519,7 +529,9 @@ class PlayerPipeline:
                     run.close_stdout_once()
             self._current_run = None
             self._owned_run = None
-            return True
+            # A constructor can raise after native process creation. We have
+            # reaped all available handles, but cannot certify that birth.
+            return not self._birth_uncertain
 
     @property
     def at_eof(self) -> bool:
