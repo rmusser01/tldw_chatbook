@@ -4950,8 +4950,9 @@ def test_request_mcp_approvals_zero_timeout_keeps_round_armed_for_late_decision(
         )
 
     decider = threading.Thread(target=_decide_late)
-    decider.start()
+    # Before the start: a decider that runs first would shorten the measured wait.
     started = time.monotonic()
+    decider.start()
     decisions = controller.request_mcp_approvals([_pending()])
     elapsed = time.monotonic() - started
     decider.join()
