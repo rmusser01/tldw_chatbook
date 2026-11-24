@@ -340,7 +340,7 @@ assert not heavy, heavy
 def test_the_request_builder_reexports_the_one_capacity_rule() -> None:
     """Structural pin (re-export identity, not behavioural evidence): the
     capacity behaviour itself is covered by the cap tests above."""
-    from tldw_chatbook.Chat import console_prepared_request, console_request_capacity
+    from tldw_chatbook.Chat import console_history_budget, console_prepared_request
 
     for name in (
         "ConsoleRequestCapacity",
@@ -350,7 +350,7 @@ def test_the_request_builder_reexports_the_one_capacity_rule() -> None:
         "resolve_request_capacity",
     ):
         assert getattr(console_prepared_request, name) is getattr(
-            console_request_capacity, name
+            console_history_budget, name
         )
 
 
@@ -370,7 +370,7 @@ from hypothesis import strategies as st  # noqa: E402
 def test_an_estimated_window_at_or_above_the_floor_always_leaves_input(
     window: int, requested: int
 ) -> None:
-    from tldw_chatbook.Chat.console_request_capacity import (
+    from tldw_chatbook.Chat.console_history_budget import (
         ESTIMATED_WINDOW_INPUT_FLOOR_TOKENS,
     )
 
@@ -388,7 +388,7 @@ def test_an_estimated_window_at_or_above_the_floor_always_leaves_input(
 def test_every_window_the_resolver_estimates_is_above_the_floor() -> None:
     """The estimated windows come only from the provider fallbacks and the
     application fallback (a catalog or server window is verified)."""
-    from tldw_chatbook.Chat.console_request_capacity import (
+    from tldw_chatbook.Chat.console_history_budget import (
         ESTIMATED_WINDOW_INPUT_FLOOR_TOKENS,
     )
     from tldw_chatbook.Utils.token_counter import (

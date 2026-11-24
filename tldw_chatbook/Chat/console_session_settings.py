@@ -126,7 +126,7 @@ if TYPE_CHECKING:
     # Imported lazily at call sites: custom_endpoint_registry imports this
     # module for URL normalization, so a module-level import would cycle.
     from tldw_chatbook.Chat.custom_endpoint_registry import CustomEndpointEntry
-    from tldw_chatbook.Chat.console_request_capacity import ConsoleRequestCapacity
+    from tldw_chatbook.Chat.console_history_budget import ConsoleRequestCapacity
     from tldw_chatbook.Utils.token_counter import ContextWindowResolution
 
 
@@ -4118,7 +4118,7 @@ def console_reply_capacity(
     Returns:
         The resolved capacity.
     """
-    from tldw_chatbook.Chat.console_request_capacity import resolve_request_capacity
+    from tldw_chatbook.Chat.console_history_budget import resolve_request_capacity
 
     tokens, verified, output_cap = _catalog_capacity_inputs(provider, model)
     observed = CONSOLE_SEND_OUTCOMES.window_for(provider, model, endpoint)

@@ -26,9 +26,10 @@ from tldw_chatbook.Chat.console_history_budget import (
 )
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_prompt_mixins import MixinAttemptSnapshot
-# TASK-34100.2 review round 2 (R2-4): the capacity rule lives in a
-# dependency-light module readiness can import; re-exported for callers here.
-from tldw_chatbook.Chat.console_request_capacity import (  # noqa: F401
+# TASK-34100.2 review round 2 (R2-4): the capacity rule lives in the
+# dependency-light console_history_budget, which readiness can import;
+# re-exported for callers here.
+from tldw_chatbook.Chat.console_history_budget import (  # noqa: F401
     ESTIMATED_WINDOW_RESERVATION_DIVISOR as ESTIMATED_WINDOW_RESERVATION_DIVISOR,
     MINIMUM_SAFETY_MARGIN_TOKENS as MINIMUM_SAFETY_MARGIN_TOKENS,
     ConsoleRequestCapacity as ConsoleRequestCapacity,
