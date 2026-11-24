@@ -540,3 +540,51 @@ async def test_queued_cleanup_survives_cancellation_and_joins_once(
     finally:
         release.set()
         child.exited.set()
+
+
+async def test_pending_executor_join_fences_output_and_wrapper_can_be_reused(
+    linux, monkeypatch
+):
+    player, path = linux
+    wrapper = AsyncAudioPlayer(player)
+    joining, release = threading.Event(), threading.Event()
+    children = []
+
+    class HeldExecutor(ThreadPoolExecutor):
+        def shutdown(self, wait=True, *, cancel_futures=False):
+            joining.set()
+            assert release.wait(4)
+            super().shutdown(wait=wait, cancel_futures=cancel_futures)
+
+    def spawn(*args, **kwargs):
+        child = Child()
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(audio_player.subprocess, "Popen", spawn)
+    wrapper._executor = HeldExecutor(max_workers=1)
+    assert await wrapper.play(path)
+    first = asyncio.create_task(wrapper.cleanup())
+    try:
+        assert await asyncio.to_thread(joining.wait, 2)
+        assert children[0].exited.is_set()
+        accepted = await wrapper.play(path)
+        assert await wrapper.get_state() is (
+            PlaybackState.PLAYING if accepted else PlaybackState.IDLE
+        )
+        second = asyncio.create_task(wrapper.cleanup())
+        await asyncio.sleep(0)
+        release.set()
+        await asyncio.gather(first, second)
+        assert all(child.exited.is_set() for child in children)
+        assert wrapper._executor is None
+        assert not accepted  # new output is refused while the join is pending
+        assert await wrapper.play(path)
+        await wrapper.cleanup()
+        assert len(children) == 2
+        assert children[-1].exited.is_set() and wrapper._executor is None
+    finally:
+        release.set()
+        for child in children:
+            child.exited.set()
+        await first

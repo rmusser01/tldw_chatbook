@@ -817,7 +817,13 @@ class AsyncAudioPlayer:
         self._cleanup_task: asyncio.Task[None] | None = None
 
     def _get_executor(self):
-        """Get or create thread pool executor"""
+        """Return the transport executor while it accepts work.
+
+        During cleanup, getters can use asyncio's default executor (None).
+        They only read the underlying player's locked state.
+        """
+        if self._cleanup_task is not None and not self._cleanup_task.done():
+            return None
         if self._executor is None:
             import concurrent.futures
 
@@ -830,27 +836,30 @@ class AsyncAudioPlayer:
 
         return self._executor
 
+    async def _transport(self, operation: Callable[..., bool], *args: object) -> bool:
+        executor = self._get_executor()
+        if executor is None:
+            return False
+        # Keep the caller's Textual context for the Windows handoff notice.
+        return await asyncio.get_running_loop().run_in_executor(
+            executor, copy_context().run, operation, *args
+        )
+
     async def play(self, file_path: Path) -> bool:
         """Play audio file asynchronously"""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(  # caller's context: TASK-39040's toast
-            self._get_executor(), copy_context().run, self._player.play, file_path
-        )
+        return await self._transport(self._player.play, file_path)
 
     async def pause(self) -> bool:
         """Pause playback asynchronously"""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(self._get_executor(), self._player.pause)
+        return await self._transport(self._player.pause)
 
     async def resume(self) -> bool:
         """Resume playback asynchronously"""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(self._get_executor(), self._player.resume)
+        return await self._transport(self._player.resume)
 
     async def stop(self) -> bool:
         """Stop playback asynchronously"""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(self._get_executor(), self._player.stop)
+        return await self._transport(self._player.stop)
 
     async def is_playing(self) -> bool:
         """Check if playing asynchronously"""
@@ -891,9 +900,12 @@ class AsyncAudioPlayer:
         except Exception as exc:
             logger.warning("Audio player cleanup failed ({})", type(exc).__name__)
         finally:
-            if self._executor is executor:
+            try:
+                await asyncio.to_thread(
+                    executor.shutdown, wait=True, cancel_futures=True
+                )
+            finally:
                 self._executor = None
-            await asyncio.to_thread(executor.shutdown, wait=True, cancel_futures=True)
 
 
 #
