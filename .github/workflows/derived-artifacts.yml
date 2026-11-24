@@ -1544,6 +1544,13 @@ jobs:
     # before (its vLLM case went red unseen). The whole file is bootstrap_profile
     # (its gateway reads [model_catalog]), so it goes after Tool_Packs. 29 tests,
     # 12.2-12.3 s serially with this step's flags at load 4-5.
+    # Round 25 (2026-11-24): two more files red on dev unseen, on no lane before.
+    # TASK-42514: the durable fleet progress file (every test is
+    # @private_profile_test, so sandboxed and before Tool_Packs), 16 tests,
+    # 44.0 s serially with this step's flags at load 12-13. TASK-42515: the
+    # provider failure copy file (whole file on the bootstrap profile through
+    # Tests/conftest.py, so after Tool_Packs), 18 tests, 8.8 s at load 12. This
+    # job's last PR runs took 7.1-10.3 min of the 20; +~2.3 min at 2.6x.
     name: Dreams tracking tests and unlaned riders
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -1596,9 +1603,11 @@ jobs:
             Tests/Packaging/test_first_chat_boot_closure.py \
             Tests/Wizards/test_env_key_launch_notice_sequencing.py \
             Tests/Wizards/test_first_run_discovery_base_url.py \
+            Tests/Agents/test_durable_fleet_messages.py \
             Tests/Tool_Packs \
             Tests/Chat/test_console_trace_retry_recovery_proof.py \
             Tests/Chat/test_console_failed_call_retry_ownership.py \
+            Tests/Chat/test_console_provider_failure_copy.py \
             Tests/Backup_Recovery/test_character_presentation_cadence.py \
             --timeout=180 \
             --tb=short
