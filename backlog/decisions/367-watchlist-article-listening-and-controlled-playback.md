@@ -1,4 +1,4 @@
-# ADR-366: Watchlists owns saved article listening state
+# ADR-367: Watchlists owns saved article listening state
 
 Date: 2026-11-15
 Status: Accepted architecture; recorded Windows-first backend qualified, portable expansion deferred
