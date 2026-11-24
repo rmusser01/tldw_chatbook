@@ -521,6 +521,9 @@ DREAMS_TRACKING_RIDERS = (
     "Tests/Wizards/test_env_key_launch_notice_sequencing.py",
     "Tests/Wizards/test_first_run_discovery_base_url.py",
     "Tests/Tool_Packs",
+    # Round 24: bootstrap_profile nodes, so after Tool_Packs; its sandboxed
+    # tests read no config in-process.
+    "Tests/Chat/test_console_trace_retry_recovery_proof.py",
     # TASK-42468: bootstrap_profile, so after Tool_Packs (nothing sandboxed
     # may follow it).
     "Tests/Backup_Recovery/test_character_presentation_cadence.py",
