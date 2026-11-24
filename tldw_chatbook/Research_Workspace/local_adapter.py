@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
@@ -52,6 +52,10 @@ from .source_operations import (
 )
 from .source_operation_store import SourceOperationConflictError
 from .source_readiness import normalize_local_readiness
+
+if TYPE_CHECKING:
+    from .chat_models import ResearchChatSessionRequest, ResearchChatTurnRequest
+    from .local_chat import LocalResearchChat
 
 
 _LOCAL_AVAILABLE = ResearchCapability(
@@ -123,6 +127,7 @@ class LocalResearchWorkspaceAdapter:
         now_factory: Callable[[], str] | None = None,
         notes_scope_service: Any | None = None,
         notes_user_id: str = "",
+        chat: LocalResearchChat | None = None,
     ) -> None:
         self._service = service
         self._id_factory = id_factory
@@ -136,6 +141,12 @@ class LocalResearchWorkspaceAdapter:
         self._notes_scope = notes_scope_service
         self._notes_user_id = notes_user_id.strip()
         self._note_write_lock = asyncio.Lock()
+        self._chat = chat
+        self._chat_turns = None
+        if chat is not None:
+            from .chat_service import ResearchChatService
+
+            self._chat_turns = ResearchChatService(self._answer_chat_turn)
 
     async def list_workspaces(
         self, *, include_archived: bool = False
@@ -273,7 +284,77 @@ class LocalResearchWorkspaceAdapter:
         capabilities.update(
             {name: note_capability for name in _LOCAL_NOTE_CAPABILITIES}
         )
+        chat_capability = (
+            _LOCAL_AVAILABLE
+            if self._chat is not None
+            else ResearchCapability(
+                False,
+                "local_chat_unavailable",
+                "Local conversation storage is unavailable.",
+                "local",
+            )
+        )
+        capabilities.update(
+            {
+                "list_chat_sessions": chat_capability,
+                "create_chat_session": chat_capability,
+                "send_chat_turn": chat_capability,
+            }
+        )
         return capabilities
+
+    def _require_chat(self, ref: QualifiedWorkspaceRef) -> LocalResearchChat:
+        self._require_local_ref(ref)
+        if self._chat is None:
+            raise ValueError("Local Research Chat is unavailable")
+        return self._chat
+
+    async def list_chat_sessions(
+        self, ref: QualifiedWorkspaceRef, *, limit: int = 20, offset: int = 0
+    ):
+        return await self._require_chat(ref).list_sessions(
+            ref, limit=limit, offset=offset
+        )
+
+    async def create_chat_session(
+        self, ref: QualifiedWorkspaceRef, request: ResearchChatSessionRequest
+    ):
+        return await self._require_chat(ref).create_session(ref, request)
+
+    async def load_chat_messages(
+        self, ref: QualifiedWorkspaceRef, conversation_id: str
+    ):
+        return await self._require_chat(ref).load_messages(ref, conversation_id)
+
+    async def resolve_chat_route(
+        self, ref: QualifiedWorkspaceRef, provider: str, model: str
+    ):
+        return await self._require_chat(ref).resolve_route(provider, model)
+
+    async def capture_chat_sources(self, ref: QualifiedWorkspaceRef):
+        from .chat_service import capture_selected_sources
+
+        return await capture_selected_sources(self, ref)
+
+    async def send_chat_turn(
+        self, request: ResearchChatTurnRequest, on_chunk, cancel_event
+    ):
+        self._require_chat(request.workspace)
+        return await self._chat_turns.send(request, on_chunk, cancel_event)
+
+    async def _answer_chat_turn(
+        self, request: ResearchChatTurnRequest, on_chunk, cancel_event
+    ):
+        return await self._require_chat(request.workspace).answer(
+            request,
+            on_chunk,
+            cancel_event,
+            self.capture_chat_sources,
+        )
+
+    async def stop_chat_turn(self, ref: QualifiedWorkspaceRef, turn_id: str) -> bool:
+        self._require_chat(ref)
+        return self._chat_turns.stop(ref, turn_id)
 
     async def reconcile_quick_notes(self) -> None:
         """Resume one bounded global page of durable Local note receipts."""
@@ -1243,7 +1324,9 @@ class LocalResearchWorkspaceAdapter:
         row = await self._load_local_note_row(notes, note_id)
         return None if row is None else self._note_from_row(ref, row)
 
-    async def _delete_canonical_note(self, notes: Any, note_id: str, version: int) -> bool:
+    async def _delete_canonical_note(
+        self, notes: Any, note_id: str, version: int
+    ) -> bool:
         from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
 
         def delete_in_worker() -> bool:

@@ -32,6 +32,9 @@ from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 from tldw_chatbook.app import TldwCli
 
 
+pytestmark = pytest.mark.bootstrap_profile
+
+
 class _LocalWorkspaceService:
     def __init__(self, workspace_id: str = "local-research") -> None:
         self.workspace_id = workspace_id

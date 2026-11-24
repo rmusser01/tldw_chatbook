@@ -187,7 +187,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-24, round-24 stack: TASK-34100.2's port, stacked on #3430, takes
     # a net 10 lines out of app.py; the row goes down to the measurement,
     # 5,739 -> 5,729.
-    "tldw_chatbook/app.py": 5729,
+    # TASK-21509 moves Research composition out of app.py. The combined
+    # module measures 5,685 lines after rebasing.
+    "tldw_chatbook/app.py": 5685,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.

@@ -16,6 +16,7 @@ if TYPE_CHECKING:
         ResearchChatSessionRequest,
         ResearchChatTurnOutcome,
         ResearchChatTurnRequest,
+        ResearchSourceVersionRef,
     )
     from .quick_notes import (
         ResearchNotePage,
@@ -697,6 +698,18 @@ class ResearchWorkspacePort(Protocol):
     async def create_chat_session(
         self, ref: QualifiedWorkspaceRef, request: ResearchChatSessionRequest
     ) -> ResearchChatSession: ...
+
+    async def load_chat_messages(
+        self, ref: QualifiedWorkspaceRef, conversation_id: str
+    ) -> tuple[Mapping[str, object], ...]: ...
+
+    async def resolve_chat_route(
+        self, ref: QualifiedWorkspaceRef, provider: str, model: str
+    ) -> ProcessingRoute: ...
+
+    async def capture_chat_sources(
+        self, ref: QualifiedWorkspaceRef
+    ) -> tuple[ResearchSourceVersionRef, ...]: ...
 
     async def send_chat_turn(
         self,
