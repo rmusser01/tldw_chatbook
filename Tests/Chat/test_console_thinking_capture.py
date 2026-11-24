@@ -281,3 +281,45 @@ def test_control_character_deltas_enforce_the_canonical_envelope_cap() -> None:
     blocks = capture._blocks if capture._blocks else ()
     assert len(blocks) == 1
     assert len(blocks[0].text.encode("utf-8")) <= 256 * 1024
+
+
+def test_a_block_created_after_a_restore_never_reuses_a_discarded_id() -> None:
+    """TASK-42472: a failed call's block is discarded, but its id stays spent."""
+    capture = ThinkingCapture(assistant_owner_id="assistant-1")
+    point = capture.checkpoint()
+    discarded = capture.observe(_delta("failed call")).changed_block_id
+
+    assert capture.restore(point).envelope is None
+    retried = capture.observe(_delta("retry")).changed_block_id
+
+    assert discarded is not None and retried is not None
+    assert retried != discarded
+    envelope = capture.snapshot().envelope
+    assert envelope is not None
+    assert [block.text for block in envelope.blocks] == ["retry"]
+
+
+def test_a_restore_brings_back_the_block_text_held_at_the_checkpoint() -> None:
+    capture = ThinkingCapture(assistant_owner_id="assistant-1")
+    capture.observe(_delta("first "))
+    point = capture.checkpoint()
+    capture.observe(_delta("second"))
+
+    restored = capture.restore(point).envelope
+    assert restored is not None
+    assert [block.text for block in restored.blocks] == ["first "]
+    # Appending after the restore starts from the restored text.
+    capture.observe(_delta("third"))
+    envelope = capture.snapshot().envelope
+    assert envelope is not None
+    assert [block.text for block in envelope.blocks] == ["first third"]
+
+
+def test_restore_after_settle_raises() -> None:
+    capture = ThinkingCapture(assistant_owner_id="assistant-1")
+    point = capture.checkpoint()
+    capture.observe(_delta("reason"))
+    capture.settle("complete")
+
+    with pytest.raises(RuntimeError, match="already settled"):
+        capture.restore(point)

@@ -446,12 +446,13 @@ about one message or model rather than the key.
 A rate limit (429) says so, with the provider's own reason when it gives one,
 for example "Provider error from Google Gemini: rate limit exceeded. Status:
 429. Google Gemini says: You exceeded your current quota… Free-tier limit: 20
-requests per day for gemini-3.8-flash. Retry in 38527s." A captured chat
-(trace capture on, the default) does not retry a failed model request inside
-the run, and does not switch to a provider listed in `[console]
-agent_fallback_providers`: the provider's error ends the run, and you send
-again when the limit allows. Turn capture off for a chat and its runs retry a
-429 or 5xx a couple of times first, then try the fallback providers.
+requests per day for gemini-3.8-flash. Retry in 38527s." A run retries a 429
+or 5xx a couple of times first (`[console] agent_max_model_retries`, 2 by
+default), with trace capture on or off. If the error persists, a captured chat
+(trace capture on, the default) does not switch to a provider listed in
+`[console] agent_fallback_providers`: the provider's error ends the run, and
+you send again when the limit allows. Turn capture off for a chat and its runs
+try the fallback providers once the retries are spent.
 
 A known connection failure blocks sending too. When a connection test of
 this chat's server — **Test connection & list models** in Chat settings, or

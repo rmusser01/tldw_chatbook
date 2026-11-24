@@ -1318,6 +1318,11 @@ MINIMUM_FILES = 2744
 # files ran 34-35 s serially, over the 30 s entry budget. Appended after dev's
 # tail, so no other entry changes shard. The floor is the measured entry count.
 MINIMUM_FILES = 2765
+# 2026-11-24, TASK-42472 (round 24): dev's mounted captured model-retry test
+# (test_console_captured_model_retry.py), red on the stack and on no lane, at
+# the tail as a whole file (22.6 s serially; the time is in the task's notes).
+# The floor is the measured entry count.
+MINIMUM_FILES = 2766
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 

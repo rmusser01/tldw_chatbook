@@ -524,6 +524,9 @@ DREAMS_TRACKING_RIDERS = (
     # Round 24: bootstrap_profile (its gateway reads [model_catalog]), so after
     # Tool_Packs.
     "Tests/Chat/test_console_trace_retry_recovery_proof.py",
+    # TASK-42472 (2026-11-24): the failed-call retry rule. bootstrap_profile
+    # (its gateway reads [model_catalog]), so after Tool_Packs.
+    "Tests/Chat/test_console_failed_call_retry_ownership.py",
     # TASK-42468: bootstrap_profile, so after Tool_Packs (nothing sandboxed
     # may follow it).
     "Tests/Backup_Recovery/test_character_presentation_cadence.py",

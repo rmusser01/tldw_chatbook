@@ -11,12 +11,13 @@ reached the Console as a 504 'Network error' or as a 'Trace capture blocked
   longer retried there, and an exhausted 5xx retry returns the provider's
   own answer instead of a transport error.
 * The Agents loop then retried the failed model request (TASK-25901). Under
-  trace capture (the default), that retry is a second call in the run whose
-  first call bore no response, and the trace contract refuses to reserve it
-  ('trace_tool_chain_unavailable'), which the Console shows as 'Trace capture
-  blocked ... The provider was not contacted' -- after the provider WAS
-  contacted. A captured run therefore never retries a failed model request;
-  the provider's own error ends the run.
+  trace capture (the default), a pass-1 log of 2026-10-03 showed that retry
+  refused at reservation ('trace_tool_chain_unavailable'), and the Console
+  showed 'Trace capture blocked ... The provider was not contacted' -- after
+  the provider WAS contacted. Dev's 164abdc1c9 (2026-10-04) reserves an
+  unchanged retry against the failed call's saved surface, so a captured run
+  keeps its retries (TASK-42472 AC#9) and ends on the provider's own error
+  once they are spent.
 
 The 429 body below is the shape of a real Gemini reply recorded 2026-10-04.
 """
@@ -214,21 +215,72 @@ def test_a_reason_that_carries_a_credential_hides_the_key_not_the_copy() -> None
     assert "Quota exceeded for key (key hidden)" in copy
 
 
-def test_a_captured_agent_run_never_retries_a_failed_model_request() -> None:
-    from tldw_chatbook.Agents.agent_models import RunBudget
-    from tldw_chatbook.Chat.console_agent_bridge import captured_run_budget
-    from tldw_chatbook.Chat.console_trace_provenance import ConsoleTraceCaptureMode
+_OPENAI_RPM_429 = {
+    "error": {
+        "message": "Rate limit reached for gpt-4.1-mini on requests per min (RPM): "
+        "Limit 3, Used 3, Requested 1. Please try again in 20s.",
+        "type": "requests",
+        "code": "rate_limit_exceeded",
+    }
+}
 
-    admitted = RunBudget(max_model_retries=2)
 
-    captured = captured_run_budget(admitted, ConsoleTraceCaptureMode.CAPTURE_ON)
-    uncaptured = captured_run_budget(admitted, ConsoleTraceCaptureMode.CAPTURE_OFF)
+async def test_a_captured_rate_limit_is_retried_and_ends_on_the_rate_limit(
+    tmp_path, monkeypatch
+) -> None:
+    """AC#18 through the real controller, gateway and trace factory, Capture On.
 
-    assert captured is not None and captured.max_model_retries == 0
-    assert uncaptured is admitted  # Capture Off keeps TASK-25901's retries
-    assert captured_run_budget(None, ConsoleTraceCaptureMode.CAPTURE_OFF) is None
-    from_live = captured_run_budget(None, ConsoleTraceCaptureMode.CAPTURE_ON)
-    assert from_live is not None and from_live.max_model_retries == 0
+    A 429 that never clears is retried in place (TASK-25901). The trace admits
+    each retry against the failed call, and the run ends on the rate-limit
+    copy with OpenAI's reason, never on 'Trace capture blocked'. The send does
+    not stream; only the transport (``requests.Session.post``) is faked.
+    """
+    from Tests.Chat.test_console_project_instruction_traces import _project_console
+    from tldw_chatbook.Chat.console_agent_bridge import console_run_budget
+
+    posts: list[str] = []
+
+    def post(_session: object, url: str, *_args: object, **_kwargs: object):
+        posts.append(url)
+        response = requests.Response()
+        response.status_code = 429
+        response.url = url
+        response.reason = "Too Many Requests"
+        response.headers["Content-Type"] = "application/json"
+        response._content = json.dumps(_OPENAI_RPM_429).encode()
+        return response
+
+    monkeypatch.setattr("requests.Session.post", post)
+    async with _project_console(tmp_path, monkeypatch, hosted=True) as app:
+        result = await app.controller.submit_draft("Hello", session_id=app.session.id)
+        with app.db.transaction() as cursor:
+            calls = app.factory.repository.read_conversation_call_lineage(
+                cursor, app.session.persisted_conversation_id
+            )
+        notices = [
+            message.content
+            for message in app.store.messages_for_session(app.session.id)
+            if message.role.value == "system"
+        ]
+        recovery = app.store.dispatch_recovery_for_session(app.session.id)
+        run_state = app.controller.run_state
+        reservation_errors = app.reservation_errors
+
+    retries = console_run_budget().max_model_retries
+    assert result.accepted and retries > 0
+    assert len(posts) == 1 + retries
+    assert reservation_errors == []
+    assert [(call.route_identity, call.state.value) for call in calls] == [
+        ("agent_first", "error"),
+        *[("tool_loop", "error")] * retries,
+    ]
+    copy = (
+        "Provider error from OpenAI: rate limit exceeded. Status: 429. OpenAI says: "
+        f"“{_OPENAI_RPM_429['error']['message']}”"
+    )
+    assert (run_state.status.value, run_state.visible_copy) == ("failed", copy)
+    assert notices == [copy]
+    assert recovery is None  # no 'Trace capture blocked' card
 
 
 def test_an_unclassified_provider_error_keeps_its_plain_copy() -> None:
@@ -243,14 +295,10 @@ class _PlanReached(Exception):
     pass
 
 
-@pytest.mark.parametrize(
-    ("mode", "retries"), [("CAPTURE_ON", 0), ("CAPTURE_OFF", 2)]
-)
-def test_run_reply_plans_a_captured_run_without_model_retries(
-    mode: str, retries: int
-) -> None:
-    """The wiring, not just the rule: run_reply hands the plan builder the
-    captured budget (mutating the call site back to ``run_budget`` fails)."""
+@pytest.mark.parametrize("mode", ["CAPTURE_ON", "CAPTURE_OFF"])
+def test_run_reply_plans_a_captured_run_with_its_model_retries(mode: str) -> None:
+    """The wiring: run_reply hands the plan builder the admitted budget in
+    both capture modes (TASK-42472 AC#9 lifted the Capture-On cut-off)."""
     from unittest.mock import MagicMock
 
     from tldw_chatbook.Agents.agent_models import RunBudget
@@ -291,7 +339,7 @@ def test_run_reply_plans_a_captured_run_without_model_retries(
             )
 
     (budget,) = seen
-    assert budget is not None and budget.max_model_retries == retries
+    assert budget is not None and budget.max_model_retries == 2
 
 
 @pytest.mark.parametrize(
@@ -302,12 +350,12 @@ def test_a_captured_run_never_falls_back_to_another_provider(
     mode: str, chain: tuple[str, ...]
 ) -> None:
     """Review round 1 (F7): with [console] agent_fallback_providers set, a
-    429 or 5xx under capture went straight to the ADR-110 fallback call --
-    the run's next call after one that bore no response -- and the trace
-    contract refused it: the 'Trace capture blocked -- the provider was not
-    contacted' card again, hiding the provider's own error. Until the trace
-    contract can record such a call (TASK-34100.2.1), a captured run plans no
-    fallback chain; Capture Off keeps the configured one."""
+    429 or 5xx under capture went on to the ADR-110 fallback call, to another
+    provider, and the trace contract refused it: the 'Trace capture blocked --
+    the provider was not contacted' card again, hiding the provider's own
+    error. Until the trace contract can record such a call (TASK-42525), a
+    captured run plans no fallback chain; Capture Off keeps the configured
+    one."""
     from unittest.mock import MagicMock
 
     from tldw_chatbook.Agents.agent_models import RunBudget

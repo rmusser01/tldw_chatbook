@@ -8,6 +8,7 @@ pytestmark = pytest.mark.bootstrap_profile
 
 _SCRIPT = r"""import asyncio
 import contextvars
+import functools
 import inspect
 import json
 import os
@@ -576,6 +577,9 @@ async def exercise():
                 sys.monitoring.events.PY_START | sys.monitoring.events.PY_RETURN,
             )
 
+        # The trace verifier binds kwargs through chat_api_call's signature;
+        # a bare **kwargs stand-in stores the call as an omission (TASK-41310).
+        @functools.wraps(Chat_Functions.chat_api_call)
         def reply(**kwargs):
             assert len(provider_calls) == 0 and "accepted" in observed["order"]
             assert objects["submitted_configuration"] is not None
@@ -844,6 +848,19 @@ async def exercise():
                     is local.trust_service
                 )
                 assert len(provider_calls) == 1 and not errors
+                # TASK-42472: a Capture-On call made through a bare **kwargs
+                # stand-in is stored as an omission node (TASK-41310's trap),
+                # so a later call in the run could not extend its surface.
+                with app.chachanotes_db.transaction() as cursor:
+                    kinds = dict(
+                        cursor.execute(
+                            "SELECT reference_kind, COUNT(*) "
+                            "FROM console_trace_surface_nodes GROUP BY reference_kind"
+                        ).fetchall()
+                    )
+                assert kinds and "omission" not in kinds, (
+                    f"managed_received_trace_omissions:{sorted(kinds.items())}"
+                )
                 assert observed["visible"] == 1 and observed["builder_count"] == 1
                 maximum = plain(objects["prepared"].maximum)
                 assert any(

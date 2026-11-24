@@ -582,7 +582,7 @@ def _prepare_native_reply(
         agent_messages=planning_messages,
         agent_definitions=runtime_definitions,
         fleet_max_live=fleet_max_live,
-        run_budget=native_host.captured_run_budget(run_budget, capture_mode),
+        run_budget=run_budget,
         fallback_providers=native_host.captured_fallback_providers(capture_mode),
         persona_policy_rules=persona_policy_rules,
         profile_context_service=profile_context_service,

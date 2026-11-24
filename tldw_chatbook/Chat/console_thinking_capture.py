@@ -114,6 +114,31 @@ class ThinkingCapture:
             terminal=self._terminal_outcome is not None,
         )
 
+    def checkpoint(self) -> tuple[object, ...]:
+        """Return an opaque point that ``restore`` rolls back to (TASK-42472)."""
+        return (
+            self._blocks,
+            self._round_ordinal,
+            self._boundary_reached,
+            frozenset(self._collapsed_block_ids),
+        )
+
+    def restore(self, point: tuple[object, ...]) -> ThinkingCaptureUpdate:
+        """Discard what a failed model call captured after ``point``.
+
+        Block ids keep counting up, so a discarded block's id is never reused.
+        """
+        self._require_live()
+        blocks, self._round_ordinal, self._boundary_reached, collapsed = point
+        if blocks:
+            self._install(blocks)
+        else:
+            self._blocks = ()
+            self._append_text_bytes = None
+            self._envelope_canonical_bytes = 0
+        self._collapsed_block_ids = set(collapsed)
+        return self._update()
+
     def observe(self, item: ProviderStreamItem) -> ThinkingCaptureUpdate:
         """Route one provider stream item through the explicit evidence seam."""
         self._require_live()

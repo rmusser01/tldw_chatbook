@@ -12,7 +12,10 @@ from datetime import datetime, timezone
 
 from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
-from tldw_chatbook.Chat.console_trace_continuation import LiveNativeContinuationCustody
+from tldw_chatbook.Chat.console_trace_continuation import (
+    LiveNativeContinuationCustody,
+    failed_stream_fallback_parent,
+)
 from tldw_chatbook.Chat.console_trace_errors import (
     TraceReservationRefused,
     TraceSurfaceChangeRefused,
@@ -607,7 +610,19 @@ class ConsoleTraceBoundaryFactory:
                     if (
                         previous is None
                         or latest_call is None
-                        or latest_call.call_id != previous.call_id
+                        or (
+                            latest_call.call_id != previous.call_id
+                            # TASK-42472 AC#8: the retry repeats the streamed
+                            # call, not its failed llama.cpp resend.
+                            and getattr(
+                                failed_stream_fallback_parent(
+                                    self.repository, cursor, latest_call.call_id
+                                ),
+                                "call_id",
+                                None,
+                            )
+                            != previous.call_id
+                        )
                         # Agent response settlement may still be queued when
                         # its next tool call begins; a response-bearing call
                         # already provides durable ownership for that chain.

@@ -13,28 +13,232 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from uuid import uuid4
 
+from tldw_chatbook.Chat.console_trace_errors import (
+    TraceReservationRefused,
+    TraceSurfaceChangeRefused,
+)
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 
 _SEND_DIAGNOSTIC_EVENT_LIMIT = 64
+# Rolled-back refusals carry their code, so the cause walk stops at them.
+_TRACE_REFUSAL_TYPES = (TraceReservationRefused, TraceSurfaceChangeRefused)
 
 # Exact code-owned categories only; never derive a token from arbitrary error text.
+# Every code-shaped literal refusal raised in Chat/console_trace_*.py (TASK-42471;
+# Tests/Chat/test_console_trace_missing_revision_diagnostic.py scans them all and
+# fails on a code missing here).
 _TRACE_FAILURE_CATEGORIES = frozenset(
     {
-        "trace_provenance_unavailable",
-        "trace_policy_unavailable",
-        "trace_route_unavailable",
-        "trace_route_mismatch",
-        "trace_owner_unavailable",
-        "trace_prefill_unavailable",
-        "trace_turn_unavailable",
-        "trace_revision_unavailable",
-        "trace_primary_run_already_started",
-        "trace_fresh_turn_requires_owned_recovery",
-        "trace_tool_chain_unavailable",
-        "surface_provenance_mismatch",
-        "surface_prefix_mismatch",
-        "unsupported_surface_change",
+        "abandoned",
+        "additional_mask_source_mismatch",
+        "after",
+        "available_bundle_omission",
+        "call_has_no_live_response_boundary",
+        "call_id",
+        "capture_authority_mismatch",
+        "capture_detail",
+        "codepoint_range",
+        "completed_project_context_count",
+        "completed_project_context_value",
+        "completed_project_fallback_lineage",
+        "completed_project_turn_anchor",
+        "completed_replay_attachment",
+        "completed_replay_checkpoint",
+        "completed_replay_count",
+        "completed_replay_disclosure",
+        "completed_replay_order",
+        "completed_replay_policy",
+        "completed_replay_prior_attachment",
+        "completed_replay_terminal",
+        "completed_replay_value",
+        "completed_tool_turn_lineage",
+        "completed_tool_turn_parent_unavailable",
+        "completed_tool_turn_policy",
+        "completed_tool_turn_range",
+        "completed_tool_turn_reservation",
+        "completed_tool_turn_revision",
+        "completed_tool_turn_unavailable",
+        "completed_tool_turn_value",
+        "completed_turn_closed_chain",
+        "completed_turn_closed_owner",
+        "completed_turn_discard_chain",
+        "completed_turn_discard_owner",
+        "completed_turn_replacement_attempt",
+        "completed_turn_source",
+        "component_kind",
+        "components",
+        "continuation_trace_artifact",
+        "continuation_trace_chain",
+        "continuation_trace_count",
+        "continuation_trace_domain",
+        "continuation_trace_edge",
+        "continuation_trace_envelope",
+        "continuation_trace_lineage",
+        "continuation_trace_policy",
+        "continuation_trace_projection_changed",
+        "continuation_trace_shape",
+        "continuation_trace_size",
+        "conversation_id",
+        "created_at",
+        "credential_source",
+        "custom_pii_invalid_batch",
+        "detector_unavailable",
+        "duplicate_components",
+        "duplicate_handler_components",
+        "duplicate_json_key",
+        "endpoint_identity",
+        "exchange_id",
+        "field_path",
+        "frozen_mask_source_mismatch",
+        "included_turn_ids",
+        "inherited_surface_head_unavailable",
+        "integrity_state",
+        "known_credentials",
+        "legacy_call_incomplete",
+        "legacy_import_boundary_unavailable",
+        "legacy_message_owner_unavailable",
+        "legacy_prefix_boundary_missing",
+        "legacy_prefix_predecessor_missing",
+        "legacy_structural_equivalence_failed",
+        "live_native_batch",
+        "live_native_call",
+        "live_native_checkpoint_prefix",
+        "live_native_custody",
+        "live_native_custody_expired",
+        "live_native_history_append",
+        "live_native_history_lineage",
+        "live_native_history_prefix",
+        "live_native_message_prefix",
+        "live_native_node",
+        "live_native_other_owner",
+        "live_native_owner",
+        "live_native_retry_surface",
+        "live_native_surface_shape",
+        "max_bytes",
+        "max_decoded_bytes",
+        "max_pending",
+        "max_rows",
+        "max_seconds",
+        "message_id",
+        "min_freelist_ratio",
+        "model_name",
+        "native_request_boundary_unavailable",
+        "native_surface_reference_invalid",
+        "native_surface_unavailable",
+        "ordinal",
+        "outcome",
+        "oversized_policy",
+        "page_size",
+        "pii_policy",
+        "previous_header_id",
+        "prior_integrity_state",
+        "provider_name",
+        "reason_code",
+        "recovery_grace_seconds",
+        "recursive",
+        "redaction_source",
+        "redaction_span_limit",
+        "rendered_system_slot_mismatch",
+        "rendered_system_slot_unavailable",
+        "replacement_chain_gap",
+        "replacement_chain_link_inactive",
+        "replacement_component_domain",
+        "replacement_component_ordinal",
+        "replacement_predecessor_mismatch",
+        "replacement_range_mismatch",
+        "replacement_range_noncontiguous",
+        "replacement_range_order",
+        "replacement_value",
+        "request_header_component_invalid",
+        "request_header_component_unavailable",
+        "request_header_unavailable",
+        "request_id",
+        "request_route_unavailable",
+        "required_components",
+        "response_redaction_unavailable",
+        "response_revision_unavailable",
+        "retention_root_conflict",
+        "retry_max_seconds",
+        "revision_owner_mismatch",
+        "revision_policy_binding_shape",
+        "rewritten_tail_shape",
+        "rewritten_tail_unavailable",
+        "run_tag",
+        "semantic_continuation_unavailable",
+        "semantic_revision_unavailable",
         "semantic_revision_value_mismatch",
+        "seq",
+        "sequence_range",
+        "span_metadata",
+        "status",
+        "stored_header_json",
+        "stored_json_object",
+        "surface_checkpoint_identity",
+        "surface_child_binding",
+        "surface_delta_admission",
+        "surface_delta_alignment",
+        "surface_delta_identity",
+        "surface_delta_item",
+        "surface_delta_shape",
+        "surface_owner_mismatch",
+        "surface_predecessor_mismatch",
+        "surface_prefix_mismatch",
+        "surface_provenance_mismatch",
+        "surface_reference",
+        "surface_replacement_chain",
+        "surface_replacement_checkpoint_unavailable",
+        "surface_replacement_link",
+        "surface_replacement_order",
+        "surface_replacement_range",
+        "surface_replacement_span",
+        "surface_replacement_target_inactive",
+        "surface_replacement_target_unavailable",
+        "surface_segment_unavailable",
+        "surface_value_unavailable",
+        "surface_values_unavailable",
+        "surface_verified_bundle",
+        "system_artifact_unavailable",
+        "system_component_alignment",
+        "system_composition_invalid",
+        "system_composition_span",
+        "system_revision_span",
+        "system_revision_unavailable",
+        "system_revision_value_mismatch",
+        "through_sequence",
+        "tool_values_unavailable",
+        "trace_artifact_unavailable",
+        "trace_child_owner",
+        "trace_child_segment_unavailable",
+        "trace_compaction_byte_threshold",
+        "trace_compaction_time_threshold",
+        "trace_compatibility_count",
+        "trace_compatibility_path",
+        "trace_current_transform_owner",
+        "trace_fresh_turn_requires_owned_recovery",
+        "trace_gc_request_scope_conflict",
+        "trace_owner_unavailable",
+        "trace_policy_mismatch",
+        "trace_policy_unavailable",
+        "trace_prefill_unavailable",
+        "trace_primary_run_already_started",
+        "trace_provenance_unavailable",
+        "trace_recovery_owner",
+        "trace_recovery_reservation",
+        "trace_recovery_revision",
+        "trace_reservation_refused",
+        "trace_revision_unavailable",
+        "trace_route_mismatch",
+        "trace_route_unavailable",
+        "trace_tool_chain_source_mismatch",
+        "trace_tool_chain_unavailable",
+        "trace_turn_unavailable",
+        "unavailable_bundle_content",
+        "unavailable_bundle_reason",
+        "unsupported",
+        "unsupported_surface_change",
+        "unsupported_surface_descriptor",
+        "version",
+        "work_limit",
     }
 )
 
@@ -100,6 +304,18 @@ class SendDiagnostic:
         )
 
 
+def _trace_code(error: BaseException) -> str | None:
+    """Return a trace refusal's code-owned reason, never other error text."""
+    if (
+        type(error) in (ValueError, *_TRACE_REFUSAL_TYPES)
+        and len(error.args) == 1
+        and type(error.args[0]) is str
+        and error.args[0] in _TRACE_FAILURE_CATEGORIES
+    ):
+        return error.args[0]
+    return None
+
+
 _CURRENT: ContextVar[SendDiagnostic | None] = ContextVar(
     "console_send_diagnostic", default=None
 )
@@ -142,6 +358,8 @@ def record_send_stage(
             while id(cause) not in seen and len(seen) < 8:
                 if isinstance(cause, TimeoutError):
                     break  # asyncio timeouts chain an internal cancellation.
+                if type(cause) in _TRACE_REFUSAL_TYPES or _trace_code(cause):
+                    break  # TASK-42471: the refusal names the failure, not its cause.
                 seen.add(id(cause))
                 next_cause = cause.__cause__ or cause.__context__
                 if next_cause is None or id(next_cause) in seen:
@@ -159,13 +377,8 @@ def record_send_stage(
                 if isinstance(cause, (ValueError, TypeError))
                 else "internal"
             )
-            if (
-                type(cause) is ValueError
-                and len(cause.args) == 1
-                and type(cause.args[0]) is str
-                and cause.args[0] in _TRACE_FAILURE_CATEGORIES
-            ):
-                fields["error_category"] = cause.args[0]
+            if trace_code := _trace_code(cause):
+                fields["error_category"] = trace_code
             code = getattr(cause, "sqlite_errorcode", None)
             if isinstance(cause, sqlite3.Error) and type(code) is int:
                 fields["sqlite_code"] = code

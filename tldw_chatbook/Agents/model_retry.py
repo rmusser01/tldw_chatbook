@@ -19,6 +19,8 @@ import random
 from dataclasses import dataclass
 from typing import Callable
 
+import httpx
+
 from tldw_chatbook.Provider_Contract import (
     ChatAPIError,
     ChatAuthenticationError,
@@ -40,6 +42,10 @@ _TERMINAL_TYPES: tuple[type[Exception], ...] = (
 _TRANSIENT_TYPES: tuple[type[Exception], ...] = (
     ConnectionError,        # covers ConnectionResetError
     TimeoutError,
+    # TASK-42472: the llama.cpp direct HTTP path raises raw httpx errors.
+    httpx.TimeoutException,
+    httpx.ConnectError,
+    httpx.RemoteProtocolError,
 )
 
 #: 5xx means the provider failed to serve a request it accepted; 429 means it
@@ -72,6 +78,8 @@ def is_transient_model_error(exc: BaseException) -> bool:
         return _status_of(exc) in _RETRYABLE_STATUS
     if isinstance(exc, ChatAPIError):
         return _status_of(exc) in _RETRYABLE_STATUS
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in _RETRYABLE_STATUS
     return isinstance(exc, _TRANSIENT_TYPES)
 
 

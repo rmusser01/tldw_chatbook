@@ -1,8 +1,10 @@
 """A failed call authorizes an unchanged retry, never arbitrary tool history."""
 
+import json
 from dataclasses import replace
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from Tests.Chat.test_console_trace_runtime import (
@@ -28,6 +30,11 @@ from tldw_chatbook.Chat.console_trace_provenance import (
 )
 from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
 
+# The gateway reads config: stream_chat -> prepare_chat_request ->
+# get_model_capabilities reads [model_catalog] use_models_dev. In the per-test
+# sandbox that read raises RecoveryRequired and models_dev_catalog._enabled()
+# swallows it, so the file only looked config-free (TASK-42472 review,
+# 2026-11-24; the TASK-32628 swallowed-admission trap).
 pytestmark = pytest.mark.bootstrap_profile
 make_database = _make_database_fixture
 make_gateway = _make_gateway_fixture
@@ -216,3 +223,221 @@ async def test_failed_call_retry_requires_exact_durable_chain(
         with pytest.raises(TraceCallPersistenceError):
             await send(ConsoleRequestRoute.TOOL_LOOP)
         assert len(calls) == failed_attempts
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "valid",
+        "second_round",
+        "fallback_completed",
+        "other_chain_fallback",
+        "other_chain_failure",
+        "changed_model",
+        "changed_temperature",
+        "changed_surface",
+    ],
+)
+async def test_a_retry_after_a_failed_llama_stream_fallback_is_checked_against_the_stream(
+    tmp_path, make_database, make_gateway, scenario
+):
+    """TASK-42472 AC#8: a failed llama.cpp stream is sent once more without
+    streaming on its own LLAMA_FALLBACK call. When both fail, the agent's
+    unchanged retry of the streamed call is admitted; the fallback never
+    widens what a failed call authorizes."""
+
+    database = make_database(tmp_path / "llama-retry.sqlite", "llama-retry")
+    conversation = database.add_conversation({"title": "retry"})
+    _, revision = _saved_message(database, conversation, "hello")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    actor, chain = new_opaque_id(), new_opaque_id()
+    # One HTTP status per request, in order; the fallback is a second request.
+    script = {
+        "fallback_completed": [503, 200],
+        "other_chain_fallback": [503, 503, 503, 503],
+        "other_chain_failure": [503, 503],
+        "second_round": [503, 503, 503, 503],
+    }.get(scenario, [503, 503])
+    requests = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        status = script[len(requests) - 1] if len(requests) <= len(script) else 200
+        if status != 200:
+            return httpx.Response(status, json={"error": {"message": "fixture"}})
+        if json.loads(request.content).get("stream"):
+            return httpx.Response(
+                200,
+                text='data: {"choices":[{"delta":{"content":"recovered"}}]}\n\n'
+                "data: [DONE]\n\n",
+                headers={"content-type": "text/event-stream"},
+            )
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "recovered"}}]}
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    gateway = make_gateway(
+        http_client=client,
+        trace_call_boundary_factory=ConsoleTraceBoundaryFactory(database),
+    )
+    resolution = ConsoleProviderResolution(
+        ready=True,
+        provider="llama_cpp",
+        execution_key="llama_cpp",
+        model="qwen3.7-27b",
+        base_url="http://localhost:8080",
+        # A non-streaming call has no resend: the failed call directly after
+        # this run's is another run's own call, never a fallback of it.
+        streaming=scenario != "other_chain_failure",
+    )
+    messages, descriptors = [{"role": "user", "content": "hello"}], [revision]
+
+    async def send(route, actor_id=actor, chain_id=chain):
+        request = _semantic_request(
+            messages,
+            descriptors,
+            policy,
+            route=route,
+            actor_id=actor_id,
+            chain_id=chain_id,
+        )
+        items = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                request,
+                route=route,
+                route_actor_id=actor_id,
+                route_chain_id=chain_id,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ]
+        return "".join(item for item in items if isinstance(item, str))
+
+    if scenario == "fallback_completed":
+        assert await send(ConsoleRequestRoute.AGENT_FIRST) == "recovered"
+    else:
+        with pytest.raises(httpx.HTTPStatusError):
+            await send(ConsoleRequestRoute.AGENT_FIRST)
+    if scenario == "second_round":
+        with pytest.raises(httpx.HTTPStatusError):
+            await send(ConsoleRequestRoute.TOOL_LOOP)
+    elif scenario in {"other_chain_fallback", "other_chain_failure"}:
+        # Another run's failed call (and resend, when streaming) after this
+        # run's.
+        with pytest.raises(httpx.HTTPStatusError):
+            await send(
+                ConsoleRequestRoute.AGENT_FIRST, new_opaque_id(), new_opaque_id()
+            )
+    with database.transaction() as cursor:
+        routes = cursor.execute(
+            "SELECT c.route_identity, c.state FROM console_trace_events e "
+            "JOIN console_trace_calls c ON c.call_id = e.call_id "
+            "WHERE e.event_type = 'call_boundary' ORDER BY e.sequence"
+        ).fetchall()
+    failed = [("agent_first", "error"), ("llama_fallback", "error")]
+    assert [tuple(row) for row in routes] == {
+        "fallback_completed": [("agent_first", "error"), ("llama_fallback", "complete")],
+        "second_round": [*failed, ("tool_loop", "error"), ("llama_fallback", "error")],
+        "other_chain_fallback": [*failed, *failed],
+        "other_chain_failure": [("agent_first", "error")] * 2,
+    }.get(scenario, failed)
+    sent = len(requests)
+    if scenario == "changed_model":
+        resolution = replace(resolution, model="qwen3.7-8b")
+    elif scenario == "changed_temperature":
+        resolution = replace(resolution, temperature=0.25)
+    elif scenario == "changed_surface":
+        messages = messages + [
+            {"role": "tool", "content": "unobserved addition", "tool_call_id": "forged"}
+        ]
+        descriptors = descriptors + [
+            ProviderArtifactTraceProvenance(TraceProvenanceSource.TOOL_RESULT, policy)
+        ]
+    if scenario in {"valid", "second_round"}:
+        assert await send(ConsoleRequestRoute.TOOL_LOOP) == "recovered"
+        assert len(requests) == sent + 1
+    else:
+        with pytest.raises(TraceCallPersistenceError):
+            await send(ConsoleRequestRoute.TOOL_LOOP)
+        assert len(requests) == sent
+
+
+def _call_record(**changes):
+    from tldw_chatbook.Chat.console_trace_models import (
+        TraceCallState,
+        TraceReservationProvenance,
+    )
+    from tldw_chatbook.Chat.console_trace_repository import TraceCallRecord
+
+    values = dict(
+        call_id="streamed",
+        owner_id="owner",
+        segment_id="segment",
+        turn_id="turn",
+        run_id="run",
+        call_sequence=0,
+        idempotency_key="key",
+        policy_id="policy",
+        state=TraceCallState.ERROR,
+        surface_node_id="surface",
+        request_header_id="header",
+        provider_name="llama_cpp",
+        model_name="qwen3.7-27b",
+        route_identity="agent_first",
+        dispatch_started_at="2026-11-24T00:00:00Z",
+        response_started_at=None,
+        settled_at="2026-11-24T00:00:01Z",
+        provider_inactive_at=None,
+        outcome="error",
+        usage=None,
+        integrity_state="complete",
+        omission_reason_code=None,
+        reservation_provenance=TraceReservationProvenance.CRASH_DURABLE_RESERVED,
+        import_reason_code=None,
+    )
+    values.update(changes)
+    return TraceCallRecord(**values)
+
+
+@pytest.mark.parametrize(
+    ("which", "changes"),
+    [
+        ("none", {}),
+        ("fallback", {"route_identity": "tool_loop"}),
+        ("streamed", {"state": "complete"}),
+        ("fallback", {"state": "complete"}),
+        ("fallback", {"outcome": "complete"}),
+        ("fallback", {"settled_at": None}),
+        ("fallback", {"owner_id": "other"}),
+        ("fallback", {"segment_id": "other"}),
+        ("fallback", {"turn_id": "other"}),
+        ("fallback", {"policy_id": "other"}),
+        ("fallback", {"surface_node_id": "other"}),
+    ],
+    ids=lambda value: value if isinstance(value, str) else "-".join(value) or "valid",
+)
+def test_only_an_errored_resend_of_an_errored_call_is_its_failed_stream_fallback(
+    which, changes
+):
+    """TASK-42472: the shared predicate the factory's retry check and the
+    completed-turn lineage check both use. One differing condition refuses."""
+    from tldw_chatbook.Chat.console_trace_continuation import is_failed_stream_fallback
+    from tldw_chatbook.Chat.console_trace_models import TraceCallState
+
+    changes = {
+        key: TraceCallState(value) if key == "state" else value
+        for key, value in changes.items()
+    }
+    streamed = _call_record(**(changes if which == "streamed" else {}))
+    fallback = _call_record(
+        **{
+            "call_id": "fallback",
+            "run_id": "resend",
+            "route_identity": "llama_fallback",
+            **(changes if which == "fallback" else {}),
+        }
+    )
+
+    assert is_failed_stream_fallback(streamed, fallback) is (which == "none")
