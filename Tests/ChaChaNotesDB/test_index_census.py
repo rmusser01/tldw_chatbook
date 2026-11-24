@@ -110,6 +110,31 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
     "idx_machine_followup_receipts_conversation": IndexPin(
         "console_machine_followup_receipts", False, ("conversation_id",)
     ),
+    # TASK-42517 (v87->v88): the voice-promotion message locators.
+    "idx_hook_continuation_receipts_assistant_message": IndexPin(
+        "console_hook_continuation_receipts", False, ("assistant_message_id",)
+    ),
+    "idx_hook_continuation_receipts_parent_assistant_message": IndexPin(
+        "console_hook_continuation_receipts", False, ("parent_assistant_message_id",)
+    ),
+    "idx_machine_followup_receipts_assistant_message": IndexPin(
+        "console_machine_followup_receipts", False, ("assistant_message_id",)
+    ),
+    "idx_machine_followup_receipts_parent_assistant_message": IndexPin(
+        "console_machine_followup_receipts", False, ("parent_assistant_message_id",)
+    ),
+    "idx_response_rule_assessments_message": IndexPin(
+        "console_response_rule_assessments", False, ("message_id",)
+    ),
+    "idx_response_rule_drafts_message": IndexPin(
+        "console_response_rule_drafts", False, ("message_id",)
+    ),
+    "idx_response_rule_fixtures_message": IndexPin(
+        "console_response_rule_fixtures", False, ("message_id",)
+    ),
+    "idx_response_rule_validations_message": IndexPin(
+        "console_response_rule_validations", False, ("message_id",)
+    ),
     "idx_response_rule_assessments_source": IndexPin(
         "console_response_rule_assessments", False, ("conversation_id", "message_id")
     ),

@@ -741,7 +741,7 @@ class CharactersRAGDB:
     """
 
     _CURRENT_SCHEMA_VERSION = (
-        87  # ADR-337 amendment: trace segments owned by a spawned child run.
+        88  # TASK-42517: indexed voice-promotion message locators.
     )
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
@@ -8134,6 +8134,12 @@ DELETE FROM keywords
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v87_to_v88(self, conn: sqlite3.Connection) -> None:
+        """Index the message locators that joined the census after v72."""
+        self._require_migration_entry_version(conn, 87, "V87→V88")
+        from tldw_chatbook.DB.chachanotes_sql_steps import run_sql_version_step  # migration-only; off the boot import path
+        run_sql_version_step(self, conn, 87, Path(__file__).parent / "migrations" / "chachanotes_v87_to_v88_message_locator_indexes.sql")
+
     def _migrate_from_v86_to_v87(self, conn: sqlite3.Connection) -> None:
         """Link a spawned child's own trace segment to its parent's owner."""
         self._require_migration_entry_version(conn, 86, "V86→V87")
@@ -8705,6 +8711,7 @@ DELETE FROM keywords
                     84: self._migrate_from_v84_to_v85,
                     85: self._migrate_from_v85_to_v86,
                     86: self._migrate_from_v86_to_v87,
+                    87: self._migrate_from_v87_to_v88,
                 }
 
                 if current_db_version == 0:

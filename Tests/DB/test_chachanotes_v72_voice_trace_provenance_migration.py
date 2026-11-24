@@ -13,6 +13,18 @@ from tldw_chatbook.Chat.console_trace_models import new_opaque_id
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
+_MIGRATIONS = Path(__file__).resolve().parents[2] / "tldw_chatbook/DB/migrations"
+
+
+def _migration_statement(file_name: str, start: str) -> str:
+    """One CREATE statement as its shipped migration file writes it."""
+    sql = (_MIGRATIONS / file_name).read_text(encoding="utf-8")
+    begin = sql.index(start)
+    if start.startswith("CREATE TRIGGER"):
+        return sql[begin : sql.index("END;", begin) + len("END")]
+    return sql[begin : sql.index(";", begin)]
+
+
 def _version(connection: sqlite3.Connection) -> int:
     row = connection.execute(
         "SELECT version FROM db_schema_version WHERE schema_name = ?",
@@ -132,7 +144,22 @@ def test_genuine_v70_upgrades_without_rewriting_semantic_rows(tmp_path: Path) ->
             ).fetchone()
         )
         assert after == before
-        assert _canvas_schema(connection) == canvas_before
+        # ADR-239's v81->v82 step (01b17108c7) rewrote the canvas sequence
+        # index and added the single-root guard on purpose. Strip exactly
+        # those two and the v72 guarantee still pins every other canvas
+        # object (TASK-42517).
+        assert _canvas_schema(connection) == canvas_before | {
+            (
+                "index",
+                "idx_canvas_revisions_canvas_sequence",
+            ): "CREATE INDEX idx_canvas_revisions_canvas_sequence\n"
+            "  ON canvas_revisions(canvas_id, sequence, id)",
+            (
+                "index",
+                "uq_canvas_revisions_single_root",
+            ): "CREATE UNIQUE INDEX uq_canvas_revisions_single_root\n"
+            "  ON canvas_revisions(canvas_id) WHERE parent_revision_id IS NULL",
+        }
         assert (
             tuple(
                 tuple(row)
@@ -165,11 +192,23 @@ def test_genuine_v71_preserves_archived_rows_columns_indexes_and_triggers(
         assert _version(connection) == 71
         conversation_id = old.add_conversation({"title": "Archived before voice"})
         row = old.get_conversation_by_id(conversation_id)
-        old.set_conversations_archived(
-            [conversation_id],
-            archived=True,
-            expected_versions={conversation_id: row["version"]},
-        )
+        # Archive with the v71-era statement `set_conversations_archived`
+        # ran: today's method also writes `archived_at`, which v85 added
+        # (dd8d60c9e8), so it cannot run on a v71 file (TASK-42517).
+        with old.transaction(immediate=True) as cursor:
+            assert (
+                cursor.execute(
+                    "UPDATE conversations SET archived = 1, version = version + 1, "
+                    "last_modified = ? WHERE id = ? AND deleted = 0 "
+                    "AND version = ? AND archived != 1",
+                    (
+                        old._get_current_utc_timestamp_iso(),
+                        conversation_id,
+                        row["version"],
+                    ),
+                ).rowcount
+                == 1
+            )
         archived_before = dict(old.get_conversation_by_id(conversation_id))
         columns_before = tuple(
             tuple(row) for row in connection.execute("PRAGMA table_info(conversations)")
@@ -202,27 +241,71 @@ def test_genuine_v71_preserves_archived_rows_columns_indexes_and_triggers(
     try:
         connection = current.get_connection()
         assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
-        assert dict(current.get_conversation_by_id(conversation_id)) == archived_before
-        assert (
-            tuple(
-                tuple(row)
-                for row in connection.execute("PRAGMA table_info(conversations)")
-            )
-            == columns_before
+        # ADR-166's v84->v85 step (dd8d60c9e8) added `archived_at`, NULL for
+        # every archive made before it ("historical dates remain unknown").
+        assert dict(current.get_conversation_by_id(conversation_id)) == (
+            archived_before | {"archived_at": None}
         )
+        assert tuple(
+            tuple(row) for row in connection.execute("PRAGMA table_info(conversations)")
+        ) == columns_before + ((len(columns_before), "archived_at", "TEXT", 0, None, 0),)
         schema_after = tuple(
             tuple(row)
             for row in connection.execute(
                 "SELECT type, name, sql FROM sqlite_master WHERE tbl_name = 'conversations' ORDER BY type, name"
             )
         )
-        # Two intentional conversations-schema changes after v72: ADR-224's
-        # sargable keyset index (v78->v79, conversations only) and ADR-216's
-        # browse-order pair (v79->v80). Strip exactly the sargable row and
-        # the v72 preservation guarantee still pins everything else.
+        # Intentional conversations-schema changes after v72 (TASK-42517
+        # added the last three): ADR-224's sargable keyset index (v78->v79,
+        # conversations only), ADR-216's browse-order pair (v79->v80), the
+        # response-rules cleanup trigger (v80->v81, d24c4c04b2), ADR-166's
+        # archive chronology (v84->v85, dd8d60c9e8: the `archived_at` column,
+        # one index and a rewritten `conversations_sync_update`), and the
+        # prompt mix-ins' `conversations_ad` rewrite (v85->v86, 7970fbcada).
+        # The later statements are read from their shipped migration files.
+        # Strip exactly the sargable row and the v72 preservation guarantee
+        # still pins everything else.
+        rewritten = {
+            ("trigger", "conversations_sync_update"): _migration_statement(
+                "chachanotes_v84_to_v85_archive_chronology.sql",
+                "CREATE TRIGGER conversations_sync_update",
+            ),
+            ("trigger", "conversations_ad"): _migration_statement(
+                "chachanotes_prompt_mixins.sql", "CREATE TRIGGER conversations_ad"
+            ),
+        }
+        later = (
+            browse_order_indexes
+            + (
+                (
+                    "trigger",
+                    "console_response_rules_conversation_cleanup",
+                    _migration_statement(
+                        "chachanotes_v80_to_v81_response_rules.sql",
+                        "CREATE TRIGGER console_response_rules_conversation_cleanup",
+                    ),
+                ),
+                (
+                    "index",
+                    "idx_conversations_archive_chronology",
+                    _migration_statement(
+                        "chachanotes_v84_to_v85_archive_chronology.sql",
+                        "CREATE INDEX idx_conversations_archive_chronology",
+                    ),
+                ),
+            )
+            + tuple((*key, sql) for key, sql in rewritten.items())
+        )
+        kept = tuple(
+            (kind, name, sql[:-1] + ", archived_at TEXT)")
+            if (kind, name) == ("table", "conversations")
+            else (kind, name, sql)
+            for kind, name, sql in schema_before
+            if (kind, name) not in rewritten
+        )
         assert tuple(
             row for row in schema_after if row[1] != "idx_conv_char_lm"
-        ) == tuple(sorted(schema_before + browse_order_indexes))
+        ) == tuple(sorted(kept + later))
         assert any(row[1] == "idx_conv_char_lm" for row in schema_after)
     finally:
         current.close_connection()
@@ -296,8 +379,18 @@ def test_v72_provenance_defaults_and_cross_column_constraints() -> None:
         db.close_connection()
 
 
-def test_every_completed_pair_reconciliation_locator_uses_indexed_search() -> None:
-    db = CharactersRAGDB(":memory:", "v72-index-plans")
+@pytest.mark.parametrize("origin", ["fresh", "upgraded_from_v87"])
+def test_every_completed_pair_reconciliation_locator_uses_indexed_search(
+    tmp_path: Path, origin: str
+) -> None:
+    path = tmp_path / "locators.sqlite"
+    if origin == "upgraded_from_v87":
+        # The v87->v88 step (TASK-42517) must index an existing file too.
+        with chachanotes_db_at_version(path, 87, client_id="v87-locators"):
+            pass
+    db = CharactersRAGDB(
+        ":memory:" if origin == "fresh" else path, "v72-index-plans"
+    )
     try:
         connection = db.get_connection()
         assert (
@@ -355,6 +448,40 @@ def test_every_completed_pair_reconciliation_locator_uses_indexed_search() -> No
                 "console_trace_surface_nodes",
                 "semantic_revision_id",
             ): "idx_console_trace_surface_nodes_semantic_revision_exact",
+            # Locators classified after v72 (38467b8fc6, d24c4c04b2) planned
+            # as SCAN until v88 indexed them (TASK-42517).
+            (
+                "console_hook_continuation_receipts",
+                "assistant_message_id",
+            ): "idx_hook_continuation_receipts_assistant_message",
+            (
+                "console_hook_continuation_receipts",
+                "parent_assistant_message_id",
+            ): "idx_hook_continuation_receipts_parent_assistant_message",
+            (
+                "console_machine_followup_receipts",
+                "assistant_message_id",
+            ): "idx_machine_followup_receipts_assistant_message",
+            (
+                "console_machine_followup_receipts",
+                "parent_assistant_message_id",
+            ): "idx_machine_followup_receipts_parent_assistant_message",
+            (
+                "console_response_rule_assessments",
+                "message_id",
+            ): "idx_response_rule_assessments_message",
+            (
+                "console_response_rule_drafts",
+                "message_id",
+            ): "idx_response_rule_drafts_message",
+            (
+                "console_response_rule_fixtures",
+                "message_id",
+            ): "idx_response_rule_fixtures_message",
+            (
+                "console_response_rule_validations",
+                "message_id",
+            ): "idx_response_rule_validations_message",
         }
         locators = frozenset().union(
             persistence_module._VOICE_PROMOTION_MANDATORY_LOCATORS,

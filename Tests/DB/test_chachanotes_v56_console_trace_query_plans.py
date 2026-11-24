@@ -7,8 +7,14 @@ import sqlite3
 
 import pytest
 
+from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
+
+RESPONSE_REVISION_LOCATOR = (
+    "SELECT response_link_id FROM console_trace_response_links "
+    "WHERE semantic_revision_id = ?"
+)
 
 TRACE_INDEX_QUERIES: dict[str, tuple[str, tuple[object, ...]]] = {
     "idx_console_trace_artifacts_identity": (
@@ -71,9 +77,11 @@ TRACE_INDEX_QUERIES: dict[str, tuple[str, tuple[object, ...]]] = {
         "WHERE artifact_id = ?",
         ("artifact",),
     ),
-    "idx_console_trace_response_revision": (
-        "SELECT response_link_id FROM console_trace_response_links "
-        "WHERE semantic_revision_id = ?",
+    # Since schema 72 (b7dd8e53f2) the exact full index wins this locator
+    # over v56's partial idx_console_trace_response_revision; the v56 index
+    # is pinned on a v71 file below (TASK-42517).
+    "idx_console_trace_response_links_semantic_revision_exact": (
+        RESPONSE_REVISION_LOCATOR,
         ("revision",),
     ),
     "idx_console_trace_revision_bindings_artifact": (
@@ -163,3 +171,30 @@ def test_console_trace_query_uses_index_without_statistics(
     ).fetchall()
     plan = "\n".join(str(row[-1]) for row in rows)
     assert index_name in plan, plan
+
+
+def test_response_revision_index_served_its_locator_until_schema_72(tmp_path) -> None:
+    """v56's partial index chose the revision locator on every v56-v71 file.
+
+    Schema 72 added ``idx_console_trace_response_links_semantic_revision_exact``
+    on the same column (ADR-338's completed-pair locators), and that full
+    index wins the same plan on a current file (the parametrized pin above).
+    No product query plans through the v56 index any more (TASK-42517).
+    """
+
+    with chachanotes_db_at_version(tmp_path / "v71.sqlite", 71) as historical:
+        connection = historical.get_connection()
+        assert (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'sqlite_stat1'"
+            ).fetchone()
+            is None
+        )
+        plan = "\n".join(
+            str(row[-1])
+            for row in connection.execute(
+                "EXPLAIN QUERY PLAN " + RESPONSE_REVISION_LOCATOR, ("revision",)
+            )
+        )
+    assert "idx_console_trace_response_revision" in plan, plan

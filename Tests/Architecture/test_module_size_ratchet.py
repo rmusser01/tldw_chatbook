@@ -1034,7 +1034,9 @@ _BUDGETS: dict[str, int] = {
     # dev 2026-11-19: dev's close_connection already takes ``checkpoint``, so
     # the branch's private close helper is gone: 22544 -> 22566 (+22, the
     # store declaration and the method; measured, wc -l).
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22566,
+    # 2026-11-24, TASK-42517: 22566 -> 22573 (+7), the v87->v88 locator-index
+    # step (through the shared DB/chachanotes_sql_steps.py) and its dispatch row.
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22573,
     # TASK-39147: the rebased report reader and workflow migrations cross 4000.
     # 2026-11-12, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +2, the store's @declare_store backup-participant declaration and import.
