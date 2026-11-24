@@ -367,6 +367,8 @@ from hypothesis import strategies as st  # noqa: E402
 
 @settings(max_examples=300, deadline=None)
 @example(window=514, requested=1)  # falsified the old iff (round-24 soak, run 11 of 20)
+@example(window=683, requested=50_000_000)  # the floor itself: any reply leaves input
+@example(window=682, requested=170)  # one below, a reply at the cap (170) fills it
 @given(
     window=st.integers(min_value=1, max_value=50_000_000),
     requested=st.integers(min_value=1, max_value=50_000_000),

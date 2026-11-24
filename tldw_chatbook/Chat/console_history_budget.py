@@ -768,10 +768,11 @@ def estimated_window_reply_cap(window_tokens: int) -> int:
         window_tokens: The estimated context window.
 
     Returns:
-        The reservation ceiling, at least a quarter of the window. It leaves
-        input only for a window of at least
+        The reservation ceiling, at least a quarter of the window. A reply
+        at this ceiling leaves input only for a window of at least
         ``ESTIMATED_WINDOW_INPUT_FLOOR_TOKENS``; below that the safety margin
-        alone fills it.
+        plus that reply fill it (the margin alone fills a window of up to
+        512 tokens).
     """
     margin = request_safety_margin_tokens(window_tokens)
     return max(
