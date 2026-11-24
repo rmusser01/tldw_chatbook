@@ -151,6 +151,20 @@ async def test_studio_history_keeps_stale_sources_visible_and_edits_the_exact_ar
             _, appended = notes_section.capture_save_request()
             assert appended.note_id == first_note.note_id
             assert appended.expected_version > first_note.expected_version
+            screen.query_one("#research-studio-reopen-last", Button).press()
+
+            def exact_artifact_open() -> bool:
+                catalog = getattr(app.screen, "_artifacts_controller", None)
+                detail = catalog.detail if catalog else None
+                return (
+                    detail is not None
+                    and detail.key.source == "chatbook"
+                    and str(detail.key.native_id) == updated.owner_id
+                )
+
+            await _until(
+                pilot, exact_artifact_open, "canonical Library artifact reopened"
+            )
 
 
 @pytest.mark.parametrize(

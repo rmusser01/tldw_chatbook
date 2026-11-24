@@ -19,7 +19,7 @@ The shell destination id is `research`, but its **primary route is `research_wor
 | Quick notes | `Research_Workspace/quick_notes.py` | save requests with app-minted operation ids, receipt validation at the authority boundary, provenance-as-keywords encoding, conflict errors |
 | Presentation | `Research_Workspace/overlay_store.py`, `paste_staging.py`, `layout_state.py`, `source_urls.py` | per-user overlay JSON (folders/annotations/pane prefs); private paste staging (2 MiB/artifact, 100 artifacts); pane layout; http/https-only URL admission |
 | Runs engine | `Research_Interop/` | `LocalResearchService` (SQLite sessions/runs/events/artifacts/checkpoints; lease + fencing per ADR-070), `LocalResearchEngine` (phases planning→collecting→synthesizing→packaging; reuses the deep-search pipeline), `ResearchScopeService` (LOCAL\|SERVER routing on a single-worker executor to preserve read-check-write ordering), budget ledger, chat handoff |
-| Persistence | `DB/Workspace_DB.py` (schema v8; `research_source_operations` + quick-note receipts), `DB/ChaChaNotes_DB.py` (`research_quick_note_owner_proofs`, local-only) | see below |
+| Persistence | `DB/Workspace_DB.py` (schema v11; source and Quick Note receipts and output membership metadata), `DB/ChaChaNotes_DB.py` (`research_quick_note_owner_proofs`, local-only) | see below |
 | Wiring | `app_service_wiring.py`, `app.py`, `app_ingest_queue.py` | research service wiring; screen late-binding of both ports; held ingest dispatch/retry/reconcile helpers |
 
 ## Source admission (dataflow)
@@ -65,6 +65,35 @@ in the editor with the saved note's current version.
 Local Quick Note deletion runs the canonical Notes write in a finite worker,
 including during receipt recovery. It waits for the owner result before
 cleaning up workspace memberships.
+
+## Primary Studio
+
+`ResearchStudioRegion` projects availability for Summary, Flashcards, Quiz,
+Report, and Compare Sources from the selected workspace's capture of ready
+Media sources and its processing route. Compare Sources requires two eligible
+sources. `ResearchStudioGenerator` rechecks the captured sources and outbound
+processing consent before using excerpts. Studio retains the captured route and
+generation settings across a retry.
+
+Local Summary, Report, and Compare Sources save to Chatbooks. Flashcards and
+Quiz save to the canonical Study deck/cards and Quiz/questions stores. A
+workspace output membership carries bounded provenance and refers to the owner
+ID. WorkspaceDB v11 adds the membership metadata column. The saved-output
+selector keys each item by its owner kind and ID. It can still inspect an output
+after a source version changes and can remove a missing owner's Local link.
+
+Server text generation uses the selected server's chat completion route with
+chat persistence disabled. The canonical workspace artifact stores the output,
+its captured source versions, and citation markers. Editing and replacement
+check the owner version and return the content to draft. Markdown export
+requires explicit review acceptance and uses the exact accepted artifact version
+returned by the server. Server Flashcards and Quiz require a workspace Study
+creation contract that can safely recover an operation after a lost response.
+
+Studio blocks workspace and authority changes while generation is active. Stop
+ends generation, and Retry uses the original operation. Local Study handoffs
+select the exact saved deck or quiz by ID even beyond the first list page. The
+Artifacts handoff reuses the Library's canonical Chatbook selection.
 
 ## Runs lifecycle
 
