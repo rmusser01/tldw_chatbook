@@ -1124,7 +1124,7 @@ _BUDGETS: dict[str, int] = {
     # +60, exact: 10,170.
     # 2026-11-24, TASK-42472 AC#9 (round-24 stack): `captured_run_budget` is
     # deleted, 10,170 -> 10,142, exact measurement.
-    "tldw_chatbook/Chat/console_agent_bridge.py": 10142,
+    "tldw_chatbook/Chat/console_agent_bridge.py": 9977,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # TASK-36944.2, 2026-11-03: +6 for the public `setting` Console reads.
@@ -1235,7 +1235,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-23, PR #3517's port onto dev b31e3e9241 (round 24; owner decision
     # 2026-10-04, expand limits): dev measures 8,376, plus this branch's
     # +53, exact: 8,429.
-    "tldw_chatbook/Chat/console_provider_gateway.py": 8429,
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8389,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 7024 -> 7043 (+19). Send's readiness gets one owner,

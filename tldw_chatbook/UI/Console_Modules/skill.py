@@ -14,7 +14,7 @@ from typing import Any
 
 from loguru import logger
 
-from ...Chat.console_command_grammar import CommandParse
+from ...Chat.console_command_grammar import SKILL_COST_COMMAND, CommandParse
 from ...Chat.console_skill_resolver import (
     SKILL_UNTRUSTED_REFUSE,
     SkillCommandCandidate,
@@ -570,10 +570,17 @@ def _capture_console_skill_discovery(controller: Any) -> Callable[[], bool] | No
     return current
 
 
+async def dispatch_skill_command(screen: Any, parse: CommandParse) -> None:
+    """Handle the two read-only Console skill commands."""
+    if parse.name == SKILL_COST_COMMAND:
+        await show_skill_cost_report(screen)
+    else:
+        await screen._skill._console_command_skills(parse)
+
+
 async def show_skill_cost_report(screen: Any) -> None:
     """Open the report only while its originating chat and binding are visible."""
     from ...Backup_Recovery.bootstrap import RecoveryRequired
-    from ...Chat.console_command_grammar import SKILL_COST_COMMAND
     from ...Chat.console_configuration_preparation import _ready_published_plugin
     from ...Chat.console_skill_cost_report import (
         format_skill_cost_report,

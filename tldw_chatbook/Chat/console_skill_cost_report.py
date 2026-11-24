@@ -9,12 +9,15 @@ from collections import Counter, deque
 from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
+from functools import partial
 from hashlib import sha256
 from threading import Lock
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.agent_models import ToolSchema
+
+    from .console_trace_provenance import ConsoleRequestRoute
 
     from .console_prepared_request import (
         ConsoleRequestTokenAccounting,
@@ -265,6 +268,68 @@ def observe_skill_use(
                 previous.body_tokens + (body_tokens or 0),
                 previous.unmeasured + (body_tokens is None),
             )
+
+
+def context_breakdown_accounting(controller: Any, session_id: str):
+    """Use the latest prepared sample, with the existing preflight fallback."""
+    try:
+        session = controller.store._session_or_raise(session_id)
+    except KeyError:
+        return None
+    return skill_report_accounting(
+        session
+    ) or controller._context_accounting_by_session.get(session_id)
+
+
+def _ignore_observation(*_args: Any) -> None:
+    return
+
+
+def manual_use_observer(
+    session: Any,
+    skill_names: Sequence[str],
+    turn_id: str,
+    route: ConsoleRequestRoute,
+    replay: bool,
+) -> Callable[[], None]:
+    """Capture the original chat binding before the accepted send awaits."""
+    from .console_trace_provenance import ConsoleRequestRoute
+
+    if replay or not skill_names or session is None or session.ephemeral:
+        return _ignore_observation
+    if route is not ConsoleRequestRoute.FRESH:
+        return _ignore_observation
+    return partial(
+        observe_skill_use,
+        session,
+        skill_report_scope(session),
+        skill_names,
+        turn_id=turn_id,
+    )
+
+
+def direct_request_observer(store: Any, session_id: str) -> Callable[[Any], None]:
+    """Observe the final direct request for the original chat binding."""
+    from .console_prepared_request import PreparedProviderRequest
+
+    session = store._session_or_raise(session_id)
+    if session.ephemeral:
+        return _ignore_observation
+    scope = skill_report_scope(session)
+
+    def observe(request: Any) -> None:
+        if isinstance(request, PreparedProviderRequest) and not request.known_overflow:
+            record_skill_cost(
+                session,
+                scope,
+                request.accounting,
+                native=bool(request.tools),
+                schema_weights=None if request.tools else (),
+                fenced_tokens=0 if not request.tools else None,
+                prepared=True,
+            )
+
+    return observe
 
 
 def format_skill_cost_report(

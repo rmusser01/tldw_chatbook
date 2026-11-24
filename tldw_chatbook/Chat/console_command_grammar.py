@@ -286,7 +286,7 @@ def default_console_registry() -> ConsoleCommandRegistry:
     )
     registry.register(
         ConsoleCommand(
-            name=SKILL_COST_COMMAND, argument_hint="", handler_id=SKILL_COST_COMMAND
+            name=SKILL_COST_COMMAND, argument_hint="", handler_id=SKILLS_COMMAND_HANDLER_ID
         )
     )
     registry.register(

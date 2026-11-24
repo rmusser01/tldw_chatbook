@@ -184,6 +184,7 @@ from tldw_chatbook.Chat.console_history_budget import (
 
 # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (console_auxiliary_routing imports at its one call site.)
 from tldw_chatbook.Agents.agent_service import append_personal_context
+from tldw_chatbook.Chat import console_skill_cost_report as skill_cost
 from tldw_chatbook.Chat.console_context_compaction import (
     NO_LEGACY_MEMORY,
     CompactionAdmission,
@@ -269,7 +270,6 @@ from tldw_chatbook.Chat.console_prepared_request import (
     PERSISTED_MESSAGE_ID_KEY,
     THINKING_OWNER_KEY,
     PreparedConsoleRequest,
-    PreparedProviderRequest,
     freeze_json as freeze_json,  # noqa: PLC0414 - retained live trace patch seam
     _is_current_user_text_transform,
     _reseal_archive_followup_trace_request,
@@ -17545,21 +17545,7 @@ class ConsoleChatController:
             return "no active run to steer — plain messages queue for the next turn"
         return steer(text)
 
-    def context_breakdown_accounting(self, session_id: str):
-        """The LAST prepared request's accounting for one session, if any.
-
-        The live diagnostic sample supplies the finalized request when available.
-        An earlier preparation may supply the preflight fallback.
-        """
-        from .console_skill_cost_report import skill_report_accounting
-
-        try:
-            session = self.store._session_or_raise(session_id)
-        except KeyError:
-            return None
-        return skill_report_accounting(
-            session
-        ) or self._context_accounting_by_session.get(session_id)
+    context_breakdown_accounting = skill_cost.context_breakdown_accounting
 
     def redirect_active_run(self, text: str) -> str | None:
         """Cut off the ACTIVE session's current model response and re-run the
@@ -24525,12 +24511,10 @@ class ConsoleChatController:
             # no-op since nothing will ever read a closed session's state.
             return self._session_closed_result()
         owner = next((s for s in self.store.sessions() if s.id == owner_id), None)
-        skill_scope = None
-        if owner is not None and skill_bindings and route is ConsoleRequestRoute.FRESH:
-            from .console_skill_cost_report import skill_report_scope
-
-            if not owner.ephemeral:
-                skill_scope = skill_report_scope(owner)
+        observe_skills = skill_cost.manual_use_observer(
+            owner, skill_bindings, assistant_message_id, route,
+            replay=prepare_retry or variant_mode,
+        )
         turn_context = self._require_complete_turn_execution_context(turn_context)
         if turn_context.session_id != owner_id:
             raise ValueError("Console turn context does not own the assistant row.")
@@ -24945,15 +24929,7 @@ class ConsoleChatController:
             }:
                 return self._session_closed_result()
             stream_signals.automatic_work_chain_id = work_chain_id
-            if skill_scope is not None and not prepare_retry and not variant_mode:
-                from .console_skill_cost_report import observe_skill_use
-
-                observe_skill_use(
-                    owner,
-                    skill_scope,
-                    skill_bindings,
-                    turn_id=assistant_message_id,
-                )
+            observe_skills()
             if (
                 bool(
                     turn_context.tool_configuration.get(
@@ -25741,10 +25717,7 @@ class ConsoleChatController:
             owner_id = self.store.session_id_for_message(assistant_message_id)
         except KeyError:
             return self._session_closed_result()
-        from .console_skill_cost_report import record_skill_cost, skill_report_scope
-
-        skill_report_session = self.store._session_or_raise(owner_id)
-        skill_scope = skill_report_scope(skill_report_session)
+        observe_cost = skill_cost.direct_request_observer(self.store, owner_id)
         one_shot_used = one_shot_prefill_revision if prefill_from_one_shot else None
         provider_messages = self._provider_messages_with_prefill(
             provider_messages,
@@ -26035,20 +26008,7 @@ class ConsoleChatController:
                     enter_provider_dispatch if deferred_boundary else None
                 ),
             }
-            if (
-                isinstance(dispatch_request, PreparedProviderRequest)
-                and not dispatch_request.known_overflow
-                and not skill_report_session.ephemeral
-            ):
-                record_skill_cost(
-                    skill_report_session,
-                    skill_scope,
-                    dispatch_request.accounting,
-                    native=bool(dispatch_request.tools),
-                    schema_weights=None if dispatch_request.tools else (),
-                    fenced_tokens=0 if not dispatch_request.tools else None,
-                    prepared=True,
-                )
+            observe_cost(dispatch_request)
             provider_stream = self.provider_gateway.stream_chat(
                 resolution,
                 dispatch_request,

@@ -9,7 +9,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
@@ -19,6 +19,10 @@ from tldw_chatbook.Chat.console_trace_models import (
 )
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_prepared_request import (
+        PreparedConsoleRequest,
+        PreparedProviderRequest,
+    )
     from tldw_chatbook.Chat.console_semantic_revision import (
         SemanticRevisionCoordinator,
     )
@@ -524,6 +528,53 @@ def request_route_provenance(
         chain_id=chain_id,
         parent_revision_id=parent_revision_id,
     )
+
+
+def validate_request_trace_binding(
+    request: PreparedConsoleRequest | PreparedProviderRequest,
+    *,
+    route: ConsoleRequestRoute | None,
+    route_actor_id: str | None,
+    route_chain_id: str | None,
+    capture_mode: ConsoleTraceCaptureMode,
+) -> None:
+    """Fail closed unless preparation provenance matches this dispatch."""
+
+    if type(capture_mode) is not ConsoleTraceCaptureMode:
+        raise TypeError("capture_mode must be ConsoleTraceCaptureMode")
+    provenance = request.provenance
+    if capture_mode is ConsoleTraceCaptureMode.CAPTURE_OFF:
+        if provenance is not None:
+            raise TraceProvenanceAlignmentError(
+                "Capture Off cannot dispatch a capture-on prepared request"
+            )
+        return
+    if provenance is None:
+        raise TraceProvenanceAlignmentError(
+            "Capture On requires prepared request provenance"
+        )
+    route_descriptor = (
+        request_route_provenance(
+            route,
+            actor_id=route_actor_id,
+            chain_id=route_chain_id,
+        )
+        if route is not None
+        else None
+    )
+    route_descriptors = tuple(
+        item
+        for item in provenance.metadata
+        if type(item) is RequestRouteTraceProvenance
+    )
+    if (
+        route_descriptor is None
+        or len(route_descriptors) != 1
+        or replace(route_descriptors[0], parent_revision_id=None) != route_descriptor  # child: turn checked by the adapter
+    ):
+        raise TraceProvenanceAlignmentError(
+            "capture-on request route provenance is missing or mismatched"
+        )
 
 
 def stream_fallback_route_provenance(

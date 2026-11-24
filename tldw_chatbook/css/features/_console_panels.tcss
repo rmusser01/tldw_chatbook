@@ -520,7 +520,10 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
     margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
 }
 
-#console-skill-cost-actions Button {
+#console-skill-cost-skills,
+#console-skill-cost-tools,
+#console-skill-cost-plugins,
+#console-skill-cost-close {
     width: $ds-width-fill;
     min-width: $ds-size-7;
     padding: $ds-space-0;

@@ -2935,9 +2935,6 @@ class AgentService:
         self._injected_app_config = app_config
         self._startup_instruction_snapshot: InstructionSnapshot | None = None
         self._tool_protocol_cache: dict[tuple[str, ...], str] = {}
-        self._console_request_surface_observer: Callable[
-            [list[ToolSchema], bool, str], None
-        ] | None = None
         self._run_log_requested = bool(
             run_log_request_plan.requested if run_log_request_plan else False
         )
