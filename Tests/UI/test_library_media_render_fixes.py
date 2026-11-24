@@ -773,14 +773,15 @@ async def test_pressing_analyze_leaves_select_mode_and_paints_its_receipt():
             # held came from the press itself, not the worker's first sync.
             partition_entered = asyncio.Event()
             release_partition = asyncio.Event()
-            unanalyzed_ids = screen._library_media_unanalyzed_ids
+            # TASK-36952.3.5 moved the partition pass into the media controller.
+            unanalyzed_ids = screen._media_controller._library_media_unanalyzed_ids
 
             async def _held_partition(media_ids):
                 partition_entered.set()
                 await release_partition.wait()
                 return await unanalyzed_ids(media_ids)
 
-            screen._library_media_unanalyzed_ids = _held_partition
+            screen._media_controller._library_media_unanalyzed_ids = _held_partition
             screen.query_one("#library-media-analyze-selected", Button).press()
             await _wait_for_condition(
                 pilot,
