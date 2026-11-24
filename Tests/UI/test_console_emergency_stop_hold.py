@@ -494,14 +494,22 @@ async def test_send_reads_held_at_every_width_and_send_again_once_lifted(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("other", ["none", "setup", "recovery", "wake", "attachment"])
+@pytest.mark.parametrize(
+    "other", ["none", "setup", "limits", "recovery", "wake", "attachment"]
+)
 async def test_a_held_send_names_the_stop_over_any_other_blocker(other) -> None:
     """Review follow-up (2026-11-22): with a setup blocker or a pending
     recovery as well, Send read "Held" while its tooltip and reason named the
-    other cause. The send gate checks the stop first, so all three name it."""
+    other cause. The send gate checks the stop first, so all three name it.
+
+    "limits" (2026-11-24 rebase onto dev's TASK-34100.2 review v5r4): a full
+    context window's strip became a link to Chat settings' Max tokens. Under
+    the stop the strip names the stop, so it carries no such link.
+    """
     from textual.app import App, ComposeResult
 
     from tldw_chatbook.Chat.console_display_state import (
+        CONSOLE_BLOCKER_MODEL_LIMITS,
         CONSOLE_BLOCKER_PROVIDER_SETUP,
         ConsoleAttachmentBlock,
         ConsoleBlockedReason,
@@ -516,6 +524,12 @@ async def test_a_held_send_names_the_stop_over_any_other_blocker(other) -> None:
         "setup": {
             "setup_blocked_reason": ConsoleBlockedReason(
                 "Add an API key before sending.", code=CONSOLE_BLOCKER_PROVIDER_SETUP
+            )
+        },
+        "limits": {
+            "setup_blocked_reason": ConsoleBlockedReason(
+                "Send blocked — fix model limits to continue",
+                code=CONSOLE_BLOCKER_MODEL_LIMITS,
             )
         },
         "recovery": {"dispatch_recovery_blocked": True},
@@ -548,6 +562,7 @@ async def test_a_held_send_names_the_stop_over_any_other_blocker(other) -> None:
         reason = composer.query_one("#console-send-disabled-reason", Static)
         assert str(reason.content) == SEND_HOLD, (other, reason.content)
         assert not composer.has_class("console-composer-setup-blocked")
+        assert not composer.has_class("console-composer-limits-blocked")
 
 
 @pytest.mark.asyncio
