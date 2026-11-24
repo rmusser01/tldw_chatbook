@@ -350,23 +350,23 @@ def _hard_split_piece(piece: str) -> list[str]:
         return [piece]
 
     pieces: list[str] = []
-    remaining = piece
+    start = 0
     search_floor = MAX_TURN_CHARS // 2
-    while len(remaining) > MAX_TURN_CHARS:
-        window = remaining[:MAX_TURN_CHARS]
-        break_at = None
-        for index in range(len(window) - 1, search_floor, -1):
-            if window[index].isspace():
-                break_at = index
+    while len(piece) - start > MAX_TURN_CHARS:
+        stop = start + MAX_TURN_CHARS
+        for index in range(stop - 1, start + search_floor, -1):
+            if piece[index].isspace():
+                stop = index
                 break
-        if break_at is not None:
-            pieces.append(remaining[:break_at].rstrip())
-            remaining = remaining[break_at:].lstrip()
+        if stop < start + MAX_TURN_CHARS:
+            pieces.append(piece[start:stop].rstrip())
+            while stop < len(piece) and piece[stop].isspace():
+                stop += 1
         else:
-            pieces.append(window)
-            remaining = remaining[MAX_TURN_CHARS:]
-    if remaining:
-        pieces.append(remaining)
+            pieces.append(piece[start:stop])
+        start = stop
+    if start < len(piece):
+        pieces.append(piece[start:])
     return pieces
 
 

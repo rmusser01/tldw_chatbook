@@ -291,7 +291,8 @@ class _DisplayTextExtractor(HTMLParser):
             return
         if tag == "li":
             self._parts.append("\n")
-            self._parts.append("- ")
+            if not self._speech:
+                self._parts.append("- ")
             return
         if tag in _BLOCK_TAGS:
             self._parts.append("\n\n" if tag in _PARAGRAPH_TAGS else "\n")

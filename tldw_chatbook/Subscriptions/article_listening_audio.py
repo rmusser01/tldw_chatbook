@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from hashlib import sha256
 from io import BytesIO
 import json
 from pathlib import Path
 import struct
-from threading import Event
+from threading import Lock
 from typing import TYPE_CHECKING
 import wave
 
@@ -41,12 +41,13 @@ from tldw_chatbook.TTS.effective_settings import (
     TTSDefaultProfileSelection,
     TTSSelectionOverrides,
 )
-from tldw_chatbook.TTS.legacy_catalogs import ELEVENLABS_MODELS, KOKORO_VOICES
+from tldw_chatbook.TTS.legacy_catalogs import ELEVENLABS_MODELS
 from tldw_chatbook.TTS.legacy_bridge import legacy_provider_outbound_endpoint
 from tldw_chatbook.TTS.openai_compatible_config import (
     normalize_openai_compatible_endpoint,
 )
 from tldw_chatbook.TTS.pocket_tts_native import is_pocket_tts_native_url
+from tldw_chatbook.TTS.request_admission import TTSProviderStartAuthorization
 
 if TYPE_CHECKING:
     from tldw_chatbook.Subscriptions.article_listening_store import (
@@ -172,11 +173,6 @@ async def _voice_projection(
             and not _official_voice(model, voice)
         ):
             raise ArticleSpeechError("listening_voice_unbound")
-    elif provider == "kokoro":
-        # Stable simple names determine language from the voice prefix. The normal
-        # admission builder fixes the ONNX route when no option overrides it.
-        if model != "kokoro" or voice not in KOKORO_VOICES or options:
-            raise ArticleSpeechError("listening_voice_unbound")
     elif provider == "elevenlabs":
         from tldw_chatbook.TTS.backends.elevenlabs import (
             get_elevenlabs_voice_id,
@@ -223,6 +219,7 @@ async def freeze_listening_voice(
             else (None, ())
         )
         result = await tts_service.resolve_effective_voice(default_profile=profile)
+        _require_reconstructible(result.provider_id, result.speed)
         voice, options = await _voice_projection(
             tts_service,
             result.provider_id,
@@ -256,6 +253,7 @@ async def resolve_listening_voice(
 ) -> dict:
     """Reacquire the saved profile's current authorized reference and admission layers."""
     try:
+        _require_reconstructible(frozen.provider, frozen.speed)
         dependencies = frozen.dependencies
         profile = None
         if dependencies:
@@ -437,6 +435,42 @@ class ArticleWavAssembly:
         return GeneratedArticleAudio(wav, sha256(wav).hexdigest(), content_frames)
 
 
+class _ArticleDecision:
+    """Order revocation against this entry's final database attachment decision."""
+
+    def __init__(self):
+        self._lock = Lock()
+        self._revoked = False
+        self._committing = False
+
+    def revoke(self) -> bool:
+        with self._lock:
+            if self._committing:
+                return False
+            self._revoked = True
+            return True
+
+    def check(self) -> None:
+        with self._lock:
+            if self._revoked:
+                raise ArticleSpeechError("article_audio_retired")
+
+    def commit(self) -> None:
+        # The exact claim is validated inside the store's IMMEDIATE transaction.
+        # Once selected, its actual commit success or failure is the caller's outcome.
+        with self._lock:
+            if self._revoked:
+                raise ArticleSpeechError("article_audio_retired")
+            self._committing = True
+
+
+def _require_reconstructible(provider: str, speed: float) -> None:
+    if provider == "kokoro":
+        raise ArticleSpeechError("article_kokoro_engine_unbound")
+    if provider == "elevenlabs" and speed != 1:
+        raise ArticleSpeechError("article_speed_unavailable")
+
+
 class ArticleListeningAudio:
     """Prepare one source-owned artifact at a time for this profile; never starts output."""
 
@@ -455,13 +489,13 @@ class ArticleListeningAudio:
         self.profiles = profile_service
         self.readiness = readiness
         self._task = None
-        self._revoked = None
+        self._decision = None
         self._unretired = None
 
     def revoke(self) -> None:
         """Revoke the active observer's permission immediately; workers retain custody."""
-        if self._revoked is not None:
-            self._revoked.set()
+        if self._decision is not None:
+            self._decision.revoke()
 
     async def settle(self) -> None:
         """Wait for the current response, workers, and reservation cleanup to retire."""
@@ -479,22 +513,22 @@ class ArticleListeningAudio:
             raise ArticleSpeechError("article_retirement_unconfirmed")
         if self._task is not None and not self._task.done():
             raise ArticleSpeechError("article_audio_busy")
-        revoked = Event()
-        self._revoked = revoked
+        decision = _ArticleDecision()
+        self._decision = decision
         task = asyncio.create_task(
-            self._prepare(entry_id, expected_revision, regenerate, revoked)
+            self._prepare(entry_id, expected_revision, regenerate, decision)
         )
         self._task = task
         # An abandoned observer must never leave an unobserved exception.
         task.add_done_callback(self._settled)
-        try:
-            result = await asyncio.shield(task)
-            if revoked.is_set():
-                raise ArticleSpeechError("article_audio_retired")
-            return result
-        except asyncio.CancelledError:
-            revoked.set()
-            raise
+        while True:
+            try:
+                return await asyncio.shield(task)
+            except asyncio.CancelledError:
+                if task.cancelled() or decision.revoke():
+                    raise
+                # Attachment already won. Deliver its real database result even
+                # if the observer was cancelled while SQLite was committing.
 
     def _settled(self, task):
         if not task.cancelled():
@@ -502,13 +536,12 @@ class ArticleListeningAudio:
         if self._task is task:
             self._task = None
 
-    async def _prepare(self, entry_id, revision, regenerate, revoked):
+    async def _prepare(self, entry_id, revision, regenerate, decision):
         store = self.store
         authority = store._authority()
 
         def check():
-            if revoked.is_set():
-                raise ArticleSpeechError("article_audio_retired")
+            decision.check()
             store._authority(authority)
 
         def current():
@@ -517,7 +550,9 @@ class ArticleListeningAudio:
                 entry_id, expected_revision=revision, authority=authority
             )
 
-        def authorize(provider, endpoint):
+        async def authorize(provider, endpoint):
+            check()
+            await asyncio.to_thread(store.verify_pending_audio, claim)
             check()
             if provider != entry.voice.provider:
                 return False
@@ -532,6 +567,7 @@ class ArticleListeningAudio:
             check()
             if store.db.listening_image != image:
                 raise ListeningConflict("listening_database_changed")
+            decision.commit()
 
         # This guard runs again inside the IMMEDIATE attachment transaction,
         # after validating the exact minted claim and before commit.
@@ -541,18 +577,51 @@ class ArticleListeningAudio:
         claim = None
         try:
             entry, image = await asyncio.to_thread(current)
-            if entry.artifact is not None and not regenerate:
-                artifact = await asyncio.to_thread(assets.read_verified, entry.artifact)
-                if (entry, image) != await asyncio.to_thread(current):
-                    raise ListeningConflict("listening_entry_changed")
-                return artifact
-            if not regenerate:
-                artifact = await asyncio.to_thread(
-                    assets.reuse, entry_id, expected_revision=revision
-                )
-                if artifact is not None:
-                    check()
+            if type(regenerate) is not bool:
+                raise ArticleSpeechError("invalid_regeneration_intent")
+            missing_attachment = False
+            if entry.artifact is not None:
+                try:
+                    artifact = await asyncio.to_thread(
+                        assets.read_verified, entry.artifact
+                    )
+                except ArticleAudioError as error:
+                    if str(error) not in {
+                        "article_audio_missing",
+                        "article_audio_corrupt",
+                    }:
+                        raise
+                    missing_attachment = True
+                    if not regenerate:
+                        raise
+                    if entry.availability == "ready":
+                        # Marking a referenced ready generation missing advances
+                        # its session once. Accept only that exact transition.
+                        revision += 1
+                        updated, current_image = await asyncio.to_thread(current)
+                        if current_image != image or updated != replace(
+                            entry, availability="missing"
+                        ):
+                            raise ListeningConflict("listening_entry_changed") from None
+                        entry = updated
+                else:
+                    if (entry, image) != await asyncio.to_thread(current):
+                        raise ListeningConflict("listening_entry_changed")
+                    decision.commit()
                     return artifact
+            artifact = await asyncio.to_thread(
+                assets.reuse,
+                entry_id,
+                expected_revision=revision,
+                replace_missing=missing_attachment,
+            )
+            if artifact is not None:
+                return artifact
+            _require_reconstructible(entry.voice.provider, entry.voice.speed)
+            if entry.voice.provider == "audio_cpp":
+                # This adapter buffers the entire WAV before the caller can
+                # inspect it; its independent producer cap exceeds this budget.
+                raise ArticleSpeechError("article_native_budget_unavailable")
             chunks = await asyncio.to_thread(article_chunks, entry.text)
             if not audio_stitch.PYDUB_AVAILABLE:
                 raise ArticleSpeechError("article_conversion_unavailable")
@@ -576,7 +645,9 @@ class ArticleListeningAudio:
                     raise ListeningConflict("listening_entry_changed")
                 check()
                 response, selected = await self.tts.synthesize_effective(
-                    text=chunk, admission_authorizer=authorize, **args
+                    text=chunk,
+                    admission_authorizer=TTSProviderStartAuthorization(authorize),
+                    **args,
                 )
                 try:
                     check()
@@ -639,7 +710,6 @@ class ArticleListeningAudio:
                 generation=claim.generation,
             )
             claim = None
-            check()
             return artifact
         except (ArticleSpeechError, ListeningConflict, ArticleAudioError):
             raise

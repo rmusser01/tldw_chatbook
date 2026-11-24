@@ -651,6 +651,16 @@ Pending work revalidates its frozen dependencies before each request and again
 before publication. Windows controlled-output and conversion readiness, text and
 128-chunk limits are checked before the first synthesis submission.
 
+The first preparation delivery refuses new article requests through audio.cpp's
+whole-response producer, whose internal collection and copy cannot enforce the
+remaining article budget. It also refuses Kokoro generation while its implicit
+engine selection and initialization fallback cannot preserve frozen identity,
+and non-unit ElevenLabs speed while the backend does not apply that setting.
+These refusals happen before backend startup or submission; verified retained
+audio remains reusable. Existing TTS consumers keep their existing routes. A
+later route extension must demonstrate bounded production and exact applied
+settings before article synthesis can use it.
+
 Reuse effective native/legacy TTS requests and the existing text splitter. Add
 only the bounded collection/conversion seam needed for PCM16 stereo 48 kHz.
 Account for accumulated output, current encoded/decoded chunks, conversion and

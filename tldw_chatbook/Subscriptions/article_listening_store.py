@@ -617,13 +617,23 @@ class ArticleListeningStore:
         *,
         expected_revision: int,
         lease: ListeningLease | None = None,
+        replace_missing: bool = False,
         authorize_commit: Callable[[], None] | None = None,
     ) -> ListeningSession:
         a = self._authority()
         _int(expected_revision)
         with self.db.listening_transaction(lease=lease, profile=a.profile) as c:
             self._checked(c, expected_revision, a)
-            self._attach(c, self._entry(c, entry_id), a, generation, False)
+            entry = self._entry(c, entry_id)
+            if replace_missing:
+                # Regeneration permission only replaces a physically verified miss.
+                old = c.execute(
+                    "SELECT status FROM article_audio WHERE generation=?",
+                    (entry["artifact"],),
+                ).fetchone()
+                if old is None or old[0] != "missing":
+                    raise ListeningConflict("explicit_regeneration_required")
+            self._attach(c, entry, a, generation, replace_missing)
             session = self._load(c)
             if authorize_commit is not None:
                 authorize_commit()
@@ -663,6 +673,11 @@ class ArticleListeningStore:
             or self.db.listening_image != claim.image
         ):
             raise ListeningConflict("article_audio_reservation_changed")
+
+    def verify_pending_audio(self, claim: AudioReservation) -> None:
+        """Check the minted source and revision immediately before provider work."""
+        with self.db.artifact_read_snapshot() as c:
+            self._reservation(c, claim)
 
     def check_reservation(
         self, claim: AudioReservation, *, lease: ListeningLease

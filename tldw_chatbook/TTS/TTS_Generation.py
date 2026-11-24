@@ -81,7 +81,7 @@ from tldw_chatbook.TTS.effective_settings import (
     TTSStudioDraftSelection,
     tts_configuration_is_active,
 )
-from tldw_chatbook.TTS.legacy_bridge import resolve_legacy_route
+from tldw_chatbook.TTS.legacy_bridge import LegacyTTSAdapter, resolve_legacy_route
 from tldw_chatbook.TTS.playground_types import (
     STTSPlaygroundCloneSnapshot,
     STTSPlaygroundProfilePreview,
@@ -100,6 +100,7 @@ from tldw_chatbook.TTS.profile_reference_types import (
 )
 from tldw_chatbook.TTS.request_admission import (
     TTSAdmissionAuthorizer,
+    TTSProviderStartAuthorization,
     TTSProfileReferenceResolver,
     TTSRequestAdmissionCoordinator,
     _ResolvedTTSCloneExecutionAuthority,
@@ -846,8 +847,17 @@ class _AdmittedTTSOperation:
             ):
                 await lease.adapter.ensure_ready()
                 if self._clone_execution is None:
-                    self._authorize_outbound(lease)
-                    response = await lease.adapter.synthesize(self._request, safe_sink)
+                    await self._authorize_outbound(lease)
+                    if isinstance(lease.adapter, LegacyTTSAdapter) and isinstance(
+                        self._admission_authorizer, TTSProviderStartAuthorization
+                    ):
+                        response = await lease.adapter.synthesize(
+                            self._request,
+                            safe_sink,
+                            authorize_start=lambda: self._authorize_outbound(lease),
+                        )
+                    else:
+                        response = await lease.adapter.synthesize(self._request, safe_sink)
                 else:
                     adapter = lease.adapter
                     materializer = self._clone_materializer
@@ -925,7 +935,7 @@ class _AdmittedTTSOperation:
                         provider_revision=lease.configuration_revision,
                         applied_provider_generation=lease.applied_generation,
                     )
-                    self._authorize_outbound(lease)
+                    await self._authorize_outbound(lease)
                     response = await adapter.synthesize_clone(
                         admitted_request,
                         safe_sink,
@@ -1020,7 +1030,7 @@ class _AdmittedTTSOperation:
             raise closed_error
         return managed_response, clone_evidence
 
-    def _authorize_outbound(self, lease: TTSAdapterLease) -> None:
+    async def _authorize_outbound(self, lease: TTSAdapterLease) -> None:
         authorizer = self._admission_authorizer
         if authorizer is None:
             return
@@ -1028,10 +1038,11 @@ class _AdmittedTTSOperation:
         authorized = False
         try:
             if isinstance(adapter, TTSOutboundEndpointAdapter):
-                authorized = authorizer(
-                    lease.provider_id,
-                    adapter.admitted_outbound_endpoint(),
-                )
+                endpoint = adapter.admitted_outbound_endpoint()
+                if isinstance(authorizer, TTSProviderStartAuthorization):
+                    authorized = await authorizer.check(lease.provider_id, endpoint)
+                else:
+                    authorized = authorizer(lease.provider_id, endpoint)
         except Exception:
             authorized = False
         if authorized is not True:

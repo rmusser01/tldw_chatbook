@@ -75,3 +75,37 @@ def test_html_output_limit_and_markdown_hidden_inline_html():
     )
     assert speech.text.split() == ["Before", "<tag>", "after"]
     assert not speech.is_excerpt
+
+
+def test_speech_list_requires_visible_prose():
+    prepare = api().prepare_saved_text
+    assert (
+        prepare(
+            "<ul><li><img alt='caption'></li><li><script>hidden</script></li></ul>",
+            None,
+            None,
+        )
+        == ""
+    )
+    assert prepare("<ol><li>One</li><li>Two</li></ol>", None, None).split() == [
+        "One",
+        "Two",
+    ]
+
+
+def test_chunk_preparation_uses_bounded_windows(monkeypatch):
+    from tldw_chatbook.Subscriptions import briefing_audio
+
+    def unbounded_sentence_matcher(*args):
+        pytest.fail("article preparation entered the unbounded sentence matcher")
+
+    monkeypatch.setattr(briefing_audio, "_split_turn_text", unbounded_sentence_matcher)
+    text = (("!?." * 32 + "Word. ") * 40) + "Last."
+    chunks = api().article_chunks(text)
+    assert "".join("".join(chunks).split()) == "".join(text.split())
+    assert max(map(len, chunks)) <= 1800
+
+
+def test_whitespace_between_full_article_windows_spends_no_empty_request():
+    first = "x" * 1800
+    assert api().article_chunks(first + " " * 2000 + "The end.") == [first, "The end."]

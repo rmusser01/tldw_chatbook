@@ -376,7 +376,9 @@ class ArticleAudioAssets:
             self.store.record_audio_use(generation, lease=lease)
             return audio
 
-    def reuse(self, entry_id: str, *, expected_revision: int) -> ArticleAudio | None:
+    def reuse(
+        self, entry_id: str, *, expected_revision: int, replace_missing: bool = False
+    ) -> ArticleAudio | None:
         """Attach only a verified ready generation with this exact entry identity."""
         for generation in self.store.find_reusable(entry_id):
             rows = self.store.audio_inventory(generation)
@@ -401,6 +403,7 @@ class ArticleAudioAssets:
                     generation,
                     expected_revision=expected_revision,
                     lease=lease,
+                    **({"replace_missing": True} if replace_missing else {}),
                     **self._commit_options,
                 )
                 return audio

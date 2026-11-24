@@ -89,19 +89,12 @@ def prepare_article_speech(
 
 def article_chunks(text: str) -> list[str]:
     """Split the complete snapshot into the bounded provider submission sequence."""
-    from tldw_chatbook.Subscriptions.briefing_audio import (
-        _hard_split_piece,
-        _split_turn_text,
-    )
+    from tldw_chatbook.Subscriptions.briefing_audio import _hard_split_piece
 
     _bounded_bytes(text)
     if not text.strip():
         raise ArticleSpeechError("empty_article")
-    chunks = _split_turn_text(text)
-    # The sentence splitter normalizes repeated punctuation in long clauses.
-    # Article reading must retain every non-whitespace character of the source.
-    if "".join("".join(chunks).split()) != "".join(text.split()):
-        chunks = _hard_split_piece(text)
+    chunks = [piece for piece in _hard_split_piece(text) if piece.strip()]
     if len(chunks) > MAX_CHUNKS:
         raise ArticleSpeechError("article_chunk_limit")
     return chunks

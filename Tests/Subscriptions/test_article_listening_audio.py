@@ -11,7 +11,7 @@ import wave
 import pytest
 
 from Tests.Subscriptions.test_article_audio_assets import (
-    listening,  # noqa: F401
+    listening as listening_fixture,
     native_effects,
     publish,
 )  # noqa: F401
@@ -27,6 +27,9 @@ from Tests.TTS.test_default_profile_request_resolver import (
     _profile,
     _FakeDefaultProfileService,
 )
+
+
+listening = listening_fixture
 
 
 def api():
@@ -113,7 +116,7 @@ def test_nullable_native_voice_and_provider_specific_boolean_roundtrip():
 
 @native_effects
 @pytest.mark.asyncio
-async def test_verified_audio_spends_no_tts_calls(listening):  # noqa: F811
+async def test_verified_audio_spends_no_tts_calls(listening):
     store, session, root = listening
     entry = session.queue[0]
     audio = publish(store, session, root, entry)
@@ -126,7 +129,7 @@ async def test_verified_audio_spends_no_tts_calls(listening):  # noqa: F811
 
 @native_effects
 @pytest.mark.asyncio
-async def test_all_saved_words_reach_real_admission_and_single_tail(listening):  # noqa: F811
+async def test_all_saved_words_reach_real_admission_and_single_tail(listening):
     store, session, root = listening
     from Tests.Subscriptions.test_article_listening_store import prepare
 
@@ -167,7 +170,7 @@ async def test_all_saved_words_reach_real_admission_and_single_tail(listening): 
 @native_effects
 @pytest.mark.asyncio
 @pytest.mark.parametrize("retirement", ["cancel", "source", "epoch"])
-async def test_late_response_cannot_attach(listening, retirement):  # noqa: F811
+async def test_late_response_cannot_attach(listening, retirement):
     store, session, root = listening
     mod = api()
     entered, release = asyncio.Event(), asyncio.Event()
@@ -233,7 +236,7 @@ async def test_accumulator_rejects_expansion_and_final_copy_before_publication()
 @native_effects
 @pytest.mark.asyncio
 async def test_cancellation_inside_attachment_rolls_back_and_retires(
-    listening,  # noqa: F811
+    listening,
     monkeypatch,
 ):
     import threading
@@ -270,7 +273,7 @@ async def test_cancellation_inside_attachment_rolls_back_and_retires(
 
 @native_effects
 @pytest.mark.asyncio
-async def test_failed_physical_cleanup_keeps_admission_closed(listening):  # noqa: F811
+async def test_failed_physical_cleanup_keeps_admission_closed(listening):
     store, session, root = listening
 
     class UncertainAdapter(Transport):
@@ -305,7 +308,10 @@ async def test_failed_physical_cleanup_keeps_admission_closed(listening):  # noq
 
 @native_effects
 @pytest.mark.asyncio
-async def test_retired_before_adapter_submission_spends_zero_requests(listening):  # noqa: F811
+@pytest.mark.parametrize("retire", ["observer", "source"])
+async def test_retired_before_adapter_submission_spends_zero_requests(
+    listening, retire
+):
     store, session, root = listening
     entered, release = asyncio.Event(), asyncio.Event()
 
@@ -323,7 +329,10 @@ async def test_retired_before_adapter_submission_spends_zero_requests(listening)
     try:
         async with asyncio.timeout(5):
             await entered.wait()
-        owner.revoke()
+        if retire == "source":
+            store.db.delete_article(session.queue[0].item_id)
+        else:
+            owner.revoke()
         release.set()
         with pytest.raises(ValueError):
             await task
@@ -337,7 +346,7 @@ async def test_retired_before_adapter_submission_spends_zero_requests(listening)
 
 @native_effects
 @pytest.mark.asyncio
-async def test_missing_artifact_requires_explicit_regeneration(listening):  # noqa: F811
+async def test_missing_artifact_requires_explicit_regeneration(listening):
     store, session, root = listening
     entry = session.queue[0]
     old = publish(store, session, root, entry)
@@ -617,7 +626,7 @@ async def test_kokoro_native_generation_error_excludes_request_locals(onnx):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["platform", "conversion", "chunks"])
 async def test_preflight_refusal_precedes_every_submission(
-    listening,  # noqa: F811
+    listening,
     monkeypatch,
     failure,
 ):
@@ -704,7 +713,7 @@ async def test_pocket_native_route_cannot_freeze_a_model_it_ignores():
 
 @native_effects
 @pytest.mark.asyncio
-async def test_pocket_route_detected_at_dispatch_never_receives_article(listening):  # noqa: F811
+async def test_pocket_route_detected_at_dispatch_never_receives_article(listening):
     store, session, root = listening
     svc, adapter = service()
     adapter.admitted_outbound_endpoint = lambda: "http://localhost:8000/tts"
@@ -715,5 +724,345 @@ async def test_pocket_route_detected_at_dispatch_never_receives_article(listenin
                 session.queue[0].entry_id, expected_revision=session.revision
             )
         assert not adapter.requests and store.load_session().queue[0].artifact is None
+    finally:
+        await svc.wait_closed()
+
+
+@native_effects
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reuse", [False, True])
+async def test_retry_verifies_existing_audio_even_with_regeneration(listening, reuse):
+    store, session, root = listening
+    old = publish(store, session, root, session.foreground)
+    row = session.queue[0] if reuse else session.foreground
+    owner = api().ArticleListeningAudio(store, root, tts_service=None)
+    audio = await owner.prepare(
+        row.entry_id, expected_revision=store.load_session().revision, regenerate=True
+    )
+    assert audio == old
+
+
+@native_effects
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "voice,code",
+    [
+        (
+            FrozenVoice("audio_cpp", "native", "named"),
+            "article_native_budget_unavailable",
+        ),
+        (
+            FrozenVoice("kokoro", "kokoro", "af_heart", format="pcm"),
+            "article_kokoro_engine_unbound",
+        ),
+        (
+            FrozenVoice(
+                "elevenlabs",
+                "eleven_multilingual_v2",
+                "21m00Tcm4TlvDq8ikWAM",
+                format="pcm",
+                speed=1.5,
+            ),
+            "article_speed_unavailable",
+        ),
+    ],
+)
+async def test_generation_requires_a_bounded_exact_producer(listening, voice, code):
+    from Tests.Subscriptions.test_article_listening_store import prepare
+
+    store, session, root = listening
+    candidate = prepare(store, store._authority(), voice)
+    sess = store.replace_session(candidate, expected_revision=session.revision)
+
+    async def premature():
+        pytest.fail("unqualified producer reached readiness")
+
+    owner = api().ArticleListeningAudio(
+        store, root, tts_service=None, readiness=premature
+    )
+    with pytest.raises(ValueError, match=code):
+        await owner.prepare(sess.foreground.entry_id, expected_revision=sess.revision)
+
+
+@native_effects
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reuse", [False, True])
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_commit_winner_returns_artifact_after_revocation(
+    listening, monkeypatch, reuse, cancel
+):
+    import threading
+
+    store, session, root = listening
+    if reuse:
+        publish(store, session, root, session.foreground)
+    session = store.load_session()
+    entry = session.queue[0]
+    method = "attach_audio" if reuse else "complete_audio"
+    original = getattr(store, method)
+    authorized, resume = threading.Event(), threading.Event()
+
+    def at_final_authorization(*args, authorize_commit, **kwargs):
+        def pause_before_commit():
+            authorize_commit()
+            authorized.set()
+            assert resume.wait(5)
+
+        return original(*args, authorize_commit=pause_before_commit, **kwargs)
+
+    monkeypatch.setattr(store, method, at_final_authorization)
+    svc, _ = service()
+    owner = api().ArticleListeningAudio(store, root, tts_service=svc, readiness=ready)
+    task = asyncio.create_task(
+        owner.prepare(entry.entry_id, expected_revision=session.revision)
+    )
+    try:
+        assert await asyncio.to_thread(authorized.wait, 5)
+        if cancel:
+            task.cancel()
+            await asyncio.sleep(0)
+        else:
+            owner.revoke()
+        resume.set()
+        result = await task
+        assert store.load_session().queue[0].artifact == result.generation
+    finally:
+        resume.set()
+        await asyncio.gather(task, return_exceptions=True)
+        await svc.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_legacy_host_revalidates_after_operation_lock():
+    from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
+    from tldw_chatbook.TTS.legacy_bridge import LegacyBackendHost
+
+    calls = []
+    host = LegacyBackendHost(
+        provider_id="openai",
+        app_config={},
+        manager_factory=lambda *_: calls.append("startup"),
+    )
+    lock = host._operation_locks["openai_official_tts-1"] = asyncio.Lock()
+    req = OpenAISpeechRequest(
+        input="synthetic", model="tts-1", voice="alloy", response_format="wav"
+    )
+
+    async def retired():
+        raise ValueError("retired")
+
+    try:
+        async with lock:
+            op = host.generate(
+                "openai_official_tts-1", req, None, authorize_start=retired
+            )
+            started = asyncio.create_task(anext(op))
+            await asyncio.sleep(0)
+            assert not started.done()
+        with pytest.raises(ValueError, match="retired"):
+            await started
+        assert calls == []
+        await op.aclose()
+    finally:
+        await host.close()
+
+
+@native_effects
+@pytest.mark.asyncio
+@pytest.mark.parametrize("alternate", [False, True])
+async def test_explicit_retry_repairs_a_newly_discovered_missing_file(
+    listening, alternate
+):
+    store, session, root = listening
+    entry = session.foreground
+    first = publish(store, session, root, entry)
+    latest = (
+        publish(store, store.load_session(), root, entry, regenerate=True)
+        if alternate
+        else first
+    )
+    latest.wav.path.unlink()
+    svc, adapter = service()
+    owner = api().ArticleListeningAudio(store, root, tts_service=svc, readiness=ready)
+    try:
+        result = await owner.prepare(
+            entry.entry_id,
+            expected_revision=store.load_session().revision,
+            regenerate=True,
+        )
+        assert result.generation != latest.generation
+        if alternate:
+            assert result == first and not adapter.requests
+        else:
+            assert len(adapter.requests) == 1
+    finally:
+        await svc.wait_closed()
+
+
+@native_effects
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pause", ["lock", "initialization", "approved", "ordinary"])
+async def test_article_real_legacy_host_checks_source_before_backend_work(
+    listening, pause
+):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
+    from tldw_chatbook.TTS.adapter_types import TTSProviderSpec, TTSProviderDescriptor
+    from tldw_chatbook.TTS.legacy_bridge import (
+        LegacyBackendHost,
+        LegacyTTSAdapter,
+        openai_internal_model_id,
+    )
+    from tldw_chatbook.TTS.legacy_catalogs import legacy_catalog
+    from tldw_chatbook.TTS.TTS_Generation import TTSService
+
+    store, session, root = listening
+    arrived, resume = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    class ObservedLock(asyncio.Lock):
+        async def __aenter__(self):
+            arrived.set()
+            return await super().__aenter__()
+
+    async def get_backend(_):
+        calls.append("initialize")
+        arrived.set()
+        await resume.wait()
+
+        async def transport(_):
+            calls.append("transport")
+            yield mono()
+
+        return SimpleNamespace(
+            set_progress_callback=lambda _: None, generate_speech_stream=transport
+        )
+
+    manager = SimpleNamespace(get_backend=get_backend, close_all_backends=AsyncMock())
+    host = LegacyBackendHost(
+        provider_id="openai", app_config={}, manager_factory=lambda _: manager
+    )
+    lock = ObservedLock()
+    if pause == "lock":
+        host._operation_locks[openai_internal_model_id("tts-1")] = lock
+        await lock.acquire()
+    adapter = LegacyTTSAdapter("openai", host, legacy_catalog("openai"))
+    spec = TTSProviderSpec(
+        descriptor=TTSProviderDescriptor(
+            provider_id="openai", display_name="Test", native=False
+        ),
+        factory=lambda _: adapter,
+        initial_config={"app_config": {}},
+        exclusive_reconfigure=False,
+    )
+    svc = TTSService(
+        TTSAdapterRegistry(specs=(spec,), aliases={}),
+        preferences_snapshot=_snapshot(
+            provider_id="openai", model_id="tts-1", voice_mode="exact", voice_id="alloy"
+        ),
+    )
+    if pause == "ordinary":
+        authorized = []
+
+        def check_destination(provider, endpoint):
+            authorized.append((provider, endpoint))
+            return True
+
+        resume.set()
+        try:
+            response = await svc.synthesize_default(
+                text="Synthetic.", admission_authorizer=check_destination
+            )
+            try:
+                assert (
+                    b"".join([chunk async for chunk in response.byte_stream]) == mono()
+                )
+            finally:
+                await response.aclose()
+            assert authorized == [("openai", host.admitted_outbound_endpoint())]
+            assert calls == ["initialize", "transport"]
+        finally:
+            await svc.wait_closed()
+        return
+    owner = api().ArticleListeningAudio(store, root, tts_service=svc, readiness=ready)
+    task = asyncio.create_task(
+        owner.prepare(session.queue[0].entry_id, expected_revision=session.revision)
+    )
+    try:
+        await asyncio.wait_for(arrived.wait(), 5)
+        if pause == "approved":
+            resume.set()
+            result = await task
+            assert result.wav.content_frames > 0
+            assert calls == ["initialize", "transport"]
+            return
+        owner.revoke()
+        resume.set()
+        if pause == "lock":
+            lock.release()
+        with pytest.raises(ValueError):
+            await task
+        assert calls == ([] if pause == "lock" else ["initialize"])
+    finally:
+        if lock.locked():
+            lock.release()
+        resume.set()
+        await asyncio.gather(task, return_exceptions=True)
+        await svc.wait_closed()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider,engine,speed,code",
+    [
+        ("kokoro", True, 1, "article_kokoro_engine_unbound"),
+        ("kokoro", False, 1, "article_kokoro_engine_unbound"),
+        ("elevenlabs", None, 1.5, "article_speed_unavailable"),
+    ],
+)
+async def test_freeze_refuses_unenforceable_settings_before_cold_host(
+    provider, engine, speed, code
+):
+    from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
+    from tldw_chatbook.TTS.adapter_types import TTSProviderSpec, TTSProviderDescriptor
+    from tldw_chatbook.TTS.legacy_bridge import LegacyBackendHost, LegacyTTSAdapter
+    from tldw_chatbook.TTS.legacy_catalogs import legacy_catalog
+    from tldw_chatbook.TTS.TTS_Generation import TTSService
+
+    def cold_start(_):
+        pytest.fail("unqualified legacy engine started")
+
+    config = {"app_tts": {"KOKORO_USE_ONNX": engine}}
+    host = LegacyBackendHost(
+        provider_id=provider, app_config=config, manager_factory=cold_start
+    )
+    adapter = LegacyTTSAdapter(provider, host, legacy_catalog(provider))
+    spec = TTSProviderSpec(
+        descriptor=TTSProviderDescriptor(
+            provider_id=provider, display_name="Synthetic", native=False
+        ),
+        factory=lambda _: adapter,
+        initial_config={"app_config": config},
+        exclusive_reconfigure=False,
+    )
+    model, voice = (
+        ("kokoro", "af_heart")
+        if provider == "kokoro"
+        else ("eleven_multilingual_v2", "21m00Tcm4TlvDq8ikWAM")
+    )
+    svc = TTSService(
+        TTSAdapterRegistry(specs=(spec,), aliases={}),
+        preferences_snapshot=_snapshot(
+            provider_id=provider,
+            model_id=model,
+            voice_mode="exact",
+            voice_id=voice,
+            speed=speed,
+        ),
+    )
+    try:
+        with pytest.raises(ValueError, match=code):
+            await api().freeze_listening_voice(tts_service=svc)
     finally:
         await svc.wait_closed()

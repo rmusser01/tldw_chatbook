@@ -62,7 +62,16 @@ if TYPE_CHECKING:
 
 _AudioFormat = Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
 _VALID_AUDIO_FORMATS = frozenset({"mp3", "opus", "aac", "flac", "wav", "pcm"})
-TTSAdmissionAuthorizer = Callable[[str, str], bool]
+
+
+@dataclass(frozen=True, slots=True)
+class TTSProviderStartAuthorization:
+    """Repeat a live authorization at admission and deferred provider start."""
+
+    check: Callable[[str, str], Awaitable[bool]]
+
+
+TTSAdmissionAuthorizer = Callable[[str, str], bool] | TTSProviderStartAuthorization
 
 
 class TTSHandsFreeAudioUnavailableError(RuntimeError):
@@ -414,7 +423,7 @@ class TTSRequestAdmissionCoordinator:
             profile_reference_resolver
         ):
             raise TypeError("Profile reference resolver is invalid")
-        if admission_authorizer is not None and not callable(admission_authorizer):
+        if admission_authorizer is not None and not (callable(admission_authorizer) or isinstance(admission_authorizer, TTSProviderStartAuthorization)):
             raise TypeError("TTS admission authorizer is invalid")
         if response_format_override not in (None, "prefer_pcm"):
             raise ValueError("TTS response format override is invalid")

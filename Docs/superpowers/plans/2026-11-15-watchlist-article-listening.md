@@ -229,6 +229,12 @@ projection defaults and existing effective TTS admission; the cast helpers drop
 clone/option authority and their eager concatenator does not provide this budget.
 No transport/UI implementation is authorized by this task.
 
+**Review ruling, 2026-11-24:** First delivery pauses new article generation for
+audio.cpp whole-response collection, Kokoro's unfrozen engine/fallback, and
+non-unit ElevenLabs speed. Existing retained WAV reuse remains available. These
+routes need actual producer-budget or applied-setting evidence before they can
+be admitted; existing TTS consumers are unchanged (ADR367).
+
 - [ ] **Step 1: Write failing tests.** Cover text/HTML/Markdown including scripts/styles, link labels versus targets, images, malformed markup/control codes, code prose, empty conversion, exact boundary and over-limit input/queue/chunk counts. Assert full long-body coverage without 800-character truncation. Change defaults/profile/reference after enqueue and restart; verify frozen valid voice or explicit pause, no silent substitution. Retained valid audio spends zero provider calls; cancellation/deletion cannot republish or autoplay; aggregate limit stops before retaining the next chunk.
 - [ ] **Step 2: Observe RED.** Run the two new test files with real WAV fixtures and fake provider transport only; expect missing preparation/synthesis behavior.
 - [ ] **Step 3: Implement minimal preparation and orchestration.** Reuse `Subscriptions/html_text.py`, existing Markdown parser, exact/native and legacy TTS admission/chunking/WAV concatenation. Normalize provider audio to PCM16 stereo 48 kHz and append the qualified tail once before publication; bound retained conversion/stitching copies and test mono/other-rate input. Check required optional dependencies and Windows controlled-playback capability before the first request. Record converter version and original item authority; do work off-loop. No speculative prefetch.
