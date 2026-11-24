@@ -502,6 +502,65 @@ def test_a_hallucinated_runtime_tool_never_reaches_its_confirm_card(
     ]
 
 
+@pytest.mark.parametrize("full_agent_tools", [False, True], ids=["off", "on"])
+async def test_the_served_mobile_companion_plans_the_light_set(
+    tmp_path, full_agent_tools
+):
+    """Pre-merge review (2026-10-29): the served mobile companion built its
+    own ``ConsoleAgentBridge`` with no light-surface reader, and a bridge
+    without one keeps the full agent surface. Every phone send got
+    ``spawn_subagent`` and the rest of the agent surface whatever Full agent
+    tools said. Driven through ``MobileChatService.send`` and the real
+    engine it builds, as the phone's HTTP layer does."""
+    import asyncio
+
+    from Tests.console_provider_doubles import AgentModeGateway
+    from Tests.Web_Server.test_mobile_service import _shutdown, _subscribe, _wait_for
+    from tldw_chatbook.Web_Server.mobile_service import MobileChatService
+
+    class _NamesGateway(AgentModeGateway):
+        """Records every advertised tool name; calls a light tool, then answers."""
+
+        def __init__(self):
+            super().__init__(tool_name="get_current_datetime")
+            self.names_seen: list[set[str]] = []
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.names_seen.append(
+                {tool["function"]["name"] for tool in kwargs.get("tools") or ()}
+            )
+            async for item in super().stream_chat(resolution, messages, **kwargs):
+                yield item
+
+    if full_agent_tools:
+        assert save_setting_to_cli_config("tools", "full_agent_tools_enabled", True)
+    gateway = _NamesGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    got: list = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        session = await service.create_session(title="phone")
+        await service.send(session["id"], "Reply with just: hi")
+        await _wait_for(
+            lambda: any(event.type == "run_completed" for event in got),
+            timeout=30,
+            what="run_completed event",
+        )
+    finally:
+        await _shutdown(service, subscriber)
+
+    assert gateway.names_seen, "the provider was never called"
+    if full_agent_tools:
+        assert "spawn_subagent" in gateway.names_seen[0], sorted(gateway.names_seen[0])
+    else:
+        # The light set less ``ask_user``: the headless phone engine has no
+        # view to show a question card on, so it never registers that tool
+        # (``ConsoleChatController._ask_user_wiring``), light or full.
+        assert gateway.names_seen[0] == LIGHT - {"ask_user"}, sorted(
+            gateway.names_seen[0]
+        )
+
+
 def test_a_skill_turn_keeps_the_agent_surface(tmp_path):
     """Review round 1 (C-F2): a message that names a skill (``$skill``) gets
     the agent surface for that turn -- skills run as sub-agents."""
@@ -526,6 +585,135 @@ def test_a_light_run_starts_no_fleet_and_spawns_nothing(tmp_path):
     _send(bridge, session, assistant_id, _native_resolution())
 
     assert "conv-light" not in bridge._fleet_coordinators
+
+
+def test_a_refused_hallucinated_call_does_not_count_as_agent_use(tmp_path):
+    """TASK-34100.5.3.2 review round 1 (F3-11), on the real persisted trace.
+
+    A light-surface send whose model names ``web_search`` anyway is refused
+    ("Tool not permitted"), but the run log still records the call. The
+    one-time Full agent tools upgrade must not read that refusal as "this
+    profile uses agent features"; a dispatched non-light call still counts.
+    """
+    from tldw_chatbook.Agents.full_agent_tools_upgrade import (
+        SIGNAL_TOOL_CALL,
+        detect_agent_feature_use,
+    )
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+    bridge, gateway, session, assistant_id = _production_bridge(
+        tmp_path, [[_fence("web_search", {"query": "x"})], ["hi"]]
+    )
+    outcome = _send(bridge, session, assistant_id, _test_resolution())
+    refused = [
+        step
+        for step in outcome.steps
+        if step.kind == "tool_result" and step.tool_name == "web_search"
+    ]
+    assert [step.tool_outcome for step in refused] == ["blocked"], refused
+    # The Console's runs database, where production finds it: beside the
+    # app's ChaChaNotes file.
+    runs_path = tmp_path / "agent_runs.db"
+    assert runs_path.is_file()
+    workspaces = WorkspaceDB(tmp_path / "upgrade-workspaces.db", client_id="probe")
+    try:
+        assert detect_agent_feature_use(runs_path, workspaces) is None
+
+        # Control: a tool the model was offered and that ran does count.
+        bridge._db.insert_steps_at_indices(
+            bridge._db.create_run(conversation_id="conv-full", agent_kind="primary"),
+            [(0, {"index": 0, "kind": "tool_call", "tool_name": "fs_list",
+                  "call_id": "turn-1-call-0"})],
+        )
+        assert detect_agent_feature_use(runs_path, workspaces) == SIGNAL_TOOL_CALL
+    finally:
+        workspaces.close()
+
+
+@pytest.mark.parametrize(
+    ("tool", "args", "recorded"),
+    [
+        (
+            "send_to_agent",
+            {"agent_id": "a", "message": "x"},
+            ("failed", "ERROR: Tool not permitted: send_to_agent"),
+        ),
+        ("report_to_supervisor", {"message": "x"}, ("failed", "unavailable")),
+    ],
+    ids=["send-to-agent", "report-to-supervisor"],
+)
+def test_a_refusal_the_loop_records_as_failed_does_not_count_as_agent_use(
+    tmp_path, tool, args, recorded
+):
+    """TASK-34100.5.3.2 review v5r1 (R1-2b), on the real persisted trace.
+
+    Some refusals are not recorded as ``blocked``: ``send_to_agent`` with no
+    fleet is refused before dispatch as ``failed`` "Tool not permitted", and
+    a fleet message tool with no fleet as ``failed`` with the bounded code
+    ``unavailable``. The run log still records the call; neither ran."""
+    from tldw_chatbook.Agents.full_agent_tools_upgrade import detect_agent_feature_use
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+    bridge, gateway, session, assistant_id = _production_bridge(
+        tmp_path, [[_fence(tool, args)], ["hi"]]
+    )
+    outcome = _send(bridge, session, assistant_id, _test_resolution())
+    assert [
+        (step.kind, step.tool_outcome, step.result)
+        for step in outcome.steps
+        if step.tool_name == tool and step.kind in {"tool_call", "tool_result"}
+    ] == [("tool_call", None, ""), ("tool_result", *recorded)]
+    workspaces = WorkspaceDB(tmp_path / "upgrade-workspaces.db", client_id="probe")
+    try:
+        assert detect_agent_feature_use(tmp_path / "agent_runs.db", workspaces) is None
+    finally:
+        workspaces.close()
+
+
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [("find_tools", {"query": "hi"}), ("load_tools", {"ids": ["local:web_search"]})],
+    ids=["find-tools", "load-tools"],
+)
+def test_a_dispatched_discovery_call_does_not_count_as_agent_use(tmp_path, tool, args):
+    """TASK-34100.5.3.2 review v5r2 (G532-R2-3, LV2-1), on the real trace.
+
+    The loop dispatches ``find_tools``/``load_tools`` even on the light
+    surface, which never offers them, and small models call them for a plain
+    "hi" (live round (a) of review v5r1). Unlike a refused call the trace
+    shows them as run; they are still the runtime's own scaffolding, not an
+    agent feature the user used. A real call to a non-light tool still counts.
+    """
+    from tldw_chatbook.Agents.full_agent_tools_upgrade import (
+        SIGNAL_TOOL_CALL,
+        detect_agent_feature_use,
+    )
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+    bridge, gateway, session, assistant_id = _production_bridge(
+        tmp_path, [[_fence(tool, args)], ["hi"]]
+    )
+    outcome = _send(bridge, session, assistant_id, _test_resolution())
+    results = [
+        step.tool_outcome
+        for step in outcome.steps
+        if step.kind == "tool_result" and step.tool_name == tool
+    ]
+    assert results and "blocked" not in results, results
+    runs_path = tmp_path / "agent_runs.db"
+    workspaces = WorkspaceDB(tmp_path / "upgrade-workspaces.db", client_id="probe")
+    try:
+        assert detect_agent_feature_use(runs_path, workspaces) is None
+
+        # Control: a non-light tool that ran does count.
+        bridge._db.insert_steps_at_indices(
+            bridge._db.create_run(conversation_id="conv-full", agent_kind="primary"),
+            [(0, {"index": 0, "kind": "tool_call", "tool_name": "web_search",
+                  "call_id": "turn-1-call-0"})],
+        )
+        assert detect_agent_feature_use(runs_path, workspaces) == SIGNAL_TOOL_CALL
+    finally:
+        workspaces.close()
 
 
 class _LiveFleet:
@@ -559,6 +747,58 @@ def test_live_agent_work_keeps_the_agent_surface(tmp_path, monkeypatch):
         bridge, "_session_progress_inbox", lambda _sid: _Inbox(("report",))
     )
     assert not bridge.light_surface_for((), session_id=session.id)
+
+
+def _raises(*_args, **_kwargs):
+    raise RuntimeError("unreadable")
+
+
+def test_a_send_whose_light_surface_reader_raises_plans_the_light_set(tmp_path):
+    """Pre-merge review (2026-10-29): the fail-closed branches had no test.
+    A reader that raises keeps the light surface -- never the agent surface
+    because the switch could not be read."""
+    bridge, gateway, session, assistant_id = _production_bridge(tmp_path, [["hi"]])
+    bridge._light_tool_surface = _raises
+
+    _send(bridge, session, assistant_id, _native_resolution())
+
+    assert _native_names(gateway) == LIGHT, sorted(_native_names(gateway))
+
+
+def test_an_unreadable_config_keeps_plain_chat_light(monkeypatch):
+    """The production reader fails closed too: ``get_cli_setting`` raising
+    reads as "Full agent tools off"."""
+    from tldw_chatbook import config
+    from tldw_chatbook.Agents.plain_chat_tool_surface import light_surface_configured
+
+    assert save_setting_to_cli_config("tools", "full_agent_tools_enabled", True)
+    assert light_surface_configured() is False  # the switch is really on
+
+    # Undone before the autouse fixture resets the gates through config.
+    with monkeypatch.context() as patch:
+        patch.setattr(config, "get_cli_setting", _raises)
+        light = light_surface_configured()
+
+    assert light is True
+
+
+def test_a_send_whose_agent_work_detector_raises_stays_light(tmp_path):
+    """The live-work detector that keeps a running fleet's agent surface
+    (F8) fails closed: a fleet whose live count cannot be read counts as
+    "no agent work in flight", so the send stays light."""
+    import time
+
+    from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
+
+    bridge, gateway, session, assistant_id = _production_bridge(tmp_path, [["hi"]])
+    fleet = FleetCoordinator(max_live=2, clock=time.monotonic)
+    fleet.live_count = _raises  # the one read the detector makes
+    with bridge._fleet_admission_lock:
+        bridge._fleet_coordinators["conv-light"] = fleet
+
+    _send(bridge, session, assistant_id, _native_resolution())
+
+    assert _native_names(gateway) == LIGHT, sorted(_native_names(gateway))
 
 
 @pytest.mark.parametrize(

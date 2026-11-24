@@ -76,6 +76,53 @@ To turn more on:
 - **One turn** — a message that names a skill (`$skill`) gets the full agent
   surface for that turn.
 
+**Upgrading a profile from before the light tool surface.** The first time
+the Chatbook app or `tldw-serve` opens a profile that has no
+`full_agent_tools_enabled` setting on this version, it checks once whether
+the profile already uses agent features:
+
+- a sub-agent definition (**Settings ▸ Agents**);
+- a workspace folder or SSH remote binding (**Settings ▸ Workspaces**);
+- an earlier Console reply, or a reply in the mobile companion that
+  `tldw-serve` serves, that ran a tool outside the light set
+  (a workspace, web or Watchlists tool, a sub-agent, and so on). A call that
+  was refused, such as a tool a small model named although plain chat never
+  offered it, does not count. Neither does the agent's own housekeeping:
+  searching for or loading tools, or reading its own run log or messages.
+  Small models do that even for a plain "hi", and a tool they load and then
+  use still counts.
+
+If it finds any of them, it turns **Full agent tools** on for you, so plain
+chat keeps the tools it had. It adds one line, `full_agent_tools_enabled =
+true`, under `[tools]` in config.toml (or a new `[tools]` table at the end of
+the file). If your tool settings are written as `tools.…` lines at the top
+of the file, with no `[tools]` header, the line is
+`tools.full_agent_tools_enabled = true` instead, added after them. Every
+other byte is kept, your comments and layout included. That holds for this
+one write only: a later settings save rewrites config.toml, as every
+settings save does. One shape is left alone: if config.toml writes `[tools]`
+as an inline table (`tools = { … }`), the line cannot be added without
+rewriting it. The file is then not changed and the profile stays on the
+light set, so turn on Full agent tools yourself. A profile with none of
+them, and every new profile, stays on the light set, and its config.toml is
+left as it was. The check runs once per profile: the profile's workspaces database
+records that it ran. If that database is replaced, or restored from a copy
+without that record, the check runs again on what the profile holds then.
+It never changes a value you set yourself, so switching Full agent tools off
+afterwards keeps it off, even then. If it cannot read the profile's data, or
+cannot save the line, it changes nothing and tries again at the next launch
+or server start. Once the line is saved, Full agent tools is on, even if a
+step after it fails (refreshing the app's settings, or recording that the
+check ran); the next launch or server start finishes the check without
+changing the file again.
+
+The Chatbook app runs the check in the background once it is open.
+`tldw-serve` runs it as it starts, before it accepts connections, so a
+profile you use only from the mobile companion is checked before its next
+phone send. A new profile first used from the phone is recorded before any
+phone use, so nothing it does later on the light set can turn Full agent
+tools on.
+
 Each send reads these switches fresh, so a change applies on the next send.
 The exception is a conversation whose sub-agents are still running, or have
 sent reports nobody has read yet: it keeps the full agent surface until that

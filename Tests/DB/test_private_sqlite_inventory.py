@@ -827,9 +827,11 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # C101/C102 read an archived Personal Context image and check the
         # published copy's key after a restore (TASK-40135); C103 reads a live
         # copy's restore marker when no secure keyring exists (TASK-40136).
+        # C104 is the light-surface upgrade's read-only agent-use detection
+        # (TASK-34100.5.3.2; it was C100 until dev minted C100-C103 above).
         # C08/C09 were the legacy settings window's VACUUM and integrity
         # workers; they left with the window (TASK-33244).
-        for number in range(1, 104) if number not in {8, 9, 10, 75, 97}
+        for number in range(1, 105) if number not in {8, 9, 10, 75, 97}
     ]
     assert [row["id"] for row in backup_rows] == [
         # B04-B09 were that window's six-owner bulk backup loop (TASK-33244).
