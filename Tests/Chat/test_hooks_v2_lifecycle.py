@@ -25,6 +25,10 @@ async def session_case(tmp_path):
     notifications = []
 
     class LegacyRecorder:
+        def prepare_notification(self, event, session_id, tool_name=None):
+            # This recorder has no native attachment or physical work to prehold.
+            return None
+
         async def fire_async(self, event, **kwargs):
             notifications.append((event, kwargs))
             return HookOutcome()

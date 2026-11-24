@@ -850,6 +850,7 @@ RECOVERED_SUITES_TARGETS = (
     # TASK-39119: the goal recovery file (bootstrap_profile, 4 tests, ~19 s
     # serial), which caught a regression this round and ran on no lane.
     "Tests/Chat/test_console_goal_recovery.py",
+    "Tests/DB/test_goal_attempts.py",
     # Round 13, all bootstrap_profile, red on no lane before: TASK-39154's
     # rewind/summarize and per-session run-state files, TASK-39164's
     # edit-and-resend and regenerate-branching files, and TASK-40097's
@@ -1033,6 +1034,8 @@ ADMISSION_TARGETS = (
     # step's flags at load 48, and review rev1's real Console card test
     # 18.4 s more at load 52).
     "Tests/Workspaces/test_native_confirmed_undo.py",
+    # TASK-42344: exercise the legacy and native lifecycle paths on Linux.
+    "Tests/Chat/test_hooks_v2_lifecycle.py",
 )
 
 #: The second admission-sensitive job's invocation, exactly, in order
@@ -1268,6 +1271,8 @@ ADMISSION_3_TARGETS = (
     # bootstrap_profile, 77 s serial), both at load 22-27.
     "Tests/DB/test_automatic_work_deadlines.py",
     "Tests/Chat/test_console_automatic_turn_compaction_hold.py",
+    "Tests/Chat/test_console_context_presentation_reads.py",
+    "Tests/Chat/test_response_rules_transport.py",
     # TASK-34100.2 (PR #3517's round-24 port): its first-chat files with
     # bootstrap_profile nodes (rate limits, OpenRouter replies, the wizard's
     # key check and local streaming), on no lane before.

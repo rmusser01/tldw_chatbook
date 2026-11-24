@@ -1,11 +1,11 @@
 ---
 id: TASK-34973
 title: Own response rule learning and assessment in Console runtime
-status: In Progress
+status: Done
 assignee:
   - '@codex'
-created_date: '2026-10-04 05:55'
-updated_date: '2026-10-13 00:09'
+created_date: '2026-10-04T05:55:00Z'
+updated_date: '2026-11-24T17:49:31Z'
 labels: []
 dependencies:
   - TASK-34359
@@ -23,9 +23,9 @@ Enable the approved Console response-rule behavior for plan task 7. Preserve exi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Eligible settled responses are checked before completion release and next queue drain.
-- [ ] #2 Stop, foreground input and source changes fence late activation or correction.
-- [ ] #3 App-owned state survives view remount and public editor testing never autoactivates changes.
+- [x] #1 Eligible settled responses are checked before completion release and next queue drain.
+- [x] #2 Stop, foreground input and source changes fence late activation or correction.
+- [x] #3 App-owned state survives view remount and public editor testing never autoactivates changes.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -58,6 +58,8 @@ Completed app-owned learning, completed-answer assessment, source/binding CAS, e
 2026-10-12 final review F1/F2 fix wave: all six store mutation owners now obtain native SQLite writer admission before store/runtime revocation locks, then recheck source and binding CAS under a fence retained through commit/rollback. Temporary binding publication remains postcommit, and adoption/caller-owned transactions and physical DB cleanup owners are unchanged. Save reloads the exact committed revision, row/details and tested definition, retaining it for Promote and Disable/Enable. Genuine pre-fix RED: twelve contention cases fail (eight measured 0.516–0.614s stalls, two early invalidations causing Stop=false, two deferred write-upgrade failures); four public manager sequences repin revision1 after Save2. Mixed first receipt with teardown typo is retained separately. GREEN: original16 regressions16.20s; store/adoption/CAS/capacity/settlement40pass21.07s; manager/runtime/source/cleanup30pass47.91s; added critical and executable/negative membership226pass30.79s. Existing required P0 admission-sensitive command appends only the contention file and exact manager selector: 20 cases sum 22.341s including per-case setup/teardown in this run, within the measured ~7min headroom of the unchanged20min job (parent13m3 plus earlier rules~86s). No new process/cap/allowance or original13-selector omission/reordering. Existing ADR232 applies; no new ADR. Original05 sealed assets remain immutable; new final-fix receipts/report/handoff carry this wave. Final committed-head binding follows; model learning/semantic/tool quality, native paint/Checking-Stop, settled-Goal repair refusal, inherited759/756 guard and actual-base/hosted/re-review gates remain explicitly open. Tasks remain In Progress.
 
 2026-10-12 bounded R1 correction: Disable/Exclude/Delete now check current user scope/adoption and revoke affected work under a short shared fence before SQLite writer admission. The lock is released during the writer wait; existing post-admission scope/CAS/invalidation and settlement fences remain, including revocation of new work accepted during the wait. Assessment-epoch revocation does not revoke the manager's current user-scope intent. No F1/F2 owner, UI, timeout, schema or allowance changes. Genuine destructive-only native RED:12 cases retain source eligibility; final native controls now use actual retained deterministic assessments, durable and real ephemeral Chats, held writer or real query-only SQLite admission refusal. Failed admission leaves the pin unchanged and its assessment revoked; event loop/borrowed handles/physical cleanup survive. Added three post-wait current-Chat/CAS/new-source interleavings. Corrected old Stop expectation when destructive intent already ended Checking, and a listener-count assertion that did not express the contract. Retained partial receipts:02 has46pass/6test-cleanup failures from awaiting a callback checkpoint while holding its writer;03 has54pass/1test fixture scope mismatch (workspace context was not the manager's current-Chat owner);04 has43pass/12test assertions confusing assessment state=completed with outcome=violation. No product changes were needed for those setup corrections. Final05:75pass in54.355s. Exactly15 new cases sum6.878s; they are automatically enrolled in the existing contention-file selector. All15 CI selectors/processes/profile markers/timeouts/20min cap/aggregate are unchanged. Existing ADR232/source section6 governs; root's explicit bounded extra-cycle ruling and cost precede code. Original164 and prior35 sealed assets remain immutable. Source-bound committed qualification and new revocation-correction report/handoff follow. No task Done; model/native/Goal/inherited/actual-base/hosted/re-review limits remain open.
+
+Current dev verification at four workers passed all 41 runtime cases and all 29 manager modal cases. The acceptance cases cover evaluation before completion and queue drain, actual AgentService routing, retained ownership during Stop and source changes, remount with one completion, and public editor testing at both sizes. Larger mounted composer paths are tracked separately by TASK-34974.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

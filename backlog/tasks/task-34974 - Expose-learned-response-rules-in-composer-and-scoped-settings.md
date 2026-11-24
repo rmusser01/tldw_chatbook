@@ -8,7 +8,7 @@ created_date: 2026-10-04 05:55
 updated_date: 2026-10-22 19:20
 labels: []
 dependencies:
-- TASK-34805
+- TASK-34973
 references:
 - Docs/superpowers/plans/2026-10-03-console-response-rules.md
 documentation:
@@ -53,7 +53,7 @@ ADR required: no new ADR. ADR path: backlog/decisions/232-console-learned-respon
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Implemented native /omfg and /rules commands, shared Chat/Workspace/current-profile manager, exact tested CAS Save, private example inspection, promotion preview, exclusion and Stop/status/focus. Thin UI adapters retain app-owned runtime and token/component patterns; generated CSS rebuilt through its owner. Public targeted run: 55 passes plus the corrected active-run/Workspace witnesses (2 passes); real HTTP literal-send and saved-chat journeys pass. Static checks pass. Required full owner/governance and composer attempts retain independently verified baseline exclusions, documented in Docs/superpowers/reviews/2026-10-03-console-response-rules.md. ADR-232 governs storage, scope and admission; independent whole-branch review belongs to qualification task 34807.
+Implemented native /omfg and /rules commands, shared Chat/Workspace/current-profile manager, exact tested CAS Save, private example inspection, promotion preview, exclusion and Stop/status/focus. Thin UI adapters retain app-owned runtime and token/component patterns; generated CSS rebuilt through its owner. Public targeted run: 55 passes plus the corrected active-run/Workspace witnesses (2 passes); real HTTP literal-send and saved-chat journeys pass. Static checks pass. Required full owner/governance and composer attempts retain independently verified baseline exclusions, documented in Docs/superpowers/reviews/2026-10-03-console-response-rules.md. ADR-232 governs storage, scope and admission; independent whole-branch review belongs to TASK-34975.
 
 2026-10-12 current integration (historical source evidence above remains unchanged): Composer commands, scoped manager, Console settings and canonical F4 Settings share one runtime. Token-backed UI preserves edits, dirty-cancel confirmation, disabled/tested pins, promotion privacy and focus. All four mounted learn/repair/reopen/exclude journeys passed in phase42 after current public workspace switching and actual button readiness fixes. Pilot is wiring evidence; native terminal paint is still pending because Computer Use explicitly denied Terminal. Existing ADR232 governs, with ADR337 live-revision GC and ADR227 Goal constraints applied. Current report: E/pr3010-current-integration/task-1-report.md. All tasks stay In Progress and acceptance remains open pending independent review, actual-base/hosted qualification and unmet external/model checks.
 

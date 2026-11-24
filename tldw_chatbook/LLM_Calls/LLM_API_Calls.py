@@ -88,6 +88,7 @@ from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.log_sanitizer import REDACTION_MARKER, redact_log_line
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
+    native_rule_transport_remaining,
     llm_content_byte_count,
     llm_retry_count,
     safe_llm_error_detail,
@@ -2028,12 +2029,10 @@ def chat_with_anthropic(
                 response.status_code == 400
                 and _contains_cache_control(data)
                 and "cache_control" in (response.text or "")
+                and native_rule_transport_remaining() is None
             ):
-                # Caching must never break sends (cost-ticker PR2): odd
-                # proxies/gateways can reject cache_control. Retry exactly
-                # once without any breakpoints; every other error path is
-                # untouched. Reading .text here is safe -- it is the error
-                # body, not a stream.
+                # Ordinary sends may retry once without rejected cache markers.
+                # Native helpers remain one-shot, including adapter fallbacks.
                 logger.warning(
                     "Anthropic: endpoint rejected cache_control; retrying without prompt caching."
                 )

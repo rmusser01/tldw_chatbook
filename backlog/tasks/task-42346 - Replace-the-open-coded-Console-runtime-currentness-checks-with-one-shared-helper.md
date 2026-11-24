@@ -1,7 +1,7 @@
 ---
 id: TASK-42346
 title: "Replace the open-coded Console runtime currentness checks with one shared helper"
-status: To Do
+status: In Progress
 assignee: []
 created_date: 2026-11-22 16:37
 updated_date: 2026-11-22 16:56
@@ -41,3 +41,17 @@ Proposed by the review of the PR #3493 port (TASK-34975, round 20) as optional c
 - [ ] #2 Sites that check a different set of fields either use the shared check plus their own extra conditions, or the implementation notes say why they keep their own
 - [ ] #3 Behaviour is unchanged: the covering tests of every edited module pass through the scratch wrapper at `-n 4`, and the module-size ratchets pass
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Compare runtime ownership checks with their surrounding guards. Move the common disposed, controller, store and session-admission check behind a runtime method.
+2. Preserve checks with a different contract and leave configuration preparation to its current owner.
+3. Run the edited modules' ownership regressions and the module-size ratchets.
+
+ADR required: no
+ADR path: N/A
+Reason: Mechanical consolidation of the current runtime authority boundary.
+
+## Implementation Notes
+
+The runtime predicate is shared by received sends, automatic submissions, context presentation, reference preparation and hook preparation. Each caller retains its checks of the original app, source or receipt where applicable. Configuration preparation remains under the other active work identified above. Raw CLI capture owns a session and store without a controller binding. Workflow submission has a separate native receipt and closing check. Terminal command hooks may settle after admission closes. Those paths retain their existing tests.

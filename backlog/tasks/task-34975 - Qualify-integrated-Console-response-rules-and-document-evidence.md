@@ -9,7 +9,7 @@ created_date: 2026-10-04 05:56
 updated_date: 2026-11-22 15:58
 labels: []
 dependencies:
-- TASK-34806
+- TASK-34974
 references:
 - Docs/superpowers/plans/2026-10-03-console-response-rules.md
 documentation:

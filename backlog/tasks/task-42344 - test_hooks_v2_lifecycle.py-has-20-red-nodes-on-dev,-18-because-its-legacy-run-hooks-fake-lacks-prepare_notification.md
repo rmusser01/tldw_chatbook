@@ -1,7 +1,7 @@
 ---
 id: TASK-42344
 title: "test_hooks_v2_lifecycle.py has 20 red nodes on dev, 18 because its legacy run-hooks fake lacks prepare_notification"
-status: To Do
+status: In Progress
 assignee: []
 created_date: 2026-11-22 16:37
 updated_date: 2026-11-22 16:37
@@ -36,3 +36,17 @@ Found by the TASK-34975 port (round 20, fu/r20-ctxclose), which reported it as `
 - [ ] #3 The whole file passes through the scratch wrapper at `-n 4` on a branch carrying the fix, with the load average recorded
 - [ ] #4 The file runs on a PR lane
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Reproduce the lifecycle failures. Update the legacy engine double to model an unattached notification preparation and isolate the scheduled wake and MCP Stop cases.
+2. Keep real command and MCP coverage. Separate setup from the measured Interrupt guard and verify the full file at four workers on a supported host.
+3. Add the file to a required admission-sensitive lane.
+
+ADR required: no
+ADR path: N/A
+Reason: Test fixtures and CI coverage only.
+
+## Implementation Notes
+
+The legacy test recorder now provides the no-attachment notification preparation expected by the controller. The whole file is selected by the required admission-sensitive Linux job. Native Windows refuses the command-hook setup these cases use. A Windows MCP-only diagnostic hit the existing one-second event deadline, with the ownership counters settled. The scheduled wake and MCP success cases still need Linux qualification.

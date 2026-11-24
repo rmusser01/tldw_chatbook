@@ -22,6 +22,18 @@ if TYPE_CHECKING:
     from .console_received_intent import ConsoleReceivedTurnIntent
 
 
+def runtime_owns_session(
+    self: native_host.ConsoleRuntime, controller: Any, store: Any, session_id: str
+) -> bool:
+    """Check the original runtime bindings and the session admission fence."""
+    return (
+        not self._disposed
+        and self._chat_controller is controller
+        and self._chat_store is store
+        and session_id not in self._admission_fenced_sessions
+    )
+
+
 def _attachment_receipt(controller, session_id):
     from .console_received_turn import received_turn_claim_for
 
@@ -135,12 +147,7 @@ def preparation_native_runner(
             )
             or (
                 runtime is not None
-                and (
-                    runtime._disposed
-                    or runtime._chat_controller is not controller
-                    or runtime._chat_store is not store
-                    or session_id in runtime._admission_fenced_sessions
-                )
+                and not runtime.owns_session(controller, store, session_id)
             )
         ):
             raise RecoveryRequired("console_snapshot_owner_changed")
@@ -1044,10 +1051,7 @@ def publish_received_acceptance(self, record, controller) -> None:
             # Saved acceptance is a fact even when its original owner
             # changed or Stop won. Those outcomes retain the composer.
             if (
-                self._disposed
-                or record.session_id in self._admission_fenced_sessions
-                or self._chat_store is not store
-                or self._chat_controller is not controller
+                not self.owns_session(controller, store, record.session_id)
                 or controller.store is not store
                 or claim is None
                 or not store.received_turn_matches_session(claim)

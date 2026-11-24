@@ -1,20 +1,22 @@
 ---
 id: TASK-42343
-title: "Three test_console_context_presentation_reads.py cases are red on dev and run on no lane"
-status: To Do
+title: >-
+  Three test_console_context_presentation_reads.py cases are red on dev and run
+  on no lane
+status: In Progress
 assignee: []
-created_date: 2026-11-22 16:37
-updated_date: 2026-11-22 16:37
+created_date: '2026-11-22T16:37:00Z'
+updated_date: '2026-11-24T17:39:27Z'
 labels:
-- follow-up
-- tests
-- console
-priority: medium
-references:
-- Tests/Chat/test_console_context_presentation_reads.py
-- tldw_chatbook/Chat/console_context_repository.py
-- .github/workflows/derived-artifacts.yml
+  - follow-up
+  - tests
+  - console
 dependencies: []
+references:
+  - Tests/Chat/test_console_context_presentation_reads.py
+  - tldw_chatbook/Chat/console_context_repository.py
+  - .github/workflows/derived-artifacts.yml
+priority: medium
 ---
 
 ## Description
@@ -30,7 +32,24 @@ Until these pass, the file cannot guard the context-presentation reads that TASK
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The cause of each red node is named, and either the test or the product is fixed (the product only where the test's expectation is right)
-- [ ] #2 All three nodes pass through the scratch wrapper at `-n 4` on a branch carrying the fix
+- [x] #1 The cause of each red node is named, and either the test or the product is fixed (the product only where the test's expectation is right)
+- [x] #2 All three nodes pass through the scratch wrapper at `-n 4` on a branch carrying the fix
 - [ ] #3 The file runs on a PR lane
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce the three cases on current dev. Observe live readers without changing callback identity and persist memory before taking the compaction case snapshot.
+2. Run the three cases and the full file through the same private profile at four workers. Measure the serial file and add it to a required admission-sensitive lane.
+
+ADR required: no
+ADR path: N/A
+Reason: Test fixtures and CI coverage only.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+On dev 9fa2bf1b1d the three reported cases failed at four workers. The fixed exact cases passed 3/3, and the full module passed 15/15 at four workers (43.33 seconds) and 15/15 serially (74.12 seconds). The cold/expired check observes the original callback without changing its identity. The compaction test persists memory before capturing the initial revision. Required PR Fast Lane (admission-sensitive 3) now selects the whole module. Hosted execution is pending.
+<!-- SECTION:NOTES:END -->

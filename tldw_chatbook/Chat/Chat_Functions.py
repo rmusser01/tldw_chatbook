@@ -92,6 +92,7 @@ from tldw_chatbook.provider_registry import (  # noqa: E402
 )
 from tldw_chatbook.Utils.sensitive_llm_logging import (  # noqa: E402
     is_sensitive_llm_request,
+    native_rule_transport_remaining,
     safe_llm_error_detail,
     safe_llm_exception_message,
 )
@@ -252,6 +253,19 @@ def _project_instruction_messages_for_handler(
 # sensitive auxiliary-request audit before it can silently join the dispatch
 # surface.
 SENSITIVE_AUXILIARY_AUDITED_ENDPOINTS = frozenset(AUDITED_ENDPOINT_KEYS)
+# These installed handlers use DefaultTimeoutSession for every HTTP path.
+# Engine presets share that same audited hosted transport. A new independent
+# adapter must establish its native-helper transport contract before admission.
+NATIVE_RULE_TIMEOUT_ENDPOINTS = frozenset(
+    {
+        "openai", "anthropic", "cohere", "groq", "openrouter", "deepseek",
+        "mistral", "mistralai", "google", "huggingface", "moonshot", "zai",
+        "qwencloud", "llama_cpp", "strata", "polystrata", "koboldcpp", "oobabooga",
+        "tabbyapi", "vllm", "local-llm", "ollama", "aphrodite", "custom-openai-api",
+        "custom-openai-api-2", "mlx_lm", "local_llamacpp", "local_llamafile",
+        "local_ollama", "local_vllm", "local_mlx_lm",
+    }
+) | frozenset(record.key for record in ENGINE_RECORDS)
 """
 A dispatch table mapping API endpoint names (e.g., 'openai') to their
 corresponding handler functions (e.g., `chat_with_openai`). This is used by
@@ -1146,6 +1160,13 @@ def chat_api_call(
         :rtype: str | dict | Generator[str, Any, None]
     """
     endpoint_lower = api_endpoint.lower()
+    if (
+        native_rule_transport_remaining() is not None
+        and endpoint_lower not in NATIVE_RULE_TIMEOUT_ENDPOINTS
+    ):
+        raise ChatConfigurationError(
+            "Native response-rule helpers are unavailable for this provider."
+        )
     # TASK-17165: never echo the raw value -- these two fire on EVERY call,
     # not just failures, and the label additionally lands in exported
     # metrics (where it is also an unbounded-cardinality hazard).

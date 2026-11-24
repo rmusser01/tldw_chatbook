@@ -110,7 +110,10 @@ class AutomaticWorkContext:
         }
         if self.attempt_kind not in readers:
             raise AutomaticWorkRefused("acceptance_required")
-        return readers[self.attempt_kind](self.attempt_id, owner_id=self.owner_id)
+        attempt = readers[self.attempt_kind](self.attempt_id, owner_id=self.owner_id)
+        if self.goal is not None and attempt.session_id != self.goal.session_id:
+            raise AutomaticWorkRefused("goal_authority_expired")
+        return attempt
 
     def _accepted_states(self):
         return (

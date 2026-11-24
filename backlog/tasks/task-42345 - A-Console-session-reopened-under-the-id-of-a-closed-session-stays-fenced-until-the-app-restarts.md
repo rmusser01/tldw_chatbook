@@ -1,7 +1,7 @@
 ---
 id: TASK-42345
 title: "A Console session reopened under the id of a closed session stays fenced until the app restarts"
-status: To Do
+status: In Progress
 assignee: []
 created_date: 2026-11-22 16:37
 updated_date: 2026-11-22 16:56
@@ -44,3 +44,17 @@ The root cause is the id reuse. The latches are deliberate: a close that timed o
 - [ ] #3 A test closes a goal run's chat, resumes the goal, then sends and closes, and is shown red before the fix
 - [ ] #4 The new test runs on a PR lane
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Close a goal chat through the runtime, resume it, and check that both automatic dispatch and another close target the new live session. Cover an old producer that outlives the bounded close drain.
+2. Keep the durable goal conversation and ledger chain. Allocate a fresh live session ID after close and bind the next goal attempt to that exact ID. Reject an attempt retry from a different session.
+3. Run the goal dispatch, attempt ledger, and close regressions in the required recovered-suites job.
+
+ADR required: no new ADR
+ADR path: backlog/decisions/227-native-console-goal-runs.md
+Reason: The fix preserves the durable goal and its existing authority and repairs a live session lifecycle bug.
+
+## Implementation Notes
+
+Both close variants reproduced the closed-session refusal. The live-session fix passed those two cases and 11 ledger tests locally. The timeout case holds an old producer across hydration and observes its original close fence, then sends in the reopened chat and closes it. Required Linux CI also exercises public Resume on a real paused goal and verifies the saved conversation and the new live session in the next durable attempt. ADR-227 records the identity distinction.

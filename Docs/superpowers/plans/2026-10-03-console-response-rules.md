@@ -62,9 +62,9 @@ Planning inspected committed product code at `origin/dev` **74fffc99f99cf47a39c1
 - Plan task 4: [TASK-34357](../../../backlog/tasks/task-34357%20-%20Assess-response-rules-using-permitted-execution-evidence.md).
 - Plan task 5: [TASK-34358](../../../backlog/tasks/task-34358%20-%20Learn-and-calibrate-native-response-rule-candidates.md).
 - Plan task 6: [TASK-34359](../../../backlog/tasks/task-34359%20-%20Admit-native-repairs-through-shared-machine-follow-up-custody.md).
-- Plan task 7: [TASK-34805](../../../backlog/tasks/task-34805%20-%20Own-response-rule-learning-and-assessment-in-Console-runtime.md).
-- Plan task 8: [TASK-34806](../../../backlog/tasks/task-34806%20-%20Expose-learned-response-rules-in-composer-and-scoped-settings.md).
-- Plan task 9: [TASK-34807](../../../backlog/tasks/task-34807%20-%20Qualify-integrated-Console-response-rules-and-document-evidence.md).
+- Plan task 7: [TASK-34973](../../../backlog/tasks/task-34973%20-%20Own-response-rule-learning-and-assessment-in-Console-runtime.md).
+- Plan task 8: [TASK-34974](../../../backlog/tasks/task-34974%20-%20Expose-learned-response-rules-in-composer-and-scoped-settings.md).
+- Plan task 9: [TASK-34975](../../../backlog/tasks/task-34975%20-%20Qualify-integrated-Console-response-rules-and-document-evidence.md).
 
 ## File ownership map
 

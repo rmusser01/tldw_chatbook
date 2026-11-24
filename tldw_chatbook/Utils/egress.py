@@ -1303,6 +1303,42 @@ class DefaultTimeoutSession(requests.Session):
         # explicit timeout and must not be overridden.
         if "timeout" not in kwargs and len(args) <= 6:
             kwargs["timeout"] = self.default_timeout
+        from .sensitive_llm_logging import native_rule_transport_remaining
+
+        remaining = native_rule_transport_remaining()
+        if remaining is not None:
+            if remaining <= 0:
+                raise requests.exceptions.Timeout(
+                    "Native rule transport deadline expired."
+                )
+            # Never mutate a pooled session or its adapter: this limit belongs
+            # only to the current native helper. Sensitive provider dispatch
+            # already selects a zero-retry adapter; refuse any unaudited one.
+            if self.get_adapter(url).max_retries.total != 0:
+                raise requests.exceptions.RequestException(
+                    "Native rule transport requires zero retries."
+                )
+            timeout = args[6] if len(args) > 6 else kwargs["timeout"]
+            bounded = (
+                tuple(
+                    remaining if value is None else min(value, remaining)
+                    for value in timeout
+                )
+                if isinstance(timeout, tuple)
+                else remaining
+                if timeout is None
+                else min(timeout, remaining)
+            )
+            if len(args) > 6:
+                args = (*args[:6], bounded, *args[7:])
+            else:
+                kwargs["timeout"] = bounded
+            # Redirects would introduce another request outside the one-shot
+            # provider contract and can renew a per-read timeout.
+            if len(args) > 7:
+                args = (*args[:7], False, *args[8:])
+            else:
+                kwargs["allow_redirects"] = False
         return super().request(method, url, *args, **kwargs)
 
 

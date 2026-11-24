@@ -1,11 +1,11 @@
 ---
 id: TASK-34354
 title: Validate native response rule definitions and deterministic outcomes
-status: In Progress
+status: Done
 assignee:
   - '@codex'
-created_date: '2026-10-04 05:53'
-updated_date: '2026-10-12 23:14'
+created_date: '2026-10-04T05:53:00Z'
+updated_date: '2026-11-24T17:41:36Z'
 labels: []
 dependencies: []
 references:
@@ -22,9 +22,9 @@ Enable the approved Console response-rule behavior for plan task 1. Preserve exi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Closed native definitions reject unsupported fields and enforce all size limits.
-- [ ] #2 Chat and Workspace exclusions mask logical rules while revisions remain pinned.
-- [ ] #3 Literal and Markdown heading checks distinguish violations, unavailable checks and inapplicable rules.
+- [x] #1 Closed native definitions reject unsupported fields and enforce all size limits.
+- [x] #2 Chat and Workspace exclusions mask logical rules while revisions remain pinned.
+- [x] #3 Literal and Markdown heading checks distinguish violations, unavailable checks and inapplicable rules.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -46,4 +46,6 @@ Current-dev PR3010 integration: follow Docs/superpowers/plans/2026-10-11-pr3010-
 Implemented closed immutable rule definitions, scope precedence and deterministic literal/Markdown-heading checks. Unknown and skipped results remain distinct from pass; private input bodies stay out of repr. Added rule package and three test files plus fixtures. ADR-232 governs the change. Watched the missing boundary fail; 43 feature cases and 36 command regression cases pass; black py312, ruff and mypy pass. Self-review completed.
 
 2026-10-12 current integration (historical source evidence above remains unchanged): Integrated the closed response-rule definition and deterministic detector contracts with current Console owners. Declared behavior fixtures remain separately labelled from real model outcomes. Existing ADR232 governs, with ADR337 live-revision GC and ADR227 Goal constraints applied. Current report: E/pr3010-current-integration/task-1-report.md. All tasks stay In Progress and acceptance remains open pending independent review, actual-base/hosted qualification and unmet external/model checks.
+
+Current dev qualification passed the model, resolution, and deterministic suites at four workers. They verify closed definitions and exact input bounds, logical exclusions and revision precedence, and literal and Markdown-heading outcomes. Combined rule-domain and recovery run: 297 passed. ADR-232 still governs the original implementation.
 <!-- SECTION:NOTES:END -->

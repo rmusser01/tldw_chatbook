@@ -619,6 +619,7 @@ jobs:
             Tests/Backup_Recovery/test_canvas_policy_worker.py::test_identity_releases_unissued_read_and_accepts_unchanged_install \
             Tests/Backup_Recovery/test_canvas_policy_worker.py::test_stock_canvas_policy_poll_declines_busy_config_lock \
             Tests/Workspaces/test_native_confirmed_undo.py \
+            Tests/Chat/test_hooks_v2_lifecycle.py \
             --timeout=300 \
             --tb=short
 
@@ -900,6 +901,8 @@ jobs:
             Tests/UI/test_theme_contrast.py::test_roleplay_items_search_placeholder_and_typed_text_clear_aa_on_every_theme \
             Tests/DB/test_automatic_work_deadlines.py \
             Tests/Chat/test_console_automatic_turn_compaction_hold.py \
+            Tests/Chat/test_console_context_presentation_reads.py \
+            Tests/Chat/test_response_rules_transport.py \
             Tests/Chat/test_rate_limit_reads_as_rate_limit.py \
             Tests/LLM_Calls/test_openrouter_response_extras.py \
             Tests/Wizards/test_first_run_key_check.py \
@@ -2013,6 +2016,7 @@ jobs:
             Tests/Chat/test_fleet_wake_retry.py \
             Tests/Chat/test_console_goal_dispatch.py \
             Tests/Chat/test_console_goal_recovery.py \
+            Tests/DB/test_goal_attempts.py \
             Tests/Chat/test_console_rewind_summarize.py \
             Tests/Chat/test_console_run_state_per_session.py \
             Tests/Chat/test_console_edit_resend.py \

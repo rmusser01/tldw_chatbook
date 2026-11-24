@@ -2,6 +2,7 @@
 
 import asyncio
 from contextlib import asynccontextmanager
+import sys
 import threading
 from types import SimpleNamespace
 
@@ -80,7 +81,14 @@ async def test_cold_and_expired_presentation_never_fall_back_to_live_ui_reads(
     tmp_path, monkeypatch
 ):
     database, store, controller, _ = _controller(tmp_path)
-    tasks, calls = [], []
+    tasks, calls, live_reads = [], [], []
+    live_read_code = controller.context_control_inputs.__func__.__code__
+    previous_profile = sys.getprofile()
+
+    def observe_live_read(frame, event, _argument):
+        if event == "call" and frame.f_code is live_read_code:
+            live_reads.append(threading.get_ident())
+
     try:
         store.active_session_id = "session-1"
         message = store.append_message(
@@ -101,11 +109,8 @@ async def test_cold_and_expired_presentation_never_fall_back_to_live_ui_reads(
             return task
 
         monkeypatch.setattr(store.persistence, "get_message_versions", versions)
-        monkeypatch.setattr(
-            controller,
-            "context_control_inputs",
-            lambda *_: pytest.fail("presentation fell back to live UI reads"),
-        )
+        # Preserve the installed callback identity that selects the stock path.
+        sys.setprofile(observe_live_read)
         snapshot = spend.ConsoleContextReadSnapshot(schedule=schedule)
         assert snapshot.inputs(controller, "session-1")[2] is None
         assert calls == []
@@ -126,7 +131,10 @@ async def test_cold_and_expired_presentation_never_fall_back_to_live_ui_reads(
         assert snapshot.inputs(controller, "session-1")[2] is None
         await asyncio.gather(*tasks)
         assert len(calls) == 3
+        assert not live_reads, "presentation fell back to live UI reads"
     finally:
+        sys.setprofile(previous_profile)
+        await asyncio.gather(*tasks, return_exceptions=True)
         database.close()
 
 
@@ -308,6 +316,14 @@ async def _real_compaction_resume(tmp_path, monkeypatch):
     assert preparation.pause_kind is ConsolePreparationPauseKind.CONTEXT_COMPACTION
     echo = controller._held_send_echo_id("session-1")
     assert echo is not None and store.get_message(echo).persisted_message_id is None
+    # A real memory makes presentation capture versions instead of taking the
+    # no-memory fast path. Capture all resume facts after this fixture setup.
+    boundary = next(
+        message.id
+        for message in store.messages_for_session("session-1")
+        if message.persisted_message_id is not None
+    )
+    store.set_session_context_summary("session-1", "Earlier context", boundary)
     original = gateway.resolve_for_send
     entered, release = asyncio.Event(), asyncio.Event()
 

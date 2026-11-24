@@ -1384,12 +1384,7 @@ async def read_context_presentation_inputs(
             or getattr(controller, "_hooks_v2_runtime", None) is not runtime
             or (
                 runtime is not None
-                and (
-                    runtime._disposed
-                    or runtime._chat_controller is not controller
-                    or runtime._chat_store is not store
-                    or session_id in runtime._admission_fenced_sessions
-                )
+                and not runtime.owns_session(controller, store, session_id)
             )
             or getattr(store, "persistence", None) is not persistence
             or getattr(repository, "db", None) is not repository_db
