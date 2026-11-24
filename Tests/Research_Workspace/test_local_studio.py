@@ -182,6 +182,38 @@ async def test_local_flashcard_child_failure_leaves_no_visible_partial_owner(
     assert (await local_studio.adapter.list_outputs(turn.workspace)).items == ()
 
 
+async def test_local_chatbook_replace_retry_recovers_the_committed_owner_revision(
+    local_studio, monkeypatch
+):
+    owner = local_studio.adapter
+    turn = request()
+    first = await owner.save(
+        turn, StudioGeneratedOutput("complete", text="First output")
+    )
+    updated = replace(turn, operation_id="link-recovery")
+    result = StudioGeneratedOutput("complete", text="New output")
+    persist = local_studio.registry.upsert_membership_metadata
+    failed = False
+
+    def fail_once(*args, **kwargs):
+        nonlocal failed
+        if not failed:
+            failed = True
+            raise OSError("simulated membership write failure")
+        return persist(*args, **kwargs)
+
+    monkeypatch.setattr(local_studio.registry, "upsert_membership_metadata", fail_once)
+    with pytest.raises(RuntimeError, match="needs recovery"):
+        await owner.save(updated, result, replace_output=first)
+    recovered = await owner.save(updated, result, replace_output=first)
+    assert recovered.owner_id == first.owner_id
+    assert recovered.owner_version == first.owner_version + 1
+    assert (await owner.list_outputs(turn.workspace)).items == (recovered,)
+    assert (await owner.resolve_output(recovered))["metadata"][
+        "content"
+    ] == "New output"
+
+
 async def test_local_workspace_port_generates_from_real_selected_library_media(
     local_studio, tmp_path
 ):

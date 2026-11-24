@@ -723,6 +723,7 @@ class WorkspaceArtifactUpdateRequest(BaseModel):
     total_cost_usd: Optional[float] = None
     completed_at: Optional[str] = None
     producer_metadata: Optional[dict[str, Any]] = None
+    review_state: Literal["draft", "accepted"] | None = None
     version: int
 
 

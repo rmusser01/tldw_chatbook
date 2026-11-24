@@ -1312,6 +1312,66 @@ class StudyScreen(BaseAppScreen):
             )
         else:
             store.acknowledge(claim)
+            if previous_section == self.current_section and self.current_section in {
+                "flashcards",
+                "quizzes",
+            }:
+                study_window = self.query_one(StudyWindow)
+                callback = (
+                    study_window._schedule_flashcards_refresh
+                    if self.current_section == "flashcards"
+                    else study_window._schedule_quizzes_refresh
+                )
+                study_window.call_after_refresh(callback)
+
+    async def initialize_research_output(self, section, initialize) -> bool:
+        """Consume a Research handoff only after the exact canonical item opens."""
+        if self.current_section != section:
+            return False
+        channel = (
+            HandoffChannel.RESEARCH_STUDY_DECK_TARGET
+            if section == "flashcards"
+            else HandoffChannel.RESEARCH_QUIZ_TARGET
+        )
+        store = self.app_instance.pending_handoffs
+        claim = store.claim(channel)
+        if claim is None:
+            return False
+        try:
+            target = claim.value
+            backend = self._runtime_backend()
+            if (
+                backend != "local"
+                or target.workspace.data_source.value != backend
+                or self.scope_state.scope_type is not StudyScopeType.GLOBAL
+            ):
+                self.notify(
+                    "Open Local Study to view this saved Research output.",
+                    severity="warning",
+                )
+                return True
+            if not await initialize(research_owner_id=target.owner_id):
+                self.notify(
+                    "The saved Research item is unavailable in Local Study.",
+                    severity="warning",
+                )
+                return True
+            if self.current_section == section and self._runtime_backend() == backend:
+                store.acknowledge_current(claim)
+            return True
+        except (ValueError, LookupError, OSError) as exc:
+            logger.warning(
+                "Study Research output handoff failed (exception_category={}).",
+                type(exc).__name__,
+            )
+            self.notify(
+                "The saved Research item could not be loaded. Reopen it from Studio.",
+                severity="warning",
+            )
+            return True
+        finally:
+            # Release also covers cancellation while a newer view is being mounted.
+            store.release(claim)
 
     def on_mount(self) -> None:
         """Mount now, load the scoped data after (TASK-1320).

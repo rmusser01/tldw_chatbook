@@ -36,6 +36,7 @@ class _ArtifactServer:
         self.drop_provenance = False
         self.drop_version = False
         self.after_write = lambda: None
+        self.exports = []
 
     async def list_workspace_artifacts(self, workspace_id):
         assert workspace_id == SERVER.workspace_id
@@ -44,7 +45,13 @@ class _ArtifactServer:
     async def create_workspace_artifact(self, workspace_id, payload):
         assert workspace_id == SERVER.workspace_id
         self.writes.append(("create", payload.id))
-        row = {**payload.model_dump(), "workspace_id": workspace_id, "version": 1}
+        row = {
+            **payload.model_dump(),
+            "workspace_id": workspace_id,
+            "version": 1,
+            "review_state": "draft",
+            "artifact_version_id": f"{payload.id}:v1",
+        }
         if self.drop_provenance:
             row.pop("producer_metadata")
         if self.drop_version:
@@ -59,7 +66,31 @@ class _ArtifactServer:
         assert row["version"] == payload.version
         self.writes.append(("update", artifact_id, payload.version))
         row.update(payload.model_dump(exclude_unset=True), version=payload.version + 1)
+        row["artifact_version_id"] = f"{artifact_id}:v{row['version']}"
         return row
+
+    async def _request(self, method, path, *, json_data):
+        assert method == "POST"
+        artifact_id = path.split("/")[-2]
+        assert (
+            path
+            == f"/api/v1/workspaces/{SERVER.workspace_id}/artifacts/{artifact_id}/exports"
+        )
+        assert json_data == {
+            "format": "md",
+            "artifact_version_id": self.saved[artifact_id]["artifact_version_id"],
+        }
+        self.exports.append(json_data)
+        return {
+            "workspace_id": SERVER.workspace_id,
+            "artifact_id": artifact_id,
+            "artifact_version_id": json_data["artifact_version_id"],
+            "review_state": "accepted",
+            "format": "md",
+            "content_type": "text/markdown",
+            "content": "Reviewed report",
+            "bytes": 15,
+        }
 
 
 async def test_server_studio_uses_canonical_artifact_versions_and_reloads_provenance():
@@ -155,3 +186,25 @@ async def test_server_output_rejects_unselected_citations_before_writing():
             ),
         )
     assert not server.writes
+
+
+async def test_server_export_requires_an_accepted_exact_version_and_edit_reopens_review():
+    server = _ArtifactServer()
+    owner = ServerStudioAdapter(lambda _ref: server)
+    artifact = await owner.save(
+        server_request(), StudioGeneratedOutput("complete", text="One report")
+    )
+    with pytest.raises(ValueError, match="accept"):
+        await owner.export_output(artifact, "markdown")
+    assert server.exports == []
+    await owner.accept_output(artifact)
+    (accepted,) = (await owner.list_outputs(SERVER)).items
+    assert accepted.owner_version == artifact.owner_version + 1
+    assert await owner.export_output(accepted, "markdown") == b"Reviewed report"
+    with pytest.raises(ValueError, match="current version"):
+        await owner.export_output(artifact, "markdown")
+    await owner.edit_output(accepted, "New text")
+    (edited,) = (await owner.list_outputs(SERVER)).items
+    with pytest.raises(ValueError, match="accept"):
+        await owner.export_output(edited, "markdown")
+    assert len(server.exports) == 1

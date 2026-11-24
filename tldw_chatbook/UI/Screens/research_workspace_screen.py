@@ -246,6 +246,8 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 )
                 yield ResearchPaneHandle("studio", id="research-studio-handle")
                 yield ResearchStudioRegion(
+                    controller=self.controller,
+                    overlay_store=self.overlay_store,
                     id="research-studio-pane", classes="research-workspace-pane"
                 )
             yield Static(
@@ -314,12 +316,13 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             button.disabled = True
         try:
             chat = self.query_one(ResearchChatRegion)
-            if not await chat.flush_pending_chat():
+            studio = self.query_one(ResearchStudioRegion)
+            if not studio.allow_leave() or not await chat.flush_pending_chat():
                 return
             async with self._quick_note_lock:
                 if not await self._flush_quick_note_before_owner_switch():
                     return
-                if await chat.flush_pending_chat():
+                if studio.allow_leave() and await chat.flush_pending_chat():
                     self._apply_data_source_switch(data_source)
         finally:
             self._quick_note_switch_running = False
@@ -331,6 +334,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
 
         self.controller.select_data_source(data_source)
         self.query_one(ResearchChatRegion).set_workspace(None)
+        self.query_one(ResearchStudioRegion).set_workspace(None)
         self._source_page_offset = 0
         self._quick_note_offset = 0
         self._quick_note_query = ""
@@ -544,6 +548,9 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             )
         section = self.query_one(ResearchQuickNotesSection)
         chat = self.query_one(ResearchChatRegion)
+        studio = self.query_one(ResearchStudioRegion)
+        if target_ref != studio.ref and not studio.allow_leave():
+            return
         if target_ref != chat.ref and not await chat.flush_pending_chat():
             return
         if target_ref != section.editor_ref:
@@ -554,6 +561,8 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 return
             if target_ref != chat.ref and not await chat.flush_pending_chat():
                 return
+        if target_ref != studio.ref and not studio.allow_leave():
+            return
         header = self.query_one("#research-workspace-header", ResearchHeaderRegion)
         header.sync_catalog_state(state)
         selection = self.query_one("#research-workspace-selection", Static)
@@ -561,6 +570,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         status = self.query_one("#research-workspace-status", Static)
         if state.recovery is not None:
             chat.set_workspace(None)
+            studio.set_workspace(None)
             selection.update(
                 f"{state.data_source.value.title()} workspace catalog unavailable."
             )
@@ -581,6 +591,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             return
         if not state.workspaces:
             chat.set_workspace(None)
+            studio.set_workspace(None)
             selection.update(
                 f"No {state.data_source.value.title()} research workspaces."
             )
@@ -609,6 +620,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         )
         self.controller.select_workspace(workspace.ref)
         chat.set_workspace(workspace.ref)
+        studio.set_workspace(workspace.ref)
         self._source_page_offset = 0
         self._quick_note_offset = 0
         self._quick_note_query = ""
@@ -804,15 +816,20 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         """Flush before navigation or hand recovery over to the quit prompt."""
 
         chat = self.query_one(ResearchChatRegion)
+        studio = self.query_one(ResearchStudioRegion)
+        if not studio.allow_leave():
+            return False
         if not quitting and not await chat.flush_pending_chat():
             return False
         async with self._quick_note_lock:
             if not await self._flush_quick_note_before_owner_switch(quitting=quitting):
                 return False
-            return quitting or await chat.flush_pending_chat()
+            return studio.allow_leave() and (quitting or await chat.flush_pending_chat())
 
     async def confirm_quit(self) -> bool:
         """Persist the Quick Note draft or ask before discarding it."""
+        if not self.query_one(ResearchStudioRegion).allow_leave():
+            return False
         chat = self.query_one(ResearchChatRegion)
         if not await chat.flush_pending_chat():
             if chat.is_busy:
@@ -1297,6 +1314,170 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         self.query_one(ResearchChatRegion).sync_sources(
             page, self.controller.visible_readiness
         )
+        self.query_one(ResearchStudioRegion).refresh_studio()
+
+    @on(ResearchStudioRegion.OwnerAction)
+    def studio_output_action(self, message: ResearchStudioRegion.OwnerAction) -> None:
+        if message.row.output.workspace != self.controller.selected_ref:
+            return
+        self.run_worker(
+            self._perform_studio_owner_action(message),
+            group="research-studio-owner-action",
+            exit_on_error=False,
+        )
+
+    async def _perform_studio_owner_action(
+        self, message: ResearchStudioRegion.OwnerAction
+    ) -> None:
+        from ..Research_Workspace_Modules.studio_history import history_key
+
+        studio = self.query_one(ResearchStudioRegion)
+        action, row = message.action, message.row
+        output = row.output
+        ref = output.workspace
+        port = self.controller.port_for_data_source(ref.data_source)
+        current = lambda: self.is_mounted and self.controller.selected_ref == ref
+        if not current() or port is None:
+            return
+        try:
+            if action == "reopen":
+                if await self.flush_pending_work() and current():
+                    self._open_studio_owner(output)
+            elif action == "discuss":
+                chat = self.query_one(ResearchChatRegion)
+                await chat.add_output_to_draft(ref, row.title, row.content)
+                if current():
+                    self.active_pane = "chat"
+                    self._apply_pane_layout(
+                        max(1, self.size.width), relocate_hidden_focus=True
+                    )
+                    chat.query_one("#research-chat-composer", TextArea).focus()
+            elif action in {"note", "append"}:
+                async with self._quick_note_lock:
+                    if await self._flush_quick_note_before_owner_switch() and current():
+                        section = self.query_one(ResearchQuickNotesSection)
+                        if action == "note":
+                            section.new_draft()
+                            section.query_one(
+                                "#research-quick-note-title", Input
+                            ).value = row.title
+                        elif section.capture_save_request()[1].note_id is None:
+                            studio._status(
+                                "Open an existing Quick Note before appending to it."
+                            )
+                            return
+                        editor = section.query_one(
+                            "#research-quick-note-body", TextArea
+                        )
+                        separator = "\n\n" if editor.text else ""
+                        editor.load_text(f"{editor.text}{separator}{row.content}")
+                        _, draft = section.capture_save_request()
+                        section.set_source_provenance(
+                            (
+                                *draft.source_ids,
+                                *(
+                                    source.source_id
+                                    for source in output.source_snapshot
+                                ),
+                            )
+                        )
+                        await self._save_quick_note(*section.capture_save_request())
+            elif action in {"delete", "unlink"}:
+                delete = action == "delete"
+                confirm = ConfirmationDialog(
+                    title="Delete Studio output?"
+                    if delete
+                    else "Remove missing output link?",
+                    message=row.title,
+                    confirm_label="Delete" if delete else "Remove",
+                    cancel_label="Cancel",
+                )
+                if await self.app.push_screen_wait(confirm) is True and current():
+                    if delete:
+                        await port.delete_output(output)
+                    else:
+                        await port.unlink_output(output)
+                    if current():
+                        studio.forget_output(output)
+                        studio._status(
+                            "Output deleted."
+                            if delete
+                            else "Missing output link removed."
+                        )
+                        studio.refresh_studio()
+            elif action == "export":
+                picked = await self.app.push_screen_wait(
+                    FileSave(
+                        location=str(Path.home()),
+                        title="Download Studio output as Markdown",
+                        default_file=f"{output.output_kind.value}.md",
+                    )
+                )
+                if picked is not None and current():
+                    data = await port.export_output(output, "markdown")
+                    if current():
+                        target = validate_path_simple(picked, require_exists=False)
+                        await asyncio.to_thread(Path(target).write_bytes, data)
+                        studio._status("Markdown downloaded.")
+            elif action == "edit":
+                from ..Research_Workspace_Modules.studio_dialogs import (
+                    ResearchStudioEdit,
+                )
+
+                body = await self.app.push_screen_wait(ResearchStudioEdit(row))
+                if body is not None and current():
+                    await port.edit_output(output, body)
+                    if current():
+                        studio._status("Output updated.")
+                        studio.refresh_studio(preferred=history_key(output))
+            elif action == "accept":
+                confirm = ConfirmationDialog(
+                    title="Accept the reviewed Server artifact?",
+                    message=f"Accept the displayed version of {row.title} for Server export.",
+                    confirm_label="Accept version",
+                    cancel_label="Cancel",
+                )
+                if await self.app.push_screen_wait(confirm) is True and current():
+                    await port.accept_output(output)
+                    if current():
+                        studio._status(
+                            "The Server accepted the artifact version for export."
+                        )
+                        studio.refresh_studio(preferred=history_key(output))
+        except Exception as exc:
+            if current():
+                studio._show_error(exc)
+
+    def _open_studio_owner(self, output) -> None:
+        from ...Constants import TAB_ARTIFACTS
+        from ..Navigation.main_navigation import NavigateToScreen
+        from ..Navigation.pending_handoff_store import HandoffChannel
+        from ..Navigation.research_output_handoffs import output_handoff
+        from .study_scope_models import StudyScopeContext
+
+        channel, value = output_handoff(output)
+        app = self.app_instance
+        if (
+            channel is not HandoffChannel.RESEARCH_CHATBOOK_TARGET
+            and app.get_authoritative_runtime_source() != "local"
+        ):
+            self.notify(
+                "Switch Study to Local to open this saved output.", severity="warning"
+            )
+            return
+        if not app._stage_handoff(
+            channel, value, recovery="The saved Studio output could not be opened."
+        ):
+            return
+        if channel is HandoffChannel.RESEARCH_CHATBOOK_TARGET:
+            app.post_message(NavigateToScreen(TAB_ARTIFACTS))
+        else:
+            section = (
+                "quizzes"
+                if channel is HandoffChannel.RESEARCH_QUIZ_TARGET
+                else "flashcards"
+            )
+            app.open_study_screen(StudyScopeContext(), initial_section=section)
 
     @on(ResearchChatRegion.OverlayUpdated)
     def research_chat_overlay_updated(

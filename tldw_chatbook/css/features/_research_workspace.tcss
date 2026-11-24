@@ -366,6 +366,41 @@ ResearchChatMessageEditor {
     max-width: $ds-size-50;
 }
 
+.research-studio-card, .research-studio-history {
+    height: auto;
+    margin-top: $ds-space-1;
+}
+
+.research-studio-card Static, .research-studio-history Static,
+#research-studio-route, #research-studio-status {
+    height: auto;
+    color: $ds-text-muted;
+}
+
+ResearchStudioOptions, ResearchStudioActions, ResearchStudioEdit {
+    align: center middle;
+    background: $background $ds-opacity-dim;
+}
+
+#research-studio-dialog, #research-studio-actions-dialog, #research-studio-edit-dialog {
+    width: $ds-percent-90;
+    max-width: $ds-size-76;
+    height: $ds-percent-90;
+    min-height: $ds-size-12;
+    padding: $ds-space-1;
+    border: round $accent;
+    background: $panel;
+}
+
+.research-studio-action-scroll, #research-studio-edit-body {
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+}
+
+#research-studio-dialog Static, #research-studio-actions-dialog Static {
+    height: auto;
+}
+
 ResearchPaneHandle {
     width: $ds-size-4;
     min-width: $ds-size-4;

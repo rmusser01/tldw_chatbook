@@ -485,6 +485,19 @@ class ResearchChatRegion(Vertical):
                 return False
         return True
 
+    async def add_output_to_draft(self, ref, title: str, content: str) -> None:
+        from ...Research_Workspace.chat_models import validate_chat_draft
+
+        if self.ref != ref or self._busy or not self._ready:
+            raise ValueError("Open the workspace conversation before discussing the output.")
+        prompt = f'Discuss the Studio output "{title}".\n\n{content}'
+        draft = validate_chat_draft(f"{self._composer.text.rstrip()}\n\n{prompt}".lstrip())
+        self._composer.load_text(draft)
+        self.query_one("#research-chat-mode", Select).value = ResearchChatMode.RAG
+        self._retry = None
+        await self._save_draft()
+        self._status("Studio output added to the draft.")
+
     @on(Select.Changed, "#research-chat-session")
     def session_changed(self, event: Select.Changed) -> None:
         if self._busy or event.value is Select.NULL or event.value == self._session:

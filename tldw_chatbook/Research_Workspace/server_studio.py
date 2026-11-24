@@ -13,6 +13,9 @@ from tldw_chatbook.Notes.server_notes_workspace_service import (
 )
 from tldw_chatbook.Workspaces.output_membership import output_membership_metadata
 from tldw_chatbook.tldw_api.exceptions import APIResponseError
+from tldw_chatbook.tldw_api.workspace_artifact_exports import (
+    export_accepted_workspace_markdown,
+)
 
 from .chat_models import validate_chat_id
 from .chat_service import MAX_ANSWER_BYTES
@@ -59,6 +62,16 @@ class ServerStudioAdapter:
             "" if ready else "Check server generation and workspace permissions.",
             chat.capability_revision,
         )
+        change = ResearchCapability(
+            writable,
+            "available" if writable else "server_artifact_read_only",
+            "Server artifact changes are available."
+            if writable
+            else "Server artifacts are read only.",
+            "server_artifact",
+            "" if writable else "Check workspace write permissions.",
+            chat.capability_revision,
+        )
         blocked = {
             action: ResearchCapability(
                 False,
@@ -83,7 +96,7 @@ class ServerStudioAdapter:
         }
         return {
             "save_workspace_artifact": text,
-            "update_workspace_artifact": text,
+            "update_workspace_artifact": change,
             **blocked,
         }
 
@@ -146,6 +159,10 @@ class ServerStudioAdapter:
         )
 
     async def list_outputs(self, ref, *, limit=20, offset=0):
+        page, _ = await self.list_output_records(ref, limit=limit, offset=offset)
+        return page
+
+    async def list_output_records(self, ref, *, limit=20, offset=0):
         if (
             type(limit) is not int
             or not 1 <= limit <= 100
@@ -155,19 +172,20 @@ class ServerStudioAdapter:
             raise ValueError("Choose a bounded output page")
         client, service = self._connection(ref)
         rows = await self._records(ref, client, service)
-        outputs = tuple(
-            self._reference(ref, row, metadata)
+        entries = tuple(
+            (self._reference(ref, row, metadata), row)
             for row in rows
             if (metadata := self._metadata(row))
         )
+        selected = entries[offset : offset + limit]
         page = BoundedPageResult(
-            outputs[offset : offset + limit],
+            tuple(output for output, _ in selected),
             limit,
             offset,
-            len(outputs),
-            offset + limit < len(outputs),
+            len(entries),
+            offset + limit < len(entries),
         )
-        return validate_output_page(ref, page)
+        return validate_output_page(ref, page), dict(selected)
 
     async def resolve_output(self, output: WorkspaceOutputRef):
         client, service = self._connection(output.workspace)
@@ -190,6 +208,64 @@ class ServerStudioAdapter:
             )
         )
         return str(uuid5(NAMESPACE_URL, "tldw:research-studio:" + identity))
+
+    async def edit_output(self, output: WorkspaceOutputRef, body: str) -> None:
+        if not body.strip() or len(body.encode("utf-8")) > MAX_ANSWER_BYTES:
+            raise ValueError("Enter a non-empty output within the size limit")
+        await self._update_selected(output, content=body, review_state="draft")
+
+    async def accept_output(self, output: WorkspaceOutputRef) -> None:
+        await self._update_selected(output, review_state="accepted")
+
+    async def _update_selected(self, output: WorkspaceOutputRef, **fields) -> None:
+        ref = output.workspace
+        client, service = self._connection(ref)
+        async with self._mutations:
+            row = await self.resolve_output(output)
+            self._check_connection(ref, client)
+            if (
+                not row
+                or not output.owner_version
+                or row.get("version") != output.owner_version
+            ):
+                raise ValueError("The output changed. Reload it before updating")
+            saved = await service.save_workspace_artifact(
+                workspace_id=ref.workspace_id,
+                artifact_id=output.owner_id,
+                version=output.owner_version,
+                **fields,
+            )
+            self._check_connection(ref, client)
+            if (
+                saved.get("workspace_id") != ref.workspace_id
+                or saved.get("id") != output.owner_id
+                or saved.get("version", 0) <= output.owner_version
+                or any(saved.get(key) != value for key, value in fields.items())
+                or self._metadata(saved) != self._metadata(row)
+            ):
+                raise ValueError("The Server did not confirm the updated revision")
+
+    async def export_output(self, output: WorkspaceOutputRef, format: str) -> bytes:
+        if format != "markdown":
+            raise ValueError("Choose Markdown for this workspace artifact")
+        ref = output.workspace
+        client, _ = self._connection(ref)
+        row = await self.resolve_output(output)
+        self._check_connection(ref, client)
+        if (
+            not row
+            or row.get("version") != output.owner_version
+            or row.get("review_state") != "accepted"
+        ):
+            raise ValueError("Review and accept the current version before exporting")
+        version_id = validate_chat_id(
+            row.get("artifact_version_id"), "artifact version ID"
+        )
+        result = await export_accepted_workspace_markdown(
+            client, ref.workspace_id, output.owner_id, version_id
+        )
+        self._check_connection(ref, client)
+        return result
 
     async def save(
         self,
@@ -298,6 +374,7 @@ class ServerStudioAdapter:
                     content=generated.text,
                     producer_metadata=producer,
                     version=replace_output.owner_version if replace_output else None,
+                    **({"review_state": "draft"} if replace_output else {}),
                 )
             except APIResponseError as exc:
                 if exc.status_code == 409:

@@ -951,7 +951,9 @@ class StudyWindow(Container):
 
     def _schedule_flashcards_refresh(self) -> None:
         self.run_worker(
-            self.flashcards_controller.initialize_view(),
+            self._initialize_study_view(
+                "flashcards", self.flashcards_controller.initialize_view
+            ),
             exclusive=True,
             group="study-flashcards-initialize-view",
         )
@@ -960,12 +962,20 @@ class StudyWindow(Container):
 
     def _schedule_quizzes_refresh(self) -> None:
         self.run_worker(
-            self.quizzes_controller.initialize_view(),
+            self._initialize_study_view(
+                "quizzes", self.quizzes_controller.initialize_view
+            ),
             exclusive=True,
             group="study-quizzes-initialize-view",
         )
         self.call_after_refresh(self._configure_quizzes_lifecycle_controls)
         self.call_after_refresh(self._notify_shell_state_changed)
+
+    async def _initialize_study_view(self, section, initialize) -> None:
+        apply_target = getattr(self.screen, "initialize_research_output", None)
+        if callable(apply_target) and await apply_target(section, initialize):
+            return
+        await initialize()
 
     def _configure_quizzes_lifecycle_controls(self) -> None:
         try:

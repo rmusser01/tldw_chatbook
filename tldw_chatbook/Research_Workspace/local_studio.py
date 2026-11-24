@@ -323,14 +323,23 @@ class LocalStudioAdapter:
         ):
             raise ValueError("This Local owner supports saving a new version")
         payload = self._text_payload(request, generated)
-        try:
-            record = await self.chatbooks.update_chatbook(
-                output.owner_id, expected_revision=output.owner_version, **payload
-            )
-        except (KeyError, ChatbookRevisionConflict) as exc:
-            raise StudioOutputConflict(
-                "The output changed. Reload it before replacing it"
-            ) from exc
+        payload["metadata"]["research_operation_id"] = request.operation_id
+        record = await self._read_owner(owner, output.owner_id)
+        already_committed = (
+            record is not None
+            and record.get(owner.version_field) == output.owner_version + 1
+            and record.get("metadata") == payload["metadata"]
+            and record.get("name") == payload["name"]
+        )
+        if not already_committed:
+            try:
+                record = await self.chatbooks.update_chatbook(
+                    output.owner_id, expected_revision=output.owner_version, **payload
+                )
+            except (KeyError, ChatbookRevisionConflict) as exc:
+                raise StudioOutputConflict(
+                    "The output changed. Reload it before replacing it"
+                ) from exc
         try:
             return await self._link_metadata(
                 request.workspace, owner, record, link, metadata
@@ -466,6 +475,41 @@ class LocalStudioAdapter:
             if not deleted:
                 raise StudioOutputConflict("The canonical output was not deleted")
             await self._unlink(output.workspace, owner, output.owner_id)
+
+    async def unlink_missing(self, output: WorkspaceOutputRef) -> None:
+        owner = self._owner(output.workspace, output.output_kind)
+        async with self._mutations:
+            if not await self._related_link(output) or await self._read_owner(
+                owner, output.owner_id
+            ):
+                raise StudioOutputConflict(
+                    "Reload the history before removing a missing link"
+                )
+            await self._unlink(output.workspace, owner, output.owner_id)
+
+    async def edit_output(self, output: WorkspaceOutputRef, body: str) -> None:
+        owner = self._owner(output.workspace, output.output_kind)
+        if (
+            owner.owner_kind is not StudioOwnerKind.LOCAL_CHATBOOK
+            or self.chatbooks is None
+        ):
+            raise ValueError("Open this output in its canonical editor")
+        if not body.strip() or len(body.encode("utf-8")) > MAX_ANSWER_BYTES:
+            raise ValueError("Enter a non-empty output within the size limit")
+        async with self._mutations:
+            row = await self.resolve_output(output)
+            if not row or output.owner_version is None:
+                raise StudioOutputConflict("Reload the output before editing it")
+            try:
+                await self.chatbooks.update_chatbook(
+                    output.owner_id,
+                    expected_revision=output.owner_version,
+                    metadata={**row["metadata"], "content": body},
+                )
+            except (KeyError, ChatbookRevisionConflict) as exc:
+                raise StudioOutputConflict(
+                    "The output changed. Reload it before editing"
+                ) from exc
 
     async def export_output(self, output: WorkspaceOutputRef, format: str) -> bytes:
         owner = self._owner(output.workspace, output.output_kind)

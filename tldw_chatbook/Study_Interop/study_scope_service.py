@@ -915,6 +915,13 @@ class StudyScopeService:
             records = records[:limit]
         return records
 
+    async def get_local_deck(self, deck_id: str) -> dict[str, Any] | None:
+        """Read one canonical Local deck by ID, including beyond the list page."""
+        self._enforce_policy(self._deck_action_id(StudyBackend.LOCAL, "list"))
+        service = self._service_for_mode(StudyBackend.LOCAL)
+        record = await self._maybe_await(service.get_deck(deck_id))
+        return normalize_study_deck_record("local", record) if record else None
+
     async def count_decks(
         self,
         *,

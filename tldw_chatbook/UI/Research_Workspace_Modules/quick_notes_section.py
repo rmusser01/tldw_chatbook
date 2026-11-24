@@ -376,6 +376,14 @@ class ResearchQuickNotesSection(Vertical):
         self._source_ids = tuple(dict.fromkeys(source_ids))[:100]
         self._sync_dirty_status()
 
+    @property
+    def can_save_note(self) -> bool:
+        return self._save_available
+
+    @property
+    def can_append_note(self) -> bool:
+        return self._save_available and self._note_id is not None
+
     def set_message_provenance(self, message_ids: tuple[str, ...]) -> None:
         self._message_ids = tuple(dict.fromkeys(message_ids))[:20]
         self._sync_dirty_status()

@@ -454,6 +454,12 @@ class LocalResearchWorkspaceAdapter:
     async def delete_output(self, output_ref: WorkspaceOutputRef) -> None:
         await self._require_studio(output_ref.workspace).owner.delete(output_ref)
 
+    async def unlink_output(self, output_ref: WorkspaceOutputRef) -> None:
+        await self._require_studio(output_ref.workspace).owner.unlink_missing(output_ref)
+
+    async def edit_output(self, output_ref: WorkspaceOutputRef, body: str) -> None:
+        await self._require_studio(output_ref.workspace).owner.edit_output(output_ref, body)
+
     async def export_output(self, output_ref: WorkspaceOutputRef, format: str) -> bytes:
         return await self._require_studio(output_ref.workspace).owner.export_output(output_ref, format)
 

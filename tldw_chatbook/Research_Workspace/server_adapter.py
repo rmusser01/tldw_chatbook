@@ -480,11 +480,53 @@ class ServerResearchWorkspaceAdapter:
 
     async def list_outputs(self, ref: QualifiedWorkspaceRef, *, limit: int = 20, offset: int = 0):
         context = self._context_for_ref(ref)
-        return await self._server_call(self._require_studio(ref).owner.list_outputs(ref, limit=limit, offset=offset), context=context)
+        return await self._server_call(
+            self._require_studio(ref).owner.list_outputs(
+                ref, limit=limit, offset=offset
+            ),
+            context=context,
+        )
+
+    async def list_output_records(
+        self, ref: QualifiedWorkspaceRef, *, limit: int = 20, offset: int = 0
+    ):
+        context = self._context_for_ref(ref)
+        return await self._server_call(
+            self._require_studio(ref).owner.list_output_records(
+                ref, limit=limit, offset=offset
+            ),
+            context=context,
+        )
 
     async def resolve_output(self, output_ref):
         context = self._context_for_ref(output_ref.workspace)
-        return await self._server_call(self._require_studio(output_ref.workspace).owner.resolve_output(output_ref), context=context)
+        return await self._server_call(
+            self._require_studio(output_ref.workspace).owner.resolve_output(output_ref),
+            context=context,
+        )
+
+    async def edit_output(self, output_ref, body: str) -> None:
+        context = self._context_for_ref(output_ref.workspace)
+        require_capability(self._capabilities_for_context(context), "update")
+        await self._server_call(
+            self._require_studio(output_ref.workspace).owner.edit_output(
+                output_ref, body
+            ),
+            context=context,
+        )
+
+    async def accept_output(self, output_ref) -> None:
+        context = self._context_for_ref(output_ref.workspace)
+        require_capability(self._capabilities_for_context(context), "update")
+        await self._server_call(
+            self._require_studio(output_ref.workspace).owner.accept_output(output_ref),
+            context=context,
+        )
+
+    async def export_output(self, output_ref, format: str) -> bytes:
+        context = self._context_for_ref(output_ref.workspace)
+        require_capability(self._capabilities_for_context(context), "update")
+        return await self._server_call(self._require_studio(output_ref.workspace).owner.export_output(output_ref, format), context=context)
 
     async def generate_output(self, request, on_chunk, cancel_event, *, replace_output=None, supersedes=None):
         from .studio_mapping import PRIMARY_OUTPUT_MAPPINGS

@@ -209,6 +209,13 @@ class QuizScopeService:
             records = records[:limit]
         return records
 
+    async def get_local_quiz(self, quiz_id: str) -> dict[str, Any] | None:
+        """Read one canonical Local quiz by ID, including beyond the list page."""
+        self._enforce_policy(self._quiz_action_id(QuizBackend.LOCAL, "list"))
+        service = self._service_for(QuizBackend.LOCAL)
+        record = await self._maybe_await(service.get_quiz(quiz_id))
+        return normalize_quiz_record("local", record) if record else None
+
     async def count_quizzes(
         self,
         *,

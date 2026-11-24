@@ -349,27 +349,32 @@ class StudyQuizzesController:
             await asyncio.sleep(0.01)
         return False
 
-    async def initialize_view(self) -> None:
+    async def initialize_view(self, *, research_owner_id: str = "") -> bool:
         service = self._scope_service()
         if service is None:
             self.reset_quiz_panel("Study quizzes backend is unavailable.")
-            return
+            return False
         if not self._scope_is_available():
             self.reset_quiz_panel(self._scope_unavailable_message())
-            return
+            return False
         if not await self._wait_for_widgets():
             logger.warning(
                 "Study quizzes UI did not finish mounting before initialization"
             )
             self.reset_quiz_panel("Study quizzes UI is still loading.")
-            return
-        await self.refresh_quizzes()
+            return False
+        await self.refresh_quizzes(
+            preferred_selection=research_owner_id or None,
+            exact_selection=bool(research_owner_id),
+        )
+        return bool(research_owner_id and self._selected_quiz_id() == research_owner_id)
 
     async def refresh_quizzes(
         self,
         *,
         preserve_selection: bool = True,
         preferred_selection: Optional[str] = None,
+        exact_selection: bool = False,
     ) -> None:
         service = self._scope_service()
         if service is None:
@@ -380,13 +385,27 @@ class StudyQuizzesController:
             return
 
         selected_before = self._selected_quiz_id() if preserve_selection else None
+        mode = self._current_mode()
         quizzes = await service.list_quizzes(
-            mode=self._current_mode(),
+            mode=mode,
             **self._scope_arguments(),
             q=None,
             limit=100,
             offset=0,
         )
+        requested = preferred_selection if exact_selection else selected_before
+        lookup = getattr(service, "get_local_quiz", None)
+        if (
+            requested
+            and mode == "local"
+            and callable(lookup)
+            and not any(str(quiz.get("backing_id")) == requested for quiz in quizzes)
+        ):
+            target = await lookup(requested)
+            if target and str(target.get("backing_id")) == requested:
+                quizzes = [*quizzes, target]
+        if exact_selection and mode != self._current_mode():
+            return
 
         quiz_select = self.window.query_one("#quiz-select", Select)
         options = [
@@ -407,9 +426,9 @@ class StudyQuizzesController:
             self._suppress_quiz_change_events = True
             if preferred_selection in available_values:
                 quiz_select.value = str(preferred_selection)
-            elif selected_before in available_values:
+            elif not exact_selection and selected_before in available_values:
                 quiz_select.value = str(selected_before)
-            elif self.has_quizzes:
+            elif not exact_selection and self.has_quizzes:
                 quiz_select.value = str(available_values[0])
             else:
                 quiz_select.clear()
