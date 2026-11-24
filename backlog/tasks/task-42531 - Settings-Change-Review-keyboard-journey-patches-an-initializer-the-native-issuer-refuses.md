@@ -4,8 +4,8 @@ title: Settings Change Review keyboard journey patches an initializer the native
 status: Done
 assignee:
   - '@claude'
-created_date: '2026-11-24 08:00'
-updated_date: '2026-11-24 08:00'
+created_date: '2026-11-23 23:05'
+updated_date: '2026-11-23 23:05'
 labels:
   - tests
   - workspaces
