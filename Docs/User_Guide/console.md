@@ -1634,12 +1634,18 @@ executes while the stop is active — the shell tool, built-in, local and MCP
 tools, and sub-agent spawns alike. Each call is refused with a result that
 names the stop and the reason you typed, for example "tool call blocked: the
 emergency stop is active (runaway agent)", so the model can wind down and
-you can see why on the call's row. No approval card is raised during the
-stop, and a card you approve after the stop lands is refused instead of run.
-A call that was already executing when the stop landed finishes and keeps
-its own result. The stop is durable (it survives a restart) and
+you can see why on the call's row. If the model asks for tools again on its
+next turn, the run ends there ("Agent stopped: the emergency stop held its
+tool calls 2 turns in a row …") instead of spending more model calls that
+can run nothing. No approval card is raised during the stop, and a card you
+approve after the stop lands is refused instead of run. A call that was
+already executing when the stop landed finishes and keeps its own result.
+The stop is durable (it survives a restart) and
 fail-safe: if its state can't be read, the app treats it as stopped rather
-than proceeding. While it is active the Console shows it until it is
+than proceeding. When even the stop's location can't be reached (for example
+while a backup or restore holds the data folder), each tool call says "the
+emergency stop's state couldn't be read, so tools are held"; send again once
+Chatbook is ready. While it is active the Console shows it until it is
 cleared, not just in the five-second toast: the header badge reads
 **Held · emergency stop** (just **Held** in a narrow window) instead of
 Ready, the status strip starts with **Emergency stop: runs and schedules
