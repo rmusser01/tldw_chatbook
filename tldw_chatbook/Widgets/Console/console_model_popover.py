@@ -1821,7 +1821,7 @@ class ConsoleModelPopover(
         """The reply maximum a row's pair would be sent with (review F7).
 
         This chat's own pair uses the chat's value -- what the header judges
-        and Conversation settings edits. Any other pair uses what applying it
+        and Chat settings edits. Any other pair uses what applying it
         would inherit (its provider table and saved model defaults, through
         the same layers the readiness resolver reads), memoized per open.
         """
