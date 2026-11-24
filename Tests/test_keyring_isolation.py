@@ -165,7 +165,10 @@ _EXEMPT = {
     (
         "Tests/Live/test_library_adaptive_reader_closeout.py",
         "test_child_environment_redirects_every_writable_owner_before_import",
-    ): "a table of values the child asserts; the child copies the pinned environment",
+    ): (
+        "the child runs pytest on a temporary file that imports no app code; the "
+        "runner's allowlist drops the pin"
+    ),
 }
 #: An empty or broken scan must not pass (174 profile moves on 2026-11-24).
 _MIN_PROFILE_MOVES = 120
@@ -202,6 +205,11 @@ class _Env:
         env.keys, env.pin, env.popped = set(self.keys), self.pin, self.popped
         return env
 
+    def unpin(self) -> None:
+        """A ``pop``/``del`` of the key: undoes any pin, and any inherited one."""
+        self.pin = None
+        self.popped = True
+
     def take(self, table: _Env) -> None:
         """Copy a table's entries in (a ``.items()`` loop or comprehension)."""
         self.keys |= table.keys
@@ -216,7 +224,7 @@ def _profile_moves(source: str, *, pytest_file: bool) -> list[tuple[str, int, bo
     ``env.update(...)``, ``env["K"] = ...``, ``dict(env, K=...)``), ``os.environ``
     itself, or an unnamed literal. It is pinned only by the backend key set to
     the constant null backend (or a module constant holding it), never by a
-    ``pop``/``del`` of it. In a pytest file, a copy of the running environment
+    ``pop``/``del`` of it (a later re-pin still counts). In a pytest file, a copy of the running environment
     (``{**os.environ}``, ``dict(os.environ)``, ``os.environ.copy()``) or
     ``os.environ`` itself already carries the conftest's pin. An allowlist or
     denylist built from ``os.environ.items()`` is a fresh environment. A table
@@ -224,8 +232,10 @@ def _profile_moves(source: str, *, pytest_file: bool) -> list[tuple[str, int, bo
     ``monkeypatch.setenv``) counts for the mapping it fills, not on its own.
 
     Limits: one scope at a time, so HOME and the profile keys set in different
-    helpers are not seen together, and a mapping passed to another function to
-    be filled in is not followed.
+    helpers are not seen together; a mapping passed to another function to be
+    filled in is not followed; and a path table that is itself passed on (as
+    ``env=``) is still treated as only a table (the one live case is the Git
+    environment in ``Tests/Notes/test_file_notes_git_integration.py``).
     """
     tree = ast.parse(source)
     constants = {
@@ -339,10 +349,13 @@ def _profile_moves(source: str, *, pytest_file: bool) -> list[tuple[str, int, bo
                     ):
                         put(env_of(target.value), target.slice.value, node.value)
                     continue
-                start = source_env(node.value)
-                if start is not None and isinstance(target, (ast.Name, ast.Attribute)):
-                    envs[ast.unparse(target)] = start
-                    fill(start, node.value)
+                if isinstance(target, (ast.Name, ast.Attribute)):
+                    # Rebinding a name starts a new mapping: a filtered copy
+                    # or a helper's result is not the copy it replaced.
+                    start = source_env(node.value)
+                    envs[ast.unparse(target)] = start or _Env()
+                    if start is not None:
+                        fill(start, node.value)
             elif isinstance(node, ast.For):
                 table = table_of(node.iter)
                 for inner in ast.walk(node) if table is not None else ():
@@ -361,14 +374,14 @@ def _profile_moves(source: str, *, pytest_file: bool) -> list[tuple[str, int, bo
                         target.slice, ast.Constant
                     ):
                         if target.slice.value == _KEYRING_KEY:
-                            env_of(target.value).popped = True
+                            env_of(target.value).unpin()
             elif isinstance(node.func, ast.Attribute) and id(node) not in handled:
                 if node.func.attr == "update":
                     fill(env_of(node.func.value), node)
                 elif node.func.attr == "pop" and node.args:
                     first = node.args[0]
                     if isinstance(first, ast.Constant) and first.value == _KEYRING_KEY:
-                        env_of(node.func.value).popped = True
+                        env_of(node.func.value).unpin()
         # Unnamed literals: a returned dict, a ``dict(x, ...)`` passed on, ...
         for node in nodes:
             if id(node) in handled:
@@ -466,6 +479,28 @@ _NULL = '"keyring.backends.null.Keyring"'
             'def f(r):\n    p = {"HOME": r, "XDG_DATA_HOME": r}\n    e = {"PATH": "x"}\n    e.update({k: str(v) for k, v in p.items()})\n',
             False,
             [False],
+        ),
+        # Rebinding a copy to a filtered copy or a helper's result starts afresh.
+        (
+            "def f(r):\n    e = dict(os.environ)\n    e = {k: v for k, v in e.items() if k in A}\n    e.update(HOME=r, TLDW_CONFIG_PATH=r)\n",
+            True,
+            [False],
+        ),
+        (
+            "def f(r):\n    e = dict(os.environ)\n    e = allow(e)\n    e.update(HOME=r, TLDW_CONFIG_PATH=r)\n",
+            True,
+            [False],
+        ),
+        # A pop after a pin undoes it; a re-pin after the pop counts.
+        (
+            f'def f(r):\n    e = {{"HOME": r, "XDG_DATA_HOME": r, "{_KEYRING_KEY}": {_NULL}}}\n    e.pop("{_KEYRING_KEY}")\n',
+            False,
+            [False],
+        ),
+        (
+            f'def f(r):\n    e = {{"HOME": r, "XDG_DATA_HOME": r}}\n    del e["{_KEYRING_KEY}"]\n    e["{_KEYRING_KEY}"] = {_NULL}\n',
+            False,
+            [True],
         ),
         ('def f(r):\n    return {"HOME": r, "PATH": r}\n', False, []),
     ],

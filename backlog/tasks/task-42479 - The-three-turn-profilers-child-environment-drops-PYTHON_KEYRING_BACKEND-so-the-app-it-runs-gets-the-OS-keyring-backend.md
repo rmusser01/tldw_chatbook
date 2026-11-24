@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-23 11:13
-updated_date: 2026-11-24 02:15
+updated_date: 2026-11-24 02:30
 labels:
 - follow-up
 - tests
@@ -77,8 +77,12 @@ Files (first pass): `Tests/Performance/run_console_three_turn_profile.py`, `Test
   - **What it tracks (re-review rework).** Each mapping a scope fills is tracked on its own: a name (`env = {...}`, then `env.update(...)`, `env["K"] = ...`, `dict(env, K=...)`), `os.environ` itself, or an unnamed literal. A mapping moves the profile when it gets HOME together with `TLDW_CONFIG_PATH`, `TLDW_TEST_MODE` or an XDG path. A table copied in by a `.items()` comprehension or loop (`x[key] = ...`, `monkeypatch.setenv`) counts for the mapping it fills.
   - **What pins it.** The mapping must set `PYTHON_KEYRING_BACKEND` (dict key, keyword or subscript) to the constant `keyring.backends.null.Keyring`, or to a module constant holding it. Another value does not count, and a `pop`/`del` of the key undoes it. The one inherited case is a pytest file (`test_*.py`, `conftest.py`) whose mapping is a copy of the running environment (`{**os.environ}`, `dict(os.environ)`, `os.environ.copy()`) or `os.environ` itself, because the conftest has already pinned it there.
   - **Corrected after re-review.** The first version also counted `os.environ.items()` and any `setenv` in the scope as a copy, which excused allowlists and denylists built from `os.environ.items()`. Those are fresh environments, and three were unpinned (below). It also accepted the key's bare name, a non-null value and a `pop`.
-  - **Limits** (in the census docstring): it reads one scope at a time, so HOME and the profile keys set in different helpers are not seen together (`test_installed_distribution.py::_sanitized_build_env` sets HOME while `_installed_env` adds the XDG paths; it is pinned by hand), and a mapping handed to another function to be filled in is not followed.
-  - **Exceptions.** There are 11 exact `(path, scope)` pairs, each with a reason. Eight were there before: a Node VM probe, six Git-only or ambient-Git environments, and `Tests/private_profile.py`, where forcing the key would override the `TLDW_TEST_REAL_KEYRING` opt-out. Three are new: the portable launcher's host-environment input, which that test asserts the launcher pins to null; the benchmark restore test's in-process host seed, which uses the `fail` backend; and the closeout runner's expected-values table. A stale pair fails the test.
+  - **Limits** (in the census docstring):
+    - It reads one scope at a time, so HOME and the profile keys set in different helpers are not seen together. `test_installed_distribution.py::_sanitized_build_env` sets HOME while `_installed_env` adds the XDG paths, so it is pinned by hand.
+    - A mapping handed to another function to be filled in is not followed.
+    - A path table that is itself passed on as `env=` is still treated as only a table. The one live case is the Git environment in `Tests/Notes/test_file_notes_git_integration.py`.
+  - **Round-3 fixes.** Rebinding a name now starts a new mapping, so a filtered copy (`e = {k: v for k, v in e.items() if ...}`) or a helper's result (`e = allow(e)`) no longer inherits the old copy's status. A `pop`/`del` of the key clears an earlier pin, and a later re-pin still counts. Four new controls cover this: rebind to a comprehension, rebind to a helper, pop after a pin, and del then re-pin. The first three were red against the previous scanner. The repo scan is unchanged: 174 profile moves, none unpinned, no stale exemption.
+  - **Exceptions.** There are 11 exact `(path, scope)` pairs, each with a reason. Eight were there before: a Node VM probe, six Git-only or ambient-Git environments, and `Tests/private_profile.py`, where forcing the key would override the `TLDW_TEST_REAL_KEYRING` opt-out. Three are new: the portable launcher's host-environment input, which that test asserts the launcher pins to null; the benchmark restore test's in-process host seed, which uses the `fail` backend; and the closeout runner's expected-values table (that child runs pytest on a temporary file that imports no app code, and the runner's allowlist drops the pin). A stale pair fails the test.
   - **Negative control and floor.** Fourteen synthetic sources cover scratch unpinned, pinned, pinned by a module constant, a macOS value, a `pop` from a copy, a copy under pytest, the same copy in a script, an `os.environ.items()` allowlist, a scope-level `setenv`, a module-level keyword, a keyword pin, a pinned path table, an unpinned path table, and no move. Against the previous scanner, four of them were red: the macOS value, the `pop`, the allowlist and the `setenv`. A floor of 120 profile moves stops an empty scan from passing (174 are found today); with `_CENSUS_TREES` emptied by a temporary edit (reverted), the test failed with `the census saw only 0 profile moves`.
 - **Red before the pins.** The census named 19 sites. They are listed with the fixes below. After the re-review rework it named three more (`test_native_multivolume.py`, `test_recovery_profile_terminal.py`, `test_logging_pipeline_single_pass.py`).
 - **Re-review pins.** Each of the three sites' environment moved into a helper with no behaviour change (`_image_case_environment`, `_terminal_child_environment`, `_sandboxed_wiring_environment`), and each helper now pins the backend. The terminal test is macOS-only and its child mounts `TldwCli`, so on a Mac it reached the login Keychain. `_sanitized_build_env` is pinned too, with the key added to `_BUILD_ENV_KEYS`. Each has a red-first builder-capture test, and no real child ran: `test_terminal_child_environment_pins_the_null_keyring_backend`, `test_image_case_environment_pins_the_null_keyring_backend`, `test_sandboxed_wiring_environment_pins_the_null_keyring_backend` (host backend set to `fail`), and an assertion in `test_sdist_build_env_excludes_host_state`. Red: `assert None == 'keyring.backends.null.Keyring'` (or the `fail` value), 4 nodes; green after. Following the re-review rule, the three files' spawning tests were not run; collection is clean (30 tests).
@@ -110,6 +114,11 @@ Files (first pass): `Tests/Performance/run_console_three_turn_profile.py`, `Test
   - `Tests/CI` `-n 4`: 1823 passed, 2 skipped.
   - `preflight.sh`: rc 0. `ruff --select F`: clean. `ruff_gate.py`: rc 0.
   - No real child, profiler or live helper was run.
+
+- **Round-3 checks.**
+  - `Tests/test_keyring_isolation.py` with the Architecture guards flags: 25 passed in 20.9 s at load ~48.
+  - Soaked 20 times at `-n 4`: 20 of 20 (500 of 500) at load 50-56.
+  - `preflight.sh`: rc 0. `ruff --select F`: clean.
 
 Files (re-review): `Tests/test_keyring_isolation.py`, `Tests/Backup_Recovery/test_recovery_profile_terminal.py`, `Tests/Backup_Recovery/test_native_multivolume.py`, `Tests/test_logging_pipeline_single_pass.py`, `Tests/Packaging/test_installed_distribution.py`, `.github/workflows/derived-artifacts.yml` (timing comment).
 
