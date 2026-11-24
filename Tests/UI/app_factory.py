@@ -243,12 +243,12 @@ def swap_app_aliases(app, **aliases) -> None:
 
 
 def run_on_host(app: TldwCli, host: Any) -> None:
-    """Run a factory app's Console controller on the harness App that shows it.
+    """Mark a factory app running and route its marshal through its harness host.
 
     A Console harness mounts the real ``ChatScreen`` for ``app``, a never-run
     ``TldwCli``, inside ``host``, and every Console ensure hands ``app`` to the
     controller as ``controller.app``. The shipped app is running, so this
-    makes ``app`` report the host's running state and marshal onto the host's
+    marks ``app`` running and routes its ``call_from_thread`` onto the host's
     loop: the interrupt rounds' no-running-app guard (TASK-41637) then sees the
     harness as the shipped app (TASK-41948). Call it from the host's
     ``on_mount``. As in the shipped app, ``app`` stops reporting running when

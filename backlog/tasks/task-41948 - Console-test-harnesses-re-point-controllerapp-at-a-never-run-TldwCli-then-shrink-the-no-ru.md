@@ -4,7 +4,7 @@ title: "Console test harnesses re-point `controller.app` at a never-run TldwCli;
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-24 03:18'
+updated_date: '2026-11-24 04:09'
 created_date: '2026-11-19 07:30'
 labels:
 - follow-up
@@ -31,11 +31,11 @@ Found during the TASK-41630..41655 follow-up burn-down (2026-11-18/19). Checked 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 The harnesses point `controller.app` at the running host: the factory `TldwCli` that every Console ensure hands the controller as `controller.app` runs on the harness host (its `is_running` and `call_from_thread` are the host's)
+- [x] #1 The harnesses point `controller.app` at the running host: the factory `TldwCli` that every Console ensure hands the controller as `controller.app` is marked running and routes its `call_from_thread` through the harness host while the host runs
 - [x] #2 The guard drops the view condition; ADR-314's clarification is updated; the round and harness tests pass
 <!-- AC:END -->
 
-AC #1 refined 2026-11-23, while implementing: `controller.app` cannot literally become the bare host App. Every Console ensure re-points it at `ChatScreen.app_instance` (`attach_review_presenter`), and the controller reads that object's `TldwCli` services (`unified_mcp_service`, `app_config`, `console_runtime`, `chachanotes_db`, ...) while the tests read its toast sink. So the harness keeps that object and binds its running state and marshal to the host, which is what the guard reads.
+AC #1 refined 2026-11-23, while implementing: `controller.app` cannot literally become the bare host App. Every Console ensure re-points it at `ChatScreen.app_instance` (`attach_review_presenter`), and the controller reads that object's `TldwCli` services (`unified_mcp_service`, `app_config`, `console_runtime`, `chachanotes_db`, ...) while the tests read its toast sink. So the harness keeps that object, marks it running and routes its marshal through the host; the running mark is what the guard reads.
 
 ## Implementation Plan
 
@@ -57,7 +57,7 @@ Owner decision 2026-11-23: "Fix the harnesses (Recommended)" -- this task's appr
 Owner decision 2026-11-23: "Fix the harnesses (Recommended)", over TASK-42465's alternative.
 
 **Approach.**
-- Harness. `Tests/UI/app_factory.py::run_on_host(app, host)` sets the factory `TldwCli`'s `call_from_thread` to the host's and marks it running. A wrapper on the host's `_shutdown` clears both before Textual tears the host down, as the shipped app stops running first. Every harness that mounts `ChatScreen` for a factory app calls it from `on_mount`, so `controller.app` now runs on the host. That is 25 harness classes in 21 files, among them the shared gate-1 `ConsoleHarness`, which `ProductionConsoleHarness` and the other subclasses inherit, and `DeferredInitialConsole`, which prevents the base mount. The session-close tests' per-test `app.call_from_thread = host.call_from_thread` lines are gone. Why AC #1 is worded this way is noted under the criteria.
+- Harness. `Tests/UI/app_factory.py::run_on_host(app, host)` sets the factory `TldwCli`'s `call_from_thread` to the host's and marks it running. A wrapper on the host's `_shutdown` clears the running mark when that shutdown starts and restores the app's own marshal only after it returns. The shipped app behaves the same: `is_running` is False from the start of `_shutdown`, but its marshal lands until `_shutdown` returns. Every harness that mounts `ChatScreen` for a factory app calls it from `on_mount`, so `controller.app` reports running and marshals through the host. That is 25 harness classes in 21 files, among them the shared gate-1 `ConsoleHarness`, which `ProductionConsoleHarness` and the other subclasses inherit, and `DeferredInitialConsole`, which prevents the base mount. The session-close tests' per-test `app.call_from_thread = host.call_from_thread` lines are gone. Why AC #1 is worded this way is noted under the criteria.
 - Guard. `InterruptRoundHost.run_round` now uses `app_gone = not app.is_running`, still with the `AttributeError` fallback; the view condition is dropped, and the guard comment and ADR-314's TASK-41637 clarification state the new rule. `console_interrupt_rounds.py` drops from 6304 to 6300 lines; its pin (6307) is unchanged.
 - TASK-41637's tests. One was edited, because the ADR change requires it: `test_never_run_app_round_stays_pending_while_a_view_can_answer` pinned the dropped rule. It is now `test_never_run_app_round_is_refused_even_while_a_view_can_answer`. The rest pass unedited: the never-run App, exited App and no-view refusals, the running App that waits under a covering screen, and the `_ThreadApp` host without `is_running`, which still waits.
 - Waits in `test_console_session_tab_close.py`, decided with the evidence below.
@@ -92,5 +92,33 @@ Owner decision 2026-11-23: "Fix the harnesses (Recommended)", over TASK-42465's 
 - There are no new census entries and no User Guide change: the shipped app's `controller.app` was always running.
 
 **Files.** `Tests/UI/app_factory.py`, `tldw_chatbook/Chat/console_interrupt_rounds.py`, `Tests/Chat/test_console_runtime_lifetime.py`, `Tests/UI/test_console_session_tab_close.py`, the 21 harness files, `backlog/decisions/314-indefinite-human-approval-waits.md`, and `backlog/docs/lessons-testing-evidence.md`. The lessons file has a new entry, and the TASK-42424 and TASK-42481 entries no longer give the retired waiting advice.
+**Review round (2026-11-24, six Minors).**
+1. Shutdown order. `run_on_host` cleared the factory app's marshal before awaiting the host's `_shutdown`. The shipped app's marshal keeps landing until `_shutdown` returns, and the Console runtime drain (`app_lifecycle.py` `_shutdown_console_runtime`) relies on that.
+   - Fix: the wrapper now clears the running mark, awaits the host's shutdown, and restores the app's own marshal in `finally`.
+   - New test `Tests/UI/test_app_factory_cleanup.py::test_run_on_host_keeps_the_marshal_until_the_host_shutdown_returns`: a thread worker that the host drains in its `_shutdown` lands its result through `app.call_from_thread`, and sees `is_running` False. Red with the old order ("the drained worker's result never landed"), green after.
+2. The docstring of `test_running_app_round_stays_pending_while_no_view_can_answer` no longer describes the dropped view rule.
+3. Leftover re-points. `test_console_parallel_runs.py` (7 sites) and `Tests/integration/test_console_chat_fork_flow.py` no longer set `controller.app = host`, and their false comments are gone. The `notify` capture moved to the factory app, which both the controller's notices and the screen's park toast call.
+   - `test_park_toast_survives_a_viewed_run_completion_re_invocation` then saw two "needs approval" toasts. One is the round's own app-owned announcement ("... needs approval to use a tool ..."). The other comes from the legacy screen seam that the test re-invokes ("Agent in ... needs approval."): that seam dedupes only rounds it toasted itself. The second toast had always gone to an object nobody recorded. The test now counts the round's own announcement, the only toast it ever recorded, and says why in a comment. The seam gap is a proposed follow-up; no production path re-invokes the seam for retained approval rounds.
+   - Proof. All seven formerly re-pointed parallel-runs tests are already private-profile, and all pass at `-n 4`. The file's other 22 failures are the local `RecoveryRequired` trap and also fail on base. On base the file also failed `test_mounted_round_survives_switch_away_and_switch_back` and the park-toast test.
+   - The fork flow test, run under a temporary `@private_profile_test`, gets past its approval round and then fails after the simulated restart (`test_console_chat_fork_flow.py:1098`, `assistant_kind 'generic' != None`). Base, with the same marker, failed earlier: its round's marshal raised "App is not running", because later ensures undid the re-point. With the marshal routed to the host as well, base fails at the same restart assertion with the same message, so that failure predates this change. The file is in no PR lane. The marker was removed.
+4. TASK-42465: ACs #2 and #4 are ticked with the evidence. #3 is ticked and marked superseded in part (one TASK-41637 test pinned the dropped rule).
+5. Wording. The guard comment and ADR-314 now say the harnesses mark that `TldwCli` running and route its `call_from_thread` through their host (`run_on_host`); they no longer say it "runs" on the host. The same correction is in AC #1, these notes and the lesson.
+6. Untested plain tests. 120 harness-using tests (164 nodes) in 14 edited harness files outside every PR lane were run under a temporary `@private_profile_test`, on this tree and on a detached base worktree (`fu-r24-harness-base`), with an identical selection.
+   - The files: focus mode, gate-1 home/library/Console, prompts controller, setup-lock polish, 30 native-chat-flow, 15 workbench-contract, model chips, probe isolation, 15 command-composer, initial-draft, video capacity, change-turn tracking, hook-review freeze.
+   - Both trees: 156 passed, 6 failed and 2 errors, the same nodes and messages. All are pre-existing:
+     - three prompts-controller tests: the stale `_CountingResolutionGateway` double has no `cached_context_window`;
+     - `test_library_core_loop_modes_are_actionable_without_leaving_library`;
+     - `test_conversation_settings_return_releases_transient_modal_mount_failure` (`assert 2 == 1`);
+     - `test_console_approvals_chip_activation_focuses_the_decision_not_submit` ("expected the row's decision Select");
+     - two `test_chat_screen_context_modal.py` setup errors: its `app_instance` fixture builds the app in the parent, outside the child. Under a temporary `bootstrap_profile` marker instead, both pass on both trees.
+   - Every temporary marker was reverted.
+
+   Review-round checks:
+   - Soak: the session-close, lifetime, interrupt-rounds, parallel-runs, initial-draft and app-factory files, 20 runs at `-n 4`, two at a time, beside the serial `Tests/Architecture` run. All 20 passed 111/111, in 115-128 s, at load 9-15. The 22 parallel-runs nodes deselected are the local `RecoveryRequired` trap; all 22 also fail on base.
+   - `Tests/Architecture`, serial: 1492 passed, 5 skipped. `Tests/CI` at `-n 4`: 1823 passed, 2 skipped. `preflight.sh`: all checks passed.
+   - `ruff --select F tldw_chatbook` and on the touched test files: clean. `ruff_gate.py`: rc 0.
+   - Lane step "Run admission-sensitive suites", serial: 711 passed, 2 skipped, 3 xfailed.
+   - Lane step "Run admission-sensitive suites 4", serial. The first run had 598 passed and 1 failed: `test_console_right_rail.py::test_mounted_inspector_semantic_census_matches_actual_right_rail_order`, with the Inspector row order at index 4 differing. That test then passed 5/5 alone on this tree and 3/3 on base, and its file passed 6/6 serially. A rerun of the step: 599 passed.
+   - The `run_on_host` docstring also stops saying the controller "runs on" the host.
 <!-- SECTION:NOTES:END -->
 
