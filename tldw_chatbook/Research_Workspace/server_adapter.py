@@ -966,6 +966,20 @@ class ServerResearchWorkspaceAdapter:
             ),
         )
 
+    async def bibliography_metadata(self, source: ResearchSourceSummary) -> Mapping[str, object]:
+        ref = source.ref
+        context = self._context_for_ref(ref)
+        client = self._chat_client(ref)
+        media_id = int(self._canonical_media_id(source.catalog_item_id))
+        detail = await self._server_call(
+            client.get_media_item(media_id, include_content=False, include_versions=False), context=context
+        )
+        self._context_for_ref(ref)
+        if detail.media_id != media_id or self._chat_client(ref) is not client:
+            raise ValueError("The Server Media owner returned a different bibliography source")
+        metadata = detail.processing.safe_metadata or {}
+        return {"url": detail.source.url, **{key: metadata[key] for key in ("author", "published_at", "year") if key in metadata}}
+
     async def get_readiness(
         self,
         ref: QualifiedWorkspaceRef,

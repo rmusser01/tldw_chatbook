@@ -677,6 +677,13 @@ class ResearchStudioRegion(VerticalScroll):
         else:
             self.post_message(self.OwnerAction(key, row))
 
+    async def open_output_reference(self, output) -> None:
+        """Open the exact owner from a workspace search result."""
+        if output.workspace == self.ref and not self.is_busy and not self._dialog_open:
+            self._dialog_open = True
+            self._sync_controls()
+            await self._show_actions(StudioHistoryRow(output, None, False))
+
     async def _select_action(self, row: StudioHistoryRow, *, reopen: bool):
         capture = self.controller.capture_request()
         output = row.output

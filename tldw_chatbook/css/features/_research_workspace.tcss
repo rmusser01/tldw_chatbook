@@ -173,8 +173,17 @@ ResearchScreen #research-window.window {
     color: $text-muted;
 }
 
+#research-workspace-banner {
+    height: auto;
+    max-height: $ds-size-2;
+    padding: $ds-space-0 $ds-space-1;
+    background: $ds-surface-panel;
+    color: $ds-text-muted;
+}
+
 #research-manage-workspaces,
-#research-workspace-actions {
+#research-workspace-actions,
+#research-workspace-help {
     width: auto;
     min-width: $ds-size-0;
     height: $ds-size-1;
@@ -186,7 +195,8 @@ ResearchScreen #research-window.window {
 }
 
 #research-manage-workspaces:focus,
-#research-workspace-actions:focus {
+#research-workspace-actions:focus,
+#research-workspace-help:focus {
     border: none;
     outline: none;
     background: $primary;
@@ -401,7 +411,9 @@ ResearchStudioOptions, ResearchStudioActions, ResearchStudioEdit, ResearchMoreOu
 }
 
 ResearchWorkspaceActions, ResearchCopyTargetDialog, ResearchCopyPreview,
-ResearchCopyProgress, ResearchCopyReceiptView, ResearchSharingDialog {
+ResearchCopyProgress, ResearchCopyReceiptView, ResearchSharingDialog,
+ResearchWorkspaceName, ResearchWorkspacePicker, ResearchWorkspaceTemplates,
+ResearchWorkspaceSplit, ResearchWorkspaceSearchModal, ResearchHelpMenu, ResearchHelpDetail {
     align: center middle;
     background: $background $ds-opacity-dim;
 }
@@ -427,6 +439,20 @@ ResearchCopyProgress, ResearchCopyReceiptView, ResearchSharingDialog {
 .research-transfer-scroll {
     height: $ds-height-fill;
     min-height: $ds-size-0;
+}
+
+ResearchWorkspaceSearch,
+#research-global-search-panel,
+#research-global-search-actions {
+    height: auto;
+}
+
+#research-global-search-field,
+#research-global-search-results {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    border: none;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .research-share-page {

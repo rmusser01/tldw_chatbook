@@ -117,6 +117,33 @@ Executive Brief, Evidence-Bound Hypotheses, and Research Proposal Pack use
 cited templates with required sections. Their identity stays in provenance
 while Local Chatbooks and Server `report` artifacts own the content.
 
+## Workspace menu and search
+
+Workspace creation, rename, archive, and restore call the selected owner.
+Local duplication starts a workspace with the same description and destructive
+Local management opens Settings. Templates create a workspace and put their
+starter note into the existing Quick Notes editor as a draft.
+
+The v5 device overlay stores the optional banner, pin, and last explicit
+workspace visit alongside the existing pane preferences. Catalog data remains
+authoritative for archive state. Search uses `/` and reads paginated names,
+attached sources, notes, and native output titles in the selected catalog.
+Prefixes `workspace:`, `source:`, `note:`, and `output:` narrow the owner
+queries. Search results retain qualified owner IDs for reopening.
+
+Export BibTeX reads verified Media metadata, uses stable keys per canonical
+source, labels incomplete entries, and rechecks Local transfer policy before
+writing the selected file. Collections opens its Library destination.
+
+Local bundle import reviews the declared text entries before any writes.
+It restores notes and artifacts through Notes and Chatbooks and associates
+them with the imported workspace. Importing the same bundle again recovers
+the same workspace and entry records.
+
+Research Help is available from the header and the global F1 binding. Its
+status view reads the selected workspace's intake and Copy receipts and the
+mounted Chat and Studio state. Links open the existing owner destinations.
+
 ## Copy, export, and sharing
 
 The workspace Actions menu opens Copy for the selected Local or Server

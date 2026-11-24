@@ -1596,6 +1596,13 @@ class LocalResearchWorkspaceAdapter:
             updated_at=str(row.get("updated_at") or ""),
         )
 
+    async def bibliography_metadata(self, source: ResearchSourceSummary) -> Mapping[str, object]:
+        self._require_local_ref(source.ref)
+        detail = await self._require_media_scope().get_media_detail(mode=MediaReadingBackend.LOCAL, media_id=source.catalog_item_id)
+        if str(detail.get("backing_media_id")) != source.catalog_item_id:
+            raise ValueError("The Local Media owner returned a different bibliography source")
+        return {key: detail[key] for key in ("author", "published_at", "year", "url") if key in detail}
+
     @staticmethod
     def _source_summary(ref, membership, detail, *, selected, position):
         version = detail.get("version")

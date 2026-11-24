@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -12,7 +13,11 @@ from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Select, Static
 
-from ...Research_Workspace.contracts import QualifiedWorkspaceRef, WorkspaceDataSource
+from ...Research_Workspace.contracts import (
+    QualifiedWorkspaceRef,
+    ResearchCapability,
+    WorkspaceDataSource,
+)
 from ...Research_Workspace.copy_models import (
     CopyConflictChoice,
     CopyReason,
@@ -55,59 +60,162 @@ class ResearchWorkspaceActions(SafeModalDismissMixin, ModalScreen[str | None]):
     SAFE_MODAL_CONTENT = "#research-workspace-actions-dialog"
 
     def __init__(
-        self, ref: QualifiedWorkspaceRef, *, can_copy: bool, can_share: bool
+        self,
+        ref: QualifiedWorkspaceRef | None,
+        *,
+        authority: WorkspaceDataSource,
+        catalog_ready: bool,
+        capabilities: Mapping[str, ResearchCapability],
+        can_copy: bool,
+        can_share: bool,
+        presentation_available: bool,
+        pinned: bool,
     ) -> None:
         super().__init__()
         self.ref = ref
+        self.authority = authority
+        self.catalog_ready = catalog_ready
+        self.capabilities = capabilities
         self.can_copy = can_copy
         self.can_share = can_share
+        self.presentation_available = presentation_available
+        self.pinned = pinned
 
     def compose(self) -> ComposeResult:
         with Vertical(
-            id="research-workspace-actions-dialog", classes="research-transfer-dialog"
+            id="research-workspace-actions-dialog",
+            classes="research-transfer-dialog research-transfer-scroll-dialog",
         ):
             yield Static("Workspace actions", classes="research-pane-title")
-            if self.ref.data_source is WorkspaceDataSource.LOCAL:
-                yield Button("Export bundle", id="research-action-export", compact=True)
-                yield Button(
-                    "Copy to Server",
-                    id="research-action-copy-server",
-                    compact=True,
-                    disabled=not self.can_copy,
+            yield Static(f"{self.authority.value.title()} data")
+            with VerticalScroll(classes="research-transfer-scroll"):
+                yield from self._lifecycle_commands()
+                if self.presentation_available:
+                    yield from self._presentation_commands()
+                if self.ref is not None and self.catalog_ready:
+                    yield from self._transfer_commands()
+            yield Button("Close", id="research-action-close", compact=True)
+
+    def _lifecycle_commands(self) -> ComposeResult:
+        create = self.capabilities.get("create")
+        yield Button(
+            "New workspace",
+            id="research-action-new",
+            compact=True,
+            disabled=not self.catalog_ready or bool(create and not create.available),
+        )
+        yield Button(
+            "Archived workspaces",
+            id="research-action-archived",
+            compact=True,
+            disabled=not self.catalog_ready,
+        )
+        yield Button(
+            "Workspace templates…",
+            id="research-action-templates",
+            compact=True,
+            disabled=not self.catalog_ready or bool(create and not create.available),
+        )
+        if self.authority is WorkspaceDataSource.LOCAL:
+            yield Button(
+                "Import workspace bundle…",
+                id="research-action-import",
+                compact=True,
+                disabled=not self.catalog_ready
+                or bool(create and not create.available),
+            )
+        if self.ref is None or not self.catalog_ready:
+            return
+        commands = [
+            ("rename", "Rename workspace", "update"),
+            ("archive", "Archive workspace", "archive"),
+        ]
+        if self.authority is WorkspaceDataSource.LOCAL:
+            commands.insert(
+                1, ("duplicate", "Duplicate workspace details", "duplicate")
+            )
+        for action, label, key in commands:
+            capability = self.capabilities.get(key)
+            yield Button(
+                label,
+                id=f"research-action-{action}",
+                compact=True,
+                disabled=not capability or not capability.available,
+            )
+            if capability and not capability.available:
+                yield Static(
+                    f"{capability.owner} · {capability.user_message} {capability.recovery_action}",
+                    markup=False,
                 )
+        if self.authority is WorkspaceDataSource.LOCAL:
+            yield Button(
+                "Delete in Settings…", id="research-action-delete-local", compact=True
+            )
+        else:
+            yield Static(
+                "Server duplicate requires a workspace copy contract. Server deletion with a version check is unavailable.",
+                markup=False,
+            )
+
+    def _presentation_commands(self) -> ComposeResult:
+        yield Button("Recent workspaces", id="research-action-recent", compact=True)
+        yield Button("Pinned workspaces", id="research-action-pinned", compact=True)
+        if self.ref is not None:
+            if self.pinned:
                 yield Button(
-                    "Copy to Server and Share",
-                    id="research-action-copy-server-share",
-                    compact=True,
-                    disabled=not self.can_copy,
+                    "Unpin workspace", id="research-action-unpin", compact=True
                 )
             else:
-                yield Button(
-                    "Copy to Local",
-                    id="research-action-copy-local",
-                    compact=True,
-                    disabled=not self.can_copy,
-                )
-                yield Button(
-                    "Share",
-                    id="research-action-share",
-                    compact=True,
-                    disabled=not self.can_share,
-                )
+                yield Button("Pin workspace", id="research-action-pin", compact=True)
+            yield Button("Customize banner…", id="research-action-banner", compact=True)
+            yield Button("Split workspace…", id="research-action-split", compact=True)
+
+    def _transfer_commands(self) -> ComposeResult:
+        yield Button("Open in Console", id="research-action-console", compact=True)
+        yield Button("Collections", id="research-action-collections", compact=True)
+        yield Button("Export BibTeX…", id="research-action-bibtex", compact=True)
+        if self.authority is WorkspaceDataSource.LOCAL:
+            yield Button("Export bundle", id="research-action-export", compact=True)
             yield Button(
-                "Copy receipts",
-                id="research-action-receipts",
+                "Copy to Server",
+                id="research-action-copy-server",
                 compact=True,
                 disabled=not self.can_copy,
             )
-            if not self.can_copy:
-                yield Static(
-                    "Configure both workspace authorities to use Copy.", markup=False
-                )
-            yield Button("Close", id="research-action-close", compact=True)
+            yield Button(
+                "Copy to Server and Share",
+                id="research-action-copy-server-share",
+                compact=True,
+                disabled=not self.can_copy,
+            )
+        else:
+            yield Button(
+                "Copy to Local",
+                id="research-action-copy-local",
+                compact=True,
+                disabled=not self.can_copy,
+            )
+            yield Button(
+                "Share",
+                id="research-action-share",
+                compact=True,
+                disabled=not self.can_share,
+            )
+        yield Button(
+            "Copy receipts",
+            id="research-action-receipts",
+            compact=True,
+            disabled=not self.can_copy,
+        )
+        if not self.can_copy:
+            yield Static(
+                "Configure both workspace authorities to use Copy.", markup=False
+            )
 
     @on(Button.Pressed)
     def select_action(self, event: Button.Pressed) -> None:
+        if event.button.disabled:
+            return
         action = (event.button.id or "").removeprefix("research-action-")
         self.dismiss(None if action == "close" else action)
 

@@ -272,8 +272,10 @@ class ResearchQuickNotesSection(Vertical):
             "Unsaved changes" if self.is_dirty else f"Saved · version {note.version}"
         )
 
-    def new_draft(self) -> None:
+    def new_draft(self, draft: ResearchNoteSaveRequest | None = None) -> None:
         self._reset_editor()
+        if draft is not None:
+            self._set_fields(draft.title, draft.content, draft.tags)
         self._sync_editor_state("New note · Unsaved")
         self.query_one("#research-quick-note-title", Input).focus()
 

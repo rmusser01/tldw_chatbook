@@ -25,6 +25,9 @@ class ResearchWorkspaceMenu(Horizontal):
     class ActionsRequested(Message):
         """Open the selected workspace's action menu."""
 
+    class HelpRequested(Message):
+        """Open the contextual Research help menu."""
+
     def compose(self) -> ComposeResult:
         yield Static(
             "No research workspace selected.", id="research-workspace-selection"
@@ -32,12 +35,23 @@ class ResearchWorkspaceMenu(Horizontal):
         yield Select(
             [], id="research-workspace-picker", prompt="Workspace", compact=True
         )
-        yield Button("Actions", id="research-workspace-actions", tooltip="Workspace actions", compact=True, disabled=True)
+        yield Button(
+            "Actions",
+            id="research-workspace-actions",
+            tooltip="Workspace actions",
+            compact=True,
+        )
         yield Button(
             "Manage Workspaces...",
             id="research-manage-workspaces",
             tooltip="Open Settings workspace management.",
             compact=True,
+        )
+        yield Button(
+            "Help",
+            id="research-workspace-help",
+            compact=True,
+            tooltip="Research Workspace Help",
         )
 
     def on_mount(self) -> None:
@@ -52,7 +66,6 @@ class ResearchWorkspaceMenu(Horizontal):
                 ref if any(row.ref == ref for row in workspaces) else Select.NULL
             )
         picker.display = len(choices) > 1
-        self.query_one("#research-workspace-actions", Button).disabled = ref is None
         self.query_one(
             "#research-workspace-selection", Static
         ).display = not picker.display
@@ -70,6 +83,10 @@ class ResearchWorkspaceMenu(Horizontal):
     @on(Button.Pressed, "#research-workspace-actions")
     def open_actions(self) -> None:
         self.post_message(self.ActionsRequested())
+
+    @on(Button.Pressed, "#research-workspace-help")
+    def open_help(self) -> None:
+        self.post_message(self.HelpRequested())
 
 
 ResearchPaneName = Literal["sources", "chat", "studio"]
