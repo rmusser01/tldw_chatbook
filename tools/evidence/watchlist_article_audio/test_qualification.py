@@ -1,5 +1,6 @@
 """Real parser and numerical measurement checks; no audio-device access."""
 
+from concurrent.futures import Future
 import json
 import hashlib
 import os
@@ -37,6 +38,7 @@ from qualification import (
     select_fresh,
     stop_is_due,
 )
+from wasapi_packets import Packet
 
 
 def stats(value):
@@ -453,6 +455,139 @@ class CaptureDiagnosticsTests(unittest.TestCase):
 
 
 class PhaseTests(unittest.TestCase):
+    def _run_padded_stop_fixture(self, stop_after, **options):
+        source = marker_signal(2.5)
+        now = 10.0
+        last_poll = None
+        launched_at = None
+        stopped_at = None
+        sent_marker = False
+        config = {"actual_buffer_frames": 4800, "device_period_s": 0.01}
+
+        def sleep(delay):
+            nonlocal now
+            now += delay
+
+        def poll_capture(timeout=None):
+            return timeout is not None or last_poll != now
+
+        def receive_capture():
+            nonlocal last_poll, sent_marker
+            if last_poll is None:
+                last_poll = now
+                return ("ready", now, config)
+            last_poll = now
+            packets = []
+            if (
+                launched_at is not None
+                and stopped_at is None
+                and now - launched_at >= 0.2
+                and not sent_marker
+            ):
+                stereo = np.repeat(source[:4800, None], 2, axis=1)
+                packets.append(Packet(0, launched_at + 0.1, 0, stereo))
+                sent_marker = True
+            return ("packets", now, packets, {})
+
+        def launch(*args, **kwargs):
+            nonlocal launched_at
+            launched_at = now
+            return process
+
+        def terminate():
+            nonlocal stopped_at
+            stopped_at = now
+
+        def submit(function, *args):
+            future = Future()
+            future.set_result(function(*args))
+            return future
+
+        process = Mock(returncode=0)
+        process.poll.side_effect = lambda: (
+            0 if stopped_at is not None or now - launched_at >= 2.5 else None
+        )
+        process.terminate.side_effect = terminate
+        context = Mock()
+        receiver = Mock()
+        receiver.poll.side_effect = poll_capture
+        receiver.recv.side_effect = receive_capture
+        context.Pipe.return_value = (receiver, Mock())
+        context.Process.return_value.is_alive.return_value = False
+        clock = SimpleNamespace(perf_counter=lambda: now, sleep=sleep)
+        with (
+            patch("qualification.time", clock),
+            patch("qualification.mp.get_context", return_value=context),
+            patch("qualification.subprocess.Popen", side_effect=launch),
+            patch("qualification.threading.Thread"),
+            patch("qualification.ThreadPoolExecutor") as executor,
+        ):
+            executor.return_value.submit.side_effect = submit
+            result = run_case(
+                Path("never"),
+                Path("never.wav"),
+                source,
+                offset=0,
+                generation=1,
+                stop_after=stop_after,
+                padded=True,
+                capture_clock="wasapi-packet",
+                capture_buffer_frames=4800,
+                **options,
+            )
+        return result, launched_at, stopped_at, executor.call_count
+
+    def test_padded_startup_stop_uses_launch_clock_without_matching_playing(self):
+        result, launched_at, stopped_at, executor_count = self._run_padded_stop_fixture(
+            0.020, stop_clock="launch"
+        )
+        self.assertEqual(result["stop_clock"], "launch")
+        self.assertEqual(result["stop_after_launch_s"], 0.020)
+        self.assertIsNone(result["stop_after_playing_s"])
+        self.assertIsNone(result["playing_ready_timeout_s"])
+        self.assertNotIn("playing_observed_at_s", result)
+        self.assertEqual(result["diagnostics"]["live_matcher_calls"], 0)
+        self.assertEqual(executor_count, 0)
+        actual_delay = stopped_at - launched_at
+        self.assertGreaterEqual(actual_delay, 0.020)
+        self.assertLessEqual(actual_delay, 0.025001)
+        self.assertEqual(result["stop_requested_after_launch_s"], actual_delay)
+        self.assertEqual(result["capture_ready_timeout_s"], 30)
+        self.assertEqual(result["capture_lifetime_s"], 45)
+        self.assertEqual(result["max_capture_blocks"], 4500)
+        self.assertEqual(result["baseline_monitor"]["status"], "pass")
+        self.assertEqual(result["post_stop_monitor"]["status"], "pass")
+        self.assertEqual(native_result([dict(result, case="stop_startup")]), "pass")
+
+    def test_default_padded_stop_counts_from_observed_playing(self):
+        result, launched_at, stopped_at, _ = self._run_padded_stop_fixture(0.700)
+        self.assertEqual(result["stop_clock"], "observed_playing")
+        self.assertIsNone(result["stop_after_launch_s"])
+        self.assertEqual(result["stop_after_playing_s"], 0.700)
+        self.assertEqual(result["playing_ready_timeout_s"], 30)
+        self.assertGreater(result["playing_observed_at_s"] - launched_at, 0.200)
+        self.assertEqual(
+            result["stop_requested_after_launch_s"], stopped_at - launched_at
+        )
+        self.assertAlmostEqual(
+            stopped_at - result["playing_observed_at_s"], 0.700, delta=0.005001
+        )
+
+    def test_invalid_stop_clock_refuses_before_opening_resources(self):
+        with patch("qualification.mp.get_context") as capture_context:
+            with self.assertRaises(ValueError):
+                run_case(
+                    Path("never"),
+                    Path("never.wav"),
+                    np.zeros(480),
+                    offset=0,
+                    generation=1,
+                    stop_after=0.020,
+                    padded=True,
+                    stop_clock="invalid",
+                )
+            capture_context.assert_not_called()
+
     def test_padded_stop_countdown_waits_for_playing_instead_of_launch(self):
         self.assertFalse(
             stop_is_due(
@@ -786,6 +921,42 @@ class MatrixTests(unittest.TestCase):
         )
         self.assertEqual(native_result([run, dict(run, tail_coverage="fail")]), "fail")
         self.assertEqual(native_result([run, dict(run, capture_reaped=False)]), "fail")
+
+    def test_measured_telemetry_failure_takes_precedence_in_short_and_stop_cases(self):
+        passing = {
+            "capture_clock": "wasapi-packet",
+            "endpoint_loopback": "pass",
+            "process_exit": "pass",
+            "player_reaped": True,
+            "capture_reaped": True,
+        }
+        cases = [
+            dict(
+                passing,
+                case="short_120ms",
+                duration_s=0.12,
+                requested_start_s=0,
+                seek="pass",
+                tail_coverage="pass",
+            ),
+            dict(
+                passing,
+                case="stop_playing",
+                stop_after_s=0.7,
+                post_stop_silence="pass",
+                post_stop_latency="pass",
+                stop_process_latency_s=0.010,
+                bookmark="pass",
+                bookmark_alignment="pass",
+            ),
+        ]
+        for row in cases:
+            with self.subTest(case=row["case"]):
+                self.assertEqual(native_result([row]), "pass")
+                self.assertEqual(
+                    native_result([dict(row, telemetry="unqualified")]), "pass"
+                )
+                self.assertEqual(native_result([dict(row, telemetry="fail")]), "fail")
 
     def test_retired_stale_or_future_callback_cannot_supply_bookmark(self):
         values = [
