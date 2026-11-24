@@ -162,7 +162,12 @@ def normalize_local_readiness(
         or detail.get("content")
         or detail.get("transcription")
     )
-    fts_ready = bool(detail.get("has_chunks")) and text_ready
+    # The Local Media detail includes the committed chunking state even when
+    # it does not project per-item chunk counts. Media FTS searches the text
+    # row rather than requiring the chunks to be hydrated into this read.
+    fts_ready = text_ready and (
+        bool(detail.get("has_chunks")) or status == "completed"
+    )
     vector_ready = vector_status is True or str(vector_status).lower() in {
         "complete",
         "completed",

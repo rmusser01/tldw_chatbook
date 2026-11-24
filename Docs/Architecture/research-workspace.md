@@ -35,6 +35,23 @@ The shell destination id is `research`, but its **primary route is `research_wor
 
 Startup reconciliation fans out three workers: held-job linking/dispatch, association/readiness resume, and a paste-staging sweep. Quick-note reconciliation claims receipts with lease tokens and reconciles against ChaChaNotes rows plus owner proofs (proof mismatches block permanently). Failures are isolated and logged by exception class only.
 
+## Grounded Chat
+
+`ResearchChatRegion` drives workspace-scoped conversations with the `research-chat`
+topic. `LocalResearchChat` uses `ChatConversationService` and
+`ChatPersistenceService` for messages, membership, usage, and citation traces.
+The Local retrieval pipelines receive an allowlist of captured selected Media
+IDs. The provider gateway receives only accepted evidence, and remote excerpt
+egress requires a matching fingerprint from `ResearchEgressConsentService`.
+
+`ServerResearchChat` uses the workspace startup route, selected-Media RAG, and
+server chat completion with an explicit workspace scope. It appends user and
+assistant messages and citation context through the canonical APIs. The
+device overlay keeps the draft, selected conversation ID, consent fingerprints,
+and bounded append receipts so context persistence can be retried without
+duplicate messages. Its layout compare retries after a Chat-only write when the
+committed pane and source organization fields still match.
+
 ## Quick notes (write path)
 
 Local saves hold a note-write lock, reconcile receipts first, then write through the notes scope with provenance encoded as base64 keywords. The receipt machine walks `pending → owner_committed → projection_committed` (+ `blocked`), each transition revision-checked and CHECK-floored. Owner proofs (64-hex) live in a **deliberately local-only** ChaChaNotes table with no sync/FTS/export triggers; legacy `research-receipt-proof:` keywords are filtered from visible tags forever. Stale optimistic updates raise a conflict error surfaced as a modal; a dirty editor on owner switch flushes first, with a recovery modal (retry/discard/cancel — cancel keeps the draft and blocks the switch).

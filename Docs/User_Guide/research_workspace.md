@@ -1,8 +1,8 @@
 # Research Workspace
 
-Research is Chatbook's authority-explicit workspace for collecting sources and
-taking canonical Quick Notes. It is a separate screen from the durable Research
-Runs operator.
+Research is Chatbook's workspace for collecting sources, asking grounded
+questions, and taking Quick Notes. It opens separately from the durable
+Research Runs operator.
 
 ## Open Research
 
@@ -22,9 +22,10 @@ Runs.
 
 ## Choose the data authority
 
-The pinned **Workspace data: Local | Server** selector chooses the complete
-owner used by the workspace catalog, sources, notes, and every mutation on this
-screen.
+The pinned **Workspace data: Local | Server** selector chooses the owner for
+the workspace catalog, sources, conversations, and notes. When that catalog
+contains multiple workspaces, use the workspace picker beside **Manage
+Workspaces**.
 
 - **Local** uses this installation's Local Library, Local Notes, and Local
   workspace memberships.
@@ -160,15 +161,41 @@ workspace, or editor navigation, a non-empty dirty draft is saved to its exact
 captured owner. If saving fails, navigation pauses with **Retry**, **Discard
 editor changes**, and **Cancel**.
 
-Server Quick Note Delete is visible but disabled because the current server
-endpoint does not enforce the supplied expected version. Use a server client
-that provides versioned deletion. **Capture message** is also disabled until
-Grounded Chat exposes a canonical message owner.
+Server Quick Note Delete is disabled until its endpoint enforces the expected
+version. **Capture message** opens a new Quick Note from the current Grounded
+Chat selection, with the saved message and source references attached.
+
+## Grounded Chat
+
+Choose a saved **Conversation** or use **New**. The composer retains its draft
+when you leave the workspace and restores it when you return. **Clear draft**
+empties the composer. **Stop** interrupts the active answer and saves any
+partial text the provider has already returned.
+
+- **Sources off** answers without retrieval.
+- **Grounded** requires at least one selected ready source and matching evidence.
+- **Auto retrieval** uses ready sources when available and reports **Retrieved**
+  or **Did not retrieve** with the saved answer.
+
+Open **Retrieval options** to select FTS, Vector, or Hybrid, set result and score
+limits, toggle reranking, and choose whether to record citations. If the
+selected sources support only FTS, the answer status shows the requested and
+effective retrieval modes.
+
+Set the provider and model for the active owner. The processing route appears
+in Chat status. Sending Local excerpts to a remote provider requires approval
+for the displayed provider, endpoint class, and source handling. Server
+retrieval, inference, and history remain with the selected server.
+
+Highlight a saved message to copy it, look up its citations, or open it in
+Quick Notes. Local Chat supports Edit, Delete, Undo, Branch, and Regenerate.
+Regenerate creates a new Local branch from the saved question. Server Chat
+supports editing saved questions and version-checked message deletion. When a
+Local speech provider resolves, **Read aloud** asks you to confirm its processing
+destination before it uses the selected message.
 
 ## Current limitations
 
-- Grounded Chat is mounted as a separate work area, but persistent grounded
-  messaging belongs to the next implementation phase and Send is not offered.
 - Studio output generators are not yet available. Summary, Flashcards, Quiz,
   Report, Compare Sources, and the extended output set remain future phases;
   this screen does not advertise working generation buttons.
