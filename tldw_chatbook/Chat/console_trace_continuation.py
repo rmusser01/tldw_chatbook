@@ -718,9 +718,13 @@ def validate_completed_tool_turn(
         or tail is None
         or latest_id != terminal.call_id
         or terminal.state not in terminal_states
+        # TASK-42534: a closed turn's terminal call may have failed before
+        # any response. It bore nothing and authorized at most an unchanged
+        # retry; the tool history it leaves is rechecked below.
         or closed
         and not explicit_discard
         and terminal.response_started_at is None
+        and terminal.state is not trace.TraceCallState.ERROR
         or (
             (restoring_source or unanswered)
             and terminal.state is not trace.TraceCallState.RESPONSE_STARTED
@@ -1154,6 +1158,23 @@ def validate_completed_tool_turn(
         for row in rows
     ):
         raise ValueError("completed_tool_turn_lineage")
+    # A failed call authorizes an unchanged retry, never tool history
+    # (TASK-42534): each tool-loop call that appended a removed node must
+    # follow a call of this run that bore a response.
+    for call_sequence in {row[7] for row in rows if row[6] == "tool_loop"}:
+        previous = self.repository.get_call_by_logical_identity(
+            cursor,
+            owner_id=owner_id,
+            segment_id=segment_id,
+            turn_id=terminal.turn_id,
+            run_id=chain_terminal.run_id,
+            call_sequence=call_sequence - 1,
+        )
+        if previous is None or previous.state not in {
+            trace.TraceCallState.RESPONSE_STARTED,
+            trace.TraceCallState.COMPLETE,
+        }:
+            raise ValueError("completed_tool_turn_lineage")
     foreign = cursor.execute(
         """SELECT c.call_id FROM console_trace_events e
                  JOIN console_trace_calls c ON c.call_id = e.call_id

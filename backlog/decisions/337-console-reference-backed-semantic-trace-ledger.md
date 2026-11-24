@@ -664,6 +664,22 @@ or unsaved settlement remains ineligible. Each retry reserves a distinct ordered
 call; it never rewrites the failed call or relabels it as a tool response.
 
 
+### Integration recorded 2026-11-24: a closed run whose calls failed before any response (TASK-42534)
+
+The 2026-10-04 integration lets a run retry a call that failed with no
+captured response. When the retries fail too, the run's assistant settles
+Failed and empty, and its terminal call is a settled ERROR that never started a
+response. The 2026-09-09 closed-run witness required a response-bearing
+terminal, so the next captured send was refused (`completed_tool_turn_unavailable`)
+whenever its request replaced the run's suffix: project context, or tool
+history from earlier in the run. A failed call authorizes an unchanged retry,
+never tool history, so it adds nothing the witness must vouch for, and the
+witness may close the turn on it. In exchange, the witness now checks directly
+that every removed tool-loop node was appended by a call whose predecessor in
+the run bore a response (RESPONSE_STARTED or COMPLETE). A closed terminal that
+completed or stopped without a response, and every check above, are unchanged.
+No call is relabeled as response-bearing and no response link is created.
+
 ## Current-owner integration amendment (2026-10-13)
 
 Canonical message/revision identity and predecessor ancestry remain reachable independently of archived payload. The existing admitted checkpoint roots and graph-epoch invalidation remain authoritative before reservation; metadata roots cannot retain deleted payload through another call sharing a policy. Retry capture compares canonical JSON bytes (including boolean/integer/float identity), and frozen arrays thaw only when forming PersistRequest fields.

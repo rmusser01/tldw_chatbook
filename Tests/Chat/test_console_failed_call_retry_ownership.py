@@ -441,3 +441,236 @@ def test_only_an_errored_resend_of_an_errored_call_is_its_failed_stream_fallback
     )
 
     assert is_failed_stream_fallback(streamed, fallback) is (which == "none")
+
+
+_TOOL_CALL = (
+    "```tool_call\n"
+    + json.dumps({"name": "calculator", "arguments": {"expression": "6*7"}})
+    + "\n```"
+)
+
+
+def _busy():
+    from tldw_chatbook.Provider_Contract import ChatProviderError
+
+    return ChatProviderError("fixture busy", provider="deepseek", status_code=503)
+
+
+def _hosted_replies(app, monkeypatch, replies):
+    """Send through deepseek's handler seam; each call takes the next reply.
+
+    The stand-in keeps ``chat_api_call``'s signature (the TASK-41310 trap).
+    An exception in ``replies`` is raised; past the script, the call answers.
+    Returns each call's ``messages_payload``, in order.
+    """
+    import functools
+
+    from tldw_chatbook.Chat import Chat_Functions
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+        ConsoleEgressClass,
+        ConsoleResolvedDestination,
+    )
+
+    calls = []
+
+    @functools.wraps(Chat_Functions.chat_api_call)
+    def handler(*_args, **kwargs):
+        reply = replies[len(calls)] if len(calls) < len(replies) else "Fixture reply"
+        calls.append(kwargs["messages_payload"])
+        if isinstance(reply, Exception):
+            raise reply
+        return {"choices": [{"message": {"role": "assistant", "content": reply}}]}
+
+    async def resolve(_selection):
+        return ConsoleProviderResolution(
+            ready=True,
+            provider="deepseek",
+            execution_key="deepseek",
+            model="deepseek-chat",
+            base_url="https://api.deepseek.com",
+            api_key="fixture",
+            streaming=False,
+            resolved_destination=ConsoleResolvedDestination(
+                provider="deepseek",
+                model="deepseek-chat",
+                endpoint_identity="https://api.deepseek.com",
+                egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+            ),
+        )
+
+    monkeypatch.setattr(app.gateway, "resolve_for_send", resolve)
+    monkeypatch.setattr(app.gateway, "_chat_api_call_fn", handler)
+    return calls
+
+
+# Each run: (harness options, hosted script or None, first run's status, lineage).
+_FAILED = ("tool_loop", "error")
+_RUNS = {
+    # Every call failed before any response: the in-place retries ran out.
+    "hosted_exhausted": (
+        {},
+        [_busy(), _busy(), _busy()],
+        "failed",
+        [("agent_first", "error"), _FAILED, _FAILED],
+    ),
+    # The first call answered with a tool call; every call after it failed.
+    "hosted_tool_then_exhausted": (
+        {},
+        [_TOOL_CALL, _busy(), _busy(), _busy()],
+        "failed",
+        [("agent_first", "complete"), _FAILED, _FAILED, _FAILED],
+    ),
+    # Each stream and its non-streaming resend failed, three rounds.
+    "llama_stream_exhausted": (
+        {"response_mode": "stream", "failures": 6},
+        None,
+        "failed",
+        [("agent_first", "error"), ("llama_fallback", "error")]
+        + [_FAILED, ("llama_fallback", "error")] * 2,
+    ),
+    # Controls: a run that bore a response still closes its turn as before.
+    "hosted_recovered": (
+        {},
+        [_busy()],
+        "completed",
+        [("agent_first", "error"), ("tool_loop", "complete")],
+    ),
+    "hosted_tool_completed": (
+        {},
+        [_TOOL_CALL],
+        "completed",
+        [("agent_first", "complete"), ("tool_loop", "complete")],
+    ),
+}
+
+
+def _turn_calls(app, turn_id):
+    with app.db.transaction() as cursor:
+        calls = cursor.execute(
+            "SELECT call_id, route_identity, state, outcome, response_started_at, "
+            "settled_at FROM console_trace_calls WHERE turn_id = ? "
+            "ORDER BY rowid",
+            (turn_id,),
+        ).fetchall()
+        links = cursor.execute(
+            "SELECT l.call_id FROM console_trace_response_links l "
+            "JOIN console_trace_calls c ON c.call_id = l.call_id "
+            "WHERE c.turn_id = ?",
+            (turn_id,),
+        ).fetchall()
+    return [tuple(row) for row in calls], {row[0] for row in links}
+
+
+async def _first_run(app, monkeypatch, run):
+    options, script, status, lineage = _RUNS[run]
+    calls = (
+        _hosted_replies(app, monkeypatch, script)
+        if script is not None
+        else app.attempts
+    )
+    first = await app.controller.submit_draft(
+        "Use calculator once" if _TOOL_CALL in (script or ()) else "Hello",
+        session_id=app.session.id,
+    )
+    assert first.accepted
+    assert app.controller.run_state.status.value == status, app.reservation_errors
+    assert app.reservation_errors == []
+    turn_id = app.store.get_message(first.user_message_id).persisted_message_id
+    before, links = _turn_calls(app, turn_id)
+    assert [(row[1], row[2]) for row in before] == lineage
+    return calls, turn_id, before, links
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("project", [True, False], ids=["project", "no_project"])
+@pytest.mark.parametrize("run", list(_RUNS))
+async def test_the_message_after_a_captured_run_that_failed_is_sent(
+    tmp_path, monkeypatch, run, project
+):
+    """TASK-42534: a failed call never closes the chat to the next message.
+
+    A Capture-On agent run whose calls failed before any response ends
+    `failed`. The next message's trace proves the finished turn from its
+    terminal call, and refused one that never started a response, so the
+    send ended `blocked` on 'Trace capture could not start' and the provider
+    was never asked. That needs a replaced request suffix: project context
+    (`AGENTS.md`), or tool history earlier in the run. A failed call adds
+    nothing to the run: the next message is sent, and the failed calls are
+    never recorded as having borne a response.
+    """
+    from Tests.Chat.test_console_project_instruction_traces import (
+        GUIDANCE,
+        _llama_failure,
+        _project_console,
+    )
+
+    options = _RUNS[run][0]
+    async with _project_console(
+        tmp_path,
+        monkeypatch,
+        source_name="AGENTS.md" if project else "NOTES.md",
+        first_failure=_llama_failure("http503") if "failures" in options else None,
+        **options,
+    ) as app:
+        calls, turn_id, before, links = await _first_run(app, monkeypatch, run)
+        failed = [row for row in before if row[2] == "error"]
+        assert all(row[4] is None for row in failed)
+        assert not links & {row[0] for row in failed}
+        sent = len(calls)
+
+        follow_up = await app.controller.submit_draft(
+            "And now?", session_id=app.session.id
+        )
+
+        assert follow_up.accepted
+        assert app.reservation_errors == []
+        assert app.controller.run_state.status.value == "completed"
+        assert len(calls) == sent + 1
+        reply = app.store.get_message(follow_up.assistant_message_id)
+        assert (reply.status, reply.content) == ("complete", "Fixture reply")
+        wire = calls[-1] if _RUNS[run][1] else app.http_payloads[-1]["messages"]
+        assert any(GUIDANCE in str(row.get("content")) for row in wire) is project
+        # AC#2: the failed turn's calls are unchanged; none bore a response.
+        assert _turn_calls(app, turn_id) == (before, links)
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("run", ["hosted_tool_completed", "hosted_tool_then_exhausted"])
+async def test_a_failed_call_never_authorizes_the_tool_history_a_turn_closes(
+    tmp_path, monkeypatch, run
+):
+    """TASK-42534: the next message rechecks who answered with the tool call.
+
+    Its trace may now close a turn on a call that failed before any response,
+    so it must not take a run's tool history on trust. Here the call that
+    answered with the tool call reads as failed: a failed call authorizes an
+    unchanged retry, never tool history, so the next message is refused
+    before the provider is asked, and the earlier trace is left alone.
+    """
+    from Tests.Chat.test_console_project_instruction_traces import _project_console
+    from tldw_chatbook.Chat.console_trace_models import TraceCallState
+
+    async with _project_console(tmp_path, monkeypatch) as app:
+        calls, turn_id, before, links = await _first_run(app, monkeypatch, run)
+        sent = len(calls)
+        repository = app.factory.repository
+        logical = repository.get_call_by_logical_identity
+
+        def answered_by_a_failed_call(cursor, **identity):
+            call = logical(cursor, **identity)
+            if call is not None and (call.turn_id, call.call_sequence) == (turn_id, 0):
+                return replace(call, state=TraceCallState.ERROR, outcome="error")
+            return call
+
+        monkeypatch.setattr(
+            repository, "get_call_by_logical_identity", answered_by_a_failed_call
+        )
+        follow_up = await app.controller.submit_draft(
+            "And now?", session_id=app.session.id
+        )
+
+        assert follow_up.accepted
+        assert app.reservation_errors == ["completed_tool_turn_lineage"]
+        assert app.controller.run_state.status.value == "blocked"
+        assert len(calls) == sent
+        assert _turn_calls(app, turn_id) == (before, links)
