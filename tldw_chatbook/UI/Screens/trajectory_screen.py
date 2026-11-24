@@ -1068,17 +1068,17 @@ class TrajectoryScreen(ModalScreen[None]):
             self._follow = following
             self._refresh_state()
 
-    def _reader_moved_cursor(self, from_key: str | None, to_key: str) -> None:
-        """A navigation key or a timeline click moved the cursor to ``to_key``.
+    def _reader_moved_cursor(self) -> None:
+        """A navigation key or a timeline click moved the cursor.
 
-        That moves the view as a scroll would, so it counts as one, in the
-        direction the cursor went.
+        The view follows the cursor, so this counts as a reader scroll, and
+        always as one toward older rows: a follower's cursor sits above the
+        view as rows append, so even a move to a newer row scrolls the view
+        up. With a ledger scroll queued, follow pauses and the next tick
+        resumes it if the view is still at the bottom; otherwise the follow
+        check reads the view at once.
         """
-        keys = self._visible_keys
-        if to_key not in keys:
-            return
-        older = from_key not in keys or keys.index(to_key) < keys.index(from_key)
-        self._reader_scrolled(older)
+        self._reader_scrolled(True)
 
     def _reader_scrolled(self, toward_older: bool) -> None:
         """A wheel, key or scrollbar scroll, before the table applies it.
@@ -1934,7 +1934,6 @@ class TrajectoryScreen(ModalScreen[None]):
         except StopIteration:
             return  # unknown record (stale bar from a live snapshot): no-op
         key = self._record_key(selected_record)
-        from_key = self._cursor_key()
         state_without_time = replace(self._filter_bar.state, time_range=None)
         if not self._record_matches(
             selected_record, self._query.lower()
@@ -1978,7 +1977,7 @@ class TrajectoryScreen(ModalScreen[None]):
         # on both synchronous and future worker-backed paths.
         if key in self._visible_keys:
             self._move_cursor_to_key(key)
-            self._reader_moved_cursor(from_key, key)
+            self._reader_moved_cursor()
 
     def _move_cursor_to_key(self, key: str) -> None:
         """Best-effort cursor move to the row with ``key``."""
@@ -2106,7 +2105,7 @@ class TrajectoryScreen(ModalScreen[None]):
             self._pending_restore_key = key
             self._render_ledger()
         self._move_cursor_to_key(key)
-        self._reader_moved_cursor(current, key)
+        self._reader_moved_cursor()
 
     def action_next_match(self) -> None:
         self._navigate_records(lambda _record: True, 1)

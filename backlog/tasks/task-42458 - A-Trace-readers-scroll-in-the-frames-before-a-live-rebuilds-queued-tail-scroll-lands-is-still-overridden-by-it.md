@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-23 06:38
-updated_date: 2026-11-24 00:08
+updated_date: 2026-11-24 01:23
 labels:
 - follow-up
 - trace
@@ -90,3 +90,8 @@ Found during round 22 of the follow-up burn-down (2026-11-23). Checked on the ro
 - **Considered and left out:** recording the cursor's row as the reader's anchor directly, instead of the top row after the move. It was not needed in any case I could build, including the paging click, so it is not in the code.
 - **Not tested:** a navigation move that re-renders without paging (a cleared time brush, or a revealed collapsed turn) while a ledger scroll is queued. A probe of the brush case failed on the test data's missing timing, not on the screen. This is a proposed follow-up.
 - **Soak after the re-review fixes.** 20 of 20 runs of the five Trace files at `-n 4` passed (173 tests each, load 45-86). `test_trajectory_live.py` now has 46 tests: 37.3 s serial with the lane's flags at load 45. The timer-path and guarded-modal Architecture tests passed (26). Tests/CI at `-n 4`: 1822 passed. Its one failure, `test_bootstrap_root_cleanup.py::test_owned_root_is_removed[fork-child-terminated]` (a child process did not end in time at load ~50-60), passed 3 of 3 alone. The branch does not touch Tests/CI.
+
+**Third re-review fix.** `_reader_moved_cursor` took the direction from the cursor's move. A follower's cursor sits above the view as rows append, so "next" (`n`, `j`, `u`, `v`, `a`, or a timeline click on a later record) scrolled the view up but counted as "newer", and a queued tail scroll still landed.
+- **Fix:** navigation and timeline moves now always count as reader moves toward older rows. With a ledger scroll queued, follow pauses, and the next tick resumes it if the view is still at the bottom. Otherwise the follow check reads the view at once. Unlike a choice by the view's bottom, this does not depend on where the table's scroll stands during the window, when its position is unreliable.
+- **Test:** a new case, `test_a_navigation_move_while_a_tail_scroll_is_queued_keeps_the_cursor_in_view[next-match-cursor-above-view]`. It runs ten live updates, checks that the cursor is above the view, then presses `n` while a tail scroll is queued. At 9ec7e7d1cb it fails with "the move did not pause follow". With that assertion skipped, it fails with "cursor row 181 is off screen (190..213)", which matches probe P12. Green after.
+- **Regression check:** the other cases and all 267 Trace UI tests pass, including the `f` tests.

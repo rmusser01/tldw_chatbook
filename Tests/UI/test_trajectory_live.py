@@ -1015,7 +1015,13 @@ async def test_a_reader_who_scrolls_up_again_before_the_resume_stays_paused(
 
 
 @pytest.mark.parametrize(
-    "how", ["previous-match", "timeline-click", "timeline-click-pages-in"]
+    "how",
+    [
+        "previous-match",
+        "timeline-click",
+        "timeline-click-pages-in",
+        "next-match-cursor-above-view",
+    ],
 )
 async def test_a_navigation_move_while_a_tail_scroll_is_queued_keeps_the_cursor_in_view(
     how, monkeypatch, wait_for_condition
@@ -1024,7 +1030,8 @@ async def test_a_navigation_move_while_a_tail_scroll_is_queued_keeps_the_cursor_
 
     Neither counted as a reader scroll, so a queued tail scroll pulled the
     view back to the tail with the cursor off screen, still FOLLOWING
-    (TASK-42458 re-review).
+    (TASK-42458 re-review). A follower's cursor drifts above the view as
+    rows append, so even a move to a newer row scrolls the view up.
     """
 
     async def until(condition):
@@ -1052,6 +1059,13 @@ async def test_a_navigation_move_while_a_tail_scroll_is_queued_keeps_the_cursor_
         screen = app.screen_instance
         table = screen.query_one("#trajectory-table", DataTable)
         await until(lambda: table.max_scroll_y > 0 and not screen._scrolls_pending)
+        if how == "next-match-cursor-above-view":
+            # Ten live updates append below the cursor while it follows.
+            for update in range(1, 11):
+                screen._apply_live_snapshot(snapshot_with_turns(turns + update))
+                await until(lambda: not screen._scrolls_pending)
+            turns += 10
+            assert table.cursor_row < int(table.scroll_y), "the cursor is in view"
         monkeypatch.setattr(table, "call_after_refresh", hold)
         screen._apply_live_snapshot(snapshot_with_turns(turns + 1))
         assert screen._scrolls_pending and screen._follow is True
@@ -1059,6 +1073,8 @@ async def test_a_navigation_move_while_a_tail_scroll_is_queued_keeps_the_cursor_
         if how == "previous-match":
             for _ in range(30):
                 await pilot.press("p")
+        elif how == "next-match-cursor-above-view":
+            await pilot.press("n")
         else:
             index = 0 if how == "timeline-click-pages-in" else -60
             older = screen._all_records()[index]
