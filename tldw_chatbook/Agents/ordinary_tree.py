@@ -613,7 +613,7 @@ class OrdinaryTurn:
             "code_review_guide",  # guidance text only
             "code_review_release",  # always refused (native_discard_required)
         }:
-            # Prepare/read run git in the bound root, which can read a linked
+            # Prepare/read/submit run git in the bound root, which can read a linked
             # worktree's objects outside it; every review then spawns reviewers,
             # which widen anyway. Widen at the first such call, like a skill
             # install (TASK-40715), so a busy workspace refuses it up front.
