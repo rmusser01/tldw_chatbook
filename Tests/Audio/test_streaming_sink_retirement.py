@@ -93,6 +93,36 @@ def test_rejected_authority_never_enters_factory():
     assert not attempts and sink.retirement_confirmed
 
 
+def test_independent_stop_notifies_its_caller_before_pending_open_retires():
+    entered, release = threading.Event(), threading.Event()
+    stream = Device()
+    deliveries = []
+
+    def factory(**kwargs):
+        entered.set()
+        assert release.wait(4)
+        return stream
+
+    def listen(event):
+        deliveries.append((type(event), threading.get_ident()))
+
+    sink = audio.StreamingPcmSink(on_event=listen, stream_factory=factory)
+    opener = threading.Thread(target=sink.open, args=(24000,))
+    opener.start()
+    expected = [(audio.SinkStopped, threading.get_ident())]
+    try:
+        assert entered.wait(2)
+        assert not sink.stop()
+        assert deliveries == expected
+        assert not sink.retirement_confirmed and not stream.closed
+    finally:
+        release.set()
+        opener.join(2)
+    assert not opener.is_alive()
+    assert sink.retirement_confirmed and stream.closes == 1 and stream.starts == 0
+    assert deliveries == expected
+
+
 def test_managed_sink_is_independent_of_the_standalone_displacement_slot():
     standalone, managed = Device(), Device()
     first = audio.StreamingPcmSink(
