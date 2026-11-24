@@ -1,6 +1,6 @@
 ---
 id: TASK-42513
-title: Thirty-two Console trace tests are red on dev in six files no PR lane runs
+title: Thirty-two Console trace tests are red on dev in five files no PR lane runs
 status: To Do
 assignee: []
 created_date: '2026-11-24 14:29'
@@ -40,6 +40,6 @@ Not covered here: the two `current_turn_transforms` failures (TASK-32032).
 <!-- AC:BEGIN -->
 - [ ] #1 Every one of the 32 named nodes passes on dev, or is changed with a stated reason when the product's current behaviour is the intended one (for example the 2026-11-06 credential-version ruling); no assertion is weakened without that reason
 - [ ] #2 The 30 sandbox-trap tests no longer read config in-process under the per-test sandbox, or carry the bootstrap_profile marker, and the four 'alias request' cases and four teardown errors that appear behind the trap are diagnosed as product or test drift, with evidence
-- [ ] #3 The six files run on a PR lane, timed with that lane's flags, so a new red in them fails PR CI
+- [ ] #3 The five files holding the 32 run on a PR lane, timed with that lane's flags, so a new red in them fails PR CI; `graph_gc`'s node already in console-p0-gate is folded into the whole-file entry so no node runs twice, and `current_turn_transforms` joins when TASK-32032 closes (or runs with its two nodes deselected and named)
 - [ ] #4 The fix is verified on Linux (CI or the Docker recipe) as well as macOS, since this task's evidence is macOS only
 <!-- AC:END -->
