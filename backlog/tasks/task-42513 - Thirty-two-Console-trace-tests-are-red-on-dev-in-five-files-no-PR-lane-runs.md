@@ -4,6 +4,7 @@ title: Thirty-two Console trace tests are red on dev in five files no PR lane ru
 status: To Do
 assignee: []
 created_date: '2026-11-24 14:29'
+updated_date: '2026-11-24 15:39'
 labels:
   - console
   - trace-capture
