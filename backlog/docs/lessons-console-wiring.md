@@ -900,16 +900,22 @@ retries, so the provider's own error ended it.
 predates dev's 164abdc1c9 (2026-10-04), which reserves an unchanged retry
 against the failed call's saved surface. When the #3517 port carried
 `captured_run_budget` onto a dev that already admitted retries, it hid a
-different refusal. A llama.cpp stream that fails before any content is sent
-once more without streaming, on its own `LLAMA_FALLBACK` call. When that
-failed too, the factory compared the retry with that fallback (the segment's
-latest call) instead of the streamed call it repeats. On the shipped llama.cpp
+different refusal, which was only ever seen in a probe on the round-24 stack
+with the cut-off removed, never in a shipped build. A llama.cpp stream that
+fails before any content is sent once more without streaming, on its own
+`LLAMA_FALLBACK` call with its own run id. When that resend failed too, the
+factory compared the agent's retry with it (the segment's latest call) instead
+of the streamed call the retry repeats. In the probe, on the shipped llama.cpp
 settings (`streaming = true`), a refused connection, timeout, 429 or 5xx ended
-on "Trace capture could not start" instead of the provider's error. Dev's own
-captured-retry tests (`test_console_trace_model_retries.py`,
-`test_console_captured_model_retry.py`) were red on the stack the whole time,
-but no PR lane ran them. The cut-off is gone; the factory now sees past that
-failed fallback (`_is_failed_stream_fallback_of`).
+on "Trace capture could not start" instead of the provider's error. The fix
+then left the *next* message blocked: after a run that recovered, the user's
+next send was refused with `completed_tool_turn_lineage`, because the
+completed-turn check (`validate_completed_tool_turn`) counted the resend's own
+run id as a foreign call inside the run. The first fix tested only the run, not
+the next send; review caught it. Both checks now share one helper
+(`failed_stream_fallback_parent`). Dev's own captured-retry tests
+(`test_console_trace_model_retries.py`, `test_console_captured_model_retry.py`)
+were red on the stack the whole time, but no PR lane ran them.
 **What to do:** when a trace card follows a provider error, read the log's
 `console_send_stage` lines for the attempt. Two `trace_reservation` phases for
 one send mean a second call, such as a retry, a stream fallback or a fallback
@@ -918,4 +924,6 @@ model call inside a captured run needs a trace route that admits it. A
 configured ADR-110 fallback still makes such a call (TASK-42525). Before
 turning a feature off to avoid a trace refusal, re-check the refusal on
 current dev and run the tests that pin the feature: a workaround written
-against an old log can outlive its cause and hide the next one.
+against an old log can outlive its cause and hide the next one. A fix to a
+captured run's trace also needs the next send in the same chat tested: the
+completed-turn check re-reads the whole run before the next turn reserves.

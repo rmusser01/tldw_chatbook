@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-23 06:38
-updated_date: 2026-11-24 08:35
+updated_date: 2026-11-24 09:49
 labels:
 - follow-up
 - console
@@ -36,6 +36,7 @@ Found during round 22 of the follow-up burn-down (2026-11-23), by TASK-42412. Ch
 **AC amendment (2026-11-24, round-24 stack).** Two criteria were added after the coordinator decided to lift the stacked #3517 port's Capture-On retry cut-off (`captured_run_budget`, TASK-34100.2 AC#18):
 - AC#8: with the cut-off lifted, a probe found that a Capture-On llama.cpp streaming run (`streaming = true` ships on) whose stream and its non-streaming fallback both fail with a transient error ended on 'Trace capture could not start' instead of the provider's error. The trace factory compared the in-place retry with the segment's latest call, the failed `LLAMA_FALLBACK` call, not with the streamed call it repeats (`trace_tool_chain_unavailable`). AC#6 made this path reachable; the cut-off hid it under Capture On.
 - AC#9: the cut-off's premise (a 2026-10-03 pass-1 log) predates dev's failed-call retry rule (164abdc1c9, 2026-10-04), and AC#1's probe shows captured in-place retries are admitted.
+- AC#8 amended (2026-11-24, review of the first AC#8 fix): a run that recovered this way still blocked the user's *next* message (`completed_tool_turn_lineage`), because the completed-turn check counted the failed resends as foreign calls. The criterion now covers the next send.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -47,7 +48,7 @@ Found during round 22 of the follow-up burn-down (2026-11-23), by TASK-42412. Ch
 - [x] #5 `Tests/Performance/test_console_managed_received_acceptance.py`'s provider stand-in keeps `chat_api_call`'s signature, and the test asserts its Capture-On trace has no omission node; red before the fix, green after
 - [x] #6 A llama.cpp (direct HTTP) agent run retries a transient failure in place (HTTP 408, 425, 429, 500, 502, 503, 504 or 529; a timeout; a refused connection; a protocol error), while a 400/401/404 still ends the run at once; a test drives such a run, red before and green after
 - [x] #7 When an agent run retries a model call in place, or falls back, after a call failed mid-stream, the reply starts again from what the message held before the failed call: no partial text or thinking from the failed call survives. If the retries run out, the failed message keeps only the last attempt's partial, as a run that fails without retrying does. Tests drive a llama.cpp and a hosted (OpenAI) streaming run through a mid-stream failure, red before the fix
-- [x] #8 A Capture-On llama.cpp streaming agent run whose stream and its non-streaming fallback both fail with a transient error retries in place. The trace admits each retry, and the run ends on the provider's own error, never the trace card, when retries run out
+- [x] #8 A Capture-On llama.cpp streaming agent run whose stream and its non-streaming fallback both fail with a transient error retries in place. The trace admits each retry, and the run ends on the provider's own error, never the trace card, when retries run out. After such a run recovers, the user's next message is sent
 - [x] #9 Capture On keeps the configured model retries (the #3517 port's `captured_run_budget` cut-off is removed); a captured provider fallback stays refused (TASK-42525)
 <!-- AC:END -->
 
@@ -170,19 +171,42 @@ Found during round 22 of the follow-up burn-down (2026-11-23), by TASK-42412. Ch
 - *Cause.* A llama.cpp stream that fails before any content is sent once more without streaming, on its own `LLAMA_FALLBACK` call (task-19324; no chain, so its own run id). When that failed too, the agent's in-place retry had the streamed call as `previous`, but the segment's latest call boundary was the fallback. `ConsoleTraceBoundaryFactory.__call__`'s tool-loop check (`latest_call.call_id != previous.call_id`) refused it with `trace_tool_chain_unavailable`, and the run ended `blocked` on 'Trace capture could not start'.
   - Probe (temporary, deleted): with the cut-off removed, 12 of 12 Capture-On llama.cpp streaming cases (429, 500, 503, refused connection, read timeout, protocol error; PII on and off) ended that way. The traces held no omission node, so this was not the TASK-41310 trap. Capture Off, llama.cpp complete mode and OpenAI (complete and stream) were not affected.
   - `llama_cpp` ships `streaming = true`, so this is the default llama.cpp send. AC#6 made the path reachable; the cut-off hid it under Capture On.
-- *Fix.* `ConsoleTraceBoundaryFactory._is_failed_stream_fallback_of` (`Chat/console_trace_runtime.py`). The tool-loop check sees past the latest call only when all of these hold:
-  - it is a `LLAMA_FALLBACK` call in `error` (outcome `error`, settled);
-  - its call boundary directly follows `previous`'s;
-  - `previous` is in `error`;
-  - owner, segment, turn, policy and surface node match `previous`'s.
+- *Fix.* One shared helper in `Chat/console_trace_continuation.py`. `is_failed_stream_fallback(streamed, fallback)` holds only when all of these are true:
+  - `fallback` is a `llama_fallback` call in `error` (outcome `error`, settled);
+  - `streamed` is in `error`;
+  - owner, segment, turn, policy and surface node match.
 
-  The unchanged-retry checks then run against `previous`, the streamed call, as before. `ConsoleTraceService.persist_request` compares the new header with the logical `previous` (sequence - 1), never with the latest boundary, so it needed no change. The only other latest-versus-previous comparison (`prepare_current_surface_delta`) applies to live native custody only.
+  `failed_stream_fallback_parent(repository, cursor, call_id)` returns the call whose call boundary directly precedes the fallback's, when that pair holds. Two checks use it:
+  - *The retry.* `ConsoleTraceBoundaryFactory.__call__`'s tool-loop check sees past the latest call only when that call's parent is `previous`. The unchanged-retry checks then run against `previous`, the streamed call, as before.
+  - *The next send (review, 2026-11-24).* The first fix tested only the run. After a recovered run, the user's next message was refused with `completed_tool_turn_lineage`: `validate_completed_tool_turn` refuses any call boundary in the finished run's span whose run id differs, and each failed resend has its own. That foreign-call query now excludes a boundary only when its parent is a call of the run being validated (`chain_terminal.run_id`); any other foreign call still refuses, and more than 256 refuse unread. `ConsoleTraceService.persist_request` and `prepare_current_surface_delta` both reach that validation for the next turn, so the helper covers them too.
+
+  `persist_request`'s own failed-call header comparison reads the logical `previous` (sequence - 1), never the latest boundary, so it needed no change.
+- *The exhausted case is a separate cause, filed as TASK-42534.* After a run that ends `failed`, the next send is refused with `completed_tool_turn_unavailable`. `validate_completed_tool_turn` refuses a closed turn whose terminal call never started a response (`closed and not explicit_discard and terminal.response_started_at is None`). The helper does not change that. The block reproduces on dev af4b13ea75, in a scratch worktree since removed:
+  - for a deepseek run whose retries ran out;
+  - for a llama.cpp stream whose resend also failed (dev does not retry llama.cpp), with lineage `agent_first`, `llama_fallback`, both `error`;
+  - on this branch, also for OpenAI's real handler.
 - *Tests.*
-  - `Tests/Chat/test_console_project_instruction_traces.py::test_a_captured_llamacpp_stream_retries_after_its_fallback_fails`: the real llama.cpp Console harness, streaming, Capture On, each of the 6 failure kinds before any content. `recovered`: two failed rounds (stream and fallback, twice), then a reply; lineage `agent_first, llama_fallback, tool_loop, llama_fallback` in `error`, then `tool_loop` complete. `exhausted`: 6 requests, the run ends `failed` on the provider's own copy ("Agent run failed: provider returned HTTP 503 (fixture)." and so on), no recovery card. Red with the cut-off removed and no trace fix: 12 failed (`assert ['trace_tool_..._unavailable'] == []`). Green after: 12 passed.
-  - `Tests/Chat/test_console_failed_call_retry_ownership.py::test_a_retry_after_a_failed_llama_stream_fallback_is_checked_against_the_stream`, gateway level with the real factory. `valid` and `second_round` (a retry after the retry's own failed fallback) are admitted. These are refused: `fallback_completed` (a COMPLETE fallback, then a TOOL_LOOP claiming retry), `other_chain_fallback` (another run's failed stream and fallback in between), `changed_model`, `changed_temperature` and `changed_surface`. Red evidence, each from a temporary edit that was reverted:
-    - without the fix, `valid` and `second_round` are red (`TraceCallPersistenceError`);
-    - with the helper's state checks removed, `fallback_completed` is admitted (`DID NOT RAISE`);
-    - with its adjacency check removed, `other_chain_fallback` is admitted (`DID NOT RAISE`).
+  - `Tests/Chat/test_console_project_instruction_traces.py::test_a_captured_llamacpp_stream_retries_after_its_fallback_fails`: the real llama.cpp Console harness, streaming, Capture On, each of the 6 failure kinds before any content.
+    - `recovered`: two failed rounds (stream and fallback, twice), then a reply. Lineage is `agent_first, llama_fallback, tool_loop, llama_fallback` in `error`, then `tool_loop` complete. Then a second message is sent and completes with no reservation error.
+    - `exhausted`: 6 requests, and the run ends `failed` on the provider's own copy ("Agent run failed: provider returned HTTP 503 (fixture)." and so on), with no recovery card.
+    - Red with the cut-off removed and no trace fix: 12 failed (`assert ['trace_tool_..._unavailable'] == []`).
+    - Red before the next-send fix: the 6 `recovered` cases (`assert ['completed_t...turn_lineage'] == []`, at the second message).
+    - Green after: 12 passed.
+  - `Tests/Chat/test_console_failed_call_retry_ownership.py::test_a_retry_after_a_failed_llama_stream_fallback_is_checked_against_the_stream`, gateway level with the real factory.
+    - Admitted: `valid` and `second_round` (a retry after the retry's own failed fallback).
+    - Refused: `fallback_completed` (a COMPLETE fallback, then a TOOL_LOOP claiming retry), `other_chain_fallback` (another run's failed stream and fallback in between), `other_chain_failure` (review: non-streaming, so another run's failed AGENT_FIRST directly follows this run's failed call), `changed_model`, `changed_temperature` and `changed_surface`.
+  - `test_only_an_errored_resend_of_an_errored_call_is_its_failed_stream_fallback` (same file): the predicate on hand-built `TraceCallRecord`s. The valid pair holds, plus one refused case per condition:
+    - route;
+    - `streamed.state`;
+    - `fallback.state`;
+    - `fallback.outcome`;
+    - `fallback.settled_at`;
+    - each of the five identity fields.
+  - Red evidence, each from a temporary edit that was reverted:
+    - *The predicate.* Removing each condition reds exactly its own unit case. Removing the route condition also reds `other_chain_failure` (it is admitted); before the review, all 7 gateway cases stayed green under that mutation.
+    - *The factory.* With no helper (latest must be `previous`), `valid`, `second_round` and all 12 harness cases are red. Accepting any failed fallback, whatever call it follows, reds `other_chain_fallback`.
+    - *The completed-turn check.* With the old "any foreign boundary refuses" check, the 6 `recovered` cases are red at the next send.
+    - *Not pinned: the completed-turn check's run-id comparison.* Excluding a failed fallback of *any* run leaves every test green. Through the product that case cannot arise: for another run's call to sit inside this run's span, this run would have to continue after it, and the factory refuses that (`other_chain_fallback`, `other_chain_failure`). The comparison stays as defence in depth.
 
 **AC#9: the Capture-On cut-off is removed.**
 - `captured_run_budget` and its call site in `Chat/console_agent_preparation.py` are deleted. `captured_fallback_providers` stays, with a docstring that gives its own reason: a fallback goes to another provider, model or endpoint, which the unchanged-retry rule refuses (TASK-42525).
@@ -197,27 +221,37 @@ Found during round 22 of the follow-up burn-down (2026-11-23), by TASK-42412. Ch
 - *OpenAI streaming check (not fixed; reported).* With a real `requests.Response`, a *streamed* OpenAI 429 reads "Provider error from OpenAI: unexpected provider error." with capture on or off. `chat_with_openai`'s stream generator catches the `HTTPError` from `raise_for_status` as a `RequestException` and yields an SSE error line (`openai_stream_error`, "Stream connection error: 429 ..."). It has been on dev since ee46503f9c. A non-streaming 429 reads as a rate limit.
 
 **Lanes (round 24).** Dev's two captured-retry files were red on the stack and on no lane.
-- "Run the admission-sensitive Console P0 regression tests", mid-list after `Tests/Chat/test_console_project_instruction_traces.py`, with `Tests/CI/test_response_rules_critical_gate.py` updated in the same order:
-  - `Tests/Chat/test_console_trace_model_retries.py`: 13.0 s serially with the step's flags (`-p no:xdist --timeout=300`), load 15-29.
-  - `Tests/Chat/test_console_failed_call_retry_ownership.py`, the failed-call retry rule and AC#8's negative cases, also on no lane before: 30.8 s.
-- UI census tail: `Tests/UI/test_console_captured_model_retry.py` whole, 22.6 s serially with the UI lane's flags (`-p no:xdist --timeout=180 --durations=0`), load 15-29. The floor is the measured entry count.
+- "Run the admission-sensitive Console P0 regression tests", mid-list after `Tests/Chat/test_console_project_instruction_traces.py`, with `Tests/CI/test_response_rules_critical_gate.py` updated in the same order, and a dated comment above the step: `Tests/Chat/test_console_trace_model_retries.py`. It stays in this profile because it is `bootstrap_profile`: its harness reads the tool gates through config, and without the marker it fails 4 of 4. 4 passed in 10.2 s serially with the step's flags (`-p no:xdist --timeout=300`), at load 5.
+- "Run the sandboxed Console P0 regression tests" (review, 2026-11-24, for the admission profile's CI headroom), mid-list after the continuation destination identity file, with a dated comment and the contract list updated: `Tests/Chat/test_console_failed_call_retry_ownership.py`, the failed-call retry rule, also on no lane before. Nothing in it reads config, so its `bootstrap_profile` marker is dropped (59 passed without it). 59 passed in 32.3 s serially with the step's flags (`-p no:xdist --timeout=180`), at load 5.
+- UI census tail: `Tests/UI/test_console_captured_model_retry.py`, whole. 22.6 s serially with the UI lane's flags (`-p no:xdist --timeout=180 --durations=0`), at load 15-29. The floor is the measured entry count.
 
-**Size rows.** `console_agent_bridge.py` 10,170 -> 10,142, exact. `console_trace_runtime.py` is 1,019 lines and has no row (it is under 4,000).
+**Size rows.** `console_agent_bridge.py` 10,170 -> 10,142, exact. `console_trace_runtime.py` and `console_trace_continuation.py` have no row; both are under 4,000 lines.
 
 **Runs (AC#8/AC#9, round-24 stack).**
 - *Soak,* 20 rounds at `-n 4`, load 8-15: the new llama.cpp stream test, diag's 9 formerly red tests (with the rest of their functions), the new trace-rule test, the three changed rate-limit tests and dev's two newly laned files. 20/20 rounds, 840/840 tests.
 - *Covering,* `-n 4`: every `Tests/Chat/test_console_trace_*.py` file, the failed-attempt, retry-JSON, self-hosted-retry, run-budget and failure-copy files, the touched files, the Agents retry and fallback files and the luna native-tools file. 1,974 tests, 36 failed. The same 36 ids fail with HEAD's product files swapped in and on a detached worktree at the parent tip d0a7e3badc (36 of 36 each), so they predate this change. Most are `Hooks unavailable; review or disable hook` submit refusals in the sidecar replay and redaction files.
 - `Tests/CI` `-n 4`: 1,948 passed, 2 skipped. `Tests/Architecture`, serial: 1,507 passed, 5 skipped. `preflight.sh`: all checks passed (UI census floor 2,766). `ruff check tldw_chatbook --select F`: clean. `Tests/lint/ruff_gate.py`: ratchet OK.
 - *Lane steps,* via `r19-step.sh` with each step's flags, run beside one another at load 5-15:
-  - "Run the admission-sensitive Console P0 regression tests" (`-p no:xdist --timeout=180`): 576 passed in 1,654 s;
+  - "Run the admission-sensitive Console P0 regression tests": 576 passed in 1,654 s. That run used the brief's `-p no:xdist --timeout=180`; the step itself uses `--timeout=300`, which the review round below used;
   - "Run admission-sensitive suites 3" (the rate-limit file; `--timeout=300`): 435 passed in 957 s;
   - "Run fast PR contract" (the size ratchet; `--timeout=180`): 4,873 passed, 4 skipped in 1,148 s.
 
-**Commits.** `59cec61cedd59f879e7deea3da13ff68d68bc990` (the trace fix, the cut-off removal, their tests and the size row) and `b0c628fc5ea2e22c13af9d722a893558c11a5111` (lanes), then this docs commit.
+**Runs (review round, 2026-11-24, rebased onto fu/r24-p3517 f8880bc62c).** The rebase was clean and the replayed diff equals `d0a7e3badc..0306a7f634`. Load was 4-13.
+- *Soak,* 20 rounds at `-n 4`: the llama.cpp stream harness test (with its next send), the whole failed-call retry rule file (without its marker), the two changed rate-limit tests, and dev's two newly laned files. 20/20 rounds, 1,600/1,600 tests.
+- *Covering,* `-n 4`, the same file set as the first round: 1,950 passed, 36 failed. These are the same 36 ids that fail at the parent tip; the rebase changed only CI files.
+- `Tests/CI` `-n 4`: 1,948 passed, 2 skipped. `Tests/Architecture`, serial: 1,507 passed, 5 skipped. `preflight.sh`: all checks passed. `ruff check tldw_chatbook --select F`: clean. `Tests/lint/ruff_gate.py`: ratchet OK.
+- *Lane steps,* via `r19-step.sh` with each step's own flags:
+  - "Run the sandboxed Console P0 regression tests" (`-p no:xdist --timeout=180`): 707 passed in 342 s;
+  - "Run the admission-sensitive Console P0 regression tests" (`-p no:xdist --timeout=300`): 529 passed in 1,394 s. That is 47 fewer than before, now that the rule file runs in the sandboxed step.
 
-**Found and not fixed (for the coordinator).**
-- A streamed OpenAI 429 reads "unexpected provider error" (see the AC#9 check above).
-- A Capture-On llama.cpp agent run whose stream is empty and whose non-streaming fallback replies with a tool call is blocked at the next TOOL_LOOP call. The lineage is `agent_first` error, then `llama_fallback` response_started, refused with `trace_tool_chain_unavailable`. A probe gave the same result on the parent tip d0a7e3badc and on this branch.
-- By code reading only: a self-hosted or Custom endpoint's refused-stream resend (TASK-37421) is a TOOL_LOOP call with `streaming=False` in the same chain. If it fails transiently, the agent's in-place retry streams again, and `_retry_generation_matches` allows only True -> False, so that retry would be refused too. Not probed.
+**Commits.**
+- First round, rebased: `5e7f3e36b4b26f0fc4714a834f37e2bbe2167b25` (the trace fix, the cut-off removal, their tests and the size row), `1bd14c64039a622b83bfaf92fdb9c5957d0b94a5` (lanes) and `a0b3805a77116d96e38ebde09ef1592b3a6dcd89` (docs).
+- Review round: `bfc8084e1a52113506fe3915ab4fa6149dd8754e` (the next-send fix and the shared helper), `1ab1a7333ac638d18b20f674fc8c6c6450755eb7` (the lane move), then this docs commit.
 
+**Filed follow-ups (review round).** IDs were checked unused across all refs, worktrees, history names and ref-tip blobs; 42528 and 42531 were taken.
+- TASK-42529: a streamed OpenAI 429 reads "unexpected provider error" (AC#18's streaming gap); Anthropic and Gemini are to be checked.
+- TASK-42530: a llama.cpp tool call that arrives on the non-streaming fallback blocks the next call. It is on the parent tip too.
+- TASK-42532: a streamed retry after a failed non-streaming resend in the same chain (TASK-37421's resend; llama.cpp with tools). Found by code reading and not probed.
+- TASK-42533: the admission-sensitive Console P0 job's CI headroom.
+- TASK-42534: after a captured run fails before any response, the next send is blocked. It is on dev af4b13ea75 too.
 <!-- SECTION:NOTES:END -->
