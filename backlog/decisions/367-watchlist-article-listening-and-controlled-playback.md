@@ -585,6 +585,13 @@ inspect unmigrated or rollback snapshots, so new queries are version-gated.
   multiple claims or inconsistent physical root/peer remains unsupported;
   unselected sibling data does not gain backup authority through this grouping.
   This projection does not change native reads, effects or cleanup custody.
+  A canonical installed article-root group may relocate its disjoint logical
+  partitions to separately reviewed selector roots. When those selectors retain
+  one shared destination, materialize and publish their exact verified member
+  union once while retaining each member's config/DB edge. Reject overlapping or
+  unexplained membership. This owner-specific projection preserves the default
+  shared-root round trip; it does not enable generic directory merging or alter
+  database, briefing-tree or individual-file alias rules.
 - A cheap installed producer gate closes intake and drains actual storage work
   before maintenance. Ordinary storage admission covers DB, lock and asset paths
   through physical retirement. Long-lived listening holders must release/drain
