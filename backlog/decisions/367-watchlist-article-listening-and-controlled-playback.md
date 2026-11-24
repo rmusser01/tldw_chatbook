@@ -500,6 +500,12 @@ inspect unmigrated or rollback snapshots, so new queries are version-gated.
   contract supports these primitives; its three focused no-replace/barrier cases
   passed without changing qualification policy. This is primitive evidence,
   not yet article-persistence or backup evidence.
+  Final names are flat lowercase UUID-hex `.wav` keys; a stage is exactly
+  `.<same-key>.stage`, created exclusively before native no-replace publication.
+  Actual enumerated spelling matters on case-insensitive filesystems. A rowless
+  UUID-shaped file or ambiguous preexisting collision grants no cleanup authority;
+  preserve and report uncertain custody. Live cleanup needs the current profile's
+  row-backed generation and proven file custody, even when data roots alias.
   The existing TTS package is lazy and its container validator imports no runtime
   owner or optional audio/UI dependency. Expose the same callable as
   `validate_controlled_wav`, retaining its physical-frame argument and private
