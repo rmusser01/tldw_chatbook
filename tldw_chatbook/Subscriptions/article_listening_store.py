@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 from uuid import uuid4
+from weakref import WeakValueDictionary
 
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.DB.subscriptions_schema import listening_brief_items
@@ -72,6 +73,7 @@ class ArticleListeningStore:
         self.database = db.listening_binding
         self._current = current_authority
         self._profile = self._authority().profile
+        self._issued_audio = WeakValueDictionary()
 
     def _authority(self, expected=None):
         current = self._current()
@@ -545,7 +547,7 @@ class ArticleListeningStore:
                     int(regenerate),
                 ),
             ).lastrowid
-            return AudioReservation(
+            claim = AudioReservation(
                 generation,
                 key,
                 entry_id,
@@ -554,7 +556,10 @@ class ArticleListeningStore:
                 s["incarnation"],
                 a,
                 self.database,
+                self.db.listening_image,
             )
+            self._issued_audio[generation] = claim
+            return claim
 
     @staticmethod
     def _attach(c, entry, a, generation, regenerate):
@@ -602,7 +607,8 @@ class ArticleListeningStore:
             return self._load(c)
 
     def _reservation(self, c, claim):
-        if type(claim) is not AudioReservation or claim.database != self.database:
+        self._check_issued(claim)
+        if claim.database != self.database:
             raise ListeningConflict("article_audio_reservation_changed")
         a = self._authority(claim.authority)
         s = self._checked(c, claim.revision, a)
@@ -627,6 +633,14 @@ class ArticleListeningStore:
             raise ListeningConflict("article_audio_reservation_changed")
         return entry, bool(row[0])
 
+    def _check_issued(self, claim):
+        if (
+            type(claim) is not AudioReservation
+            or self._issued_audio.get(claim.generation) is not claim
+            or self.db.listening_image != claim.image
+        ):
+            raise ListeningConflict("article_audio_reservation_changed")
+
     def check_reservation(
         self, claim: AudioReservation, *, lease: ListeningLease
     ) -> None:
@@ -644,6 +658,7 @@ class ArticleListeningStore:
         if claim.database != self.database:
             raise ListeningConflict("article_audio_reservation_changed")
         with self.db.listening_transaction(lease=lease, profile=a.profile) as c:
+            self._check_issued(claim)
             changed = c.execute(
                 "UPDATE article_audio SET item_id=NULL,speech_hash=NULL,converter=NULL,"
                 "voice_hash=NULL,dependency_hash=NULL,status='pending_delete',last_used=NULL,created_at=NULL,"
@@ -726,3 +741,61 @@ class ArticleListeningStore:
             if any(type(key) is not str or not _KEY.fullmatch(key) for _, key in rows):
                 raise ValueError("unsafe_article_audio_key")
             return rows
+
+    def audio_inventory(self, generation: int | None = None) -> tuple:
+        """Return this selector's storage receipts and reference protection."""
+        profile = self._authority().profile
+        query = (
+            "SELECT a.*, EXISTS(SELECT 1 FROM listening_entries e WHERE e.artifact=a.generation) "
+            "AS referenced FROM article_audio a WHERE profile=?"
+        )
+        params = (profile,)
+        if generation is not None:
+            query += " AND generation=?"
+            params += (_int(generation, 1),)
+        with self.db.artifact_read_snapshot() as c:
+            return tuple(c.execute(query + " ORDER BY generation", params))
+
+    def relinquish_audio(
+        self, claim: AudioReservation, *, lease: ListeningLease
+    ) -> None:
+        """Drop only this issued generation's cleanup rights on custody loss."""
+        profile = self._authority().profile
+        with self.db.listening_transaction(lease=lease, profile=profile) as c:
+            self._check_issued(claim)
+            if claim.authority.profile != profile or claim.database != self.database:
+                raise ListeningConflict("article_audio_reservation_changed")
+            # Cancellation or source deletion may already have scrubbed the
+            # target fields. The issued generation/key/image still name exactly
+            # its tombstone; it must never authorize deleting a substituted file.
+            c.execute(
+                "DELETE FROM article_audio WHERE generation=? AND profile=? AND file_key=? "
+                "AND status IN ('pending','pending_delete') AND NOT EXISTS "
+                "(SELECT 1 FROM listening_entries WHERE artifact=article_audio.generation)",
+                (claim.generation, profile, claim.file_key),
+            )
+
+    def retire_audio(self, generations: list[int], *, lease: ListeningLease) -> None:
+        """Commit invalidation only for still-unreferenced, current-profile rows."""
+        profile = self._authority().profile
+        with self.db.listening_transaction(lease=lease, profile=profile) as c:
+            c.executemany(
+                "UPDATE article_audio SET status='pending_delete',item_id=NULL,speech_hash=NULL,converter=NULL,"
+                "voice_hash=NULL,dependency_hash=NULL,sha256=NULL,sample_rate=NULL,content_frames=NULL,"
+                "file_frames=NULL,byte_size=NULL,last_used=NULL,created_at=NULL,target_entry=NULL,"
+                "target_revision=NULL,regenerate=NULL WHERE profile=? AND generation=? AND status<>'pending_delete' "
+                "AND NOT EXISTS(SELECT 1 FROM listening_entries e WHERE e.artifact=article_audio.generation)",
+                ((profile, _int(g, 1)) for g in generations),
+            )
+
+    def finish_audio_deletion(
+        self, generation: int, key: str, *, lease: ListeningLease
+    ) -> None:
+        """Retire the exact tombstone after its private names are gone."""
+        profile = self._authority().profile
+        with self.db.listening_transaction(lease=lease, profile=profile) as c:
+            c.execute(
+                "DELETE FROM article_audio WHERE profile=? AND generation=? AND file_key=? "
+                "AND status='pending_delete'",
+                (profile, _int(generation, 1), key),
+            )

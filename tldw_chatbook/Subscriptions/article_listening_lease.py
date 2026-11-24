@@ -58,11 +58,13 @@ class ListeningLease:
         self._database = database
         self._profile = profile
         self._database_identity = None
+        self._related_paths = frozenset()
         self._storage = storage
         self._owner = owner
         self._condition = threading.Condition()
         self._open = True
         self._borrowers = 0
+        self._asset_active = False
 
     def __copy__(self):
         raise TypeError("listening_lease_cannot_be_copied")
@@ -71,13 +73,20 @@ class ListeningLease:
         raise TypeError("listening_lease_cannot_be_copied")
 
     @contextmanager
-    def borrow(self, database: Path, *, profile: str | None):
+    def borrow(
+        self,
+        database: Path,
+        *,
+        profile: str | None,
+        related_paths: tuple[Path, ...] = (),
+    ):
         with self._condition:
             if (
                 not self._open
                 or self._owner is None
                 or database.resolve() != self._database
                 or (profile is not None and self._profile != profile)
+                or not self._related_paths.issuperset(related_paths)
             ):
                 raise ListeningBusy("listening_lease_unavailable")
             if self._database_identity is not None:
@@ -99,6 +108,19 @@ class ListeningLease:
     def revoke(self):
         with self._condition:
             self._open = False
+
+    @contextmanager
+    def asset_operation(self):
+        """Admit one finite file operation per native holder without waiting on SQL."""
+        with self._condition:
+            if not self._open or self._asset_active:
+                raise ListeningBusy("listening_asset_busy")
+            self._asset_active = True
+        try:
+            yield
+        finally:
+            with self._condition:
+                self._asset_active = False
 
     def _retire(self):
         with self._condition:
@@ -166,6 +188,7 @@ def hold_listening(
             raise ValueError("listening_lock_changed")
         lease = ListeningLease(canonical, profile, storage, fd, issuer=_ISSUER)
         lease._database_identity = identity
+        lease._related_paths = frozenset(related_paths)
         try:
             yield lease
         finally:

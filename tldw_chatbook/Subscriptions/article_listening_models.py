@@ -2,17 +2,24 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 import json
 import math
 from pathlib import Path
 import re
-from typing import Literal
+import struct
+from typing import BinaryIO, Literal
 
 from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path
 from tldw_chatbook.TTS.audio_limits import MAX_BUFFERED_AUDIO_BYTES
-from tldw_chatbook.TTS.controlled_wav_profile import PADDING_FRAMES, RATE, WavBookmark
+from tldw_chatbook.TTS.controlled_wav_profile import (
+    PADDING_FRAMES,
+    RATE,
+    RetainedWav,
+    WavBookmark,
+    validate_controlled_wav,
+)
 
 DatabaseImage = tuple[int, int, int | None] | str
 UnavailableReason = Literal["missing_item", "unsupported_content", "empty_body"]
@@ -324,7 +331,7 @@ class ListeningCheckpoint:
             ids.add(entry_id)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class AudioReservation:
     generation: int
     file_key: str
@@ -334,6 +341,7 @@ class AudioReservation:
     incarnation: str
     authority: ListeningAuthority
     database: Path
+    image: DatabaseImage
 
 
 @dataclass(frozen=True, slots=True)
@@ -361,3 +369,76 @@ class AudioMetadata:
             )
         ):
             raise ValueError("invalid_article_audio_shape")
+
+
+MAX_WAV_HEADER_BYTES = 65536
+MAX_WAV_VALIDATION_READS = 1024
+
+
+class _WavReader:
+    """Bound the installed parser's work on malformed ancillary chunk tables."""
+
+    def __init__(self, stream):
+        self.seek = stream.seek
+        self.tell = stream.tell
+        self._read = stream.read
+        self._remaining = MAX_WAV_VALIDATION_READS
+
+    def read(self, size):
+        if not self._remaining:
+            raise ValueError("invalid_article_audio")
+        self._remaining -= 1
+        return self._read(size)
+
+
+def validate_article_audio(stream: BinaryIO, metadata: AudioMetadata) -> None:
+    """Check a seekable, caller-pinned complete artifact against its receipt."""
+    if type(metadata) is not AudioMetadata or (
+        stream.seek(0, 2) != metadata.byte_size
+        or metadata.byte_size - metadata.file_frames * 4 > MAX_WAV_HEADER_BYTES
+    ):
+        raise ValueError("invalid_article_audio")
+    stream.seek(0)
+    digest = sha256()
+    remaining = metadata.byte_size
+    while remaining:
+        chunk = stream.read(min(remaining, 65536))
+        if not chunk or len(chunk) > remaining:
+            raise ValueError("invalid_article_audio")
+        digest.update(chunk)
+        remaining -= len(chunk)
+    if stream.read(1) or digest.hexdigest() != metadata.sha256:
+        raise ValueError("invalid_article_audio")
+    try:
+        validate_controlled_wav(_WavReader(stream), metadata.file_frames)
+    except (ValueError, struct.error):
+        raise ValueError("invalid_article_audio") from None
+
+
+@dataclass(frozen=True, slots=True)
+class GeneratedArticleAudio:
+    wav_bytes: bytes = field(repr=False)
+    sha256: str
+    content_frames: int
+
+    def __post_init__(self):
+        if (
+            type(self.wav_bytes) is not bytes
+            or len(self.wav_bytes) > MAX_BUFFERED_AUDIO_BYTES
+        ):
+            raise ValueError("invalid_article_audio_size")
+        self.metadata()
+
+    def metadata(self) -> AudioMetadata:
+        frames = _int(self.content_frames, 1)
+        return AudioMetadata(
+            self.sha256, RATE, frames, frames + PADDING_FRAMES, len(self.wav_bytes)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ArticleAudio:
+    generation: int
+    source_item_id: int
+    wav: RetainedWav
+    byte_size: int
