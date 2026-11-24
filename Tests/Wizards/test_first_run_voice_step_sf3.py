@@ -42,6 +42,7 @@ from Tests.Wizards.test_first_run_setup_wizard import (
     _StyledHostApp,
 )
 from tldw_chatbook import config as config_module
+from tldw_chatbook.app_service_wiring import ServiceWiringMixin
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler,
     STTSSettingsSaveEvent,
@@ -135,6 +136,8 @@ def _replace_voice_tables(app_tts: dict | None, tts_settings: dict | None) -> No
 
 class _RealVoiceSaveApp(App):
     """Routes the step's save through the real STTS handler and config writer."""
+
+    audio_output = ServiceWiringMixin.audio_output
 
     def __init__(self, step: VoiceSetupStep, service: TTSService) -> None:
         super().__init__()

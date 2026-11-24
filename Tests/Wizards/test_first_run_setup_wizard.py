@@ -25,6 +25,7 @@ from textual.widgets import (
     Switch,
 )
 
+from tldw_chatbook.app_service_wiring import ServiceWiringMixin
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
@@ -118,6 +119,8 @@ def _first_chat_store_snapshot(store: ConsoleChatStore) -> list[dict[str, object
 
 
 class _HostApp(App):
+    audio_output = ServiceWiringMixin.audio_output
+
     def __init__(self, wizard: FirstRunSetupWizard):
         super().__init__()
         self._wizard = wizard
@@ -1260,10 +1263,12 @@ async def test_voice_playback_failure_cleans_new_file_and_keeps_verification(
     async def sample(*_args, **_kwargs):
         return voice_state.VoiceSampleResult(b"valid", "audio/wav", "wav", True)
 
-    class FailingPlayer:
-        def play(self, _path):
-            raise RuntimeError("player detail")
+    async def failing_prepare(_path):
+        raise OSError("synthetic player failure")
 
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.audio_output_runs.FileOutputRun.prepare", failing_prepare
+    )
     monkeypatch.setattr(voice_state, "run_voice_sample", sample)
     monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
     step = VoiceSetupStep(
@@ -1271,7 +1276,6 @@ async def test_voice_playback_failure_cleans_new_file_and_keeps_verification(
         config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
     )
     app = _StepHost(step)
-    app.audio_player = FailingPlayer()
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -1307,15 +1311,10 @@ async def test_voice_playback_creates_the_app_audio_player_on_first_use(
     async def sample(*_args, **_kwargs):
         return voice_state.VoiceSampleResult(b"valid", "audio/wav", "wav", True)
 
-    class FakeAsyncPlayer:
-        async def play(self, path):
-            played.append(path)
-            return True
+    from Tests.UI.file_output_fakes import capture_file_playback
 
+    capture_file_playback(monkeypatch, played)
     monkeypatch.setattr(voice_state, "run_voice_sample", sample)
-    monkeypatch.setattr(
-        "tldw_chatbook.TTS.audio_player.AsyncAudioPlayer", FakeAsyncPlayer
-    )
     monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
     step = VoiceSetupStep(
         wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
@@ -1332,7 +1331,7 @@ async def test_voice_playback_creates_the_app_audio_player_on_first_use(
 
         status = str(step.query_one("#setup-voice-status", Static).renderable)
         assert "playback failed" not in status
-        assert isinstance(app.audio_player, FakeAsyncPlayer)
+        assert app.audio_output.owner == "First-run voice sample"
         assert played == [step._sample_audio_path]
 
 
@@ -1349,10 +1348,10 @@ async def test_voice_playback_reports_failure_when_no_os_player_is_found(
     async def sample(*_args, **_kwargs):
         return voice_state.VoiceSampleResult(b"valid", "audio/wav", "wav", True)
 
-    class NoOsPlayer:
-        async def play(self, _path):
-            return False
+    async def refused(_path):
+        return None
 
+    monkeypatch.setattr("tldw_chatbook.TTS.audio_output_runs.FileOutputRun.prepare", refused)
     monkeypatch.setattr(voice_state, "run_voice_sample", sample)
     monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
     step = VoiceSetupStep(
@@ -1360,7 +1359,6 @@ async def test_voice_playback_reports_failure_when_no_os_player_is_found(
         config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
     )
     app = _StepHost(step)
-    app.audio_player = NoOsPlayer()
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -1387,15 +1385,15 @@ async def test_voice_playback_cancellation_cleans_new_file(
 
     from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
 
-    playback_started = asyncio.Event()
 
     async def sample(*_args, **_kwargs):
         return voice_state.VoiceSampleResult(b"valid", "audio/wav", "wav", True)
 
-    class BlockingPlayer:
-        async def play(self, _path):
-            playback_started.set()
-            await asyncio.Event().wait()
+    from Tests.TTS.test_audio_output_runs import FilePlayer
+
+    player = FilePlayer()
+    player.release.clear()
+    monkeypatch.setattr("tldw_chatbook.TTS.audio_output_runs.SimpleAudioPlayer", lambda: player)
 
     monkeypatch.setattr(voice_state, "run_voice_sample", sample)
     monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
@@ -1404,14 +1402,19 @@ async def test_voice_playback_cancellation_cleans_new_file(
         config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
     )
     app = _StepHost(step)
-    app.audio_player = BlockingPlayer()
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         await _pick_pocket_tts(step, pilot)
         step.query_one("#setup-voice-test", Button).press()
-        await asyncio.wait_for(playback_started.wait(), timeout=1)
+        assert await asyncio.to_thread(player.entered.wait, 2)
         app.workers.cancel_group(step, "setup-voice-sample")
+        await pilot.pause()
+        assert step._sample_audio_path.is_file()
+        released = asyncio.Event()
+        step._sample_output.latest.run.on_retired(released.set)
+        player.release.set()
+        await asyncio.wait_for(released.wait(), 2)
         await pilot.pause(0.1)
 
         assert list(tmp_path.glob("chatbook-voice-sample-*")) == []
@@ -2362,6 +2365,8 @@ def _typed_model_discovery_result(provider: str, *model_ids: str):
 
 
 class _StepHost(App):
+    audio_output = ServiceWiringMixin.audio_output
+
     def __init__(self, step):
         super().__init__()
         self._step = step

@@ -50,10 +50,27 @@ class PreparedOutputRun:
         self.audible = audible
         self.lease: AudioOutputLease | None = None
         self.retirement_confirmed = False
+        self._retired_callbacks: list[Callable[[], None]] = []
         self._fence = threading.Event()
         self._bound = False
         self._pending: asyncio.Task | None = None
         self._retirement: asyncio.Task[bool] | None = None
+
+    def on_retired(self, callback: Callable[[], None]) -> None:
+        """On the owning loop, observe positive retirement exactly once."""
+        if self.retirement_confirmed:
+            self._notify_retired(callback)
+        else:
+            self._retired_callbacks.append(callback)
+
+    @staticmethod
+    def _notify_retired(callback: Callable[[], None]) -> None:
+        try:
+            callback()
+        except (Exception, asyncio.CancelledError) as error:
+            asyncio.get_running_loop().call_exception_handler(
+                {"message": "Audio retirement observer failed", "exception": error}
+            )
 
     def _authorized(self) -> bool:
         """Fast worker guard. The host only makes admission decisions on its loop."""
@@ -146,6 +163,9 @@ class PreparedOutputRun:
             self.retirement_confirmed = True
             if self.lease is not None:
                 self.lease.release()
+            callbacks, self._retired_callbacks = self._retired_callbacks, []
+            for callback in callbacks:
+                self._notify_retired(callback)
         elif self.lease is not None:
             self.lease.block()
         return self.retirement_confirmed

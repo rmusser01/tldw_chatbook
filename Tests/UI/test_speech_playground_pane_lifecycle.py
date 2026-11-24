@@ -62,6 +62,7 @@ from textual.widgets import (
 )
 
 from Tests.UI.background_signals import wait_for_signal
+from tldw_chatbook.app_service_wiring import ServiceWiringMixin
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler,
     STTSPlaygroundGenerateEvent,
@@ -2111,6 +2112,8 @@ class _PaneHost(App[None]):
     service` for the profile-save path.
     """
 
+    audio_output = ServiceWiringMixin.audio_output
+
     def __init__(
         self,
         *,
@@ -3977,6 +3980,7 @@ async def test_second_load_after_genuine_config_change_marks_provider_stale(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_playback_uses_dedicated_widget_worker_group(
     audio_cpp_playground: FakeTTSService,
     monkeypatch: pytest.MonkeyPatch,
@@ -4017,11 +4021,6 @@ async def test_playback_uses_dedicated_widget_worker_group(
         await pilot.pause()
         await app.workers.wait_for_complete()
         monkeypatch.setattr(SpeechPlaygroundPane, "run_worker", run_worker)
-        monkeypatch.setattr(
-            SpeechPlaygroundPane,
-            "_ensure_audio_player",
-            lambda _self: True,
-        )
         pane = app.query_one(SpeechPlaygroundPane)
         pane.current_audio_artifact = artifact
         pane.current_audio_file = artifact.path
@@ -4035,7 +4034,10 @@ async def test_playback_uses_dedicated_widget_worker_group(
 
 
 @pytest.mark.asyncio
-async def test_playback_uses_artifact_captured_before_worker_runs(
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("superseded", [False, True])
+async def test_playback_uses_only_a_current_artifact_and_intent(
+    superseded,
     audio_cpp_playground: FakeTTSService,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -4075,28 +4077,16 @@ async def test_playback_uses_artifact_captured_before_worker_runs(
         jobs.append(job)
         return SimpleNamespace(is_finished=False, cancel=lambda: None)
 
-    class Player:
-        def __init__(self) -> None:
-            self.played: list[Path] = []
+    from Tests.UI.file_output_fakes import capture_file_playback
 
-        async def get_state(self) -> str:
-            return "stopped"
-
-        async def stop(self) -> bool:
-            return True
-
-        async def play(self, path: Path) -> bool:
-            self.played.append(path)
-            return False
-
+    played = []
+    capture_file_playback(monkeypatch, played)
     lease_handler = SimpleNamespace(
         lease_playground_result=Mock(return_value=True),
         release_playground_result=Mock(),
     )
     app = _PaneHost()
     app._stts_handler = lease_handler
-    player = Player()
-    app.audio_player = player
 
     async with app.run_test(size=(180, 70)) as pilot:
         await pilot.pause()
@@ -4109,10 +4099,10 @@ async def test_playback_uses_artifact_captured_before_worker_runs(
         pane.current_audio_file = old_path
 
         pane._play_audio()
-        pane.current_audio_artifact = STTSPlaygroundResultProjection.from_artifact(
-            new_artifact
-        )
-        pane.current_audio_file = new_path
+        if superseded:
+            app.audio_output.begin_intent()
+        else:
+            pane._store_delivered_artifact(new_artifact, announce=False)
 
         job = jobs[0]
         if callable(job):
@@ -4120,15 +4110,10 @@ async def test_playback_uses_artifact_captured_before_worker_runs(
         else:
             await job  # type: ignore[misc]
 
-        assert player.played == [old_path]
-        lease_handler.lease_playground_result.assert_called_once_with(
-            old_artifact.operation_id,
-            old_artifact.path,
-        )
-        lease_handler.release_playground_result.assert_called_once_with(
-            old_artifact.operation_id,
-            old_artifact.path,
-        )
+        assert played == []
+        assert not pane.query_one("#audio-play-btn", Button).disabled
+        lease_handler.lease_playground_result.assert_not_called()
+        lease_handler.release_playground_result.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -4142,8 +4127,10 @@ async def test_playback_uses_artifact_captured_before_worker_runs(
     ),
     ids=("playing-stop", "paused-stop", "natural-finish", "unmount"),
 )
+@pytest.mark.bootstrap_profile
 async def test_playback_lease_survives_replacement_until_playback_ends(
     audio_cpp_playground: FakeTTSService,
+    monkeypatch,
     tmp_path: Path,
     pause_before_replacement: bool,
     terminal_action: str,
@@ -4174,44 +4161,16 @@ async def test_playback_lease_survives_replacement_until_playback_ends(
         content_type="audio/wav",
     )
 
-    class Player:
-        def __init__(self) -> None:
-            self.state = PlaybackState.IDLE
-
-        async def get_state(self) -> PlaybackState:
-            return self.state
-
-        async def stop(self) -> bool:
-            self.state = PlaybackState.IDLE
-            return True
-
-        async def play(self, _path: Path) -> bool:
-            self.state = PlaybackState.PLAYING
-            return True
-
-        async def is_playing(self) -> bool:
-            return self.state == PlaybackState.PLAYING
-
-        async def pause(self) -> bool:
-            self.state = PlaybackState.PAUSED
-            return True
-
-        async def resume(self) -> bool:
-            self.state = PlaybackState.PLAYING
-            return True
-
-        async def get_position(self) -> float:
-            return 0.0
-
-        async def get_duration(self) -> float:
-            return 1.0
+    from Tests.TTS.test_audio_output_runs import FilePlayer
 
     app = _PaneHost()
     handler = STTSEventHandler(app)
     handler._accept_playground_artifact(old_artifact)
     app._stts_handler = handler
-    player = Player()
-    app.audio_player = player
+    player = FilePlayer(external=False)
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.audio_output_runs.SimpleAudioPlayer", lambda: player
+    )
 
     async with app.run_test(size=(180, 70)) as pilot:
         await pilot.pause()
@@ -4249,8 +4208,10 @@ async def test_playback_lease_survives_replacement_until_playback_ends(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_handed_off_playback_ends_its_polling_and_unmount_releases_the_copy(
     audio_cpp_playground: FakeTTSService,
+    monkeypatch,
     tmp_path: Path,
 ) -> None:
     """TASK-39040 fix round 2 (Qodo). A clip the Windows fallback hands to the
@@ -4274,43 +4235,16 @@ async def test_handed_off_playback_ends_its_polling_and_unmount_releases_the_cop
         content_type="audio/wav",
     )
 
-    class Player:
-        def __init__(self) -> None:
-            self.state = PlaybackState.IDLE
-
-        async def get_state(self) -> PlaybackState:
-            return self.state
-
-        async def stop(self) -> bool:
-            # A handed-off clip releases the slot without claiming a stop.
-            self.state = PlaybackState.IDLE
-            return False
-
-        async def play(self, _path: Path) -> bool:
-            self.state = PlaybackState.HANDED_OFF
-            return True
-
-        async def is_playing(self) -> bool:
-            return False
-
-        async def pause(self) -> bool:
-            return False
-
-        async def resume(self) -> bool:
-            return False
-
-        async def get_position(self) -> float:
-            return 0.0
-
-        async def get_duration(self) -> float:
-            return 1.0
+    from Tests.TTS.test_audio_output_runs import FilePlayer
 
     app = _PaneHost()
     handler = STTSEventHandler(app)
     handler._accept_playground_artifact(artifact)
     app._stts_handler = handler
-    player = Player()
-    app.audio_player = player
+    player = FilePlayer(external=True)
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.audio_output_runs.SimpleAudioPlayer", lambda: player
+    )
 
     async with app.run_test(size=(180, 70)) as pilot:
         await pilot.pause()
@@ -4329,7 +4263,7 @@ async def test_handed_off_playback_ends_its_polling_and_unmount_releases_the_cop
 
         assert clip.exists()
         assert handler._playground_file_leases[clip] == 1
-        assert pane._active_playback_release is None
+        assert pane._file_output.active.run.retirement_confirmed
         assert len(pane._hand_off_releases) == 1
         assert str(app.query_one("#audio-player-status", Static).render()) == (
             "Playing in your default audio app. Pause or stop it there."
@@ -5504,3 +5438,56 @@ async def test_unavailable_lazy_profile_service_keeps_audio_artifact_owned_by_ha
             == profile_library_module.PROFILE_STORE_UNAVAILABLE_COPY
         )
         assert app.profile_service_requests == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_failed_stop_retains_exact_artifact_and_unmount_preserves_same_path_successor(
+    audio_cpp_playground, tmp_path, monkeypatch
+):
+    from Tests.TTS.test_audio_output_runs import FilePlayer
+    from tldw_chatbook.TTS.audio_output_runs import FileOutputRun
+
+    path = tmp_path / "shared.wav"
+    path.write_bytes(b"synthetic audio")
+    artifact = STTSGeneratedAudio(
+        path=path,
+        provider_id="audio_cpp",
+        model_id="model",
+        voice_id=None,
+        source_text="output",
+        operation_id="retained",
+        audio_format="wav",
+        content_type="audio/wav",
+    )
+    player = FilePlayer()
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.audio_output_runs.SimpleAudioPlayer", lambda: player
+    )
+    app = _PaneHost()
+    handler = STTSEventHandler(app)
+    handler._accept_playground_artifact(artifact)
+    app._stts_handler = handler
+    async with app.run_test(size=(180, 70)) as pilot:
+        await pilot.pause()
+        pane = app.query_one(SpeechPlaygroundPane)
+        pane._store_delivered_artifact(artifact, announce=False)
+        pane.action_play_audio()
+        await app.workers.wait_for_complete()
+        assert handler._playground_file_leases[path] == 1
+        player.can_stop = False
+        pane.action_stop_audio()
+        await app.workers.wait_for_complete()
+        assert app.audio_output.blocked and path.exists()
+        assert handler._playground_file_leases[path] == 1
+        player.can_stop = True
+        pane.action_stop_audio()
+        await app.workers.wait_for_complete()
+        assert path not in handler._playground_file_leases
+        other = FilePlayer()
+        run = await FileOutputRun.prepare(path, player=other)
+        lease = await app.audio_output.acquire("another surface", run.retire)
+        assert await run.start(lease)
+        await pane.remove()
+        assert lease.is_current() and not other.stops
+        assert await app.audio_output.stop(lease)
