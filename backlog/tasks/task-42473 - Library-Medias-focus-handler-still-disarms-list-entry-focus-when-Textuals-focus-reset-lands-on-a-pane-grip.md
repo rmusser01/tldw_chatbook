@@ -83,3 +83,20 @@ Found during round 22 of the follow-up burn-down (2026-11-23), by TASK-42422. Ch
 - The two new tests set `LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS` to 10.0 before they re-arm, as the first-row test does at 6.0, so a loaded host cannot close the window under them. Their assertions are unchanged; the AC#1 test's final wait, which now includes the 10 s window closing, has a 30 s timeout.
 - `lessons-textual.md`: the TASK-34000.28 entry and this task's entry now reference each other. That entry ruled out an override that changed where the reset lands; this one only records it, and a rename turns the AC#1 test red.
 - The Size line above is corrected (32903, not 32901), and re-measured after the guard: 32906 lines, 1289 methods.
+
+**Runs after the review fixes (shared by TASK-41723, 42470 and 42473; final tree).**
+- **Soak of the touched files, 20× at `-n 4`:**
+  - `test_library_ingest_readiness.py`: 580 passed (load 82-106).
+  - `test_library_ingest_runner.py` with `--storage-lease-guard`: 3140 passed, 20 skipped (load 106-119).
+  - The two `test_library_shell.py` nodes (ingest submit, Media retry): 40 passed (load 96-118).
+  - `test_library_rail_switch_keeps_reader_and_note.py`: 550 passed, 10 failed (load 55-108). The new tests passed in every run. All 10 failures were `test_each_library_switch_lands_on_its_first_row_never_a_grip` cases:
+    - 9 Collections cases ending with nothing focused: the capture loader outlasting the 2 s entry window above load 50, which TASK-42422 and TASK-41504 recorded;
+    - 1 `media-click-empty-notes` ending on the rail row.
+  - That test then passed an A/B at `-n 4`, 10 runs a side: base `library_screen.py` 120/120 (load 42-67), this branch 120/120 (load 35-60).
+- **Checks:**
+  - `Tests/CI` at `-n 4`: 1823 passed, 2 skipped.
+  - Size ratchets, the Library recompose ratchet, the timer inventory and the diagnostic inventory tests (serial): 388 passed, 1 skipped, 2 failed. Both failures were the git-history `test_task_15103_review_ledger_*` tests at their 300 s timeout (load 70-118). Alone they passed in 254 s and 170 s.
+  - `./scripts/preflight.sh` passed. `ruff check tldw_chatbook --select F` passed. `Tests/lint/ruff_gate.py`: RATCHET OK.
+- **Lane steps via `r19-step.sh`:**
+  - "Run the recovered suites" (`-p no:xdist --storage-lease-guard --timeout=180`): 2007 passed (57 min, load 41-119).
+  - "Run admission-sensitive suites 2" (`-p no:xdist --timeout=300`): 1513 passed, 1 failed (50 min, load 47-118). The failure was `test_console_session_admitted_roots.py::test_the_three_readers_return_the_same_string_roots`, a private-profile child `TimeoutError`; Console code this branch does not touch. Alone it passed 2 of 2.
