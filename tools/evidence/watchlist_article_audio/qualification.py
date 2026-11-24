@@ -626,28 +626,37 @@ def run_case(
     padded: bool = False,
     capture_buffer_frames: int = BLOCK,
     capture_clock: str = "legacy",
+    stop_clock: str | None = None,
 ) -> dict:
-    """Measure one bounded native run; all raw samples/output are disposable."""
+    """Measure one native run, optionally overriding the default Stop clock."""
     if capture_buffer_frames not in (480, 4800):
         raise ValueError("capture_buffer_frames_must_be_480_or_4800")
     if capture_clock not in ("legacy", "wasapi-packet", "pulse-fragment"):
         raise ValueError("unknown_capture_clock")
+    if stop_clock is None:
+        stop_clock = "observed_playing" if padded else "launch"
+    if stop_clock not in ("launch", "observed_playing"):
+        raise ValueError("unknown_stop_clock")
+    wait_for_playing = stop_clock == "observed_playing"
     packet_mode = capture_clock == "wasapi-packet"
     pulse_mode = capture_clock == "pulse-fragment"
     native_mode = packet_mode or pulse_mode
     if pulse_mode and platform.system() != "Linux":
         raise ValueError("pulse_requires_linux")
+    match_playing = wait_for_playing and (not native_mode or stop_after is not None)
+    ready_budget = 30 if padded else 6
+    playback_budget = len(source) / RATE + 6 + (0.25 if padded else 0)
     result = {
         "launched": False,
         "generation": generation,
         "duration_s": len(source) / RATE,
         "requested_start_s": offset,
-        "stop_after_launch_s": stop_after if not padded else None,
-        "stop_after_playing_s": stop_after if padded else None,
+        "stop_after_launch_s": None if wait_for_playing else stop_after,
+        "stop_after_playing_s": stop_after if wait_for_playing else None,
         "stop_after_s": stop_after,
-        "stop_clock": "observed_playing" if padded else "launch",
+        "stop_clock": stop_clock,
         "capture_ready_timeout_s": 30 if padded else 8,
-        "playing_ready_timeout_s": 30 if padded else None,
+        "playing_ready_timeout_s": ready_budget if wait_for_playing else None,
         "capture_lifetime_s": 45 if padded else 12,
         "max_capture_blocks": 4500 if padded else 1800,
         "capture_buffer_frames": capture_buffer_frames,
@@ -723,13 +732,13 @@ def run_case(
         if len(ready) > 2:
             result["diagnostics"]["capture_configuration"] = ready[2]
         polls.append(ready[1])
-        if native_mode and padded and stop_after is not None:
+        if native_mode and match_playing:
             live_executor = ThreadPoolExecutor(max_workers=1)
         # Independent pre-launch baseline; no output names or samples are saved.
         baseline_duration = 0.35
         baseline_until = time.perf_counter() + baseline_duration
         deadline = (
-            time.perf_counter() + len(source) / RATE + 6 + (30.25 if padded else 0)
+            time.perf_counter() + playback_budget + (ready_budget if padded else 0)
         )
         while time.perf_counter() < deadline:
             while receiver.poll():
@@ -855,9 +864,12 @@ def run_case(
                 result["launched"] = True
                 if pulse_mode:
                     player_pid.value = process.pid
-                if padded:
-                    playing_ready_deadline = time.perf_counter() + 30
-                    deadline = playing_ready_deadline + len(source) / RATE + 0.25 + 6
+                if padded or match_playing:
+                    ready_by = time.perf_counter() + ready_budget
+                    if padded:
+                        deadline = ready_by + playback_budget
+                    if match_playing:
+                        playing_ready_deadline = ready_by
                 reader = threading.Thread(
                     target=_stats_pump,
                     args=(process.stderr, observations, generation),
@@ -882,7 +894,7 @@ def run_case(
                                 playing_startup_wait_s=playing_at - launched_at,
                                 playing_source_position_s=match["end_source_s"],
                             )
-                            deadline = playing_at + len(source) / RATE + 0.25 + 6
+                            deadline = playing_at + playback_budget
                     if (
                         live_future is None
                         and playing_at is None
@@ -905,7 +917,7 @@ def run_case(
                             live_future = live_executor.submit(matcher, recent, source)
                             result["diagnostics"]["live_matcher_calls"] += 1
                 if (
-                    padded
+                    match_playing
                     and not native_mode
                     and playing_at is None
                     and len(blocks) - last_checked_blocks >= 4
@@ -932,11 +944,10 @@ def run_case(
                         result["playing_observed_at_s"] = playing_at
                         result["playing_startup_wait_s"] = playing_at - launched_at
                         result["playing_source_position_s"] = match["end_source_s"]
-                        deadline = playing_at + len(source) / RATE + 0.25 + 6
+                        deadline = playing_at + playback_budget
                 if (
-                    padded
+                    playing_ready_deadline is not None
                     and playing_at is None
-                    and (not native_mode or stop_after is not None)
                     and time.perf_counter() >= playing_ready_deadline
                     and process.poll() is None
                 ):
@@ -951,10 +962,11 @@ def run_case(
                         launched_at_s=launched_at,
                         playing_at_s=playing_at,
                         delay_s=stop_after,
-                        wait_for_playing=padded,
+                        wait_for_playing=wait_for_playing,
                     )
                 ):
                     stop_at = time.perf_counter()
+                    result["stop_requested_after_launch_s"] = stop_at - launched_at
                     frame = saved_bookmark_frame(
                         list(observations),
                         generation=generation,
@@ -991,9 +1003,7 @@ def run_case(
                 return result
             result["reason"] = (
                 "playing_ready_timeout"
-                if padded
-                and playing_at is None
-                and (not native_mode or stop_after is not None)
+                if match_playing and playing_at is None
                 else "playback_deadline"
             )
             if result["reason"] == "playback_deadline":
@@ -1445,8 +1455,9 @@ def native_result(runs: list[dict]) -> str:
     """Every required case counts; unmatched cases and missing cleanup cannot pass."""
     required = []
     for run in runs:
-        if run.get("capture_clock") == "pulse-fragment":
-            required.append(run.get("telemetry", "unqualified"))
+        telemetry = run.get("telemetry", "unqualified")
+        if telemetry == "fail" or run.get("capture_clock") == "pulse-fragment":
+            required.append(telemetry)
         if _capture_quality_unqualified(run):
             required.append("unqualified")
         if run.get("cleanup_errors"):
@@ -1465,7 +1476,7 @@ def native_result(runs: list[dict]) -> str:
             )
             offset = run.get("requested_start_s")
             if offset is not None and run["duration_s"] - offset >= 0.5:
-                required.append(run.get("telemetry", "unqualified"))
+                required.append(telemetry)
         else:
             required.extend(
                 run.get(key, "unqualified")
