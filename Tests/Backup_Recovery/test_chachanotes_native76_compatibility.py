@@ -10,10 +10,16 @@ from Tests.DB.test_chachanotes_v77_agent_chat_starts_migration import (
     _legacy_native76,
     _seed_legacy_queue_owner,
     _assert_legacy_queue_quarantine,
+    _v2_subscriptions,
 )
 from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
 from tldw_chatbook.Backup_Recovery import sqlite_validation as validation
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.recovery_core import core_adapters
+
+# A staged upgrade ends at the current schema: the literal 80 went stale at
+# v81 and each later bump (TASK-42516). Historical step results stay literal.
+CURRENT = CharactersRAGDB._CURRENT_SCHEMA_VERSION
 
 
 def _owner():
@@ -114,12 +120,16 @@ def test_native76_staged_upgrade_preserves_machine_receipts(tmp_path, dictionary
         rows = tuple(connection.execute("SELECT * FROM console_dispatch_checkpoints"))
         messages = tuple(connection.execute("SELECT * FROM messages ORDER BY id"))
     assert validation.validate_candidate(_owner(), path, Event(), migrate=True) == ()
-    assert validation.validated_schema_version(_owner(), path, Event()) == 80
+    assert validation.validated_schema_version(_owner(), path, Event()) == CURRENT
     with closing(sqlite3.connect(path)) as connection:
-        assert (
-            tuple(connection.execute("SELECT * FROM console_dispatch_checkpoints"))
-            == rows
-        )
+        cursor = connection.execute("SELECT * FROM console_dispatch_checkpoints")
+        names = [column[0] for column in cursor.description]
+        upgraded = [dict(zip(names, row, strict=True)) for row in cursor]
+        # v86 (ADR-286) appended the mix-in column; a native-76 row has none.
+        assert [row.pop("mixin_snapshot_schema_version") for row in upgraded] == [
+            None
+        ] * len(upgraded)
+        assert tuple(tuple(row.values()) for row in upgraded) == rows
         assert (
             tuple(connection.execute("SELECT * FROM messages ORDER BY id")) == messages
         )
@@ -250,7 +260,26 @@ def test_subscription_native_catalog_retains_exact_embedded_stamps(
     owner = next(a for a in recovery_adapters() if a.owner_id == "db.subscriptions")
     before = _dump(path)
     assert validation.validate_candidate(owner, path, Event(), migrate=True) == ()
-    assert _dump(path) == before
+    # ADR-207 (cd65558bc9): the shared file's Subscriptions side migrates v2 to
+    # v3, which restamps it and recreates its timestamp trigger with the same
+    # text, so only the trigger's dump position moves. The embedded ChaChaNotes
+    # stamp and every other line are unchanged, in order.
+    trigger = next(
+        line
+        for line in before
+        if line.startswith("CREATE TRIGGER update_subscriptions_timestamp")
+    )
+    stamped = tuple(
+        line.replace(
+            'INSERT INTO "schema_version" VALUES(2);',
+            'INSERT INTO "schema_version" VALUES(3);',
+        )
+        for line in before
+        if line != trigger
+    )
+    after = _dump(path)
+    assert after.count(trigger) == 1
+    assert tuple(line for line in after if line != trigger) == stamped
     with closing(sqlite3.connect(path)) as connection:
         connection.execute("UPDATE db_schema_version SET version=75")
         connection.commit()
@@ -534,10 +563,7 @@ def test_repaired77_catalog_admits_only_its_exact_stamp(
 
     path = tmp_path / "fresh.sqlite"
     if subscriptions:
-        from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
-
-        other = SubscriptionsDB(path)
-        other.close()
+        _v2_subscriptions(path)
     # This control remains about the independently frozen historical v77 shape.
     monkeypatch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 77)
     db = CharactersRAGDB(path, client_id="repaired-stamp")
@@ -590,25 +616,13 @@ def test_strong_primary_catalog_accepts_historical_stamps(
     path = tmp_path / "strong.sqlite"
     _legacy_native76(path, dictionary=dictionary)
     with closing(sqlite3.connect(path)) as connection:
-        catalog = tuple(
-            connection.execute(
-                "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
-            )
-        )
         connection.execute("UPDATE db_schema_version SET version=?", (version,))
         connection.commit()
-    from tldw_chatbook.DB.recovery_core_schema import (
-        _browse_order_catalog,
-        _fleet_progress_catalog,
-        _sargable_catalog,
-    )
+    from tldw_chatbook.DB.recovery_core_schema import CHACHANOTES_V87_SCHEMAS
 
-    catalog = tuple(
-        (sql,)
-        for sql in _browse_order_catalog(
-            _sargable_catalog(_fleet_progress_catalog(tuple(row[0] for row in catalog)))
-        )
-    )
+    # The staged upgrade ends at the current lineage's native-76 member (the
+    # two repaired-77 catalogs come first).
+    catalog = tuple((sql,) for sql in CHACHANOTES_V87_SCHEMAS[3 if dictionary else 2])
     assert validation.validate_candidate(_owner(), path, Event(), migrate=True) == ()
     with closing(sqlite3.connect(path)) as connection:
         assert (
@@ -621,4 +635,4 @@ def test_strong_primary_catalog_accepts_historical_stamps(
         )
         assert connection.execute(
             "SELECT version FROM db_schema_version"
-        ).fetchone() == (80,)
+        ).fetchone() == (CURRENT,)

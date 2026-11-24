@@ -309,6 +309,21 @@ CREATE INDEX idx_console_dispatch_checkpoints_user_message
 """
 
 
+def _v2_subscriptions(path):
+    """Create the Subscriptions v2 catalog that native-76 and repaired-77 shared with.
+
+    Today's constructor adds idx_subscriptions_source (task-34399) and stamps
+    v3, whose DDL is unchanged (ADR-207), so both are undone (TASK-42516).
+    """
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+
+    SubscriptionsDB(path).close()
+    with closing(sqlite3.connect(path)) as connection:
+        connection.execute("DROP INDEX idx_subscriptions_source")
+        connection.execute("UPDATE schema_version SET version=2")
+        connection.commit()
+
+
 def _seed_native76_machine_owner(db, acceptance):
     """Write one agent_chat_start owner into a v76 file, as `_insert` did.
 
@@ -406,17 +421,7 @@ def _seed_native76_machine_owner(db, acceptance):
 def _legacy_native76(path, *, dictionary=False, subscriptions=False):
     """Replay the previously shipped feature SQL over its actual v75 chain."""
     if subscriptions:
-        from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
-
-        subscriptions_db = SubscriptionsDB(path)
-        subscriptions_db.close()
-        # A native-76 shared file had the Subscriptions v2 catalog. Today's
-        # constructor adds idx_subscriptions_source (task-34399) and stamps v3,
-        # whose DDL is unchanged (ADR-207), so undo both (TASK-42516).
-        with closing(sqlite3.connect(path)) as connection:
-            connection.execute("DROP INDEX idx_subscriptions_source")
-            connection.execute("UPDATE schema_version SET version=2")
-            connection.commit()
+        _v2_subscriptions(path)
     with chachanotes_db_at_version(path, 75) as db:
         db.get_connection().executescript(_FROZEN_NATIVE76_MIGRATION)
         db.get_connection().execute(
