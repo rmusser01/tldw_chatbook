@@ -154,8 +154,9 @@ The final whole-task review and one scoped fix re-review are clear. The last
 178-case selection passes; after rebasing both drafts onto dev `6fa2635c14`,
 199 affected checks pass with three platform skips. All 106 reviewed source/test/
 tool blobs and all public numerical receipts remain unchanged by that rebase.
-TASK-41177 is complete in draft PR #3742. TASK-41178 is complete on a
-separate child branch; TASK-41179 and later have not begun.
+TASK-41177 is complete in draft PR #3742. TASK-41178 is complete in draft
+PR #3766. TASK-41179 is in progress on its separate child branch; later tasks
+have not begun.
 
 ### Task 3: Persist listening state and source-owned assets safely (TASK-41178)
 
@@ -214,9 +215,19 @@ was added by Task 3.
 **Prerequisite:** TASK-41178. **Files:** New `Subscriptions/article_speech.py`, `article_listening_audio.py`; small extraction from `briefing_audio.py` only where reuse requires it; existing HTML and TTS request/admission helpers. Tests: new `Tests/Subscriptions/test_article_speech.py`, `test_article_listening_audio.py`; existing briefing synthesis regressions.
 
 **Interfaces:**
-- `prepare_article_speech(body: str, *, content_format: str) -> PreparedArticleSpeech` carries normalized text, UTF-8 hash and converter version. Admission limits: 256 KiB UTF-8 input per entry, 2 MiB total snapshot text per queue, 256 entries, 128 TTS chunks per article. Reject whole over-limit candidates; keep unavailable placeholders for ordinary missing bodies.
-- `freeze_listening_voice(resolution: CharacterTTSRequestResolution | VoiceSelection) -> FrozenListeningVoice` retains allowlisted nonsecret settings and dependency identity; `resolve_listening_voice(snapshot: FrozenListeningVoice) -> VoiceSelection` revalidates via existing admission. Never reconstruct authority from a saved reference pathname.
-- `synthesize_article(entry: ListeningEntry, *, generation: int) -> GeneratedArticleAudio` uses the store/assets contract. At most one listening request in flight; enforce existing 64 MiB `MAX_BUFFERED_AUDIO_BYTES` across encoded/decoded/stitching buffers, counting retained copies. No partial artifact is playable.
+- `prepare_article_speech(body: str, *, content_format: str, is_excerpt: bool = False) -> PreparedArticleSpeech` carries normalized text, UTF-8 hash, converter version and the caller's saved-source excerpt classification. Admission limits: 256 KiB UTF-8 input and prepared text per entry, 2 MiB total snapshot text per queue, 256 entries, 128 TTS chunks per article. Reject whole over-limit candidates; keep unavailable placeholders for ordinary missing bodies.
+- Async `freeze_listening_voice` and `resolve_listening_voice` use the existing effective/default-profile service and the store's inert `FrozenVoice`, with explicit service/profile inputs. Retain allowlisted nonsecret settings and stable dependency identity; resolution returns existing ephemeral admission arguments, including typed clone authority. Never reconstruct authority from a saved reference pathname or silently use a changed default.
+- A constructible profile-bound `ArticleListeningAudio` preparation owner obtains the authoritative entry by ID/revision, checks retained audio before provider work, and uses the store's exact issued `AudioReservation` and asset publisher. Its async preparation returns `ArticleAudio`; cancellation revokes the pending operation while physical work remains retained. At most one listening request is in flight. Enforce the existing 64 MiB `MAX_BUFFERED_AUDIO_BYTES` across encoded/decoded/stitching buffers, counting retained copies; return a complete `GeneratedArticleAudio` only after qualified normalization and padding. No partial artifact is playable.
+
+**Implementation preflight, 2026-11-24:** Parent #3766's two CI test corrections
+are independently reviewed and published at `8ce8a67efa`. Existing briefing
+synthesis/audio-limit tests pass 29 cases. The dated ADR367 synthesis contract
+clarifies native null voices, stable versus live dependency identity, implicit
+backend knobs, bounded assembly and cancellation. Preserve v4 catalog bytes and
+already-valid JSON/fingerprints. Reuse the HTML parser with speech-specific
+projection defaults and existing effective TTS admission; the cast helpers drop
+clone/option authority and their eager concatenator does not provide this budget.
+No transport/UI implementation is authorized by this task.
 
 - [ ] **Step 1: Write failing tests.** Cover text/HTML/Markdown including scripts/styles, link labels versus targets, images, malformed markup/control codes, code prose, empty conversion, exact boundary and over-limit input/queue/chunk counts. Assert full long-body coverage without 800-character truncation. Change defaults/profile/reference after enqueue and restart; verify frozen valid voice or explicit pause, no silent substitution. Retained valid audio spends zero provider calls; cancellation/deletion cannot republish or autoplay; aggregate limit stops before retaining the next chunk.
 - [ ] **Step 2: Observe RED.** Run the two new test files with real WAV fixtures and fake provider transport only; expect missing preparation/synthesis behavior.
