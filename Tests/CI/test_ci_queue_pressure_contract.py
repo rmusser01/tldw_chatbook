@@ -531,6 +531,11 @@ DREAMS_TRACKING_RIDERS = (
     # TASK-42514 (round 25): every test is @private_profile_test, so
     # sandboxed; before Tool_Packs.
     "Tests/Agents/test_durable_fleet_messages.py",
+    # TASK-42513 (round 26): two Console trace files red on dev unseen. They
+    # read no config in-process (RecoveryRequired recorder), so before
+    # Tool_Packs; the GC file's one console-p0-gate node folded in here.
+    "Tests/Chat/test_console_trace_graph_gc.py",
+    "Tests/Chat/test_console_trace_project_turn_service.py",
     "Tests/Tool_Packs",
     # Round 24: bootstrap_profile (its gateway reads [model_catalog]), so after
     # Tool_Packs.
@@ -541,6 +546,11 @@ DREAMS_TRACKING_RIDERS = (
     # TASK-42515 (round 25): bootstrap_profile (Tests/conftest.py keeps the
     # whole file on it), so after Tool_Packs.
     "Tests/Chat/test_console_provider_failure_copy.py",
+    # TASK-42513 (round 26): bootstrap_profile (their sends read [hooks]
+    # in-process), so after Tool_Packs.
+    "Tests/Chat/test_console_trace_sidecar_replay.py",
+    "Tests/Chat/test_console_trace_sidecar_redaction.py",
+    "Tests/Chat/test_console_trace_proprietary_settlement.py",
     # TASK-42516 (round 25): Tests/conftest.py keeps Tests/DB on the bootstrap
     # profile, so after Tool_Packs.
     "Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py",
@@ -549,6 +559,10 @@ DREAMS_TRACKING_RIDERS = (
     "Tests/DB/test_chachanotes_v78_fleet_progress_migration.py",
     "Tests/DB/test_chachanotes_v79_sargable_migration.py",
     "Tests/DB/test_chachanotes_v54_before_first_cursor.py",
+    # TASK-42517 (round 26): bootstrap profile by directory, after Tool_Packs.
+    "Tests/DB/test_chachanotes_v47_messages_fts_backfill.py",
+    "Tests/DB/test_chachanotes_v56_console_trace_query_plans.py",
+    "Tests/DB/test_chachanotes_v72_voice_trace_provenance_migration.py",
     # TASK-42468: bootstrap_profile, so after Tool_Packs (nothing sandboxed
     # may follow it).
     "Tests/Backup_Recovery/test_character_presentation_cadence.py",
