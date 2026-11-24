@@ -52,6 +52,9 @@ def test_play_does_not_raise_unbound_local_error_on_a_non_darwin_afplay_path(
     player._player_name = "aplay"
     player._player_cmd = ["aplay", "-q"]
     player._supports_pause = False
+    monkeypatch.setattr(
+        audio_player.shutil, "which", lambda name: name if name == "aplay" else None
+    )
 
     audio_file = tmp_path / "clip.wav"
     audio_file.write_bytes(b"fake audio data")
@@ -151,9 +154,19 @@ def test_previous_monitor_cannot_finish_next_clip():
 #: Space-free names that cmd.exe would have parsed as command syntax.
 _SHELL_METACHARACTER_NAMES = (
     "a&calc&.mp3",
-    "a|calc.mp3",
+    pytest.param(
+        "a|calc.mp3",
+        marks=pytest.mark.skipif(
+            os.name == "nt", reason="Windows forbids | in filenames"
+        ),
+    ),
     "x^calc.mp3",
-    "a&b|c^d.wav",
+    pytest.param(
+        "a&b|c^d.wav",
+        marks=pytest.mark.skipif(
+            os.name == "nt", reason="Windows forbids | in filenames"
+        ),
+    ),
     "%COMSPEC%.mp3",
 )
 

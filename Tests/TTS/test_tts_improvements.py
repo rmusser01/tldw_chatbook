@@ -643,9 +643,32 @@ class TestAudioPlayer:
     """Test audio player improvements"""
 
     @pytest.fixture
-    def player(self):
-        """Create test player"""
-        return SimpleAudioPlayer()
+    def player(self, monkeypatch):
+        """An observable file child on all hosts, without launching a media app."""
+        from threading import Event
+
+        from tldw_chatbook.TTS import audio_player
+
+        exited = Event()
+        child = MagicMock()
+        child.poll.side_effect = lambda: 0 if exited.is_set() else None
+        child.terminate.side_effect = exited.set
+        child.kill.side_effect = exited.set
+
+        def wait(timeout=None):
+            assert exited.wait(timeout if timeout is not None else 3)
+            return 0
+
+        child.wait.side_effect = wait
+        monkeypatch.setattr(audio_player.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(
+            audio_player.shutil, "which", lambda name: name if name == "aplay" else None
+        )
+        monkeypatch.setattr(
+            audio_player.subprocess, "Popen", lambda *args, **kwargs: child
+        )
+        yield SimpleAudioPlayer()
+        exited.set()
 
     def test_play_stop(self, player, tmp_path):
         """Test play and stop functionality"""
