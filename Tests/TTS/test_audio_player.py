@@ -515,9 +515,8 @@ def _speech_host():
 
 async def _play_speech_file(host, clip, release):
     host.current_audio_file = clip
-    host._capture_audio_for_action = lambda: (clip, release)
     attempt = host._file_output.begin(host.app, host.app.audio_output.begin_intent())
-    await host._play_audio_async(attempt, None)
+    await host._play_audio_async(attempt, None, clip, release)
 
 
 async def _settle_speech_host(host) -> None:

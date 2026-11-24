@@ -905,12 +905,31 @@ async def test_newer_manual_play_keeps_its_transport_until_stop_when_autoplay_ar
         ).text = "Another synthetic reply."
         lab.pane.action_generate_tts()
         request = lab.app.requests[-1]
+        dispatch = asyncio.Event()
+        run_worker = lab.pane.run_worker
+
+        def queue_worker(work, **kwargs):
+            if kwargs.get("group") != "stts-playback":
+                return run_worker(work, **kwargs)
+
+            async def delayed_play():
+                await dispatch.wait()
+                await (work() if callable(work) else work)
+
+            return run_worker(delayed_play, **kwargs)
+
+        monkeypatch.setattr(lab.pane, "run_worker", queue_worker)
         lab.pane.action_play_audio()
-        await lab.app.workers.wait_for_complete()
-        assert played == [prior]
+        worker = lab.pane._play_worker_task
         await lab.handler.handle_playground_generate(
             STTSPlaygroundGenerateEvent(request)
         )
+        try:
+            assert prior.is_file()
+        finally:
+            dispatch.set()
+        await worker.wait()
+        assert played == [prior]
         await lab.pilot.pause()
         assert players[0].stops == []
         assert not lab.pane.query_one("#stop-audio-btn", Button).disabled
@@ -918,3 +937,69 @@ async def test_newer_manual_play_keeps_its_transport_until_stop_when_autoplay_ar
         await lab.app.workers.wait_for_complete()
         assert lab.pane.current_audio_artifact.operation_id == request.operation_id
         assert played == [prior]
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_covered_speech_preparation_restores_transport_after_modal_close(
+    backend_lab_factory, monkeypatch, tmp_path
+):
+    from textual.screen import ModalScreen
+    from Tests.UI.file_output_fakes import capture_file_playback
+    from tldw_chatbook.TTS.audio_output_runs import FileOutputRun
+
+    played = []
+    capture_file_playback(monkeypatch, played)
+    prepare = FileOutputRun.prepare
+    entered, finish = asyncio.Event(), asyncio.Event()
+
+    async def delayed(path):
+        entered.set()
+        await finish.wait()
+        return await prepare(path)
+
+    monkeypatch.setattr(FileOutputRun, "prepare", delayed)
+    async with backend_lab_factory("kokoro") as lab:
+        path = tmp_path / "prior.wav"
+        path.write_bytes(_wav_sample())
+        lab.pane.current_audio_file = path
+        lab.pane._play_audio()
+        worker = lab.pane._play_worker_task
+        await asyncio.wait_for(entered.wait(), 3)
+        modal = ModalScreen()
+        await lab.app.push_screen(modal)
+        finish.set()
+        await worker.wait()
+        await modal.dismiss()
+        await lab.pilot.pause()
+        assert played == []
+        assert not lab.pane.query_one("#audio-play-btn", Button).disabled
+        assert lab.pane.query_one("#pause-audio-btn", Button).disabled
+        assert lab.pane.query_one("#stop-audio-btn", Button).disabled
+        assert "Playing" not in str(
+            lab.pane.query_one("#audio-player-status", Static).render()
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_speech_play_cancelled_before_worker_dispatch_releases_selection(
+    backend_lab_factory, monkeypatch, tmp_path
+):
+    async with backend_lab_factory("kokoro") as lab:
+        capture, release = Mock(), Mock()
+        path = tmp_path / "prior.wav"
+        path.write_bytes(_wav_sample())
+        lab.pane.current_audio_file = path
+        capture.return_value = path, release
+        monkeypatch.setattr(lab.pane, "_capture_audio_for_action", capture)
+        lab.pane._play_audio()
+        worker = lab.pane._play_worker_task
+        worker.cancel()
+        capture.assert_called_once_with()
+        with pytest.raises(WorkerCancelled):
+            await worker.wait()
+        await lab.pilot.pause()
+        release.assert_called_once_with()
+        assert lab.pane._play_worker_task is None
+        assert not lab.pane.query_one("#audio-play-btn", Button).disabled

@@ -933,7 +933,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # mirror of `pane.script_audio`, resolved alongside `_selected_
         # script` inside `_load_briefings` (see that method).
         self._file_output = FileOutputSurface()
-        self._file_row = None
         self._loaded_script_audio: dict[str, Any] | None = None
         # True only while THIS screen's `wl-audio` worker is running -- the
         # exact sibling of `_cast_in_flight` above, for the same reason:
@@ -11469,14 +11468,30 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if self.is_attached:
                 self._request_briefings_refresh()
 
+    def _file_source_key(self, key):
+        return self._briefings_db(), self._briefing_watchlist_id(), key
+
     def _file_attempt_for(self, key):
-        if self._file_row == (self._briefings_db(), self._briefing_watchlist_id(), key):
-            return self._file_output.latest
+        row = self._file_source_key(key)
+        latest = self._file_output.latest
+        if (
+            latest
+            and latest.source_key == row
+            and latest.lease is None
+            and latest.ticket.is_current()
+        ):
+            return latest
+        active = self._file_output.active
+        if active and active.source_key == row and not active.run.retirement_confirmed:
+            return active
         return None
 
     def _begin_file_output(self, key):
-        self._file_row = self._briefings_db(), self._briefing_watchlist_id(), key
-        return self._file_output.begin(self.app, self.app.audio_output.begin_intent())
+        return self._file_output.begin(
+            self.app,
+            self.app.audio_output.begin_intent(),
+            source_key=self._file_source_key(key),
+        )
 
     @on(PlayAudioRequested)
     def handle_play_audio_requested(self, event: PlayAudioRequested) -> None:
@@ -11494,26 +11509,44 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self.is_attached
                 and self.active_section == "artifacts"
                 and (self.app.screen is self or self._file_output.confirming())
-                and self._file_attempt_for(key) is attempt
+                and attempt.source_key == self._file_source_key(key)
                 and key == event.key
             )
 
-        if self._file_output.latest is not attempt or not current():
+        path = None
+        if self._file_output.latest is attempt and current():
+            path = self._playable_artifact_path(event.key[2])
+        if path is None:
+            attempt.ticket.cancel()
             return
-        file_path = event.key[2]
-        if not file_path or not audio_file_path_is_safe(file_path):
-            return
+
+        async def play():
+            try:
+                await self._file_output.play(attempt, path, "Watchlists", current)
+            finally:
+                if attempt.lease is None:
+                    attempt.ticket.cancel()
+
+        self.run_worker(play, group="watchlists-artifact-play")
+
+    def _playable_artifact_path(self, file_path: str | None) -> Path | None:
         from ...Subscriptions.briefing_audio import briefing_audio_dir
         from ...Utils.path_validation import validate_path
 
+        if not file_path or not audio_file_path_is_safe(file_path):
+            return None
         try:
             path = validate_path(file_path, briefing_audio_dir(), redact_paths=True)
         except ValueError:
-            return
-        if not path.is_file():
-            self._notify_watchlists("This audio file no longer exists on disk.", severity="warning", markup=False)
-            return
-        self.run_worker(self._file_output.play(attempt, path, "Watchlists", current), group="watchlists-artifact-play")
+            return None
+        if path.is_file():
+            return path
+        self._notify_watchlists(
+            "This audio file no longer exists on disk.",
+            severity="warning",
+            markup=False,
+        )
+        return None
 
     @on(StopAudioRequested)
     def handle_stop_audio_requested(self, event: StopAudioRequested) -> None:

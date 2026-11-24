@@ -26,7 +26,7 @@ import unicodedata
 
 from loguru import logger
 from textual.css.query import NoMatches
-from textual.worker import WorkerCancelled
+from textual.worker import WorkerCancelled, WorkerError
 from textual.widgets import Button, RichLog, Static, TextArea
 
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
@@ -647,42 +647,71 @@ class SpeechPlaybackMixin:
             return
         attempt = self._file_output.begin(self.app, ticket)
         artifact = self.current_audio_artifact
+        captured = self._capture_audio_for_action()
+        if captured is None:
+            self.app.notify("No audio file to play", severity="warning")
+            return
+        path, release = captured
+        dispatched = False
         self._sync_active_transport_actions()
         self.query_one("#audio-player-status", Static).update("Playing current result…")
-        self._play_worker_task = self.run_worker(
-            self._play_audio_async(attempt, artifact),
-            group="stts-playback",
-            exclusive=True,
+
+        async def dispatch():
+            nonlocal dispatched
+            dispatched = True
+            await self._play_audio_async(attempt, artifact, path, release)
+
+        def release_undispatched():
+            if not dispatched:
+                release()
+                if self._owns_transport_controls(attempt, artifact):
+                    self._play_worker_task = None
+                    self._restore_idle_transport()
+
+        try:
+            worker = self._play_worker_task = self.run_worker(
+                dispatch, group="stts-playback", exclusive=True
+            )
+        except BaseException:
+            release_undispatched()
+            raise
+
+        # Textual can cancel a queued worker before its coroutine enters.
+        async def observe_dispatch():
+            try:
+                await worker.wait()
+            except WorkerError:
+                pass
+            finally:
+                release_undispatched()
+
+        asyncio.create_task(observe_dispatch())
+
+    def _owns_transport_controls(self, attempt, artifact) -> bool:
+        return (
+            self.is_attached
+            and self._file_output.latest is attempt
+            and self.current_audio_artifact is artifact
         )
 
-    async def _play_audio_async(self, attempt, artifact) -> None:
+    def _restore_idle_transport(self) -> None:
+        self._sync_idle_transport_actions()
+        self.query_one("#audio-player-status", Static).update(
+            self._current_result_status_copy()
+        )
+
+    async def _play_audio_async(self, attempt, artifact, path, release) -> None:
         def current() -> bool:
-            return (
-                self.is_attached
-                and self.current_audio_artifact is artifact
-                and (self.app.screen is self.screen or self._file_output.confirming())
+            return self._owns_transport_controls(attempt, artifact) and (
+                self.app.screen is self.screen or self._file_output.confirming()
             )
 
-        release = None
         try:
             await self._retire_progress_timer()
-            if not current() or self._file_output.latest is not attempt:
+            if not current() or not attempt.ticket.is_current():
+                if self._owns_transport_controls(attempt, artifact):
+                    self._restore_idle_transport()
                 return
-            if not attempt.ticket.is_current():
-                self._sync_idle_transport_actions()
-                self.query_one("#audio-player-status", Static).update(
-                    self._current_result_status_copy()
-                )
-                return
-            captured = self._capture_audio_for_action()
-            if captured is None:
-                self._sync_idle_transport_actions()
-                self.query_one("#audio-player-status", Static).update(
-                    self._current_result_status_copy()
-                )
-                self.app.notify("No audio file to play", severity="warning")
-                return
-            path, release = captured
             if path.suffix.lower() == ".pcm":
                 from tldw_chatbook.TTS.pcm_playback import create_pcm16_wav_copy
 
@@ -731,15 +760,14 @@ class SpeechPlaybackMixin:
                 release=run_release,
                 retain_handoff=self._retain_handoff,
             )
-            if not current() or self._file_output.latest is not attempt:
+            if not self._owns_transport_controls(attempt, artifact):
                 return
             if not started:
-                if not attempt.ticket.is_current():
+                if not current() or not attempt.ticket.is_current():
                     if attempt.lease is None or attempt.run.retirement_confirmed:
-                        self._sync_idle_transport_actions()
-                        self.query_one("#audio-player-status", Static).update(
-                            self._current_result_status_copy()
-                        )
+                        self._restore_idle_transport()
+                    else:
+                        self._sync_blocked_transport_actions()
                     return
                 self.app.notify("Failed to start playback", severity="error")
                 blocked = (
