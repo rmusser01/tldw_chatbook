@@ -498,6 +498,9 @@ DREAMS_TRACKING_RIDERS = (
     "Tests/Backup_Recovery/test_group_issues.py",
     "Tests/Backup_Recovery/test_tokenizer_write_admission.py",
     "Tests/Backup_Recovery/test_finite_db_retirement.py",
+    # TASK-42516 (round 25): the native-76 compatibility file, whole (its one
+    # node left console-p0-gate). Sandboxed, before the Workspaces riders.
+    "Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py",
     "Tests/Workspaces/test_console_workspace_create_handler.py",
     "Tests/Workspaces/test_console_workspace_reconcile.py",
     "Tests/Workspaces/test_workspace_create_modal.py",

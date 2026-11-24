@@ -14,7 +14,8 @@ SELECTION = {
         "Tests/DB/test_response_rules_migration.py::test_historical_migrates_using_installed_sql_without_losing_history[80]",
         "Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics",
         "Tests/Backup_Recovery/test_canvas_recovery_validation.py",
-        "Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py::test_shipped76_staged_failure_rolls_back_checkpoint_rebuild",
+        # TASK-42516 (2026-11-24): test_chachanotes_native76_compatibility.py's
+        # node runs with its whole file in dreams-tracking instead.
         "Tests/Chat/test_console_voice_pair_persistence.py::test_voice_promotion_response_rule_residue_refuses_without_mutation",
         "Tests/DB/test_private_sqlite_inventory.py::test_response_rule_import_dispatch_is_exact_and_validated",
     ],

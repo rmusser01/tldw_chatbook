@@ -1192,6 +1192,8 @@ jobs:
       # append rule (18, 5.7 s) and its real-planner tests (28, 66.9 s), and the
       # continuation destination identity (8, 21.7 s), serially with this
       # step's flags at load 55-61.
+      # TASK-42516 (round 25, 2026-11-24): the native-76 compatibility node
+      # moved to dreams-tracking, where its whole file now runs.
       - name: Run the sandboxed Console P0 regression tests
         if: ${{ !cancelled() && matrix.profile == 'sandboxed' }}
         run: |
@@ -1223,7 +1225,6 @@ jobs:
             "Tests/DB/test_response_rules_migration.py::test_historical_migrates_using_installed_sql_without_losing_history[80]" \
             Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics \
             Tests/Backup_Recovery/test_canvas_recovery_validation.py \
-            Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py::test_shipped76_staged_failure_rolls_back_checkpoint_rebuild \
             Tests/Chat/test_console_voice_pair_persistence.py::test_voice_promotion_response_rule_residue_refuses_without_mutation \
             Tests/DB/test_private_sqlite_inventory.py::test_response_rule_import_dispatch_is_exact_and_validated \
             Tests/Dreams/test_query_synthesis.py \
@@ -1556,6 +1557,12 @@ jobs:
     # (the v75 file is also marked), so after Tool_Packs; run sandboxed with a
     # RecoveryRequired recorder, neither read config. 50 tests 27.2 s and
     # 6 tests 4.5 s serially with this step's flags at load 13-14.
+    # TASK-42516 also moves the native-76 compatibility file here whole (red on
+    # dev unseen; one node was in console-p0-gate's sandboxed step, removed
+    # there so none runs twice). Sandboxed with no config read (recorder), so
+    # before Tool_Packs, and with the Backup_Recovery files ahead of the
+    # Workspaces riders. 46 tests, 52.9 s serially with this step's flags at
+    # load 20-28.
     name: Dreams tracking tests and unlaned riders
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -1590,6 +1597,7 @@ jobs:
             Tests/Backup_Recovery/test_group_issues.py \
             Tests/Backup_Recovery/test_tokenizer_write_admission.py \
             Tests/Backup_Recovery/test_finite_db_retirement.py \
+            Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py \
             Tests/Workspaces/test_console_workspace_create_handler.py \
             Tests/Workspaces/test_console_workspace_reconcile.py \
             Tests/Workspaces/test_workspace_create_modal.py \
