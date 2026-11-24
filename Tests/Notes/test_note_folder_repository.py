@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 import pytest
 
 import tldw_chatbook.Notes.note_folder_repository as folder_repository_module
+from Tests.Notes.sqlite_contention_support import wal_restarted_between_read_and_write
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.Notes.note_folder_models import (
     FolderPlacementId,
@@ -3020,53 +3021,6 @@ def test_contention_inside_a_callers_transaction_is_never_retried(
     assert _active_manual_rows(repository, folder.folder_id, note_id) == []
 
 
-@contextmanager
-def _wal_restarted_after_the_first_read(
-    repository: LocalNoteFolderRepository,
-) -> Iterator[list[tuple[int, int, int]]]:
-    """Restart the WAL from a second connection once this thread's next
-    transaction has taken its read snapshot.
-
-    N-24's measured cause: every finite worker retires its thread's
-    connection through ``close_connection``, whose ``PRAGMA
-    wal_checkpoint(TRUNCATE)`` restarts the WAL header. A DEFERRED
-    transaction on another thread that has already read then fails its first
-    write with SQLITE_BUSY_SNAPSHOT (517) -- no other writer needed, and
-    SQLite's busy handler is never consulted for that code. The checkpointer
-    waits on nothing (``timeout=0``), so against a transaction that already
-    holds the write lock it falls back to a passive checkpoint.
-    """
-    checkpointer = sqlite3.connect(
-        repository.db.db_path_str, timeout=0, isolation_level=None
-    )
-    # Every frame is backfilled first, so the next reader reads the database
-    # file alone -- exactly the state a just-closed worker leaves behind.
-    checkpointer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-    connection = repository.db.get_connection()
-    restarts: list[tuple[int, int, int]] = []
-    read_started = False
-
-    def on_statement(sql: str) -> None:
-        nonlocal read_started
-        if restarts:
-            return
-        if read_started:
-            restarts.append(
-                tuple(
-                    checkpointer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-                )
-            )
-        elif sql.lstrip().upper().startswith(("SELECT", "WITH")):
-            read_started = True
-
-    connection.set_trace_callback(on_statement)
-    try:
-        yield restarts
-    finally:
-        connection.set_trace_callback(None)
-        checkpointer.close()
-
-
 def _owner_rows(repository: LocalNoteFolderRepository, owner_id: str) -> list[tuple]:
     return [
         tuple(row)
@@ -3225,7 +3179,7 @@ def test_a_wal_restart_after_the_first_read_cannot_fail_a_mutation(
     flag is 1), and the mutation's write lands."""
     mutate, landed = case(repository)
 
-    with _wal_restarted_after_the_first_read(repository) as restarts:
+    with wal_restarted_between_read_and_write(repository.db) as restarts:
         mutate()
 
     assert len(restarts) == 1, "the WAL restart never ran"

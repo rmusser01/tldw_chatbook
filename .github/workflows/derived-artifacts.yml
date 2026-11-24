@@ -1465,6 +1465,11 @@ jobs:
     # before a sandboxed target. 55 tests: the first 47 took 63-72 s serially
     # at load 14-18, 54 took 138-140 s at load 37-64 and all 55 188 s at load
     # 71-92; at 2.6x the quiet time (~3.7 min) the job keeps ~6.5 min headroom.
+    # TASK-34000.84 (2026-11-23): the ChaChaNotes read-then-write contention
+    # table (sandboxed, so before Tool_Packs; 130 tests, 83.2 s serially at
+    # load 39-41, 74.0 s for 121 of them at load 30-34) forces a committed
+    # write and a held write lock into every fixed site. The whole step:
+    # 881 tests, 1035.5 s at load 52-75 (875 took 741.8 s at load 30-48).
     name: Dreams tracking tests and unlaned riders
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -1490,6 +1495,7 @@ jobs:
             Tests/Workspaces/test_console_workspace_reconcile.py \
             Tests/Workspaces/test_workspace_create_modal.py \
             Tests/Notes/test_agent_lessons_seed.py \
+            Tests/Notes/test_chachanotes_read_then_write_contention.py \
             Tests/Tool_Packs \
             Tests/Backup_Recovery/test_character_presentation_cadence.py \
             --timeout=180 \

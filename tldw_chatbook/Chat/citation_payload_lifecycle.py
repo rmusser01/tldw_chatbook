@@ -618,7 +618,7 @@ class CitationPayloadLifecycle:
         trace_until: tuple[str, str] | None = None
         tombstone_after: tuple[str, str, str] | None = None
         tombstone_until: tuple[str, str, str] | None = None
-        with self.repository.db.transaction() as cursor:
+        with self.repository.db.transaction(immediate=True) as cursor:
             identity = self.repository._require_active_write_cursor(cursor)
             cursor_state = _decode_collection_cursor(
                 validated_cursor,

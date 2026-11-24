@@ -1410,8 +1410,8 @@ def test_a_wal_restart_after_the_first_read_cannot_fail_a_local_first_move(
     ``BEGIN IMMEDIATE`` never runs. Each outer transaction takes the write
     lock first, so a WAL restart (any finite worker closing its connection)
     after its first read can no longer fail it with SQLITE_BUSY_SNAPSHOT."""
-    from Tests.Notes.test_note_folder_repository import (
-        _wal_restarted_after_the_first_read,
+    from Tests.Notes.sqlite_contention_support import (
+        wal_restarted_between_read_and_write,
     )
 
     _, _, notes, state = _stores(tmp_path)
@@ -1419,7 +1419,7 @@ def test_a_wal_restart_after_the_first_read_cannot_fail_a_local_first_move(
     folders = LocalNoteFolderRepository(notes)
     mutate, landed = case(service, folders, notes)
 
-    with _wal_restarted_after_the_first_read(folders) as restarts:
+    with wal_restarted_between_read_and_write(notes) as restarts:
         mutate()
 
     assert len(restarts) == 1, "the WAL restart never ran"

@@ -711,7 +711,7 @@ class CitationLegacyMigrationService:
                     reason_code="legacy_terminal_transition_invalid",
                 )
             now = datetime.now(UTC).isoformat()
-            with self.db.transaction() as cursor:
+            with self.db.transaction(immediate=True) as cursor:
                 self.repository._require_repository_cursor(cursor)
                 changed = cursor.execute(
                     """
@@ -752,7 +752,7 @@ class CitationLegacyMigrationService:
                 ),
             )
         now = datetime.now(UTC).isoformat()
-        with self.db.transaction() as cursor:
+        with self.db.transaction(immediate=True) as cursor:
             self.repository._require_repository_cursor(cursor)
             inserted = cursor.execute(
                 """
@@ -939,7 +939,7 @@ class CitationLegacyMigrationService:
         claimed_generation = expected_generation + 1
         next_cursor = batch_ids[-1] if batch_ids else cursor_after
         try:
-            with self.db.transaction() as cursor:
+            with self.db.transaction(immediate=True) as cursor:
                 self.repository._require_repository_cursor(cursor)
                 if journal is None:
                     claimed = cursor.execute(
@@ -1083,7 +1083,7 @@ class CitationLegacyMigrationService:
 
         completed_at = datetime.now(UTC).isoformat()
         try:
-            with self.db.transaction() as cursor:
+            with self.db.transaction(immediate=True) as cursor:
                 self.repository._require_repository_cursor(cursor)
                 completed = cursor.execute(
                     """
@@ -1150,7 +1150,7 @@ class CitationLegacyMigrationService:
                 reason_code="legacy_package_record_invalid",
             )
         try:
-            with self.db.transaction() as cursor:
+            with self.db.transaction(immediate=True) as cursor:
                 self.repository._require_repository_cursor(cursor)
                 message = cursor.execute(
                     """
@@ -1516,7 +1516,7 @@ class CitationLegacyMigrationService:
             raise CitationPersistenceUnavailable(
                 "citation_identity_context_unavailable"
             )
-        with self.db.transaction() as cursor:
+        with self.db.transaction(immediate=True) as cursor:
             self.repository._require_repository_cursor(cursor)
             row = cursor.execute(
                 """

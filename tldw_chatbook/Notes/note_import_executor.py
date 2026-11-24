@@ -280,7 +280,7 @@ class LocalNoteImportTarget:
         try:
             _validate_opaque_id(note_id)
             _validate_payload(payload)
-            with self._db.transaction() as cursor:
+            with self._db.transaction(immediate=True) as cursor:
                 existing = self._read_note(cursor, note_id)
                 if existing is not None:
                     if _note_matches(existing, payload):
@@ -312,7 +312,7 @@ class LocalNoteImportTarget:
             _validate_opaque_id(note_id)
             _validate_expected_version(expected_version)
             _validate_payload(payload)
-            with self._db.transaction() as cursor:
+            with self._db.transaction(immediate=True) as cursor:
                 current = self._read_note(cursor, note_id)
                 if current is None:
                     raise ImportTargetConflictError from None
@@ -368,7 +368,7 @@ class LocalNoteImportTarget:
         try:
             _validate_opaque_id(note_id)
             desired = _normalize_keywords(keywords)
-            with self._db.transaction() as cursor:
+            with self._db.transaction(immediate=True) as cursor:
                 if not self._active_note_exists(cursor, note_id):
                     raise ImportTargetPermanentError from None
                 self._sync_normalized_keywords(cursor, note_id, desired)

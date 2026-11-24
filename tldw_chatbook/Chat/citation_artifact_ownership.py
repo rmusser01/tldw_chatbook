@@ -330,7 +330,7 @@ class CitationArtifactOwnershipCoordinator:
 
         if self.backend_mode is not ArtifactBackendMode.SHARED_DATABASE:
             raise ValueError("shared_database_owner_contract_required")
-        with self.trace_repository.db.transaction() as cursor:
+        with self.trace_repository.db.transaction(immediate=True) as cursor:
             validated = (
                 self.trace_repository.validate_shared_database_artifact_owner_operation(
                     cursor,

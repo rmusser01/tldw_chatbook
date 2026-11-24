@@ -1262,10 +1262,10 @@ class ChatPersistenceService:
     def save_conversation_mixin_preferences(
         self, *, conversation_id: str, expected_revision: int, value: "MixinPreferences"
     ) -> "MixinPreferences":
-        """CAS one preference component in its native owned transaction."""
+        """CAS one preference component in its native owned IMMEDIATE transaction."""
         from tldw_chatbook.DB.console_prompt_mixins import save_preferences
 
-        with operation_owned_connection(self.db), self.db.transaction() as cursor:
+        with operation_owned_connection(self.db), self.db.transaction(immediate=True) as cursor:
             return save_preferences(
                 cursor, conversation_id, expected_revision=expected_revision, value=value
             )

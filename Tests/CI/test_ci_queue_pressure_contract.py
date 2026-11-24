@@ -469,6 +469,8 @@ DREAMS_TRACKING_RIDERS = (
     "Tests/Workspaces/test_workspace_create_modal.py",
     # TASK-42412: sandboxed, so before Tool_Packs.
     "Tests/Notes/test_agent_lessons_seed.py",
+    # TASK-34000.84: sandboxed, so before Tool_Packs.
+    "Tests/Notes/test_chachanotes_read_then_write_contention.py",
     "Tests/Tool_Packs",
     # TASK-42468: bootstrap_profile, so after Tool_Packs (nothing sandboxed
     # may follow it).

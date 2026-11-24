@@ -228,7 +228,7 @@ class VisualIdentityRepository:
         if pack.get("active_version_id") is not None:
             raise ValueError("visual_identity_pack_active_version_mismatch")
 
-        with self.db.transaction():
+        with self.db.transaction(immediate=True):
             if (
                 require_unbound_actor
                 and self._validate_existing_actor_binding(actor_kind, str(actor_id))
@@ -380,7 +380,7 @@ class VisualIdentityRepository:
         self._validate_actor(actor_kind, actor_id)
         self._validate_asset_candidates(assets, pack_id)
 
-        with self.db.transaction():
+        with self.db.transaction(immediate=True):
             pack_row = self.db.execute_query(
                 """
                 SELECT *
@@ -543,7 +543,7 @@ class VisualIdentityRepository:
         Raises:
             ValueError: If the active binding is absent or references another pack.
         """
-        with self.db.transaction():
+        with self.db.transaction(immediate=True):
             row = self.db.execute_query(
                 """
                 SELECT *
@@ -734,7 +734,7 @@ class VisualIdentityRepository:
     def _set_pack_status(
         self, pack_id: int, status: str, *, include_deleted: bool
     ) -> dict[str, Any]:
-        with self.db.transaction():
+        with self.db.transaction(immediate=True):
             row = self.db.execute_query(
                 """
                 SELECT *

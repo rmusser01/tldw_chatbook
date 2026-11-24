@@ -10068,7 +10068,7 @@ DELETE FROM keywords
         now = self._get_current_utc_timestamp_iso()
 
         try:
-            with self.transaction() as conn:
+            with self.transaction(immediate=True) as conn:
                 logger.debug(f"Transaction started. Connection object: {id(conn)}")
 
                 # Initial version check. This also confirms the record exists and is not deleted.
@@ -10339,7 +10339,7 @@ DELETE FROM keywords
         params = (now, next_version_val, self.client_id, character_id, expected_version)
 
         try:
-            with self.transaction() as conn:
+            with self.transaction(immediate=True) as conn:
                 try:
                     current_db_version = self._get_current_db_version(
                         conn, "character_cards", "id", character_id
@@ -17587,7 +17587,7 @@ DELETE FROM keywords
             transaction = (
                 contextlib.nullcontext(cursor)
                 if cursor is not None
-                else self.transaction()
+                else self.transaction(immediate=True)
             )
             with transaction as conn:
                 # Check if a soft-deleted item exists and undelete it
@@ -17858,7 +17858,7 @@ DELETE FROM keywords
             transaction = (
                 contextlib.nullcontext(cursor)
                 if cursor is not None
-                else self.transaction()
+                else self.transaction(immediate=True)
             )
             with transaction as conn:
                 # Explicit pre-check. _get_current_db_version raises ConflictError if not found or soft-deleted.
@@ -17971,7 +17971,7 @@ DELETE FROM keywords
             transaction = (
                 contextlib.nullcontext(cursor)
                 if cursor is not None
-                else self.transaction()
+                else self.transaction(immediate=True)
             )
             with transaction as conn:
                 try:
@@ -20154,7 +20154,7 @@ DELETE FROM keywords
             transaction = (
                 contextlib.nullcontext(cursor)
                 if cursor is not None
-                else self.transaction()
+                else self.transaction(immediate=True)
             )
             with transaction as owner_cursor:
                 return self._update_note_with_cursor(
@@ -20669,7 +20669,7 @@ DELETE FROM keywords
         )
         now_iso = self._get_current_utc_timestamp_iso()
         try:
-            with self.transaction() as conn:
+            with self.transaction(immediate=True) as conn:
                 existing_rows = conn.execute(
                     "SELECT keyword_id FROM conversation_keywords WHERE conversation_id = ?",
                     (conversation_id,),

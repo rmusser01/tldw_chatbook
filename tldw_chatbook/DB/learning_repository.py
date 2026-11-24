@@ -4,6 +4,11 @@ TASK-36949.2: moved out of ``CharactersRAGDB`` as a repository that runs on the
 database's own connection and joins its managed ``transaction()``; it opens no
 connection and no transaction of its own. Reach it through ``db.learning``.
 Method bodies are unchanged apart from ``self.<db member>`` -> ``self.db.<member>``.
+
+TASK-34000.84: every method that reads before it writes opens its transaction
+with ``immediate=True``. A DEFERRED one that has read fails its first write at
+once (SQLITE_BUSY_SNAPSHOT or SQLITE_BUSY, no busy wait) when another
+connection commits, restarts the WAL or holds the write lock in between.
 """
 
 from __future__ import annotations
@@ -114,7 +119,7 @@ class LearningRepository:
 
         card_id = self.db._generate_uuid()
 
-        with self.db.transaction() as cursor:
+        with self.db.transaction(immediate=True) as cursor:
             deck_row = cursor.execute(
                 "SELECT id FROM decks WHERE id = ? AND is_deleted = 0",
                 (deck_id,),
@@ -198,7 +203,7 @@ class LearningRepository:
     ) -> bool:
         """Update local flashcard content/metadata with optional optimistic locking."""
         try:
-            with self.db.transaction() as cursor:
+            with self.db.transaction(immediate=True) as cursor:
                 row = cursor.execute(
                     """
                     SELECT deck_id, version, is_deleted, metadata
@@ -321,7 +326,7 @@ class LearningRepository:
         if rating < 0 or rating > 5:
             raise InputError("Rating must be between 0 and 5")
 
-        with self.db.transaction() as cursor:
+        with self.db.transaction(immediate=True) as cursor:
             # Get current card data
             cursor.execute(
                 """
@@ -533,7 +538,7 @@ class LearningRepository:
     ) -> bool:
         """Update flashcard deck metadata with optional optimistic locking."""
         try:
-            with self.db.transaction() as cursor:
+            with self.db.transaction(immediate=True) as cursor:
                 row = cursor.execute(
                     "SELECT version, is_deleted FROM decks WHERE id = ?",
                     (deck_id,),
@@ -589,7 +594,7 @@ class LearningRepository:
     ) -> bool:
         """Delete a flashcard and refresh the owning deck count."""
         try:
-            with self.db.transaction() as cursor:
+            with self.db.transaction(immediate=True) as cursor:
                 row = cursor.execute(
                     "SELECT deck_id, version, is_deleted FROM flashcards WHERE id = ?",
                     (card_id,),
@@ -639,7 +644,7 @@ class LearningRepository:
     ) -> bool:
         """Move a flashcard between decks and refresh both deck counts."""
         try:
-            with self.db.transaction() as cursor:
+            with self.db.transaction(immediate=True) as cursor:
                 target_row = cursor.execute(
                     "SELECT id FROM decks WHERE id = ? AND is_deleted = 0",
                     (target_deck_id,),
@@ -693,7 +698,7 @@ class LearningRepository:
         """Soft-delete or hard-delete a deck, tombstoning its name on soft delete."""
         tombstone_name = f"__deleted_deck__:{deck_id}"
         try:
-            with self.db.transaction() as cursor:
+            with self.db.transaction(immediate=True) as cursor:
                 row = cursor.execute(
                     "SELECT version, is_deleted FROM decks WHERE id = ?",
                     (deck_id,),
@@ -865,7 +870,7 @@ class LearningRepository:
     ) -> Optional[Dict[str, Any]]:
         """Update a local flashcard template using optimistic locking when supplied."""
         try:
-            with self.db.transaction() as cursor:
+            with self.db.transaction(immediate=True) as cursor:
                 row = cursor.execute(
                     "SELECT * FROM flashcard_templates WHERE id = ? AND deleted = 0",
                     (str(template_id),),
@@ -939,7 +944,7 @@ class LearningRepository:
     ) -> bool:
         """Soft-delete a local flashcard template."""
         try:
-            with self.db.transaction() as cursor:
+            with self.db.transaction(immediate=True) as cursor:
                 row = cursor.execute(
                     "SELECT version, deleted FROM flashcard_templates WHERE id = ?",
                     (str(template_id),),
@@ -1583,7 +1588,7 @@ class LearningRepository:
 
         now = self.db._get_current_utc_timestamp_iso()
         try:
-            with self.db.transaction() as conn:
+            with self.db.transaction(immediate=True) as conn:
                 row = conn.execute(
                     "SELECT version FROM quizzes WHERE id = ? AND deleted = 0",
                     (quiz_id,),
@@ -1620,7 +1625,7 @@ class LearningRepository:
         """Soft-delete or hard-delete a quiz."""
         now = self.db._get_current_utc_timestamp_iso()
         try:
-            with self.db.transaction() as conn:
+            with self.db.transaction(immediate=True) as conn:
                 row = conn.execute(
                     "SELECT version, deleted FROM quizzes WHERE id = ?",
                     (quiz_id,),
@@ -1691,7 +1696,7 @@ class LearningRepository:
         normalized_penalty = max(0, int(hint_penalty_points or 0))
 
         try:
-            with self.db.transaction() as conn:
+            with self.db.transaction(immediate=True) as conn:
                 quiz_row = conn.execute(
                     "SELECT id FROM quizzes WHERE id = ? AND deleted = 0",
                     (quiz_id,),
@@ -1891,7 +1896,7 @@ class LearningRepository:
 
         now = self.db._get_current_utc_timestamp_iso()
         try:
-            with self.db.transaction() as conn:
+            with self.db.transaction(immediate=True) as conn:
                 row = conn.execute(
                     "SELECT version, quiz_id FROM quiz_questions WHERE id = ? AND deleted = 0",
                     (question_id,),
@@ -1930,7 +1935,7 @@ class LearningRepository:
         """Delete a quiz question and refresh the owning quiz question count."""
         now = self.db._get_current_utc_timestamp_iso()
         try:
-            with self.db.transaction() as conn:
+            with self.db.transaction(immediate=True) as conn:
                 row = conn.execute(
                     "SELECT quiz_id, version, deleted FROM quiz_questions WHERE id = ?",
                     (question_id,),
@@ -1968,7 +1973,7 @@ class LearningRepository:
         """Start a new quiz attempt and snapshot the current question set."""
         now = self.db._get_current_utc_timestamp_iso()
         try:
-            with self.db.transaction() as conn:
+            with self.db.transaction(immediate=True) as conn:
                 quiz_row = conn.execute(
                     "SELECT id FROM quizzes WHERE id = ? AND deleted = 0",
                     (quiz_id,),
@@ -2028,7 +2033,7 @@ class LearningRepository:
         """Submit and grade a quiz attempt."""
         now = self.db._get_current_utc_timestamp_iso()
         try:
-            with self.db.transaction() as conn:
+            with self.db.transaction(immediate=True) as conn:
                 row = conn.execute(
                     "SELECT quiz_id, started_at, total_possible, questions_snapshot, answers FROM quiz_attempts WHERE id = ?",
                     (attempt_id,),
