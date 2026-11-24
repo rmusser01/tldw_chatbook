@@ -23,12 +23,29 @@ from .controlled_wav_profile import (
 )
 from .controlled_wav_progress import (
     FRESH_S,
+    STARTUP_S,
     ProgressClock,
     ProgressObservation,
     StatsReader,
 )
 
-_spawn = subprocess.Popen
+
+class _IncompleteBirth(Exception):
+    """Retain CPython's constructor object when its native post-birth cleanup fails."""
+
+    def __init__(self, child):
+        self.child = child
+
+
+def _spawn(argv, **options):
+    child = subprocess.Popen.__new__(subprocess.Popen)
+    try:
+        child.__init__(argv, **options)
+    except Exception:
+        raise _IncompleteBirth(child) from None
+    return child
+
+
 _now = time.perf_counter
 _SETTLE_S = 0.250
 _STOP_WAIT_S = 1.5
@@ -129,13 +146,20 @@ class ControlledWavPlayback:
         """Commit an already prepared attempt to the exact current output lease."""
         if self._lease is not None or self.already_at_end or self._stop.is_set():
             raise ControlledWavError("attempt_not_startable")
-        if not isinstance(lease, AudioOutputLease) or not lease.is_current():
+        if not isinstance(lease, AudioOutputLease) or not lease.authorizes(self.retire):
             self._interrupt()
             raise ControlledWavError("lease_revoked")
         self._lease = lease
         self._command.set()
         try:
-            await asyncio.shield(self._started)
+            await asyncio.wait_for(asyncio.shield(self._started), STARTUP_S)
+        except TimeoutError:
+            interrupted = self._interrupted()
+            self._interrupt()
+            self._publish(
+                CompletionKind.STOPPED if interrupted else CompletionKind.UNCERTAIN,
+                "interrupted" if interrupted else "startup_deadline_exceeded",
+            )
         except asyncio.CancelledError:
             self._interrupt()
             raise
@@ -176,10 +200,8 @@ class ControlledWavPlayback:
             if not self._loop.is_closed():
                 raise
 
-    def _finish(self, kind: CompletionKind, reason: str, retired: bool) -> None:
+    def _publish(self, kind: CompletionKind, reason: str) -> None:
         if not self._completion.done():
-            if kind is not CompletionKind.ALREADY_AT_END and self._interrupted():
-                kind, reason = CompletionKind.STOPPED, "interrupted"
             clock = self._clock
             last = clock.last if clock else None
             evidence = PlaybackEvidence(
@@ -204,8 +226,16 @@ class ControlledWavPlayback:
                     evidence,
                 )
             )
-        if retired and self._lease:
-            self._lease.release()
+
+    def _finish(self, kind: CompletionKind, reason: str, retired: bool) -> None:
+        if kind is not CompletionKind.ALREADY_AT_END and self._interrupted():
+            kind, reason = CompletionKind.STOPPED, "interrupted"
+        self._publish(kind, reason)
+        if self._lease:
+            if retired:
+                self._lease.release()
+            else:
+                self._lease.revoke()
         if not self._retired.done():
             self._retired.set_result(retired)
 
@@ -268,6 +298,7 @@ class ControlledWavPlayback:
         child = reader = None
         ready = False
         clean = True
+        birth_unknown = False
         kind, reason = CompletionKind.FAILED, "controlled_prepare_failed"
         try:
             exe, *pins = prepare_files(self._artifact, self._bookmark, executable)
@@ -303,7 +334,7 @@ class ControlledWavPlayback:
                 "audio",
                 "-ss",
                 f"{self._bookmark.frame/RATE:.6f}",
-                str(self._artifact.path),
+                str(pins[-1].physical_path),
             ]
             # Linearization point: all native custody was published before
             # this final check. A revocation during Popen must await its result.
@@ -311,14 +342,25 @@ class ControlledWavPlayback:
                 kind, reason = CompletionKind.STOPPED, "interrupted"
                 return
             reason = "player_start_failed"
-            child = _spawn(
-                argv,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                bufsize=0,
-                env=env,
-            )
+            try:
+                child = _spawn(
+                    argv,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    bufsize=0,
+                    env=env,
+                )
+            except Exception as error:
+                # Windows Popen can raise after CreateProcess but before it
+                # publishes the process/thread handles or checks pipe closes.
+                birth_unknown = True
+                self._unconfirmed_pins = pins
+                if isinstance(error, _IncompleteBirth):
+                    self._partial_birth = error.child
+                    if getattr(error.child, "_handle", None) is not None:
+                        child = error.child
+                return
             reader = threading.Thread(
                 target=self._read, args=(child.stderr, clock), daemon=True
             )
@@ -335,11 +377,17 @@ class ControlledWavPlayback:
                 self._reap(child)
                 if reader is not None and reader.ident is not None:
                     reader.join()
+                if child.stderr is not None:
+                    try:
+                        child.stderr.close()
+                    except OSError:
+                        clean = False
+                        self._unclosed_pipe = child.stderr
                 try:
-                    child.stderr.close()
+                    child._handle.Close()  # Windows Popen.wait leaves this kernel HANDLE open.
                 except OSError:
                     clean = False
-                    self._unclosed_pipe = child.stderr
+                    self._unclosed_process_handle = child._handle
                 if kind is CompletionKind.NATURAL and not (
                     self._reader_ok and self._clock.natural_candidate(self._reaped_at)
                 ):
@@ -348,15 +396,20 @@ class ControlledWavPlayback:
                         "terminal_progress_unconfirmed",
                     )
                 time.sleep(max(0.0, _SETTLE_S - (_now() - self._reaped_at)))
-            for pin in reversed(pins):
-                if not pin.close():
-                    clean = False
+            if not birth_unknown:
+                for pin in reversed(pins):
+                    if not pin.close():
+                        clean = False
+            else:
+                clean = False
             if clean:
                 self._retired_at = _now()
             else:
                 kind, reason = (
                     CompletionKind.UNCERTAIN,
-                    "resource_retirement_unconfirmed",
+                    "player_birth_unconfirmed"
+                    if birth_unknown
+                    else "resource_retirement_unconfirmed",
                 )
             self._post(self._finish, kind, reason, clean)
             if not ready:

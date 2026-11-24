@@ -4,6 +4,7 @@ import asyncio
 import os
 import queue
 import threading
+from pathlib import Path
 from dataclasses import replace
 
 import pytest
@@ -26,6 +27,14 @@ class Child:
         self.entered_read = threading.Event()
         self.done = threading.Event()
         self.closed = False
+        self._handle = self.Handle()
+
+    class Handle:
+        def __init__(self):
+            self.closed = False
+
+        def Close(self):
+            self.closed = True
 
     def read(self, size):
         self.entered_read.set()
@@ -87,8 +96,11 @@ async def test_early_exit_and_exact_argv(retained, monkeypatch, code, expected):
     await run.start(await host.acquire("article", run.retire))
     result = await asyncio.wait_for(run.completion, 5)
     assert result.kind.value == expected and result.bookmark.frame == 2400
-    assert args == [
-        str(exe),
+    assert Path(args[0]).samefile(exe) and Path(args[-1]).samefile(artifact.path)
+    assert args[0].startswith("\\\\?\\Volume{") and args[-1].startswith(
+        "\\\\?\\Volume{"
+    )
+    assert args[1:-1] == [
         "-nodisp",
         "-autoexit",
         "-stats",
@@ -96,9 +108,8 @@ async def test_early_exit_and_exact_argv(retained, monkeypatch, code, expected):
         "audio",
         "-ss",
         "0.050000",
-        str(artifact.path),
     ]
-    assert child.closed and host.owner is None
+    assert child.closed and child._handle.closed and host.owner is None
     assert "FFREPORT" not in supplied_env[0]
 
 
@@ -287,3 +298,143 @@ async def test_startup_telemetry_deadline_reaps_child_without_inventing_position
     assert result.kind.value == "uncertain" and result.reason == "progress_unavailable"
     assert result.bookmark.frame == 960
     assert child.done.is_set() and host.owner is None
+
+
+async def test_current_lease_cannot_launch_another_prepared_run(retained, monkeypatch):
+    exe, artifact, bookmark = retained
+    child, births = Child(), []
+
+    def launch(*args, **kwargs):
+        births.append(True)
+        return child
+
+    monkeypatch.setattr(playback, "_spawn", launch)
+    first = await playback.ControlledWavPlayback.prepare(
+        artifact, bookmark, executable=exe
+    )
+    other = await playback.ControlledWavPlayback.prepare(
+        artifact, bookmark, executable=exe
+    )
+    host = AudioOutputOwnership()
+    lease = await host.acquire("article", first.retire)
+    try:
+        await first.start(lease)
+        with pytest.raises(playback.ControlledWavError):
+            await other.start(lease)
+        assert await other.retire()
+        assert births == [True] and lease.is_current() and host.owner == "article"
+    finally:
+        await first.retire()
+        await other.retire()
+
+
+async def test_held_launch_times_out_logically_but_keeps_physical_custody(
+    retained, monkeypatch
+):
+    exe, artifact, bookmark = retained
+    child, entered, proceed = Child(), threading.Event(), threading.Event()
+
+    def launch(*args, **kwargs):
+        entered.set()
+        assert proceed.wait(5)
+        return child
+
+    monkeypatch.setattr(playback, "_spawn", launch)
+    monkeypatch.setattr(playback, "STARTUP_S", 0.15, raising=False)
+    monkeypatch.setattr(playback, "_STOP_WAIT_S", 0.05)
+    run = await playback.ControlledWavPlayback.prepare(
+        artifact, bookmark, executable=exe
+    )
+    host = AudioOutputOwnership()
+    lease = await host.acquire("article", run.retire)
+    task = asyncio.create_task(run.start(lease))
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        result = await asyncio.wait_for(run.completion, 1)
+        assert result.kind.value == "uncertain" and result.bookmark.frame == 0
+        assert (
+            result.evidence.retired_at_s is None
+            and lease.revoked
+            and host.owner == "article"
+        )
+        await task
+        assert not await run.retire()
+    finally:
+        proceed.set()
+        await task
+    monkeypatch.setattr(playback, "_STOP_WAIT_S", 1.5)
+    assert await run.retire() and child.done.is_set() and host.owner is None
+
+
+@pytest.mark.parametrize("known_child", [False, True])
+async def test_ambiguous_process_birth_refuses_replacement(
+    retained, monkeypatch, known_child
+):
+    exe, artifact, bookmark = retained
+    # Hold the real pin objects for deliberate cleanup of a simulated birth.
+    captured = []
+    original = playback.prepare_files
+
+    def prepare(*args):
+        result = original(*args)
+        captured.extend(result[1:])
+        return result
+
+    def partial_launch(*args, **kwargs):
+        raise OSError("simulated failure following native process birth")
+
+    monkeypatch.setattr(playback, "prepare_files", prepare)
+    births = []
+    if known_child:
+
+        class PartialChild(Child):
+            def __init__(self, *args, **kwargs):
+                super().__init__()
+                births.append(self)
+                partial_launch()
+
+        monkeypatch.setattr(playback.subprocess, "Popen", PartialChild)
+    else:
+        monkeypatch.setattr(playback, "_spawn", partial_launch)
+    run = await playback.ControlledWavPlayback.prepare(
+        artifact, bookmark, executable=exe
+    )
+    host = AudioOutputOwnership()
+    try:
+        await run.start(await host.acquire("article", run.retire))
+        result = await run.completion
+        assert result.kind.value == "uncertain" and result.evidence.retired_at_s is None
+        if known_child:
+            (child,) = births
+            assert child.done.is_set() and child._handle.closed and child.closed
+        with pytest.raises(RuntimeError, match="blocked"):
+            await host.acquire("other", run.retire)
+        with pytest.raises(OSError):
+            artifact.path.unlink()
+    finally:
+        for pin in captured:
+            pin.close()
+
+
+async def test_ambiguous_process_handle_close_keeps_custody_after_reap(
+    retained, monkeypatch
+):
+    exe, artifact, bookmark = retained
+    child = Child()
+    child.exit(0)
+
+    def refuse():
+        raise OSError("ambiguous close")
+
+    child._handle.Close = refuse
+    monkeypatch.setattr(playback, "_spawn", lambda *a, **kw: child)
+    run = await playback.ControlledWavPlayback.prepare(
+        artifact, bookmark, executable=exe
+    )
+    host = AudioOutputOwnership()
+    await run.start(await host.acquire("article", run.retire))
+    result = await run.completion
+    assert (
+        result.evidence.reaped_at_s is not None and result.evidence.retired_at_s is None
+    )
+    assert not await run.retire() and host.owner == "article"

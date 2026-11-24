@@ -98,6 +98,11 @@ class ProgressClock:
             if (
                 stamp < self.last.observed_at_s
                 or frame <= self.last_physical_frame
+                or abs(
+                    (frame - self.last_physical_frame) / RATE
+                    - (stamp - self.last.observed_at_s)
+                )
+                > MAX_SKEW_S
                 or self.expired(stamp)
             ):
                 return

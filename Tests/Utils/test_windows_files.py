@@ -74,6 +74,49 @@ def test_read_pin_blocks_content_change_and_ancestor_move(tmp_path):
 
 
 @native
+def test_read_pin_refuses_substituted_root_without_modifying_drive_map(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Utils import windows_files
+
+    source = tmp_path / "data"
+    source.write_bytes(b"contents")
+    monkeypatch.setattr(
+        windows_files,
+        "_volume_root_name",
+        lambda handle: "\\\\?\\Volume{01234567-89ab-cdef-0123-456789abcdef}\\some\\folder",
+        raising=False,
+    )
+    pin = windows_files.WindowsReadPin()
+    try:
+        with pytest.raises(ValueError, match="volume_root"):
+            pin.open(source)
+    finally:
+        assert pin.close()
+
+
+@native
+def test_pinned_ancestor_acl_check_opens_no_auxiliary_validation_descriptors(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Utils import windows_files, private_paths
+
+    source = tmp_path / "data"
+    source.write_bytes(b"contents")
+    pin = windows_files.WindowsReadPin()
+    try:
+        pin.open(source)
+
+        def forbidden(*args, **kwargs):
+            pytest.fail("opened an auxiliary validation descriptor")
+
+        monkeypatch.setattr(private_paths, "_open_verified_parent", forbidden)
+        pin.verify_private()
+    finally:
+        assert pin.close()
+
+
+@native
 def test_private_relative_file_and_exclusive_rename(tmp_path):
     win = WindowsOS()
     namespace = tmp_path / "namespace"

@@ -135,3 +135,28 @@ async def test_same_digest_shim_refused_but_later_real_package_discovered(
         == "qualified_ffplay_unavailable"
     )
     assert await profile.controlled_wav_readiness() is None
+
+
+@native
+@pytest.mark.asyncio
+@pytest.mark.parametrize("location", ["path", "default_package"])
+async def test_search_uses_all_direct_candidates(
+    retained, tmp_path, monkeypatch, location
+):
+    exe, _, _ = retained
+    first = tmp_path / "first"
+    first.mkdir()
+    (first / "ffplay.exe").write_bytes(b"wrong build")
+    second = tmp_path / "second"
+    data = tmp_path / "data"
+    target = (
+        second
+        if location == "path"
+        else data / "chocolatey" / "lib" / "ffmpeg" / "tools"
+    )
+    target.mkdir(parents=True)
+    (target / "ffplay.exe").write_bytes(exe.read_bytes())
+    monkeypatch.setenv("PATH", os.pathsep.join(map(str, (first, second))))
+    monkeypatch.setenv("ProgramData", str(data))
+    monkeypatch.setenv("ChocolateyInstall", str(tmp_path / "other"))
+    assert await profile.controlled_wav_readiness() is None
