@@ -930,6 +930,7 @@ def _run_child(
     environment.update(
         {
             "HOME": str(isolated / "home"),
+            "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
             "XDG_CONFIG_HOME": str(isolated / "config"),
             "XDG_DATA_HOME": str(isolated / "data"),
             "TLDW_CONFIG_PATH": str(isolated / "config" / "config.toml"),

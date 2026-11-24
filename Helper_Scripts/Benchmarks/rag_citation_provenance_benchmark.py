@@ -340,6 +340,7 @@ def isolated_benchmark_host_state(root: Path) -> Iterator[None]:
     config_directory.mkdir(parents=True, mode=0o700, exist_ok=True)
     overrides = {
         "HOME": str(home),
+        "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
         "USERPROFILE": str(home),
         "XDG_CONFIG_HOME": str(config_root),
         "XDG_DATA_HOME": str(data_root),

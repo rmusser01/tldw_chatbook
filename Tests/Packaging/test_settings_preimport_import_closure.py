@@ -29,6 +29,7 @@ def test_preimport_defers_settings_category_services(
         },
         "TLDW_TEST_MODE": "1",
         "HOME": str(tmp_path / "home"),
+        "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
         "USERPROFILE": str(tmp_path / "home"),
         "XDG_DATA_HOME": str(tmp_path / "data"),
         "XDG_CONFIG_HOME": str(tmp_path / "config"),

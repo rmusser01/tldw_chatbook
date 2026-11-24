@@ -707,6 +707,13 @@ def test_roundtrip_child_environment_preserves_windows_runtime_without_secrets(
     assert environment["PYTHONIOENCODING"] == "utf-8"
 
 
+def test_restore_child_environment_pins_the_null_keyring_backend(tmp_path):
+    """TASK-42479: the restore child moves HOME; never the OS keyring."""
+    environment = _isolated_environment(tmp_path, {})
+
+    assert environment.get("PYTHON_KEYRING_BACKEND") == "keyring.backends.null.Keyring"
+
+
 def _capture_two_profiles(tmp_path, installed_package=None):
     """Stage1: A is live, B is closed at capture; this is not restore qualification."""
     root = tmp_path.resolve()
@@ -715,6 +722,7 @@ def _capture_two_profiles(tmp_path, installed_package=None):
     environment = _base_child_environment()
     environment.update(
         HOME=str(root / "home"),
+        PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
         USERPROFILE=str(root / "home"),
         XDG_CONFIG_HOME=str(root / "xdg-config"),
         XDG_DATA_HOME=str(root / "xdg-data"),
@@ -874,6 +882,7 @@ def _isolated_environment(root, environment):
     return dict(
         environment,
         HOME=str(root / "restore-home"),
+        PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
         USERPROFILE=str(root / "restore-home"),
         XDG_CONFIG_HOME=str(root / "restore-config"),
         XDG_DATA_HOME=str(root / "restore-data"),

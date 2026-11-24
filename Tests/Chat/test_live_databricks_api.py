@@ -36,6 +36,7 @@ def _live_subprocess_environment(profile: Path, environ: Mapping[str, str]) -> d
     env.update(
         {
             "HOME": str(profile / "home"),
+            "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
             "XDG_CONFIG_HOME": str(profile / "xdg-config"),
             "XDG_DATA_HOME": str(profile / "xdg-data"),
             "TLDW_CONFIG_PATH": str(profile / "config" / "config.toml"),
@@ -69,6 +70,8 @@ def test_live_subprocess_isolates_profile_before_chatbook_imports() -> None:
     assert env["XDG_DATA_HOME"] == str(profile / "xdg-data")
     assert env["TLDW_CONFIG_PATH"] == str(profile / "config" / "config.toml")
     assert env["DATABRICKS_LIVE_DATA_DIR"] == str(profile / "data")
+    # TASK-42479: never the OS keyring.
+    assert env.get("PYTHON_KEYRING_BACKEND") == "keyring.backends.null.Keyring"
     assert _LIVE_CHILD.index("config_path.write_text") < _LIVE_CHILD.index(
         "from tldw_chatbook"
     )

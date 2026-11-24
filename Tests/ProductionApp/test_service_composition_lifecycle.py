@@ -382,6 +382,7 @@ def _run_lifecycle_case(tmp_path: Path, case: str) -> None:
     }
     env.update(
         HOME=str(directories["home"]),
+        PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
         USERPROFILE=str(directories["home"]),
         XDG_CONFIG_HOME=str(directories["config"]),
         XDG_DATA_HOME=str(directories["data"]),

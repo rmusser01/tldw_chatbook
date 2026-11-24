@@ -126,6 +126,7 @@ def restore_and_rebackup(original):
     environment = dict(
         os.environ,
         HOME=str(restored / "home"),
+        PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
         USERPROFILE=str(restored / "home"),
         XDG_CONFIG_HOME=str(restored / "config"),
         XDG_DATA_HOME=str(restored / "data"),

@@ -129,6 +129,7 @@ def test_recovered_media_delete_survives_native_process_exit(tmp_path, boundary)
     }
     environment.update(
         HOME=str(root / "home"),
+        PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
         USERPROFILE=str(root / "home"),
         XDG_CONFIG_HOME=str(root / "config"),
         XDG_DATA_HOME=str(root / "data"),

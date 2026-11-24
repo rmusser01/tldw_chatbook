@@ -39,6 +39,7 @@ def _live_subprocess_environment(
     env.update(
         {
             "HOME": str(profile / "home"),
+            "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
             "XDG_CONFIG_HOME": str(profile / "xdg-config"),
             "XDG_DATA_HOME": str(profile / "xdg-data"),
             "TLDW_CONFIG_PATH": str(profile / "config" / "config.toml"),
@@ -82,6 +83,8 @@ def test_live_subprocess_profile_is_isolated_before_chatbook_imports() -> None:
     assert env["TLDW_CONFIG_PATH"] == str(profile / "config" / "config.toml")
     assert env["TLDW_LIVE_QWENCLOUD_DATA_DIR"] == str(profile / "data")
     assert env["TLDW_LIVE_QWENCLOUD_API_MODE"] == "responses"
+    # TASK-42479: never the OS keyring.
+    assert env.get("PYTHON_KEYRING_BACKEND") == "keyring.backends.null.Keyring"
     assert _LIVE_CHILD.index("config_path.write_text") < _LIVE_CHILD.index(
         "from tldw_chatbook"
     )

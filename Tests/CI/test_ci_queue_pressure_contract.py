@@ -549,6 +549,11 @@ ARCHITECTURE_GUARD_TARGETS = (
     # TASK-42480: the keyring-isolation guard (null backend pinned by the
     # conftest), on no PR lane before; sandboxed, app case in a private profile.
     "Tests/test_keyring_isolation.py",
+    # TASK-42479: the profilers' child-environment keyring pins, by node.
+    "Tests/Performance/test_console_three_turn_profile.py::test_build_child_environment_is_strictly_allowlisted",
+    "Tests/Performance/test_console_three_turn_profile.py::test_assert_child_environment_requires_sample_owned_paths",
+    "Tests/Performance/test_console_three_turn_profile.py::test_parent_spawns_each_child_with_the_null_keyring_backend",
+    "Tests/Performance/test_workspace_tool_executor_profile.py::test_windows_isolated_environment_uses_only_temporary_home",
     # TASK-42147: the timer-path `.update(` census, red on dev in no PR lane
     # (pure AST, sandboxed, so before the ChaChaNotesDB and Tests/DB files below).
     "Tests/Architecture/test_timer_path_static_update_inventory.py",
