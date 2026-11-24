@@ -769,6 +769,7 @@ def _isolate_process(workspace: Path) -> dict[str, str | None]:
         "XDG_CACHE_HOME": str(cache),
         "HF_HOME": str(cache / "huggingface"),
         "TLDW_CONFIG_PATH": str(config / "config.toml"),
+        "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
     }
     previous = {name: os.environ.get(name) for name in values}
     os.environ.update(values)

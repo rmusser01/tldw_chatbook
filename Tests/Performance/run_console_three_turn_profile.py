@@ -5617,7 +5617,13 @@ async def run_scripted_mounted_sample(
             await type_text(TURN_PROMPTS[0])
             await pilot.press("enter")
             try:
-                await wait_until(lambda: "turn-one-complete" in _visible_text(console))
+                # Turn one is slow under load, not stuck (TASK-42520): 62 runs at
+                # load 18-40 took 9.0-16.1 s (median 13.5 s, p95 15.8 s), so the
+                # default 10 s failed 54 of them; 6.0 s at load 9. 60 s keeps a
+                # first send that never reaches the gateway a failure.
+                await wait_until(
+                    lambda: "turn-one-complete" in _visible_text(console), timeout=60.0
+                )
             except AssertionError as exc:
                 send_button = console.query_one("#console-send-message")
                 setup_modals = list(console.query("#console-setup-modal"))

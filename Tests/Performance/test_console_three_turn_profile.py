@@ -3996,7 +3996,13 @@ def test_target_imports_resolve_only_below_selected_root(tmp_path: Path) -> None
         check=False,
         capture_output=True,
         text=True,
-        env={"PATH": os.environ.get("PATH", ""), "PYTHONDONTWRITEBYTECODE": "1"},
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            # With no HOME the child's Path.home() is the account's (TASK-42520).
+            "HOME": str(tmp_path),
+            "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
+        },
     )
 
     assert completed.returncode == 0, completed.stderr

@@ -243,7 +243,10 @@ print("PASS")
             expected,
         ],
         cwd=target.parent,
-        env={key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
+        env=dict(
+            {key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
+            PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
+        ),
         capture_output=True,
         text=True,
         timeout=60,

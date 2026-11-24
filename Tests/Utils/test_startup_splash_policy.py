@@ -285,6 +285,7 @@ print("\n".join(records), file=sys.stdout)
 
 def test_pre_tui_warnings_go_to_the_log_not_the_terminal() -> None:
     env = {k: v for k, v in os.environ.items() if k != "TLDW_VERBOSE_STARTUP"}
+    env["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
     result = subprocess.run(
         [sys.executable, "-c", _PROBE],
         cwd=str(REPO_ROOT),
@@ -320,6 +321,7 @@ def test_held_warnings_reach_stderr_when_the_app_never_configures_logging() -> N
     startup unlock or a crash before the TUI never got that far, so their
     warnings -- which used to reach stderr -- were silently dropped."""
     env = {k: v for k, v in os.environ.items() if k != "TLDW_VERBOSE_STARTUP"}
+    env["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
     result = subprocess.run(
         [sys.executable, "-c", _EXIT_WITHOUT_REPLAY],
         cwd=str(REPO_ROOT),
@@ -359,6 +361,7 @@ def test_a_stdlib_error_before_the_tui_still_reaches_stderr(handlers: str) -> No
     took them (lastResort's own rule); warnings are still held for the exit
     flush."""
     env = {k: v for k, v in os.environ.items() if k != "TLDW_VERBOSE_STARTUP"}
+    env["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
     result = subprocess.run(
         [sys.executable, "-c", _STDLIB_ERRORS_BEFORE_THE_TUI, handlers],
         cwd=str(REPO_ROOT),
@@ -409,6 +412,7 @@ def test_configuring_the_app_log_replays_the_held_notices() -> None:
     """review-tests F5: the app's own logging setup is what writes the held
     notices to the log; removing that call must fail a test."""
     env = {k: v for k, v in os.environ.items() if k != "TLDW_VERBOSE_STARTUP"}
+    env["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
     result = subprocess.run(
         [sys.executable, "-c", _CONFIGURE_LOGGING],
         cwd=str(REPO_ROOT),

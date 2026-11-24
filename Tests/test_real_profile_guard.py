@@ -742,6 +742,7 @@ def test_an_xdist_workers_session_end_refusal_fails_the_run(
     env = {k: v for k, v in os.environ.items() if not k.startswith("PYTEST_")}
     env.pop("TLDW_TEST_CONFIG_ROOT_OWNER", None)
     env["TLDW_TEST_CONFIG_ROOT"] = str(tmp_path / "sandbox")
+    env["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
     env["PYTHONPATH"] = os.pathsep.join(
         filter(None, (str(REPO_ROOT), os.environ.get("PYTHONPATH")))
     )
