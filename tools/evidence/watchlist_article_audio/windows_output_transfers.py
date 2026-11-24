@@ -10,12 +10,12 @@ import controlled_instrument as ci
 from windows_controlled_adapter import Capture, ControlledWavPlayback, q
 from controlled_instrument import channel_packets, separation_check
 from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership
-from tldw_chatbook.TTS.audio_output_runs import PcmOutputRun
 from tldw_chatbook.TTS.controlled_wav_profile import WavBookmark
-from tldw_chatbook.Audio.streaming_sink import pump
 
 
 async def pcm_feed(run, pcm):
+    from tldw_chatbook.Audio.streaming_sink import pump
+
     async def chunks():
         for at in range(0, len(pcm), 960 * 4):
             yield pcm[at : at + 960 * 4]
@@ -29,6 +29,8 @@ async def prepared(kind, artifact, events):
         return await ControlledWavPlayback.prepare(
             artifact, WavBookmark(artifact.sha256, q.RATE, 0)
         )
+    from tldw_chatbook.TTS.audio_output_runs import PcmOutputRun
+
     return PcmOutputRun(
         q.RATE,
         2,
@@ -71,10 +73,10 @@ async def transfer(directory, old_kind, new_kind, phase, ordinal):
         "phase": phase,
         "ordinal": ordinal,
     }
-    row["old_fixture"] = ci.fixture_receipt(old_artifact)
-    row["new_fixture"] = ci.fixture_receipt(new_artifact)
     old_feed = new_feed = None
     try:
+        row["old_fixture"] = ci.fixture_receipt(old_artifact)
+        row["new_fixture"] = ci.fixture_receipt(new_artifact)
         old = await prepared(old_kind, old_artifact, events_old)
         new = await prepared(new_kind, new_artifact, events_new)
         await capture.start()
@@ -116,21 +118,49 @@ async def transfer(directory, old_kind, new_kind, phase, ordinal):
     except Exception as error:
         row["error"] = type(error).__name__
     finally:
-        row["old_retirement_confirmed"] = old is not None and await old.retire()
-        row["new_retirement_confirmed"] = new is not None and await new.retire()
-        row["old_fixture_mode_after_retirement"] = ci.fixture_mode(old_artifact.path)
-        row["new_fixture_mode_after_retirement"] = ci.fixture_mode(new_artifact.path)
+        for role, run, artifact in (
+            ("old", old, old_artifact),
+            ("new", new, new_artifact),
+        ):
+            try:
+                row[role + "_retirement_confirmed"] = (
+                    run is not None and await run.retire()
+                )
+            except (Exception, asyncio.CancelledError):
+                row[role + "_retirement_confirmed"] = False
+                row.setdefault("error", role + "_retirement_failed")
+            try:
+                row[role + "_fixture_mode_after_retirement"] = ci.fixture_mode(
+                    artifact.path
+                )
+            except Exception:
+                row[role + "_fixture_mode_after_retirement"] = None
+                row.setdefault("error", role + "_fixture_stat_failed")
         for feed in (old_feed, new_feed):
             if feed is not None:
                 try:
                     await asyncio.wait_for(asyncio.shield(feed), 2)
                 except (Exception, asyncio.CancelledError):
                     row["feed_unsettled"] = True
-        row["capture_reaped"] = await capture.finish()
+        try:
+            row["capture_reaped"] = await capture.finish()
+        except (Exception, asyncio.CancelledError):
+            row["capture_reaped"] = False
+            row.setdefault("error", "capture_finish_failed")
         row["owner_released"] = host.owner is None
         row["capture_configuration"] = capture.config
         row["capture_metrics"] = capture.metrics
         row["capture_error"] = capture.error
+        if not all(
+            row.get(k) is True
+            for k in (
+                "old_retirement_confirmed",
+                "new_retirement_confirmed",
+                "capture_reaped",
+                "owner_released",
+            )
+        ) or row.get("feed_unsettled"):
+            row.setdefault("error", "custody_unconfirmed")
     row["old_events"], row["new_events"] = events_old, events_new
     if row.get("error") or row.get("capture_error"):
         return row

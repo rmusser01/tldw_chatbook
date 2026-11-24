@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-23",
+  "source_revision": "81ba625ba0",
+  "runs": [
+    {
+      "case": "padding_stop",
+      "content_frames": 24000,
+      "start_frame": 0,
+      "fixture_native_mode_at_admission": "0o600",
+      "baseline_monitor": {
+        "status": "pass",
+        "evidence": "monitored_no_packets",
+        "rms": null,
+        "packet_frames": 0
+      },
+      "stop_observation": {
+        "frame": 24000,
+        "observed_at_s": 460274.9086544,
+        "generation": 1
+      },
+      "stop_acknowledged": true,
+      "completion": {
+        "kind": "stopped",
+        "reason": "interrupted",
+        "bookmark": {
+          "sha256": "e52cb00a8505262b3c55ccca518c4e419f059e9f4671d9b050f4a989708ea699",
+          "sample_rate": 48000,
+          "frame": 24000
+        },
+        "generation": 1,
+        "evidence": {
+          "launched_at_s": 460274.2400305,
+          "stop_at_s": 460274.9186727,
+          "reaped_at_s": 460274.9242278,
+          "retired_at_s": 460275.1747944,
+          "last_physical_frame": 24960,
+          "advanced_span_s": 0.5155510999611579,
+          "clock_skew_s": 0.00444890003884213,
+          "last_observed_at_s": 460274.9086544
+        }
+      },
+      "retirement_confirmed": true,
+      "owner_released": true,
+      "final_retirement_confirmed": true,
+      "capture_reaped": true,
+      "capture_error": null,
+      "capture_configuration": {
+        "actual_buffer_frames": 4800,
+        "requested_buffer_frames": 4800,
+        "device_period_s": 0.01,
+        "qpc_calibration_bracket_s": 3.00002284348011e-07,
+        "qpc_offset_s": -5.00003807246685e-08
+      },
+      "capture_metrics": {
+        "packet_count": 100,
+        "discontinuity_raw_count": 1,
+        "session_origin_discontinuity_count": 1,
+        "discontinuity_count": 0,
+        "timestamp_error_count": 0,
+        "poll_gap_max_s": 0.01089890004368499
+      },
+      "fixture_native_mode_after_retirement": "0o600",
+      "waveform_match": {
+        "start_source_s": -0.002416666666666667,
+        "end_source_s": 0.5019791666666666,
+        "capture_onset_s": 0.0015833333333333333,
+        "capture_end_s": 0.5059791666666666,
+        "early_score": 0.9999951460497496,
+        "tail_score": 0.9999957401840617,
+        "alignment_drift_s": 0.0,
+        "capture_onset_qpc_s": 460274.38285978336,
+        "capture_end_qpc_s": 460274.88725561666
+      },
+      "waveform_diagnostics": {
+        "timeline_stage": "contiguous",
+        "content_frames": 24480,
+        "packet_clock_error_max_s": 5.569999571891637e-05,
+        "stage": "matched",
+        "active_frames": 24211,
+        "capture_frames": 24480,
+        "active_start_frame": 76,
+        "active_end_frame": 24287,
+        "window_frames": 2160,
+        "early_score": 0.9999951460497496,
+        "tail_score": 0.9999957401840617,
+        "early_source_frame": 268,
+        "tail_source_frame": 21551,
+        "early_capture_frame": 460,
+        "tail_capture_frame": 21743,
+        "alignment_drift_s": 0.0,
+        "duration_s": 0.004274300008546561
+      },
+      "start_error_s": -0.002416666666666667,
+      "end_error_s": 0.001979166666666643,
+      "post_reap_quiet": {
+        "status": "pass",
+        "evidence": "monitored_packets",
+        "rms": 0.0,
+        "packet_frames": 15601
+      }
+    }
+  ],
+  "archived_raw_sha256": "188dc7a9a179687760553ae291f2efb38931df9183fac1bb9de5b64ee4810c18"
+}
