@@ -26472,6 +26472,12 @@ real-profile guards. No existing profile, recovery marker or ACL was changed.
 recovery policy or bypassing conftest. Use `tools/run_guarded_pytest.py` for
 explicit targeted runs on this Windows host; its private parent is checked
 before creating disposable test state and its cleanup checks the exact boundary.
+Final review also found that caller options could replace the verified basetemp
+or inherit `PYTEST_ADDOPTS` suppressing conftest. Stub-child regressions confirmed
+those inputs reached the old launcher; no unsafe option was executed by pytest.
+Keep storage/configuration authority in the launcher: resolve test targets under
+`Tests`, permit bounded selectors/reporting only, and control the child option
+environment. A final cleanup boundary cannot undo pytest's earlier directory reset.
 
 ## Reconstruct measurement claims from their retained primitives (TASK-41177, 2026-11-24)
 

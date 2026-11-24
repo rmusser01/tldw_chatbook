@@ -135,7 +135,7 @@ Commands below use `python` as shorthand for that verified interpreter. Check su
 - [x] **Step 2: Observe RED.** Run `python -m pytest Tests/TTS/test_controlled_wav_playback.py Tests/TTS/test_audio_output_ownership.py -q`; verify failures name missing contract behavior.
 - [x] **Step 3: Implement the qualified adapter and owner.** Promote only needed qualified parser logic, retain legacy ordinary playback behavior, wrap actual streaming/file/media acquisition and owner-scoped cleanup, and preserve external-handoff takeover acknowledgement.
 - [x] **Step 4: Observe GREEN.** Run those tests plus existing `Tests/TTS/test_audio_player_formats.py` and mapped affected surface tests; verify native cross-surface takeover with synthetic audio. Run Ruff on changed Python and the repository's targeted architecture checks for message-loop waits.
-- [ ] **Step 5: Review and commit.** Record caller coverage and native evidence in task notes; commit `feat: coordinate controlled audio playback ownership`.
+- [x] **Step 5: Review and commit.** Record caller coverage and native evidence in task notes; commit `feat: coordinate controlled audio playback ownership`.
 
 **Implementation evidence, 2026-11-24:** The controlled adapter, app-owned intent/lease
 service and audited file/PCM/realtime/duplex/media/preview/replay/shutdown callers
@@ -150,7 +150,11 @@ records the canonical 12 controls, early-zero negative, and six transfer
 conditions repeated three times. The offline evidence suite passes 96 tests;
 independent audit fixes preserve all recorded measurements. Detailed increment
 reviews precede the final whole-task review; Task2 status/AC remain with TASK-41177.
-Later tasks have not begun.
+The final whole-task review and one scoped fix re-review are clear. The last
+178-case selection passes; after rebasing both drafts onto dev `6fa2635c14`,
+199 affected checks pass with three platform skips. All 106 reviewed source/test/
+tool blobs and all public numerical receipts remain unchanged by that rebase.
+TASK-41177 is complete in draft PR #3742; later tasks have not begun.
 
 ### Task 3: Persist listening state and source-owned assets safely (TASK-41178)
 

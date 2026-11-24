@@ -416,6 +416,11 @@ admission failure, not a recovery-policy defect. The normal account with a fresh
 native-verified private home subtree and process-local TEMP/basetemp passes the
 unchanged conftest and real-profile guards. `tools/run_guarded_pytest.py` records
 that targeted workflow; no existing profile, marker or ACL is repaired or bypassed.
+It permits only resolved repository test targets and bounded selectors/reporting
+options, pins the repository pytest configuration and controls inherited pytest
+option/plugin variables. Conflicting storage or conftest inputs never reach a
+child process. Negative or expired controlled retirement publishes blocked
+custody immediately; late positive proof can release only that exact lease.
 The controlled adapter also checks native private permissions before reading.
 New PCM-to-WAV copies set native owner-only permissions on their retained new
 descriptor before writing any header or audio bytes.

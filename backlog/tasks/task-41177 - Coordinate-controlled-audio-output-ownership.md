@@ -1,11 +1,11 @@
 ---
 id: TASK-41177
 title: Coordinate controlled audio output ownership
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-11-15'
-updated_date: '2026-11-24T03:54:00Z'
+updated_date: '2026-11-24T09:33:00Z'
 labels:
   - watchlists
   - tts
@@ -27,14 +27,13 @@ Make article listening coexist predictably with existing speech and media output
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
-- [ ] #1 Windows controlled WAV playback restores a validated PCM16 stereo 48 kHz retained file with the qualified tail policy at its saved media position; unsupported platforms refuse controlled listening before synthesis.
-- [ ] #2 All existing file, streaming PCM and media start paths serialize output ownership and wait for confirmed retirement before replacement output.
-- [ ] #3 Late starts and old-surface cleanup cannot affect the new owner; failed termination retains a visible blocked owner.
-- [ ] #4 Existing ordinary file playback and external-handoff behavior remain supported, with targeted regressions and native transfer evidence.
-- [ ] #5 Exact logical-EOF Resume launches no player; Stop during padding stays an interruption and cannot publish natural completion or release a newer output owner.
-- [ ] #6 Targeted ownership, controlled-adapter and affected production pytest runs use normal conftest and real-profile guards with verified private test storage; no recovery-policy bypass or existing profile/ACL mutation is needed.
+- [x] #1 Windows controlled WAV playback restores a validated PCM16 stereo 48 kHz retained file with the qualified tail policy at its saved media position; unsupported platforms refuse controlled listening before synthesis.
+- [x] #2 All existing file, streaming PCM and media start paths serialize output ownership and wait for confirmed retirement before replacement output.
+- [x] #3 Late starts and old-surface cleanup cannot affect the new owner; failed termination retains a visible blocked owner.
+- [x] #4 Existing ordinary file playback and external-handoff behavior remain supported, with targeted regressions and native transfer evidence.
+- [x] #5 Exact logical-EOF Resume launches no player; Stop during padding stays an interruption and cannot publish natural completion or release a newer output owner.
+- [x] #6 Targeted ownership, controlled-adapter and affected production pytest runs use normal conftest and real-profile guards with verified private test storage; no recovery-policy bypass or existing profile/ACL mutation is needed.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -109,7 +108,7 @@ UTF-8 and passed on rerun. The later two-race integration selection passed 111
 cases, including both pending-start/failing-replacement orders and concrete
 versus opaque opener failure. Incremental file/PCM/media/duplex/mounted reviews
 have separate overlapping tests; these counts are not a unique aggregate.
-All 23 new nonmeasurement Python files pass Ruff lint/format; edited legacy files
+All 24 new nonmeasurement Python files pass Ruff lint/format; edited legacy files
 have no introduced Ruff diagnostics and changed-range formatting. The message
 pump and affected architecture checks pass. No full repository test sweep ran.
 
@@ -131,5 +130,20 @@ unqualified. Separate Windows saved-video capacity tests refuse existing POSIX
 pinned-save primitives before audio delegation; their methods/tests are
 unchanged and this task does not repair that feature. Two older controller
 teardown errors did not reproduce in two current and two baseline runs; their
-cause remains unverified. Final whole-task review, base synchronization and
-publication are still pending; status and AC stay open until those gates finish.
+cause remains unverified. Both also pass in the final post-base selection.
+
+Final whole-task review and its scoped re-review are clear. The final fix wave
+handles definite POSIX exec refusal without losing unknown-birth quarantine,
+publishes blocked controlled custody immediately on negative/expired retirement,
+and restricts guarded test inputs and inherited pytest options. Its 178-case
+selection passes with three platform skips. Bad runner inputs are tested only
+against a stub child. Controlled launch, classifier and settling parameters and
+all numerical receipts remain unchanged.
+
+Both draft branches are rebased onto dev `6fa2635c14`. All 106 reviewed source,
+test and tool blobs are unchanged by the rebase. Final normal guarded checks
+pass 199 cases with three POSIX signal skips in 117.83 seconds, including the
+message-pump guard, mounted confirmation/cover and both controller nodes. Public
+receipts regrade identically. TASK-41177 acceptance is complete; draft PR #3742
+contains this implementation and #3741 its qualification prerequisite. Issue
+#2864 remains open for saved listening state and article/queue/UI implementation.
