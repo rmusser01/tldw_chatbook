@@ -336,6 +336,39 @@ class PulseCaseTests(unittest.TestCase):
                 self.assertEqual(row["tail_coverage"], "unqualified")
                 self.assertEqual(row["reason"], route)
 
+    def test_unattributed_source_match_preserves_observed_and_censored_boundaries(self):
+        route = "pulse_player_route_unavailable"
+        for clipped in (False, True):
+            with self.subTest(clipped=clipped):
+                row = self.run_fixture(clipped=clipped, playback_route=route)
+                self.assertEqual(row["reason"], route)
+                self.assertEqual(
+                    (row["endpoint_loopback"], row["seek"], row["tail_coverage"]),
+                    ("unqualified",) * 3,
+                )
+                self.assertNotIn("measurement", row)
+                self.assertNotIn("missing_tail_s", row)
+                info = row["diagnostics"].get("unattributed_source_match", {})
+                self.assertEqual(info.get("attribution"), "unattributed")
+                self.assertEqual(
+                    info["end_boundary"], "censored" if clipped else "observed"
+                )
+                self.assertAlmostEqual(info["start_source_s"], 0, delta=0.02)
+                self.assertGreater(info["end_source_s"], 0.4)
+                self.assertGreaterEqual(
+                    min(info["early_score"], info["tail_score"]), 0.7
+                )
+                self.assertAlmostEqual(info["alignment_drift_s"], 0, delta=0.02)
+        stopped = self.run_fixture(stop_after=0.015, padded=True, playback_route=route)
+        self.assertEqual(stopped["endpoint_loopback"], "unqualified")
+        self.assertNotIn(stopped.get("bookmark_alignment"), ("pass", "fail"))
+        self.assertNotIn("bookmark_end_error_s", stopped)
+        self.assertGreater(
+            stopped["diagnostics"]["unattributed_source_match"]["end_source_s"], 0
+        )
+        incomplete = self.run_fixture(complete=False, playback_route=route)
+        self.assertNotIn("unattributed_source_match", incomplete["diagnostics"])
+
     def test_native_cli_refuses_pulse_on_other_platforms_before_opening_player(self):
         with tempfile.TemporaryDirectory() as scratch:
             target = Path(scratch) / "no-output"
@@ -509,6 +542,31 @@ class CaptureStartupTests(unittest.TestCase):
 
 
 class PlayerRouteTests(unittest.TestCase):
+    def test_unassigned_new_then_overlapping_expected_links_is_unavailable(self):
+        from pulse_fragments import InputEvent, PlayerRouteHistory, NEW, CHANGE, REMOVE
+
+        def history(sinks, overlap=None):
+            result = PlayerRouteHistory()
+            result.events = [
+                InputEvent(
+                    NEW if n == 0 else CHANGE, 77, b"1234", sink, True, n == overlap
+                )
+                for n, sink in enumerate(sinks)
+            ]
+            result.events.append(InputEvent(REMOVE, 77))
+            return result.verdict(1234, 54)
+
+        self.assertEqual(
+            history([0xFFFFFFFF, 54, 54, 54], overlap=1),
+            "pulse_player_route_unavailable",
+        )
+        self.assertEqual(history([0xFFFFFFFF, 54, 54]), "verified")
+        self.assertEqual(history([0xFFFFFFFF]), "pulse_player_route_unavailable")
+        self.assertEqual(
+            history([0xFFFFFFFF, 62, 54], overlap=1), "pulse_player_route_changed"
+        )
+        self.assertNotEqual(history([54, 0xFFFFFFFF, 54]), "verified")
+
     def test_native_notifications_track_owned_input_through_removal(self):
         from pulse_fragments import watch_player_route
 
