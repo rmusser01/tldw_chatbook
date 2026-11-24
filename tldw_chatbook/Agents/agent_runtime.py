@@ -1842,11 +1842,12 @@ def _loop_outcome(
 
 
 def _continuation_error(state: LoopState, reason: str) -> RunOutcome:
-    # TASK-34100.3 AC#3: every exit shares the user-facing summary, so the
-    # code-owned ``reason`` (and the store's own precondition code, when a
-    # persist call failed) is what names the failed precondition. The codes
-    # ride in field_states KEYS: a code as a VALUE broke Trace export.
+    # TASK-34100.3 AC#3: the exits share one summary (TASK-42526: bar a
+    # destination-refused first final), so the code-owned ``reason`` and the
+    # store's precondition code name the failure. The codes ride in
+    # field_states KEYS: a code as a VALUE broke Trace export.
     from tldw_chatbook.Chat.provider_continuation_diagnostics import (
+        continuation_error_summary,
         continuation_reason_states,
     )
 
@@ -1861,9 +1862,8 @@ def _continuation_error(state: LoopState, reason: str) -> RunOutcome:
     )
     state.add(
         STEP_ERROR,
-        summary=(
-            "Provider continuation could not be persisted; retry or recover "
-            "the interrupted run."
+        summary=continuation_error_summary(
+            reason, failed_store, first_final=state.continuation_checkpoint is None
         ),
         field_states=continuation_reason_states(reason, failed_store),
     )

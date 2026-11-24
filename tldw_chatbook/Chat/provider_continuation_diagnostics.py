@@ -144,6 +144,54 @@ UNWRITTEN_STORE_FAILURES = frozenset(
     }
 )
 
+#: TASK-35582's host-target, destination and binding refusals (above). On a
+#: tool-free first final they fail the reply closed, before any write and
+#: with no dispatch checkpoint to resume, so nothing is left to recover.
+DESTINATION_REFUSALS = frozenset(
+    {
+        "host_target_unavailable",
+        "destination_unavailable",
+        "destination_mismatch",
+        "binding_erased",
+        "managed_finalizer_unavailable",
+    }
+)
+
+_CONTINUATION_ERROR_SUMMARY = (
+    "Provider continuation could not be persisted; retry or recover the "
+    "interrupted run."
+)
+#: TASK-42526 (owner decision 2026-11-24): say what happened and what Send
+#: does, not "retry or recover" a run that has no recovery.
+_DESTINATION_REFUSED_SUMMARY = (
+    "This reply's reasoning could not be matched to the provider endpoint "
+    "this message was sent to, so the reply was kept as failed, without its "
+    "reasoning. Send again to continue the chat."
+)
+
+
+def continuation_error_summary(
+    reason: str, store_failure: str | None, *, first_final: bool
+) -> str:
+    """Return the user-facing summary for a continuation-error exit.
+
+    Args:
+        reason: The runtime's code for the continuation exit that was taken.
+        store_failure: The store's precondition code, when a persist failed.
+        first_final: No checkpoint was active, so this was a tool-free first
+            final reply.
+
+    Returns:
+        The shared summary, except for a destination-refused first final.
+    """
+    if (
+        first_final
+        and reason == "final_persist_failed"
+        and store_failure in DESTINATION_REFUSALS
+    ):
+        return _DESTINATION_REFUSED_SUMMARY
+    return _CONTINUATION_ERROR_SUMMARY
+
 
 #: The two ``field_states`` key prefixes a continuation failure is traced
 #: under. Trace ``field_states`` VALUES are the per-field state vocabulary

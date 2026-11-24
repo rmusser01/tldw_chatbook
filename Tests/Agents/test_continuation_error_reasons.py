@@ -52,6 +52,7 @@ from tldw_chatbook.Chat.provider_continuation import (
 )
 from tldw_chatbook.Chat.provider_continuation_diagnostics import (
     ACKNOWLEDGE_FAILED,
+    DESTINATION_REFUSALS,
     STORE_FAILURE_CODES,
     UNRECOGNIZED_STORE_FAILURE,
     UNWRITTEN_STORE_FAILURES,
@@ -127,9 +128,25 @@ def _reasons(field_states) -> dict[str, str]:
     return continuation_reasons(field_states)
 
 
-def _error_states(outcome) -> dict[str, str]:
+#: The summary every continuation-error exit shows, bar one (TASK-42526).
+SHARED_SUMMARY = (
+    "Provider continuation could not be persisted; retry or recover the "
+    "interrupted run."
+)
+#: TASK-42526 (owner decision 2026-11-24): a destination-refused first final
+#: leaves nothing to retry or recover, so it says so and points at Send.
+DESTINATION_REFUSED_SUMMARY = (
+    "This reply's reasoning could not be matched to the provider endpoint "
+    "this message was sent to, so the reply was kept as failed, without its "
+    "reasoning. Send again to continue the chat."
+)
+
+
+def _error_states(outcome, summary: str = SHARED_SUMMARY) -> dict[str, str]:
+    """The last error step's codes, after pinning its user-facing summary."""
     errors = [step for step in outcome.steps if step.kind == STEP_ERROR]
     assert errors, "the run must record an error step"
+    assert errors[-1].summary == summary
     return _reasons(errors[-1].field_states)
 
 
@@ -720,6 +737,8 @@ def test_destination_binding_refusals_still_fail_closed(store_text, store_code) 
     They refuse before any write, but a refusal means the checkpoint names a
     different provider, origin or binding than the accepted dispatch, so the
     run must not quietly complete as an ordinary reply (review v5r1 F9).
+    Nothing is left to recover, so the summary says what happened and that
+    sending again continues the chat (TASK-42526).
     """
 
     def persist(event) -> None:
@@ -728,13 +747,47 @@ def test_destination_binding_refusals_still_fail_closed(store_text, store_code) 
     outcome, traced = _run_with_trace([_first_final_turn()], persist=persist)
 
     assert outcome.status == RUN_ERROR
-    assert _error_states(outcome) == {
+    assert store_code in DESTINATION_REFUSALS
+    assert _error_states(outcome, DESTINATION_REFUSED_SUMMARY) == {
         "continuation_error": "final_persist_failed",
         "continuation_store_failure": store_code,
     }
     assert not [
         step for step in traced if step.summary == "Reasoning not preserved for replay"
     ]
+
+
+@pytest.mark.parametrize(
+    "store_text",
+    [
+        "Provider continuation destination mismatch.",
+        "Durable continuation host target is unavailable.",
+    ],
+)
+def test_post_tool_destination_refusal_keeps_the_shared_summary(store_text) -> None:
+    """TASK-42526 AC#3: only a tool-free first final gets the Send copy.
+
+    After a tool round the run holds an active checkpoint, so the same
+    refusal on its final keeps the shared summary and behaviour.
+    """
+
+    def persist(event) -> None:
+        if isinstance(event, FinalContinuation):
+            raise RuntimeError(store_text)
+
+    final = _kimi_checkpoint(
+        revision=4,
+        state="complete",
+        rounds=(_completed_tool_round(), _final_round("visible answer")),
+    )
+    outcome = _run(
+        _tool_then_final(final),
+        persist=persist,
+        invoke=lambda call: ToolResult(ok=True, content="4"),
+    )
+
+    assert outcome.status == RUN_ERROR
+    assert _error_states(outcome)["continuation_error"] == "final_persist_failed"
 
 
 @pytest.mark.parametrize(
