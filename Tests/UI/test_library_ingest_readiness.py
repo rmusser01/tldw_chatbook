@@ -297,6 +297,73 @@ async def test_a_rebuilds_echo_of_its_rendered_form_never_reaches_the_screen():
         assert seen == edits
 
 
+@pytest.mark.asyncio
+async def test_an_earlier_canvas_builds_echo_stays_dropped_after_a_later_build():
+    """TASK-41723 review: the same canvas rebuilt twice (``sync_state``, then
+    a submit's cleared form) must still drop the first build's echo when it
+    is delivered after the second build has composed.
+    """
+    from textual.widgets import Input
+
+    from Tests.UI.test_library_ingest_canvas import _CanvasHost
+    from Tests.UI.test_library_shell import _wait_for_condition
+    from tldw_chatbook.Library.library_ingest_state import (
+        LibraryIngestFormState,
+        build_library_ingest_state,
+    )
+    from tldw_chatbook.Widgets.Library.library_ingest_canvas import LibraryIngestCanvas
+
+    staged = build_library_ingest_state(
+        (), form=LibraryIngestFormState(path="/tmp/tides.txt", title="Tides 101")
+    )
+    cleared = build_library_ingest_state((), form=LibraryIngestFormState())
+    seen = []
+
+    class Host(_CanvasHost):
+        def on_input_changed(self, event):
+            if (event.input.id or "").startswith("library-ingest-"):
+                seen.append((event.input.id, event.value))
+
+    host = Host(cleared)
+    async with host.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        canvas = host.query_one(LibraryIngestCanvas)
+        held: list[Input.Changed] = []
+        post = Input.post_message
+
+        def hold_form_echoes(self, message):
+            # The first build's echoes, still in flight when the next one lands.
+            if isinstance(message, Input.Changed) and (self.id or "").startswith(
+                "library-ingest-"
+            ):
+                held.append(message)
+                return True
+            return post(self, message)
+
+        Input.post_message = hold_form_echoes
+        try:
+            canvas.sync_state(staged)
+            await _wait_for_condition(
+                pilot,
+                lambda: len(held) == 2,
+                message=lambda: f"The first build's echoes never posted: {held!r}",
+            )
+        finally:
+            Input.post_message = post
+        first_path = canvas.query_one("#library-ingest-path", Input)
+        canvas.sync_state(cleared)  # the submit's cleared form
+        await _wait_for_condition(
+            pilot,
+            lambda: canvas.query_one("#library-ingest-path", Input) is not first_path,
+            message="The second build never mounted.",
+        )
+        for message in held:
+            canvas.post_message(message)
+        await pilot.pause()
+        await pilot.pause()
+        assert seen == []
+
+
 def test_restaging_same_source_and_options_fences_pending_readiness():
     from tldw_chatbook.UI.Library_Modules.library_ingest_controller import (
         LibraryIngestController,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import weakref
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import PurePath
@@ -1320,8 +1321,12 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
         # populated list survives every re-render without a re-query.
         self._chunk_template_names: list[str] = []
         # TASK-41723: each form field still owing its mount echo, with the
-        # value it was composed with. See ``_stop_form_field_echo``.
-        self._form_field_echoes: dict[Input, str] = {}
+        # value it was composed with. See ``_stop_form_field_echo``. Kept
+        # across rebuilds, so an earlier build's late echo is still dropped;
+        # a field that is gone drops out of it.
+        self._form_field_echoes: weakref.WeakKeyDictionary[Input, str] = (
+            weakref.WeakKeyDictionary()
+        )
 
     def sync_state(self, state: LibraryIngestCanvasState) -> None:
         """Rebuild only the mounted ingest canvas from a complete snapshot.
@@ -1818,7 +1823,6 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
 
     def compose(self) -> ComposeResult:
         state = self.state
-        self._form_field_echoes = {}
         yield Static(
             state.header,
             id="library-ingest-header",

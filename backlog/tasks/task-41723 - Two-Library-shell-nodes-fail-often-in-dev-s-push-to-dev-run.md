@@ -70,3 +70,16 @@ Forced order (probe, not committed): hold the screen's recompose after the struc
 **Files.** `tldw_chatbook/Widgets/Library/library_ingest_canvas.py`, `Tests/UI/test_library_ingest_readiness.py`, `backlog/docs/lessons-textual.md` (and `Tests/UI/test_library_shell.py` in TASK-42473's commit).
 
 **Checks (final tree, shared by TASK-41723, 42470 and 42473).** `Tests/CI` at `-n 4`: 1823 passed, 2 skipped. `Tests/Architecture` serially: 1491 passed, 5 skipped, 1 failed. The failure was `test_persistent_diagnostic_inventory.py::test_task_15103_review_ledger_canonical_schema_and_arithmetic`, at its 300 s timeout while the run shared the host at load 33-67. Alone it passed in 194 s (load ~45-50). `./scripts/preflight.sh` passed; `ruff check tldw_chatbook --select F` passed; `Tests/lint/ruff_gate.py` passed (RATCHET OK).
+
+**Review fixes (review of the round-24 branch, Minor 1).** `compose()` reset `_form_field_echoes`, so a same-canvas rebuild (`sync_state` -> `refresh(recompose=True)`) dropped the guard for an earlier build's echo still in flight. The map is now one `weakref.WeakKeyDictionary` created in `__init__` and kept across rebuilds; a field that is gone drops out of it. New test `test_an_earlier_canvas_builds_echo_stays_dropped_after_a_later_build` (`test_library_ingest_readiness.py`) holds the first `sync_state` build's two echoes, rebuilds with the cleared form, then delivers them at the canvas: red 3 of 3 on the first round-24 commit (`[('library-ingest-path', '/tmp/tides.txt'), …] == []`), green 3 of 3 after.
+
+**Two nodes from the reviewer's long `-n 4` run of `test_library_shell.py`, re-checked (60 runs a side, `-n 4`, load 59-78; base = the three product files at b31e3e9241):**
+
+| Node | Base | Branch |
+|---|---|---|
+| `test_library_shell_ingest_path_enter_submits_valid_form` | 5 of 60 failed | 4 of 60 failed |
+| `test_library_shell_note_delete_shows_inline_confirm_without_deleting[#library-note-context-delete]` | 2 of 60 failed | 2 of 60 failed |
+
+- The ingest node fails in the same three ways on both sides. Most often it is `assert 0 == 1` on the job count: the test reads it one `pilot.pause()` after Enter, while Enter waits for the pre-check worker and then the readiness worker. It can also fail with `NoMatches` for `#library-ingest-path` or `SelectCurrent`'s `#label` while the canvas opens.
+- The note node fails on both sides with focus on `library-note-delete-cancel` instead of `library-note-context-delete`.
+- Same shapes and rates on both sides, so these are pre-existing flakes, not made worse here. They are follow-up candidates.
