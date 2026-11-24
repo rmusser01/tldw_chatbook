@@ -425,6 +425,18 @@ DREAMS_BOUNDARY_TARGETS = (
     "Tests/Architecture/test_console_agent_bridge_light_surface_wiring.py",
     "Tests/Agents/test_full_agent_tools_upgrade.py",
     "Tests/App/test_full_agent_tools_upgrade_boot.py",
+    # TASK-34100.13 (port, round 24): the setup wizard's Full-track step
+    # files. The two sandboxed ones close the sandboxed block; the five with
+    # bootstrap_profile tests open the bootstrap block (TASK-32873). Timed
+    # 2026-11-24 with this step's flags, serial at load 10-14 on 18 CPUs:
+    # 4.7, 4.6, 4.2, 13.6, 4.8, 47.7 and 33.2 s.
+    "Tests/Wizards/test_first_run_tools_posture.py",
+    "Tests/Wizards/test_first_run_appearance_comfort.py",
+    "Tests/Utils/test_startup_splash_policy.py",
+    "Tests/Wizards/test_first_run_full_track_shape.py",
+    "Tests/Wizards/test_first_run_search_step.py",
+    "Tests/Wizards/test_first_run_speech_engine_choice.py",
+    "Tests/Wizards/test_first_run_welcome_copy.py",
     # TASK-38985: the Library modal dismissal contracts and launch inventory,
     # red on dev in no PR lane. ~2 min serial (140.2, 114.6 and 101.6 s with
     # this step's command, load 20-34 on 18 CPUs), whole file: the UI census

@@ -175,6 +175,13 @@ INHERITED = {
         "Tests/Architecture/test_console_agent_bridge_light_surface_wiring.py",  # TASK-34100.5.3.2
         "Tests/Agents/test_full_agent_tools_upgrade.py",  # TASK-34100.5.3.2
         "Tests/App/test_full_agent_tools_upgrade_boot.py",  # TASK-34100.5.3.2
+        "Tests/Wizards/test_first_run_tools_posture.py",  # TASK-34100.13
+        "Tests/Wizards/test_first_run_appearance_comfort.py",  # TASK-34100.13
+        "Tests/Utils/test_startup_splash_policy.py",  # TASK-34100.13
+        "Tests/Wizards/test_first_run_full_track_shape.py",  # TASK-34100.13
+        "Tests/Wizards/test_first_run_search_step.py",  # TASK-34100.13
+        "Tests/Wizards/test_first_run_speech_engine_choice.py",  # TASK-34100.13
+        "Tests/Wizards/test_first_run_welcome_copy.py",  # TASK-34100.13
         "Tests/UI/test_library_modal_dismissal.py",  # TASK-38985
         "Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_single_app_route_cycle",  # TASK-39052
         "Tests/Web_Server/test_mobile_service.py",  # TASK-39049
