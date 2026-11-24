@@ -672,6 +672,21 @@ def chat_call_impl(
             ):
                 await _consume_body()
 
+    if not is_subagent:
+        # TASK-42472: the run loop re-asks a failed call (in-place retry or
+        # provider fallback) into this same message, so first discard what
+        # the failed call streamed; otherwise the reply reads "The capital of
+        # FrThe capital of France...". The point stays set until this call
+        # returns, so a call that fails anywhere is discarded by the next.
+        rollback = getattr(self, "_failed_call_rollback", None)
+        if rollback is not None:
+            _discard_failed_call(self, rollback)
+        try:
+            held = self._store.get_message(self._assistant_message_id).content
+        except KeyError:  # No message yet: nothing streamed, nothing to keep.
+            self._failed_call_rollback = None
+        else:
+            self._failed_call_rollback = (held, self._thinking_capture.checkpoint())
     future = bridge.asyncio.run_coroutine_threadsafe(_consume(), self._submit_loop)
     _stall_session_id = self._session_id or self._store.session_id_for_message(self._assistant_message_id)
     try:
@@ -818,4 +833,23 @@ def chat_call_impl(
     result = bridge._StreamingProviderResponse(
         response, terminal_metadata, call_envelope
     )
+    if not is_subagent:
+        self._failed_call_rollback = None
     return result
+
+
+def _discard_failed_call(self, rollback) -> None:
+    """Restore the message text and thinking held before the failed call."""
+    content, thinking = rollback
+    self._store.reset_stream_content(self._assistant_message_id)
+    if content:
+        self._store.append_stream_chunk(self._assistant_message_id, content)
+    before = self._thinking_capture.snapshot().envelope
+    restored = self._thinking_capture.restore(thinking).envelope
+    if restored != before:
+        self._store.replace_message_thinking(
+            self._assistant_message_id,
+            restored,
+            generation_token=self._generation_token,
+            validated=True,
+        )

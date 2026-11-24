@@ -57,6 +57,9 @@ async def _project_console(
     cold_after_request=None,
     tool_prefix="",
     first_failure=None,
+    failures=1,
+    hosted=False,
+    structured_thinking=False,
 ):
     """Use real new-session/workspace defaults; replace only provider HTTP."""
     with (
@@ -114,7 +117,7 @@ async def _project_console(
         def respond(request: httpx.Request) -> httpx.Response:
             assert request.url.path == "/v1/chat/completions"
             attempts.append(request)
-            if first_failure is not None and len(attempts) == 1:
+            if first_failure is not None and len(attempts) <= failures:
                 return first_failure(request)  # returns an error or raises
             payload = json.loads(request.content)
             http_payloads.append(payload)
@@ -156,24 +159,42 @@ async def _project_console(
                 200, json={"choices": [{"message": {"content": content}}]}
             )
 
+        # hosted: OpenAI through the real chat_api_call dispatcher; the
+        # test fakes its requests transport (TASK-42472).
+        provider, model, endpoint = (
+            ("openai", "gpt-4.1-mini", "https://api.openai.com/v1")
+            if hosted
+            else ("llama_cpp", "qwen3.7-27b", "http://localhost:8080")
+        )
         resolution = ConsoleProviderResolution(
             ready=True,
-            provider="llama_cpp",
-            execution_key="llama_cpp",
-            model="qwen3.7-27b",
-            base_url="http://localhost:8080",
+            provider=provider,
+            execution_key=provider,
+            model=model,
+            base_url=endpoint,
             api_key=RUNTIME_CREDENTIAL,
             streaming=response_mode != "complete",
+            local_structured_thinking=structured_thinking,
             resolved_destination=ConsoleResolvedDestination(
-                provider="llama_cpp",
-                model="qwen3.7-27b",
-                endpoint_identity="http://localhost:8080",
-                egress_class=ConsoleEgressClass.ON_DEVICE,
+                provider=provider,
+                model=model,
+                endpoint_identity=endpoint,
+                egress_class=ConsoleEgressClass.PUBLIC_NETWORK
+                if hosted
+                else ConsoleEgressClass.ON_DEVICE,
             ),
         )
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            if hosted:
+                from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+                hosted_kwargs = {"chat_api_call_fn": chat_api_call, "environ": {}}
+            else:
+                hosted_kwargs = {}
             gateway = ConsoleProviderGateway(
-                http_client=client, trace_call_boundary_factory=boundary
+                http_client=client,
+                trace_call_boundary_factory=boundary,
+                **hosted_kwargs,
             )
 
             async def resolve(_selection):
@@ -186,9 +207,7 @@ async def _project_console(
             # Use the real new-session defaults: the old helper disabled AGENTS.
             session = store.create_session(
                 workspace_id="project-trace",
-                settings=ConsoleSessionSettings(
-                    provider="llama_cpp", model="qwen3.7-27b"
-                ),
+                settings=ConsoleSessionSettings(provider=provider, model=model),
             )
             bridge = ConsoleAgentBridge(
                 agent_runs_db=runs, store=store, provider_gateway=gateway
@@ -661,3 +680,104 @@ async def test_llamacpp_agent_retries_a_transient_failure_in_place(
             assert app.controller.run_state.status.value == "failed"
             assert len(app.attempts) == 1
             assert lineage == [("agent_first", "error")]
+
+
+_PARTIAL = "The capital of Fr"
+
+
+def _sse(*contents):
+    events = [{"choices": [{"index": 0, "delta": {"content": text}}]} for text in contents]
+    return "".join(f"data: {json.dumps(event)}\n\n" for event in events)
+
+
+_FAILED_REASONING = "Reasoning the failed call streamed"
+
+
+class _BrokenLlamaStream(httpx.AsyncByteStream):
+    """Reasoning and one content event, then the connection breaks mid-body."""
+
+    async def __aiter__(self):
+        reasoning = {"choices": [{"index": 0, "delta": {"reasoning_content": _FAILED_REASONING}}]}
+        yield f"data: {json.dumps(reasoning)}\n\n".encode()
+        yield _sse(_PARTIAL).encode()
+        raise httpx.RemoteProtocolError("fixture: peer closed mid-body")
+
+
+def _hosted_post(failures, attempts):
+    """A requests transport whose first ``failures`` streams break mid-body."""
+    from unittest.mock import Mock
+
+    import requests
+
+    def post(*_args, **_kwargs):
+        attempts.append(True)
+        broken = len(attempts) <= failures
+        body = _sse(_PARTIAL if broken else "Fixture reply").encode()
+
+        def lines(*_a, **_k):
+            yield body.strip()
+            if broken:
+                raise requests.exceptions.ChunkedEncodingError("fixture: mid-body")
+            yield b"data: [DONE]"
+
+        response = Mock(status_code=200, ok=True, headers={})
+        response.iter_lines.side_effect = lines
+        return response
+
+    return post
+
+
+@pytest.mark.parametrize("failures", [1, 3], ids=["retried", "exhausted"])
+@pytest.mark.parametrize("hosted", [False, True], ids=["llama_cpp", "openai"])
+async def test_a_retry_after_a_mid_stream_failure_replaces_the_partial_reply(
+    tmp_path, monkeypatch, hosted, failures
+):
+    """TASK-42472: an in-place retry starts from the reply the failed call found.
+
+    The failed stream's partial text stayed in the assistant message and the
+    retry streamed after it ("The capital of FrFixture reply"). A run whose
+    retries run out keeps only its last attempt's partial, as a run that
+    fails without retrying does.
+    """
+    attempts = []
+    if hosted:
+        monkeypatch.setattr("requests.Session.post", _hosted_post(failures, attempts))
+    async with _project_console(
+        tmp_path,
+        monkeypatch,
+        response_mode="stream",
+        first_failure=None
+        if hosted
+        else lambda _request: httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=_BrokenLlamaStream(),
+        ),
+        failures=failures,
+        hosted=hosted,
+        structured_thinking=not hosted,
+    ) as app:
+        result = await app.controller.submit_draft("Hello", session_id=app.session.id)
+        assert result.accepted
+        (reply,) = [
+            message
+            for message in app.store.messages_for_session(app.session.id)
+            if message.role.value == "assistant"
+        ]
+        saved = app.db.get_message_by_id(reply.persisted_message_id)
+        assert len(attempts if hosted else app.attempts) == min(failures + 1, 3)
+        if failures == 1:
+            assert app.controller.run_state.status.value == "completed"
+            assert (reply.status, reply.content) == ("complete", "Fixture reply")
+        else:
+            assert app.controller.run_state.status.value == "failed"
+            # Only the last attempt's partial: the stream gate holds back a
+            # short tail, so the visible partial is a prefix of _PARTIAL.
+            assert reply.status == "failed"
+            assert reply.content and _PARTIAL.startswith(reply.content)
+        assert saved["content"] == reply.content
+        if not hosted:
+            # The failed call's reasoning goes with its text: none survives a
+            # successful retry, and only the last attempt's when they run out.
+            reasoning = [block.text for block in getattr(reply.thinking, "blocks", ())]
+            assert reasoning == ([] if failures == 1 else [_FAILED_REASONING])
