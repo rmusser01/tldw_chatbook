@@ -83,7 +83,11 @@ def _pin_executable(explicit: Path | None) -> tuple[Path, WindowsReadPin]:
                 == QUALIFIED_SHA256
             )
             if matched:
-                return pin.physical_path, pin
+                # CreateProcessW accepts the device spelling of this exact
+                # pinned volume. The WAV consumer keeps its extended spelling.
+                return Path(
+                    str(pin.physical_path).replace("\\\\?\\", "\\\\.\\", 1)
+                ), pin
         except (OSError, ValueError):
             pass
         finally:

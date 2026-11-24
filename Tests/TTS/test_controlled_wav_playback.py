@@ -20,6 +20,8 @@ pytestmark = [
 
 
 class Child:
+    has_process = True
+
     def __init__(self):
         self.stderr = self
         self.pipe = queue.Queue()
@@ -42,6 +44,9 @@ class Child:
 
     def close(self):
         self.closed = True
+
+    def close_process_handle(self):
+        self._handle.Close()
 
     def poll(self):
         return self.returncode
@@ -97,7 +102,7 @@ async def test_early_exit_and_exact_argv(retained, monkeypatch, code, expected):
     result = await asyncio.wait_for(run.completion, 5)
     assert result.kind.value == expected and result.bookmark.frame == 2400
     assert Path(args[0]).samefile(exe) and Path(args[-1]).samefile(artifact.path)
-    assert args[0].startswith("\\\\?\\Volume{") and args[-1].startswith(
+    assert args[0].startswith("\\\\.\\Volume{") and args[-1].startswith(
         "\\\\?\\Volume{"
     )
     assert args[1:-1] == [
@@ -387,13 +392,12 @@ async def test_ambiguous_process_birth_refuses_replacement(
     births = []
     if known_child:
 
-        class PartialChild(Child):
-            def __init__(self, *args, **kwargs):
-                super().__init__()
-                births.append(self)
-                partial_launch()
+        def known_birth(*args, **kwargs):
+            child = Child()
+            births.append(child)
+            raise playback.UncertainBirth(child)
 
-        monkeypatch.setattr(playback.subprocess, "Popen", PartialChild)
+        monkeypatch.setattr(playback, "_spawn", known_birth)
     else:
         monkeypatch.setattr(playback, "_spawn", partial_launch)
     run = await playback.ControlledWavPlayback.prepare(
@@ -438,3 +442,40 @@ async def test_ambiguous_process_handle_close_keeps_custody_after_reap(
         result.evidence.reaped_at_s is not None and result.evidence.retired_at_s is None
     )
     assert not await run.retire() and host.owner == "article"
+
+
+async def test_native_creation_refusal_releases_pins_and_admits_successor(
+    retained, monkeypatch
+):
+    # The fixture hash admits these test bytes, but they are not an executable
+    # image. Windows rejects the real CreateProcessW call and creates no child.
+    exe, artifact, bookmark = retained
+    pins = []
+    prepare_files = playback.prepare_files
+
+    def observe_preparation(*args):
+        result = prepare_files(*args)
+        pins.extend(result[1:])
+        return result
+
+    monkeypatch.setattr(playback, "prepare_files", observe_preparation)
+    run = await playback.ControlledWavPlayback.prepare(
+        artifact, bookmark, executable=exe
+    )
+    host = AudioOutputOwnership()
+    try:
+        await run.start(await host.acquire("article", run.retire))
+        result = await run.completion
+        assert result.kind.value == "failed" and result.reason == "player_start_refused"
+        assert (
+            result.evidence.reaped_at_s is None
+            and result.evidence.retired_at_s is not None
+        )
+        assert host.owner is None and await run.retire()
+        artifact.path.unlink()
+        exe.unlink()
+        next_lease = await host.acquire("other", run.retire)
+        assert next_lease.is_current()
+    finally:
+        for pin in pins:
+            pin.close()
