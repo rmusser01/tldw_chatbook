@@ -572,7 +572,7 @@ class FakeSession:
         return native(), resources()
 
 
-if __name__ == "__main__":
+def _run_fixture(runner: asyncio.Runner) -> None:
     mode, marker = sys.argv[1:]
 
     def write_startup(value):
@@ -646,8 +646,15 @@ if __name__ == "__main__":
             return 1
 
         kwargs["native_abi_reader"] = late_abi
-    result = asyncio.run(
+    result = runner.run(
         run_child(read_fd, write_fd, session_factory=factory, **kwargs)
     )
     if mode == "queued_startup":
         raise SystemExit(result)
+
+
+if __name__ == "__main__":
+    # The Windows event loop creates its own loopback wakeup pair on entry.
+    # Application imports and work run with the fixture's network guard active.
+    with asyncio.Runner() as runner:
+        _run_fixture(runner)

@@ -41,7 +41,7 @@ def fake_popen(mode, marker, launches):
         assert args == [sys.executable, "-m", "tldw_chatbook.Audio.voice_process_entry"]
         assert kwargs["close_fds"] is True
         assert kwargs.get("shell", False) is False
-        assert kwargs["start_new_session"] is True
+        assert kwargs["start_new_session"] is (os.name == "posix")
         launches.append(True)
         return subprocess.Popen(
             [
@@ -113,7 +113,13 @@ async def cleanup(owner):
         process = owner.process
         if process is not None:
             try:
-                os.killpg(process.pid, signal.SIGKILL)
+                if os.name == "posix":
+                    os.killpg(process.pid, signal.SIGKILL)
+                else:
+                    if owner.tree is not None:
+                        owner.tree.terminate(force=True)
+                    if process.poll() is None:
+                        process.kill()
             except ProcessLookupError:
                 pass
             try:
