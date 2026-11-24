@@ -141,49 +141,51 @@ server-only sharing, overlay exclusion, and Deep Research ownership/return.
 
 **Files:**
 
-- Create: `tldw_chatbook/DB/migrations/workspaces_v4_to_v5_copy_receipts.sql`
+- Create: `tldw_chatbook/DB/migrations/workspaces_v11_to_v12_copy_receipts.sql`
 - Modify: `tldw_chatbook/DB/Workspace_DB.py`
 - Create: `tldw_chatbook/Research_Workspace/copy_receipts.py`
-- Test: `Tests/DB/test_workspace_db_v5_migration.py`
+- Test: `Tests/DB/test_workspace_db_v12_migration.py`
 - Test: `Tests/Research_Workspace/test_copy_receipts.py`
 
-1. Add RED tests for v4 migration/fresh schema, exact qualified keys,
+1. Add RED tests for v11 migration and fresh v12 schema, exact qualified keys,
    operation/item uniqueness, optimistic revision, state transition graph,
    per-stage crash recovery, partial completion, bounded errors, and content/
    secret rejection.
-2. Add WorkspaceDB v5 tables without a foreign key to local workspace rows:
-   keep the inline migration runner and
-   `workspaces_v4_to_v5_copy_receipts.sql` aligned.
+2. Add WorkspaceDB v12 tables without a foreign key to local workspace rows.
+   Run `workspaces_v11_to_v12_copy_receipts.sql` and stamp the schema in one
+   transaction.
 
    ```text
    research_copy_operations(
-     transfer_id PK, manifest_hash, source_data_source, source_server_profile_id,
+     transfer_id PK, manifest_hash, manifest_json, source_data_source, source_server_profile_id,
      source_principal_id, source_workspace_id, destination_data_source,
      destination_server_profile_id, destination_principal_id,
-     destination_workspace_id, server_migration_id, status, summary_json,
+     destination_workspace_id, replacement_confirmed, server_migration_id,
+     server_migration_finalized, status, lease_token, lease_expires_at,
      revision, created_at, updated_at
    )
    research_copy_items(
-     transfer_id, item_key, item_type, source_owner_id, source_owner_version,
-     source_hash, treatment, conflict_choice, destination_owner_kind,
-     destination_owner_id, destination_owner_version, stage, status,
-     retryable, error_code, error_message, receipt_json, updated_at,
+     transfer_id, item_key, ordinal, stage, destination_owner_id,
+     destination_owner_version, destination_snapshot_hash, failure,
+     retryable, rolled_back,
      PK(transfer_id, item_key)
    )
    ```
 
-3. `summary_json` and `receipt_json` are bounded, secret/body-free diagnostics.
-   They may contain hashes, byte counts, owner IDs/versions, omitted-field
-   names, and timestamps; never source/generated content.
+3. `manifest_json` stores the validated source references and proposed target
+   decisions. Item rows record the destination owner and its revision after
+   a canonical write. The store retains bounded identifiers, versions and
+   failure codes without source or generated content.
 4. Implement `ResearchCopyReceiptStore.create_from_manifest`,
    `record_item_stage`, `record_server_migration`, `finish`, `get`, and
-   `list_recoverable`. Enforce monotonic stages and compare expected revision.
+   `list_recoverable`. Enforce monotonic stages, compare expected revision,
+   and require an unexpired worker lease for state changes.
 5. Restart reconstruction comes only from this store plus destination owner and
    server migration status. It never infers success from a visible UI row.
 6. Run:
 
    ```bash
-   .venv/bin/python -m pytest -q Tests/DB/test_workspace_db_v5_migration.py Tests/Research_Workspace/test_copy_receipts.py
+   .venv/bin/python -m pytest -q Tests/DB/test_workspace_db_v12_migration.py Tests/Research_Workspace/test_copy_receipts.py
    ```
 
 7. Commit:

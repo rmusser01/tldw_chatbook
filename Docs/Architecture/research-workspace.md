@@ -19,7 +19,7 @@ The shell destination id is `research`, but its **primary route is `research_wor
 | Quick notes | `Research_Workspace/quick_notes.py` | save requests with app-minted operation ids, receipt validation at the authority boundary, provenance-as-keywords encoding, conflict errors |
 | Presentation | `Research_Workspace/overlay_store.py`, `paste_staging.py`, `layout_state.py`, `source_urls.py` | per-user overlay JSON (folders/annotations/pane prefs); private paste staging (2 MiB/artifact, 100 artifacts); pane layout; http/https-only URL admission |
 | Runs engine | `Research_Interop/` | `LocalResearchService` (SQLite sessions/runs/events/artifacts/checkpoints; lease + fencing per ADR-070), `LocalResearchEngine` (phases planning→collecting→synthesizing→packaging; reuses the deep-search pipeline), `ResearchScopeService` (LOCAL\|SERVER routing on a single-worker executor to preserve read-check-write ordering), budget ledger, chat handoff |
-| Persistence | `DB/Workspace_DB.py` (schema v11; source and Quick Note receipts and output membership metadata), `DB/ChaChaNotes_DB.py` (`research_quick_note_owner_proofs`, local-only) | see below |
+| Persistence | `DB/Workspace_DB.py` (schema v12; source, Quick Note, and Copy receipts plus output membership metadata), `DB/ChaChaNotes_DB.py` (`research_quick_note_owner_proofs`, local-only) | see below |
 | Wiring | `app_service_wiring.py`, `app.py`, `app_ingest_queue.py` | research service wiring; screen late-binding of both ports; held ingest dispatch/retry/reconcile helpers |
 
 ## Source admission (dataflow)

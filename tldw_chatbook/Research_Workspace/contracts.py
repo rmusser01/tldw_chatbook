@@ -19,7 +19,8 @@ if TYPE_CHECKING:
         ResearchSourceVersionRef,
     )
     from .copy_manifest import ResearchCopyCandidate
-    from .copy_models import ResearchCopyConfirmation, ResearchCopyManifest, ResearchCopyReceipt
+    from .copy_models import ResearchCopyConfirmation, ResearchCopyManifest
+    from .copy_receipts import ResearchCopyReceipt
     from .quick_notes import (
         ResearchNotePage,
         ResearchNotePageRequest,

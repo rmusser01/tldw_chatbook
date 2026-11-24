@@ -310,12 +310,3 @@ class ResearchCopyConfirmation:
             raise ValueError(
                 "Select at least one item with an available Copy treatment"
             )
-
-
-@dataclass(frozen=True, slots=True)
-class ResearchCopyReceipt:
-    """The durable transfer identity and its current operation revision."""
-
-    manifest: ResearchCopyManifest
-    status: ResearchCopyStatus
-    revision: int
