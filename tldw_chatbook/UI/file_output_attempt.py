@@ -21,6 +21,7 @@ class FileOutputAttempt:
     ticket: AudioOutputIntent
     run: FileOutputRun | None = None
     lease: AudioOutputLease | None = None
+    source_key: object = None
 
     def stop(self) -> asyncio.Future[bool]:
         """Fence immediately, including when preparation has yet to return."""
@@ -41,8 +42,10 @@ class FileOutputSurface:
         self.latest: FileOutputAttempt | None = None
         self.active: FileOutputAttempt | None = None
 
-    def begin(self, app: Any, ticket: AudioOutputIntent) -> FileOutputAttempt:
-        self.latest = FileOutputAttempt(app, ticket)
+    def begin(
+        self, app: Any, ticket: AudioOutputIntent, *, source_key: object = None
+    ) -> FileOutputAttempt:
+        self.latest = FileOutputAttempt(app, ticket, source_key=source_key)
         return self.latest
 
     async def play(
@@ -56,7 +59,10 @@ class FileOutputSurface:
         release: Callable[[], None] | None = None,
     ) -> bool:
         """Transfer artifact custody from preparation to positive retirement."""
-        from ..TTS.audio_output_admission import acquire_audio_output
+        from ..TTS.audio_output_admission import (
+            acquire_audio_output,
+            retain_retired_handoff_file,
+        )
         from ..TTS.audio_output_runs import FileOutputRun
 
         def eligible() -> bool:
@@ -73,16 +79,12 @@ class FileOutputSurface:
                 if release is not None:
 
                     def release_file() -> None:
-                        if run.handed_off and retain_handoff is not None:
-                            retain_handoff(release)
-                        elif run.handed_off:
-                            from ..TTS.audio_player import HAND_OFF_RETENTION_SECONDS
-
-                            asyncio.get_running_loop().call_later(
-                                HAND_OFF_RETENTION_SECONDS, release
-                            )
-                        else:
+                        if not run.handed_off:
                             release()
+                        elif retain_handoff is not None:
+                            retain_handoff(release)
+                        else:
+                            retain_retired_handoff_file(attempt.app, release)
 
                     run.on_retired(release_file)
                 attempt.lease = await acquire_audio_output(

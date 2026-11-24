@@ -4013,7 +4013,7 @@ async def test_playback_uses_dedicated_widget_worker_group(
         close = getattr(awaitable, "close", None)
         if callable(close):
             close()
-        return SimpleNamespace(is_finished=False, cancel=lambda: None)
+        return SimpleNamespace(is_finished=False, cancel=lambda: None, wait=AsyncMock())
 
     app = _PaneHost()
 
@@ -4075,7 +4075,7 @@ async def test_playback_uses_only_a_current_artifact_and_intent(
         **_kwargs: object,
     ) -> SimpleNamespace:
         jobs.append(job)
-        return SimpleNamespace(is_finished=False, cancel=lambda: None)
+        return SimpleNamespace(is_finished=False, cancel=lambda: None, wait=AsyncMock())
 
     from Tests.UI.file_output_fakes import capture_file_playback
 
@@ -4112,8 +4112,12 @@ async def test_playback_uses_only_a_current_artifact_and_intent(
 
         assert played == []
         assert not pane.query_one("#audio-play-btn", Button).disabled
-        lease_handler.lease_playground_result.assert_not_called()
-        lease_handler.release_playground_result.assert_not_called()
+        lease_handler.lease_playground_result.assert_called_once_with(
+            "old-operation", old_path
+        )
+        lease_handler.release_playground_result.assert_called_once_with(
+            "old-operation", old_path
+        )
 
 
 @pytest.mark.asyncio

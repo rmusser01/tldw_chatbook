@@ -4614,6 +4614,65 @@ async def test_play_calls_the_player_with_the_rows_path_and_stop_stops_it(
 
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("other_row", "blocked"), [(False, False), (True, True)])
+async def test_stop_resolves_held_row_after_refused_replay(
+    monkeypatch, tmp_path, other_row, blocked
+):
+    from Tests.UI.file_output_fakes import capture_file_playback
+    from tldw_chatbook.TTS.audio_output_runs import FileOutputRun
+
+    _patch_audio_dir(monkeypatch, tmp_path)
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+    db = app.watchlist_bundle_service.db
+
+    def create_row(name):
+        briefing_id, script_id = _seed_complete_script(app, watchlist_id)
+        path = briefing_audio.briefing_audio_dir() / name
+        path.write_bytes(b"sample")
+        audio_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
+        db.update_briefing_audio(audio_id, status="complete", file_path=str(path))
+        return briefing_id, script_id
+
+    first, second = create_row("a.wav"), create_row("b.wav")
+    played = []
+    players = capture_file_playback(monkeypatch, played)
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        await _select_briefing_and_script(screen, pilot, host, *first)
+        pane = screen.query_one(ArtifactsPane)
+        pane.query_one("#artifacts-play-button", Button).press()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        original = players[0]
+        if other_row:
+            await _select_briefing_and_script(screen, pilot, host, *second)
+        if blocked:
+            original.can_stop = False
+        else:
+
+            async def refuse(_path):
+                return None
+
+            monkeypatch.setattr(FileOutputRun, "prepare", refuse)
+        pane.query_one("#artifacts-play-button", Button).press()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        assert len(played) == 1
+        assert original.stops == ([original.token] if blocked else [])
+        if other_row:
+            pane.query_one("#artifacts-stop-button", Button).press()
+            await pilot.pause()
+            assert original.stops == [original.token]
+            await _select_briefing_and_script(screen, pilot, host, *first)
+        original.can_stop = True
+        pane.query_one("#artifacts-stop-button", Button).press()
+        await pilot.pause()
+        assert original.stops == [original.token] * (2 if blocked else 1)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
 async def test_stop_does_not_silence_a_different_currently_playing_file(monkeypatch):
     """A Watchlists Stop without a local attempt preserves another live lease."""
     app = _build_test_app()

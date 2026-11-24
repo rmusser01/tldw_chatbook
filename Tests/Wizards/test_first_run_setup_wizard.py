@@ -1336,6 +1336,47 @@ async def test_voice_playback_creates_the_app_audio_player_on_first_use(
 
 
 @pytest.mark.asyncio
+async def test_voice_playback_accepted_external_sample_removed_at_quit(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+
+    from Tests.TTS.test_audio_output_runs import FilePlayer
+    from tldw_chatbook import app_shutdown
+    from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
+
+    class VoiceHost(_StepHost):
+        async def on_unmount(self):
+            await app_shutdown.observe_audio_shutdown(self, 1.5)
+
+    async def sample(*_args, **_kwargs):
+        return voice_state.VoiceSampleResult(b"valid", "audio/wav", "wav", True)
+
+    player = FilePlayer(external=True)
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.audio_output_runs.SimpleAudioPlayer", lambda: player
+    )
+    monkeypatch.setattr(voice_state, "run_voice_sample", sample)
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = VoiceHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _pick_pocket_tts(step, pilot)
+        step.query_one("#setup-voice-test", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        path = step._sample_audio_path
+        assert path.is_file()
+        assert app.audio_output.handoff_epoch is not None
+        assert step._sample_output.active.run.retirement_confirmed
+        app.exit()
+    assert not path.exists()
+
+
+@pytest.mark.asyncio
 async def test_voice_playback_reports_failure_when_no_os_player_is_found(
     monkeypatch,
     tmp_path,
