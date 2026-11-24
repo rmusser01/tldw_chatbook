@@ -575,6 +575,16 @@ inspect unmigrated or rollback snapshots, so new queries are version-gated.
   selector to the acquired selector on the normalized private image before sealing;
   the later restore then uses its reviewed destination mapping. Rebinding grants
   no playback, provider or filesystem authority.
+  Selected selectors may share the same physical article directory, including
+  a default data root. Derive each final member's logical owner from its one
+  verified selected partition and exact config/DB peer, then reconcile the
+  observations into one finite physical inventory. Distinct selected custom
+  databases may supply distinct verified member claims to the same root. Never
+  infer ownership merely from a basename, root alias or another selector's row.
+  Preserve per-selector root identities for relocation. An unclaimed member,
+  multiple claims or inconsistent physical root/peer remains unsupported;
+  unselected sibling data does not gain backup authority through this grouping.
+  This projection does not change native reads, effects or cleanup custody.
 - A cheap installed producer gate closes intake and drains actual storage work
   before maintenance. Ordinary storage admission covers DB, lock and asset paths
   through physical retirement. Long-lived listening holders must release/drain
