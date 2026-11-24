@@ -12,7 +12,7 @@ from tldw_chatbook.Research_Workspace.studio_mapping import (
     PRIMARY_OUTPUT_MAPPINGS,
     project_studio_availability,
 )
-from tldw_chatbook.Research_Workspace.studio_models import ResearchOutputKind
+from tldw_chatbook.Research_Workspace.studio_models import PRIMARY_RESEARCH_OUTPUT_KINDS
 
 
 def test_primary_output_mapping_keeps_all_ten_canonical_owner_paths_explicit():
@@ -34,7 +34,9 @@ def test_primary_output_mapping_keeps_all_ten_canonical_owner_paths_explicit():
     }
     assert len(PRIMARY_OUTPUT_MAPPINGS) == 10
     for authority, rows in expected.items():
-        for kind, expected_owner in zip(ResearchOutputKind, rows, strict=True):
+        for kind, expected_owner in zip(
+            PRIMARY_RESEARCH_OUTPUT_KINDS, rows, strict=True
+        ):
             owner = PRIMARY_OUTPUT_MAPPINGS[authority, kind]
             assert (
                 owner.owner_kind,

@@ -15,6 +15,7 @@ from .contracts import (
     WorkspaceDataSource,
 )
 from .studio_models import (
+    PRIMARY_RESEARCH_OUTPUT_KINDS,
     ResearchOutputKind,
     StudioOwnerKind,
     studio_retrieval,
@@ -167,7 +168,7 @@ def project_studio_availability(
     result = {}
     if route is not None and route.data_source is not workspace.data_source:
         route = None
-    for kind in ResearchOutputKind:
+    for kind in PRIMARY_RESEARCH_OUTPUT_KINDS:
         owner = PRIMARY_OUTPUT_MAPPINGS[workspace.data_source, kind]
         capability = capabilities.get(owner.create_capability)
         if capability is None:

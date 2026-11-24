@@ -33,10 +33,36 @@ class ResearchOutputKind(StrEnum):
     QUIZ = "quiz"
     REPORT = "report"
     COMPARE_SOURCES = "compare_sources"
+    MIND_MAP = "mind_map"
+    TIMELINE = "timeline"
+    DATA_TABLE = "data_table"
+    SLIDES = "slides"
+    AUDIO_SUMMARY = "audio_summary"
 
     @property
     def minimum_sources(self) -> int:
         return 2 if self is self.COMPARE_SOURCES else 1
+
+
+PRIMARY_RESEARCH_OUTPUT_KINDS = (
+    ResearchOutputKind.SUMMARY,
+    ResearchOutputKind.FLASHCARDS,
+    ResearchOutputKind.QUIZ,
+    ResearchOutputKind.REPORT,
+    ResearchOutputKind.COMPARE_SOURCES,
+)
+
+
+class ResearchWorkProductKind(StrEnum):
+    EXECUTIVE_BRIEF = "executive_brief"
+    LITERATURE_MATRIX = "literature_matrix"
+    CORPUS_GAP_FINDER = "corpus_gap_finder"
+    EVIDENCE_BOUND_HYPOTHESES = "evidence_bound_hypotheses"
+    RESEARCH_PROPOSAL_PACK = "research_proposal_pack"
+
+    @property
+    def minimum_sources(self) -> int:
+        return 1 if self is self.EXECUTIVE_BRIEF else 2
 
 
 class StudioOwnerKind(StrEnum):
@@ -140,6 +166,8 @@ class ResearchStudioRequest:
             self, "operation_id", validate_chat_id(self.operation_id, "operation ID")
         )
         kind = ResearchOutputKind(self.output_kind)
+        if kind not in PRIMARY_RESEARCH_OUTPUT_KINDS:
+            raise ValueError("Choose an available Studio output owner")
         object.__setattr__(self, "output_kind", kind)
         if self.research_run_ref is not None and (
             not isinstance(self.research_run_ref, ResearchWorkspaceRunRef)

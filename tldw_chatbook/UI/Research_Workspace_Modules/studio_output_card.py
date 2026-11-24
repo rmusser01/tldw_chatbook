@@ -4,12 +4,13 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Button, Static
 
+from ...Research_Workspace.action_registry import RESEARCH_ACTIONS
 from ...Research_Workspace.studio_mapping import StudioAvailability
 from ...Research_Workspace.studio_models import ResearchOutputKind
 
 
 def output_label(kind: ResearchOutputKind) -> str:
-    return kind.value.replace("_", " ").title()
+    return RESEARCH_ACTIONS[kind.value].label
 
 
 class ResearchStudioOutputCard(Vertical):

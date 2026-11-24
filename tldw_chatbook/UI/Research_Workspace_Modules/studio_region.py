@@ -22,7 +22,7 @@ from ...Research_Workspace.studio_mapping import (
     project_studio_availability,
 )
 from ...Research_Workspace.studio_models import (
-    ResearchOutputKind,
+    PRIMARY_RESEARCH_OUTPUT_KINDS,
     ResearchStudioRequest,
     StudioOwnerKind,
 )
@@ -98,7 +98,7 @@ class ResearchStudioRegion(VerticalScroll):
             compact=True,
             disabled=True,
         )
-        for kind in ResearchOutputKind:
+        for kind in PRIMARY_RESEARCH_OUTPUT_KINDS:
             yield ResearchStudioOutputCard(kind)
         yield ResearchStudioHistory()
         yield ResearchQuickNotesSection(id="research-quick-notes-section")

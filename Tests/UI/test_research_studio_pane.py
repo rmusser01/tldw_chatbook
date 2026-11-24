@@ -12,7 +12,7 @@ from Tests.UI.library_quit_guard_support import _settings_without_splash, _until
 from Tests.UI.test_research_chat_region import build_research_app, open_chat
 from tldw_chatbook.Research_Workspace.contracts import WorkspaceDataSource
 from tldw_chatbook.Research_Workspace.studio_generation import StudioEvidence
-from tldw_chatbook.Research_Workspace.studio_models import ResearchOutputKind
+from tldw_chatbook.Research_Workspace.studio_models import PRIMARY_RESEARCH_OUTPUT_KINDS
 from tldw_chatbook.UI.Research_Workspace_Modules.studio_history import history_key
 
 
@@ -73,7 +73,7 @@ async def test_studio_shows_all_primary_cards_and_canonical_owner_recovery(
                 ),
                 "canonical owner availability",
             )
-            for kind in ResearchOutputKind:
+            for kind in PRIMARY_RESEARCH_OUTPUT_KINDS:
                 key = kind.value.replace("_", "-")
                 assert pane.query_one(f"#research-studio-create-{key}", Button).disabled
             assert "Local Artifacts" in str(

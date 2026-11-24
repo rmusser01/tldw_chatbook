@@ -1,25 +1,26 @@
 ---
 id: TASK-21512
 title: Add capability-gated Research Workspace extended parity
-status: To Do
-assignee: []
-created_date: '2026-08-24 05:54'
-updated_date: '2026-08-24 05:54'
+status: In Progress
+assignee:
+- '@codex'
+created_date: 2026-08-24 05:54
+updated_date: 2026-11-24 21:34
 labels:
-  - research
-  - workspace
-  - parity
-  - ux
+- research
+- workspace
+- parity
+- ux
 dependencies:
-  - TASK-21507
-  - TASK-21508
-  - TASK-21509
-  - TASK-21510
-  - TASK-21511
+- TASK-21507
+- TASK-21508
+- TASK-21509
+- TASK-21510
+- TASK-21511
 references:
-  - Docs/superpowers/specs/2026-08-23-research-workspace-design.md
-  - Docs/superpowers/plans/2026-08-23-research-workspace-extended-parity.md
-  - backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md
+- Docs/superpowers/specs/2026-08-23-research-workspace-design.md
+- Docs/superpowers/plans/2026-08-23-research-workspace-extended-parity.md
+- backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md
 priority: medium
 ---
 

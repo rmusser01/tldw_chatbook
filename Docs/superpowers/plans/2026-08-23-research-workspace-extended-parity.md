@@ -56,9 +56,9 @@ workspace registry/overlay, pending handoffs, pytest.
 ADR required: no new ADR
 
 ADR path:
-`backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md`
+`backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md`
 
-Reason: ADR-078 and the approved design already classify these controls and
+Reason: ADR-322 and the approved design already classify these controls and
 their owner boundaries. If implementation would require a new generator,
 canonical owner, service contract, or persistence boundary not listed below,
 stop and create a new ADR before proceeding.
