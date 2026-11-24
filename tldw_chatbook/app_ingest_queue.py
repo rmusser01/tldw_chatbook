@@ -4164,10 +4164,19 @@ class LibraryIngestQueueMixin:
                     )
                     done = pool_shutdown_done.wait(timeout=kill_after)
                     if not done:
+                        killed = []
                         for worker in tuple(getattr(pool, "_pool", None) or ()):
                             if worker.exitcode is None:
                                 with contextlib.suppress(Exception):
                                     worker.kill()
+                                    killed.append(worker.pid)
+                        if killed:
+                            logger.warning(
+                                "Killed {} Library ingest parse worker(s) still "
+                                "running after the pool's terminate (pids={}).",
+                                len(killed),
+                                killed,
+                            )
                         done = pool_shutdown_done.wait(
                             timeout=_INGEST_WORKER_SHUTDOWN_TIMEOUT_SECONDS - kill_after
                         )

@@ -4580,7 +4580,7 @@ def test_worker_shutdown_timeout_reports_failure_without_late_completion(
 
 
 def test_pool_teardown_kills_a_worker_that_outlives_sigterm(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """TASK-42470: a parse-pool worker that survives ``Pool.terminate``'s
     SIGTERM is killed, so the teardown completes instead of timing out.
@@ -4590,7 +4590,7 @@ def test_pool_teardown_kills_a_worker_that_outlives_sigterm(
     had just forked lost the SIGTERM that way in a whole recovered-suites
     run, and the 10 s timeout left the pool retiring. Here the worker
     ignores SIGTERM and is busy, so it cannot take the pool's stop sentinel
-    either: the same state.
+    either: the same state. The kill is logged with the worker's pid.
     """
     import signal
 
@@ -4607,10 +4607,33 @@ def test_pool_teardown_kills_a_worker_that_outlives_sigterm(
     completed: list[bool] = []
     failure: list[BaseException] = []
     teardown = None
+    from loguru import logger
+
+    warnings: list[str] = []
+    sink_id = logger.add(
+        lambda message: warnings.append(message.record["message"]), level="WARNING"
+    )
     try:
-        pool.apply(signal.signal, (signal.SIGTERM, signal.SIG_IGN))
-        pool.apply_async(time.sleep, (60,))
-        started = time.monotonic()
+        # Ignore SIGTERM, say so, then stay busy. Teardown waits for the
+        # marker: an idle worker would take the stop sentinel and exit.
+        started = tmp_path / "worker-busy"
+        pool.apply_async(
+            exec,
+            (
+                "import signal, time\n"
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                f"open({str(started)!r}, 'w').close()\n"
+                "time.sleep(60)\n",
+                {},
+            ),
+        )
+        for _ in range(600):
+            if started.exists():
+                break
+            time.sleep(0.05)
+        assert started.exists(), "the worker never started its busy task"
+        pid = pool._pool[0].pid
+        began = time.monotonic()
         teardown = LibraryIngestQueueMixin._shutdown_ingest_workers_off_thread(
             None,
             None,
@@ -4623,12 +4646,18 @@ def test_pool_teardown_kills_a_worker_that_outlives_sigterm(
         )
         assert teardown is not None
         teardown.join(timeout=8.0)
-        elapsed = time.monotonic() - started
+        elapsed = time.monotonic() - began
         assert not teardown.is_alive(), f"teardown still running after {elapsed:.1f} s"
         assert failure == []
         assert completed == [True]
         assert all(worker.exitcode is not None for worker in pool._pool)
+        # The escalation is logged, naming the worker and nothing else.
+        assert [w for w in warnings if w.startswith("Killed ")] == [
+            "Killed 1 Library ingest parse worker(s) still running after the "
+            f"pool's terminate (pids=[{pid}])."
+        ]
     finally:
+        logger.remove(sink_id)
         for worker in pool._pool:
             if worker.exitcode is None:
                 worker.kill()
