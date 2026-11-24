@@ -15,15 +15,8 @@ from pathlib import Path
 import pytest
 
 
-def _run_image_case(tmp_path, program, receipt):
-    supplied = os.environ.get("TLDW_TEST_APFS_MOUNT")
-    if not supplied:
-        pytest.skip("requires an explicitly mounted disposable APFS test image")
-    mount = Path(supplied).resolve(strict=True)
-    assert mount.is_dir() and mount.stat().st_dev != tmp_path.stat().st_dev
-    image_source = Path(tempfile.mkdtemp(prefix="chatbook-test-", dir=mount))
-    for name in ("home", "config", "data", "cache", "host", "logs", "tmp"):
-        (tmp_path / name).mkdir(mode=0o700)
+def _image_case_environment(tmp_path, image_source):
+    """An allowlisted child environment whose profile lives under ``tmp_path``."""
     environment = {
         key: value
         for key, value in os.environ.items()
@@ -31,6 +24,7 @@ def _run_image_case(tmp_path, program, receipt):
     }
     environment.update(
         HOME=str(tmp_path / "home"),
+        PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
         USERPROFILE=str(tmp_path / "home"),
         XDG_CONFIG_HOME=str(tmp_path / "config"),
         XDG_DATA_HOME=str(tmp_path / "data"),
@@ -43,6 +37,26 @@ def _run_image_case(tmp_path, program, receipt):
         TLDW_TEST_MODE="1",
         TLDW_DISABLE_CONFIG_WATCH="1",
     )
+    return environment
+
+
+def test_image_case_environment_pins_the_null_keyring_backend(tmp_path):
+    """TASK-42479: the image child imports the app; an allowlist must add the pin."""
+    environment = _image_case_environment(tmp_path, tmp_path / "image")
+
+    assert environment.get("PYTHON_KEYRING_BACKEND") == "keyring.backends.null.Keyring"
+
+
+def _run_image_case(tmp_path, program, receipt):
+    supplied = os.environ.get("TLDW_TEST_APFS_MOUNT")
+    if not supplied:
+        pytest.skip("requires an explicitly mounted disposable APFS test image")
+    mount = Path(supplied).resolve(strict=True)
+    assert mount.is_dir() and mount.stat().st_dev != tmp_path.stat().st_dev
+    image_source = Path(tempfile.mkdtemp(prefix="chatbook-test-", dir=mount))
+    for name in ("home", "config", "data", "cache", "host", "logs", "tmp"):
+        (tmp_path / name).mkdir(mode=0o700)
+    environment = _image_case_environment(tmp_path, image_source)
     (tmp_path / "fixture.json").write_text(
         json.dumps(
             {

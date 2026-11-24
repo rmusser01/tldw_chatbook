@@ -1525,8 +1525,8 @@ jobs:
     # unseen). TASK-42480 adds the keyring-isolation guard after the network
     # guard (sandboxed; its app-building case runs in a private profile;
     # 3 tests, ~10 s serially at load 45). TASK-42479 adds that file's
-    # HOME-move census and script pins (14 tests in the file, ~19 s at load
-    # 50, the census ~10 s), then the profilers' keyring-pin nodes (4 tests,
+    # HOME-move census and script pins (21 tests in the file, ~9 s at load
+    # 15-20, the census ~4 s), then the profilers' keyring-pin nodes (4 tests,
     # about 1 s together; not the whole files).
     name: Architecture guard contracts
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))

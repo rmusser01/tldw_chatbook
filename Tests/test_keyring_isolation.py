@@ -151,12 +151,27 @@ _EXEMPT = {
         "copies the pytest process's pinned environment; forcing the key would "
         "override the TLDW_TEST_REAL_KEYRING opt-out"
     ),
+    (
+        "Tests/Packaging/test_windows_portable.py",
+        "test_portable_environment_drops_host_profile_and_secrets",
+    ): "a host environment handed to the launcher, which the test asserts pins null",
+    (
+        "Tests/Performance/test_rag_citation_provenance_benchmark.py",
+        "test_benchmark_host_state_context_isolates_and_restores_environment",
+    ): (
+        "seeds an in-process host environment with the fail backend (it reaches no "
+        "store) to prove the benchmark context replaces it"
+    ),
+    (
+        "Tests/Live/test_library_adaptive_reader_closeout.py",
+        "test_child_environment_redirects_every_writable_owner_before_import",
+    ): "a table of values the child asserts; the child copies the pinned environment",
 }
-#: An empty or broken scan must not pass (164 profile moves on 2026-11-24).
+#: An empty or broken scan must not pass (174 profile moves on 2026-11-24).
 _MIN_PROFILE_MOVES = 120
 
 
-def _is_environ(node: ast.AST) -> bool:
+def _is_environ(node: ast.AST | None) -> bool:
     return isinstance(node, ast.Attribute) and node.attr == "environ"
 
 
@@ -172,14 +187,60 @@ def _own_nodes(scope: ast.AST):
             stack.extend(ast.iter_child_nodes(node))
 
 
-def _profile_moves(source: str, *, pytest_file: bool) -> list[tuple[str, int, bool]]:
-    """(scope, line, pinned) for each function or module that moves HOME.
+class _Env:
+    """What one scope does to one environment mapping."""
 
-    Keys come from dict literals, ``update(...)``/``dict(...)`` keywords and
-    ``x["KEY"] = ...``. A scope is pinned when it names the backend key, or,
-    in a pytest file, when it copies or edits the running environment.
+    def __init__(self, copy: bool = False) -> None:
+        self.keys: set[str] = set()
+        self.pin: str | None = None  # "null", or "other" for any other value
+        self.popped = False
+        self.copy = copy  # a copy of the running environment, or os.environ itself
+        self.table = False  # only a table of values copied into another mapping
+
+    def derived(self) -> _Env:
+        env = _Env(self.copy)
+        env.keys, env.pin, env.popped = set(self.keys), self.pin, self.popped
+        return env
+
+    def take(self, table: _Env) -> None:
+        """Copy a table's entries in (a ``.items()`` loop or comprehension)."""
+        self.keys |= table.keys
+        self.pin = table.pin or self.pin
+        table.table = True
+
+
+def _profile_moves(source: str, *, pytest_file: bool) -> list[tuple[str, int, bool]]:
+    """(scope, line, pinned) for each environment a scope moves HOME in.
+
+    Each mapping is tracked on its own: a name (``env = {...}``, then
+    ``env.update(...)``, ``env["K"] = ...``, ``dict(env, K=...)``), ``os.environ``
+    itself, or an unnamed literal. It is pinned only by the backend key set to
+    the constant null backend (or a module constant holding it), never by a
+    ``pop``/``del`` of it. In a pytest file, a copy of the running environment
+    (``{**os.environ}``, ``dict(os.environ)``, ``os.environ.copy()``) or
+    ``os.environ`` itself already carries the conftest's pin. An allowlist or
+    denylist built from ``os.environ.items()`` is a fresh environment. A table
+    copied in by a ``.items()`` comprehension or loop (``x[key] = ...``,
+    ``monkeypatch.setenv``) counts for the mapping it fills, not on its own.
+
+    Limits: one scope at a time, so HOME and the profile keys set in different
+    helpers are not seen together, and a mapping passed to another function to
+    be filled in is not followed.
     """
     tree = ast.parse(source)
+    constants = {
+        target.id: node.value.value
+        for node in tree.body
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+
+    def is_null(value: ast.AST) -> bool:
+        if isinstance(value, ast.Name):
+            return constants.get(value.id) == NULL_BACKEND
+        return isinstance(value, ast.Constant) and value.value == NULL_BACKEND
+
     scopes = [tree] + [
         node
         for node in ast.walk(tree)
@@ -187,61 +248,182 @@ def _profile_moves(source: str, *, pytest_file: bool) -> list[tuple[str, int, bo
     ]
     moves = []
     for scope in scopes:
-        keys: set[str] = set()
-        names_key = inherits = False
-        for node in _own_nodes(scope):
-            if isinstance(node, ast.Constant) and node.value == _KEYRING_KEY:
-                names_key = True
-            elif isinstance(node, ast.Dict):
+        nodes = list(_own_nodes(scope))
+        envs: dict[object, _Env] = {}
+        handled: set[int] = set()
+
+        def env_of(target: ast.AST) -> _Env:
+            key = ast.unparse(target)
+            if key not in envs:
+                envs[key] = _Env(copy=_is_environ(target))
+            return envs[key]
+
+        def table_of(iterable: ast.AST) -> _Env | None:
+            """The mapping a ``.items()`` loop reads, when this scope built it."""
+            func = getattr(iterable, "func", None)
+            if not isinstance(func, ast.Attribute) or func.attr != "items":
+                return None
+            if isinstance(func.value, ast.Dict):
+                table = _Env()
+                fill(table, func.value)
+                return table
+            if _is_environ(func.value):
+                return None
+            return envs.get(ast.unparse(func.value))
+
+        def put(env: _Env, key: str, value: ast.AST) -> None:
+            env.keys.add(key)
+            if key == _KEYRING_KEY:
+                env.pin = "null" if is_null(value) else "other"
+
+        def fill(env: _Env, node: ast.AST) -> None:
+            """Apply a dict literal or a ``dict(...)``/``update(...)`` call."""
+            handled.add(id(node))
+            if isinstance(node, ast.Dict):
                 for key, value in zip(node.keys, node.values):
                     if key is None:
-                        inherits = inherits or _is_environ(value)
+                        env.copy = env.copy or _is_environ(value)
                     elif isinstance(key, ast.Constant) and isinstance(key.value, str):
-                        keys.add(key.value)
+                        put(env, key.value, value)
             elif isinstance(node, ast.Call):
-                func = node.func
-                name = getattr(func, "attr", getattr(func, "id", None))
-                if name in ("update", "dict"):
-                    keys.update(kw.arg for kw in node.keywords if kw.arg)
-                inherits = inherits or (
-                    name == "setenv"
-                    or (
-                        name in ("update", "copy", "items")
-                        and _is_environ(getattr(func, "value", None))
-                    )
-                    or (
-                        name == "dict" and bool(node.args) and _is_environ(node.args[0])
-                    )
+                for arg in node.args:
+                    if isinstance(arg, ast.Dict):
+                        fill(env, arg)
+                    elif isinstance(arg, ast.DictComp):
+                        table = table_of(arg.generators[0].iter)
+                        if table is not None:
+                            env.take(table)
+                for keyword in node.keywords:
+                    if keyword.arg:
+                        put(env, keyword.arg, keyword.value)
+
+        def source_env(value: ast.AST) -> _Env | None:
+            """The environment a new mapping starts from, if it copies one."""
+            if isinstance(value, ast.Dict):
+                return _Env()
+            if isinstance(value, ast.Call):
+                func = value.func
+                if isinstance(func, ast.Name) and func.id == "dict":
+                    base = value.args[0] if value.args else None
+                    if base is None or isinstance(base, ast.Dict):
+                        return _Env()
+                    if _is_environ(base):
+                        return _Env(copy=True)
+                    known = envs.get(ast.unparse(base))
+                    return known.derived() if known else _Env()
+                if isinstance(func, ast.Attribute) and func.attr == "copy":
+                    if _is_environ(func.value):
+                        return _Env(copy=True)
+            return None
+
+        # Assignments first, in source order, so a later update finds its env.
+        for node in sorted(
+            (
+                n
+                for n in nodes
+                if isinstance(
+                    n, (ast.Assign, ast.AnnAssign, ast.Call, ast.Delete, ast.For)
                 )
-            elif isinstance(node, ast.Assign):
+            ),
+            key=lambda n: (n.lineno, n.col_offset),
+        ):
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                target = (
+                    node.targets[0] if isinstance(node, ast.Assign) else node.target
+                )
+                if node.value is None:
+                    continue
+                if isinstance(target, ast.Subscript):
+                    if isinstance(target.slice, ast.Constant) and isinstance(
+                        target.slice.value, str
+                    ):
+                        put(env_of(target.value), target.slice.value, node.value)
+                    continue
+                start = source_env(node.value)
+                if start is not None and isinstance(target, (ast.Name, ast.Attribute)):
+                    envs[ast.unparse(target)] = start
+                    fill(start, node.value)
+            elif isinstance(node, ast.For):
+                table = table_of(node.iter)
+                for inner in ast.walk(node) if table is not None else ():
+                    if isinstance(inner, ast.Assign) and isinstance(
+                        inner.targets[0], ast.Subscript
+                    ):
+                        env_of(inner.targets[0].value).take(table)
+                    elif (
+                        isinstance(inner, ast.Call)
+                        and getattr(inner.func, "attr", None) == "setenv"
+                    ):
+                        envs.setdefault("os.environ", _Env(copy=True)).take(table)
+            elif isinstance(node, ast.Delete):
                 for target in node.targets:
                     if isinstance(target, ast.Subscript) and isinstance(
                         target.slice, ast.Constant
                     ):
-                        keys.add(str(target.slice.value))
-                        inherits = inherits or _is_environ(target.value)
-        if "HOME" in keys and keys & _PROFILE_KEYS:
-            pinned = names_key or _KEYRING_KEY in keys or (pytest_file and inherits)
-            moves.append(
-                (
-                    getattr(scope, "name", "<module>"),
-                    getattr(scope, "lineno", 0),
-                    pinned,
+                        if target.slice.value == _KEYRING_KEY:
+                            env_of(target.value).popped = True
+            elif isinstance(node.func, ast.Attribute) and id(node) not in handled:
+                if node.func.attr == "update":
+                    fill(env_of(node.func.value), node)
+                elif node.func.attr == "pop" and node.args:
+                    first = node.args[0]
+                    if isinstance(first, ast.Constant) and first.value == _KEYRING_KEY:
+                        env_of(node.func.value).popped = True
+        # Unnamed literals: a returned dict, a ``dict(x, ...)`` passed on, ...
+        for node in nodes:
+            if id(node) in handled:
+                continue
+            start = source_env(node)
+            if start is not None and not (
+                isinstance(node, ast.Call) and not node.keywords and not node.args
+            ):
+                envs[id(node)] = start
+                fill(start, node)
+        for env in envs.values():
+            if not env.table and "HOME" in env.keys and env.keys & _PROFILE_KEYS:
+                pinned = env.pin == "null" or (
+                    env.pin is None and not env.popped and pytest_file and env.copy
                 )
-            )
+                moves.append(
+                    (
+                        getattr(scope, "name", "<module>"),
+                        getattr(scope, "lineno", 0),
+                        pinned,
+                    )
+                )
     return moves
+
+
+_NULL = '"keyring.backends.null.Keyring"'
 
 
 @pytest.mark.parametrize(
     ("source", "pytest_file", "pinned"),
     [
+        # Scratch literal, unpinned / pinned / pinned by a module constant.
         ('def f(r):\n    return {"HOME": r, "TLDW_CONFIG_PATH": r}\n', False, [False]),
         (
-            'def f(r):\n    return {"HOME": r, "XDG_DATA_HOME": r,\n'
-            '        "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring"}\n',
+            f'def f(r):\n    return {{"HOME": r, "XDG_DATA_HOME": r, "{_KEYRING_KEY}": {_NULL}}}\n',
             False,
             [True],
         ),
+        (
+            f'N = {_NULL}\ndef f(r):\n    return {{"HOME": r, "TLDW_TEST_MODE": "1", "{_KEYRING_KEY}": N}}\n',
+            False,
+            [True],
+        ),
+        # Only the null backend counts; another value or a pop does not.
+        (
+            f'def f(r):\n    return {{"HOME": r, "XDG_DATA_HOME": r, "{_KEYRING_KEY}": "keyring.backends.macOS.Keyring"}}\n',
+            False,
+            [False],
+        ),
+        (
+            f'def f(r):\n    e = dict(os.environ)\n    e.update(HOME=r, TLDW_TEST_MODE="1")\n    e.pop("{_KEYRING_KEY}", None)\n',
+            True,
+            [False],
+        ),
+        # A copy of the running environment inherits the pin only under pytest.
         (
             'def f(r):\n    e = dict(os.environ)\n    e["HOME"] = r\n    e["TLDW_TEST_MODE"] = "1"\n',
             True,
@@ -252,15 +434,38 @@ def _profile_moves(source: str, *, pytest_file: bool) -> list[tuple[str, int, bo
             False,
             [False],
         ),
+        # An allowlist built from os.environ.items() is a fresh environment.
+        (
+            "def f(r):\n    e = {k: v for k, v in os.environ.items() if k in A}\n    e.update(HOME=r, TLDW_CONFIG_PATH=r)\n",
+            True,
+            [False],
+        ),
+        # A setenv elsewhere in the scope excuses no other mapping.
+        (
+            'def f(r, mp):\n    mp.setenv("X", "1")\n    return {"HOME": r, "TLDW_CONFIG_PATH": r}\n',
+            True,
+            [False],
+        ),
         (
             'import os\nos.environ.update(HOME="h", XDG_CONFIG_HOME="c")\n',
             False,
             [False],
         ),
         (
-            'def f(e):\n    e.update(HOME="h", TLDW_CONFIG_PATH="c", PYTHON_KEYRING_BACKEND="n")\n',
+            f'def f(e):\n    e.update(HOME="h", TLDW_CONFIG_PATH="c", {_KEYRING_KEY}={_NULL})\n',
             False,
             [True],
+        ),
+        # A path table counts for the mapping it is copied into.
+        (
+            f'def f(r):\n    p = {{"HOME": r, "XDG_DATA_HOME": r}}\n    e = {{"{_KEYRING_KEY}": {_NULL}}}\n    e.update({{k: str(v) for k, v in p.items()}})\n',
+            False,
+            [True],
+        ),
+        (
+            'def f(r):\n    p = {"HOME": r, "XDG_DATA_HOME": r}\n    e = {"PATH": "x"}\n    e.update({k: str(v) for k, v in p.items()})\n',
+            False,
+            [False],
         ),
         ('def f(r):\n    return {"HOME": r, "PATH": r}\n', False, []),
     ],

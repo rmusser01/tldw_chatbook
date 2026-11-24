@@ -99,16 +99,8 @@ asyncio.run(main())
 """
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="Actual native terminal driver")
-@pytest.mark.parametrize("mode", ["success", "cancel", "failed_result", "start_error"])
-def test_parent_terminal_resumes_after_service_wait(tmp_path, mode):
-    import pty
-
-    for name in ("home", "config", "data", "cache", "tmp"):
-        (tmp_path / name).mkdir(mode=0o700)
-    selector = tmp_path / "config" / "config.toml"
-    selector.write_text('[general]\nusers_name="terminal-fixture"\n')
-    selector.chmod(0o600)
+def _terminal_child_environment(tmp_path, selector):
+    """An allowlisted child environment whose profile lives under ``tmp_path``."""
     environment = {
         key: value
         for key, value in os.environ.items()
@@ -116,6 +108,7 @@ def test_parent_terminal_resumes_after_service_wait(tmp_path, mode):
     }
     environment.update(
         HOME=str(tmp_path / "home"),
+        PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
         USERPROFILE=str(tmp_path / "home"),
         XDG_CONFIG_HOME=str(tmp_path / "config"),
         XDG_DATA_HOME=str(tmp_path / "data"),
@@ -127,6 +120,27 @@ def test_parent_terminal_resumes_after_service_wait(tmp_path, mode):
         TERM="xterm-256color",
         PYTHONPATH=str(Path(__file__).resolve().parents[2]),
     )
+    return environment
+
+
+def test_terminal_child_environment_pins_the_null_keyring_backend(tmp_path):
+    """TASK-42479: the child mounts TldwCli; an allowlist must add the pin."""
+    environment = _terminal_child_environment(tmp_path, tmp_path / "config.toml")
+
+    assert environment.get("PYTHON_KEYRING_BACKEND") == "keyring.backends.null.Keyring"
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Actual native terminal driver")
+@pytest.mark.parametrize("mode", ["success", "cancel", "failed_result", "start_error"])
+def test_parent_terminal_resumes_after_service_wait(tmp_path, mode):
+    import pty
+
+    for name in ("home", "config", "data", "cache", "tmp"):
+        (tmp_path / name).mkdir(mode=0o700)
+    selector = tmp_path / "config" / "config.toml"
+    selector.write_text('[general]\nusers_name="terminal-fixture"\n')
+    selector.chmod(0o600)
+    environment = _terminal_child_environment(tmp_path, selector)
     master, slave = pty.openpty()
     process = subprocess.Popen(  # nosec B603
         [sys.executable, "-c", _CHILD, mode],
