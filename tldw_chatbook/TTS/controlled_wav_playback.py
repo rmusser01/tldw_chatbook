@@ -325,29 +325,31 @@ class ControlledWavPlayback:
                 f"{self._bookmark.frame/RATE:.6f}",
                 str(pins[-1].physical_path),
             ]
-            # Linearization point: all native custody was published before
-            # this final check. A revocation during Popen must await its result.
+            # The launcher also checks authority at the native creation boundary.
             if self._interrupted():
                 kind, reason = CompletionKind.STOPPED, "interrupted"
                 return
             reason = "player_start_failed"
+            # Opening the launch boundary transfers custody to this attempt.
+            # Only an owned child or checked refusal can clear the uncertainty.
+            birth_unknown = True
             try:
                 child = _spawn(
                     argv, env=env, start_allowed=lambda: not self._interrupted()
                 )
             except SpawnRefused:
+                birth_unknown = False
                 kind, reason = CompletionKind.FAILED, "player_start_refused"
                 return
-            except Exception as error:
-                # Only positive refusal and checked setup retirement acknowledge
-                # absence. Unknown creation or cleanup retains the exact pins.
-                birth_unknown = True
-                self._unconfirmed_pins = pins
+            except BaseException as error:
                 if isinstance(error, UncertainBirth):
                     self._partial_birth = error.child
                     if error.child.has_process:
                         child = error.child
                 return
+            if child is None:
+                return
+            birth_unknown = False
             reader = threading.Thread(
                 target=self._read, args=(child.stderr, clock), daemon=True
             )
@@ -367,12 +369,12 @@ class ControlledWavPlayback:
                 if child.stderr is not None:
                     try:
                         child.stderr.close()
-                    except OSError:
+                    except BaseException:
                         clean = False
                         self._unclosed_pipe = child.stderr
                 try:
                     child.close_process_handle()
-                except Exception:
+                except BaseException:
                     clean = False
                     self._unclosed_process = child
                 if kind is CompletionKind.NATURAL and not (
@@ -388,6 +390,7 @@ class ControlledWavPlayback:
                     if not pin.close():
                         clean = False
             else:
+                self._unconfirmed_pins = pins
                 clean = False
             if clean:
                 self._retired_at = _now()

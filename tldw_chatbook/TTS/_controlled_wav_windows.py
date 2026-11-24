@@ -115,7 +115,7 @@ class _Reader:
             fd, self.fd = self.fd, -1
             try:
                 _close_fd(fd)
-            except Exception:
+            except BaseException:
                 self.failed_close = fd
                 raise
 
@@ -167,7 +167,7 @@ class WindowsPlayer:
         if handle is not None:
             try:
                 _winapi.CloseHandle(handle)
-            except Exception:
+            except BaseException:
                 self.uncertain_closes.append(handle)
                 raise
 
@@ -194,7 +194,7 @@ def spawn_player(
 
         child = WindowsPlayer()
         kernel = _kernel()
-    except Exception:
+    except BaseException:
         # No process or per-attempt file/pipe has been allocated.
         raise SpawnRefused from None
     null_fd = writer_fd = -1
@@ -250,34 +250,34 @@ def spawn_player(
             C.byref(child.info),
         )
         state = "created" if created else "refused"
-    except Exception:
-        # The state describes the last positively observed point. Exceptions
-        # and their argument/path-bearing tracebacks do not escape this helper.
+    except BaseException:
+        # Native interruptions can occur after the kernel populates child.info.
+        # Classify the last observed state after all setup closes have run.
         pass
     finally:
         if attr_initialized:
             try:
                 kernel.DeleteProcThreadAttributeList(attributes)
-            except Exception:
+            except BaseException:
                 child.uncertain_closes.append(attributes)
         thread, child.info.thread = child.info.thread, None
         if thread:
             try:
                 _winapi.CloseHandle(thread)
-            except Exception:
+            except BaseException:
                 child.uncertain_closes.append(thread)
         for fd in (writer_fd, null_fd):
             if fd != -1:
                 try:
                     _close_fd(fd)
-                except Exception:
+                except BaseException:
                     child.uncertain_closes.append(fd)
     if state == "created" and child.has_process and not child.uncertain_closes:
         return child
     if not child.has_process:
         try:
             child.stderr.close()
-        except Exception:
+        except BaseException:
             child.uncertain_closes.append(child.stderr)
         if state in {"preparing", "refused"} and not child.uncertain_closes:
             raise SpawnRefused

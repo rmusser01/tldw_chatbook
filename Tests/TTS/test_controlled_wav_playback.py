@@ -10,6 +10,7 @@ from dataclasses import replace
 import pytest
 
 from Tests.TTS.test_controlled_wav_profile import retained_files as retained_files
+from tldw_chatbook.TTS import _controlled_wav_windows as native
 from tldw_chatbook.TTS import controlled_wav_playback as playback
 from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership
 
@@ -478,4 +479,92 @@ async def test_native_creation_refusal_releases_pins_and_admits_successor(
         assert next_lease.is_current()
     finally:
         for pin in pins:
+            pin.close()
+
+
+@pytest.mark.parametrize(
+    "phase", ["during_create", "during_setup_close", "opaque_factory"]
+)
+async def test_native_interruption_keeps_birth_custody_and_checks_remaining_closes(
+    retained, monkeypatch, phase
+):
+    exe, artifact, bookmark = retained
+    captured_pins, closes, child_events = [], [], []
+    real_prepare = playback.prepare_files
+
+    def prepare(*args):
+        result = real_prepare(*args)
+        captured_pins.extend(result[1:])
+        return result
+
+    # Simulate a process handle in the actual preallocated PROCESS_INFORMATION.
+    # No OS process operation receives this synthetic value.
+    token = 112233
+    kernel = native._kernel()
+
+    class Boundary:
+        def __getattr__(self, name):
+            return getattr(kernel, name)
+
+        def CreateProcessW(self, *args):
+            args[-1]._obj.process = token
+            if phase == "during_create":
+                raise asyncio.CancelledError
+            return True
+
+    def terminate(child):
+        child_events.append(("terminate", child.info.process))
+        child.returncode = 1
+
+    def wait(child, timeout):
+        child_events.append(("wait", child.info.process))
+        return child.returncode
+
+    def close_process(child):
+        child_events.append(("close", child.info.process))
+        child.info.process = None
+
+    def close_fd(fd):
+        os.close(fd)
+        closes.append(fd)
+        if phase == "during_setup_close" and len(closes) == 1:
+            raise asyncio.CancelledError
+
+    def opaque(*a, **kw):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(playback, "prepare_files", prepare)
+    monkeypatch.setattr(native, "_kernel", lambda: Boundary())
+    monkeypatch.setattr(native.WindowsPlayer, "poll", lambda child: child.returncode)
+    monkeypatch.setattr(native.WindowsPlayer, "terminate", terminate)
+    monkeypatch.setattr(native.WindowsPlayer, "kill", terminate)
+    monkeypatch.setattr(native.WindowsPlayer, "wait", wait)
+    monkeypatch.setattr(native.WindowsPlayer, "close_process_handle", close_process)
+    monkeypatch.setattr(native, "_close_fd", close_fd)
+    if phase == "opaque_factory":
+        monkeypatch.setattr(playback, "_spawn", opaque)
+
+    run = await playback.ControlledWavPlayback.prepare(
+        artifact, bookmark, executable=exe
+    )
+    host = AudioOutputOwnership()
+    try:
+        await asyncio.wait_for(run.start(await host.acquire("article", run.retire)), 3)
+        result = await asyncio.wait_for(run.completion, 3)
+        assert result.kind.value == "uncertain" and result.evidence.retired_at_s is None
+        if phase != "opaque_factory":
+            assert child_events == [
+                ("terminate", token),
+                ("wait", token),
+                ("close", token),
+            ]
+            assert len(closes) == len(set(closes)) == 3
+            assert result.evidence.reaped_at_s is not None
+        assert not await run.retire()
+        with pytest.raises(RuntimeError, match="blocked"):
+            await host.acquire("successor", run.retire)
+        with pytest.raises(OSError):
+            artifact.path.unlink()
+    finally:
+        for pin in captured_pins:
             pin.close()
