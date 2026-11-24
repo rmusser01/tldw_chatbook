@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-23 06:38
-updated_date: 2026-11-23 23:30
+updated_date: 2026-11-24 00:30
 labels:
 - follow-up
 - ci
@@ -49,7 +49,7 @@ That race existed before 2026-11-22, yet in TASK-42416's scan of 140 Derived Art
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-**Verdict: no repo change started the failures, and TASK-42416's harness fix (#3723, e8aca4955c, merged 2026-11-23 15:18Z) already covers them on this base. Closed with what was ruled out.**
+**Verdict: no change on the overlay's sync path was found, what made the step faster at the onset is not established, and TASK-42416's harness fix (#3723, e8aca4955c, merged 2026-11-23 15:18Z) already covers them on this base. Closed with what was ruled out.**
 
 **CI record** (read-only rescan of every Derived Artifacts run and attempt, 2026-11-19 00:49Z to 2026-11-23 22:19Z; "PR Fast Lane (admission-sensitive 2)" PR jobs that ran to success or failure):
 - before 2026-11-22 04:05Z: 100 passed, 0 failed;
@@ -74,10 +74,10 @@ That race existed before 2026-11-22, yet in TASK-42416's scan of 140 Derived Art
 **AC #3, ruled out:**
 - **The lane.** The admission-2 job and its step are identical at 230205800c and fe84affafc, and none of the step's 48 target files changed in the window.
 - **The runner.** The same images before and after (ubuntu-26.04 20261116.202.1 on Azure, 20261116.88.1 on AWS); 59 Azure passes on that image before the onset. The same CPython 3.12.16 and pytest 9.2.0, and the same 89 installed packages in the last pre-onset Azure pass (job 137058698672, 03:32Z) and the first failure (137065646598, 04:05Z).
-- **Content.** The first failures were PR runs of the stacked r19 branches, each testing dev e5626ea043 plus its stack prefix: testsb, backuprec and consoleb failed, while consolea, providers2, backupdef, recompose and filing, which carry the same content and more, passed. The first failing tree (e5626ea043 + docs2/testsa/testsb) adds no change on the overlay path. Before the onset, trees containing the r18 merges passed 31 of 31 (under 1% likely at the later failure rate) and trees containing e5626ea043 passed 12 of 12.
+- **Content.** The first failures were PR runs of the stacked r19 branches, each testing dev e5626ea043 plus its stack prefix: testsb, backuprec and consoleb failed, while consolea, providers2, backupdef, recompose and filing, which carry the same content and more, passed. Each of those is a single run, so as evidence against a flaky cause they are weak: at the failing period's rate (15 of 82, about 18%) a branch carrying the cause passes one run about 82% of the time. The first failing tree (e5626ea043 + docs2/testsa/testsb) adds no change on the overlay path. The counts carry more weight: before the onset, trees containing the r18 merges passed 31 of 31 (about 0.2% likely at that rate), while trees containing e5626ea043 passed 12 of 12 (about 9% likely, so that commit is not excluded by the count; its product change is a behaviour-identical refactor).
 - **Local measure.** A scratch spy on `ConsoleSetupModal.sync_card_state` replayed the old harness (composer, `pause(0.2)`, one hide, `pause()`, the click). 12 mounts at e5626ea043 and 12 at fe84affafc ran concurrently, `-n 4` each, at load 50-70, with the refusing Keychain probe. Both trees gave 11-13 syncs before the hide and 0 after; the last landed 0.13-2.2 s before it, and 24 of 24 clicks hit.
 
-**What the data does show.** Within the failing period the failures were the faster runs: by the step's pytest time they ranked 5-56 of 82 (one-sided permutation p ≈ 0.005). From the onset the step's median also fell from 1373 s to 1206 s, with the same targets, Python, packages and image, while the project-chat UAT step in the same job did not get faster (149 s to 164 s). That fits TASK-42416's mechanism: a fixed pause after the composer, and timer-driven setup syncs that land after the hide when the mount is quick. The speed shift is runner-side and not explained by any repo change, which is also why a loaded local machine cannot reproduce it.
+**What the data does show.** Within the failing period the failures were the faster runs: by the step's pytest time they ranked 5-56 of 82 (one-sided permutation p ≈ 0.005). From the onset the step's median also fell from 1373 s to 1206 s, with the same targets, Python, packages and image, while the project-chat UAT step in the same job did not get faster (149 s to 164 s). That fits TASK-42416's mechanism: a fixed pause after the composer, and timer-driven setup syncs that land after the hide when the mount is quick. Why the step got faster is not established: the UAT step slowing at the same time argues against plain faster runners, and no change on the overlay's sync path was found. The fast-run skew is also why a loaded local machine cannot reproduce the failure.
 
 **Already fixed on this base (b31e3e9241).**
 - **Soak.** 20 of 20 runs of the file at `-n 4` (40 of 40 tests) passed, at a 1-minute load of 54-109. On its own this cannot fail here, since the old harness passed 24 of 24 mounts locally too.
