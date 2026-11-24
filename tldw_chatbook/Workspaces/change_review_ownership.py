@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Event, Lock
 
+from loguru import logger
+
 from tldw_chatbook.Agents.activation import execution
 from tldw_chatbook.Agents.execution_capacity import (
     CapacityRefused,
@@ -280,7 +282,17 @@ class _SnapshotTicket:
             ):
                 return
             self._retired = True
-        with self.activate():
+        with ExitStack() as stack:
+            try:
+                stack.enter_context(self.activate())
+            except Exception as error:  # noqa: BLE001 -- a refused scope must not keep the slot
+                # A replaced source refuses its storage scope; the original
+                # owner still returns its slot (TASK-41957).
+                logger.debug(
+                    "Change Review ticket returned outside its refused source scope: {}",
+                    type(error).__name__,
+                )
+                stack.enter_context(self.owner.activate())
             self.operation.finish()
         if self.claim is not None:
             # Source/storage exits and availability callbacks inside finish

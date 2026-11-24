@@ -432,8 +432,9 @@ class ChangeReviewConsentService:
                     self._queue.task_done()
         for work in discarded:
             if work.ticket is not None:
-                with work.ticket.activate():
-                    work.ticket.returned(worker=True, handoff=True)
+                # returned() activates the ticket itself and still returns the
+                # slot when a changed source refuses that scope (TASK-41957).
+                work.ticket.returned(worker=True, handoff=True)
 
     def shutdown(self, *, timeout: float = 1.0) -> None:
         """Seal ingress and bounded-join; returning does not prove physical drain."""
@@ -499,8 +500,7 @@ class ChangeReviewConsentService:
             return False
         finally:
             if ticket is not None and not queued:
-                with ticket.activate():
-                    ticket.returned(worker=True, handoff=True)
+                ticket.returned(worker=True, handoff=True)
 
     def _work_current(self, work):
         with self._lock:
@@ -538,11 +538,13 @@ class ChangeReviewConsentService:
                     ticket = work.ticket or work.source.admit()
 
                     def custody(ticket=ticket, work=work):
-                        with ticket.activate():
-                            try:
+                        try:
+                            with ticket.activate():
                                 self._run_work(work)
-                            finally:
-                                ticket.returned(worker=True, handoff=True)
+                        finally:
+                            # Outside the activation, so a source that changed
+                            # while queued still returns its slot (TASK-41957).
+                            ticket.returned(worker=True, handoff=True)
 
                     # An unproven Git cleanup holds this daemon worker until
                     # restart, never a pool thread, so it cannot stall other

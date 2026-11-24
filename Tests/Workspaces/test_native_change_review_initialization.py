@@ -919,3 +919,36 @@ def test_a_claim_held_without_a_retained_cleanup_stays_retryable(native_initiali
         bystander.finish_root()
         claim.settle(durable=True)
         holder.finish_root()
+
+
+def test_source_change_after_admission_still_returns_the_slot(
+    native_initializer, monkeypatch
+):
+    """TASK-41957: the worker's own activation refuses a changed source.
+
+    The slot is reserved at admission; the source then changes before the
+    worker enters ``ticket.activate()``. Returning must not depend on that
+    activation, or the tool slot stays counted until restart.
+    """
+    from tldw_chatbook.Workspaces.change_review_ownership import _InitializationSource
+
+    h = native_initializer
+    original_admit = _InitializationSource.admit
+    tickets = []
+
+    def admit_then_replace(source):
+        ticket = original_admit(source)
+        tickets.append(ticket)
+        monkeypatch.setattr(h.app, "workspace_registry_service", object())
+        return ticket
+
+    monkeypatch.setattr(_InitializationSource, "admit", admit_then_replace)
+    h.registry.set_change_review_enabled("init-workspace", True)
+    capture_change_review_admission(h.app, "init-workspace")
+    wait_until(lambda: tickets)
+    wait_until(lambda: h.service._queue.unfinished_tasks == 0)
+    assert (
+        h.service.status("init-workspace").roots[0].state is RootReadinessState.FAILED
+    )
+    assert tickets[0].retired.is_set(), "ticket never retired"
+    assert h.runtime.execution_capacity.snapshot().executions == ()
