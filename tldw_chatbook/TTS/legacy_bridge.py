@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import AbstractAsyncContextManager, nullcontext
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -472,6 +473,7 @@ class _LegacyOperation(AsyncIterator[bytes]):
         request: OpenAISpeechRequest,
         progress_sink: ProgressSink | None,
         authorize_start: Callable[[], Awaitable[None]] | None,
+        start_scope: Callable[[], AbstractAsyncContextManager[None]] | None,
     ) -> None:
         self._iterator = host._run_operation(
             self,
@@ -479,6 +481,7 @@ class _LegacyOperation(AsyncIterator[bytes]):
             request,
             progress_sink,
             authorize_start,
+            start_scope,
         )
         self._drive_lock = asyncio.Lock()
         self._driver_task: asyncio.Task[Any] | None = None
@@ -605,6 +608,7 @@ class LegacyBackendHost:
         progress_sink: ProgressSink | None,
         *,
         authorize_start: Callable[[], Awaitable[None]] | None = None,
+        start_scope: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> AsyncIterator[bytes]:
         if self.provider_id == "kokoro" and internal_model_id in {
             "local_kokoro_default_onnx",
@@ -629,6 +633,7 @@ class LegacyBackendHost:
             request,
             progress_sink,
             authorize_start,
+            start_scope,
         )
 
     async def _run_operation(
@@ -638,6 +643,7 @@ class LegacyBackendHost:
         request: OpenAISpeechRequest,
         progress_sink: ProgressSink | None,
         authorize_start: Callable[[], Awaitable[None]] | None,
+        start_scope: Callable[[], AbstractAsyncContextManager[None]] | None,
     ) -> AsyncGenerator[bytes, None]:
         await self._admit_operation(operation)
         try:
@@ -657,17 +663,31 @@ class LegacyBackendHost:
                     if progress_sink is not None
                     else None
                 )
+                stream = None
                 try:
-                    if authorize_start is not None:
-                        await authorize_start()
-                    stream = backend.generate_speech_stream(request)
-                    try:
-                        async for chunk in stream:
-                            yield bytes(chunk)
-                    finally:
-                        await _close_delegated_stream(stream)
+                    async with (
+                        start_scope() if start_scope is not None else nullcontext()
+                    ):
+                        if start_scope is None and authorize_start is not None:
+                            await authorize_start()
+                        stream = backend.generate_speech_stream(request)
+                        if start_scope is not None:
+                            # Constructing this generator does not start the backend.
+                            try:
+                                first = await anext(stream)
+                            except StopAsyncIteration:
+                                return
+                    if start_scope is not None:
+                        yield bytes(first)
+                        del first
+                    async for chunk in stream:
+                        yield bytes(chunk)
                 finally:
-                    backend.set_progress_callback(None)
+                    try:
+                        if stream is not None:
+                            await _close_delegated_stream(stream)
+                    finally:
+                        backend.set_progress_callback(None)
         finally:
             await self._release_operation(operation)
 
@@ -843,6 +863,7 @@ class LegacyTTSAdapter:
         progress_sink: ProgressSink | None = None,
         *,
         authorize_start: Callable[[], Awaitable[None]] | None = None,
+        start_scope: Callable[[], AbstractAsyncContextManager[None]] | None = None,
     ) -> TTSAudioResponse:
         if request.provider_id != self.provider_id:
             raise ValueError("TTS request does not match provider")
@@ -884,7 +905,12 @@ class LegacyTTSAdapter:
                 route.internal_model_id,
                 legacy_request,
                 progress_sink,
-                **({"authorize_start": authorize_start} if authorize_start is not None else {}),
+                **(
+                    {"authorize_start": authorize_start}
+                    if authorize_start is not None
+                    else {}
+                ),
+                **({"start_scope": start_scope} if start_scope is not None else {}),
             ),
         )
 

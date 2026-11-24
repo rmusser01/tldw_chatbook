@@ -177,9 +177,18 @@ async def test_late_response_cannot_attach(listening, retirement):
 
     class HeldAdapter(Transport):
         async def synthesize(self, request, progress_sink=None):
-            entered.set()
-            await release.wait()
-            return await super().synthesize(request, progress_sink)
+            response = await super().synthesize(request, progress_sink)
+            stream = response.byte_stream
+
+            async def delayed():
+                entered.set()
+                await release.wait()
+                async for piece in stream:
+                    yield piece
+
+            response.byte_stream = delayed()
+            response.add_cleanup(stream.aclose)
+            return response
 
     svc, adapter = service(HeldAdapter("openai"))
     owner = mod.ArticleListeningAudio(store, root, tts_service=svc, readiness=ready)
@@ -1065,4 +1074,199 @@ async def test_freeze_refuses_unenforceable_settings_before_cold_host(
         with pytest.raises(ValueError, match=code):
             await api().freeze_listening_voice(tts_service=svc)
     finally:
+        await svc.wait_closed()
+
+
+@native_effects
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["reuse", "generate", "unrelated"])
+async def test_retry_accounts_for_sibling_referenced_missing_generation(
+    listening, monkeypatch, outcome
+):
+    store, session, root = listening
+    sibling = session.foreground
+    target = session.queue[0]
+    first = publish(store, session, root, sibling)
+    damaged = first
+    if outcome != "generate":
+        damaged = publish(store, store.load_session(), root, sibling, regenerate=True)
+    damaged.wav.path.unlink()
+    session = store.load_session()
+    if outcome == "unrelated":
+        original = store.mark_audio_missing
+
+        from tldw_chatbook.Subscriptions.article_listening_models import (
+            ListeningCheckpoint,
+        )
+
+        def mark_then_checkpoint(generation, **kwargs):
+            result = original(generation, **kwargs)
+            update = ListeningCheckpoint(
+                store._authority(),
+                session.incarnation,
+                session.playback_generation,
+                session.cursor,
+                session.resume_queue,
+                "paused",
+            )
+            store.checkpoint(
+                update, expected_revision=session.revision + 1, lease=kwargs["lease"]
+            )
+            return result
+
+        monkeypatch.setattr(store, "mark_audio_missing", mark_then_checkpoint)
+    svc, adapter = service()
+    owner = api().ArticleListeningAudio(store, root, tts_service=svc, readiness=ready)
+    try:
+        if outcome == "unrelated":
+            with pytest.raises(ValueError, match="listening_revision_changed"):
+                await owner.prepare(
+                    target.entry_id, expected_revision=session.revision, regenerate=True
+                )
+            assert not adapter.requests
+            assert store.load_session().queue[0] == target
+        else:
+            result = await owner.prepare(
+                target.entry_id, expected_revision=session.revision, regenerate=True
+            )
+            if outcome == "reuse":
+                assert result == first and not adapter.requests
+            else:
+                assert (
+                    result.generation != damaged.generation
+                    and len(adapter.requests) == 1
+                )
+            assert store.load_session().queue[0].artifact == result.generation
+    finally:
+        await svc.wait_closed()
+
+
+@native_effects
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "winner", ["delete", "start", "cancel", "failure", "after_first_piece"]
+)
+async def test_legacy_provider_start_holds_source_custody(
+    listening, monkeypatch, winner
+):
+    import threading
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from tldw_chatbook.Subscriptions.article_listening_lease import ListeningBusy
+    from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
+    from tldw_chatbook.TTS.adapter_types import TTSProviderSpec, TTSProviderDescriptor
+    from tldw_chatbook.TTS.legacy_bridge import LegacyBackendHost, LegacyTTSAdapter
+    from tldw_chatbook.TTS.legacy_catalogs import legacy_catalog
+    from tldw_chatbook.TTS.TTS_Generation import TTSService
+
+    store, session, root = listening
+    item = session.queue[0]
+    initialized, initialize = asyncio.Event(), asyncio.Event()
+    starting, produce = asyncio.Event(), asyncio.Event()
+    reading_tail, finish = asyncio.Event(), asyncio.Event()
+    verified, handoff = threading.Event(), threading.Event()
+    calls = []
+    original = store.verify_pending_audio
+
+    def verified_claim(claim):
+        original(claim)
+        if initialized.is_set() and winner == "start":
+            verified.set()
+            assert handoff.wait(5)
+
+    monkeypatch.setattr(store, "verify_pending_audio", verified_claim)
+
+    async def stream(_):
+        calls.append("start")
+        starting.set()
+        await produce.wait()
+        if winner == "failure":
+            raise RuntimeError("synthetic failure")
+        yield mono()
+        if winner == "after_first_piece":
+            reading_tail.set()
+            await finish.wait()
+
+    async def get_backend(_):
+        initialized.set()
+        await initialize.wait()
+        return SimpleNamespace(
+            set_progress_callback=lambda _: None, generate_speech_stream=stream
+        )
+
+    manager = SimpleNamespace(get_backend=get_backend, close_all_backends=AsyncMock())
+    host = LegacyBackendHost(
+        provider_id="openai", app_config={}, manager_factory=lambda _: manager
+    )
+    adapter = LegacyTTSAdapter("openai", host, legacy_catalog("openai"))
+    spec = TTSProviderSpec(
+        descriptor=TTSProviderDescriptor(
+            provider_id="openai", display_name="Test", native=False
+        ),
+        factory=lambda _: adapter,
+        initial_config={"app_config": {}},
+        exclusive_reconfigure=False,
+    )
+    svc = TTSService(
+        TTSAdapterRegistry(specs=(spec,), aliases={}),
+        preferences_snapshot=_snapshot(
+            provider_id="openai", model_id="tts-1", voice_mode="exact", voice_id="alloy"
+        ),
+    )
+    owner = api().ArticleListeningAudio(store, root, tts_service=svc, readiness=ready)
+    task = asyncio.create_task(
+        owner.prepare(item.entry_id, expected_revision=session.revision)
+    )
+
+    async def delete():
+        return await asyncio.to_thread(store.db.delete_article, item.item_id)
+
+    try:
+        await asyncio.wait_for(initialized.wait(), 5)
+        if winner == "delete":
+            assert await delete()
+            initialize.set()
+            with pytest.raises(ValueError):
+                await task
+            assert calls == []
+            return
+        initialize.set()
+        if winner == "start":
+            assert await asyncio.to_thread(verified.wait, 5)
+            with pytest.raises(ListeningBusy):
+                await delete()
+            handoff.set()
+        await asyncio.wait_for(starting.wait(), 5)
+        with pytest.raises(ListeningBusy):
+            await delete()
+        if winner == "cancel":
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            with pytest.raises(ListeningBusy):
+                await delete()
+        produce.set()
+        if winner == "after_first_piece":
+            await asyncio.wait_for(reading_tail.wait(), 5)
+            assert await delete()
+            finish.set()
+            with pytest.raises(ValueError):
+                await task
+            assert calls == ["start"]
+            return
+        if winner == "failure":
+            with pytest.raises(ValueError):
+                await task
+        elif winner == "start":
+            assert (await task).wav.content_frames > 0
+        await owner.settle()
+        assert await delete()
+        assert calls == ["start"]
+    finally:
+        handoff.set()
+        initialize.set()
+        produce.set()
+        finish.set()
+        await asyncio.gather(task, return_exceptions=True)
+        await owner.settle()
         await svc.wait_closed()

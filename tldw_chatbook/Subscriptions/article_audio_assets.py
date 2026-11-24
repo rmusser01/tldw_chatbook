@@ -345,7 +345,7 @@ class ArticleAudioAssets:
                 )
                 return self._audio(generation, source_item_id, key, expected)
 
-    def _read(self, directory, row, lease, census=None):
+    def _read(self, directory, row, lease, census=None, *, mark_missing=None):
         g, key = row["generation"], row["file_key"]
         if row["status"] != "ready":
             raise ArticleAudioError("article_audio_missing")
@@ -353,7 +353,7 @@ class ArticleAudioAssets:
         try:
             self._verify(directory, key, m, census)
         except (ValueError, FileNotFoundError) as exc:
-            self.store.mark_audio_missing(g, lease=lease)
+            (mark_missing or self.store.mark_audio_missing)(g, lease=lease)
             code = (
                 "article_audio_missing"
                 if isinstance(exc, FileNotFoundError)
@@ -380,6 +380,24 @@ class ArticleAudioAssets:
         self, entry_id: str, *, expected_revision: int, replace_missing: bool = False
     ) -> ArticleAudio | None:
         """Attach only a verified ready generation with this exact entry identity."""
+        audio, _ = self.reuse_with_revision(
+            entry_id,
+            expected_revision=expected_revision,
+            replace_missing=replace_missing,
+        )
+        return audio
+
+    def reuse_with_revision(
+        self, entry_id: str, *, expected_revision: int, replace_missing: bool = False
+    ) -> tuple[ArticleAudio | None, int]:
+        """Return only revision advances made by this verified candidate scan."""
+
+        def mark_missing(generation, *, lease):
+            nonlocal expected_revision
+            expected_revision = self.store.mark_audio_missing(
+                generation, lease=lease, expected_revision=expected_revision
+            )
+
         for generation in self.store.find_reusable(entry_id):
             rows = self.store.audio_inventory(generation)
             if not rows:
@@ -390,7 +408,9 @@ class ArticleAudioAssets:
                 if not rows or rows[0]["file_key"] != key:
                     raise ListeningConflict("article_audio_inventory_changed")
                 try:
-                    audio = self._read(directory, rows[0], lease)
+                    audio = self._read(
+                        directory, rows[0], lease, mark_missing=mark_missing
+                    )
                 except ArticleAudioError as exc:
                     if str(exc) not in (
                         "article_audio_missing",
@@ -398,7 +418,7 @@ class ArticleAudioAssets:
                     ):
                         raise
                     continue
-                self.store.attach_audio(
+                session = self.store.attach_audio(
                     entry_id,
                     generation,
                     expected_revision=expected_revision,
@@ -406,8 +426,8 @@ class ArticleAudioAssets:
                     **({"replace_missing": True} if replace_missing else {}),
                     **self._commit_options,
                 )
-                return audio
-        return None
+                return audio, session.revision
+        return None, expected_revision
 
     def _clean_names(self, directory, census, row):
         """Confirm absence, or remove one independently proven local object."""

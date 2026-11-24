@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias, cast
 from uuid import UUID
@@ -69,6 +69,7 @@ class TTSProviderStartAuthorization:
     """Repeat a live authorization at admission and deferred provider start."""
 
     check: Callable[[str, str], Awaitable[bool]]
+    hold: Callable[[str, str], AbstractAsyncContextManager[None]]
 
 
 TTSAdmissionAuthorizer = Callable[[str, str], bool] | TTSProviderStartAuthorization

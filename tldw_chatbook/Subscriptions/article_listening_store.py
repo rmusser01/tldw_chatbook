@@ -816,10 +816,17 @@ class ArticleListeningStore:
                 raise ListeningConflict("article_audio_inventory_changed")
 
     def mark_audio_missing(
-        self, generation: int, *, lease: ListeningLease | None = None
-    ) -> None:
+        self,
+        generation: int,
+        *,
+        lease: ListeningLease | None = None,
+        expected_revision: int | None = None,
+    ) -> int | None:
+        """Mark one damaged receipt and return the guarded session's resulting revision."""
         a = self._authority()
         with self.db.listening_transaction(lease=lease, profile=a.profile) as c:
+            if expected_revision is not None:
+                self._checked(c, expected_revision, a)
             self._authority(a)
             changed = c.execute(
                 "UPDATE article_audio SET status='missing' WHERE generation=? AND profile=? AND status='ready'",
@@ -831,6 +838,10 @@ class ArticleListeningStore:
                     "id IN (SELECT session_id FROM listening_entries WHERE artifact=?)",
                     (generation,),
                 )
+
+            if expected_revision is not None:
+                return self._state(c)["revision"]
+            return None
 
     def pending_deletions(self) -> tuple[tuple[int, str], ...]:
         """Expose only committed safe cleanup keys; actual unlink requires a held lease."""

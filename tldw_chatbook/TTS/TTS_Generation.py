@@ -848,16 +848,30 @@ class _AdmittedTTSOperation:
                 await lease.adapter.ensure_ready()
                 if self._clone_execution is None:
                     await self._authorize_outbound(lease)
+                    authorizer = self._admission_authorizer
+
+                    def start_scope():
+                        if isinstance(authorizer, TTSProviderStartAuthorization):
+                            return authorizer.hold(
+                                lease.provider_id,
+                                lease.adapter.admitted_outbound_endpoint(),
+                            )
+                        return nullcontext()
+
                     if isinstance(lease.adapter, LegacyTTSAdapter) and isinstance(
-                        self._admission_authorizer, TTSProviderStartAuthorization
+                        authorizer, TTSProviderStartAuthorization
                     ):
                         response = await lease.adapter.synthesize(
                             self._request,
                             safe_sink,
                             authorize_start=lambda: self._authorize_outbound(lease),
+                            start_scope=start_scope,
                         )
                     else:
-                        response = await lease.adapter.synthesize(self._request, safe_sink)
+                        async with start_scope():
+                            response = await lease.adapter.synthesize(
+                                self._request, safe_sink
+                            )
                 else:
                     adapter = lease.adapter
                     materializer = self._clone_materializer

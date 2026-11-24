@@ -650,6 +650,11 @@ credentials or references. Valid retained audio needs no synthesis permission.
 Pending work revalidates its frozen dependencies before each request and again
 before publication. Windows controlled-output and conversion readiness, text and
 128-chunk limits are checked before the first synthesis submission.
+The last source check must carry authority through the provider-start handoff:
+source deletion and start need one observable ordering. Finishing a database
+read in a worker and checking only profile state after resuming the event loop
+does not provide that ordering. A deletion that wins forbids submission; a start
+that wins must remain observable to the source mutation until handoff completes.
 
 The first preparation delivery refuses new article requests through audio.cpp's
 whole-response producer, whose internal collection and copy cannot enforce the

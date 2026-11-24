@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import ExitStack, asynccontextmanager
 from dataclasses import asdict, replace
 from hashlib import sha256
 from io import BytesIO
 import json
 from pathlib import Path
 import struct
-from threading import Lock
+from threading import Event, Lock
 from typing import TYPE_CHECKING
 import wave
 
@@ -30,6 +31,7 @@ from tldw_chatbook.Subscriptions.article_speech import (
     article_chunks,
 )
 from tldw_chatbook.TTS import audio_stitch
+from tldw_chatbook.TTS._async_lifecycle import join_retained_task
 from tldw_chatbook.TTS.audio_limits import MAX_BUFFERED_AUDIO_BYTES
 from tldw_chatbook.TTS.controlled_wav_profile import (
     PADDING_FRAMES,
@@ -550,9 +552,7 @@ class ArticleListeningAudio:
                 entry_id, expected_revision=revision, authority=authority
             )
 
-        async def authorize(provider, endpoint):
-            check()
-            await asyncio.to_thread(store.verify_pending_audio, claim)
+        def destination_allowed(provider, endpoint):
             check()
             if provider != entry.voice.provider:
                 return False
@@ -562,6 +562,46 @@ class ArticleListeningAudio:
                 if normalize_openai_compatible_endpoint(endpoint).official:
                     return _official_voice(entry.voice.model, entry.voice.voice)
             return True
+
+        async def authorize(provider, endpoint):
+            check()
+            await asyncio.to_thread(store.verify_pending_audio, claim)
+            return destination_allowed(provider, endpoint)
+
+        @asynccontextmanager
+        async def hold_start(provider, endpoint):
+            loop = asyncio.get_running_loop()
+            ready = asyncio.Event()
+            release = Event()
+
+            def hold_source():
+                # Source deletion shares this nonblocking native lease. Enter and
+                # retire it on one worker through the provider's lazy first read.
+                custody = ExitStack()
+                custody.enter_context(store.mutation_lease())
+                try:
+                    store.verify_pending_audio(claim)
+                    loop.call_soon_threadsafe(ready.set)
+                    release.wait()
+                finally:
+                    try:
+                        custody.close()
+                    except BaseException:
+                        self._unretired = claim
+                        raise
+
+            worker = asyncio.create_task(asyncio.to_thread(hold_source))
+            worker.add_done_callback(lambda _: ready.set())
+            try:
+                await ready.wait()
+                if worker.done():
+                    worker.result()
+                if not destination_allowed(provider, endpoint):
+                    raise ArticleSpeechError("listening_voice_changed")
+                yield
+            finally:
+                release.set()
+                await join_retained_task(worker)
 
         def authorize_commit():
             check()
@@ -609,8 +649,8 @@ class ArticleListeningAudio:
                         raise ListeningConflict("listening_entry_changed")
                     decision.commit()
                     return artifact
-            artifact = await asyncio.to_thread(
-                assets.reuse,
+            artifact, revision = await asyncio.to_thread(
+                assets.reuse_with_revision,
                 entry_id,
                 expected_revision=revision,
                 replace_missing=missing_attachment,
@@ -646,7 +686,9 @@ class ArticleListeningAudio:
                 check()
                 response, selected = await self.tts.synthesize_effective(
                     text=chunk,
-                    admission_authorizer=TTSProviderStartAuthorization(authorize),
+                    admission_authorizer=TTSProviderStartAuthorization(
+                        authorize, hold_start
+                    ),
                     **args,
                 )
                 try:
