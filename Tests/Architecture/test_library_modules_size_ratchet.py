@@ -613,7 +613,10 @@ _BUDGETS: dict[str, int] = {
     # own +40, plus its +20 Task 9 lines in the Media bodies dev's
     # TASK-36952.3 moved here from library_screen.py; same owner decision:
     # expand limits, don't contort code).
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 11145,
+    # 2026-11-24, rebased onto dev cf30a398f0: 11141 -> 11201 (dev's
+    # TASK-41757 row plus polish-1b's own +60; same owner decision: expand
+    # limits, don't contort code).
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 11201,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
