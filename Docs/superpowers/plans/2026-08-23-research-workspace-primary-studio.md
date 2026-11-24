@@ -260,9 +260,12 @@ generated content or source excerpts.
    `NotesScopeService.save_workspace_artifact(workspace_id=..., artifact_id=...,
    artifact_type=..., title=..., status="complete", content=...)`. Generate
    artifact IDs client-side as UUIDs so retries reuse the same owner ID.
-3. Persist Flashcards through `StudyScopeService.create_deck(...,
-   workspace_id=...)` and owner card methods; persist Quiz through
-   `QuizScopeService.create_quiz(..., workspace_id=...)` and question methods.
+3. Verify the canonical Study and Quiz creation contracts before advertising
+   either card. The current server creates the parent and children separately
+   and assigns parent IDs. A lost create response has no supported generation
+   operation lookup, and deck creation has no provenance field. Keep Server
+   Flashcards and Quiz unavailable in Studio until there is a scoped,
+   retry-safe creation contract. Local Study generation remains available.
 4. Treat the server response as the only proof of persistence. A downloaded
    file, local preview, or local receipt never flips `saved=True`.
 5. Use exact owner versions for replace/delete. If the server contract lacks a

@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field, replace
 from hashlib import sha256
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tldw_chatbook.Chat.chat_conversation_scope_service import (
     ChatConversationScopeService,
@@ -48,6 +48,9 @@ from .contracts import (
 )
 from .layout_state import ResearchPanePreferences
 from .overlay_store import OverlayConflictError, ResearchPresentationOverlayStore
+
+if TYPE_CHECKING:
+    from .studio_models import ResearchStudioRequest
 
 _EXCERPT_CHARS = 12_000
 _HISTORY_CHARS = 64_000
@@ -217,6 +220,37 @@ class ServerResearchChat:
     ) -> ProcessingRoute:
         client, _ = self._connection(ref)
         return self._route(client, provider, model)
+
+    async def stream_studio(self, request: ResearchStudioRequest, messages):
+        ref, options, route = request.workspace, request.generation, request.processing_route
+        client, _ = self._connection(ref)
+        if self._route(client, route.provider, route.model) != route:
+            raise ValueError("The selected Server route changed. Review it before generating")
+        payload = ResearchChatCompletionRequest(
+            messages=tuple(messages), model=route.model, api_provider=route.provider or None,
+            stream=True, save_to_db=False, max_tokens=options.max_tokens,
+            temperature=options.temperature, top_p=options.top_p,
+        )
+        async for chunk in client.stream_chat_completion(payload, workspace_id=ref.workspace_id):
+            if self.client_for(ref) is not client:
+                raise ValueError("The selected server changed. Reopen the workspace")
+            yield chunk
+
+    async def focused_studio_evidence(self, request: ResearchStudioRequest):
+        from .studio_generation import StudioEvidence
+
+        ref, options = request.workspace, request.generation.retrieval
+        client, _ = self._connection(ref)
+        sources = {source.catalog_item_id: source for source in request.retrieval_sources}
+        result = await client.search_research_chat(ResearchChatRagSearch(
+            query=request.generation.focus, workspace_id=ref.workspace_id,
+            include_media_ids=tuple(int(media_id) for media_id in sources),
+            search_mode=_server_mode(request.effective_retrieval), top_k=options.top_k,
+            min_score=options.threshold or 0, enable_reranking=options.rerank,
+        ))
+        if self.client_for(ref) is not client:
+            raise ValueError("The selected server changed. Reopen the workspace")
+        return tuple(StudioEvidence(sources[row.id], row.title, row.excerpt) for row in _read_documents(result, sources, options.top_k))
 
     @staticmethod
     def _route(client, provider, model):

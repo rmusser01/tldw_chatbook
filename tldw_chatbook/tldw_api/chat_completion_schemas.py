@@ -25,7 +25,7 @@ class ResearchChatHistoryMessage(_ResearchRequest):
 
 
 class ResearchChatCompletionRequest(_ResearchRequest):
-    conversation_id: Identifier
+    conversation_id: Identifier | None = None
     messages: tuple[ResearchChatHistoryMessage, ...] = Field(
         min_length=1, max_length=102, repr=False
     )
@@ -35,10 +35,13 @@ class ResearchChatCompletionRequest(_ResearchRequest):
     save_to_db: bool
     max_tokens: int = Field(default=4096, ge=1, le=16384)
     temperature: float | None = Field(default=None, ge=0, le=2)
+    top_p: float | None = Field(default=None, gt=0, le=1)
     tool_choice: Literal["none"] = "none"
 
     @model_validator(mode="after")
     def _validate_send(self) -> Self:
+        if self.save_to_db and self.conversation_id is None:
+            raise ValueError("Saved Research chat requires an exact conversation ID")
         if self.stream and self.save_to_db:
             raise ValueError("Streaming Research answers are appended explicitly")
         if (

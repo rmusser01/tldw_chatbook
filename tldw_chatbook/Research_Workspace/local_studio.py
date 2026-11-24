@@ -5,16 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Mapping
-from dataclasses import asdict, replace
-from hashlib import sha256
+from dataclasses import replace
 
 from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
 from tldw_chatbook.Chatbooks.local_chatbook_service import ChatbookRevisionConflict
 from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError
-from tldw_chatbook.Workspaces.output_membership import output_membership_metadata
 from tldw_chatbook.Workspaces.registry_service import WorkspaceMembershipConflict
 
-from .chat_models import ResearchSourceVersionRef
 from .chatbook_artifact_payload import build_research_chatbook_payload
 from .chat_service import MAX_ANSWER_BYTES
 from .contracts import BoundedPageResult, QualifiedWorkspaceRef, WorkspaceDataSource
@@ -26,6 +23,11 @@ from .studio_models import (
     StudioOwnerKind,
     WorkspaceOutputRef,
     validate_output_page,
+)
+from .studio_provenance import (
+    citation_references,
+    generation_metadata,
+    output_reference,
 )
 
 
@@ -172,41 +174,10 @@ class LocalStudioAdapter:
 
     @staticmethod
     def _as_ref(ref, owner_id, metadata, owner, record=None) -> WorkspaceOutputRef:
-        return WorkspaceOutputRef(
-            ref,
-            metadata["output_kind"],
-            owner.owner_kind,
-            owner_id,
-            record.get(owner.version_field)
-            if record
-            else metadata.get("owner_version"),
-            tuple(
-                ResearchSourceVersionRef(ref=ref, **source)
-                for source in metadata["source_snapshot"]
-            ),
-            metadata["settings_fingerprint"],
-            metadata["status"],
+        version = (
+            record.get(owner.version_field) if record else metadata.get("owner_version")
         )
-
-    @staticmethod
-    def _provenance(request: ResearchStudioRequest, status, supersedes=None):
-        sources = []
-        for source in request.source_snapshot:
-            source_fields = asdict(source)
-            del source_fields["ref"]
-            sources.append(source_fields)
-        route = json.dumps(asdict(request.processing_route), sort_keys=True)
-        return {
-            "operation_id": request.operation_id,
-            "output_kind": request.output_kind.value,
-            "source_snapshot": sources,
-            "settings_fingerprint": request.generation.fingerprint,
-            "processing_route_fingerprint": sha256(route.encode()).hexdigest(),
-            "provider": request.processing_route.provider,
-            "model": request.processing_route.model,
-            "status": status,
-            "supersedes_owner_id": supersedes.owner_id if supersedes else None,
-        }
+        return output_reference(ref, owner_id, owner.owner_kind, version, metadata)
 
     async def save(
         self,
@@ -265,10 +236,7 @@ class LocalStudioAdapter:
             )
             if workspace is None or workspace.archived:
                 raise ValueError("Choose an active workspace before saving an output")
-            details = self._provenance(request, generated.status, supersedes)
-            metadata = output_membership_metadata(
-                {"research_generation": details}, "output"
-            )
+            metadata = generation_metadata(request, supersedes)
             old, count = await self._off_loop(
                 self.registry.list_workspace_output_memberships,
                 ref.workspace_id,
@@ -414,7 +382,11 @@ class LocalStudioAdapter:
                     "front": card.front,
                     "back": card.back,
                     "extra": json.dumps(
-                        {"source_citations": self._citations(generated, card.citations)}
+                        {
+                            "source_citations": citation_references(
+                                generated, card.citations
+                            )
+                        }
                     ),
                 }
                 for card in generated.cards
@@ -442,21 +414,9 @@ class LocalStudioAdapter:
                     correct_answer=item.correct_index,
                     explanation=item.explanation,
                     order_index=order,
-                    source_citations=self._citations(generated, item.citations),
+                    source_citations=citation_references(generated, item.citations),
                 )
             return self.quizzes.get_quiz(quiz["id"])
-
-    @staticmethod
-    def _citations(generated, markers):
-        return [
-            {
-                "marker": citation.marker,
-                "source_id": citation.source.source_id,
-                "catalog_item_id": citation.source.catalog_item_id,
-            }
-            for citation in generated.citations
-            if citation.marker in markers
-        ]
 
     async def _delete_owner(self, owner, owner_id, version):
         if type(version) is not int:

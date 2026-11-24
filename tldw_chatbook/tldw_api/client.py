@@ -2671,7 +2671,7 @@ class TLDWAPIClient(ChatCompletionClientMixin):
         return await self._request(
             "POST",
             f"/api/v1/workspaces/{workspace_id}/artifacts",
-            json_data=request_data.model_dump(mode="json"),
+            json_data=request_data.model_dump(mode="json", exclude={"producer_metadata"} if request_data.producer_metadata is None else None),
         )
 
     async def update_workspace_artifact(

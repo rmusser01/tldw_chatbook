@@ -710,6 +710,7 @@ class WorkspaceArtifactCreateRequest(BaseModel):
     title: str
     status: str = "pending"
     content: Optional[str] = None
+    producer_metadata: Optional[dict[str, Any]] = None
 
 
 class WorkspaceArtifactUpdateRequest(BaseModel):
@@ -721,6 +722,7 @@ class WorkspaceArtifactUpdateRequest(BaseModel):
     total_tokens: Optional[int] = None
     total_cost_usd: Optional[float] = None
     completed_at: Optional[str] = None
+    producer_metadata: Optional[dict[str, Any]] = None
     version: int
 
 
