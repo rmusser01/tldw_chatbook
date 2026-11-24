@@ -1705,7 +1705,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-24: re-measured after rebasing onto dev cf30a398f0 (same owner
     #: rule): dev's TASK-41757 row 32812 + polish-1b's +715 = 33581 -> 33527
     #: lines, methods unchanged (measured).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 33527, 1314),
+    #: 2026-11-24: re-measured after rebasing onto dev 9fa2bf1b1d (same owner
+    #: rule): dev's TASK-42473 row 32852/1289 + polish-1b's +715/+26 =
+    #: 33527/1314 -> 33567/1315 (measured).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 33567, 1315),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

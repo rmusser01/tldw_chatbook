@@ -927,7 +927,10 @@ _BUDGETS: dict[str, int] = {
     # don't contort code): the import publish re-derives the footer, so a
     # running check says "esc cancel" wherever focus is: 9183 -> 9186
     # (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 9186,
+    # 2026-11-24, rebased onto dev 9fa2bf1b1d: 9186 -> 9195 (dev measures
+    # 7501 after TASK-34100.16.1's +9; polish-1b's own +1694; same owner
+    # decision: expand limits, don't contort code).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 9195,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

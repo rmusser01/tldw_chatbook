@@ -246,7 +246,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-20, rebased onto dev d85e90bc9e: 3704 -> 3693 (dev measures
     # 3675; polish-1b's own +18; same owner decision: expand limits,
     # don't contort code).
-    "tldw_chatbook/app_service_wiring.py": 3693,
+    # 2026-11-24, rebased onto dev 9fa2bf1b1d: 3693 -> 3694 (dev measures
+    # 3676; polish-1b's own +18; same owner decision: expand limits,
+    # don't contort code).
+    "tldw_chatbook/app_service_wiring.py": 3694,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
@@ -1081,7 +1084,10 @@ _BUDGETS: dict[str, int] = {
     # own +311; same owner decision: expand limits, don't contort code).
     # 2026-11-19, rebased onto dev a6df4d8d48: 22544 -> 22855 (polish-1b's
     # own +311; same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22855,
+    # 2026-11-24, rebased onto dev 9fa2bf1b1d: 22855 -> 22877 (dev measures
+    # 22566; polish-1b's own +311; same owner decision: expand limits,
+    # don't contort code).
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22877,
     # TASK-39147: the rebased report reader and workflow migrations cross 4000.
     # 2026-11-12, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +2, the store's @declare_store backup-participant declaration and import.
