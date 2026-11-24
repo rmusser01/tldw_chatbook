@@ -11,6 +11,7 @@ from tldw_chatbook.TTS.adapter_types import TTSOperationError
 from tldw_chatbook.TTS.audio_limits import check_buffered_audio_size
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.base_backends import (
+    http_status_failure,
     APITTSBackend,
     TTSBackendConnectionError,
 )
@@ -37,33 +38,6 @@ from tldw_chatbook.config import (
 
 
 _DEFAULT_OPENAI_TTS_URL = "https://api.openai.com/v1/audio/speech"
-
-
-def _http_status_failure(status_code: int) -> tuple[str, ValueError]:
-    if status_code == 401:
-        return (
-            "authentication_failed",
-            ValueError(
-                "Authentication failed. Please check your API configuration (HTTP 401)."
-            ),
-        )
-    if status_code == 429:
-        return (
-            "rate_limited",
-            ValueError("Rate limit exceeded. Please try again later (HTTP 429)."),
-        )
-    if status_code >= 500:
-        return (
-            "service_unavailable",
-            ValueError(
-                "TTS service temporarily unavailable. Please try again later "
-                f"(HTTP {status_code})."
-            ),
-        )
-    return (
-        "request_rejected",
-        ValueError(f"TTS request was rejected by the service (HTTP {status_code})."),
-    )
 
 
 class OpenAITTSBackend(APITTSBackend):
@@ -299,7 +273,7 @@ class OpenAITTSBackend(APITTSBackend):
 
         except httpx.HTTPStatusError as error:
             status_code = error.response.status_code
-            category, safe_failure = _http_status_failure(status_code)
+            category, safe_failure = http_status_failure(status_code)
             logger.error(
                 "OpenAITTSBackend: Request failed "
                 f"(http_status={status_code}, category={category})"

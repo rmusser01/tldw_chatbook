@@ -50,6 +50,12 @@ The adapter registry is **lease-based with a revision + generation model**: ever
 
 Profiles live in a dedicated SQLite store (`config.get_tts_profiles_db_path()`, default `<user_data>/tldw_chatbook_tts_profiles.db`): UUID ids, NFKC-casefold name uniqueness, monotonic revisions with CAS updates, v2/v3 migrations with backups, portable bundles with hostile-archive admission (exact member order, size caps, expansion-ratio limit), and private clone-reference assets (ADR-051). The store requires the `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE` capability and fails closed without it.
 
+## Saved Watchlists article speech
+
+`Subscriptions/article_speech.py::prepare_article_speech` converts a saved body or excerpt to visible speech text, bounded at 256 KiB before and after conversion. `Subscriptions/article_listening_audio.py::freeze_listening_voice` captures the selected voice and durable profile/reference identity. Fresh synthesis resolves the saved profile UUID and current reference authority through `TTSService.synthesize_effective`.
+
+`ArticleListeningAudio.prepare` takes a stored entry ID and expected session revision. It verifies an existing artifact before consulting any speech services. For a new generation it checks controlled-WAV readiness, processes up to 128 chunks under a 64 MiB assembly budget, and publishes PCM16 stereo at 48 kHz with one 12,000-frame tail through the store-issued reservation. `revoke` fences subsequent submissions and final attachment. `settle` waits for the response, conversion work, and storage operation to retire. Its result is a verified artifact for a separate playback owner. [ADR-367](../../backlog/decisions/367-watchlist-article-listening-and-controlled-playback.md)
+
 ## Audiobook chapter source authority
 
 `UI/STTS_Window.py::AudioBookGenerationWidget` keeps the complete file, Notes, or Conversation import in its editable TextArea and working source. Programmatic import echoes therefore retain the full source for chapter detection and Generate, including text beyond character 1000; deliberate edits replace that working source and clearing it blocks Generate (TASK-36130). Chapter publication generation advances when the current TextArea source changes, including clear and the debounce interval. Dispatch also advances it, so a slow superseded worker cannot replace current chapters or announce stale success. A same-source programmatic import echo keeps its dispatch valid (TASK-36100).

@@ -2357,6 +2357,17 @@ class TTSService:
         )
 
     @_maintenance_call
+    async def resolve_effective_voice(
+        self,
+        *,
+        default_profile: TTSDefaultProfileSelection | None = None,
+    ) -> TTSEffectiveSelectionSnapshot:
+        """Return a coherent selection for a saved voice without submitting synthesis."""
+        return await self._request_admission.resolve_effective_voice(
+            default_profile=default_profile
+        )
+
+    @_maintenance_call
     async def synthesize_effective(
         self,
         *,

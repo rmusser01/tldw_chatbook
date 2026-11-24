@@ -626,6 +626,13 @@ snapshot. Reacquire current repository and provider generations at request time;
 they are not durable identity. Resolve the saved UUID even after the default
 changes. Preserve the profile layer's provider/model ownership so clone authority
 is not accidentally replaced by an explicit-provider request.
+Existing reference materialization currently requires POSIX secure file/lock
+primitives. This task does not qualify a new Windows clone path. First-delivery
+Windows generation can use reconstructible named voices; a reference-backed
+request may refuse under that existing platform policy before submission, with
+no fallback. Stable reference identities remain representable, and already
+retained authorized audio still requires no new materialization. Provider unit
+tests on another OS do not qualify article playback there.
 
 Keep existing v4 JSON and fingerprints unchanged for already-valid voices.
 Extend the inert model for native null voice identifiers and the finite safe

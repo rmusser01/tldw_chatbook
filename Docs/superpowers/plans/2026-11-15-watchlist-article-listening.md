@@ -212,7 +212,7 @@ was added by Task 3.
 
 ### Task 4: Prepare bounded article speech and frozen-voice audio (TASK-41179)
 
-**Prerequisite:** TASK-41178. **Files:** New `Subscriptions/article_speech.py`, `article_listening_audio.py`; small extraction from `briefing_audio.py` only where reuse requires it; existing HTML and TTS request/admission helpers. Tests: new `Tests/Subscriptions/test_article_speech.py`, `test_article_listening_audio.py`; existing briefing synthesis regressions.
+**Prerequisite:** TASK-41178. **Files:** New `Subscriptions/article_speech.py`, `article_listening_audio.py`; small extraction from `briefing_audio.py` only where reuse requires it; existing HTML and TTS request/admission helpers, plus bounded generation-failure diagnostics in the existing ElevenLabs/Kokoro backends. Tests: new `Tests/Subscriptions/test_article_speech.py`, `test_article_listening_audio.py`; existing briefing synthesis and affected backend regressions.
 
 **Interfaces:**
 - `prepare_article_speech(body: str, *, content_format: str, is_excerpt: bool = False) -> PreparedArticleSpeech` carries normalized text, UTF-8 hash, converter version and the caller's saved-source excerpt classification. Admission limits: 256 KiB UTF-8 input and prepared text per entry, 2 MiB total snapshot text per queue, 256 entries, 128 TTS chunks per article. Reject whole over-limit candidates; keep unavailable placeholders for ordinary missing bodies.

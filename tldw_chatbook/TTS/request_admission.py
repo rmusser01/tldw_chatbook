@@ -221,6 +221,49 @@ class TTSRequestAdmissionCoordinator:
         """Return the latest saved settings generation published in memory."""
         return self._preferences_generation
 
+    async def resolve_effective_voice(
+        self,
+        *,
+        default_profile: TTSDefaultProfileSelection | None = None,
+    ) -> TTSEffectiveSelectionSnapshot:
+        """Resolve a deliberate saved selection without submitting text or reserving inference."""
+        self._service._require_operation_admission_open()
+        if default_profile is not None and default_profile.reference is not None:
+            requirement = default_profile.reference.recipe_requirement
+            if requirement is not None:
+                await self._service._require_audio_cpp_clone_dependency(requirement)
+                await self._service._preflight_audio_cpp_clone_dependency(requirement)
+            else:
+                await self._service._preflight_audio_cpp_clone_source()
+        while True:
+            provider = self._effective_settings.project_provider(
+                global_preferences=self._preferences,
+                default_profile=default_profile,
+            )
+            async with self._service._prepared_provider_read(provider, deliberate=True):
+                if self._preferences is None and default_profile is None:
+                    raise TTSProviderUnavailableError(
+                        "TTS default provider is not configured"
+                    )
+                if provider != self._effective_settings.project_provider(
+                    global_preferences=self._preferences,
+                    default_profile=default_profile,
+                ):
+                    continue
+                return await self._resolve_non_studio(
+                    self._preferences, default_profile=default_profile
+                )
+
+    async def _resolve_non_studio(self, preferences, **layers):
+        return await self._effective_settings.resolve_non_studio(
+            global_preferences=preferences,
+            global_preferences_revision=self._preferences_generation,
+            provider_revision_reader=self._service.configuration_revision,
+            catalog_reader=self._service._get_catalog_already_prepared,
+            native_capability_reader=self._read_native_capability,
+            **layers,
+        )
+
     async def _read_native_capability(
         self,
         provider_id: str,
@@ -568,25 +611,11 @@ class TTSRequestAdmissionCoordinator:
                                 native_capability_reader=(self._read_native_capability),
                             )
                         else:
-                            selection = (
-                                await self._effective_settings.resolve_non_studio(
-                                    explicit=effective_explicit,
-                                    character_profile=character_profile,
-                                    default_profile=default_profile,
-                                    global_preferences=preferences,
-                                    global_preferences_revision=(
-                                        self._preferences_generation
-                                    ),
-                                    provider_revision_reader=(
-                                        self._service.configuration_revision
-                                    ),
-                                    catalog_reader=(
-                                        self._service._get_catalog_already_prepared
-                                    ),
-                                    native_capability_reader=(
-                                        self._read_native_capability
-                                    ),
-                                )
+                            selection = await self._resolve_non_studio(
+                                preferences,
+                                explicit=effective_explicit,
+                                character_profile=character_profile,
+                                default_profile=default_profile,
                             )
                         if (
                             response_format_override == "prefer_pcm"

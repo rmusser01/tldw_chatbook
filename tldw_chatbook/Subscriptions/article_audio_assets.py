@@ -8,6 +8,7 @@ import json
 import os as stdlib_os
 import sqlite3
 import stat
+from collections.abc import Callable
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -161,6 +162,7 @@ class ArticleAudioAssets:
         profile_data_root: Path,
         reservation: AudioReservation | None = None,
         lease: ListeningLease | None = None,
+        authorize_commit: Callable[[], None] | None = None,
     ):
         if (
             not isinstance(profile_data_root, Path)
@@ -172,6 +174,9 @@ class ArticleAudioAssets:
         self.root = profile_data_root / "article_audio"
         self.reservation = reservation
         self.lease = lease
+        self._commit_options = (
+            {} if authorize_commit is None else {"authorize_commit": authorize_commit}
+        )
 
     @contextmanager
     def _hold(self, keys):
@@ -332,7 +337,11 @@ class ArticleAudioAssets:
                     raise ArticleAudioError("article_audio_name_collision") from None
                 self._check_directory(directory)
                 self.store.complete_audio(
-                    claim, expected, lease=lease, custody_witness=witness
+                    claim,
+                    expected,
+                    lease=lease,
+                    custody_witness=witness,
+                    **self._commit_options,
                 )
                 return self._audio(generation, source_item_id, key, expected)
 
@@ -392,6 +401,7 @@ class ArticleAudioAssets:
                     generation,
                     expected_revision=expected_revision,
                     lease=lease,
+                    **self._commit_options,
                 )
                 return audio
         return None

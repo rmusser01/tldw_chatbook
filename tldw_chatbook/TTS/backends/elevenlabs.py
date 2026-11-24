@@ -10,7 +10,7 @@ from loguru import logger
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.adapter_types import TTSOperationError
 from tldw_chatbook.TTS.audio_limits import check_buffered_audio_size
-from tldw_chatbook.TTS.base_backends import APITTSBackend
+from tldw_chatbook.TTS.base_backends import APITTSBackend, http_status_failure
 from tldw_chatbook.config import (
     get_api_key,
     get_cli_setting,
@@ -20,6 +20,25 @@ from tldw_chatbook.config import (
 #######################################################################################################################
 #
 # ElevenLabs TTS Backend Implementation
+
+
+def voice_settings(config) -> dict[str, float | bool]:
+    """Resolve the four nonsecret controls sent in the ElevenLabs voice payload."""
+
+    def setting(key, default):
+        return (
+            config[key] if key in config else get_cli_setting("app_tts", key, default)
+        )
+
+    return {
+        "stability": float(setting("ELEVENLABS_VOICE_STABILITY", "0.5")),
+        "similarity_boost": float(setting("ELEVENLABS_SIMILARITY_BOOST", "0.8")),
+        "style": float(setting("ELEVENLABS_STYLE", "0.0")),
+        "use_speaker_boost": str(
+            setting("ELEVENLABS_USE_SPEAKER_BOOST", "true")
+        ).lower()
+        == "true",
+    }
 
 
 class ElevenLabsTTSBackend(APITTSBackend):
@@ -63,32 +82,11 @@ class ElevenLabsTTSBackend(APITTSBackend):
             get_cli_setting("app_tts", "ELEVENLABS_OUTPUT_FORMAT", "mp3_44100_192"),
         )
 
-        # Voice settings with proper type conversion
-        self.voice_stability = float(
-            self.config.get(
-                "ELEVENLABS_VOICE_STABILITY",
-                get_cli_setting("app_tts", "ELEVENLABS_VOICE_STABILITY", "0.5"),
-            )
-        )
-        self.similarity_boost = float(
-            self.config.get(
-                "ELEVENLABS_SIMILARITY_BOOST",
-                get_cli_setting("app_tts", "ELEVENLABS_SIMILARITY_BOOST", "0.8"),
-            )
-        )
-        self.style = float(
-            self.config.get(
-                "ELEVENLABS_STYLE",
-                get_cli_setting("app_tts", "ELEVENLABS_STYLE", "0.0"),
-            )
-        )
-
-        # Boolean conversion
-        speaker_boost_str = self.config.get(
-            "ELEVENLABS_USE_SPEAKER_BOOST",
-            get_cli_setting("app_tts", "ELEVENLABS_USE_SPEAKER_BOOST", "true"),
-        )
-        self.use_speaker_boost = str(speaker_boost_str).lower() == "true"
+        settings = voice_settings(self.config)
+        self.voice_stability = settings["stability"]
+        self.similarity_boost = settings["similarity_boost"]
+        self.style = settings["style"]
+        self.use_speaker_boost = settings["use_speaker_boost"]
 
         self.base_url = "https://api.elevenlabs.io/v1"
 
@@ -236,60 +234,25 @@ class ElevenLabsTTSBackend(APITTSBackend):
         except TTSOperationError:
             raise
 
-        except httpx.HTTPStatusError as e:
-            # Try to read error content safely
-            error_msg = f"HTTP {e.response.status_code}"
-            try:
-                error_content = await e.response.aread()
-                error_msg = error_content.decode("utf-8", errors="ignore")
-                logger.error(
-                    f"ElevenLabs API HTTP error {e.response.status_code}: {error_msg}"
-                )
-
-                # Try to extract meaningful error message
-                try:
-                    import json
-
-                    error_data = json.loads(error_msg)
-                    if "detail" in error_data:
-                        if (
-                            isinstance(error_data["detail"], dict)
-                            and "message" in error_data["detail"]
-                        ):
-                            error_msg = error_data["detail"]["message"]
-                        else:
-                            error_msg = str(error_data["detail"])
-                except Exception:
-                    pass
-            except Exception as read_error:
-                logger.error(f"Failed to read error response: {read_error}")
-                # Use basic error message
-
-            # Raise proper exceptions instead of yielding error text
-            if e.response.status_code == 401:
-                raise ValueError(
-                    "Authentication failed. Please check your API configuration."
-                )
-            elif e.response.status_code == 429:
-                raise ValueError("Rate limit exceeded. Please try again later.")
-            elif e.response.status_code >= 500:
-                raise ValueError(
-                    "TTS service temporarily unavailable. Please try again later."
-                )
-            else:
-                raise ValueError(f"TTS request failed: {error_msg}")
-
-        except httpx.RequestError as e:
-            logger.error(f"ElevenLabsTTSBackend: Request error: {e}")
-            raise ValueError(
+        except httpx.HTTPStatusError as error:
+            status = error.response.status_code
+            category, safe_failure = http_status_failure(status)
+            logger.error(
+                "ElevenLabs request failed (status={}, category={})", status, category
+            )
+        except httpx.RequestError:
+            logger.error("ElevenLabs network request failed")
+            safe_failure = ValueError(
                 "Unable to connect to TTS service. Please check your internet connection."
             )
-
-        except Exception as e:
-            logger.opt(exception=True).error(
-                f"ElevenLabsTTSBackend: Unexpected error: {e}"
+        except Exception:
+            logger.error("ElevenLabs audio generation failed")
+            safe_failure = ValueError(
+                "An unexpected error occurred during TTS generation."
             )
-            raise ValueError("An unexpected error occurred during TTS generation.")
+        else:
+            return
+        raise safe_failure
 
     def _map_output_format(self, format: str) -> str:
         """Map common format names to ElevenLabs format strings"""
