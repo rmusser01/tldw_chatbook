@@ -678,6 +678,41 @@ class ArticleListeningStore:
             if changed != 1:
                 raise ListeningConflict("article_audio_reservation_changed")
 
+    def reject_audio_stage(
+        self, claim: AudioReservation, witness: str, *, lease: ListeningLease
+    ) -> bool:
+        """Commit cleanup of the issuing holder's rejected, still-held stage."""
+        # Publication authority may have changed. Cleanup is restricted to the
+        # original store profile, immutable DB image and already admitted lease.
+        with self.db.listening_transaction(lease=lease, profile=self._profile) as c:
+            self._check_issued(claim)
+            if (
+                claim.authority.profile != self._profile
+                or claim.database != self.database
+            ):
+                raise ListeningConflict("article_audio_reservation_changed")
+            return (
+                c.execute(
+                    "UPDATE article_audio SET item_id=NULL,speech_hash=NULL,converter=NULL,"
+                    "voice_hash=NULL,dependency_hash=NULL,status='pending_delete',last_used=NULL,created_at=NULL,"
+                    "target_entry=NULL,target_revision=NULL,regenerate=NULL,custody_witness=? "
+                    "WHERE generation=? AND profile=? AND file_key=? AND custody_witness IS NULL "
+                    "AND (status='pending_delete' OR (status='pending' AND item_id=? "
+                    "AND target_entry=? AND target_revision=?)) AND NOT EXISTS "
+                    "(SELECT 1 FROM listening_entries WHERE artifact=article_audio.generation)",
+                    (
+                        _digest(witness),
+                        claim.generation,
+                        self._profile,
+                        claim.file_key,
+                        claim.item_id,
+                        claim.entry_id,
+                        claim.revision,
+                    ),
+                ).rowcount
+                == 1
+            )
+
     def seal_audio_custody(
         self, claim: AudioReservation, witness: str, *, lease: ListeningLease
     ) -> None:

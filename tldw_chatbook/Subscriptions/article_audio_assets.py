@@ -88,9 +88,11 @@ def _confirm_absent(parent, name):
     raise ArticleAudioError("article_audio_custody_uncertain")
 
 
-def _witness(image, generation, key, physical, digest, size):
+def _witness(image, generation, key, physical, digest, size, *, rejected_stage=False):
     fields = (
-        "article-audio-custody-v1",
+        "article-audio-rejected-stage-v1"
+        if rejected_stage
+        else "article-audio-custody-v1",
         image,
         generation,
         key,
@@ -101,6 +103,14 @@ def _witness(image, generation, key, physical, digest, size):
     return hashlib.sha256(
         json.dumps(fields, separators=(",", ":")).encode("ascii")
     ).hexdigest()
+
+
+def _measure(held):
+    size = held.stream.seek(0, 2)
+    if not 0 <= size <= MAX_BUFFERED_AUDIO_BYTES:
+        raise ArticleAudioError("article_audio_custody_uncertain")
+    held.stream.seek(0)
+    return hashlib.file_digest(held.stream, "sha256").hexdigest(), size
 
 
 @contextmanager
@@ -252,6 +262,30 @@ class ArticleAudioAssets:
             m.byte_size,
         )
 
+    def _seal_stage(self, directory, held, claim, data, expected, lease):
+        physical = held.identity
+        identity = claim.image, claim.generation, claim.file_key, physical
+        try:
+            if held.stream.write(data) != expected.byte_size:
+                raise ArticleAudioError("article_audio_write_incomplete")
+            held.flush_file()
+            try:
+                validate_article_audio(held.stream, expected)
+            except ValueError:
+                raise ArticleAudioError("invalid_article_audio") from None
+            self._check_directory(directory)
+            witness = _witness(*identity, expected.sha256, expected.byte_size)
+            self.store.seal_audio_custody(claim, witness, lease=lease)
+            return witness
+        except (ValueError, OSError, sqlite3.Error):
+            # Only this live, exclusively created stage can acquire a rejection
+            # receipt. A later sweep cannot derive custody from unsealed bytes.
+            self._check_directory(directory)
+            rejected = _witness(*identity, *_measure(held), rejected_stage=True)
+            if self.store.reject_audio_stage(claim, rejected, lease=lease):
+                held.delete()
+            raise
+
     def publish(
         self, candidate: GeneratedArticleAudio, *, source_item_id: int, generation: int
     ) -> ArticleAudio:
@@ -281,24 +315,9 @@ class ArticleAudioAssets:
                 except (FileExistsError, ArticleAudioError):
                     self.store.relinquish_audio(claim, lease=lease)
                     raise ArticleAudioError("article_audio_name_collision") from None
-                if held.stream.write(candidate.wav_bytes) != expected.byte_size:
-                    raise ArticleAudioError("article_audio_write_incomplete")
-                held.flush_file()
-                try:
-                    validate_article_audio(held.stream, expected)
-                except ValueError:
-                    self.store.cancel_audio(claim, lease=lease)
-                    raise ArticleAudioError("invalid_article_audio") from None
-                self._check_directory(directory)
-                witness = _witness(
-                    claim.image,
-                    generation,
-                    key,
-                    held.identity,
-                    expected.sha256,
-                    expected.byte_size,
+                witness = self._seal_stage(
+                    directory, held, claim, candidate.wav_bytes, expected, lease
                 )
-                self.store.seal_audio_custody(claim, witness, lease=lease)
                 try:
                     held.rename_new(key)
                 except FileExistsError:
@@ -398,20 +417,17 @@ class ArticleAudioAssets:
         if saved is None:
             raise ArticleAudioError("article_audio_custody_uncertain")
         with held_regular_file(directory, present[0]) as held:
-            size = held.stream.seek(0, 2)
-            if not 0 < size <= MAX_BUFFERED_AUDIO_BYTES:
-                raise ArticleAudioError("article_audio_custody_uncertain")
-            held.stream.seek(0)
-            digest = hashlib.file_digest(held.stream, "sha256").hexdigest()
-            current = _witness(
+            identity = (
                 self.store.db.listening_image,
                 row["generation"],
                 final,
                 held.identity,
-                digest,
-                size,
+                *_measure(held),
             )
-            if current != saved:
+            if _witness(*identity) != saved and not (
+                present[0] == stage
+                and _witness(*identity, rejected_stage=True) == saved
+            ):
                 raise ArticleAudioError("article_audio_custody_uncertain")
             # Refuse a second leaf born since the planning census. The native
             # operation itself acts only on the verified, share-frozen handle.
@@ -507,6 +523,13 @@ class ArticleAudioAssets:
                 if expired or over_limit:
                     retired.append(row["generation"])
             if retired:
+                if directory is None:
+                    with pinned_directory(self.root.parent) as parent:
+                        _confirm_absent(parent, self.root.name)
+                        require_regular_file_effects(parent)
+                else:
+                    self._check_directory(directory)
+                    require_regular_file_effects(directory)
                 self.store.retire_audio(retired, lease=lease)
             self._cleanup(lease, directory, census, receipt, rows)
         return receipt

@@ -804,3 +804,154 @@ def test_unqualified_volume_refuses_before_creating_article_tree(
     ):
         owner.publish(data, source_item_id=claim.item_id, generation=claim.generation)
     assert not owner.root.exists()
+
+
+@native_effects
+@pytest.mark.parametrize(
+    "reason", ["bad-digest", "cancel", "source-deletion", "profile-switch"]
+)
+def test_live_rejected_stage_disposed_after_committed_revocation(
+    listening, reason, monkeypatch
+):
+    store, _, _ = listening
+    owner, claim, candidate = owner_for(listening)
+    if reason == "bad-digest":
+        candidate = replace(candidate, sha256="0" * 64)
+    else:
+        original = store.seal_audio_custody
+
+        def revoke(*args, **kwargs):
+            if reason == "cancel":
+                store.cancel_audio(claim, lease=kwargs["lease"])
+            elif reason == "source-deletion":
+                store.db.delete_article(claim.item_id, lease=kwargs["lease"])
+            else:
+                monkeypatch.setattr(
+                    store,
+                    "_current",
+                    lambda: replace(claim.authority, profile="f" * 24),
+                )
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(store, "seal_audio_custody", revoke)
+    observed = []
+
+    def dispose(actual):
+        assert not store.db.conn.in_transaction
+        row = store.db.conn.execute(
+            "SELECT status,custody_witness FROM article_audio WHERE generation=?",
+            (claim.generation,),
+        ).fetchone()
+        observed.append((row[0], len(row[1])))
+        actual()
+
+    intercept_handle(monkeypatch, "delete", dispose)
+    with pytest.raises((models.ListeningConflict, api().ArticleAudioError)):
+        owner.publish(
+            candidate, source_item_id=claim.item_id, generation=claim.generation
+        )
+    assert observed == [("pending_delete", 64)]
+    assert list(owner.root.iterdir()) == []
+
+
+@native_effects
+@pytest.mark.parametrize(
+    "after_failure", ["retry-stage", "move-to-final", "replace-stage"]
+)
+def test_failed_rejected_stage_disposition_only_retries_proven_stage(
+    listening, after_failure, monkeypatch
+):
+    store, _, root = listening
+    owner, claim, candidate = owner_for(listening)
+
+    def failure(actual):
+        raise OSError("disposition_failed")
+
+    with monkeypatch.context() as patch:
+        intercept_handle(patch, "delete", failure)
+        with pytest.raises(api().ArticleAudioError, match="storage_unavailable"):
+            owner.publish(
+                replace(candidate, sha256="0" * 64),
+                source_item_id=claim.item_id,
+                generation=claim.generation,
+            )
+    row = store.audio_inventory(claim.generation)[0]
+    assert row["status"] == "pending_delete" and len(row["custody_witness"]) == 64
+    stage = owner.root / ("." + claim.file_key + ".stage")
+    final = owner.root / claim.file_key
+    if after_failure == "move-to-final":
+        stage.rename(final)
+    elif after_failure == "replace-stage":
+        stage.rename(root / "original-stage")
+        stage.write_bytes(candidate.wav_bytes)
+    store.db.close()
+    _, _, reopened, _ = setup_store(store.db)
+    receipt = api().ArticleAudioAssets(reopened, profile_data_root=root).reconcile()
+    if after_failure == "retry-stage":
+        assert (
+            receipt.removed == 1
+            and not stage.exists()
+            and not reopened.pending_deletions()
+        )
+    else:
+        assert receipt.uncertain == receipt.retry == 1 and reopened.pending_deletions()
+        assert (
+            final if after_failure == "move-to-final" else stage
+        ).read_bytes() == candidate.wav_bytes
+
+
+@native_effects
+def test_unqualified_prune_preserves_ready_metadata_and_verified_reuse(
+    listening, monkeypatch
+):
+    store, session, root = listening
+    owner = api().ArticleAudioAssets(store, profile_data_root=root)
+    audio = publish(store, session, root, session.foreground)
+    store.clear(expected_revision=store.load_session().revision)
+    before = dict(store.audio_inventory(audio.generation)[0])
+    assert before["status"] == "ready" and not before["referenced"]
+
+    def refuse(_parent):
+        raise OSError("regular_file_effects_unqualified")
+
+    monkeypatch.setattr(api(), "require_regular_file_effects", refuse)
+    monkeypatch.setattr(
+        import_module("tldw_chatbook.Backup_Recovery.native_files"),
+        "require_regular_file_effects",
+        refuse,
+    )
+    with pytest.raises(api().ArticleAudioError, match="effects_unqualified"):
+        owner.prune(2**62)
+    assert dict(store.audio_inventory(audio.generation)[0]) == before
+    assert owner.read_verified(audio.generation) == audio
+    _, _, _, voice = setup_store(store.db)
+    session = store.replace_session(
+        prepare(store, session.authority, voice, item=audio.source_item_id),
+        expected_revision=None,
+    )
+    assert (
+        owner.reuse(session.foreground.entry_id, expected_revision=session.revision)
+        == audio
+    )
+
+
+@native_effects
+def test_post_seal_error_preserves_existing_publication_witness(listening, monkeypatch):
+    owner, claim, candidate = owner_for(listening)
+    seal = owner.store.seal_audio_custody
+    saved = []
+
+    def committed_then_failed(claim, witness, *, lease):
+        seal(claim, witness, lease=lease)
+        saved.append(witness)
+        raise OSError("after_commit")
+
+    monkeypatch.setattr(owner.store, "seal_audio_custody", committed_then_failed)
+    with pytest.raises(api().ArticleAudioError, match="storage_unavailable"):
+        owner.publish(
+            candidate, source_item_id=claim.item_id, generation=claim.generation
+        )
+    row = owner.store.audio_inventory(claim.generation)[0]
+    assert row["status"] == "pending" and saved == [row["custody_witness"]]
+    assert len(list(owner.root.iterdir())) == 1
+    assert owner.reconcile().removed == 1 and not list(owner.root.iterdir())
