@@ -2153,9 +2153,13 @@ def test_dreams_tracking_lane_is_one_serial_minimal_python_312_job() -> None:
     )
     assert setup["with"]["python-version"] == "3.12"
     install = _named_step(job, "Install fast-lane dependencies")["run"]
-    assert shlex.split(install) == shlex.split(
-        _named_step(workflow["jobs"]["pr-fast-lane"], "Install fast-lane dependencies")["run"]
-    )
+    # TASK-34100.2 (2026-11-24): a rider imports hypothesis at module level.
+    assert shlex.split(install) == [
+        *shlex.split(
+            _named_step(workflow["jobs"]["pr-fast-lane"], "Install fast-lane dependencies")["run"]
+        ),
+        "hypothesis",
+    ]
     step = _named_step(job, "Run the Dreams tracking tests and unlaned riders")
     assert "if" not in step
     assert tuple(shlex.split(step["run"].replace("\\\n", " "), comments=True)) == (

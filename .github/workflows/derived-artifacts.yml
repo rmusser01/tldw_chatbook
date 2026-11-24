@@ -1547,9 +1547,12 @@ jobs:
           python-version: '3.12'
           cache: pip
 
-      # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
+      # pr-fast-lane's line plus hypothesis (TASK-34100.2 round-24 port,
+      # 2026-11-24): the riders' first-chat capacity file imports hypothesis at
+      # module level, and without it the step stops at collection and runs
+      # nothing (found by the round's Linux check with CI's install line).
       - name: Install fast-lane dependencies
-        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2 hypothesis
 
       - name: Run the Dreams tracking tests and unlaned riders
         run: |
