@@ -301,17 +301,13 @@ def test_tool_pack_implementation_imports_only_in_deferred_worker(
         "tldw_chatbook.Tool_Packs.receipt_store",
         "tldw_chatbook.Tool_Packs.removal",
     ]
-    if os.name == "nt":
-        # Native Windows receipt durability remains unqualified (ADR-107).
-        assert payload["attached"] is False
-        assert payload["root"] is None
-        assert payload["unavailable_reason"] == "composition_unavailable"
-        assert payload["reconciliation_reason"] == "not_run"
-        assert payload["guard_active"] is False
-        assert payload["guard_unchanged"] is True
-        return
+    # Windows receipt-store initialization uses the native directory barrier.
     assert payload["attached"] is True
     assert payload["root"] == str(tmp_path / "data" / "tool_pack_receipts")
+    assert payload["unavailable_reason"] is None
+    assert payload["reconciliation_reason"] not in {"not_run", "pending"}
+    assert payload["guard_active"] is True
+    assert payload["guard_unchanged"] is True
 
 
 @pytest.mark.parametrize(("enabled", "expected_tasks"), [(False, 0), (True, 1)])

@@ -924,13 +924,17 @@ def _seed_schema_version(path, versions) -> None:
 
 def test_schema_version_current_plus_stale_row_normalizes_to_current(tmp_path):
     path = tmp_path / "current-plus-stale.db"
-    _seed_schema_version(path, [1, _CURRENT_SCHEMA_VERSION])
+    with closing(SubscriptionsDB(path)) as current, current.transaction() as conn:
+        conn.execute("INSERT INTO schema_version VALUES (1)")
 
     db = SubscriptionsDB(path)
     try:
         assert [
             row[0] for row in db.conn.execute("SELECT version FROM schema_version")
         ] == [_CURRENT_SCHEMA_VERSION]
+        from Tests.Subscriptions.test_article_listening_store import setup_store
+
+        assert setup_store(db)[2].load_session() is None
     finally:
         db.close()
 
@@ -941,16 +945,31 @@ def test_schema_version_current_plus_stale_row_normalizes_to_current(tmp_path):
         ] == [_CURRENT_SCHEMA_VERSION]
 
 
+@pytest.mark.parametrize("absent", ["all", "index", "trigger"])
+def test_current_stamp_requires_installed_listening_catalog(tmp_path, absent):
+    path = tmp_path / "partial.db"
+    if absent == "all":
+        _seed_schema_version(path, [1, _CURRENT_SCHEMA_VERSION])
+    else:
+        with closing(SubscriptionsDB(path)) as db, db.transaction() as conn:
+            if absent == "index":
+                conn.execute("DROP INDEX idx_article_audio_lru")
+            else:
+                conn.execute("DROP TRIGGER listening_item_delete")
+    with pytest.raises(SubscriptionError, match="listening schema"):
+        SubscriptionsDB(path)
+
+
 def test_schema_version_unknown_future_version_raises_actionable_error(tmp_path):
     path = tmp_path / "future-version.db"
-    _seed_schema_version(path, [3])
+    _seed_schema_version(path, [_CURRENT_SCHEMA_VERSION + 1])
 
     with pytest.raises(SubscriptionError) as exc_info:
         SubscriptionsDB(path)
 
     message = str(exc_info.value)
     assert str(path) in message
-    assert "[3]" in message
+    assert str([_CURRENT_SCHEMA_VERSION + 1]) in message
     assert str(_CURRENT_SCHEMA_VERSION) in message
 
 
@@ -961,12 +980,12 @@ def test_schema_version_unknown_version_beside_v1_still_raises(tmp_path):
     untested code over unknown data.
     """
     path = tmp_path / "unknown-plus-v1.db"
-    _seed_schema_version(path, [1, 3])
+    _seed_schema_version(path, [1, _CURRENT_SCHEMA_VERSION + 1])
 
     with pytest.raises(SubscriptionError) as exc_info:
         SubscriptionsDB(path)
 
-    assert "[1, 3]" in str(exc_info.value)
+    assert str([1, _CURRENT_SCHEMA_VERSION + 1]) in str(exc_info.value)
 
 
 def test_schema_version_empty_table_raises_actionable_error(tmp_path):
@@ -1001,14 +1020,14 @@ def test_schema_version_current_plus_newer_unknown_row_is_refused_untouched(tmp_
     still normalizes.
     """
     path = tmp_path / "current-plus-newer.db"
-    _seed_schema_version(path, [_CURRENT_SCHEMA_VERSION, 3])
+    _seed_schema_version(path, [_CURRENT_SCHEMA_VERSION, _CURRENT_SCHEMA_VERSION + 1])
 
     with pytest.raises(SubscriptionError) as exc_info:
         SubscriptionsDB(path)
 
     message = str(exc_info.value)
     assert str(path) in message
-    assert f"[{_CURRENT_SCHEMA_VERSION}, 3]" in message
+    assert str([_CURRENT_SCHEMA_VERSION, _CURRENT_SCHEMA_VERSION + 1]) in message
 
     # The refusal touched nothing: both rows are still on disk.
     with closing(sqlite3.connect(path)) as conn:
@@ -1016,7 +1035,7 @@ def test_schema_version_current_plus_newer_unknown_row_is_refused_untouched(tmp_
             row[0] for row in conn.execute("SELECT version FROM schema_version")
         ] == [
             _CURRENT_SCHEMA_VERSION,
-            3,
+            _CURRENT_SCHEMA_VERSION + 1,
         ]
 
 

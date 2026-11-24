@@ -1058,18 +1058,183 @@ def _briefing_relocation_authorizer(read_authorizer):
 
 
 class _SubscriptionsAdapter(_SQLiteDeclaration):
+    @staticmethod
+    def _article_rows(connection, profile):
+        """Use only after this connection passes the installed catalog check."""
+        if (
+            connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+            != 4
+        ):
+            return ()
+        return connection.execute(
+            "SELECT file_key,sha256,sample_rate,content_frames,file_frames,byte_size "
+            "FROM article_audio WHERE profile=? AND status='ready' ORDER BY generation",
+            (profile,),
+        )
+
+    def rebind_listening_profile(
+        self,
+        item: StorageItem,
+        candidate: Path,
+        mapping: Mapping[str, Path],
+        *,
+        aliases: tuple[StorageItem, ...] = (),
+    ) -> None:
+        """Rebind a reviewed selector and discard device-local custody on a private image."""
+        from tldw_chatbook.DB.private_sqlite import open_recovery_validation
+        from tldw_chatbook.Subscriptions.article_listening_models import (
+            listening_profile_key,
+        )
+
+        profiles = {}
+        for row in (item, *aliases):
+            parts = row.logical_id.split(":")
+            if (
+                len(parts) != 3
+                or parts[0] != "profile"
+                or not parts[1]
+                or parts[2] != self.owner_id
+                or row.owner != self.owner_id
+                or aliases
+                and (
+                    not item.shared_group
+                    or row.shared_group != item.shared_group
+                    or row.path != item.path
+                )
+            ):
+                raise ValueError("listening_profile_mapping_required")
+            source = parts[1]
+            config_id = f"profile:{source}:config"
+            selector = mapping.get(config_id)
+            if (
+                config_id not in row.dependencies
+                or not isinstance(selector, Path)
+                or not selector.is_absolute()
+                or ".." in selector.parts
+            ):
+                raise ValueError("listening_profile_mapping_required")
+            profiles[source] = listening_profile_key(selector)
+        if len(set(profiles.values())) != len(profiles):
+            raise ValueError("listening_profile_collision")
+        moves = [(source, target) for source, target in profiles.items() if source != target]
+        with open_recovery_validation(
+            self.owner_id, candidate, writable=True, with_restrictions=True
+        ) as opened:
+            connection, restrictions = opened
+
+            def authorize(action, table, column, database, origin):
+                if origin is None and (
+                    action == sqlite3.SQLITE_TRANSACTION
+                    and database is None
+                    and table in {"BEGIN", "COMMIT", "ROLLBACK"}
+                    or action == sqlite3.SQLITE_UPDATE
+                    and database == "main"
+                    and (table, column)
+                    in {
+                        ("listening_session", "profile"),
+                        ("article_audio", "profile"),
+                        ("article_audio", "custody_witness"),
+                    }
+                ):
+                    return sqlite3.SQLITE_OK
+                return restrictions.authorize(action, table, column, database, origin)
+
+            connection.set_authorizer(authorize)
+            with connection:
+                connection.execute("BEGIN IMMEDIATE")
+                issues = self._validate_catalog(connection)
+                if issues:
+                    raise ValueError(issues[0])
+                if (
+                    connection.execute(
+                        "SELECT MAX(version) FROM schema_version"
+                    ).fetchone()[0]
+                    != 4
+                ):
+                    return
+                destinations = {target for _, target in moves}
+                for target in destinations:
+                    if connection.execute(
+                        "SELECT 1 FROM listening_session WHERE profile=? UNION ALL "
+                        "SELECT 1 FROM article_audio WHERE profile=? LIMIT 1",
+                        (target, target),
+                    ).fetchone():
+                        raise ValueError("listening_profile_collision")
+                for source, target in moves:
+                    # Every destination was empty in both tables before any move.
+                    # An overlapping source can now contain only newly moved rows.
+                    if source in destinations:
+                        continue
+                    connection.execute(
+                        "UPDATE listening_session SET profile=? WHERE profile=?",
+                        (target, source),
+                    )
+                    connection.execute(
+                        "UPDATE article_audio SET profile=? WHERE profile=?",
+                        (target, source),
+                    )
+                # Every partition now lives in a different physical image, including
+                # an imported copy restored under the original selector spelling.
+                connection.execute(
+                    "UPDATE article_audio SET custody_witness=NULL WHERE custody_witness IS NOT NULL"
+                )
+                if (
+                    self._validate_catalog(connection)
+                    or connection.execute("PRAGMA foreign_key_check").fetchone()
+                ):
+                    raise ValueError("invalid_listening_state")
+
+    def _check_article_peers(
+        self, connection, item, profile, candidates, topology=None
+    ):
+        """Match every included article payload to its profile's actual generation."""
+        from io import BytesIO
+        from tldw_chatbook.Backup_Recovery.storage_admission import (
+            _consume_recovery_file,
+        )
+        from tldw_chatbook.Backup_Recovery.recovery_files import article_id
+
+        source = item.logical_id.split(":")[1]
+        root = article_id(source)
+        keys = {key for key in candidates if key.startswith(root + "-")}
+        if keys != {key for key in item.dependencies if key.startswith(root + "-")}:
+            return ("dependency_unavailable",)
+        if not keys:
+            return ()
+        if topology is not None and topology.get(root) != (root, None, "", "directory"):
+            return ("dependency_unavailable",)
+        from tldw_chatbook.Subscriptions.article_listening_models import (
+            AudioMetadata,
+            validate_article_audio,
+        )
+
+        for name, *fields in self._article_rows(connection, profile):
+            key = article_id(source, name)
+            if key not in keys:
+                continue
+            if topology is not None and topology.get(key) != (root, root, name, "file"):
+                return ("dependency_unavailable",)
+            metadata = AudioMetadata(*fields)
+            data = _consume_recovery_file(
+                "subscriptions.assets",
+                candidates[key],
+                max_bytes=metadata.byte_size,
+                collect=True,
+                private=True,
+            )
+            validate_article_audio(BytesIO(data), metadata)
+            keys.remove(key)
+        return ("dependency_unavailable",) if keys else ()
+
     def schema_policy(self) -> SchemaPolicy:
-        migration = Path(__file__).with_name("migrations") / "subscriptions_v2_to_v3_url_provenance.sql"
-        statements = []
-        pending = ""
-        for line in migration.read_text(encoding="utf-8").splitlines(keepends=True):
-            pending += line
-            if sqlite3.complete_statement(pending):
-                statements.append(pending)
-                pending = ""
-        if pending.strip():
-            raise ValueError("incomplete_provenance_migration")
-        return SchemaPolicy(self.owner_id, self.versions, self.schemas, ((2, 3, tuple(statements)),))
+        from .subscriptions_schema import migration
+
+        return SchemaPolicy(
+            self.owner_id,
+            self.versions,
+            self.schemas,
+            tuple((version, version + 1, migration(version)) for version in (2, 3)),
+        )
 
     def relocate_restore(
         self, item: StorageItem, candidate: Path, mapping: Mapping[str, Path]
@@ -1140,6 +1305,7 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
         candidates: Mapping[str, Path],
         *,
         topology: Mapping[str, tuple[str, str | None, str, str]],
+        selector: Path | None = None,
     ) -> tuple[str, ...]:
         """Bind relocated rows to the selected config and original finite topology.
 
@@ -1151,6 +1317,7 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
         from tldw_chatbook.Backup_Recovery.recovery_files import _RawDeclaration
         from tldw_chatbook.Backup_Recovery.storage_admission import _read_recovery_file
         from tldw_chatbook.DB.private_sqlite import open_recovery_validation
+        from tldw_chatbook.Subscriptions.article_listening_models import listening_profile_key
 
         parts = item.logical_id.split(":")
         if (
@@ -1161,13 +1328,24 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
             or not parts[1]
         ):
             return ("invalid_dependency_context",)
-        issues = self.validate_restore(item, candidate)
-        if issues:
-            return issues
         try:
             with open_recovery_validation(
                 self.owner_id, candidate, writable=False
             ) as connection:
+                issues = self._validate_catalog(connection)
+                if issues:
+                    return issues
+                article_issues = self._check_article_peers(
+                    connection,
+                    item,
+                    listening_profile_key(selector)
+                    if selector is not None
+                    else parts[1],
+                    candidates,
+                    topology,
+                )
+                if article_issues:
+                    return article_issues
                 paths = tuple(
                     row[0]
                     for row in connection.execute(
@@ -1204,6 +1382,7 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
                     root_id, parent_id, relative, kind = record
                     if (
                         kind == "file"
+                        and not key.startswith(prefix + "article_audio")
                         and relative == Path(value).name
                         and parent_id == root_id
                         and root_id.startswith(prefix)
@@ -1215,20 +1394,18 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
                 ).validate(candidates[matches[0]]):
                     return ("dependency_unavailable",)
             return ()
-        except (OSError, ValueError, sqlite3.Error):
+        except (OSError, ValueError, RuntimeError, sqlite3.Error):
             return ("dependency_unavailable",)
 
     def discover(self, config: Mapping[str, object]) -> tuple[StorageItem, ...]:
         from dataclasses import replace
 
-        from tldw_chatbook.Backup_Recovery.recovery_files import _tree_member_id
+        from tldw_chatbook.Backup_Recovery.recovery_files import _tree_member_id, article_id, article_tree
         from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
         item = super().discover(config)[0]
         if item.status != "included":
             return (item,)
-        if self.validate(item.path):
-            return (replace(item, status="unsupported"),)
         root = user_data_dir(config) / "briefing_audio"
         try:
             with closing(
@@ -1236,13 +1413,30 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
                     "recovery.operations.subscriptions", item.path, read_only=True
                 )
             ) as connection:
+                connection.execute("BEGIN")
+                if self._validate_catalog(connection):
+                    return (replace(item, status="unsupported"),)
+                profile = discovery_context(config).profile_id
+                files = {
+                    row.logical_id
+                    for row in article_tree(
+                        config, user_data_dir(config) / "article_audio"
+                    )
+                    if row.status == "included"
+                }
+                ready = {
+                    article_id(profile, row[0])
+                    for row in self._article_rows(connection, profile)
+                }
                 paths = tuple(
                     row[0]
                     for row in connection.execute(
                         "SELECT file_path FROM briefing_audio WHERE status='complete'"
                     )
                 )
-            dependencies = list(item.dependencies)
+            # The asset census joins these selector-specific claims after all
+            # selected databases have reported their members of the physical tree.
+            dependencies = [*item.dependencies, *sorted(files & ready)]
             for value in paths:
                 if (
                     not isinstance(value, str)
@@ -1263,14 +1457,14 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
             return (replace(item, status="unavailable"),)
 
     def validate_dependencies(
-        self, item: StorageItem, candidate: Path, candidates: Mapping[str, Path]
+        self, item: StorageItem, candidate: Path, candidates: Mapping[str, Path], *, staged=False
     ) -> tuple[str, ...]:
         from tldw_chatbook.Backup_Recovery.models import DiscoveryContext
         from tldw_chatbook.Backup_Recovery.recovery_files import (
             _RawDeclaration,
             _tree_member_id,
         )
-        from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+        from tldw_chatbook.DB.private_sqlite import connect_private_sqlite, open_recovery_validation
 
         parts = item.logical_id.split(":")
         if (
@@ -1281,16 +1475,25 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
             or not parts[1]
         ):
             return ("invalid_dependency_context",)
-        issues = self.validate(candidate)
-        if issues:
-            return issues
         context = DiscoveryContext(Path("/historical-selector-not-opened"), parts[1])
         try:
-            with closing(
-                connect_private_sqlite(
-                    "recovery.operations.subscriptions", candidate, read_only=True
+            with (
+                open_recovery_validation(self.owner_id, candidate, writable=False)
+                if staged
+                else closing(
+                    connect_private_sqlite(
+                        "recovery.operations.subscriptions", candidate, read_only=True
+                    )
                 )
             ) as connection:
+                issues = self._validate_catalog(connection)
+                if issues:
+                    return issues
+                issues = self._check_article_peers(
+                    connection, item, parts[1], candidates
+                )
+                if issues:
+                    return issues
                 for (value,) in connection.execute(
                     "SELECT file_path FROM briefing_audio WHERE status='complete'"
                 ):
@@ -1313,7 +1516,7 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
                     ):
                         return ("dependency_unavailable",)
             return ()
-        except (OSError, ValueError, sqlite3.Error):
+        except (OSError, RuntimeError, ValueError, sqlite3.Error):
             return ("dependency_unavailable",)
 
     def _validate_catalog(self, connection: sqlite3.Connection) -> tuple[str, ...]:
@@ -1339,6 +1542,13 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
             )
             if stamp not in _subscriptions_chachanotes_stamps(actual):
                 return ("unsupported_schema_version",)
+        if (
+            connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+            == 4
+        ):
+            from .subscriptions_schema import listening_issues
+
+            return listening_issues(connection)
         return ()
 
     def validate_restore(self, item: StorageItem, candidate: Path) -> tuple[str, ...]:
@@ -1405,7 +1615,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "db.subscriptions",
             "subscriptions_db_path",
             "tldw_chatbook_subscriptions.db",
-            (3, 2),
+            (4, 3, 2),
             _SUBSCRIPTIONS_SCHEMA,
             (),
         ),
@@ -1519,6 +1729,7 @@ _SUBSCRIPTIONS_SCHEMA += (
 
 def _subscriptions_chachanotes_stamps(schema):
     """Return embedded stamps for a matched complete Subscription catalog."""
+    schema = _SUBSCRIPTIONS_V4_PREDECESSORS.get(schema, schema)
     if schema in _SUBSCRIPTIONS_CHILD_SEGMENTS_V87_SCHEMAS:
         return ((87,),)
     if schema in _SUBSCRIPTIONS_MIXINS_V86_SCHEMAS:
@@ -1776,6 +1987,18 @@ _AGENT_RUNS_SCHEMA += tuple(
 _SUBSCRIPTIONS_SCHEMA = tuple((3, schema) for version, schema in _SUBSCRIPTIONS_SCHEMA
                               if version == 2) + _SUBSCRIPTIONS_SCHEMA
 
+from .subscriptions_schema import (
+    listening_catalog,
+    listening_objects,
+)
+
+_LISTENING_OBJECTS = listening_objects()
+_SUBSCRIPTIONS_V4_PREDECESSORS = {
+    listening_catalog(schema, _LISTENING_OBJECTS): schema
+    for version, schema in _SUBSCRIPTIONS_SCHEMA
+    if version == 3
+}
+_SUBSCRIPTIONS_SCHEMA += tuple((4, schema) for schema in _SUBSCRIPTIONS_V4_PREDECESSORS)
 
 
 _AGENT_RUNS_SCHEMA += tuple(

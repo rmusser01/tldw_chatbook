@@ -235,9 +235,14 @@ Files and databases the restore created where the profile had none are removed
 again by later rollback (a database with its `-wal` and `-shm` files). The review
 refuses instead, and leaves the file, when such a file was replaced after the
 restore or sits beside a configuration file that another profile's configuration
-now shares. Two kinds of created data are not removed yet, so the review refuses
-when a restore created them: a Personal Context database, and Saved chatbook
-archives the restore added to an existing chatbooks folder.
+now shares. The review also refuses later rollback in three cases.
+
+- The restore created a Personal Context database.
+- The restore added Saved chatbook archives to an existing chatbooks folder.
+- The restore created a Watchlists article audio folder shared by multiple
+  profiles. That folder can block later rollback even if it is unchanged.
+
+A refused review leaves the current files in place.
 
 ## Manage recovered media
 

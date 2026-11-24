@@ -293,7 +293,7 @@ ADR-023 (TTS adapter registry + audio.cpp runtime boundary), ADR-294 (character 
 
 ## Verified gotchas
 
-1. `TTS/__init__.py` eagerly imports Textual transitively — zero-Textual modules (`Audio/streaming_sink.py`) must never import `TTS.pcm_stream` at module scope.
+1. `TTS/__init__.py` now exposes exact lazy exports. Its retained-WAV profile and audio-limit values load without optional UI/audio dependencies or native initialization; `Tests/Subscriptions/test_article_listening_format_imports.py` pins that inert boundary. Keep generation, playback owners and device initialization out of recovery and pure audio module imports.
 2. The local-STT provider list once existed twice and drifted (wrong model warmed, another model transcribed) — `Utils/local_stt_providers.py` is now the single source.
 3. Streaming holds the provider lease through playback; reconfiguration can be delayed by one utterance.
 4. Chatterbox's child process silences stdout/stderr before imports and speaks JSON on the dup'ed fd — any library print corrupts the protocol.

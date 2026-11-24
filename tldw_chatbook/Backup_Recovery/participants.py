@@ -340,6 +340,24 @@ def core_operation(repository):
             yield
 
 
+def listening_mutation_context(repository, lease, profile):
+    """Select a fresh DB-bound listening hold or a checked borrow from its owner."""
+    from tldw_chatbook.Subscriptions.article_listening_lease import (
+        ListeningLease,
+        hold_listening,
+    )
+
+    if lease is None:
+        return hold_listening(
+            repository.listening_binding,
+            profile=profile,
+            memory=repository.is_memory_db,
+        )
+    if type(lease) is not ListeningLease:
+        raise ValueError("invalid_listening_lease")
+    return lease.borrow(repository.listening_binding, profile=profile)
+
+
 def core_operation_active(repository):
     """Whether a counted core operation is running on this repository's file.
 

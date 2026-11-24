@@ -358,8 +358,12 @@ def _document(archive):
     return _manifest(archive.manifest_bytes, ArchiveLimits(), encrypted=True)
 
 
-def _shared_directory_aliases(doc):
-    """Match declared concrete roots only when their complete trees agree."""
+def _shared_directory_aliases(doc, article_roots=None):
+    """Match identical physical trees and verified partitions of an article root."""
+    if article_roots is None:
+        from tldw_chatbook.Subscriptions.recovery import shared_article_roots
+
+        article_roots = shared_article_roots(doc)
     producer = {row.logical_id: row for row in doc.producer_inventory}
     directories = {row.logical_id: row for row in doc.directories}
     trees = {
@@ -367,6 +371,7 @@ def _shared_directory_aliases(doc):
         for row in doc.directories
         if row.parent_id is None
         and not row.synthetic
+        and row.logical_id not in article_roots
         and row.logical_id in producer
         and producer[row.logical_id].shared_group
     }
@@ -391,7 +396,7 @@ def _shared_directory_aliases(doc):
         closure = tuple(sorted(members, key=lambda row: row[:2]))
         group = (producer[root].shared_group, closure)
         aliases[root] = representatives.setdefault(group, root)
-    return aliases
+    return aliases | article_roots
 
 
 def _ancestor(path):
@@ -814,7 +819,10 @@ def plan_restore(
     }
     directories = {row.logical_id: row for row in doc.directories}
     roots = {key: row for key, row in directories.items() if row.parent_id is None}
-    shared_roots = _shared_directory_aliases(doc)
+    from tldw_chatbook.Subscriptions.recovery import shared_article_roots
+
+    article_roots = shared_article_roots(doc)
+    shared_roots = _shared_directory_aliases(doc, article_roots)
     accepted = {
         f"profile:{profile}:" + ".".join(location)
         for profile in doc.profile_ids
@@ -1141,6 +1149,7 @@ def plan_restore(
             item
             and item.shared_group
             and item.owner_id not in _PER_PROFILE_ALIAS_OWNERS
+            and key not in article_roots
             and key in mapped
         ):
             shared_destinations.setdefault(item.shared_group, set()).add(mapped[key])

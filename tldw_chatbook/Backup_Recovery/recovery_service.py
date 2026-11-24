@@ -153,7 +153,7 @@ _OWNER_LABELS = {
     "runtime.scheduler_heartbeat": "Scheduler heartbeat",
     "runtime.sync_state": "Server sync state",
     "skills": "Skills",
-    "subscriptions.assets": "Briefing audio",
+    "subscriptions.assets": "Briefing and article audio",
     "tamagotchi.config": "Pet settings",
     "tokenizers.custom": "Custom tokenizers",
     "tts.profile_store": "Voice profiles",

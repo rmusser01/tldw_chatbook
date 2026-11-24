@@ -306,10 +306,9 @@ CREATE INDEX idx_console_dispatch_checkpoints_user_message
 def _legacy_native76(path, *, dictionary=False, subscriptions=False):
     """Replay the previously shipped feature SQL over its actual v75 chain."""
     if subscriptions:
-        from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+        from Tests.DB.historical_subscriptions import historical_database
 
-        subscriptions_db = SubscriptionsDB(path)
-        subscriptions_db.close()
+        historical_database(path, source_index=False)
     with chachanotes_db_at_version(path, 75) as db:
         db.get_connection().executescript(_FROZEN_NATIVE76_MIGRATION)
         db.get_connection().execute(
@@ -351,7 +350,57 @@ def _legacy_native76(path, *, dictionary=False, subscriptions=False):
             ),
             handoff_draft_revision=1,
         )
-        _insert(db, ConsoleDispatchRepository(db), acceptance)
+        # Seed this shipped receipt with its own fields. The live dispatch
+        # repository also reads mixin columns introduced ten versions later.
+        from tldw_chatbook.Chat.console_dispatch_repository import (
+            dump_console_dispatch_reconstructability_json,
+            dump_console_resolved_destination_json,
+            dump_console_turn_library_authority_json,
+        )
+
+        user = db.add_message(
+            {
+                "conversation_id": conversation,
+                "sender": "user",
+                "content": acceptance.user_content,
+                "metadata_json": message_metadata.MessageMetadata(
+                    origin=acceptance.origin,
+                    agent_chat_start=acceptance.agent_chat_start,
+                ).to_json(),
+            }
+        )
+        assistant = db.add_message(
+            {
+                "conversation_id": conversation,
+                "parent_message_id": user,
+                "sender": "assistant",
+                "content": "pending",
+            }
+        )
+        with db.transaction(immediate=True) as cursor:
+            cursor.execute(
+                "INSERT INTO console_dispatch_checkpoints(assistant_message_id,user_message_id,"
+                "conversation_id,preparation_id,attempt_id,state,user_message_version,assistant_message_version,"
+                "origin,agent_chat_start_attempt_id,frozen_authority_json,resolved_destination_json,"
+                "reconstructability_json) VALUES (?,?,?,?,?,'accepted',1,1,'agent_chat_start',?,?,?,?)",
+                (
+                    assistant,
+                    user,
+                    conversation,
+                    acceptance.preparation_id,
+                    acceptance.attempt_id,
+                    acceptance.agent_chat_start_attempt_id,
+                    dump_console_turn_library_authority_json(
+                        acceptance.frozen_authority
+                    ),
+                    dump_console_resolved_destination_json(
+                        acceptance.resolved_destination
+                    ),
+                    dump_console_dispatch_reconstructability_json(
+                        acceptance.reconstructability
+                    ),
+                ),
+            )
         rows = tuple(
             tuple(row)
             for row in db.get_connection().execute(

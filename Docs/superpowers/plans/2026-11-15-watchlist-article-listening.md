@@ -154,7 +154,8 @@ The final whole-task review and one scoped fix re-review are clear. The last
 178-case selection passes; after rebasing both drafts onto dev `6fa2635c14`,
 199 affected checks pass with three platform skips. All 106 reviewed source/test/
 tool blobs and all public numerical receipts remain unchanged by that rebase.
-TASK-41177 is complete in draft PR #3742; later tasks have not begun.
+TASK-41177 is complete in draft PR #3742. TASK-41178 is complete on a
+separate child branch; TASK-41179 and later have not begun.
 
 ### Task 3: Persist listening state and source-owned assets safely (TASK-41178)
 
@@ -166,11 +167,47 @@ TASK-41177 is complete in draft PR #3742; later tasks have not begun.
 - `ArticleAudioAssets.publish(candidate: GeneratedArticleAudio, *, source_item_id: int, generation: int) -> ArticleAudio`; validate private relative identity, WAV shape, source validity, digest and ownership before publication/reference attachment.
 - Provide a profile-local nonblocking listening mutation lease using existing private-lock primitives; service, deletion, cleanup and restore share it. Register the writer with existing recovery quiescence.
 
-- [ ] **Step 1: Write failing real-SQLite/file tests.** Exercise old-profile upgrade and migration rollback, two independently opened DBs, revision collisions, atomic cursor/two-bookmark updates, source deletion during candidate admission and artifact publication, source-bound sharing, all-unavailable replacement, missing/corrupt WAV, publication failure/orphans, lock crash release, and fail-busy destructive mutation. Deleting membership preserves sources; deleting a brief preserves an unrelated valid foreground reading.
-- [ ] **Step 2: Observe RED.** Run only the two new Subscriptions test files and selected migration nodes. Expect missing tables/contracts, with existing base migration cases still green.
-- [ ] **Step 3: Implement store, migration and asset lifecycle.** Allocate next schema version at the implementation base (v3 here), add its SQL artifact and indexes/allowlists. Enforce source existence/generation transactionally, use existing private atomic writers/path validation, and reconcile only after ownership. Enforce seven-day/512 MiB unreferenced LRU while protecting references.
-- [ ] **Step 4: Integrate backup atomically.** Extend `Subscriptions/recovery.py::_BriefingAudio`'s `subscriptions.assets` declaration, `DB/recovery_operations.py::_SubscriptionsAdapter`'s exact schema catalogs/versions, migration policy, discover/relocate/dependency validation and SQLite authorizer, core dependency discovery, inventory/census, detached layout and staging. Register publication in `RuntimeMaintenance.settle_producers/resume` and `acquire_storage`. Test owners present AND absent, DB-only backup, assets backup, rollback and relocation; restoration never starts audio. Missing files retain regenerable entries with offsets reset only by explicit regeneration. Existing focused suites include `test_briefing_audio_dependencies.py`, `test_briefing_audio_restore.py`, `test_detached_layout.py`, `test_runtime_maintenance.py` under `Tests/Backup_Recovery/` and `Tests/Architecture/test_backup_owner_inventory.py`.
-- [ ] **Step 5: Observe GREEN and review.** Run targeted Subscriptions/migration tests and all changed Backup_Recovery owner suites, including optional-owner absence cases. Run relevant derived-artifact guards and Ruff. Record any baseline failures separately with a base comparison before calling them pre-existing. Review and commit `feat: persist watchlist listening and owned audio assets`.
+**Implementation preflight, 2026-11-24:** Rebased onto dev `9fa2bf1b1d` before
+storage work; the schema remains v3 and the next step is v4. The dated ADR367
+persistence contract fixes the empty-session revision witness, source deletion
+tombstones, exact borrowable mutation ownership, historical/shared SQLite catalogs
+and two-tree recovery identities. Existing Windows NTFS no-replace/barrier tests
+pass (three cases); this is primitive evidence, not feature completion. Deliver
+and review the constructible schema/store/ownership foundation first, then build
+asset publication and complete recovery on its released interfaces. Keep all four
+TASK-41178 AC open until the complete database/file/restore evidence passes.
+
+**Foundation review gate:** The v4 migration, immutable store, physical mutation
+lease and deletion guards are implemented and independently approved. The review
+fixes bind prepared snapshots to the actual DB image, share bounded citation
+authority with recovery, validate integer/count limits before materialization,
+retain content format and unavailable reasons, and separate destructive intent
+from a retained physical borrow. The focused integration selection passed 59
+cases; three further discriminator-bound controls passed after their RED run.
+The private WAV asset increment is also independently approved. Its 48-case
+focused module covers same-object custody, rejected-stage recovery and refusing
+elective pruning before metadata changes on an unqualified volume. Recovery and
+the whole-task review are clear of Critical/Important findings after correction.
+The final 150-case Windows selection covers constructors, read-only state,
+store/assets, citations, shared-root installation, source census and layer rules.
+The recovery neighbors also cover historical subscriptions catalogs, detached
+restore and single-selector rollback. Seven broader tests already fail on the
+parent: one Windows casefold assertion, and six primary-database fixtures that
+hide separate stale v80 expectations despite the current v87 schema.
+
+Shared article roots support verified selected participants and reviewed split
+or common destinations. Later rollback of a replacement-created multi-selector
+root remains an explicit conservative refusal with state preserved; ADR367 and
+the user recovery guide document that boundary. One nonblocking performance
+follow-up remains: detached import can stage an unclaimed private WAV before its
+final dependency check refuses sealing. No synthesis, transport or listening UI
+was added by Task 3.
+
+- [x] **Step 1: Write failing real-SQLite/file tests.** Exercise old-profile upgrade and migration rollback, two independently opened DBs, revision collisions, atomic cursor/two-bookmark updates, source deletion during candidate admission and artifact publication, source-bound sharing, all-unavailable replacement, missing/corrupt WAV, publication failure/orphans, lock crash release, and fail-busy destructive mutation. Deleting membership preserves sources; deleting a brief preserves an unrelated valid foreground reading.
+- [x] **Step 2: Observe RED.** Run only the two new Subscriptions test files and selected migration nodes. Expect missing tables/contracts, with existing base migration cases still green.
+- [x] **Step 3: Implement store, migration and asset lifecycle.** Allocate next schema version at the implementation base (v3 here), add its SQL artifact and indexes/allowlists. Enforce source existence/generation transactionally, use existing private atomic writers/path validation, and reconcile only after ownership. Enforce seven-day/512 MiB unreferenced LRU while protecting references.
+- [x] **Step 4: Integrate backup atomically.** Extend `Subscriptions/recovery.py::_BriefingAudio`'s `subscriptions.assets` declaration, `DB/recovery_operations.py::_SubscriptionsAdapter`'s exact schema catalogs/versions, migration policy, discover/relocate/dependency validation and SQLite authorizer, core dependency discovery, inventory/census, detached layout and staging. Register publication in `RuntimeMaintenance.settle_producers/resume` and `acquire_storage`. Test owners present AND absent, DB-only backup, assets backup, rollback and relocation; restoration never starts audio. Missing files retain regenerable entries with offsets reset only by explicit regeneration. Existing focused suites include `test_briefing_audio_dependencies.py`, `test_briefing_audio_restore.py`, `test_detached_layout.py`, `test_runtime_maintenance.py` under `Tests/Backup_Recovery/` and `Tests/Architecture/test_backup_owner_inventory.py`.
+- [x] **Step 5: Observe GREEN and review.** Run targeted Subscriptions/migration tests and all changed Backup_Recovery owner suites, including optional-owner absence cases. Run relevant derived-artifact guards and Ruff. Record any baseline failures separately with a base comparison before calling them pre-existing. Review and commit `feat: persist watchlist listening and owned audio assets`.
 
 ### Task 4: Prepare bounded article speech and frozen-voice audio (TASK-41179)
 
@@ -231,4 +268,4 @@ TASK-41177 is complete in draft PR #3742; later tasks have not begun.
 
 The seven deliveries cover all ten design acceptance outcomes. The five Review Focus cases each have an owning test step above. Store, preparation, output and service signatures match their consumers. Tasks are ordered so a storage/voice/UI implementation cannot bypass qualification. SQL names and schema number are intentionally selected against the implementation base, while their ownership and rollback contracts are fixed here.
 
-Gate status: [native evidence](../../Testing/watchlist-article-audio-qualification.md) records the passing 21-case Windows matrix, explicit Windows listener confirmation and passing current-profile three-round startup-Stop supplement. The Windows-first release gate passes; the two earlier supplemental attempts remain preserved and all nine players/captures retired. Linux route/timing/listener evidence and native macOS evidence remain unqualified; they are unsupported for this first delivery and the portable gate remains open. Task 1 is Done under its revised Windows-first AC. Task 2 is In Progress for the isolated ownership increment; Tasks 3-7 have not started.
+Gate status: [native evidence](../../Testing/watchlist-article-audio-qualification.md) records the passing 21-case Windows matrix, explicit Windows listener confirmation and passing current-profile three-round startup-Stop supplement. The Windows-first release gate passes; the two earlier supplemental attempts remain preserved and all nine players/captures retired. Linux route/timing/listener evidence and native macOS evidence remain unqualified; they are unsupported for this first delivery and the portable gate remains open. Tasks 1 and 2 are Done under their revised Windows-first AC. Task 3 is In Progress for persistence/assets/recovery; Tasks 4-7 have not started.

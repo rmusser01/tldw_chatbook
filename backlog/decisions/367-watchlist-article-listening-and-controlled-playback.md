@@ -428,6 +428,187 @@ descriptor before writing any header or audio bytes.
 Article storage, synthesis/queue orchestration and listening controls remain
 TASK-41178 onward. This output foundation does not close issue #2864.
 
+## Persistence implementation contract, 2026-11-24
+
+TASK-41178 starts from SubscriptionsDB version 3 on dev `9fa2bf1b1d`.
+Use the shipped v3-to-v4 SQL step, statement-by-statement inside the existing
+IMMEDIATE transaction, and stamp only after successful DDL. Recheck the version
+under the writer reservation, including concurrent initializers. Fresh and
+upgraded stores must have the same installed listening catalog. Preserve every
+qualified historical v2/v3 standalone and shared-ChaChaNotes catalog; append exact
+v4 successors and retain their predecessor stamp associations. Recovery may
+inspect unmigrated or rollback snapshots, so new queries are version-gated.
+
+- Keep purpose-specific session, entry and article-audio records. One active
+  session per explicit profile has a durable incarnation and monotonic revision.
+  Clear retains an empty revision witness, so an old empty-state candidate cannot
+  recreate state after create/clear. Checkpoints atomically update the identified
+  foreground and queue bookmarks, cursor, return intent and revision. Read-only
+  restoration projects unfinished state paused without rewriting snapshots.
+  The profile key uses the installed owner's selector domain:
+  `sha256(str(profile_paths.lexical_path(config_selector)).encode("utf-8"))[:24]`
+  in hexadecimal. Display names and installation/catalog UUIDs are different
+  identities. Profiles intentionally sharing a physical DB keep separate session
+  and empty witnesses; the common DB lease serializes their live holders.
+- Bind local DB integer item IDs explicitly; UI/server identifier strings grant
+  no local lookup authority. Brief admission validates the saved briefing's
+  selection/citation membership before fetching article bodies. Freeze bounded
+  text/provenance and allowlisted nonsecret voice/dependency values. Equal bytes
+  from different items never establish shared ownership.
+  Admission carries saved content kind and format to the converter; change-report
+  items are unavailable. Prepared snapshots retain the physical DB image binding
+  as well as its selector/path and revision, so replacing an idle DB cannot admit
+  text prepared from the previous image. Constructor-free recovery validates the
+  same source/citation authority and strict integer/count/byte bounds before
+  materializing saved entries.
+- Use a stable private nonblocking OS lock outside replaceable asset trees,
+  bound to the canonical SubscriptionsDB identity. DB aliases must converge on
+  the same lock; custom DB locations do not move the profile's article asset
+  directory. The exact holder can lend a checked capability to off-loop work;
+  revocation refuses new borrowers and physical borrowers retain custody. Direct
+  destructive DB/bundle operations coordinate through that boundary or fail busy.
+  Supported raw-SQL deletion/cascades must not bypass source invalidation or the
+  active-holder guard. Arbitrary external legacy writers remain outside the
+  cooperative protocol.
+  Public destructive methods admit their DB and lock companions before entering
+  the transaction. Direct SQL affecting protected listening state uses an explicit
+  destructive-transaction context; an ordinary transaction refuses unowned effects
+  even when no competing holder exists. SQLite effect guards check an existing
+  exact lease only: they do not acquire native resources or expand an already-open
+  core operation's pathname authority. Ordinary non-destructive polling writes
+  retain their existing transaction path.
+  Retaining a physical pin through an outer transaction does not grant destructive
+  SQL intent: that intent is scoped independently to the explicit destructive
+  context, including after a nested checkpoint or reservation returns.
+  The DB reaches the domain mutation context through its existing typed
+  `Backup_Recovery.participants` seam; inert domain models keep the established
+  layer rule. No broad upward-import exception or native-path grant is added.
+- Source deletion scrubs affected speech snapshots and private provenance,
+  detaches bookmarks/artifacts and revokes generation in the same transaction.
+  Keep unavailable queue placeholders. Retain only generation-unique relative
+  file keys in pending-delete audio records until post-commit safe unlink is
+  confirmed; failed cleanup and crashes remain retryable. Brief/watchlist deletion
+  retires that queue while preserving a valid unrelated foreground. Membership
+  removal preserves source items and other listening references.
+- Reserve each synthesis generation durably before later expensive work. The
+  asset boundary uses bounded immutable normalized WAV input, strict flat opaque
+  keys, full digest/frame/padding validation and the existing private staging and
+  native no-replace publication helpers. Recheck source, exact reservation and
+  attachment identity under the final IMMEDIATE transaction. A publication or DB
+  failure cannot overwrite retained audio or attach a stale generation. Keep
+  uncertain outcomes for owned reconciliation. The existing Windows NTFS native
+  contract supports these primitives; its three focused no-replace/barrier cases
+  passed without changing qualification policy. This is primitive evidence,
+  not yet article-persistence or backup evidence.
+  Final names are flat lowercase UUID-hex `.wav` keys; a stage is exactly
+  `.<same-key>.stage`, created exclusively before native no-replace publication.
+  Actual enumerated spelling matters on case-insensitive filesystems. A rowless
+  UUID-shaped file or ambiguous preexisting collision grants no cleanup authority;
+  preserve and report uncertain custody. Live cleanup needs the current profile's
+  row-backed generation and proven file custody, even when data roots alias.
+  Article publication and removal require a qualified same-object regular-file
+  effect. On Windows, keep a private read/write/delete-capable handle with
+  exclusive sharing through verification and no-replace rename or disposition.
+  Rename retains the file through the pinned parent's durability barrier. For
+  POSIX disposition on Windows, close that exact delete handle before flushing
+  the retained parent: the name disappears on delete-handle close, as specified
+  by [Microsoft's disposition contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/ns-ntddk-_file_disposition_information_ex).
+  Do not reopen a checked basename for
+  the effect, recurse through a replacement directory or repair its permissions.
+  Existing generic backup primitives keep their current contracts. Article write
+  and destructive cleanup refuse platforms without the qualified same-object
+  primitive; read-only parsing remains portable for this Windows-first delivery.
+  The unpublished v4 article-audio row gains one nullable bounded opaque custody
+  `custody_witness`. Seal it from the issuing DB image, generation/key and the pinned
+  parent/regular-file identities, creation time and verified payload before
+  publication. Preserve it through cancellation and source-deletion tombstones,
+  independently of scrubbed text, voice and payload metadata. Recompute it from
+  the effect handle; a reserved name, copied row or witness string alone grants
+  no authority. Unsealed partials and mismatched objects remain uncertain and
+  preserved. Retiring even an absent-name retry requires the directory barrier.
+  Incoming restore and detached acquisition clear foreign custody witnesses on
+  their private DB candidates. Same-place snapshot rollback preserves DB bytes;
+  copied receipts cannot pass a different physical-image check. Restored bytes
+  remain readable after full artifact verification, but automatic cleanup keeps
+  them uncertain until independently proven local custody exists. Preserve and
+  report that uncertainty rather than minting authority from a pathname or digest.
+  Startup reconciliation must establish a fresh/quiesced producer boundary;
+  borrowing a live holder is insufficient to retire its pending synthesis claims.
+  A worker rejecting its freshly created stage keeps that exclusive creation
+  handle through committed invalidation and same-object disposal. For retry it
+  may seal a separate `article-audio-rejected-stage-v1` cleanup-only witness from
+  bounded measured raw bytes and the same image/key/native identity tuple. This
+  variant authorizes only its exact stage name in an unreferenced deletion row;
+  it cannot authorize a final, attachment or playback. Preserve an existing
+  publication witness and keep crash-discovered unsealed partials uncertain.
+  Elective pruning qualifies native cleanup before retiring reusable metadata;
+  immediate source-deletion invalidation retains its independent semantics.
+  The existing TTS package is lazy and its container validator imports no runtime
+  owner or optional audio/UI dependency. Expose the same callable as
+  `validate_controlled_wav`, retaining its physical-frame argument and private
+  alias; recovery/storage reuse it directly. A fresh-interpreter regression blocks
+  runtime imports and native DLL loading. No parser move or format change is needed.
+- All entry roles protect their referenced artifacts. Missing/corrupt/DB-only
+  restored audio remains unavailable with its old bookmark identity; only explicit
+  regeneration binds new bytes at zero. Reconcile interrupted rows and managed
+  orphan/temp files only under ownership. Apply seven-day/512 MiB LRU limits to
+  unreferenced audio, retaining retryable cleanup evidence.
+- Extend the existing `subscriptions.assets` owner with the profile data root's
+  `article_audio` sibling tree. Preserve legacy briefing IDs and distinguish new
+  article root/member identities, including absent/empty trees and identical
+  basenames, consistently through discovery, staging, detached import, relocation
+  and rollback. Relative article keys need no SQL pathname rewrite; keep the
+  existing briefing relocation authorizer narrow. Do not infer declared peer
+  identity from owner/basename alone or reopen historical source paths.
+  Rollback establishes finite owner membership and metadata identities before
+  reading content. Its committed tree digest uses the scoped bounded reader on
+  each approved file, with an optional expected identity checked on the same
+  descriptor before and after reading and against the final named entry. This
+  contracts the existing read operation; it adds no path or inode authority.
+  Unexpected stage or foreign member content is never recursively hashed before
+  the topology check.
+  A reviewed incoming candidate can rebind listening profile keys to the exact
+  declared destination config selector through a separate narrow installed data
+  update. Reject destination-key collisions, including foreign audio records when
+  no source session exists. Same-place local-snapshot rollback does no rebinding
+  and retains its original DB bytes. Detached import bridges the portable
+  selector to the acquired selector on the normalized private image before sealing;
+  the later restore then uses its reviewed destination mapping. Rebinding grants
+  no playback, provider or filesystem authority.
+  Selected selectors may share the same physical article directory, including
+  a default data root. Derive each final member's logical owner from its one
+  verified selected partition and exact config/DB peer, then reconcile the
+  observations into one finite physical inventory. Distinct selected custom
+  databases may supply distinct verified member claims to the same root. Never
+  infer ownership merely from a basename, root alias or another selector's row.
+  Preserve per-selector root identities for relocation. An unclaimed member,
+  multiple claims or inconsistent physical root/peer remains unsupported;
+  unselected sibling data does not gain backup authority through this grouping.
+  This projection does not change native reads, effects or cleanup custody.
+  A canonical installed article-root group may relocate its disjoint logical
+  partitions to separately reviewed selector roots. When those selectors retain
+  one shared destination, materialize and publish their exact verified member
+  union once while retaining each member's config/DB edge. Reject overlapping or
+  unexplained membership. This owner-specific projection preserves the default
+  shared-root round trip; it does not enable generic directory merging or alter
+  database, briefing-tree or individual-file alias rules.
+  Shared publication alone grants no later destructive retirement authority.
+  The existing later-rollback proof for a newly created root requires one exact
+  selected config/generation. A multi-selector replacement root without that
+  affirmative proof remains a conservative refusal, preserving its bytes and
+  control state. The shared-root capture and isolated restore evidence does not
+  claim successful later rollback for that case.
+- A cheap installed producer gate closes intake and drains actual storage work
+  before maintenance. Ordinary storage admission covers DB, lock and asset paths
+  through physical retirement. Long-lived listening holders must release/drain
+  ordinary authority before exclusive maintenance, and cannot regain authority
+  merely because an observer timed out. Owner-absent recovery must work without
+  constructing listening services. Resume of storage is never playback or synthesis.
+
+These choices implement the accepted storage boundary. Provider synthesis,
+transport orchestration and controls remain later deliveries; no new runtime
+dependency, alternate manifest or independent backup owner is introduced.
+
 ## Alternatives
 
 - A profile-local JSON queue manifest avoids SQL changes but splits atomic state,

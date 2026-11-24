@@ -68,7 +68,7 @@ BACKUP_GROUPS = (
     BackupGroup(
         "research",
         "Research and subscriptions",
-        "Research projects and results, subscriptions, and briefing audio.",
+        "Research projects and results, subscriptions, saved listening, and briefing and article audio.",
     ),
     BackupGroup(
         "writing", "Writing", "Writing projects, manuscripts, and related records."

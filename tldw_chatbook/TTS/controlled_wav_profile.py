@@ -148,6 +148,10 @@ def _check_wave(stream: BinaryIO, frames: int) -> None:
     raise ControlledWavError("invalid_retained_wave")
 
 
+# Storage validates the same bytes using the physical frame count.
+validate_controlled_wav = _check_wave
+
+
 def _validate(
     artifact: RetainedWav, bookmark: WavBookmark, pin: WindowsReadPin
 ) -> None:

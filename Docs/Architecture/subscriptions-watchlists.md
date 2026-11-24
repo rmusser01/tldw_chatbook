@@ -73,6 +73,91 @@ Reader j/k and next-unread navigation use the article list selection intent whil
 - Local vs server sources split at `watchlist_scope_service.py`; some server flows declare local run-execution unsupported.
 - `Subscriptions/SUB-Arch.md` self-declares as historical; only its "what actually runs" banner is current.
 
+## Saved article listening
+
+`Subscriptions/article_listening_store.py` owns the immutable listening records
+in SubscriptionsDB v4. Each explicit config selector has one session and an empty
+revision/incarnation witness. Queue and foreground bookmarks commit together;
+unfinished sessions load paused. The selector key is independent of display names
+and recovery installation IDs, including when selectors share a physical DB.
+
+Preparation freezes bounded saved speech, format and nonsecret voice/dependency
+values. The shared `DB/subscriptions_schema.py::listening_brief_items` resolves
+completed-brief citations against their saved selection before reading article
+bodies. Change reports, missing items and empty bodies retain bounded unavailable
+reasons. Recovery applies the same provenance, integer, count and byte checks.
+Candidates also bind the open physical DB image, so pathname reuse cannot admit
+snapshots from a replaced database.
+
+`Subscriptions/article_listening_lease.py` holds a stable DB-sibling native lock
+and ordinary storage admission through actual borrower retirement. Explicit
+`SubscriptionsDB.destructive_transaction` scopes destructive SQL intent separately
+from physical custody. Source deletion scrubs private snapshots and bookmarks,
+preserves unavailable queue positions and retains safe generation cleanup keys.
+Membership removal preserves source items; brief deletion preserves an unrelated
+foreground. Audio generations and bookmarks identify immutable retained bytes.
+
+`Subscriptions/article_audio_assets.py` binds an explicit profile data directory
+and stores flat UUID WAV keys under `article_audio`, including when the DB lives
+elsewhere. Its inert model validator checks the complete digest, PCM16 stereo
+48 kHz shape and 12,000 zero-tail frames, with a 64 MiB file cap, 65,536-byte
+header allowance and 1,024 parser-read budget. Reuse verifies the physical file
+and repeats source identity and revision checks before attachment.
+
+Publication and deletion use a qualified Windows NTFS regular-file handle through
+the actual native effect. Named ancestor pins protect the parent namespace.
+The nullable `custody_witness` binds the issuing DB image, generation, key, native
+root/leaf creation identities and measured bytes. It survives source scrubbing
+and retries; a filename or copied receipt alone grants no cleanup authority.
+Rejected live stages use a distinct stage-only cleanup receipt after committed
+invalidation. Directory barriers precede forgetting deletion records, including
+retries where the name is already absent. Unsupported effect platforms refuse
+elective pruning before changing reusable metadata; file validation stays portable.
+
+Every retained entry role protects its generation. Eligible unreferenced audio
+uses seven-day/512 MiB LRU retention. Successful user-directed verified reads
+refresh last use; integrity scans do not. Recovery validates live-generation
+timestamps before admitting a copied image while allowing scrubbed deletion
+records. A missing or corrupt artifact keeps its old
+bookmark identity; explicit regeneration binds a new generation at zero. Unknown,
+unsealed or foreign objects remain preserved with uncertainty reported, including
+restored bytes whose local custody has not been established. Physical cleanup
+runs through an explicitly bound asset owner after DB invalidation, without
+inferring a data directory from a deletion row.
+
+The existing `subscriptions.assets` recovery owner declares both briefing and
+article trees. Legacy briefing IDs stay unchanged; article roots and final WAV
+members use explicit profile IDs. Private stages and the device-local DB-sibling
+lock are excluded. Recovery validates the v4 catalog, source authority and WAV
+bytes without constructing a provider or player. DB-only restore preserves
+bookmarks even when their corresponding audio is absent.
+
+Selected profiles can share an article directory and its default DB, or use
+distinct custom DBs with the same data root. Inventory assigns each file to its
+unique verified selected partition and config/DB peer. Unknown, unselected or
+multiply claimed members refuse a complete capture. The canonical article-root
+projection preserves each member's ownership when restoring to separate roots
+or publishing their verified disjoint union once to a common reviewed root.
+Generic database, briefing and file alias rules remain unchanged.
+
+Incoming and detached copies rebind reviewed selector keys only in private
+candidate databases and clear foreign cleanup custody for every partition.
+Local safety snapshots retain their original bytes. Runtime maintenance fences
+listening intake and drains retained physical work before exclusive storage
+admission, then reopens intake without starting playback. An absent feature
+does not create its audio directory during maintenance.
+
+Later replacement rollback of a newly created multi-selector shared root remains
+unqualified: existing finite-membership and affirmative retirement checks refuse
+it while preserving files and control state. Shared capture/publication alone
+does not establish that destructive authority. Single-selector replacement and
+rollback retain their existing verified path.
+
+The storage and recovery contract is
+[ADR-367](../../backlog/decisions/367-watchlist-article-listening-and-controlled-playback.md).
+Preparation, transport orchestration and listening controls build on this boundary
+in the subsequent implementation tasks.
+
 ## Config keys (`[scheduling]`)
 
 `watchlist_checks_enabled` (default true — the sole executor gate; there is no legacy scheduler behind it), `watchlist_checks_shadow` (default false — fetch-and-discard diagnostics; cannot probe sitemap/api, reports `shadow_unsupported`; ignores cadence, so leaving it on means no real checks run), `briefing_schedules_enabled` (default true; per-watchlist cadence is opt-in via `briefing_cadence_seconds`, NULL = never), `handler_timeout_seconds` (300). Per-subscription columns act as config: `check_frequency`, `change_threshold`, `ignore_selectors`, `auto_pause_threshold`, extraction settings, `etag`/`last_modified`.

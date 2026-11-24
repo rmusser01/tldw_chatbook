@@ -105,3 +105,85 @@ asyncio.run(main())
 print('retired and reopened')
 """
     _run(tmp_path, "runtime", "unsettled", script=script)
+
+
+@pytest.mark.parametrize("mode", ["lazy", "held", "cancel", "changed", "wrong"])
+def test_listening_intake_quiesces_with_the_live_runtime(tmp_path, mode):
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    script = r"""
+import asyncio, sys, threading, time
+from pathlib import Path
+import pytest
+from tldw_chatbook.app import TldwCli
+from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+from tldw_chatbook.Backup_Recovery.runtime_maintenance import RuntimeMaintenance
+from tldw_chatbook.Subscriptions import article_listening_lease as listening
+from tldw_chatbook.config import get_user_data_dir
+
+async def main():
+    mode = sys.argv[2]
+    app = TldwCli()
+    runtime = RuntimeMaintenance(app)
+    app._backup_runtime_maintenance = runtime
+    producer = listening.listening_producer
+    worker = None
+    entered, finish = threading.Event(), threading.Event()
+    try:
+        root = get_user_data_dir() / "article_audio"
+        if mode == "wrong":
+            listening.listening_producer = object()
+            with pytest.raises(RecoveryRequired, match="runtime_owner_unqualified"):
+                await runtime.settle_producers(time.monotonic()+10)
+            return
+        if mode in {"held", "cancel"}:
+            db = app.subscriptions_db
+            def accepted():
+                with listening.hold_listening(db.db_path, profile=None):
+                    entered.set()
+                    assert finish.wait(12)
+            worker = asyncio.create_task(asyncio.to_thread(accepted))
+            assert await asyncio.to_thread(entered.wait, 8)
+            if mode == "cancel":
+                owner = asyncio.current_task()
+                async def cancel_after_fence():
+                    async with asyncio.timeout(8):
+                        while not producer._lifetime.closed:
+                            await asyncio.sleep(.01)
+                    owner.cancel()
+                observer = asyncio.create_task(cancel_after_fence())
+                with pytest.raises(asyncio.CancelledError):
+                    await runtime.settle_producers(time.monotonic()+10)
+                await observer
+            else:
+                with pytest.raises(RecoveryRequired, match="runtime_work_not_settled"):
+                    await runtime.settle_producers(time.monotonic()+.2)
+            assert producer._lifetime.closed and not worker.done()
+            with pytest.raises(RecoveryRequired, match="runtime_producer_paused"):
+                with listening.hold_listening(db.db_path, profile=None): pass
+            finish.set()
+            await worker
+            return
+        await runtime.settle_producers(time.monotonic()+10)
+        assert not root.exists() and producer._lifetime.closed
+        with pytest.raises(RecoveryRequired, match="runtime_producer_paused"):
+            with listening.hold_listening(root / "unopened.db", profile=None): pass
+        assert not root.exists()
+        if mode == "changed":
+            runtime.retire_local_caches()
+            listening.listening_producer = listening.ListeningProducer()
+            with pytest.raises(RecoveryRequired, match="participant_runtime_coverage_incomplete"):
+                runtime._require_storage_coverage(runtime.pause)
+    finally:
+        finish.set()
+        if worker is not None: await worker
+        listening.listening_producer = producer
+        if runtime.closed: await runtime.resume()
+        assert not producer._lifetime.closed
+        await app._shutdown_app_owned_lifecycles()
+        await app.tts_service.close()
+        await app.tts_service.wait_closed()
+asyncio.run(main())
+print('retired and reopened')
+"""
+    _run(tmp_path, "listening", mode, script=script)
