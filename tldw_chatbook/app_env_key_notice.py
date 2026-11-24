@@ -36,6 +36,7 @@ class EnvKeyNoticeMixin:
             title=notice.title,
             timeout=10 if notice.ready else 20,
             severity="information" if notice.ready else "warning",
+            markup=False,  # TASK-1513: env var and model names are text, never markup
         )
         self._env_key_notice_message = notice.message  # F10: 'Use X' dismisses it
         self._persist_env_key_notice_flag()

@@ -364,13 +364,17 @@ _ENV_NOTICE = (
 async def test_committing_a_found_key_dismisses_only_the_env_key_toast() -> None:
     """After 'Use Anthropic' committed, the 20 s toast still said 'new chats
     use OpenAI, which has no key' (live, g2-v2-envant/05). Committing the
-    offer now removes that toast -- and only that one."""
+    offer now removes that toast -- and only that one.
+
+    PR #3517's round-24 port: ``TldwCli`` no longer inherits
+    ``EnvKeyNoticeMixin`` (it loads the notice's bodies on first use,
+    ADR-097), so the card dismisses the toast through the unbound
+    ``EnvKeyNoticeMixin.dismiss_env_key_notice(app)``. A plain App stands in
+    for that real app shape here."""
     from textual.app import App
 
-    from tldw_chatbook.app_env_key_notice import EnvKeyNoticeMixin
-
-    class ToastHost(EnvKeyNoticeMixin, App):
-        """The notice mixin is the real app's base, so it owns the toast."""
+    class ToastHost(App):
+        """A plain app that shows toasts, as TldwCli now is (no notice base)."""
 
     app = ToastHost()
     async with app.run_test(size=(120, 30)) as pilot:
@@ -386,6 +390,36 @@ async def test_committing_a_found_key_dismisses_only_the_env_key_toast() -> None
         remaining = [notification.message for notification in app._notifications]
 
     assert remaining == ["Another copy is open."]
+
+
+@pytest.mark.asyncio
+async def test_the_env_key_notice_shows_a_bracketed_model_id_as_typed() -> None:
+    """TASK-1513: the launch notice interpolates the env var's name and the
+    provider and model new chats use, which are the user's text, so it is
+    never parsed as markup. A model id such as ``tiny[x]-chat`` read
+    ``tiny-chat`` in the toast (Rich took ``[x]`` for a style tag)."""
+    from textual.app import App
+    from textual.widgets._toast import Toast
+
+    from tldw_chatbook.app_env_key_notice import EnvKeyNoticeMixin
+    from tldw_chatbook.Chat.console_onboarding_state import EnvKeyFirstLaunchNotice
+
+    message = (
+        "Found CUSTOM_OPENAI_API_KEY — you're ready to chat with "
+        "Custom OpenAI · tiny[x]-chat."
+    )
+    app = App()
+    app._pending_env_key_notice = EnvKeyFirstLaunchNotice(
+        title="Provider key detected", message=message, ready=True
+    )
+    app._persist_env_key_notice_flag = lambda: None
+    async with app.run_test(size=(120, 30), notifications=True) as pilot:
+        EnvKeyNoticeMixin._show_pending_env_key_notice(app)
+        await pilot.pause()
+        shown = [toast.render().plain for toast in app.screen.query(Toast)]
+
+    assert len(shown) == 1
+    assert shown[0].endswith(message), shown
 
 
 @pytest.mark.asyncio
