@@ -1,22 +1,23 @@
 ---
 id: TASK-21509
 title: Add persistent grounded Research Workspace Chat
-status: To Do
-assignee: []
-created_date: '2026-08-24 05:54'
-updated_date: '2026-08-24 05:54'
+status: In Progress
+assignee:
+- '@codex'
+created_date: 2026-08-24 05:54
+updated_date: 2026-11-24 16:36
 labels:
-  - research
-  - workspace
-  - chat
-  - rag
+- research
+- workspace
+- chat
+- rag
 dependencies:
-  - TASK-21507
-  - TASK-21508
+- TASK-21507
+- TASK-21508
 references:
-  - Docs/superpowers/specs/2026-08-23-research-workspace-design.md
-  - Docs/superpowers/plans/2026-08-23-research-workspace-grounded-chat.md
-  - backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md
+- Docs/superpowers/specs/2026-08-23-research-workspace-design.md
+- Docs/superpowers/plans/2026-08-23-research-workspace-grounded-chat.md
+- backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md
 priority: high
 ---
 

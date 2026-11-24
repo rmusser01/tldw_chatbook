@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 import re
 from typing import TYPE_CHECKING, Generic, Protocol, TypeVar
 
 if TYPE_CHECKING:
+    from asyncio import Event
+
+    from .chat_models import (
+        ResearchChatSession,
+        ResearchChatSessionRequest,
+        ResearchChatTurnOutcome,
+        ResearchChatTurnRequest,
+    )
     from .quick_notes import (
         ResearchNotePage,
         ResearchNotePageRequest,
@@ -409,6 +417,10 @@ class ProcessingRoute:
     provider: str = ""
     model: str = ""
     remote: bool = False
+    endpoint_class: str = ""
+    endpoint_fingerprint: str = ""
+    redaction_policy: str = "none"
+    source_body_mode: str = "excerpts"
 
     def __post_init__(self) -> None:
         try:
@@ -419,8 +431,34 @@ class ProcessingRoute:
         object.__setattr__(
             self, "processor", _required_text(self.processor, "processor")
         )
-        object.__setattr__(self, "provider", _optional_text(self.provider, "provider"))
-        object.__setattr__(self, "model", _optional_text(self.model, "model"))
+        for name in ("provider", "model", "redaction_policy"):
+            value = _safe_identity(getattr(self, name), name)
+            if len(value) > 256 or "://" in value:
+                raise ValueError(f"{name} must be a bounded label")
+            object.__setattr__(self, name, value)
+        if type(self.remote) is not bool:
+            raise TypeError("remote must be bool")
+        if self.endpoint_class not in {
+            "",
+            "on_device",
+            "private_network",
+            "public_network",
+            "unknown",
+            "server",
+        }:
+            raise ValueError("endpoint class is invalid")
+        if self.endpoint_class in {"private_network", "public_network", "unknown"}:
+            if not self.remote:
+                raise ValueError("network processing must be declared remote")
+        if self.endpoint_fingerprint and not re.fullmatch(
+            r"[0-9a-f]{64}", self.endpoint_fingerprint
+        ):
+            raise ValueError("endpoint fingerprint is invalid")
+        if not self.redaction_policy or self.source_body_mode not in {
+            "excerpts",
+            "full",
+        }:
+            raise ValueError("source disclosure policy is invalid")
 
 
 PageItem = TypeVar("PageItem")
@@ -650,4 +688,23 @@ class ResearchWorkspacePort(Protocol):
 
     async def delete_note(
         self, ref: QualifiedWorkspaceRef, note_id: str, expected_version: int
+    ) -> bool: ...
+
+    async def list_chat_sessions(
+        self, ref: QualifiedWorkspaceRef, *, limit: int = 20, offset: int = 0
+    ) -> BoundedPageResult[ResearchChatSession]: ...
+
+    async def create_chat_session(
+        self, ref: QualifiedWorkspaceRef, request: ResearchChatSessionRequest
+    ) -> ResearchChatSession: ...
+
+    async def send_chat_turn(
+        self,
+        request: ResearchChatTurnRequest,
+        on_chunk: Callable[[str], None],
+        cancel_event: Event,
+    ) -> ResearchChatTurnOutcome: ...
+
+    async def stop_chat_turn(
+        self, ref: QualifiedWorkspaceRef, turn_id: str
     ) -> bool: ...
