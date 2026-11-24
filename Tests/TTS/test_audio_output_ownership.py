@@ -16,6 +16,27 @@ async def retired() -> bool:
     return True
 
 
+@pytest.mark.asyncio
+async def test_exact_revocation_visible_to_native_worker_before_retirement():
+    host = AudioOutputOwnership()
+    observed = []
+
+    async def retire_first():
+        observed.append(await asyncio.to_thread(lambda: first.revoked))
+        return True
+
+    first = await host.acquire("one", retire_first)
+    copy.copy(first).revoke()
+    assert first.is_current() and not first.revoked
+    second = await host.acquire("two", retired)
+    assert observed == [True]
+    first.revoke()
+    assert second.is_current() and not second.revoked
+    second.revoke()
+    assert second.revoked and not second.is_current()
+    assert host.owner == "two"
+
+
 class HeldRetirement:
     def __init__(self) -> None:
         self.started = asyncio.Event()
