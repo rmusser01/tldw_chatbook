@@ -1535,10 +1535,9 @@ jobs:
     # its four files with bootstrap_profile nodes are in admission-sensitive 3.
     # Serial seconds per file are in the task's notes.
     # Round 24 (2026-11-24): the trace retry-recovery proof file, on no lane
-    # before (its vLLM case went red unseen). Three of its tests are
-    # bootstrap_profile, so it goes after Tool_Packs; its sandboxed tests read
-    # no config in-process and pass after that enrollment. 29 tests, 12.2-12.3 s
-    # serially with this step's flags at load 4-5.
+    # before (its vLLM case went red unseen). The whole file is bootstrap_profile
+    # (its gateway reads [model_catalog]), so it goes after Tool_Packs. 29 tests,
+    # 12.2-12.3 s serially with this step's flags at load 4-5.
     name: Dreams tracking tests and unlaned riders
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}

@@ -45,8 +45,15 @@ make_database = _database_fixture
 make_gateway = _gateway_fixture
 
 
+# The gateway reads config: prepare_chat_request -> get_model_capabilities
+# reads [model_catalog] use_models_dev. In the per-test sandbox that read
+# raises RecoveryRequired and models_dev_catalog._enabled() swallows it, so
+# the tests that looked sandboxed only passed on the swallowed default
+# (round-24 review, 2026-11-24; the TASK-32628 swallowed-admission trap).
+pytestmark = pytest.mark.bootstrap_profile
+
+
 @pytest.mark.asyncio
-@pytest.mark.bootstrap_profile
 @pytest.mark.loopback_network
 @pytest.mark.parametrize("provider", ["vllm", "llama_cpp"])
 @pytest.mark.parametrize("empty_stream", [True, False])
@@ -169,7 +176,6 @@ def _record_call(gateway, signals, outcome) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.bootstrap_profile
 async def test_real_adapter_timeout_cannot_authorize_refusal_only_replay(
     tmp_path, make_database, make_gateway, monkeypatch
 ):
@@ -525,7 +531,6 @@ async def test_only_an_http_error_status_counts_as_a_refusal(
 
 
 @pytest.mark.asyncio
-@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("outcome", ["answer", "refusal", "empty", "unavailable"])
 async def test_gateway_contact_proof_keeps_accepted_count_attached(
     tmp_path, make_database, make_gateway, outcome, record_property
