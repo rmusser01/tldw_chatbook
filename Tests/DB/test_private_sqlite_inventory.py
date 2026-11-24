@@ -501,7 +501,7 @@ def _qualified_core_recovery_dispatch(source_path, symbol, call):
 
 
 def _qualified_fixed_validation_dispatch(source_path, production_module, symbol, call):
-    """Admit the six reviewed restore sites only with their fixed declarations."""
+    """Admit reviewed recovery sites only with their fixed declarations."""
     if production_module == "tldw_chatbook/DB/recovery_response_rules":
         if symbol != "prepare_imported_candidate" or ast.unparse(call) != (
             "open_recovery_validation(owner.owner_id, candidate, writable=True, "
@@ -554,11 +554,26 @@ def _qualified_fixed_validation_dispatch(source_path, production_module, symbol,
     if production_module not in declarations or not call.args:
         return False
     class_name, owner_id = declarations[production_module]
-    if symbol not in {
+    restore_sites = {
         f"{class_name}.validate_restore",
         f"{class_name}.relocate_restore",
         f"{class_name}.validate_restore_dependencies",
-    } or ast.unparse(call.args[0]) != "self.owner_id":
+    }
+    listening_calls = {
+        "_SubscriptionsAdapter.rebind_listening_profile": (
+            "open_recovery_validation(self.owner_id, candidate, writable=True, "
+            "with_restrictions=True)"
+        ),
+        "_SubscriptionsAdapter.validate_dependencies": (
+            "open_recovery_validation(self.owner_id, candidate, writable=False)"
+        ),
+    }
+    if ast.unparse(call.args[0]) != "self.owner_id":
+        return False
+    if symbol not in restore_sites and not (
+        class_name == "_SubscriptionsAdapter"
+        and ast.unparse(call) == listening_calls.get(symbol)
+    ):
         return False
     tree = _parse_source(source_path)
     if class_name in {"_SubscriptionsAdapter", "_Plugins"}:
