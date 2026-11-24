@@ -114,6 +114,10 @@ INHERITED = {
         "Tests/UI/test_console_queue_subclass_controller.py",
         # Round 16 (TASK-41508, TASK-41511): trace files and the capture file.
         "Tests/Chat/test_console_project_instruction_traces.py",
+        # TASK-42472 (round 24, 2026-11-24): dev's captured-retry contract and
+        # the failed-call retry rule, on no lane while the stack refused them.
+        "Tests/Chat/test_console_trace_model_retries.py",
+        "Tests/Chat/test_console_failed_call_retry_ownership.py",
         "Tests/Chat/test_console_trace_failed_tool_run.py",
         "Tests/Chat/test_console_trace_discarded_tool_run.py",
         "Tests/Chat/test_console_agent_call_thinking.py",

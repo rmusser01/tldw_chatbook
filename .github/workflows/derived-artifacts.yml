@@ -1311,6 +1311,8 @@ jobs:
             Tests/UI/test_response_rules_modal.py::test_manager_reload_preserves_edits_made_while_db_is_pending \
             Tests/Chat/test_response_rules_builder.py::test_new_learning_timestamps_are_canonical_and_old_offsets_still_parse \
             Tests/Chat/test_console_project_instruction_traces.py \
+            Tests/Chat/test_console_trace_model_retries.py \
+            Tests/Chat/test_console_failed_call_retry_ownership.py \
             Tests/Chat/test_console_trace_failed_tool_run.py \
             Tests/Chat/test_console_trace_discarded_tool_run.py \
             Tests/Chat/test_console_agent_call_thinking.py \
