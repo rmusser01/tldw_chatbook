@@ -36,7 +36,7 @@ Found by the review of TASK-42472 (2026-11-24) and reproduced on dev af4b13ea75 
 
 Whether the block needs project context (the harness always has an `AGENTS.md`) was not checked.
 
-**The cause is confirmed.** In the second review of TASK-42472, disabling `and terminal.response_started_at is None` (dev `console_trace_continuation.py:637`) unblocked the deepseek, llama.cpp and OpenAI next sends on af4b13ea75.
+**The cause is confirmed.** In the second review of TASK-42472, disabling `and terminal.response_started_at is None` (dev `console_trace_continuation.py:637`) unblocked the probe's next sends on af4b13ea75: both deepseek cases (fail 1 and fail 3) and the llama.cpp case. The probe has no OpenAI case. The OpenAI block (OpenAI's real handler, `requests.Session.post` returning 503 three times) was seen on fu/r24-diag only, not on dev, and is not covered by that confirmation.
 
 **The probe, inlined** (the scratch copy may be cleaned). Copy it into `Tests/Chat/` of a worktree and run it through the scratch-profile wrapper with `-s`. Each test prints `NEXT ...` with the first run's status, the second send's status and the reservation errors.
 - `test_hosted_failed_then_next` replaces the gateway's handler seam with a `functools.wraps(chat_api_call)` stand-in that raises `ChatProviderError(503)` for the first `fail` calls.
