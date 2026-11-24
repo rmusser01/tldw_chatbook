@@ -1466,8 +1466,8 @@ jobs:
     # at load 14-18, 54 took 138-140 s at load 37-64 and all 55 188 s at load
     # 71-92; at 2.6x the quiet time (~3.7 min) the job keeps ~6.5 min headroom.
     # TASK-34000.84 (2026-11-23): the ChaChaNotes read-then-write contention
-    # table (sandboxed, so before Tool_Packs; 127 tests, 158.9 s serially at
-    # load 88-106, 74.0 s for 121 of them at load 30-34) forces a committed
+    # table (sandboxed, so before Tool_Packs; 130 tests, 83.2 s serially at
+    # load 39-41, 74.0 s for 121 of them at load 30-34) forces a committed
     # write and a held write lock into every fixed site. The whole step:
     # 881 tests, 1035.5 s at load 52-75 (875 took 741.8 s at load 30-48).
     name: Dreams tracking tests and unlaned riders
