@@ -998,6 +998,46 @@ def test_an_openai_5xx_is_posted_once_and_keeps_its_status(streaming: bool) -> N
     )
 
 
+@pytest.mark.parametrize(
+    ("status", "error_type", "category"),
+    [
+        (429, ChatRateLimitError, "rate limit exceeded"),
+        (503, ChatProviderError, "provider unavailable"),
+    ],
+)
+def test_a_streamed_openai_status_whose_body_never_arrives_keeps_its_status(
+    status: int, error_type: type, category: str
+) -> None:
+    """TASK-42529 review: a streamed reply's error body is first read by the
+    dispatcher's classifier. A connection that drops after the headers made
+    that read raise ChunkedEncodingError, which left with no status and read
+    'unexpected provider error' again. An unreadable body is no body."""
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+    def post(_session: object, url: str, *_args: object, **_kwargs: object):
+        response = requests.Response()
+        response.status_code = status
+        response.url = url
+        response.raw = _BrokenStream()
+        return response
+
+    with patch("requests.Session.post", post), pytest.raises(error_type) as raised:
+        list(
+            chat_api_call(
+                "openai",
+                messages_payload=[{"role": "user", "content": "Say OK"}],
+                api_key="sk-proj-test-key",
+                model="gpt-4o",
+                streaming=True,
+            )
+        )
+
+    assert raised.value.status_code == status
+    assert safe_provider_error_copy("openai", raised.value) == (
+        f"Provider error from OpenAI: {category}. Status: {status}."
+    )
+
+
 # --- The local OpenAI-compatible family and KoboldCpp (review round 2, R3-1) --
 #
 # Custom / Custom 2, llama.cpp, vLLM, Ollama, TabbyAPI, Aphrodite, MLX-LM and

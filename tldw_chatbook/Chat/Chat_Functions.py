@@ -1059,15 +1059,21 @@ def raise_for_http_error(
             error's context keeps the response the Console reads a reason from.
     """
     status_code = getattr(e.response, "status_code", 500)
+    # A streamed reply's body is first read here; a connection that drops
+    # before it arrives makes it no body, never a status-less error.
+    unreadable = (ValueError, AttributeError, requests.exceptions.RequestException)
     if status_code in {400, 404}:
         try:
             payload = e.response.json()
-        except (ValueError, AttributeError):
+        except unreadable:
             payload = None
         unavailable = model_unavailable_error(endpoint_lower, status_code, payload)
         if unavailable is not None:
             raise unavailable from None
-    raw_error_text = getattr(e.response, "text", None)
+    try:
+        raw_error_text = getattr(e.response, "text", None)
+    except requests.exceptions.RequestException:
+        raw_error_text = None
     if raw_error_text is None:
         raw_error_text = safe_llm_exception_message(e)
     error_text = str(safe_llm_error_detail(raw_error_text))

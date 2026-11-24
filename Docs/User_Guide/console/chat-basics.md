@@ -596,7 +596,7 @@ statistics tools.
   System row quotes the provider's own error message where it sent one and
   adds how to turn streaming off. A streamed rate limit (429) or server
   error (5xx) reads the same as one without streaming: its status and the
-  provider's own reason. With
+  provider's own reason where it sent one. With
   streaming off, the reply appears all at once when the provider finishes,
   and the label shows the time waited until then.
 - While a run is active a **Stop** button (warning-tinted, "Stop this tab's

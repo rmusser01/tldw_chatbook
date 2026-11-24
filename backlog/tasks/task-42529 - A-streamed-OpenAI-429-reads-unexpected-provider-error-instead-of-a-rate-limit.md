@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-24 09:14
-updated_date: 2026-11-24 22:22
+updated_date: 2026-11-24 22:47
 labels:
 - follow-up
 - console
@@ -90,6 +90,23 @@ None needed a fix. A streamed 429 is pinned over a loopback stub for Anthropic, 
 - `LLM_API_Calls.py` size row: 5,232 -> 5,239 (+7, dated).
 - Diagnostic inventory: the moved `logger.error` in `Chat_Functions.py` is only re-indented (`--statements`: moved 1, added 0, removed 0), so the inventory is regenerated.
 - 14 covering-file nodes are red on the RecoveryRequired trap with the same command at base: `test_chat_functions.py` ×7, `test_openai_streaming_usage.py` ×4, `test_console_provider_gateway.py` ×3. The two OpenAI stop tests also fail identically at base and after under a temporary `bootstrap_profile` mark ("close called 2 times").
+
+**Review fixes (three Minors).**
+1. An unreadable error body lost the status again. A streamed reply's body is first read in `raise_for_http_error`. A connection that drops after the headers made `.json()` or `.text` raise `ChunkedEncodingError`, which left with no status. Both reads now treat a `RequestException` as no body, and the status classification still applies.
+   - Pinned by `test_a_streamed_openai_status_whose_body_never_arrives_keeps_its_status[429, 503]`: a real `requests.Response` whose raw stream raises urllib3's `ProtocolError`, through `chat_api_call(streaming=True)`. Expected: `ChatRateLimitError`, or `ChatProviderError` with status 503, and the status-only copy.
+   - Red with the first commit's classifier (`ChunkedEncodingError` escapes); green after.
+2. The User Guide now says the provider's own reason "where it sent one".
+3. The admission-sensitive 3 step's budget comment records the measured cost. All timings are serial, at load 9-10:
+   - five mounted Console cases: 19 s;
+   - seven streamed loopback parameters: 3.7 s (the review counted six; the collection has seven);
+   - two unit cases: 0.04 s;
+   - the rate-limit file plus the node: 51 tests, 42 s.
+
+**Runs after the review fixes.**
+- Soak: 5 runs, 51 passed each, at `-n 4`, load 10-12.
+- `Tests/CI`: 1946 passed, 2 skipped.
+- Preflight, `ruff check tldw_chatbook --select F` and `ruff_gate`: all pass.
+- No new Ruff findings in the touched files.
 
 **Files.**
 - `tldw_chatbook/Chat/Chat_Functions.py`

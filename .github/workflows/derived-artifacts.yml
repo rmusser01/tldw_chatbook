@@ -891,8 +891,11 @@ jobs:
       # max 21.3 of its 35 min over 56 runs from 2026-11-20 to 2026-11-22; with
       # both round-21 additions (about 1.7 + 1.4 CI-minutes) the expected max
       # is about 24.5 of 35.
-      # TASK-42529 adds one bootstrap_profile node after the rate-limit file:
-      # OpenAI's streamed 400 now leaves the stream as a typed error.
+      # TASK-42529 adds one bootstrap_profile node after the rate-limit file
+      # (OpenAI's streamed 400 now leaves the stream as a typed error) and
+      # grows that file: five mounted Console cases (19 s serial), seven
+      # streamed loopback parameters (3.7 s) and two unit cases (0.04 s). The
+      # file plus the node: 51 tests, 42 s serial, at load 9-10 (2026-11-24).
       - name: Run admission-sensitive suites 3
         run: |
           pytest \
