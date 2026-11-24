@@ -122,6 +122,20 @@ restored bytes whose local custody has not been established. Physical cleanup
 runs through an explicitly bound asset owner after DB invalidation, without
 inferring a data directory from a deletion row.
 
+The existing `subscriptions.assets` recovery owner declares both briefing and
+article trees. Legacy briefing IDs stay unchanged; article roots and final WAV
+members use explicit profile IDs. Private stages and the device-local DB-sibling
+lock are excluded. Recovery validates the v4 catalog, source authority and WAV
+bytes without constructing a provider or player. DB-only restore preserves
+bookmarks even when their corresponding audio is absent.
+
+Incoming and detached copies rebind reviewed selector keys only in private
+candidate databases and clear foreign cleanup custody for every partition.
+Local safety snapshots retain their original bytes. Runtime maintenance fences
+listening intake and drains retained physical work before exclusive storage
+admission, then reopens intake without starting playback. An absent feature
+does not create its audio directory during maintenance.
+
 The storage and recovery contract is
 [ADR-367](../../backlog/decisions/367-watchlist-article-listening-and-controlled-playback.md).
 Preparation, transport orchestration and listening controls build on this boundary
