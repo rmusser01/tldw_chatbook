@@ -76,7 +76,7 @@ a discarded import emits no success notification (TASK-36363).
 Two paths, never concurrently for one response: **PCM output** through `StreamingPcmSink` (raw streaming or an eligible complete PCM16 WAV body; PortAudio, prebuffered, `stop()` must reach silence within two audio blocks, no PortAudio stream operations from the callback), or an **artifact file** played by an external player (`afplay`/mpv/…; format catalogues are deliberately conservative — `afplay` excludes opus/ogg because it silently "succeeds" without decoding). PCM is sink-only (no external player decodes bare PCM); `locally_playable_formats()` is re-probed at every call so mid-run player installs take effect. Legacy playback completion is a poll with a text-length-derived timeout because `AudioPlayerInfo.duration` is never populated.
 
 `TTS/audio_output_ownership.py` supplies the isolated admission primitive for
-[TASK-41177 / ADR-366](../../backlog/decisions/366-watchlist-article-listening-and-controlled-playback.md).
+[TASK-41177 / ADR-367](../../backlog/decisions/367-watchlist-article-listening-and-controlled-playback.md).
 `AudioOutputOwnership.acquire(owner, retire)` grants an exact `AudioOutputLease`,
 revokes earlier start authority and awaits confirmed physical retirement before
 replacement. Cancellation retains cleanup custody; failed retirement leaves an

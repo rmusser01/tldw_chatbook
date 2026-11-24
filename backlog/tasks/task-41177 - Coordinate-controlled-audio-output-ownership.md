@@ -34,6 +34,7 @@ Make article listening coexist predictably with existing speech and media output
 - [ ] #3 Late starts and old-surface cleanup cannot affect the new owner; failed termination retains a visible blocked owner.
 - [ ] #4 Existing ordinary file playback and external-handoff behavior remain supported, with targeted regressions and native transfer evidence.
 - [ ] #5 Exact logical-EOF Resume launches no player; Stop during padding stays an interruption and cannot publish natural completion or release a newer output owner.
+- [ ] #6 Targeted ownership, controlled-adapter and affected production pytest runs use normal conftest and real-profile guards with verified private test storage; no recovery-policy bypass or existing profile/ACL mutation is needed.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -57,4 +58,12 @@ Eleven event-driven tests pass with asyncio debug enabled, including Textual's e
 
 The normal pytest bootstrap stopped before collection with `recovery_scope_uncertain`; its cause and baseline behavior were not established. Pure coordinator checks used `--noconftest`, without changing recovery policy or user profile data. Native playback, the controlled adapter, all production producer integration and app-wide takeover evidence remain unverified. Task stays In Progress and every whole-task AC remains open.
 
-Existing ADR366 governs this increment. Living internals are updated in `Docs/Architecture/speech.md`; the eager-publication incident is recorded in `backlog/docs/lessons-testing-evidence.md`. The tested implementation base is `3e08f979ea`; rebase onto current dev and rerun affected targeted checks before production caller integration.
+Existing ADR367 governs this increment. Living internals are updated in `Docs/Architecture/speech.md`; the eager-publication incident is recorded in `backlog/docs/lessons-testing-evidence.md`. The tested implementation base is `3e08f979ea`; rebase onto current dev and rerun affected targeted checks before production caller integration.
+
+### Continuation authorization and bootstrap remedy
+
+The user authorized the controlled WAV adapter and all production wiring. Both stacked branches are aligned with dev `af4b13ea75`; the audio ADR is now 367 because dev reserved 366 for CI. Existing coordinator code and eager-loop regression were preserved.
+
+The normal pytest bootstrap blocker is diagnosed: the sandbox account cannot perform the native drive-root open, and default TEMP/worktree ancestors grant the sandbox group destructive access. A fresh native-verified private temp subtree under the user home, a process-local TEMP/TMP/TMPDIR plus pytest basetemp, and normal-user execution pass all eleven tests with normal conftest/guards. No recovery marker, existing ACL or product recovery policy was changed. The guarded runner and numerical diagnosis are retained in this plan's workspace for targeted verification.
+
+ADR367's production contract and the Superpowers Task2 continuation specify preparation/pins, worker revocation, native classifier/settling qualification, full caller wiring, external handoff acknowledgement, duplex/media/shutdown policy and remaining acceptance evidence. All whole-task AC remain open.
