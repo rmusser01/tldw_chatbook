@@ -242,6 +242,9 @@ transcript:
   once before changing the live message.
 - Retries, failures, stops, and tool-loop calls are separate call boundaries.
   Abandoned variants remain identifiable.
+- A llama.cpp stream that returns no text is asked once more without
+  streaming, as its own call. When that resend answers, including with a tool
+  call, the run continues from its reply with capture on.
 - Edit & resend and Regenerate send their reply with capture off, so that reply
   has no trace call of its own. Your next send in the chat is captured as usual.
   It records the edited branch as one bounded replacement of the earlier trace

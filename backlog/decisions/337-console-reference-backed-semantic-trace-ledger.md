@@ -680,6 +680,26 @@ the run bore a response (RESPONSE_STARTED or COMPLETE). A closed terminal that
 completed or stopped without a response, and every check above, are unchanged.
 No call is relabeled as response-bearing and no response link is created.
 
+### Integration recorded 2026-11-24: stream resends inside a run (TASK-42530, TASK-42532)
+
+A llama.cpp stream that returns no content is resent without streaming on
+its own `llama_fallback` run (task-19324). TASK-42472 let a failed resend
+stand aside for the agent's unchanged retry of the streamed call. A resend
+that bore a response is that call's answer instead: the next TOOL_LOOP call
+of the run is admitted after it as the step that carries its reply and tool
+results, and is refused if it appends nothing. A resend of a tool-loop call
+takes the loop's turn from the request, and is admitted only directly after
+the settled failed tool-loop call it repeats, with nothing appended. The
+completed-turn witness counts a failed or answering resend directly after a
+call of the run as part of that run.
+
+A self-hosted or Custom endpoint's refused stream, and a llama.cpp stream
+with tools in the request, are resent as the run's next TOOL_LOOP call. When
+that resend fails, an in-place retry that streams again is compared with the
+streamed call the resend repeated (the resend having been admitted only as
+its verified True -> False flip), not with the resend. Every other target,
+setting and surface change remains refused.
+
 ## Current-owner integration amendment (2026-10-13)
 
 Canonical message/revision identity and predecessor ancestry remain reachable independently of archived payload. The existing admitted checkpoint roots and graph-epoch invalidation remain authoritative before reservation; metadata roots cannot retain deleted payload through another call sharing a policy. Retry capture compares canonical JSON bytes (including boolean/integer/float identity), and frozen arrays thaw only when forming PersistRequest fields.

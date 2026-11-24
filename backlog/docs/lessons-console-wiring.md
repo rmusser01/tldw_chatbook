@@ -17,6 +17,12 @@ bring the incident.
 
 **What to do.** Check the type a handler actually returns through its decorators before fixing at the dispatcher. Classify a lazy failure inside the handler's own generator (here with `Chat_Functions.raise_for_http_error`, the dispatcher's own classifier), and do not wrap a provider stream that has its own close or attribute contract.
 
+## A trace refusal stops the run at the first refused call, so the next refusal is only seen after the fix (TASK-42530, 2026-11-24)
+
+**Incident.** TASK-42530 was filed from a probe in which every llama.cpp stream was empty (`_project_console(response_mode="fallback")`): the stream's non-streaming resend answered with a tool call, and the agent's next call was refused with `trace_tool_chain_unavailable`. The filing and its acceptance criteria named that one refusal. After it was fixed, a variant in which only the first stream was empty passed end to end (tool run, reply, next message), but the filed all-empty probe still ended `blocked`, now on `trace_turn_unavailable`: the next tool-loop call's stream was empty too, and a llama.cpp resend of a tool-loop call had never been admitted. The factory takes a resend's turn from the request's last saved user message, and a tool-loop request ends on a tool result; TASK-42472's resends had all been of calls whose request still ended on the user's message.
+
+**What to do.** After fixing a filed Console trace refusal, re-run the exact probe shape the task recorded, to the end of the run and through the next message, before calling it fixed. A narrower variant that is easier to build can pass while the filed shape still stops one call later.
+
 ## A cache keyed on the config identity must keep its last value while it re-reads (TASK-39044, 2026-11-06)
 
 **Incident.** On dev, four to six of the seven pause-copy cases failed in each run, and the view-all history cases failed too. The Console's historical fleet read keys its cache on `config.current_config_identity()` among other fields (3e618d7119). After any config write (here a Settings save; in the tests a rail-preference write), the next sync re-keyed the cache, saw no value yet, and returned an empty snapshot until the new read landed. That one empty sync reset `_console_fleet_section_auto_opened` and `_console_fleet_inspector_dismissed`, so the Agents section the user had collapsed auto-opened again and the rail scrolled to it. The tests' own closes and clicks lost to that reopen.
