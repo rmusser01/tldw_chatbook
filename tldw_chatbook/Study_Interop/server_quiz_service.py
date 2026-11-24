@@ -12,6 +12,7 @@ from ..runtime_policy.types import PolicyDeniedError
 class ServerQuizClient(Protocol):
     """Client methods ServerQuizService calls (TASK-36953.1)."""
 
+    async def _request(self, *args: Any, **kwargs: Any) -> Any: ...
     async def create_quiz(self, *args: Any, **kwargs: Any) -> Any: ...
     async def create_quiz_question(self, *args: Any, **kwargs: Any) -> Any: ...
     async def delete_quiz(self, *args: Any, **kwargs: Any) -> Any: ...
@@ -124,6 +125,18 @@ class ServerQuizService:
         return await self._require_client().list_quizzes(
             q=q, limit=limit, offset=offset
         )
+
+    async def list_workspace_quizzes(
+        self, workspace_id: str, *, q: str | None = None, limit: int = 100, offset: int = 0
+    ) -> Any:
+        from ..tldw_api import QuizListResponse
+
+        self._enforce(self._quiz_action_id("list"))
+        params: dict[str, Any] = {"workspace_id": workspace_id, "limit": limit, "offset": offset}
+        if q is not None:
+            params["q"] = q
+        raw = await self._require_client()._request("GET", "/api/v1/quizzes", params=params)
+        return QuizListResponse.model_validate(raw).items
 
     async def get_quiz(self, quiz_id: str | int) -> Any:
         self._enforce(self._quiz_action_id("detail"))

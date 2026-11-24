@@ -17,6 +17,8 @@ from tldw_chatbook.tldw_api.workspace_artifact_exports import (
     export_accepted_workspace_markdown,
 )
 
+from tldw_chatbook.tldw_api.workspace_study_client import WorkspaceStudyClient
+
 from .chat_models import validate_chat_id
 from .chat_service import MAX_ANSWER_BYTES
 from .contracts import (
@@ -25,6 +27,7 @@ from .contracts import (
     ResearchCapability,
     WorkspaceDataSource,
 )
+from .server_study import output_creation_time, study_payload, study_result
 from .studio_generation import StudioGeneratedOutput
 from .studio_mapping import PRIMARY_OUTPUT_MAPPINGS
 from .studio_models import (
@@ -49,7 +52,7 @@ class ServerStudioAdapter:
 
     @staticmethod
     def capabilities(
-        chat: ResearchCapability, *, writable: bool
+        chat: ResearchCapability, *, writable: bool, study_supported: bool = False
     ) -> dict[str, ResearchCapability]:
         ready = chat.available and writable
         text = ResearchCapability(
@@ -72,33 +75,44 @@ class ServerStudioAdapter:
             "" if writable else "Check workspace write permissions.",
             chat.capability_revision,
         )
-        blocked = {
+        study_ready = ready and study_supported
+        study = {
             action: ResearchCapability(
-                False,
-                "server_study_provenance_unavailable",
-                reason,
+                study_ready,
+                "available" if study_ready else "server_study_unavailable",
+                "Server Study is ready."
+                if study_ready
+                else "Server generation or workspace writes are unavailable."
+                if not ready
+                else "This Server does not advertise retry-safe Study creation.",
                 owner,
-                "Use the workspace's canonical Study tools to create the item.",
+                ""
+                if study_ready
+                else "Check Server generation and workspace permissions."
+                if not ready
+                else "Update the selected server to enable these outputs.",
                 chat.capability_revision,
             )
-            for action, reason, owner in (
-                (
-                    "create_deck",
-                    "The Server deck creation route has no generation provenance field.",
-                    "server_study_deck",
-                ),
-                (
-                    "create_quiz",
-                    "The Server quiz route cannot retain the Studio operation and generation settings.",
-                    "server_quiz",
-                ),
+            for action, owner in (
+                ("create_deck", "server_study_deck"),
+                ("create_quiz", "server_quiz"),
             )
         }
         return {
             "save_workspace_artifact": text,
             "update_workspace_artifact": change,
-            **blocked,
+            **study,
         }
+
+    @staticmethod
+    def _study(ref, client) -> WorkspaceStudyClient:
+        return WorkspaceStudyClient(client, ref.workspace_id, ref.principal_id)
+
+    async def study_available(self, ref: QualifiedWorkspaceRef) -> bool:
+        client, _ = self._connection(ref)
+        result = await self._study(ref, client).page(limit=1, offset=0)
+        self._check_connection(ref, client)
+        return result is not None
 
     def _connection(self, ref: QualifiedWorkspaceRef):
         if ref.data_source is not WorkspaceDataSource.SERVER:
@@ -177,18 +191,54 @@ class ServerStudioAdapter:
             for row in rows
             if (metadata := self._metadata(row))
         )
-        selected = entries[offset : offset + limit]
+        study = self._study(ref, client)
+        if entries:
+            study_rows, study_total = await self._study_prefix(
+                ref, client, study, offset + limit
+            )
+            combined = sorted(
+                (*entries, *study_rows),
+                key=lambda entry: output_creation_time(entry[1]),
+                reverse=True,
+            )
+            selected = combined[offset : offset + limit]
+        else:
+            study_page = await study.page(limit=limit, offset=offset)
+            self._check_connection(ref, client)
+            study_total = study_page.total if study_page else 0
+            selected = [study_result(ref, row) for row in study_page.items] if study_page else []
+        total = len(entries) + study_total
         page = BoundedPageResult(
             tuple(output for output, _ in selected),
             limit,
             offset,
-            len(entries),
-            offset + limit < len(entries),
+            total,
+            offset + limit < total,
         )
         return validate_output_page(ref, page), dict(selected)
 
+    async def _study_prefix(self, ref, client, study, count):
+        rows = []
+        total = None
+        while total is None or len(rows) < min(count, total):
+            page = await study.page(limit=min(100, count - len(rows)), offset=len(rows))
+            self._check_connection(ref, client)
+            if page is None and total is None:
+                return [], 0
+            if page is None or (total is not None and page.total != total):
+                raise ValueError("Study output history changed. Reload it before continuing")
+            total = page.total
+            rows.extend(study_result(ref, item) for item in page.items)
+        return rows, total
+
     async def resolve_output(self, output: WorkspaceOutputRef):
         client, service = self._connection(output.workspace)
+        if output.owner_kind in {StudioOwnerKind.SERVER_STUDY_DECK, StudioOwnerKind.SERVER_QUIZ}:
+            row = await self._study(output.workspace, client).get(
+                output.output_kind.value, output.owner_id
+            )
+            self._check_connection(output.workspace, client)
+            return study_result(output.workspace, row)[1] if row else None
         for row in await self._records(output.workspace, client, service):
             if row.get("id") == output.owner_id and (metadata := self._metadata(row)):
                 selected = self._reference(output.workspace, row, metadata)
@@ -278,10 +328,6 @@ class ServerStudioAdapter:
         ref = request.workspace
         client, service = self._connection(ref)
         mapping = PRIMARY_OUTPUT_MAPPINGS[ref.data_source, request.output_kind]
-        if mapping.owner_kind is not StudioOwnerKind.SERVER_ARTIFACT:
-            raise ValueError(
-                "The selected Server Study owner cannot retain Studio generation provenance"
-            )
         if generated.status != "complete":
             return WorkspaceOutputRef(
                 ref,
@@ -292,13 +338,6 @@ class ServerStudioAdapter:
                 request.source_snapshot,
                 request.generation.fingerprint,
                 generated.status,
-            )
-        if (
-            not generated.text.strip()
-            or len(generated.text.encode("utf-8")) > MAX_ANSWER_BYTES
-        ):
-            raise ValueError(
-                "The generated text is empty or exceeds the output size limit"
             )
         if any(
             citation.source not in request.retrieval_sources
@@ -316,6 +355,21 @@ class ServerStudioAdapter:
         ):
             raise ValueError(
                 "The selected output belongs to a different workspace or output kind"
+            )
+        if mapping.owner_kind is not StudioOwnerKind.SERVER_ARTIFACT:
+            if replace_output:
+                raise ValueError("Create a new version or edit the item in Server Study")
+            payload = study_payload(request, generated, supersedes)
+            row = await self._study(ref, client).save(payload)
+            self._check_connection(ref, client)
+            expected = generation_metadata(request, supersedes)["research_generation"]
+            return study_result(ref, row, expected=expected)[0]
+        if (
+            not generated.text.strip()
+            or len(generated.text.encode("utf-8")) > MAX_ANSWER_BYTES
+        ):
+            raise ValueError(
+                "The generated text is empty or exceeds the output size limit"
             )
         metadata = generation_metadata(request, supersedes)
         citations = citation_references(

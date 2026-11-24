@@ -1,11 +1,11 @@
 ---
 id: TASK-21510
 title: Add primary Research Studio outputs
-status: In Progress
+status: Done
 assignee:
 - '@codex'
 created_date: 2026-08-24 05:54
-updated_date: 2026-11-24 18:56
+updated_date: 2026-11-24 20:18
 labels:
 - research
 - workspace
@@ -33,7 +33,7 @@ Add Summary, Flashcards, Quiz, Report, and Compare Sources as traceable Research
 - [x] #1 The five primary output cards project explicit availability, owner, reason, and recovery from current authority, source readiness, processing route, and capability revision; Compare requires at least two ready sources.
 - [x] #2 A field-level owner mapping covers ID, version, source snapshot/provenance, generation configuration, workspace association, reopen route, replacement/new-version behavior, and deletion for every primary output before implementation.
 - [x] #3 Local Summary, Report, and Compare save as Local Chatbook artifacts plus workspace membership; local Flashcards save as Study deck/cards plus membership; local Quiz saves as Quiz record/questions plus membership.
-- [ ] #4 Server outputs generate and persist through the supported server workspace artifact/study contracts and never masquerade a client download as server persistence.
+- [x] #4 Server outputs generate and persist through the supported server workspace artifact/study contracts and never masquerade a client download as server persistence.
 - [x] #5 Generation captures an immutable qualified workspace/source/version/config snapshot, fences stale UI results, supports cancel/retry, and reports exact processing route and saved destination.
 - [x] #6 Studio history is derived from canonical records and memberships through `WorkspaceOutputRef`; no parallel output row becomes the version, delete, or list owner.
 - [x] #7 View/edit/export, regenerate-replace, regenerate-new-version, discuss in Grounded Chat, save/append to Quick Notes, delete, safe undo, and canonical reopen are available only where the owning service supports them.
@@ -56,9 +56,15 @@ Follow `Docs/superpowers/plans/2026-08-23-research-workspace-primary-studio.md` 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Implements the five Local Studio outputs and the three versioned Server text outputs under ADR-322. Summary, Report, and Compare Sources save in Local Artifacts or Server workspace artifacts. Local Flashcards and Quiz save in Study and reopen the exact canonical record. WorkspaceDB v11 stores bounded generation metadata on the Local membership. Server text outputs retain the source and citation identities on the artifact. The review and export actions use exact Server artifact versions.
+All five primary Studio outputs now save to their canonical owners in Local and Server under ADR-322. Local Study deck/cards and quiz/questions use bounded membership metadata. Server text uses versioned artifacts and accepted-version Markdown export. Server Study uses the retry-safe workspace publication contract from tldw_server TASK-15637 and ADR-097 (local server commit dfd9ff90aa). Canonical Study owns edits and deletion, and Studio can generate a new version. Older server installations leave the Flashcards and Quiz cards unavailable.
 
-Studio exposes processing and owner availability, source-version warnings, cancel and retry, owner history, versioned edits and replacement, new versions, Grounded Chat draft handoff, Quick Note save and append, and owner-filtered delete and export. A retry repairs a replacement whose owner committed before the workspace link did. Pane tests exercised 160×40 down to 60×20. Local integration used real Library Media, Chatbook, Study, Quiz, and workspace stores. The loopback check used the real Server HTTP routers, temporary databases, and the built-in test provider. It confirmed server generation, artifact save, replay, replacement, accepted export, and review invalidation after edit.
+Server Study handoffs check the active backend, server profile, account, and workspace. Both saved owner IDs reopen outside the first page, and Back to Workspace returns to Research. The client normalizes native typed quiz responses and settles the exact handoff after the Study selection succeeds.
 
-The Server Flashcards and Quiz criterion remains open. The current Server Study routes assign owner IDs on separate create requests and provide no reliable operation lookup or complete generation provenance to recover a lost create response. Studio displays an unavailable capability for those two Server cards. The adjacent Study screen tests reproduced the same 14 profile-bootstrap failures on the unchanged base. Targeted Studio, owner, design-token, and module-size checks passed.
+The Server suite passed 100 targeted tests, including SQLite and PostgreSQL, and 19 final contract cases. The loopback check used real authenticated Server routes, selected Library Media, and a stub provider. Dropping each save response after commit and retrying recovered the same two owners. After reconnecting, native Study listed and resolved the deck and quiz and their entries. The final Chatbook regression run passed 572 tests. The two deselected provider configuration cases and 26 adjacent Study UI profile-bootstrap failures reproduce on the untouched base with raw_source_selection_changed. The mounted handoff regressions passed for both output kinds.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed Research Studio primary outputs across Local and Server, with exact native Study reopening and retry-safe publication.
+<!-- SECTION:FINAL_SUMMARY:END -->

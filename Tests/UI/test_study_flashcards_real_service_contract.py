@@ -86,9 +86,16 @@ class _FakeServerFlashcardsClient:
         self.cards: list[dict[str, Any]] = []
         self.calls: list[tuple[str, Any]] = []
 
-    async def list_flashcard_decks(self, *, limit: int = 100, offset: int = 0):
+    async def list_flashcard_decks(
+        self, *, limit: int = 100, offset: int = 0, workspace_id: str | None = None
+    ):
         self.calls.append(("list_flashcard_decks", (limit, offset)))
-        return list(self.decks[offset : offset + limit])
+        records = (
+            self.decks
+            if workspace_id is None
+            else [deck for deck in self.decks if deck.get("workspace_id") == workspace_id]
+        )
+        return list(records[offset : offset + limit])
 
     async def create_flashcard_deck(self, request: Any):
         payload = request.model_dump(mode="json")

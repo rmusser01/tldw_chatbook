@@ -34,7 +34,6 @@ class StudyQuizzesController:
         self.current_attempt_history: list[dict[str, Any]] = []
         self._scope_service_cache: Optional[QuizScopeService] = None
         self.has_quizzes: bool = False
-        self._suppress_quiz_change_events: bool = False
 
     def _current_mode(self) -> str:
         getter = getattr(self.app_instance, "get_authoritative_runtime_source", None)
@@ -174,13 +173,11 @@ class StudyQuizzesController:
 
         try:
             quiz_select = self.window.query_one("#quiz-select", Select)
-            self._suppress_quiz_change_events = True
-            quiz_select.set_options([("No quizzes available", Select.BLANK)])
-            quiz_select.clear()
+            with quiz_select.prevent(Select.Changed):
+                quiz_select.set_options([("No quizzes available", Select.BLANK)])
+                quiz_select.clear()
         except Exception:
             pass
-        finally:
-            self._suppress_quiz_change_events = False
 
         try:
             question_list = self.window.query_one("#quiz-question-list", ListView)
@@ -349,7 +346,12 @@ class StudyQuizzesController:
             await asyncio.sleep(0.01)
         return False
 
-    async def initialize_view(self, *, research_owner_id: str = "") -> bool:
+    async def initialize_view(
+        self,
+        *,
+        research_owner_id: str = "",
+        research_current: Callable[[], bool] | None = None,
+    ) -> bool:
         service = self._scope_service()
         if service is None:
             self.reset_quiz_panel("Study quizzes backend is unavailable.")
@@ -366,7 +368,10 @@ class StudyQuizzesController:
         await self.refresh_quizzes(
             preferred_selection=research_owner_id or None,
             exact_selection=bool(research_owner_id),
+            research_current=research_current,
         )
+        if research_current is not None and not research_current():
+            return False
         return bool(research_owner_id and self._selected_quiz_id() == research_owner_id)
 
     async def refresh_quizzes(
@@ -375,6 +380,7 @@ class StudyQuizzesController:
         preserve_selection: bool = True,
         preferred_selection: Optional[str] = None,
         exact_selection: bool = False,
+        research_current: Callable[[], bool] | None = None,
     ) -> None:
         service = self._scope_service()
         if service is None:
@@ -394,7 +400,20 @@ class StudyQuizzesController:
             offset=0,
         )
         requested = preferred_selection if exact_selection else selected_before
+        if research_current is not None and not research_current():
+            return
         lookup = getattr(service, "get_local_quiz", None)
+        if (
+            requested
+            and mode == "server"
+            and exact_selection
+            and not any(str(record.get("backing_id")) == requested for record in quizzes)
+        ):
+            target = await service.get_workspace_quiz(
+                quiz_id=requested, workspace_id=self._workspace_id()
+            )
+            if target:
+                quizzes = [*quizzes, target]
         if (
             requested
             and mode == "local"
@@ -404,7 +423,10 @@ class StudyQuizzesController:
             target = await lookup(requested)
             if target and str(target.get("backing_id")) == requested:
                 quizzes = [*quizzes, target]
-        if exact_selection and mode != self._current_mode():
+        if exact_selection and (
+            mode != self._current_mode()
+            or (research_current is not None and not research_current())
+        ):
             return
 
         quiz_select = self.window.query_one("#quiz-select", Select)
@@ -419,11 +441,9 @@ class StudyQuizzesController:
                 self.reset_quiz_panel(self._scope_empty_message())
                 return
             options = [("No quizzes available", Select.BLANK)]
-        quiz_select.set_options(options)
-
         available_values = [option[1] for option in options]
-        try:
-            self._suppress_quiz_change_events = True
+        with quiz_select.prevent(Select.Changed):
+            quiz_select.set_options(options)
             if preferred_selection in available_values:
                 quiz_select.value = str(preferred_selection)
             elif not exact_selection and selected_before in available_values:
@@ -432,9 +452,6 @@ class StudyQuizzesController:
                 quiz_select.value = str(available_values[0])
             else:
                 quiz_select.clear()
-        finally:
-            self._suppress_quiz_change_events = False
-
         await self.refresh_questions()
         await self.refresh_attempt_history()
         self._sync_quiz_controls()
@@ -450,6 +467,7 @@ class StudyQuizzesController:
             return
 
         list_view = self.window.query_one("#quiz-question-list", ListView)
+        scope_generation = self._scope_generation
         await list_view.clear()
 
         quiz_id = self._selected_quiz_id()
@@ -468,14 +486,19 @@ class StudyQuizzesController:
             limit=100,
             offset=0,
         )
+        if (
+            scope_generation != self._scope_generation
+            or quiz_id != self._selected_quiz_id()
+            or not list_view.is_attached
+        ):
+            return
         self.current_quiz_questions = list(questions)
-
-        if not questions:
-            await list_view.append(ListItem(Label("No questions in this quiz.")))
-        else:
-            for question in questions:
-                label = str(question.get("question_text") or "Untitled question")
-                await list_view.append(ListItem(Label(label, markup=False)))
+        rows = [
+            ListItem(Label(str(question.get("question_text") or "Untitled question"), markup=False))
+            for question in questions
+        ]
+        await list_view.extend(rows or [ListItem(Label("No questions in this quiz."))])
+        if rows:
             list_view.index = 0
 
         if self.current_attempt_id is None:
@@ -1008,8 +1031,6 @@ class StudyQuizzesController:
         self._notify_shell_state_changed()
 
     async def handle_quiz_changed(self) -> None:
-        if self._suppress_quiz_change_events:
-            return
         self.current_attempt_id = None
         self.current_attempt_questions = []
         self.current_attempt_answers = []

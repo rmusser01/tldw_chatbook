@@ -1451,21 +1451,27 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 studio._show_error(exc)
 
     def _open_studio_owner(self, output) -> None:
-        from ...Constants import TAB_ARTIFACTS
+        from ...Constants import TAB_ARTIFACTS, TAB_RESEARCH_WORKSPACE
         from ..Navigation.main_navigation import NavigateToScreen
         from ..Navigation.pending_handoff_store import HandoffChannel
-        from ..Navigation.research_output_handoffs import output_handoff
-        from .study_scope_models import StudyScopeContext
+        from ..Navigation.research_output_handoffs import (
+            output_handoff,
+            study_target_authority_current,
+        )
+        from .study_scope_models import StudyScopeContext, StudyScopeType
 
         channel, value = output_handoff(output)
         app = self.app_instance
         if (
             channel is not HandoffChannel.RESEARCH_CHATBOOK_TARGET
-            and app.get_authoritative_runtime_source() != "local"
+            and not study_target_authority_current(app, output.workspace)
         ):
-            self.notify(
-                "Switch Study to Local to open this saved output.", severity="warning"
+            recovery = (
+                "Switch Study to Local to open this saved output."
+                if output.workspace.data_source is WorkspaceDataSource.LOCAL
+                else "Open Server Study with this output's server profile and account."
             )
+            self.notify(recovery, severity="warning")
             return
         if not app._stage_handoff(
             channel, value, recovery="The saved Studio output could not be opened."
@@ -1479,7 +1485,14 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 if channel is HandoffChannel.RESEARCH_QUIZ_TARGET
                 else "flashcards"
             )
-            app.open_study_screen(StudyScopeContext(), initial_section=section)
+            scope = StudyScopeContext()
+            if output.workspace.data_source is WorkspaceDataSource.SERVER:
+                scope = StudyScopeContext(
+                    scope_type=StudyScopeType.WORKSPACE,
+                    workspace_id=output.workspace.workspace_id,
+                    return_hint=TAB_RESEARCH_WORKSPACE,
+                )
+            app.open_study_screen(scope, initial_section=section)
 
     @on(ResearchChatRegion.OverlayUpdated)
     def research_chat_overlay_updated(

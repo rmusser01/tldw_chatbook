@@ -6,6 +6,7 @@ import inspect
 from enum import Enum
 from typing import Any, Mapping
 
+from ..tldw_api.exceptions import APIResponseError
 from .study_normalizers import (
     merge_review_outcome_record,
     normalize_study_deck_record,
@@ -894,6 +895,15 @@ class StudyScopeService:
                 for record in list(records or [])
             ]
 
+        scoped_list = getattr(service, "list_workspace_decks", None)
+        if normalized_scope_type == "workspace" and callable(scoped_list):
+            records = await scoped_list(normalized_workspace_id, limit=limit, offset=offset)
+            return [
+                normalize_study_deck_record("server", record)
+                for record in records
+                if self._filter_deck_scope(record, scope_type="workspace", workspace_id=normalized_workspace_id)
+            ]
+
         if normalized_scope_type == "workspace":
             records = await self._load_scoped_server_decks(
                 service=service,
@@ -921,6 +931,28 @@ class StudyScopeService:
         service = self._service_for_mode(StudyBackend.LOCAL)
         record = await self._maybe_await(service.get_deck(deck_id))
         return normalize_study_deck_record("local", record) if record else None
+
+    async def get_workspace_deck(self, *, deck_id: str, workspace_id: str) -> dict[str, Any] | None:
+        """Get the exact native Server deck if it still belongs to the workspace."""
+        _, workspace_id = self._normalize_scope("workspace", workspace_id)
+        self._enforce_policy(self._deck_action_id(StudyBackend.SERVER, "list"))
+        service = self._service_for_mode(StudyBackend.SERVER)
+        try:
+            record = await service.get_deck(deck_id)
+        except APIResponseError as exc:
+            if exc.status_code == 404:
+                return None
+            raise
+        if not record:
+            return None
+        result = normalize_study_deck_record("server", record)
+        if (
+            result.get("workspace_id") != workspace_id
+            or str(result.get("backing_id")) != str(deck_id)
+            or result.get("deleted")
+        ):
+            return None
+        return result
 
     async def count_decks(
         self,

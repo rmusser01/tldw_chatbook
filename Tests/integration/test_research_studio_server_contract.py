@@ -21,6 +21,8 @@ async def test_server_studio_writes_exact_workspace_and_uses_only_owner_receipts
     path = f"/api/v1/workspaces/{SERVER.workspace_id}/artifacts"
 
     def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/study-outputs"):
+            return httpx.Response(404, json={"detail": "Not Found"})
         if request.method == "GET":
             assert request.url.path == path
             return httpx.Response(200, json=list(records.values()))
@@ -118,8 +120,7 @@ async def test_server_studio_writes_exact_workspace_and_uses_only_owner_receipts
         )
         available = studio.capabilities(capability, writable=True)
         assert available["save_workspace_artifact"].available
-        for kind, key in (("flashcards", "create_deck"), ("quiz", "create_quiz")):
+        assert not await studio.study_available(SERVER)
+        for key in ("create_deck", "create_quiz"):
             assert not available[key].available
-            with pytest.raises(ValueError, match="Studio generation provenance"):
-                await studio.save(server_request(kind), generated)
         assert len(writes) == 4

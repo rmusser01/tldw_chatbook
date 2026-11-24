@@ -18,7 +18,7 @@ from textual.reactive import reactive
 from textual.widgets import Button
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
-from ...Constants import LIBRARY_NAV_CONTEXT_MODE, TAB_HOME, TAB_LIBRARY
+from ...Constants import LIBRARY_NAV_CONTEXT_MODE, TAB_HOME, TAB_LIBRARY, TAB_RESEARCH_WORKSPACE
 from ...Utils.input_validation import escape_markup as escape_every_bracket
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
@@ -1326,6 +1326,9 @@ class StudyScreen(BaseAppScreen):
 
     async def initialize_research_output(self, section, initialize) -> bool:
         """Consume a Research handoff only after the exact canonical item opens."""
+        from ...tldw_api.exceptions import TLDWAPIError
+        from ..Navigation.research_output_handoffs import study_target_authority_current
+
         if self.current_section != section:
             return False
         channel = (
@@ -1339,27 +1342,42 @@ class StudyScreen(BaseAppScreen):
             return False
         try:
             target = claim.value
-            backend = self._runtime_backend()
-            if (
-                backend != "local"
-                or target.workspace.data_source.value != backend
-                or self.scope_state.scope_type is not StudyScopeType.GLOBAL
+            scope = self._scope_key(self.scope_state)
+            server = target.workspace.data_source.value == "server"
+
+            def current() -> bool:
+                return (
+                    store.is_current_claim(claim)
+                    and self.current_section == section
+                    and scope == self._scope_key(self.scope_state)
+                    and study_target_authority_current(self.app_instance, target.workspace)
+                )
+
+            in_scope = (
+                self.scope_state.scope_type is StudyScopeType.WORKSPACE
+                and self.scope_state.workspace_id == target.workspace.workspace_id
+                if server
+                else self.scope_state.scope_type is StudyScopeType.GLOBAL
+            )
+            if not in_scope or not current():
+                self.notify(
+                    "Open Study with the saved output's workspace and account.",
+                    severity="warning",
+                )
+                return True
+            if not await initialize(
+                research_owner_id=target.owner_id, research_current=current
             ):
-                self.notify(
-                    "Open Local Study to view this saved Research output.",
-                    severity="warning",
-                )
+                if current():
+                    self.notify(
+                        "The saved Research item is unavailable in this Study scope.",
+                        severity="warning",
+                    )
                 return True
-            if not await initialize(research_owner_id=target.owner_id):
-                self.notify(
-                    "The saved Research item is unavailable in Local Study.",
-                    severity="warning",
-                )
-                return True
-            if self.current_section == section and self._runtime_backend() == backend:
+            if current():
                 store.acknowledge_current(claim)
             return True
-        except (ValueError, LookupError, OSError) as exc:
+        except (ValueError, LookupError, OSError, TLDWAPIError) as exc:
             logger.warning(
                 "Study Research output handoff failed (exception_category={}).",
                 type(exc).__name__,
@@ -1416,6 +1434,9 @@ class StudyScreen(BaseAppScreen):
         Study" exit, so one shared landing spot keeps this simple rather
         than threading the originating row id through the whole handoff.
         """
+        if self.scope_state.return_hint == TAB_RESEARCH_WORKSPACE:
+            self.return_to_workspace()
+            return
         if self._study_origin == STUDY_ORIGIN_HOME:
             self.app_instance.post_message(NavigateToScreen(TAB_HOME))
             return
@@ -1605,6 +1626,9 @@ class StudyScreen(BaseAppScreen):
             open_study(scope_context)
 
     def return_to_workspace(self) -> None:
+        if self.scope_state.return_hint == TAB_RESEARCH_WORKSPACE:
+            self.app_instance.post_message(NavigateToScreen(TAB_RESEARCH_WORKSPACE))
+            return
         if not self.scope_state.workspace_id:
             return
         open_workspace = getattr(self.app_instance, "open_notes_workspace", None)

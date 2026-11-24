@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from enum import Enum
 from typing import Any, Optional
 
+from ..tldw_api.exceptions import APIResponseError
 from .quiz_normalizers import (
     normalize_quiz_attempt_record,
     normalize_quiz_question_record,
@@ -82,7 +83,8 @@ class QuizScopeService:
             if items is None:
                 return []
             return list(items)
-        return list(records)
+        entries = getattr(records, "items", None)
+        return list(entries) if isinstance(entries, list) else list(records)
 
     def _enforce_policy(self, action_id: str) -> None:
         if self.policy_enforcer is None:
@@ -196,6 +198,21 @@ class QuizScopeService:
             items = self._items_from_list_response(records)
             return [normalize_quiz_record(backend.value, record) for record in items]
 
+        scoped_list = getattr(service, "list_workspace_quizzes", None)
+        if normalized_scope_type == "workspace" and callable(scoped_list):
+            response = await scoped_list(
+                normalized_workspace_id, q=normalized_q, limit=limit, offset=offset
+            )
+            return [
+                row
+                for record in self._items_from_list_response(response)
+                if self._filter_quiz_scope(
+                    row := normalize_quiz_record("server", record),
+                    scope_type="workspace",
+                    workspace_id=normalized_workspace_id,
+                )
+            ]
+
         records = await self._load_scoped_server_quizzes(
             service=service,
             q=normalized_q,
@@ -215,6 +232,28 @@ class QuizScopeService:
         service = self._service_for(QuizBackend.LOCAL)
         record = await self._maybe_await(service.get_quiz(quiz_id))
         return normalize_quiz_record("local", record) if record else None
+
+    async def get_workspace_quiz(self, *, quiz_id: str, workspace_id: str) -> dict[str, Any] | None:
+        """Get the exact native Server quiz if it still belongs to the workspace."""
+        _, workspace_id = self._normalize_scope("workspace", workspace_id)
+        self._enforce_policy(self._quiz_action_id(QuizBackend.SERVER, "list"))
+        service = self._service_for(QuizBackend.SERVER)
+        try:
+            record = await service.get_quiz(quiz_id)
+        except APIResponseError as exc:
+            if exc.status_code == 404:
+                return None
+            raise
+        if not record:
+            return None
+        result = normalize_quiz_record("server", record)
+        if (
+            result.get("workspace_id") != workspace_id
+            or str(result.get("backing_id")) != str(quiz_id)
+            or result.get("deleted")
+        ):
+            return None
+        return result
 
     async def count_quizzes(
         self,

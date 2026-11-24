@@ -87,13 +87,19 @@ chat persistence disabled. The canonical workspace artifact stores the output,
 its captured source versions, and citation markers. Editing and replacement
 check the owner version and return the content to draft. Markdown export
 requires explicit review acceptance and uses the exact accepted artifact version
-returned by the server. Server Flashcards and Quiz require a workspace Study
-creation contract that can safely recover an operation after a lost response.
+returned by the server. Server Flashcards and Quiz use the
+`research-study.v1` workspace contract. One transaction commits the native
+Study deck or quiz, its entries, and bounded provenance keyed by the captured
+operation. A retry can recover the same owner after a lost response. Older
+servers leave these output cards unavailable. Native Study owns content edits
+and deletion. Studio can create a separate new version.
 
 Studio blocks workspace and authority changes while generation is active. Stop
-ends generation, and Retry uses the original operation. Local Study handoffs
-select the exact saved deck or quiz by ID even beyond the first list page. The
-Artifacts handoff reuses the Library's canonical Chatbook selection.
+ends generation, and Retry uses the original operation. Study handoffs select
+the exact saved deck or quiz by ID even beyond the first list page. Server
+Study also checks the active server profile, account, and workspace before
+consuming the handoff. The Artifacts handoff reuses the Library's canonical
+Chatbook selection.
 
 ## Runs lifecycle
 

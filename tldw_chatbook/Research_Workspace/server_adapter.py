@@ -470,7 +470,14 @@ class ServerResearchWorkspaceAdapter:
         studio = self._require_studio(ref)
         context = self._context_for_ref(ref)
         lifecycle = self._capabilities_for_context(context)
-        return studio.owner.capabilities(await self.chat_capability(ref), writable=lifecycle["update"].available)
+        chat = await self.chat_capability(ref)
+        writable = lifecycle["update"].available
+        study_supported = writable and chat.available and await self._server_call(
+            studio.owner.study_available(ref), context=context
+        )
+        return studio.owner.capabilities(
+            chat, writable=writable, study_supported=study_supported
+        )
 
     async def _studio_approvals(self, ref: QualifiedWorkspaceRef) -> tuple[str, ...]:
         self._context_for_ref(ref)

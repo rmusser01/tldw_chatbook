@@ -5,6 +5,7 @@ import pytest
 from Tests.Research_Workspace.test_studio_models import ROUTE, SERVER, SOURCE
 from Tests.Research_Workspace.test_studio_generation import request
 from tldw_chatbook.Research_Workspace.server_studio import ServerStudioAdapter
+from tldw_chatbook.tldw_api.exceptions import APIResponseError
 from tldw_chatbook.Research_Workspace.studio_generation import (
     StudioCitation,
     StudioGeneratedOutput,
@@ -69,7 +70,9 @@ class _ArtifactServer:
         row["artifact_version_id"] = f"{artifact_id}:v{row['version']}"
         return row
 
-    async def _request(self, method, path, *, json_data):
+    async def _request(self, method, path, *, json_data=None, params=None, headers=None):
+        if method == "GET" and path.endswith("/study-outputs"):
+            raise APIResponseError(404, "Not Found")
         assert method == "POST"
         artifact_id = path.split("/")[-2]
         assert (
