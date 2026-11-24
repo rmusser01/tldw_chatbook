@@ -167,6 +167,9 @@ def test_next_start_names_the_removed_folder_and_starts_once_it_is_back(
     assert text.startswith("Recovery required: storage_admission_unavailable")
     assert str(tokenizers) in text
     assert "create it again" in text
+    # Review M3: restores register folders too, as the service message says.
+    assert "backups and restores register the folders they use" in text
+    assert "a backup registers what it copies" not in text
 
     tokenizers.mkdir(mode=0o700)  # the remedy the message gives
     storage.admit_startup()

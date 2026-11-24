@@ -1730,11 +1730,11 @@ def _startup_refusal(error: bootstrap.RecoveryRequired) -> str:
     return "\n".join(
         (
             text,
-            "Chatbook registered these locations for its storage (a backup "
-            "registers what it copies), and they no longer exist:"
+            "Chatbook registered these locations for its storage (backups and "
+            "restores register the folders they use), and they no longer exist:"
             if len(missing) > 1
-            else "Chatbook registered this location for its storage (a backup "
-            "registers what it copies), and it no longer exists:",
+            else "Chatbook registered this location for its storage (backups and "
+            "restores register the folders they use), and it no longer exists:",
             *("  " + str(path) for path in missing),
             "If it was a folder, create it again (an empty folder is enough), "
             "then start Chatbook again.",
