@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import replace
@@ -2340,6 +2341,39 @@ async def test_console_pending_startup_work_names_each_pending_producer(
             )
             assert pending() == ("credential poll pass",)
             await quiet()  # The real poll commits the gate it reads now.
+        await quiet()
+        # A gate the poll read but could not commit (here, config-lock
+        # contention): the revision matches what it read, the commit lags.
+        held, release = threading.Event(), threading.Event()
+
+        def hold_rebuild_lock() -> None:
+            with tldw_config._settings_rebuild_lock():
+                held.set()
+                release.wait(5)
+
+        owner = threading.Thread(target=hold_rebuild_lock)
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                anthropic_subscription,
+                "subscription_readiness_revision",
+                lambda: revision + 2,
+            )
+            owner.start()
+            try:
+                assert held.wait(3)
+                screen._poll_console_credential_readiness()
+                assert screen._console_credential_pre_gate_seen[1] == revision + 2
+                assert pending() == ("credential poll pass",)
+            finally:
+                release.set()
+                owner.join(3)
+            await quiet()
+        await quiet()
+        # Before the poll's first read nothing is recorded or committed.
+        with monkeypatch.context() as patch:
+            patch.setattr(screen, "_console_credential_pre_gate_seen", None)
+            patch.setattr(screen, "_console_credential_pre_gate", None)
+            assert pending() == ("credential poll pass",)
         await quiet()
 
         refreshed = []
