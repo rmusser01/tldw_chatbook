@@ -109,6 +109,12 @@ class AudioOutputLease:
             self._host._slot = None
             self._host._blocked = False
 
+    def block(self) -> None:
+        """Publish unconfirmed retirement for this exact held lease on its loop."""
+        if self._host._owns(self):
+            self._revoked.set()
+            self._host._blocked = True
+
     def record_handoff(self) -> None:
         """Record OS acceptance on the loop while this exact launch is in custody."""
         if self._host._owns(self):
@@ -123,6 +129,7 @@ class AudioOutputOwnership:
         self._generation = 0
         self._blocked = False
         self._retirement: asyncio.Task[bool] | None = None
+        self._retry_blocked = False
         self._shutdown: asyncio.Future[bool] | None = None
         self._handoff_epoch: object | None = None
         self._intent: AudioOutputIntent | None = None
@@ -184,6 +191,10 @@ class AudioOutputOwnership:
     ) -> bool:
         # An eager task can enter here before create_task returns to the host.
         await published.wait()
+        if not self._owns(lease):
+            return True
+        if self._blocked and not self._retry_blocked:
+            return False
         try:
             confirmed = await retire()
         except (Exception, asyncio.CancelledError):
@@ -195,13 +206,17 @@ class AudioOutputOwnership:
         return not self._owns(lease)
 
     def _start_retirement(
-        self, slot: tuple[AudioOutputLease, _Retire]
+        self, slot: tuple[AudioOutputLease, _Retire], *, retry_blocked: bool = False
     ) -> asyncio.Task[bool]:
         slot[0].revoke()
         if self._retirement is None or self._retirement.done():
+            self._retry_blocked = retry_blocked
             published = asyncio.Event()
             self._retirement = asyncio.create_task(self._retire_owned(*slot, published))
             published.set()
+        elif retry_blocked:
+            # An explicit exact Stop can join before the transfer callback runs.
+            self._retry_blocked = True
         return self._retirement
 
     @staticmethod
@@ -214,7 +229,7 @@ class AudioOutputOwnership:
         """Fence the exact held output now and observe its checked retirement."""
         if self._slot is None or self._slot[0] is not lease:
             return self._resolved(False)
-        return asyncio.shield(self._start_retirement(self._slot))
+        return asyncio.shield(self._start_retirement(self._slot, retry_blocked=True))
 
     def begin_shutdown(self) -> asyncio.Future[bool]:
         """Fence admission now and share one cancellation-safe retirement result."""
@@ -222,7 +237,7 @@ class AudioOutputOwnership:
             self._intent = None
             self._tentative.clear()
             if self._slot is not None:
-                self._shutdown = self._start_retirement(self._slot)
+                self._shutdown = self._start_retirement(self._slot, retry_blocked=True)
             elif self._retirement is not None and not self._retirement.done():
                 self._shutdown = self._retirement
             else:
