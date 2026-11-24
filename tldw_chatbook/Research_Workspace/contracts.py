@@ -736,13 +736,25 @@ class ResearchWorkspacePort(Protocol):
     ) -> Mapping[str, object] | None: ...
 
     async def generate_output(
-        self, request: ResearchStudioRequest, on_chunk: Callable[[str], None], cancel_event: Event
+        self,
+        request: ResearchStudioRequest,
+        on_chunk: Callable[[str], None],
+        cancel_event: Event,
+        *,
+        replace_output: WorkspaceOutputRef | None = None,
+        supersedes: WorkspaceOutputRef | None = None,
     ) -> WorkspaceOutputRef: ...
 
-    async def cancel_output(self, ref: QualifiedWorkspaceRef, operation_id: str) -> bool: ...
+    async def cancel_output(
+        self, ref: QualifiedWorkspaceRef, operation_id: str
+    ) -> bool: ...
 
     async def retry_output(
         self, ref: QualifiedWorkspaceRef, operation_id: str
     ) -> WorkspaceOutputRef: ...
 
-    async def export_output(self, output_ref: WorkspaceOutputRef, format: str) -> bytes: ...
+    async def export_output(
+        self, output_ref: WorkspaceOutputRef, format: str
+    ) -> bytes: ...
+
+    async def delete_output(self, output_ref: WorkspaceOutputRef) -> None: ...

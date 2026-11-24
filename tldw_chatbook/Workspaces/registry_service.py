@@ -1759,6 +1759,33 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return tuple(_membership_from_row(row) for row in rows), total
 
+    def list_workspace_output_memberships(
+        self, workspace_id: str, *, limit: int = 20, offset: int = 0,
+        operation_id: str | None = None,
+    ) -> tuple[tuple[WorkspaceMembership, ...], int]:
+        """Page the workspace's output links, optionally by exact generation operation."""
+        safe_id = _normalize_required_text(workspace_id, "workspace_id")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        if type(offset) is not int or not 0 <= offset <= 10_000:
+            raise ValueError("offset must be between 0 and 10000")
+        with self.db.transaction() as conn:
+            params = (safe_id, operation_id, operation_id)
+            total = conn.execute(
+                """SELECT COUNT(*) FROM workspace_memberships
+                   WHERE workspace_id = ? AND role = 'output' AND metadata_json IS NOT NULL
+                     AND (? IS NULL OR json_extract(metadata_json, '$.research_generation.operation_id') = ?)""",
+                params,
+            ).fetchone()[0]
+            rows = conn.execute(
+                """SELECT * FROM workspace_memberships
+                   WHERE workspace_id = ? AND role = 'output' AND metadata_json IS NOT NULL
+                     AND (? IS NULL OR json_extract(metadata_json, '$.research_generation.operation_id') = ?)
+                   ORDER BY updated_at DESC, membership_id ASC LIMIT ? OFFSET ?""",
+                (*params, limit, offset),
+            ).fetchall()
+        return tuple(_membership_from_row(row) for row in rows), int(total)
+
     def list_workspace_note_memberships(
         self,
         workspace_id: str,

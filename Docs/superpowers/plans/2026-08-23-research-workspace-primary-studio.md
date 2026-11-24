@@ -224,8 +224,9 @@ generated content or source excerpts.
    failure. If cleanup fails, preserve and surface the owner ID for recovery;
    never hide an orphan behind a success receipt.
 6. Add typed handoffs `RESEARCH_CHATBOOK_TARGET`,
-   `RESEARCH_STUDY_DECK_TARGET`, and `RESEARCH_QUIZ_TARGET`; destination screens
-   claim/acknowledge the exact target instead of relying on list ordering.
+   `RESEARCH_STUDY_DECK_TARGET`, and `RESEARCH_QUIZ_TARGET`. Reuse the existing
+   Artifacts channel for Local Chatbooks. Task 5 connects exact claim and
+   acknowledgement to the destination controls.
 7. Replace updates the exact owner with optimistic version where supported;
    new version creates a new owner and sets `supersedes_owner_ref` in bounded
    membership metadata. Deletion calls the owner first, then unlinks.

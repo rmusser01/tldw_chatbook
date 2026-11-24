@@ -10,7 +10,7 @@ import math
 import re
 import threading
 import time
-from typing import Any, Generic, Literal, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, TypeVar
 
 from ...ACP_Interop.runtime_session import ACP_SESSION_RECORD_PREFIX
 from ...Chat.chat_handoff_models import ChatHandoffPayload
@@ -34,6 +34,9 @@ from ..Screens.study_scope_models import (
     STUDY_ORIGINS,
     StudyScopeContext,
 )
+
+if TYPE_CHECKING:
+    from ...Research_Workspace.contracts import QualifiedWorkspaceRef
 
 
 ARTIFACT_CHATBOOK_RECORD_PREFIX = "local:chatbook:"
@@ -89,6 +92,22 @@ class ConsoleFirstChatIntent:
         object.__setattr__(self, "provider", normalized_provider)
 
 
+@dataclass(frozen=True, slots=True)
+class ResearchStudyOutputTarget:
+    """Open one canonical deck or quiz in its captured workspace authority."""
+
+    workspace: QualifiedWorkspaceRef
+    owner_id: str
+
+    def __post_init__(self) -> None:
+        from ...Research_Workspace.chat_models import validate_chat_id
+        from ...Research_Workspace.contracts import QualifiedWorkspaceRef
+
+        if type(self.workspace) is not QualifiedWorkspaceRef:
+            raise TypeError("A Research Study target requires a qualified workspace")
+        object.__setattr__(self, "owner_id", validate_chat_id(self.owner_id, "study owner ID"))
+
+
 class HandoffChannel(StrEnum):
     """Typed single-slot channels owned by the application."""
 
@@ -111,6 +130,9 @@ class HandoffChannel(StrEnum):
     STUDY_INITIAL_SECTION = "study_initial_section"
     STUDY_ORIGIN = "study_origin"
     ARTIFACT_CHATBOOK_TARGET = "artifact_chatbook_target"
+    RESEARCH_CHATBOOK_TARGET = "artifact_chatbook_target"
+    RESEARCH_STUDY_DECK_TARGET = "research_study_deck_target"
+    RESEARCH_QUIZ_TARGET = "research_quiz_target"
     ACP_SESSION_TARGET = "acp_session_target"
     AUDIO_CPP_MODEL_LIBRARY_REQUEST = "audio_cpp_model_library_request"
     AUDIO_CPP_MODEL_LIBRARY_RESULT = "audio_cpp_model_library_result"
@@ -802,6 +824,10 @@ class PendingHandoffStore:
                 value,
                 prefix=ARTIFACT_CHATBOOK_RECORD_PREFIX,
             )
+        if channel in {HandoffChannel.RESEARCH_STUDY_DECK_TARGET, HandoffChannel.RESEARCH_QUIZ_TARGET}:
+            if type(value) is not ResearchStudyOutputTarget:
+                raise TypeError("Research Study handoff requires an exact output target")
+            return value
         if channel is HandoffChannel.ACP_SESSION_TARGET:
             return PendingHandoffStore._canonical_target(
                 value,

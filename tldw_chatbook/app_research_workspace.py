@@ -48,6 +48,9 @@ def create_research_workspace_screen(app: Any, screen_class: type, user_data_dir
         user_data_dir / "research_workspace_overlay.json"
     )
     if local_service is not None:
+        from .Research_Workspace.local_studio import LocalStudioAdapter
+
+        chat = _local_chat(app, local_service, overlay_store)
         ports[WorkspaceDataSource.LOCAL] = LocalResearchWorkspaceAdapter(
             local_service,
             media_scope_service=media_scope_service,
@@ -55,7 +58,15 @@ def create_research_workspace_screen(app: Any, screen_class: type, user_data_dir
             association_scheduler=association_scheduler,
             notes_scope_service=getattr(app, "notes_scope_service", None),
             notes_user_id=getattr(app, "notes_user_id", ""),
-            chat=_local_chat(app, local_service, overlay_store),
+            chat=chat,
+            studio=LocalStudioAdapter(
+                local_service,
+                getattr(app, "local_chatbook_service", None),
+                getattr(app, "local_study_service", None),
+                getattr(app, "local_quiz_service", None),
+            )
+            if chat
+            else None,
         )
     server_service = getattr(app, "server_notes_workspace_service", None)
     server_context_provider = getattr(app, "server_context_provider", None)

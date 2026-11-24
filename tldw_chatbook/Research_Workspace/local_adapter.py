@@ -30,6 +30,7 @@ from .contracts import (
     ResearchSourcePage,
     ResearchSourceSummary,
     ResearchWorkspaceSummary,
+    RetrievalMode,
     SourceSelectionResult,
     SourceReadiness,
     WorkspaceDataSource,
@@ -56,6 +57,8 @@ from .source_readiness import normalize_local_readiness
 if TYPE_CHECKING:
     from .chat_models import ResearchChatSessionRequest, ResearchChatTurnRequest
     from .local_chat import LocalResearchChat
+    from .local_studio import LocalStudioAdapter
+    from .studio_models import ResearchStudioRequest, WorkspaceOutputRef
 
 
 _LOCAL_AVAILABLE = ResearchCapability(
@@ -128,6 +131,7 @@ class LocalResearchWorkspaceAdapter:
         notes_scope_service: Any | None = None,
         notes_user_id: str = "",
         chat: LocalResearchChat | None = None,
+        studio: LocalStudioAdapter | None = None,
     ) -> None:
         self._service = service
         self._id_factory = id_factory
@@ -143,10 +147,20 @@ class LocalResearchWorkspaceAdapter:
         self._note_write_lock = asyncio.Lock()
         self._chat = chat
         self._chat_turns = None
+        self._studio = None
         if chat is not None:
             from .chat_service import ResearchChatService
 
             self._chat_turns = ResearchChatService(self._answer_chat_turn)
+        if studio is not None and chat is not None:
+            from .studio_generation import ResearchStudioGenerator
+            from .studio_service import ResearchStudioService
+
+            generator = ResearchStudioGenerator(
+                self.capture_chat_sources, self._read_studio_evidence,
+                chat.stream_studio, self._studio_approvals,
+            )
+            self._studio = ResearchStudioService(generator, studio)
 
     async def list_workspaces(
         self, *, include_archived: bool = False
@@ -292,6 +306,8 @@ class LocalResearchWorkspaceAdapter:
                 "send_chat_turn": chat_capability,
             }
         )
+        if self._studio is not None:
+            capabilities.update(self._studio.owner.capabilities())
         return capabilities
 
     async def chat_capability(self, ref: QualifiedWorkspaceRef) -> ResearchCapability:
@@ -385,6 +401,61 @@ class LocalResearchWorkspaceAdapter:
     async def stop_chat_turn(self, ref: QualifiedWorkspaceRef, turn_id: str) -> bool:
         self._require_chat(ref)
         return self._chat_turns.stop(ref, turn_id)
+
+    def _require_studio(self, ref: QualifiedWorkspaceRef):
+        self._require_local_ref(ref)
+        if self._studio is None:
+            raise ValueError("Local Studio is unavailable")
+        return self._studio
+
+    async def _studio_approvals(self, ref: QualifiedWorkspaceRef) -> tuple[str, ...]:
+        store = self._require_chat(ref).overlay
+        saved = await asyncio.to_thread(store.load, ref) if store else None
+        return saved.chat_egress_consents if saved else ()
+
+    async def _read_studio_evidence(self, request: ResearchStudioRequest):
+        from .studio_generation import StudioEvidence
+
+        if request.generation.focus:
+            return await self._require_chat(request.workspace).focused_studio_evidence(request)
+        if request.effective_retrieval is not RetrievalMode.FTS:
+            raise ValueError("Enter a retrieval focus to use Vector or Hybrid")
+        rows = []
+        for source in request.retrieval_sources[:request.generation.retrieval.top_k]:
+            preview = await self.preview_source(request.workspace, source.source_id, max_chars=6000, snippet_limit=0)
+            if preview.ref != request.workspace or preview.catalog_item_id != source.catalog_item_id:
+                raise ValueError("A source changed while loading its excerpt")
+            if preview.text:
+                rows.append(StudioEvidence(source, f"Library media {source.catalog_item_id}", preview.text))
+        return tuple(rows)
+
+    async def list_outputs(self, ref: QualifiedWorkspaceRef, *, limit: int = 20, offset: int = 0):
+        return await self._require_studio(ref).owner.list_outputs(ref, limit=limit, offset=offset)
+
+    async def resolve_output(self, output_ref: WorkspaceOutputRef):
+        return await self._require_studio(output_ref.workspace).owner.resolve_output(output_ref)
+
+    async def generate_output(self, request: ResearchStudioRequest, on_chunk, cancel_event, *, replace_output=None, supersedes=None):
+        from .studio_mapping import PRIMARY_OUTPUT_MAPPINGS
+
+        studio = self._require_studio(request.workspace)
+        mapping = PRIMARY_OUTPUT_MAPPINGS[request.workspace.data_source, request.output_kind]
+        require_capability(studio.owner.capabilities(), mapping.create_capability)
+        return await studio.generate(
+            request, on_chunk, cancel_event, replace_output=replace_output, supersedes=supersedes,
+        )
+
+    async def cancel_output(self, ref: QualifiedWorkspaceRef, operation_id: str) -> bool:
+        return self._require_studio(ref).cancel(ref, operation_id)
+
+    async def retry_output(self, ref: QualifiedWorkspaceRef, operation_id: str):
+        return await self._require_studio(ref).retry(ref, operation_id)
+
+    async def delete_output(self, output_ref: WorkspaceOutputRef) -> None:
+        await self._require_studio(output_ref.workspace).owner.delete(output_ref)
+
+    async def export_output(self, output_ref: WorkspaceOutputRef, format: str) -> bytes:
+        return await self._require_studio(output_ref.workspace).owner.export_output(output_ref, format)
 
     async def reconcile_quick_notes(self) -> None:
         """Resume one bounded global page of durable Local note receipts."""

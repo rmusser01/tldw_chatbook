@@ -72,6 +72,10 @@ def _content_sources(values):
     return (values["self"].registry_path,)
 
 
+class ChatbookRevisionConflict(ValueError):
+    """The captured artifact revision is stale."""
+
+
 class LocalChatbookService:
     """Expose local chatbook import/export operations through a service contract."""
 
@@ -511,11 +515,14 @@ class LocalChatbookService:
         chatbook_id: int | str,
         *,
         provenance_owner_request: CitationArtifactOwnerRequest | None = None,
+        expected_revision: int | None = None,
         **fields: Any,
     ) -> dict[str, Any]:
         with self._registry_lock:
             registry = self._load_registry()
             record = self._find_record(registry, chatbook_id)
+            self._check_revision(record, expected_revision)
+            research_artifact = record["metadata"].get("artifact_source") == "research"
             coordinator = self._citation_ownership_coordinator
             previous_binding = self._record_owner_binding(record)
             if previous_binding is not None:
@@ -545,7 +552,7 @@ class LocalChatbookService:
                 and coordinator.writes_enabled
                 and coordinator.artifact_binding_verification_available
             )
-            if previous_binding is not None or can_link:
+            if previous_binding is not None or can_link or research_artifact:
                 next_revision = int(record.get("artifact_revision") or 0) + 1
                 record["artifact_revision"] = next_revision
                 record.pop("provenance_owner", None)
@@ -569,11 +576,14 @@ class LocalChatbookService:
         return self._record_copy(record)
 
     @content_call(_content_sources)
-    async def delete_chatbook(self, chatbook_id: int | str) -> bool:
+    async def delete_chatbook(
+        self, chatbook_id: int | str, *, expected_revision: int | None = None,
+    ) -> bool:
         with self._registry_lock:
             registry = self._load_registry()
             wanted = str(chatbook_id)
             record = self._find_record(registry, chatbook_id)
+            self._check_revision(record, expected_revision)
             binding = self._record_owner_binding(record)
             coordinator = self._citation_ownership_coordinator
             if binding is not None:
@@ -618,6 +628,13 @@ class LocalChatbookService:
             registry,
             coordinator.prepare_unlink_operation(binding),
         )
+
+    @staticmethod
+    def _check_revision(record: dict[str, Any], expected_revision: int | None) -> None:
+        if expected_revision is not None and (
+            type(expected_revision) is not int or record.get("artifact_revision") != expected_revision
+        ):
+            raise ChatbookRevisionConflict("The artifact changed. Reload it and try again.")
 
     @staticmethod
     def _prepare_optional_link(

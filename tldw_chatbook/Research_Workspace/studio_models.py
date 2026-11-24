@@ -14,6 +14,7 @@ from .chat_models import (
     ResearchRetrievalSettings,
     ResearchSourceVersionRef,
     ResearchTurnStatus,
+    validate_chat_draft,
     validate_chat_id,
 )
 from .contracts import (
@@ -49,6 +50,7 @@ class StudioOwnerKind(StrEnum):
 @dataclass(frozen=True, slots=True)
 class ResearchGenerationConfig:
     title: str = ""
+    focus: str = field(default="", repr=False)
     detail: Literal["brief", "standard", "detailed"] = "standard"
     item_count: int = 8
     temperature: float = 0.3
@@ -65,6 +67,10 @@ class ResearchGenerationConfig:
                 "Output title must fit on one line of at most 120 characters"
             )
         object.__setattr__(self, "title", title)
+        focus = validate_chat_draft(self.focus).strip()
+        if len(focus) > 512:
+            raise ValueError("The retrieval focus must be at most 512 characters")
+        object.__setattr__(self, "focus", focus)
         if self.detail not in {"brief", "standard", "detailed"}:
             raise ValueError("Output detail is invalid")
         if type(self.item_count) is not int or not 1 <= self.item_count <= 50:
@@ -144,6 +150,10 @@ class ResearchStudioRequest:
             )
         if type(self.context_revision) is not int or self.context_revision < 0:
             raise ValueError("Context revision must be non-negative")
+        if self.generation.retrieval.top_k < kind.minimum_sources:
+            raise ValueError(
+                f"Choose at least {kind.minimum_sources} retrieval results for this output"
+            )
         if self.effective_retrieval is None:
             minimum = kind.minimum_sources
             noun = "source" if minimum == 1 else "sources"

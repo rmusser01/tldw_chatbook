@@ -6,9 +6,13 @@ import json
 import re
 from dataclasses import dataclass
 from hashlib import sha256
+from typing import TYPE_CHECKING
 
 from .chat_models import ResearchChatTurnRequest
 from .contracts import WorkspaceDataSource
+
+if TYPE_CHECKING:
+    from .studio_models import ResearchStudioRequest
 
 MAX_EGRESS_CONSENTS = 16
 _FINGERPRINT = re.compile(r"[0-9a-f]{64}\Z")
@@ -39,7 +43,9 @@ class ResearchEgressPreflight:
 
 class ResearchEgressConsentService:
     def preflight(
-        self, request: ResearchChatTurnRequest, approved: tuple[str, ...] = ()
+        self,
+        request: ResearchChatTurnRequest | ResearchStudioRequest,
+        approved: tuple[str, ...] = (),
     ) -> ResearchEgressPreflight | None:
         """Describe a remote transfer without including any user or source text."""
         route = request.processing_route
@@ -78,7 +84,9 @@ class ResearchEgressConsentService:
         )
 
     def is_approved(
-        self, request: ResearchChatTurnRequest, approved: tuple[str, ...]
+        self,
+        request: ResearchChatTurnRequest | ResearchStudioRequest,
+        approved: tuple[str, ...],
     ) -> bool:
         return self.preflight(request, approved) is None
 

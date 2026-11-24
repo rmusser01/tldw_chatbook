@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tldw_chatbook.Chat.citation_trace_builder import LocalRetrievalRunMetadata
 from tldw_chatbook.Chat.citation_source_locators import CanonicalSourceKind
@@ -45,13 +45,17 @@ from .contracts import (
 )
 from .egress_consent import ResearchEgressConsentService
 
+if TYPE_CHECKING:
+    from .studio_models import ResearchStudioRequest
+
 _CONTEXT_CHARS = 16_000
 _HISTORY_CHARS = 64_000
 ReadSources = Callable[
     [QualifiedWorkspaceRef], Awaitable[tuple[ResearchSourceVersionRef, ...]]
 ]
 Retrieve = Callable[
-    [ResearchChatTurnRequest, EffectiveScope], Awaitable[Iterable[object]]
+    ["ResearchChatTurnRequest | ResearchStudioRequest", EffectiveScope],
+    Awaitable[Iterable[object]],
 ]
 
 
@@ -321,6 +325,40 @@ class LocalResearchChat:
     async def resolve_route(self, provider: str, model: str) -> ProcessingRoute:
         return self._route(await self._resolve(self.get_gateway(), provider, model))
 
+    async def stream_studio(self, request: ResearchStudioRequest, messages):
+        """Use the same resolved provider route for a tool-free Studio output."""
+        route, options = request.processing_route, request.generation
+        gateway = self.get_gateway()
+        resolution = await gateway.resolve_for_send(
+            ConsoleProviderSelection(
+                route.provider,
+                explicit_model=route.model,
+                temperature=options.temperature,
+                top_p=options.top_p,
+                max_tokens=options.max_tokens,
+            )
+        )
+        if self._route(resolution) != route:
+            raise ValueError(
+                "The processing route changed. Review it before generating"
+            )
+        async for chunk in self._provider_stream(
+            gateway, resolution, messages, ConsoleProviderStreamSignals()
+        ):
+            yield chunk
+
+    async def focused_studio_evidence(self, request: ResearchStudioRequest):
+        from .studio_generation import StudioEvidence
+
+        selected = {item.catalog_item_id: item for item in request.retrieval_sources}
+        scope = EffectiveScope("scoped", {"media": frozenset(selected)}, None)
+        rows = await self.retrieve(request, scope)
+        candidates = self._filter_results(request.generation.retrieval, selected, rows)
+        return tuple(
+            StudioEvidence(selected[row.source_id], row.title, row.content)
+            for row in candidates
+        )
+
     async def answer(
         self,
         request: ResearchChatTurnRequest,
@@ -378,7 +416,7 @@ class LocalResearchChat:
         if sources:
             scope = EffectiveScope("scoped", {"media": frozenset(sources)}, None)
             rows = await self.retrieve(request, scope)
-            candidates = self._filter_results(request, sources, rows)
+            candidates = self._filter_results(request.retrieval, sources, rows)
             await self._check_scope(request, read_sources)
         end = datetime.now(UTC)
         evidence = format_local_evidence_context(candidates, max_length=_CONTEXT_CHARS)
@@ -408,15 +446,11 @@ class LocalResearchChat:
         messages.append({"role": "user", "content": request.user_text})
         signals = ConsoleProviderStreamSignals()
 
-        async def stream():
-            async for item in gateway.stream_chat(
-                resolution, messages, signals=signals
-            ):
-                if signals.synthetic_fallback_emitted:
-                    raise RuntimeError("provider response unavailable")
-                yield item
-
-        answer = await collect_answer(stream(), on_chunk, cancel)
+        answer = await collect_answer(
+            self._provider_stream(gateway, resolution, messages, signals),
+            on_chunk,
+            cancel,
+        )
         if not answer.text.strip():
             return ResearchChatTurnOutcome.from_request(
                 request, status=answer.status, retrieved=retrieved
@@ -462,7 +496,14 @@ class LocalResearchChat:
             )
 
     @staticmethod
-    def _filter_results(request, sources, rows):
+    async def _provider_stream(gateway, resolution, messages, signals):
+        async for item in gateway.stream_chat(resolution, messages, signals=signals):
+            if signals.synthetic_fallback_emitted:
+                raise RuntimeError("Provider response unavailable")
+            yield item
+
+    @staticmethod
+    def _filter_results(settings, sources, rows):
         candidates = []
         for row in rows:
             try:
@@ -474,13 +515,10 @@ class LocalResearchChat:
                 or result.source_id not in sources
             ):
                 continue
-            if (
-                request.retrieval.threshold is not None
-                and result.score < request.retrieval.threshold
-            ):
+            if settings.threshold is not None and result.score < settings.threshold:
                 continue
             candidates.append(result)
-            if len(candidates) == request.retrieval.top_k:
+            if len(candidates) == settings.top_k:
                 break
         return tuple(candidates)
 
@@ -671,7 +709,9 @@ def _usage_json(usages, outcome: ResearchChatTurnOutcome) -> str | None:
     return None if total is None else total.to_json()
 
 
-async def search_local(app, request: ResearchChatTurnRequest, scope: EffectiveScope):
+async def search_local(
+    app, request: ResearchChatTurnRequest | ResearchStudioRequest, scope: EffectiveScope
+):
     """Use the existing local pipeline with a mandatory, nonempty Media scope."""
     from tldw_chatbook.RAG_Search.pipeline_builder_simple import (
         perform_full_rag_pipeline,
@@ -681,6 +721,10 @@ async def search_local(app, request: ResearchChatTurnRequest, scope: EffectiveSc
 
     if scope.state != "scoped" or not scope.allowlist.get("media"):
         return ()
+    if isinstance(request, ResearchChatTurnRequest):
+        query, settings = request.user_text, request.retrieval
+    else:
+        query, settings = request.generation.focus, request.generation.retrieval
     pipeline = {
         RetrievalMode.FTS: perform_plain_rag_search,
         RetrievalMode.SEMANTIC: perform_full_rag_pipeline,
@@ -688,11 +732,11 @@ async def search_local(app, request: ResearchChatTurnRequest, scope: EffectiveSc
     }[request.effective_retrieval]
     rows, _ = await pipeline(
         app,
-        request.user_text,
+        query,
         {"media": True, "conversations": False, "notes": False},
-        top_k=request.retrieval.top_k,
+        top_k=settings.top_k,
         max_context_length=_CONTEXT_CHARS,
-        enable_rerank=request.retrieval.rerank,
+        enable_rerank=settings.rerank,
         scope=scope,
     )
     return rows

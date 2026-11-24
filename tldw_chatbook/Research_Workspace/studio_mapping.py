@@ -85,7 +85,7 @@ PRIMARY_OUTPUT_MAPPINGS: Mapping[
             "version",
             "workspace_membership",
             "create_deck",
-            "update_deck",
+            None,
             "delete_deck",
             "study",
             "research_study_deck_target",
