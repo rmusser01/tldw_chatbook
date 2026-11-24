@@ -176,6 +176,15 @@ and review the constructible schema/store/ownership foundation first, then build
 asset publication and complete recovery on its released interfaces. Keep all four
 TASK-41178 AC open until the complete database/file/restore evidence passes.
 
+**Foundation review gate:** The v4 migration, immutable store, physical mutation
+lease and deletion guards are implemented and independently approved. The review
+fixes bind prepared snapshots to the actual DB image, share bounded citation
+authority with recovery, validate integer/count limits before materialization,
+retain content format and unavailable reasons, and separate destructive intent
+from a retained physical borrow. The focused integration selection passed 59
+cases; three further discriminator-bound controls passed after their RED run.
+Private WAV assets and complete backup/restore integration remain in progress.
+
 - [ ] **Step 1: Write failing real-SQLite/file tests.** Exercise old-profile upgrade and migration rollback, two independently opened DBs, revision collisions, atomic cursor/two-bookmark updates, source deletion during candidate admission and artifact publication, source-bound sharing, all-unavailable replacement, missing/corrupt WAV, publication failure/orphans, lock crash release, and fail-busy destructive mutation. Deleting membership preserves sources; deleting a brief preserves an unrelated valid foreground reading.
 - [ ] **Step 2: Observe RED.** Run only the two new Subscriptions test files and selected migration nodes. Expect missing tables/contracts, with existing base migration cases still green.
 - [ ] **Step 3: Implement store, migration and asset lifecycle.** Allocate next schema version at the implementation base (v3 here), add its SQL artifact and indexes/allowlists. Enforce source existence/generation transactionally, use existing private atomic writers/path validation, and reconcile only after ownership. Enforce seven-day/512 MiB unreferenced LRU while protecting references.

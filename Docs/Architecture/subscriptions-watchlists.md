@@ -73,6 +73,35 @@ Reader j/k and next-unread navigation use the article list selection intent whil
 - Local vs server sources split at `watchlist_scope_service.py`; some server flows declare local run-execution unsupported.
 - `Subscriptions/SUB-Arch.md` self-declares as historical; only its "what actually runs" banner is current.
 
+## Saved article listening
+
+`Subscriptions/article_listening_store.py` owns the immutable listening records
+in SubscriptionsDB v4. Each explicit config selector has one session and an empty
+revision/incarnation witness. Queue and foreground bookmarks commit together;
+unfinished sessions load paused. The selector key is independent of display names
+and recovery installation IDs, including when selectors share a physical DB.
+
+Preparation freezes bounded saved speech, format and nonsecret voice/dependency
+values. The shared `DB/subscriptions_schema.py::listening_brief_items` resolves
+completed-brief citations against their saved selection before reading article
+bodies. Change reports, missing items and empty bodies retain bounded unavailable
+reasons. Recovery applies the same provenance, integer, count and byte checks.
+Candidates also bind the open physical DB image, so pathname reuse cannot admit
+snapshots from a replaced database.
+
+`Subscriptions/article_listening_lease.py` holds a stable DB-sibling native lock
+and ordinary storage admission through actual borrower retirement. Explicit
+`SubscriptionsDB.destructive_transaction` scopes destructive SQL intent separately
+from physical custody. Source deletion scrubs private snapshots and bookmarks,
+preserves unavailable queue positions and retains safe generation cleanup keys.
+Membership removal preserves source items; brief deletion preserves an unrelated
+foreground. Audio generations and bookmarks identify immutable retained bytes.
+
+The storage and recovery contract is
+[ADR-367](../../backlog/decisions/367-watchlist-article-listening-and-controlled-playback.md).
+Preparation, transport orchestration and listening controls build on this boundary
+in the subsequent implementation tasks.
+
 ## Config keys (`[scheduling]`)
 
 `watchlist_checks_enabled` (default true — the sole executor gate; there is no legacy scheduler behind it), `watchlist_checks_shadow` (default false — fetch-and-discard diagnostics; cannot probe sitemap/api, reports `shadow_unsupported`; ignores cadence, so leaving it on means no real checks run), `briefing_schedules_enabled` (default true; per-watchlist cadence is opt-in via `briefing_cadence_seconds`, NULL = never), `handler_timeout_seconds` (300). Per-subscription columns act as config: `check_frequency`, `change_threshold`, `ignore_selectors`, `auto_pause_threshold`, extraction settings, `etag`/`last_modified`.
