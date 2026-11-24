@@ -592,6 +592,12 @@ inspect unmigrated or rollback snapshots, so new queries are version-gated.
   unexplained membership. This owner-specific projection preserves the default
   shared-root round trip; it does not enable generic directory merging or alter
   database, briefing-tree or individual-file alias rules.
+  Shared publication alone grants no later destructive retirement authority.
+  The existing later-rollback proof for a newly created root requires one exact
+  selected config/generation. A multi-selector replacement root without that
+  affirmative proof remains a conservative refusal, preserving its bytes and
+  control state. The shared-root capture and isolated restore evidence does not
+  claim successful later rollback for that case.
 - A cheap installed producer gate closes intake and drains actual storage work
   before maintenance. Ordinary storage admission covers DB, lock and asset paths
   through physical retirement. Long-lived listening holders must release/drain

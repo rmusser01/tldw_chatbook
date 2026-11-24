@@ -115,7 +115,10 @@ retries where the name is already absent. Unsupported effect platforms refuse
 elective pruning before changing reusable metadata; file validation stays portable.
 
 Every retained entry role protects its generation. Eligible unreferenced audio
-uses seven-day/512 MiB LRU retention. A missing or corrupt artifact keeps its old
+uses seven-day/512 MiB LRU retention. Successful user-directed verified reads
+refresh last use; integrity scans do not. Recovery validates live-generation
+timestamps before admitting a copied image while allowing scrubbed deletion
+records. A missing or corrupt artifact keeps its old
 bookmark identity; explicit regeneration binds a new generation at zero. Unknown,
 unsealed or foreign objects remain preserved with uncertainty reported, including
 restored bytes whose local custody has not been established. Physical cleanup
@@ -129,12 +132,26 @@ lock are excluded. Recovery validates the v4 catalog, source authority and WAV
 bytes without constructing a provider or player. DB-only restore preserves
 bookmarks even when their corresponding audio is absent.
 
+Selected profiles can share an article directory and its default DB, or use
+distinct custom DBs with the same data root. Inventory assigns each file to its
+unique verified selected partition and config/DB peer. Unknown, unselected or
+multiply claimed members refuse a complete capture. The canonical article-root
+projection preserves each member's ownership when restoring to separate roots
+or publishing their verified disjoint union once to a common reviewed root.
+Generic database, briefing and file alias rules remain unchanged.
+
 Incoming and detached copies rebind reviewed selector keys only in private
 candidate databases and clear foreign cleanup custody for every partition.
 Local safety snapshots retain their original bytes. Runtime maintenance fences
 listening intake and drains retained physical work before exclusive storage
 admission, then reopens intake without starting playback. An absent feature
 does not create its audio directory during maintenance.
+
+Later replacement rollback of a newly created multi-selector shared root remains
+unqualified: existing finite-membership and affirmative retirement checks refuse
+it while preserving files and control state. Shared capture/publication alone
+does not establish that destructive authority. Single-selector replacement and
+rollback retain their existing verified path.
 
 The storage and recovery contract is
 [ADR-367](../../backlog/decisions/367-watchlist-article-listening-and-controlled-playback.md).
