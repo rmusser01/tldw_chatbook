@@ -484,9 +484,9 @@ def test_legacy_native76_upgrade_preserves_exact_receipts(
 ):
     path = tmp_path / "legacy.sqlite"
     before = _legacy_native76(path, dictionary=dictionary, subscriptions=subscriptions)
-    from tldw_chatbook.DB.recovery_core_schema import CHACHANOTES_V89_SCHEMAS
+    from tldw_chatbook.DB.recovery_core_schema import CHACHANOTES_V90_SCHEMAS
     from tldw_chatbook.DB.recovery_operations import (
-        _SUBSCRIPTIONS_RESPONSE_REVISION_DROP_V89_SCHEMAS,
+        _SUBSCRIPTIONS_MOBILE_V90_SCHEMAS,
     )
 
     # The current lineage lists the two repaired-77 catalogs, then the two
@@ -496,9 +496,9 @@ def test_legacy_native76_upgrade_preserves_exact_receipts(
     catalog = tuple(
         (sql,)
         for sql in (
-            _SUBSCRIPTIONS_RESPONSE_REVISION_DROP_V89_SCHEMAS[2 * native]
+            _SUBSCRIPTIONS_MOBILE_V90_SCHEMAS[2 * native]
             if subscriptions
-            else CHACHANOTES_V89_SCHEMAS[native]
+            else CHACHANOTES_V90_SCHEMAS[native]
         )
     )
     for _ in range(2):
@@ -576,12 +576,12 @@ def test_v77_constructor_catalog_matches_exact_native76_capture(
 ):
     import hashlib
     from tldw_chatbook.DB.recovery_core_schema import (
-        CHACHANOTES_V89_SCHEMAS,
+        CHACHANOTES_V90_SCHEMAS,
         _CHAT_DICTIONARIES_INITIAL_TRIGGER,
         _CHAT_DICTIONARIES_UPDATED_TRIGGER,
     )
     from tldw_chatbook.DB.recovery_operations import (
-        _SUBSCRIPTIONS_RESPONSE_REVISION_DROP_V89_SCHEMAS,
+        _SUBSCRIPTIONS_MOBILE_V90_SCHEMAS,
     )
 
     path = tmp_path / "capture.sqlite"
@@ -605,9 +605,9 @@ def test_v77_constructor_catalog_matches_exact_native76_capture(
         # A fresh shared file pairs the current primary catalog with the
         # Subscriptions catalog that has idx_subscriptions_source (task-34399).
         expected = (
-            _SUBSCRIPTIONS_RESPONSE_REVISION_DROP_V89_SCHEMAS[1]
+            _SUBSCRIPTIONS_MOBILE_V90_SCHEMAS[1]
             if subscriptions
-            else CHACHANOTES_V89_SCHEMAS[0]
+            else CHACHANOTES_V90_SCHEMAS[0]
         )
         if dictionary:
             expected = tuple(
@@ -803,7 +803,7 @@ def test_populated_legacy_queue_paths_are_lossless(tmp_path, dictionary, route):
         _shipped76,
     )
     from tldw_chatbook.DB.recovery_core_schema import (
-        CHACHANOTES_V89_SCHEMAS,
+        CHACHANOTES_V90_SCHEMAS,
         CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
     )
 
@@ -893,7 +893,7 @@ def test_populated_legacy_queue_paths_are_lossless(tmp_path, dictionary, route):
             assert catalog == (
                 CHACHANOTES_DICTIONARY_UPDATE_SCHEMA
                 if dictionary
-                else CHACHANOTES_V89_SCHEMAS[0]
+                else CHACHANOTES_V90_SCHEMAS[0]
             )
             assert db._get_db_version(connection) == CURRENT
             assert not connection.execute("PRAGMA foreign_key_check").fetchall()
@@ -1024,27 +1024,42 @@ def test_repaired77_false_native76_constructor_refuses(
     tmp_path, dictionary, subscriptions
 ):
     from tldw_chatbook.DB.ChaChaNotes_DB import SchemaError
-    from tldw_chatbook.DB.recovery_core_schema import _CHAT_DICTIONARIES_UPDATED_TRIGGER
+    from tldw_chatbook.DB.recovery_core_schema import (
+        CHACHANOTES_V77_DICTIONARY_UPDATE_SCHEMA,
+        CHACHANOTES_V77_SCHEMA,
+        _CHAT_DICTIONARIES_UPDATED_TRIGGER,
+    )
+    from tldw_chatbook.DB.recovery_operations import (
+        _SUBSCRIPTIONS_REPAIRED_RECEIPT_SCHEMAS,
+    )
 
-    if subscriptions:
-        from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
-
-        db = SubscriptionsDB(tmp_path / "false76.sqlite")
-        db.close()
     path = tmp_path / "false76.sqlite"
-    db = CharactersRAGDB(path, client_id="fresh77")
-    try:
+    if subscriptions:
+        _v2_subscriptions(path)
+    with chachanotes_db_at_version(path, 77, client_id="fresh77") as db:
         connection = db.get_connection()
         if dictionary:
             connection.execute("DROP TRIGGER chat_dictionaries_au")
             connection.execute(_CHAT_DICTIONARIES_UPDATED_TRIGGER)
+        expected = (
+            _SUBSCRIPTIONS_REPAIRED_RECEIPT_SCHEMAS[int(dictionary)]
+            if subscriptions
+            else CHACHANOTES_V77_DICTIONARY_UPDATE_SCHEMA
+            if dictionary
+            else CHACHANOTES_V77_SCHEMA
+        )
+        assert tuple(
+            row[0]
+            for row in connection.execute(
+                "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
+            )
+        ) == expected
+        assert db._get_db_version(connection) == 77
         connection.execute(
             "UPDATE db_schema_version SET version=76 WHERE schema_name=?",
             (CharactersRAGDB._SCHEMA_NAME,),
         )
         connection.commit()
-    finally:
-        db.close_connection()
     with closing(sqlite3.connect(path)) as connection:
         before = tuple(connection.iterdump())
     with pytest.raises(SchemaError, match="unsupported native receipt catalog"):
