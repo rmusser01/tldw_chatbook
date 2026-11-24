@@ -187,18 +187,23 @@ class ArticleListeningStore:
         if item_id is None:
             return EntryCandidate.unavailable("missing_item", origin=origin)
         row = c.execute(
-            "SELECT subscription_id,length(CAST(title AS BLOB)),length(CAST(content AS BLOB)),content_kind,content_format "
+            "SELECT subscription_id,length(CAST(title AS BLOB)),length(CAST(content AS BLOB)),"
+            "CASE WHEN content_kind IS NULL AND content_format IS NULL THEN NULL "
+            "WHEN content_kind=? AND content_format IN (?,?) THEN content_format ELSE '' END "
             "FROM subscription_items WHERE id=?",
-            (_int(item_id, 1),),
+            (
+                CONTENT_KIND_ARTICLE,
+                CONTENT_FORMAT_TEXT,
+                CONTENT_FORMAT_MARKDOWN,
+                _int(item_id, 1),
+            ),
         ).fetchone()
         if not row:
             return EntryCandidate.unavailable("missing_item", origin=origin)
-        kind, fmt = row[3], row[4]
-        if (kind, fmt) != (None, None) and (
-            kind != CONTENT_KIND_ARTICLE
-            or fmt not in (CONTENT_FORMAT_TEXT, CONTENT_FORMAT_MARKDOWN)
-        ):
+        fmt = row[3]
+        if fmt == "":
             return EntryCandidate.unavailable("unsupported_content", origin=origin)
+        kind = CONTENT_KIND_ARTICLE if fmt is not None else None
         if (row[1] or 0) > 2048 or (row[2] or 0) > MAX_TEXT_BYTES:
             raise ValueError("listening_article_limit")
         title, raw = c.execute(

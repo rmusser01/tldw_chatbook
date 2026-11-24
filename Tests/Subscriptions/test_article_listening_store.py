@@ -874,3 +874,46 @@ def test_recovery_accepts_bounded_queue_from_larger_saved_selection(records, leg
     records.close()
     owner = next(o for o in recovery_adapters() if o.owner_id == "db.subscriptions")
     assert validate_candidate(owner, records.db_path, Event(), migrate=False) == ()
+
+
+@pytest.mark.parametrize("field", ["kind", "format"])
+def test_format_discriminators_are_bounded_before_sqlite_row_delivery(records, field):
+    _, binding, store, voice = setup_store(records)
+    # An embedded NUL also catches length checks that count SQLite TEXT characters.
+    tail = "\0" + "x" * (256 * 1024)
+    kind = "article" + (tail if field == "kind" else "")
+    fmt = "markdown" + (tail if field == "format" else "")
+    with records.transaction() as c:
+        c.execute(
+            "UPDATE subscription_items SET content_kind=?,content_format=? WHERE id=1",
+            (kind, fmt),
+        )
+
+    calls = []
+
+    def convert(text, kind, fmt):
+        calls.append((kind, fmt))
+        return text
+
+    def bounded_row(cursor, values):
+        for v in values:
+            if isinstance(v, (str, bytes)):
+                assert (
+                    len(v) < 256
+                ), "oversized discriminator crossed SQLite row boundary"
+        return sqlite3.Row(cursor, values)
+
+    opts = dict(authority=binding[0], voice=voice, converter="v1", prepare_text=convert)
+    c = records.conn
+    original_rows = c.row_factory
+    try:
+        c.row_factory = bounded_row
+        assert (
+            store.prepare_item(1, **opts).foreground.unavailable_reason
+            == "unsupported_content"
+        )
+        assert not calls
+        assert store.prepare_item(2, **opts).foreground.text == "same article"
+        assert calls == [(None, None)]
+    finally:
+        c.row_factory = original_rows
