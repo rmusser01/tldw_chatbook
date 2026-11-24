@@ -34,7 +34,7 @@ Source: architecture review 2026-10-25, `Docs/QA/architecture-review-2026-10-25/
 Closed 2026-11-23. Four subtasks, all Done: TASK-36952.1, .2 and .3 (the media method bodies moved into `LibraryMediaController`, in .3.1 to .3.8), and .4.
 
 **AC #1.**
-- TASK-41757 (PR #3719) replaced the controller's 43 screen-method callbacks with four typed shell-service protocols on `LibraryMediaHost`. The controller now reaches its host only through that protocol and its 30 named accessors.
+- TASK-41757 (PR #3719, merged 2026-11-23 as `cf30a398f0`) replaced the controller's 43 screen-method callbacks with four typed shell-service protocols on `LibraryMediaHost`. The controller now reaches its host only through that protocol and its 30 named accessors.
 - TASK-36952.4 builds the controller on a stand-in host (a bare Textual `Screen`, not `LibraryScreen`) and drives one member of each protocol directly. Its test module never loads `library_screen`.
 - Production still constructs the controller with `LibraryScreen`. Owner ruling, 2026-11-22: "The controller still holds the screen object; that is accepted." Owner ruling, 2026-11-23, on how this task closes: "Add a direct test, then close".
 
