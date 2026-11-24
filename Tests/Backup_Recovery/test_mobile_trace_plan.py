@@ -13,8 +13,8 @@ def test_captured_trace_plan_preserves_native_artifact_graph(tmp_path, monkeypat
         assert callable(build), "captured reader needs the fixed T trace plan"
         plan = build()
         assert not plan.blockers
-        assert len(plan.field_ownership) == 34
-        assert sum(len(columns) for _, columns in plan.field_ownership) == 331
+        assert len(plan.field_ownership) == 35
+        assert sum(len(columns) for _, columns in plan.field_ownership) == 336
         originals = {
             r.original: dict(r.values)
             for r in plan.source_rows

@@ -1925,11 +1925,15 @@ async def test_a_refused_full_render_backs_off_after_successful_warm_up(
                 group="console-sync",
             )
             await until(
-                lambda: any(ok for _at, ok in fulls)
-                and not console._console_sync_in_progress
-                and not console._console_control_bar_sync_scheduled
-                and not console._console_control_bar_replay_whole_sync
-                and console._console_warm_refusals == 0,
+                lambda: (
+                    any(ok for _at, ok in fulls)
+                    and not console._console_sync_in_progress
+                    and not console._console_control_bar_sync_scheduled
+                    and not getattr(
+                        console, "_console_control_bar_replay_whole_sync", False
+                    )
+                    and console._console_warm_refusals == 0
+                ),
                 timeout=30,
             )
             armed.clear()

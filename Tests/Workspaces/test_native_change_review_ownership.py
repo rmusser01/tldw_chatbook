@@ -304,6 +304,9 @@ def test_original_opaque_claim_is_borrowed_and_bounded_claim_refuses(native_revi
         assert ticket.owner is owner and ticket.claim is None
         h.coordinator.cancel(reservation)
         assert h.coordinator.wait_idle(3)
+        # Logical idle precedes the actual final handoff's physical return.
+        handoff_ticket = reservation._completion.ticket
+        assert handoff_ticket is not None and handoff_ticket.retired.wait(3)
         assert owner.is_admitted
         with activity.prelaunch(footprint=WorktreeFootprint(opaque=True)) as contender:
             assert contender is None

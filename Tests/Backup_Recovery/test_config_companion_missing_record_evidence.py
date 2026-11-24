@@ -81,8 +81,9 @@ def _companion_record_calls(source):
     # Re-pinned 2026-11-23 (TASK-34100.16.1, ported onto dev b31e3e9241): only
     # RecoveryRequired's docstring changed (it names the path a subclass may
     # carry); _records is untouched.
+    # Bound to the integrated native binding and reviewed bounded mobile reads.
     assert hashlib.sha256(defining_source).hexdigest() == (
-        "41eaca635a5e887d305025be1aedb0c641fce4943cf085db748055cca3d46a73"
+        "9eba02e56c4eca3779cc8be4621f1437a476b8903dc206fbfc6006482da5c026"
     )
     assert bootstrap.__spec__.name == bootstrap.__name__
     assert Path(bootstrap.__spec__.origin).resolve() == defining_path
@@ -111,7 +112,9 @@ def _companion_record_calls(source):
         expected_code.co_exceptiontable,
         expected_code.co_stacksize,
     )
-    assert records.__defaults__ is None and records.__kwdefaults__ is None
+    assert records.__defaults__ is None
+    assert records.__kwdefaults__ == {"_budget": None, "_custody": None}
+    records_keywords = records.__kwdefaults__
     assert records.__closure__ is None
     assert records_globals is vars(bootstrap)
     guard = config_participants.companion_guard
@@ -147,7 +150,9 @@ def _companion_record_calls(source):
         sys.setprofile(previous)
         assert bootstrap._records is records and records.__code__ is records_code
         assert records.__globals__ is records_globals
-        assert records.__defaults__ is None and records.__kwdefaults__ is None
+        assert records.__defaults__ is None
+        assert records.__kwdefaults__ is records_keywords
+        assert records.__kwdefaults__ == {"_budget": None, "_custody": None}
         assert records.__closure__ is None
         assert defining_path.read_bytes() == defining_source
         assert (

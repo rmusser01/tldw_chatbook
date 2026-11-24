@@ -1,6 +1,7 @@
 """Recovery admission for installed agent runs and their native workers."""
 
 import inspect
+import sqlite3
 import sys
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
@@ -307,6 +308,17 @@ def _worker_databases(service):
     )
 
 
+def _worker_connection_open(connection):
+    """Observe the native SQLite handle, without a cache or override probe."""
+    if connection is None:
+        return False
+    try:
+        sqlite3.Connection.in_transaction.__get__(connection)
+    except sqlite3.ProgrammingError:
+        return False
+    return True
+
+
 def worker_guard(service=None):
     """Capture sources, then acquire independently inside the actual worker."""
     from .scratch_admission import capture_worker, worker_entry
@@ -319,20 +331,60 @@ def worker_guard(service=None):
         def call(*args, **kwargs):
             with worker_entry(handoff), _guard.worker_isolation():
                 with execution(service, sources=sources):
-                    existing = {
-                        db
+                    previous = {
+                        db: getattr(db._thread_local, "conn", None)
                         for db in _worker_databases(service)
-                        if getattr(db._thread_local, "conn", None) is not None
                     }
+                    borrowed = {
+                        db: connection
+                        for db, connection in previous.items()
+                        if _worker_connection_open(connection)
+                    }
+                    primary = None
                     try:
                         return function(*args, **kwargs)
+                    except BaseException as error:
+                        primary = error
+                        raise
                     finally:
-                        # These fresh native workers own their new thread-local
-                        # handles. Existing callers' handles stay caller-owned.
-                        # Failed close keeps the DB's actual native lease live.
+                        from tldw_chatbook.Backup_Recovery.participants import (
+                            core_cached_connection,
+                        )
+
+                        errors = []
                         for db in _worker_databases(service):
-                            if db not in existing:
+                            try:
+                                connection = getattr(db._thread_local, "conn", None)
+                                if connection is None or (
+                                    connection is borrowed.get(db)
+                                    and _worker_connection_open(connection)
+                                ):
+                                    continue
                                 db.close()
+                                if (
+                                    _worker_connection_open(connection)
+                                    or core_cached_connection(db, connection)
+                                    is not None
+                                ):
+                                    raise RuntimeError(
+                                        "native_worker_database_return_unproven"
+                                    )
+                            except BaseException as error:
+                                errors.append(error)
+                        if errors:
+                            if primary is not None:
+                                # Identity-based native callers must not mistake
+                                # a failed cleanup for the unchanged body error.
+                                raise BaseExceptionGroup(
+                                    "Native worker body and database cleanup failed",
+                                    [primary, *errors],
+                                ) from None
+                            elif len(errors) == 1:
+                                raise errors[0]
+                            else:
+                                raise BaseExceptionGroup(
+                                    "Native worker database cleanup failed", errors
+                                )
 
         return call
 

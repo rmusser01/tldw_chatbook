@@ -25,7 +25,7 @@ The near-expiry display test treats every declined render as an expiry defect, a
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no
-ADR path: backlog/decisions/360-isolated-self-hosted-ci-runners.md
+ADR path: backlog/decisions/367-isolated-self-hosted-ci-runners.md
 Reason: Test-only precondition repair within the existing checked-display and isolated-runner contracts.
 1. Preserve the exact live failure and observe the real renderer under deterministic coordinator overlap; distinguish reproduced interleaving from unobserved historical CI cause.
 2. Establish the coordinator-free synchronous render precondition with a 30-second timed acquisition matching the existing setup wait budget and preserve all original freshness/render/backoff assertions.

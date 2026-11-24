@@ -3574,3 +3574,63 @@ Epoch373 retained a cold-phone Send with no effect request. A passive natural pr
 Clarify R152/R166: a normal flag-free `console.changed` is a refresh hint, not projection loss. It requests a fresh snapshot without revoking or renewing the last confirmed exact target. It never marks an uncertain connection connected. A `reset` event, a changed event carrying `payload.reset_required === true`, disconnect, transport error or failed refresh still immediately invalidates confirmation, pauses mutation and withdraws answerability. Fresh admitted metadata is still required after invalidation. Native exact host/session/incarnation, run/turn/worker/round, all five send revisions, ticket/payload and receipt checks remain unchanged and authoritative. No offline or deferred mutation queue, automatic retry/replay, target substitution or new permission is introduced.
 
 Qualify one physical Send across a normal hint while its refresh metadata remains held; require exactly one original bound command before releasing that metadata. Retain both reset encodings, disconnection, replacement/unknown outcomes and native stale-target/revision refusal controls.
+
+
+### Native child-segment history in mobile88 consolidation (2026-11-23, before production code)
+
+Frozen native dev `b31e3e9241d7e384aa7312bb4d84d7bf1c1ec132` owns ChaChaNotes87 and `console_trace_child_segments`. The integrated mobile head is88, retaining the complete native87 catalog and appending only the existing mobile receipt SQL. The missing literal child-link disposition makes the current mobile planner refuse even an empty native table. A declaration alone cannot preserve the native ownership and insertion lifecycle.
+
+Treat the exact five-column link `(segment_id, owner_id, turn_id, run_id, created_at)` as T-owned normalized trace history, with identity `segment_id`. Both canonical88 and native87 source require its installed table; supported native81–86 have authenticated table absence only through the existing native captured-reader predicate. Keep the canonical `_TABLES` object in `DB/mobile_import_authority.py` and its compatibility exports identical. Unknown/mixed catalogs and historical unmerged mobile87 artifacts remain refused; no missing-table or column-normalization fallback is added.
+
+Map segment and owner through the existing trace domains, the spawning turn through the existing message/historical-locator rules, and the whole nonempty run string through the existing opaque `trace_group` domain. Reserve source and canonical group occupancy from links as well as calls: a child segment can have no calls. A trace group never becomes an AgentRuns execution reference through textual equality. Preserve source timestamps and graph/BLOB values, literal source-row fingerprints and receipt-bound mappings; do not synthesize live turns or original conversations when their native relationship cannot be proved.
+
+ADR-337/092's native child contract remains authoritative. A child segment is rootless, neither an owner root nor a fork parent, and belongs to the linked parent's owner and spawning turn. Its surface never inherits the parent's surface. Complete preflight must bind each guarded child row and per-call inverse input proof to that link and its actual owner/turn/group; lost, conflicting or unproved relationships refuse before effects. Preserve ordinary native reader omissions and uncertainty. Per-message root-lineage reconstruction alone does not qualify child history: use the native child/effective-owner readers as independent evidence.
+
+Owning import uses fixed literal SQL and the existing Chat transaction. Insert the empty child segment and attached owner before the link, the link before child surface/call/event rows, and any final owner detach after all guarded child rows and links. The existing proved-original-conversation rule governs temporarily attaching detached history; an unproved source remains an exact prewrite blocker. Retain native triggers, append-only/GC rules, legal call transitions and the actual linked-owner anchor. This is not permission to bypass a guard or convert children into fork edges.
+
+The existing row receipts/digests, exact row matches, owner batch transaction and receipt-first recovery cover every imported link. A committed Chat batch must be verified and skipped on resume rather than inserted again; canonical links and encrypted before-images remain intact. Imported Run/chain/wake/Goal and workspace holds, current execution/preparation policy and approval gates remain unchanged. No imported trace link creates a dispatch, owner claim, review grant or new hold/release kind.
+
+All added reads, occupancy unions, closure indexes, row projections, dependency edges and receipts are priced before materialization on the same original native allowance and its existing public coupling. Original source, native16MiB, ordinary completion64MiB, public aggregate4GiB, page/catalog/archive, SQLite30-second/5-million-step and physical-custody/uncertain-close controls remain unchanged. There is no new budget, reset, refund, cached verdict, reader role or authority service.
+
+Qualification requires exact native86 absence/native87 presence against canonical88, zero-call group collisions, link-loss closure, actual attached and detached owning transactions with native guards enabled, child/effective-owner reader equality, canonical preservation and row receipts, fresh-admission receipt-first resume, and original resource/authority controls. Necessary literal coverage counts may change by one table and five columns; this integration does not change any original runtime/resource limit. The pre-fix RED and every later result must identify the exact frozen source and physically retired process.
+
+
+### Native predecessor prompt-mixin catalogue boundary (2026-11-23)
+
+Native Chat schemas86 and87 contain the four prompt-mixin tables already
+preserved by canonical88's C handler. Their existence must not make an otherwise
+exact empty predecessor catalogue fail manifest equality. Retain the canonical
+C descriptors and ownership contract; enumerate those authenticated predecessor
+tables explicitly as unsupported-populated source dispositions. Schemas81–85
+retain their exact absence proof, and all catalogue, column, source-seal and
+final candidate checks remain mandatory.
+
+There is no typed legacy mix-in importer in this operation. Populated source
+preferences, attempts, attempt items or revisions therefore refuse before
+preparation or effects, using the existing bounded identity-only history probes
+before full-row fingerprinting and before captured-reader publication. Do not
+read body/selection fields, silently drop records, infer authority from a table
+name, or copy canonical preservation into a source-import grant. Canonical88
+mix-in history remains preserved under its existing C ownership. This uses the
+existing unsupported-history boundary; no schema, reader role, permission,
+accounting allowance or runtime limit changes.
+
+
+Completion-schema integration clarification (2026-11-23): native source87 and
+current mobile88 are distinct catalogue roles. Current terminal sizing, writer,
+codec and per-owner terminal validator must report and enforce88/11/33. Ordinary
+cutover retains the exact actual-database version comparison; an old87 label is
+not reinterpreted as evidence for88. Historical source87 catalogues and all raw
+receipts remain preserved. The new positive child-history journeys use the real
+public start/wait and ordinary cutover boundary under R130/R145; private16MiB
+component/refusal checks, every late charge, and the original genuine public
+4GiB/native16MiB pair remain unchanged.
+
+
+### First-root recovery refuses impossible descendant names (2026-11-23, before code)
+
+The original private recovery refusal in qualifications1210/1217 reaches terminal pricing before rejecting an extra publication file. The latter observation identifies the extra-file iteration and unchanged native16MiB exhaustion; it does not establish an accounting defect or a complete per-line cost census. Preserve R130/R145 public/private roles and every original charge.
+
+For the same live first-root recovery issuer, after authenticating the original captures, member/intent evidence and fresh publication parent/root custody, current installed metadata may refuse a name outside the exact publisher grammar. Derive only the publication root, checked structural prefix ancestors and authenticated member locations. Prepay the finite local set, path/string construction and current-name scan on the same issued read budget before allocation. No expected-name pruning of actual discovery is permitted.
+
+This is negative evidence only. A known name supplies no successful byte/inode proof, readiness, cached authority, reusable payment or permission. Valid names continue through every existing positive-path reservation, restored classification/scope digest, current-source/native-owner checks and later fresh AFiles whole/member byte and tree qualification. Existing uncertain-custody refusal and physical retirement remain authoritative. No budget reset/refund/increase, smaller coefficient, new owner role, public pair injection, deadline, buffer, worker or permission change is allowed. Qualify the unchanged original three-fault refusal and real public cold first-root recovery with all original preservation and native resource assertions.

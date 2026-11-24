@@ -423,13 +423,56 @@ async def exercise():
                 if inspect.iscode(code) and code.co_name == "call"
             )
 
+            from concurrent.futures.thread import _WorkItem
+
+            gateway_code = ConsoleProviderGateway._stream_generic_chat.__code__
+            provider_code = next(
+                code
+                for code in gateway_code.co_consts
+                if inspect.iscode(code)
+                and code.co_name == "worker"
+                and "consume_provider" in code.co_freevars
+            )
+            submission_code = next(
+                code
+                for code in gateway_code.co_consts
+                if inspect.iscode(code)
+                and code.co_name == "worker"
+                and "guarded_worker" in code.co_freevars
+            )
+            excluded_poll_returns = []
+
             def hold_original_worker_return(frame, event, argument):
                 if (
                     event == "return"
                     and frame.f_code is worker_code
                     and frame.f_locals.get("service") is service.db.automatic_work
-                    and not entered.is_set()
                 ):
+                    function = frame.f_locals["function"]
+                    if function.__code__ is not provider_code:
+                        if (
+                            threading.current_thread() is prepared.turn_lifeline._thread
+                            and entered.is_set()
+                            and not release.is_set()
+                        ):
+                            assert asyncio.current_task() is None
+                            excluded_poll_returns.append(function)
+                        return
+                    if entered.is_set():
+                        return
+                    caller = frame.f_back
+                    assert caller.f_code is submission_code
+                    assert caller.f_locals["planning"] is prepared
+                    assert caller.f_locals["guarded_worker"].__wrapped__ is function
+                    while (
+                        caller is not None
+                        and caller.f_code is not _WorkItem.run.__code__
+                    ):
+                        caller = caller.f_back
+                    assert caller is not None
+                    item = caller.f_locals["self"]
+                    assert type(item) is _WorkItem and item.future.running()
+                    print("F_EXACT_PROVIDER_WORKER_RETURN", mode, flush=True)
                     entered.set()
                     if mode == "worker-failure":
                         raise RuntimeError("original provider worker return failed")
@@ -672,6 +715,14 @@ async def exercise():
             try:
                 await asyncio.wait_for(asyncio.shield(driver), timeout=5)
             except TimeoutError:
+                print(
+                    "F_HELD_PROVIDER_TIMER_RETURNS",
+                    len(excluded_poll_returns),
+                    flush=True,
+                )
+                assert excluded_poll_returns, (
+                    "real watchdog was not excluded while provider return stayed held"
+                )
                 assert prepared.primary_owner.is_admitted
                 assert not prepared._planning_terminal_returned
                 assert disposal is None or not disposal.done(), (

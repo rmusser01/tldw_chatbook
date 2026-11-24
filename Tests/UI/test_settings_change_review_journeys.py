@@ -98,8 +98,24 @@ async def test_a_selected_git_filter_names_its_cause_and_remedy(
 async def test_change_review_keyboard_conflict_preparation_and_retry(
     request, tmp_path, monkeypatch, theme, size
 ):
-    from tldw_chatbook.Workspaces import change_turn_tracker
+    from tldw_chatbook.Workspaces import change_review_consent
 
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+    native_initialize = change_review_consent._default_root_initializer
+
+    def initialize(path, *, shadow_service=None):
+        calls.append(path)
+        entered.set()
+        if not release.wait(20):
+            raise RuntimeError("test never released initializer")
+        if len(calls) == 1:
+            raise RuntimeError("preparation failed at /private/synthetic-root")
+        return native_initialize(path, shadow_service=shadow_service)
+
+    # Bind the held callback before the runtime captures its original source.
+    monkeypatch.setattr(change_review_consent, "_default_root_initializer", initialize)
     app = _build_test_app()
     registry = app.workspace_registry_service
     registry.create_workspace(workspace_id="ws-review", name="Review workspace")
@@ -107,21 +123,6 @@ async def test_change_review_keyboard_conflict_preparation_and_retry(
     root.mkdir()
     registry.add_folder_binding("ws-review", root)
     service = app.change_review_consent_service
-    entered = threading.Event()
-    release = threading.Event()
-    calls = []
-
-    def initialize(path, **_shadow):
-        calls.append(path)
-        entered.set()
-        if not release.wait(20):
-            raise RuntimeError("test never released initializer")
-        if len(calls) == 1:
-            raise RuntimeError("preparation failed at /private/synthetic-root")
-
-    # The native issuer captured service._initialize_root at wiring, so patching
-    # that now reads as a changed source; hold the shadow step it calls instead.
-    monkeypatch.setattr(change_turn_tracker, "initialize_shadow_root", initialize)
     host = _StyledDestinationHarness(app, "settings")
     host.theme = theme
     try:

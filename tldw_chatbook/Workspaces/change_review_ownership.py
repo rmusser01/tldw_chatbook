@@ -8,8 +8,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Event, Lock
 
-from loguru import logger
-
 from tldw_chatbook.Agents.activation import execution
 from tldw_chatbook.Agents.execution_capacity import (
     CapacityRefused,
@@ -247,13 +245,22 @@ class _SnapshotTicket:
         self._lock = Lock()
         self.retired = Event()
         self._worker_returned = self._handoff_returned = self._retired = False
+        self._retiring = False
+        self._return_primary = self._return_error = None
         self._failed_write = False
         self._workflow_completion = None
         self._observation_returned = False
 
     @contextmanager
-    def activate(self):
-        with self.source.activate(self.owner):
+    def activate(self, *, _pre_storage_refusal=None):
+        activation = (
+            self.source.activate(
+                self.owner, ticket=self, _pre_storage_refusal=_pre_storage_refusal
+            )
+            if type(self.source) is _InitializationSource
+            else self.source.activate(self.owner)
+        )
+        with activation:
             token = _current_ticket.set(self)
             try:
                 yield
@@ -270,37 +277,41 @@ class _SnapshotTicket:
             self._failed_write |= not durable
             if (
                 self._retired
+                or self._retiring
                 or (
                     self._failed_write
-                    and not (
-                        self._observation_returned
-                        and getattr(self.source, "workflow_wave", None) is not None
+                    and (
+                        (
+                            getattr(self.source, "workflow_wave", None) is None
+                            and self.claim is not None
+                        )
+                        or (
+                            getattr(self.source, "workflow_wave", None) is not None
+                            and not self._observation_returned
+                        )
                     )
                 )
                 or not (self._worker_returned and self._handoff_returned)
             ):
                 return
+            self._retiring = True
+        try:
+            # Work scopes have returned; capacity retirement opens no new source.
+            with self.owner.activate():
+                self.operation.finish()
+            if self.claim is not None:
+                self.owner.finish_root()
+                if self._failed_write and self.source.workflow_wave is not None:
+                    self.source.issuer.activity._release_workflow_observation(self)
+                else:
+                    self.claim.settle(durable=not self._failed_write)
+        except BaseException:
+            with self._lock:
+                self._retiring = False
+            raise
+        with self._lock:
+            self._retiring = False
             self._retired = True
-        with ExitStack() as stack:
-            try:
-                stack.enter_context(self.activate())
-            except Exception as error:  # noqa: BLE001 -- a refused scope must not keep the slot
-                # A replaced source refuses its storage scope; the original
-                # owner still returns its slot (TASK-41957).
-                logger.debug(
-                    "Change Review ticket returned outside its refused source scope: {}",
-                    type(error).__name__,
-                )
-                stack.enter_context(self.owner.activate())
-            self.operation.finish()
-        if self.claim is not None:
-            # Source/storage exits and availability callbacks inside finish
-            # must physically return before the finite claim can retire.
-            self.owner.finish_root()
-            if self._failed_write and self.source.workflow_wave is not None:
-                self.source.issuer.activity._release_workflow_observation(self)
-            else:
-                self.claim.settle(durable=not self._failed_write)
         self.retired.set()
         if self._workflow_completion is not None:
             public, kind = self._workflow_completion
@@ -343,10 +354,15 @@ class _InitializationSource:
         return canonical
 
     @contextmanager
-    def storage_scope(self):
+    def storage_scope(self, *, ticket=None, _pre_storage_refusal=None):
         from tldw_chatbook.Backup_Recovery.activation import execution_scope
 
-        self.check()
+        try:
+            self.check()
+        except BaseException as error:
+            if _pre_storage_refusal is not None:
+                _pre_storage_refusal[0] = error
+            raise
         with ExitStack() as stack:
             for owner, path in (
                 ("config", self.selector),
@@ -355,9 +371,73 @@ class _InitializationSource:
             ):
                 if not stack.enter_context(execution_scope((owner,), path)):
                     raise ValueError("native initialization storage unavailable")
-            stack.enter_context(operation_owned_connection(self.issuer.database))
+            stack.enter_context(
+                operation_owned_connection(self.issuer.database)
+                if ticket is None
+                else self._database_scope(ticket)
+            )
             self.check()
             yield
+
+    @contextmanager
+    def _database_scope(self, ticket):
+        from tldw_chatbook.Agents.activation import _worker_connection_open
+        from tldw_chatbook.Backup_Recovery.participants import core_cached_connection
+
+        if type(ticket) is not _SnapshotTicket or ticket.source is not self:
+            raise ValueError("original initialization ticket required")
+        database = self.issuer.database
+        previous = core_cached_connection(
+            database, getattr(database._thread_local, "conn", None)
+        )
+        connection = primary = None
+        errors = []
+        try:
+            with operation_owned_connection(database):
+                try:
+                    yield
+                except BaseException as error:
+                    primary = error
+                finally:
+                    connection = getattr(database._thread_local, "conn", None)
+        except BaseException as error:
+            errors.append(error)
+        if connection is not None and not (
+            connection is previous and _worker_connection_open(connection)
+        ):
+            try:
+                if (
+                    _worker_connection_open(connection)
+                    or core_cached_connection(database, connection) is not None
+                ):
+                    raise RuntimeError("native_initialization_database_return_unproven")
+            except BaseException as error:
+                errors.append(error)
+        if errors:
+            original = (
+                ticket._return_primary
+                if ticket._return_primary is not None
+                else primary
+            )
+            ticket._return_error = (
+                BaseExceptionGroup(
+                    "Initialization body and database cleanup failed",
+                    [original, *errors],
+                )
+                if original is not None
+                else errors[0]
+                if len(errors) == 1
+                else BaseExceptionGroup(
+                    "Initialization database cleanup failed", errors
+                )
+            )
+            # Hold before the enclosing storage leases may unwind.
+            ticket.operation.retain_unproven(
+                "Change Review initialization database"
+            ).hold()
+            raise ticket._return_error
+        if primary is not None:
+            raise primary
 
     def admit(self):
         with self.storage_scope():
@@ -394,8 +474,15 @@ class _InitializationSource:
                 return _SnapshotTicket(self, owner, operation, claim)
 
     @contextmanager
-    def activate(self, owner):
-        with self.storage_scope(), owner.activate():
+    def activate(self, owner, *, ticket, _pre_storage_refusal=None):
+        if ticket.source is not self or ticket.owner is not owner:
+            raise ValueError("original initialization ticket required")
+        with (
+            self.storage_scope(
+                ticket=ticket, _pre_storage_refusal=_pre_storage_refusal
+            ),
+            owner.activate(),
+        ):
             token = _current_snapshot.set(self)
             try:
                 yield

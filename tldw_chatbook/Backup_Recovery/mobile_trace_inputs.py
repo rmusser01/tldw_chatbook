@@ -104,7 +104,7 @@ def _check_trace_members(reads):
 
 
 def _read_trace_inputs(reads, *, _read_budget=None):
-    from .mobile_captured_sqlite import _CapturedSQLite
+    from .mobile_captured_sqlite import _CapturedSQLite, _legacy_absent
 
     if type(reads) is not _CapturedSQLite:
         raise ValueError("mobile_trace_native_snapshot_required")
@@ -125,6 +125,7 @@ def _read_trace_inputs(reads, *, _read_budget=None):
         catalog.get((purpose, table)) != spec.columns
         for purpose in ("legacy", "canonical")
         for table, spec in specs.items()
+        if not _legacy_absent(reads, purpose, "chat", table)
     ):
         raise ValueError("mobile_trace_schema_mismatch")
     budget = _TraceReadBudget() if _read_budget is None else _read_budget
@@ -137,6 +138,8 @@ def _read_trace_inputs(reads, *, _read_budget=None):
         connection = reads._connections[(purpose, "chat")][0]
         rows = []
         for table, spec in specs.items():
+            if _legacy_absent(reads, purpose, "chat", table):
+                continue
             # This fixed operation already verified the complete installed
             # catalog and all six members. No caller can choose an identifier.
             cursor = connection.execute('SELECT * FROM "' + table + '"')

@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from tldw_chatbook.DB.mobile_import_authority import (
     _TABLES,
@@ -43,19 +43,37 @@ class _PlanManifest:
             raise ValueError("mobile_plan_required_handlers_pending")
 
 
+def _legacy_mixin_catalog(reads, family, table):
+    """Select fixed metadata only; the active reader already proved the native catalog."""
+    from .mobile_captured_sqlite import _CapturedSQLite, _LEGACY_MIXIN_TABLES
+
+    if reads is None or family != "chat" or table not in _LEGACY_MIXIN_TABLES:
+        return False
+    if type(reads) is not _CapturedSQLite:
+        raise ValueError("mobile_plan_native_snapshot_required")
+    reads.check()
+    return any(("legacy", "chat", version) in reads.versions for version in (86, 87))
+
+
 def _disposition(family, table, columns, canonical, *, reads=None):
     matches = [
         row
         for row in _TABLES
         if row.family == family
         and row.table == table
-        and (canonical or not row.canonical_only)
+        and (
+            canonical
+            or not row.canonical_only
+            or _legacy_mixin_catalog(reads, family, row.table)
+        )
     ]
     if len(matches) != 1:
         raise ValueError(
             "mobile_plan_table_disposition_missing:" + family + ":" + table
         )
     spec = matches[0]
+    if not canonical and spec.canonical_only:
+        spec = replace(spec, handler="unsupported-populated")
     if reads is None:
         matches = columns == spec.columns
     else:
@@ -91,7 +109,11 @@ def _plan_manifest(reads):
             row.table
             for row in _TABLES
             if row.family == family
-            and (canonical or not row.canonical_only)
+            and (
+                canonical
+                or not row.canonical_only
+                or _legacy_mixin_catalog(reads, family, row.table)
+            )
             and not _runs24_receipts_absent(reads, purpose, family, row.table)
         }
         if expected != tables:

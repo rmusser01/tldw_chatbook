@@ -1822,6 +1822,7 @@ def _install_child_stop(self, child_id, status, parent_id, should_cancel):
         parent_id,
         current=lambda: not should_cancel(),
         _execution=scope,
+        _wait_native_admission=True,
     )
 
 

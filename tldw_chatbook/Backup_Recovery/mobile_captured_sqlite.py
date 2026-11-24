@@ -949,6 +949,11 @@ def _legacy_absent(reads, purpose, family, table):
     if type(reads) is not _CapturedSQLite:
         raise ValueError("mobile_plan_native_snapshot_required")
     versions = {
+        ("chat", "console_trace_child_segments"): (81, 82, 83, 84, 85, 86),
+        ("chat", "console_prompt_mixin_attempt_items"): (81, 82, 83, 84, 85),
+        ("chat", "console_prompt_mixin_attempts"): (81, 82, 83, 84, 85),
+        ("chat", "console_prompt_mixin_preferences"): (81, 82, 83, 84, 85),
+        ("chat", "console_prompt_mixin_revisions"): (81, 82, 83, 84, 85),
         ("chat", "character_portrait_performances"): (81, 82),
         ("chat", "character_portrait_performance_frames"): (81, 82),
         ("chat", "character_portrait_regions"): (81, 82, 83),
@@ -1138,7 +1143,39 @@ def _check_plan_candidates(reads):
     reads.check()
 
 
+_LEGACY_MIXIN_TABLES = (
+    "console_prompt_mixin_attempt_items",
+    "console_prompt_mixin_attempts",
+    "console_prompt_mixin_preferences",
+    "console_prompt_mixin_revisions",
+)
+
+
 _SOURCE_HISTORY_PROBES = (
+    (
+        "chat",
+        "console_prompt_mixin_attempt_items",
+        "SELECT substr(conversation_id,1,128), substr(attempt_id,1,128), ordinal FROM console_prompt_mixin_attempt_items LIMIT 1",
+        "mobile_source_mixin_history_unsupported",
+    ),
+    (
+        "chat",
+        "console_prompt_mixin_attempts",
+        "SELECT substr(conversation_id,1,128), substr(attempt_id,1,128) FROM console_prompt_mixin_attempts LIMIT 1",
+        "mobile_source_mixin_history_unsupported",
+    ),
+    (
+        "chat",
+        "console_prompt_mixin_preferences",
+        "SELECT substr(conversation_id,1,128) FROM console_prompt_mixin_preferences LIMIT 1",
+        "mobile_source_mixin_history_unsupported",
+    ),
+    (
+        "chat",
+        "console_prompt_mixin_revisions",
+        "SELECT substr(conversation_id,1,128), substr(snapshot_id,1,128) FROM console_prompt_mixin_revisions LIMIT 1",
+        "mobile_source_mixin_history_unsupported",
+    ),
     (
         "chat",
         "character_portrait_performances",
@@ -1173,7 +1210,7 @@ _SOURCE_HISTORY_PROBES = (
 
 
 def _refuse_unmapped_source_history(reads):
-    """Identity-only bounded probes; portrait blobs and review bodies stay unread."""
+    """Identity-only probes leave mix-in bodies, portrait blobs and review bodies unread."""
     for family, table, sql, reason in _SOURCE_HISTORY_PROBES:
         key = ("legacy", family)
         if key not in reads._connections or _legacy_absent(

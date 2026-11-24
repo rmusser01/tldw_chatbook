@@ -25,7 +25,7 @@ The new bundled-CSS carrier fixture assumes its creation receives a later filesy
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no
-ADR path: backlog/decisions/360-isolated-self-hosted-ci-runners.md
+ADR path: backlog/decisions/367-isolated-self-hosted-ci-runners.md
 Reason: Test fixture timestamp precondition for existing CSS staleness policy, no production contract change.
 1. Retain eleventh-run UI24 failure and reproduce the equal timestamp with actual files.
 2. Reuse the existing timestamp helper after writing the new carrier, leaving production and assertions unchanged.

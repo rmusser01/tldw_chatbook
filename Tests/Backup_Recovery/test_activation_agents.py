@@ -823,3 +823,136 @@ print('retired and reopened')
 
 def test_explicit_writer_source_observation_has_no_pre_admission_callbacks(tmp_path):
     _run(tmp_path, "passive_source", "ordinary", script=_PASSIVE_WRITER_SOURCE)
+
+
+_NATIVE_GUARD_RETIREMENT = (
+    _SCRIPT.split("effects=[]")[0].replace(
+        "data = config.get_user_data_dir()\n",
+        "from tldw_chatbook.Tools import workspace_file_roots\n"
+        "registry = workspace_file_roots._registry_factory()\n"
+        "registry.db.close()\n"
+        "data = config.get_user_data_dir()\n",
+        1,
+    )
+    + r"""
+import asyncio, threading, sqlite3
+from tldw_chatbook.Agents.activation import execution, worker_guard
+from tldw_chatbook.DB.private_sqlite import _ordinary_connections
+service = AgentService(db, ToolCatalogRegistry(), chat_call=lambda **kwargs: None)
+with execution(service):
+    databases = (db, registry.db)
+    main_connections = [database._held_connection() for database in databases]
+    primary = asyncio.CancelledError('original worker cancellation') if route in {'body-cancel', 'cancel-only'} else RuntimeError('original worker body failure')
+    observations, errors = [], []
+
+    def opened(connection):
+        try: sqlite3.Connection.in_transaction.__get__(connection)
+        except sqlite3.ProgrammingError: return False
+        return True
+
+    def worker():
+        before, acquired, leases, bindings = [], [], [], []
+        with execution(service):
+            try:
+                if route in {'borrowed', 'stale', 'replacement'}:
+                    before = [database._held_connection() for database in databases]
+                    if route == 'stale':
+                        for connection in before:
+                            connection.close()  # Native close leaves only a closed TLS cache.
+                def body():
+                    if route == 'replacement':
+                        for database in databases:
+                            database.close()
+                    db.list_agent_definitions()
+                    registry.get_active_workspace()
+                    acquired[:] = [database._thread_local.conn for database in databases]
+                    leases[:] = [_ordinary_connections[connection] for connection in acquired]
+                    fault = 0 if route == 'all-closers' else 1
+                    if route in {'all-closers', 'body-error', 'body-cancel'}:
+                        connection = acquired[fault]
+                        bindings.append((connection, 'close' in vars(connection), vars(connection).get('close')))
+                        def refuse_close():
+                            observations.append('actual-native-close-refused')
+                            raise RuntimeError('original native close refused')
+                        connection.close = refuse_close
+                    if route in {'body-error', 'body-cancel', 'cancel-only'}:
+                        raise primary
+                    return 'actual metadata read'
+                caught = None
+                try:
+                    result = worker_guard(service)(body)()
+                except BaseException as error:
+                    caught = error
+                if route in {'all-closers', 'body-error', 'body-cancel'}:
+                    assert 'actual-native-close-refused' in observations
+                    fault = 0 if route == 'all-closers' else 1
+                    assert opened(acquired[fault])
+                    assert _ordinary_connections.get(acquired[fault]) is leases[fault]
+                    assert databases[fault]._connection_quiescence.is_registered(acquired[fault])
+                    print('F_GENUINE_NATIVE_WORKER_CLOSE_REFUSAL_' + route, flush=True)
+                if route in {'body-error', 'body-cancel'}:
+                    assert isinstance(caught, BaseExceptionGroup) and caught is not primary
+                    assert caught.exceptions[0] is primary
+                    assert len(caught.exceptions) == 2
+                    assert opened(acquired[1]) and not opened(acquired[0])
+                    assert _ordinary_connections.get(acquired[1]) is leases[1]
+                    assert registry.db._connection_quiescence.is_registered(acquired[1])
+                elif route == 'cancel-only':
+                    assert caught is primary
+                    assert all(not opened(connection) for connection in acquired)
+                elif route == 'all-closers':
+                    assert isinstance(caught, RuntimeError)
+                    assert str(caught) == 'native_worker_database_return_unproven'
+                    assert opened(acquired[0]) and not opened(acquired[1]), 'one refused closer suppressed another owned close'
+                    assert _ordinary_connections.get(acquired[0]) is leases[0]
+                else:
+                    assert caught is None and result == 'actual metadata read'
+                    if route == 'borrowed':
+                        assert all(a is b and opened(a) for a, b in zip(acquired, before))
+                    else:
+                        assert all(not opened(connection) for connection in acquired)
+                        assert all(a is not b for a, b in zip(acquired, before))
+                observations.append('native-guard-' + route)
+            finally:
+                for connection, present, binding in bindings:
+                    if present: connection.close = binding
+                    else: del connection.close
+                    assert ('close' in vars(connection)) is present
+                    assert not present or vars(connection)['close'] is binding
+                # Only the same-thread original native closer retires failed handles.
+                for database in databases:
+                    database.close()
+                assert all(not opened(connection) for connection in acquired + before)
+                assert all(connection not in _ordinary_connections for connection in acquired + before)
+                assert all(not database._connection_quiescence.is_registered(connection) for database, connection in zip(databases, acquired))
+
+    def run_worker():
+        try: worker()
+        except BaseException as error: errors.append(error)
+    thread = threading.Thread(target=run_worker, name='native-worker-retirement')
+    thread.start(); thread.join(20)
+    assert not thread.is_alive() and not errors, [type(error).__name__ for error in errors]
+    assert 'native-guard-' + route in observations
+    assert all(opened(connection) for connection in main_connections), 'worker closed caller-owned handles on another thread'
+    for database in databases: database.close()
+    assert all(not opened(connection) for connection in main_connections)
+    assert not blocked_attempts()
+    print('retired and reopened')
+"""
+)
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "borrowed",
+        "stale",
+        "replacement",
+        "all-closers",
+        "body-error",
+        "body-cancel",
+        "cancel-only",
+    ],
+)
+def test_agent_worker_guard_retires_exact_native_handles(tmp_path, mode):
+    _run(tmp_path, mode, "ordinary", script=_NATIVE_GUARD_RETIREMENT)

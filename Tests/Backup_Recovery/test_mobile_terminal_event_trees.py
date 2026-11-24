@@ -188,6 +188,19 @@ def test_each_actual_dump_has_independent_full_tree_reservation(
     assert pricing._preprice_terminal(captured, **kwargs) is None
     assert seen["mobile_dumps"] == 1
     first, second = seen["event_dumps"]
+    assert tuple(
+        target["schema_version"] for target in first["evidence"]["targets"]
+    ) == (88, 11, 33)
+    for stale_version in (87, 89):
+        stale = {
+            **first["evidence"],
+            "targets": [
+                {**target, "schema_version": stale_version} if index == 0 else target
+                for index, target in enumerate(first["evidence"]["targets"])
+            ],
+        }
+        with pytest.raises(ValueError):
+            _MobileCommitted.model_validate(stale)
     assert first == second and first is not second
     assert first["evidence"] is not second["evidence"]
     raw, decoded = seen["roundtrips"][0]

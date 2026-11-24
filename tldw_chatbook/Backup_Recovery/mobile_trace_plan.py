@@ -38,6 +38,12 @@ _REFERENCES = {
         "parent_segment_id": "trace_segment",
         "inherited_surface_head_id": "trace_node",
     },
+    "console_trace_child_segments": {
+        "segment_id": "trace_segment",
+        "owner_id": "trace_owner",
+        "turn_id": "message",
+        "run_id": "trace_group",
+    },
     "console_trace_owners": {
         "owner_id": "trace_owner",
         "conversation_id": "conversation",
@@ -280,6 +286,40 @@ class _TraceBuilder:
             values["adapter_defaults_json"] = self.header_metadata(
                 row["adapter_defaults_json"]
             )
+        elif table == "console_trace_child_segments":
+            segment = next(
+                (
+                    r
+                    for r in self.source["console_trace_segments"]
+                    if r["segment_id"] == row["segment_id"]
+                ),
+                None,
+            )
+            if (
+                segment is None
+                or segment["parent_segment_id"] is not None
+                or not any(
+                    r["owner_id"] == row["owner_id"]
+                    for r in self.source["console_trace_owners"]
+                )
+                or any(
+                    r["root_segment_id"] == row["segment_id"]
+                    for r in self.source["console_trace_owners"]
+                )
+                or any(
+                    r["parent_segment_id"] == row["segment_id"]
+                    for r in self.source["console_trace_segments"]
+                )
+                or any(
+                    call["segment_id"] == row["segment_id"]
+                    and any(
+                        call[column] != row[column]
+                        for column in ("owner_id", "turn_id", "run_id")
+                    )
+                    for call in self.source["console_trace_calls"]
+                )
+            ):
+                raise ValueError("native_child_segment_shape_invalid")
         elif table == "console_trace_calls":
             TraceCallState(row["state"])
             if any(
@@ -420,6 +460,7 @@ class _TraceBuilder:
                         in {
                             "native_artifact_bytes_invalid",
                             "native_call_idempotency_conflict",
+                            "native_child_segment_shape_invalid",
                             "native_header_metadata_invalid",
                             "native_header_composition_invalid",
                             "native_retention_kind_invalid",
@@ -537,6 +578,8 @@ class _TraceInputClosure:
         self.pending = []
         self.policy = call["policy_id"]
         self.add("console_trace_calls", call)
+        self.budget.container(2)
+        self.owned("console_trace_child_segments", "segment_id", call["segment_id"])
         self.surface(call["segment_id"], call["surface_node_id"], set())
         while self.pending:
             _check_trace_resources(self.builder.reads)

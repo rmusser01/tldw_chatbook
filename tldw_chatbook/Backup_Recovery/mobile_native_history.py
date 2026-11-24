@@ -501,6 +501,27 @@ def _original_history_inventory(
                 raise ValueError("mobile_history_object_changed")
     finally:
         custody.retire()
+    # An impossible name is already negative evidence from current discovery.
+    # Known names still require every later fresh AFiles byte/tree check.
+    budget.reserve(1024 + 32 * (len(intent["location"]) + len(intent["publication"])))
+    prefix = location.relative_to(publication).as_posix()
+    parts = PurePosixPath(prefix).parts
+    budget.container(len(members) * 8 + len(parts) * 8 + 16)
+    expected_names = {""}
+    for index in range(1, len(parts) + 1):
+        budget.reserve(256 + 16 * len(prefix))
+        expected_names.add("/".join(parts[:index]))
+    for member in members:
+        budget.reserve(256 + 16 * (len(prefix) + 1 + len(member.location)))
+        expected_names.add(prefix + "/" + member.location)
+    budget.container(len(current.items))
+    for item in current.items:
+        metadata = item.metadata
+        if metadata is None or metadata.root_id != root.logical_id:
+            continue
+        budget.reserve(256 + 16 * len(metadata.relative_path))
+        if metadata.relative_path not in expected_names:
+            raise ValueError("scope_changed")
     budget.container(len(current.items) * 16)
     for item in current.items:
         budget.value(item, text_copies=4)

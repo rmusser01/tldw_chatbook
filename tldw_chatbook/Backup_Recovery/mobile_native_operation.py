@@ -192,7 +192,7 @@ def _native_preopen(captured, cancel, *, _pricing_inputs=None):
 
 
 def _native_trace_refusals(plan, budget):
-    """Refuse the two native lifecycles that cannot carry portable authority."""
+    """Retain source child custody and refuse unproved native owner lifecycles."""
     source = plan.integrated.sync.trace.inputs.source.rows
     budget.container(len(source) * 4)
     by_table = {}
@@ -200,6 +200,7 @@ def _native_trace_refusals(plan, budget):
         if row.table in {
             "console_trace_owners",
             "console_trace_segments",
+            "console_trace_child_segments",
             "console_trace_calls",
             "console_trace_surface_nodes",
             "console_trace_surface_replacements",
@@ -211,16 +212,193 @@ def _native_trace_refusals(plan, budget):
             by_table.setdefault(row.table, []).append(dict(row.values))
     owners = by_table.get("console_trace_owners", ())
     segments = by_table.get("console_trace_segments", ())
-    budget.container(len(owners) * 3 + len(segments) * 2)
+    links = by_table.get("console_trace_child_segments", ())
+    budget.container(len(owners) * 5 + len(segments) * 2 + len(links) * 4 + 8)
     root_owners = {row["root_segment_id"]: row for row in owners}
+    owners_by_id = {row["owner_id"]: row for row in owners}
     parents = {row["segment_id"]: row["parent_segment_id"] for row in segments}
+    children = {row["segment_id"]: row for row in links}
     blocked, populated = [], set()
+    budget.container(len(links) * 2)
+    projected = {}
+    for row in plan.rows:
+        if row.table == "console_trace_child_segments":
+            budget.container(len(row.values) * 2 + 2)
+            if row.original in projected:
+                blocked.append(
+                    _ContentBlocker(
+                        row.table, row.original, "native_child_segment_input_unproved"
+                    )
+                )
+            projected[row.original] = dict(row.values)
+    # Every original link is an owned input, even with no calls or surface head.
+    for link in links:
+        budget.container(len(link) * 2 + 6)
+        expected = dict(link)
+        for column, domain in (
+            ("segment_id", "trace_segment"),
+            ("owner_id", "trace_owner"),
+            ("turn_id", "message"),
+            ("run_id", "trace_group"),
+        ):
+            try:
+                expected[column] = plan.identities.mapped(domain, link[column])
+            except ValueError:
+                blocked.append(
+                    _ContentBlocker(
+                        "console_trace_child_segments",
+                        (link["segment_id"],),
+                        "native_child_segment_dependency_unproved",
+                        domain,
+                        link[column],
+                    )
+                )
+                break
+        else:
+            current = projected.get((link["segment_id"],))
+            if (
+                current is None
+                or len(current) != len(expected)
+                or any(column not in current for column in expected)
+                or any(
+                    type(current[column]) is not type(value) or current[column] != value
+                    for column, value in expected.items()
+                )
+            ):
+                blocked.append(
+                    _ContentBlocker(
+                        "console_trace_child_segments",
+                        (link["segment_id"],),
+                        "native_child_segment_input_unproved",
+                    )
+                )
+
+    if links:
+        # The child reader has its own selection and tie keys; root-lineage message
+        # reconstruction intentionally does not qualify this independent native view.
+        budget.container(6)
+        mapped_owners, mapped_calls = {}, {}
+        for row in plan.rows:
+            if row.table in {"console_trace_owners", "console_trace_calls"}:
+                budget.container(2 * len(row.values) + 4)
+                target = (
+                    mapped_owners
+                    if row.table == "console_trace_owners"
+                    else mapped_calls
+                )
+                target[row.original] = dict(row.values)
+        for owner in owners:
+            if owner["attached"] != 1 or owner["conversation_id"] is None:
+                continue
+            budget.reserve(256)
+            mapped_owner = mapped_owners.get((owner["owner_id"],))
+            source_count = sum(link["owner_id"] == owner["owner_id"] for link in links)
+            mapped_count = sum(
+                mapped_owner is not None
+                and mapped_owner["attached"] == 1
+                and mapped_owner["conversation_id"] is not None
+                and row["owner_id"] == mapped_owner["owner_id"]
+                for row in projected.values()
+            )
+            budget.container(4 * (source_count + mapped_count) + 4)
+            source_segments = {
+                link["segment_id"]
+                for link in links
+                if link["owner_id"] == owner["owner_id"]
+            }
+            mapped_segments = {
+                row["segment_id"]
+                for row in projected.values()
+                if mapped_owner is not None
+                and mapped_owner["attached"] == 1
+                and mapped_owner["conversation_id"] is not None
+                and row["owner_id"] == mapped_owner["owner_id"]
+            }
+            source_count = sum(
+                row["segment_id"] in source_segments
+                for row in by_table.get("console_trace_calls", ())
+            )
+            mapped_count = sum(
+                row["segment_id"] in mapped_segments for row in mapped_calls.values()
+            )
+            # Count borrowed rows first; lists, tie-key tuples and sort workspace are
+            # prepaid for this owner's actual selected cohort, not every other call.
+            budget.container(10 * (source_count + mapped_count) + 8)
+            original_calls = [
+                row
+                for row in by_table.get("console_trace_calls", ())
+                if row["segment_id"] in source_segments
+            ]
+            selected = [
+                (identity, row)
+                for identity, row in mapped_calls.items()
+                if row["segment_id"] in mapped_segments
+            ]
+            reason = "native_child_call_order_changed"
+            try:
+                original_order = sorted(
+                    original_calls,
+                    key=lambda row: (
+                        row["created_at"],
+                        row["call_sequence"],
+                        row["call_id"],
+                    ),
+                )
+                selected.sort(
+                    key=lambda pair: (
+                        pair[1]["created_at"],
+                        pair[1]["call_sequence"],
+                        pair[1]["call_id"],
+                    )
+                )
+                if [row["call_id"] for row in original_order] == [
+                    identity[0] for identity, _ in selected
+                ]:
+                    continue
+            except (KeyError, TypeError):
+                reason = "native_child_call_order_unproved"
+            budget.container(8 * len(original_calls) + 6)
+            if not original_calls:
+                blocked.append(
+                    _ContentBlocker(
+                        "console_trace_owners",
+                        (owner["owner_id"],),
+                        reason,
+                    )
+                )
+            for call in original_calls:
+                blocked.append(
+                    _ContentBlocker(
+                        "console_trace_calls",
+                        (call["call_id"],),
+                        reason,
+                    )
+                )
+
+    def effective_owner(segment):
+        budget.reserve(128)
+        for _ in range(len(parents) + 1):
+            if segment is None:
+                return None
+            link = children.get(segment)
+            if link is not None:
+                owner = owners_by_id.get(link["owner_id"])
+                if owner is None:
+                    return None
+                segment = owner["root_segment_id"]
+            owner = root_owners.get(segment)
+            if owner is not None:
+                return owner
+            segment = parents.get(segment)
+        return None
+
     for table in (
         "console_trace_calls",
         "console_trace_surface_nodes",
         "console_trace_surface_replacements",
         "console_trace_events",
         "console_trace_segments",
+        "console_trace_child_segments",
     ):
         for row in by_table.get(table, ()):
             if (
@@ -240,40 +418,56 @@ def _native_trace_refusals(plan, budget):
                 if table == "console_trace_segments"
                 else row["segment_id"]
             )
-            budget.container(len(parents))
-            seen = set()
-            while segment is not None and segment not in seen:
-                seen.add(segment)
-                owner = root_owners.get(segment)
-                if owner is not None:
-                    if owner["attached"] == 0:
-                        budget.container(1)
-                        populated.add(owner["owner_id"])
-                    break
-                segment = parents.get(segment)
-    # A retained original conversation requires a native relationship witness.
-    # Coincidental canonical IDs or any caller-selected replacement are no proof.
+            owner = effective_owner(segment)
+            if table != "console_trace_segments" and (
+                owner is None
+                or table == "console_trace_calls"
+                and owner["owner_id"] != row["owner_id"]
+            ):
+                budget.container(6)
+                identity_column = (
+                    "call_id"
+                    if table == "console_trace_calls"
+                    else "node_id"
+                    if table == "console_trace_surface_nodes"
+                    else "replacement_id"
+                    if table == "console_trace_surface_replacements"
+                    else "event_id"
+                    if table == "console_trace_events"
+                    else "segment_id"
+                )
+                blocked.append(
+                    _ContentBlocker(
+                        table,
+                        (row[identity_column],),
+                        "native_guarded_trace_owner_unproved",
+                        "trace_segment",
+                        segment,
+                    )
+                )
+                continue
+            if owner is not None and owner["attached"] == 0:
+                budget.container(1)
+                populated.add(owner["owner_id"])
+    # Turn locators reserve names but prove no conversation without a native row.
     for owner in owners:
         if owner["owner_id"] not in populated:
             continue
         budget.container(len(source) * 2)
         conversations = set()
         for node in by_table.get("console_trace_surface_nodes", ()):
-            segment = node["segment_id"]
-            for _ in range(len(parents) + 1):
-                if segment in root_owners or segment is None:
-                    break
-                segment = parents.get(segment)
-            if segment != owner["root_segment_id"]:
+            found = effective_owner(node["segment_id"])
+            if found is None or found["owner_id"] != owner["owner_id"]:
                 continue
             for revision in by_table.get("console_trace_semantic_revisions", ()):
                 if revision["revision_id"] == node["semantic_revision_id"]:
                     conversations.add(revision["source_conversation_id"])
-        for call in by_table.get("console_trace_calls", ()):
-            if call["owner_id"] == owner["owner_id"]:
-                for message in by_table.get("messages", ()):
-                    if message["id"] == call["turn_id"]:
-                        conversations.add(message["conversation_id"])
+        for table in ("console_trace_calls", "console_trace_child_segments"):
+            for row in by_table.get(table, ()):
+                if row["owner_id"] == owner["owner_id"]:
+                    for message in by_table.get("messages", ()):
+                        if message["id"] == row["turn_id"]:
+                            conversations.add(message["conversation_id"])
         proved = tuple(
             r
             for r in plan.identities.reservations
@@ -768,7 +962,7 @@ def _consolidate(captured, *, password, cancel):
             terminal_budget.value(witnesses, text_copies=3)
             terminal_budget.container(3)
             targets = []
-            for target, version in zip(prepared.targets, (87, 11, 33), strict=True):
+            for target, version in zip(prepared.targets, (88, 11, 33), strict=True):
                 terminal_budget.value(target.model_dump(), text_copies=2)
                 targets.append(
                     {

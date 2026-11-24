@@ -249,7 +249,7 @@ def _reserve(domain, source, canonical, fingerprint, *, _read_budget=None):
 
 
 def _historical_locators(reads, purpose):
-    """Retained revision locators share live domains without creating live owners."""
+    """Retained revision/turn locators reserve names without creating live owners."""
     messages = _rows(reads, purpose, "chat", "messages")
     revisions = _rows(reads, purpose, "chat", "console_trace_semantic_revisions")
     owners = {}
@@ -283,8 +283,20 @@ def _historical_locators(reads, purpose):
                 or prior["revision_sequence"] >= sequence
             ):
                 raise ValueError("mobile_identity_historical_predecessor_invalid")
+    budget = reads.read_budget
+    links = _rows(
+        reads, purpose, "chat", "console_trace_child_segments", _read_budget=budget
+    )
+    budget.container(2 * len(revisions) + 4 * len(links) + 4)
+    message_locators = {row["source_message_id"] for row in revisions}
+    for link in links:
+        turn = link["turn_id"]
+        if type(turn) is not str or not turn:
+            raise ValueError("mobile_identity_historical_locator_invalid")
+        # Native turn strings reserve historical names, never live rows or owners.
+        message_locators.add(turn)
     return {
-        "message": {row["source_message_id"] for row in revisions},
+        "message": message_locators,
         "conversation": {row["source_conversation_id"] for row in revisions},
     }
 
@@ -342,10 +354,29 @@ def _plan_identities(reads):
         for purpose in ("legacy", "canonical"):
             rows = _rows(reads, purpose, domain.family, domain.table)
             if domain.name in {"message", "conversation"}:
+                reads.read_budget.container(
+                    4 * (len(rows) + len(historical[purpose][domain.name])) + 1
+                )
                 existing = {row[domain.column] for row in rows}
                 rows += tuple(
                     {domain.column: value}
                     for value in sorted(historical[purpose][domain.name] - existing)
+                )
+            if domain.name == "trace_group":
+                budget = reads.read_budget
+                links = _rows(
+                    reads,
+                    purpose,
+                    "chat",
+                    "console_trace_child_segments",
+                    _read_budget=budget,
+                )
+                budget.container(4 * (len(rows) + len(links)) + 1)
+                existing = {row["run_id"] for row in rows}
+                rows += tuple(
+                    {"run_id": row["run_id"]}
+                    for row in links
+                    if row["run_id"] not in existing
                 )
             if domain.name == "binding":
                 budget = reads.read_budget
@@ -386,7 +417,9 @@ def _plan_identities(reads):
                 domain,
                 *partitions,
                 fingerprint,
-                _read_budget=reads.read_budget if domain.name == "binding" else None,
+                _read_budget=reads.read_budget
+                if domain.name in {"binding", "trace_group", "message"}
+                else None,
             )
         )
     for domain, table in (

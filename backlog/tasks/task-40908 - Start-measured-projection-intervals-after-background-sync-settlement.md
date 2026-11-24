@@ -25,7 +25,7 @@ The run-start coalescing test advances its clock before settling background sync
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no
-ADR path: backlog/decisions/360-isolated-self-hosted-ci-runners.md
+ADR path: backlog/decisions/367-isolated-self-hosted-ci-runners.md
 Reason: Test-only scheduling/observation boundary correction within existing cadence and CI contracts.
 1. Retain the exact live UI9 failure and reproduce a real competing FULL serving the advanced-clock request before the measured owner.
 2. Advance the test clock only after its existing settled-sync wait, immediately before the measured original sync; retain every behavioral assertion and real late overlapping request.

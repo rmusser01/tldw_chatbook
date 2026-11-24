@@ -91,7 +91,7 @@ concurrency:
 permissions:
   contents: read
 
-# ADR-360: opt-in single runner labels; clearing either variable restores hosted
+# ADR-367: opt-in single runner labels; clearing either variable restores hosted
 # capacity. Forks stay hosted; only same-repository PRs use CI_TEST_RUNNER.
 jobs:
   preflight:
@@ -277,7 +277,7 @@ jobs:
     if: needs.preflight.outputs.light == 'true'
     runs-on: ubuntu-latest
     # TASK-42521: the light tier now also runs the PR's own changed test files.
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

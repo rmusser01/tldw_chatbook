@@ -572,12 +572,12 @@ def _assert_detached_normalization_source(source: str, module: str) -> None:
     expected = {
         "detached_layout": {
             "_normalize_sqlite": "eff395f259323b2638e538ee166142c727c6256368c53e8d9230fe99c0496d61",
-            "_owner_items": "84c74d0707a648707dbaf0612df8b20954434d642fc748bd9678ad58fb376f81",
-            "produce_detached_archive": "5b1e9f58aecfc57fb26c47615e8d9f2dd084c09d32838769f655c9a785b381f5",
+            "_owner_items": "47bfb9165f74f3cddc9408fa63b50a3b3ddf671f6ed5685c821985cb2c31f7d2",
+            "produce_detached_archive": "c38cfb543fc8e62f7b319e98860c5e7ca284b352696ecd0ce65594fb4e5d980a",
         },
         "sqlite_validation": {
             "normalize_detached_candidate": "0958fde34420ac25689ef1b9162c3dc1e3e3401ad71b2b3a4de924c8a0d3093b",
-            "_validate_candidate": "8d8263701cda519b85383c28cf84fd07eeaae0746e4fa8bac8a7746a51c5fcb7",
+            "_validate_candidate": "498229ebd797b883dc172e2d13d91442c3c6215ebc876c3e8242c388a68134d8",
             "_write_normalized_candidate": "29ee683bec2883fa9d4bb1b962819308b9630efb6c0c5b880373bda3a6bd3ed6",
         },
         "private_sqlite": {

@@ -70,6 +70,12 @@ PACKAGE = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 # Integration of the TASK-41630..41655 burn-down (2026-11-19): TASK-41644's
 # removals (__func__ 4, __code__ 1, __globals__ 1) and TASK-41642/41643's,
 # re-measured together on the combined tree.
+# PR3345 integration (2026-11-23): retain same_bound_callable's two method-part
+# checks from the accepted feature. R135 still requires the manager lease,
+# issued live frame and selected-source activation; equality grants no authority.
+# This is the exact merged source census under the explicit count-ceiling waiver,
+# with no runtime allowance or headroom and no change to ADR-356 rule 4.
+# The merged tree also retires one code read; keep its one-site control exact.
 PINS = {
     # caller frames, coroutine/generator implementation
     "_getframe": 14,
@@ -88,8 +94,8 @@ PINS = {
     "ag_code": 0,
     "ag_frame": 0,
     # function, code, default and closure identity
-    "__func__": 128,
-    "__code__": 361,
+    "__func__": 130,
+    "__code__": 360,
     "__defaults__": 190,
     "__kwdefaults__": 283,
     "__closure__": 217,

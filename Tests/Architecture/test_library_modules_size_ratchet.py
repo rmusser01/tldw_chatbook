@@ -879,7 +879,7 @@ _BUDGETS: dict[str, int] = {
     # (+3): the detail sync's ``arm_editor`` lands a pending stage pick.
     # 2026-11-19, TASK-41715 (review r17ls-rev1): the action-result reveal
     # reads `is_attached` on its own line before `app.screen`: 5068 -> 5069.
-    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5065,
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5066,
     # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
     # 2/3): born-governed by the glob above -- new file, pinned at its
     # exact measured line count on landing (42 moved methods + the
@@ -1053,7 +1053,7 @@ _BUDGETS["tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py"] =
 # 2026-11-19, TASK-41715 (review r17ls-rev1): `presentable`, `_scripts_closed`
 # and the share controller's `_active` read `is_attached` on its own line
 # before `app.screen`: 1063 -> 1065 and 339 -> 340 (measured).
-_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 1057
+_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 1059
 _BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_share_controller.py"] = 340
 
 # 2026-09-25, TASK-32954 (ruling R14): initial exact pin for the built-in

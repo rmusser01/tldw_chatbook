@@ -548,6 +548,21 @@ def chat_call_impl(
         )
 
         stall_timeout = bridge._stall_timeout_seconds()
+        stop_poll = should_cancel
+        if automatic_work is not None:
+            from tldw_chatbook.Agents.activation import worker_guard
+
+            # The watchdog runs on this model loop without an asyncio Task.
+            # Reacquire the captured sources instead of borrowing this task's
+            # admission; the ledger worker guard owns any fresh DB handle.
+            admitted_stop = worker_guard(automatic_work.ledger)(should_cancel)
+
+            def stop_poll() -> bool:
+                try:
+                    return admitted_stop()
+                except Exception:  # Admission or physical return also fails closed.
+                    return True
+
         async for chunk in watch_content_stalls(
             self._gateway.stream_chat(
                 effective_resolution,
@@ -571,7 +586,7 @@ def chat_call_impl(
             # after a Stop, and the app's exit joins that thread. The
             # plain cancel, not stream_cut: a redirect is not a cancel
             # and still waits for the next chunk (TASK-28227).
-            should_stop=should_cancel,
+            should_stop=stop_poll,
         ):
             received_item = True
             synthetic = emission_synthetic is True

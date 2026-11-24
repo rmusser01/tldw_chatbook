@@ -1423,6 +1423,23 @@ MINIMUM_FILES = 2825
 MINIMUM_FILES = 2827
 # 2026-11-22: re-counted after rebasing onto dev ddd3c02052. The floor is the measured entry count.
 MINIMUM_FILES = 2832
+# Shared mobile integration: retain the full surviving census plus the new
+# stand-in controller file; deleting any older member must fail this floor.
+MINIMUM_FILES = 2818
+# PR3345 current-dev integration retains all 2818 prior entries and 146 new dev entries.
+MINIMUM_FILES = 2964
+# Current dev adds 89 entries to the intact 2,964-selector feature roster.
+MINIMUM_FILES = 3053
+# PR3345: preserve all 3,072 selectors after the dev census merge.
+MINIMUM_FILES = 3072
+# The combined dev and mobile roster has 3,098 distinct selectors.
+MINIMUM_FILES = 3098
+# Keep the reviewed shared-mobile roster and the incoming paint-hold case.
+MINIMUM_FILES = 3099
+# Reconcile the complete PR roster with the 20 incoming Workspace carry selectors.
+MINIMUM_FILES = 3119
+
+
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 

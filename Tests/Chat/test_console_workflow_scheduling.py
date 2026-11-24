@@ -7264,7 +7264,7 @@ def _expect_retained_planning_child(args, kwargs, *markers):
         tb = tb.tb_next
     assert tb.tb_frame.f_code is _run.__code__
     original = tb.tb_frame.f_locals
-    assert original["result"].returncode == 0
+    assert original["returncode"] == 0
     rows = original["stdout"].splitlines()
     assert "retired and reopened" not in original["stdout"]
     assert all(rows.count(marker) == 1 for marker in markers)

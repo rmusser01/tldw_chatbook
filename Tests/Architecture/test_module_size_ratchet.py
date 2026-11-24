@@ -193,7 +193,7 @@ _BUDGETS: dict[str, int] = {
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
     # PR3345: explicit owner source-count waiver; exact measurements, no runtime changes.
     "tldw_chatbook/app_served.py": 150,
-    "tldw_chatbook/Backup_Recovery/storage_admission.py": 4000,
+    "tldw_chatbook/Backup_Recovery/storage_admission.py": 4111,
     # TASK-37173 report readers crossed the inventory threshold. Pin exact sizes.
     "tldw_chatbook/DB/AgentRuns_DB.py": 4053,
     "tldw_chatbook/Chat/console_trace_repository.py": 4046,
@@ -1597,7 +1597,8 @@ _BUDGETS: dict[str, int] = {
     # measurement. One shared never-sent predicate, a correlated NOT EXISTS
     # for the latest sent boundary (no scan of console_trace_calls), and the
     # per-call check the send-after rule uses.
-    "tldw_chatbook/Chat/console_trace_repository.py": 4075,
+    # PR3345 retains both the bounded read and incoming trace call changes.
+    "tldw_chatbook/Chat/console_trace_repository.py": 4166,
     # owner decision 2026-10-04 (expand limits), applied 2026-11-19 on the
     # rebase onto dev a6df4d8d48: TASK-34100.3 crosses 4000 at 4,069, exact
     # measurement (dev's 3,961 + 108). Each continuation-error exit names its

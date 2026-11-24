@@ -153,6 +153,7 @@ class HookSessionLifecycle:
         self._host_executions = {}
         self.turn_scope = None
         self._pending = set()
+        self._installation_admissions = {}
         self._handoff = None
         self.diagnostics = {"late_context": 0}
         self.terminal_budgets = {}
@@ -268,6 +269,8 @@ class HookSessionLifecycle:
             if _execution is not None:
                 self.engine.consume_preheld(scope, event)
             plans = self.engine.plan_handlers(scope, event)
+            if any(plan.phase == "observe" for plan in plans):
+                self.engine._capture_notification_worker(scope)
             required = tuple(
                 p.handler_id
                 for p in plans
@@ -305,6 +308,7 @@ class HookSessionLifecycle:
 
     async def _execute(self, token):
         event, scope, plans = self._executions.pop(token)
+        body_error = None
         try:
             outcomes = []
             for plan in plans:
@@ -318,8 +322,16 @@ class HookSessionLifecycle:
                 outcomes.append(await self.engine.fire_async(event))
             self.engine.notify_planned(scope, event)
             return self.engine._merge(outcomes)
+        except BaseException as error:
+            body_error = error
+            raise
         finally:
-            scope.close()
+            try:
+                cancelled = await self.engine._join_notification_admissions(scope)
+                if body_error is None and cancelled is not None:
+                    raise cancelled
+            finally:
+                scope.close()
 
     async def fire(
         self,
@@ -361,16 +373,30 @@ class HookSessionLifecycle:
         current: Callable[[], bool] = lambda: True,
         context_owner: str | None = None,
         _execution=None,
+        _wait_native_admission: bool = False,
     ) -> Future | None:
-        """Install synchronously before publishing a durable completion."""
+        """Install before completion; native producers may join receiver entry."""
+        if _wait_native_admission:
+            try:
+                current_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                current_loop = None
+            if current_loop is self.engine.loop:
+                raise RuntimeError("native admission must be awaited on the owner loop")
         if not self.checkpoints.is_current(owner):
             self.diagnostics["late_context"] += 1
             if event.event == "SubagentStop":
-                if _execution is not None:
-                    self.engine.consume_preheld(_execution, event)
-                    self.engine._notify(event, teardown=False, execution=_execution)
+                scope = _execution
+                if scope is not None:
+                    self.engine.consume_preheld(scope, event)
                 else:
-                    self.engine.notify(event)
+                    try:
+                        scope = self.engine.begin_event(event)
+                    except ValueError:
+                        return None
+                self.engine._notify(event, teardown=False, execution=scope)
+                if _wait_native_admission:
+                    self.engine._wait_notification_admissions(scope)
             elif _execution is not None:
                 _execution.close()
             return None
@@ -382,34 +408,75 @@ class HookSessionLifecycle:
             _execution=_execution,
         )
 
+        scope = self._executions[token][1]
+        started = Future()
+        admitted = Future()
+        admitted.set_running_or_notify_cancel()
+
         async def complete():
+            if not started.set_running_or_notify_cancel():
+                return None
             try:
-                result = await self._execute(token)
-                if not current() or not self.checkpoints.is_current(
-                    context_owner or owner
-                ):
-                    self.diagnostics["late_context"] += 1
-                self.checkpoints.accept(token, result)
-                return result
-            except BaseException:
                 try:
-                    self.checkpoints.fail(token, "lifecycle completion failed")
-                except HookCheckpointError:
-                    pass
-                raise
+                    result = await self._execute(token)
+                    if not current() or not self.checkpoints.is_current(
+                        context_owner or owner
+                    ):
+                        self.diagnostics["late_context"] += 1
+                    self.checkpoints.accept(token, result)
+                    return result
+                except BaseException:
+                    try:
+                        self.checkpoints.fail(token, "lifecycle completion failed")
+                    except HookCheckpointError:
+                        pass
+                    raise
+                finally:
+                    self._host_done(token)
             finally:
-                self._host_done(token)
+                admitted.set_result(None)
 
         future = asyncio.run_coroutine_threadsafe(complete(), self.engine.loop)
         self._pending.add(future)
+        self._installation_admissions[future] = admitted
+        admitted.add_done_callback(
+            lambda _done: self._installation_admissions.pop(future, None)
+        )
 
         def settled(done):
             self._pending.discard(done)
-            if not done.cancelled():
-                done.exception()  # Custody stays here even if the operation was cancelled.
+            if done.cancelled():
+                if started.cancel():
+                    # Revocation won the real coroutine's start latch. It can
+                    # never publish a delivery, even if its queued task runs.
+                    try:
+                        try:
+                            self.checkpoints.fail(
+                                token, "lifecycle completion cancelled"
+                            )
+                        except HookCheckpointError:
+                            pass
+                        self.cancel(token)
+                    finally:
+                        admitted.set_result(None)
+            else:
+                done.exception()
 
         future.add_done_callback(settled)
+        if _wait_native_admission:
+            self.engine._wait_notification_admissions(scope, admitted)
         return future
+
+    async def wait_installation(self, future):
+        """Preserve an async producer until the actual receiver-entry join."""
+        from .ownership import join_hook_worker
+
+        admitted = self._installation_admissions.get(future)
+        try:
+            return await join_hook_worker(asyncio.wrap_future(future))
+        finally:
+            if admitted is not None:
+                await join_hook_worker(asyncio.wrap_future(admitted))
 
     async def wait(
         self, owner: str, *, required_handler_ids: tuple[str, ...] | None = ()
@@ -599,7 +666,7 @@ class CompactionHooks:
             self._post_hold[1].close()
             self._post_hold = None
         if self.post_future is not None:
-            result = await asyncio.wrap_future(self.post_future)
+            result = await self.lifecycle.wait_installation(self.post_future)
             if self.reason == "manual" and (
                 not result.allowed or result.outstanding_cleanup
             ):

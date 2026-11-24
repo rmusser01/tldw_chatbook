@@ -712,6 +712,25 @@ _ROW_MATCHES["workspace_binding_authority"] = (
 )
 
 
+_ROW_INSERTS["console_trace_child_segments"] = (
+    "INSERT INTO console_trace_child_segments "
+    "(segment_id,owner_id,turn_id,run_id,created_at) "
+    "VALUES (:segment_id,:owner_id,:turn_id,:run_id,:created_at)"
+)
+_ROW_FKS["console_trace_child_segments"] = (
+    ("console_trace_segments", ("segment_id",), ("segment_id",)),
+    ("console_trace_owners", ("owner_id",), ("owner_id",)),
+)
+_ROW_MATCHES["console_trace_child_segments"] = (
+    "SELECT count(*) FROM console_trace_child_segments WHERE "
+    "segment_id IS :segment_id COLLATE BINARY AND typeof(segment_id)=typeof(:segment_id) "
+    "AND owner_id IS :owner_id COLLATE BINARY AND typeof(owner_id)=typeof(:owner_id) "
+    "AND turn_id IS :turn_id COLLATE BINARY AND typeof(turn_id)=typeof(:turn_id) "
+    "AND run_id IS :run_id COLLATE BINARY AND typeof(run_id)=typeof(:run_id) "
+    "AND created_at IS :created_at COLLATE BINARY AND typeof(created_at)=typeof(:created_at)"
+)
+
+
 def _verify_row(connection, row, values):
     if connection.execute(_ROW_MATCHES[row.table], values).fetchone()[0] != 1:
         raise ValueError("mobile_native_row_changed")
@@ -773,7 +792,16 @@ def _prepare_rows(plan, budget):
         rows[i][1]["root_segment_id"]: i
         for i in by_table.get("console_trace_owners", ())
     }
-    budget.container(len(rows) * 4)
+    budget.container(
+        len(rows) * 4
+        + 2 * len(owners)
+        + 2 * len(by_table.get("console_trace_child_segments", ()))
+    )
+    owner_ids = {rows[i][1]["owner_id"]: i for i in owners.values()}
+    child_links = {
+        rows[i][1]["segment_id"]: i
+        for i in by_table.get("console_trace_child_segments", ())
+    }
     fenced = {index: set() for index in owners.values()}
     custody = {}
     calls = {
@@ -789,6 +817,7 @@ def _prepare_rows(plan, budget):
             "console_trace_segments",
             "console_trace_owners",
             "console_trace_response_links",
+            "console_trace_child_segments",
         }:
             segment = values.get("segment_id")
             if row.table == "console_trace_owners":
@@ -799,6 +828,15 @@ def _prepare_rows(plan, budget):
                 segment = calls[values["call_id"]]["segment_id"]
             if row.table == "console_trace_segments":
                 segment = values["parent_segment_id"]
+            link = child_links.get(segment)
+            if link is not None:
+                owner_index = owner_ids.get(rows[link][1]["owner_id"])
+                if owner_index is None:
+                    raise ValueError("native_child_segment_owner_unproved")
+                budget.container(2)
+                if link != index:
+                    edges[index].add(link)
+                segment = rows[owner_index][1]["root_segment_id"]
             seen = set()
             while segment is not None:
                 if segment in seen:
@@ -853,7 +891,8 @@ def _prepare_rows(plan, budget):
                     ]
                 )
             elif (
-                child_row.table == "console_trace_calls"
+                child_row.table
+                in {"console_trace_calls", "console_trace_child_segments"}
                 and child_values["turn_id"] in messages
             ):
                 witnessed.add(messages[child_values["turn_id"]]["conversation_id"])

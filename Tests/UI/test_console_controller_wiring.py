@@ -420,7 +420,7 @@ def test_send_price_controller_is_constructed_with_late_bound_screen_edges(
     )
 
     settings = object()
-    store = object()
+    store = SimpleNamespace()
     launch = object()
     projection = object()
     screen._session._ensure_active_console_session_settings = lambda: settings
@@ -835,7 +835,7 @@ def test_current_chat_store_accessor_reads_the_live_attribute(
 ):
     """`lambda: self._console_chat_store` -- a bare attribute read, late."""
     screen = _unmounted_console()
-    sentinel = object()
+    sentinel = SimpleNamespace()
     with monkeypatch.context() as scoped:
         scoped.setattr(screen, "_console_chat_store", sentinel)
         accessor = getattr(getattr(screen, attr), accessor_name)

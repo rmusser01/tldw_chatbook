@@ -860,6 +860,14 @@ _TABLES = (
     ),
     _TableSpec(
         "chat",
+        "console_trace_child_segments",
+        "T",
+        ("segment_id", "owner_id", "turn_id", "run_id", "created_at"),
+        ("segment_id",),
+        False,
+    ),
+    _TableSpec(
+        "chat",
         "console_trace_compaction_state",
         "T",
         (

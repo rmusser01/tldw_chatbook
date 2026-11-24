@@ -131,6 +131,7 @@ commit, with the owner's explicit sign-off recorded in the PR.
 | 2026-11-07 | `_ui_ready` census | `MAX_TLDW_MODULES_AT_UI_READY` | 1038 → 1039 | TASK-38987 (fb610006fe, merged with PR #3487 on 2026-11-10): the shared switch-interval owner `Utils.switch_interval` (ref-counted scopes for config writes and Console preparation reads) is imported on first use, and a config write or preparation read runs before ready, so it is resident at ready; it stays off the app-import path (687/688). Limit = the 1038 measured + the documented +/-1 wobble. Row added retroactively on 2026-11-12 (round-13 closeout): the raise merged without one. | Owner size waiver 2026-10-31, applied by the round-12 follow-up brief. |
 | 2026-11-18 | screen pre-import payload (first-send warm-up) | `MAX_FIRST_SEND_WARMUP_ADDED_MODULES` | 94 → 90 (lowered; census 90, live warm-up 78 against 77 accepted) | TASK-41533, after #3627 (TASK-41800). The census went 5 over: TASK-41319 moved `Chat.console_ordinary_tree`, `Agents.ordinary_tree`, `Agents.execution_capacity` and `Workspaces.worktree_activity` from boot into the warm-up, and the collision added `RAG_Search.scope_evidence`'s slot. #3627 (e5f0484644) removed five modules from the census only, 99 → 94: `app_served`, `Canvas.compilation`, `Canvas.profiles`, `Canvas.runtime_assets` and `Workspaces.worktree_activity`. A booted Console already holds all five. #3533 (395d2e8b91, 59365c0a36) then removed four, 94 → 90: it unlisted `served_relay_publisher`, which a native warm-up no longer loads, and `Guardian.settings`, which startup already holds, and each took its package (`Web_Server`, `Guardian`) out of the census; it reads 90 on dev 8be7babc14. TASK-41533 also unlisted `textual_serve` (third-party) and lowers the limit 94 → 90 under the tightening convention. The row was pinned exactly with no slack, so its freed headroom is banked rather than silently re-consumed. Live, the warm-up loads 78 modules (3 of 3 runs on this branch and on dev 8be7babc14; 80 on ffdf0c5472, which is dev d0486978dd plus round-16 waves 1 and 2 without TASK-41533), against 77 at the last in-budget trees, a94c4aec67 and 5d1fc43130 (warm boot, 3 s settle, route walk, then the list). The +1 is the last-slot collision: #3471 listed `RAG_Search.scope_evidence` and #3446 listed `Agents.agent_lesson_promotion`, and each passed alone. It still exists after #3627. It ends when #3571 unlists `scope_evidence`: re-measure then, lower the limit to 89, and the owner's "Accept until #3571" closes. | Owner ruling 2026-11-18, "Accept until #3571", relayed by the round-16 coordinator for TASK-41533. |
 | 2026-11-07 | PR3345 warm UI-ready source residency | `MAX_TLDW_MODULES_AT_UI_READY` | 1031 → 1032 | Actual boot epoch726 measured1032 and named existing `DB.character_conversation_search`; its navigation/importing files are identical to passing688. This records the observed source count, without attributing its timing or changing character navigation, FTS or native custody. Actual latency epoch725 passed13 checks. | Owner explicitly withdrew source-count ceilings as blockers in the PR3345 repair chat on2026-11-07. This scoped application preserves all timing, worker, buffer, absent-family, ownership and safety checks. |
+| 2026-11-23 | PR3345 first-send source residency | `MAX_FIRST_SEND_WARMUP_ADDED_MODULES` | 90 → 93 | Original current-source census1150 measured93 /68,228LOC. Exactly three intentional feature warm-up entries account for the delta: `Chat.console_saved_sessions`, `DB.mobile_consolidation_receipts`, `Agents.scratch_admission`. The same original test passes anti-vacuity, hooks residency, no served-relay import and no new heavy-family import before its count-only refusal. Pin equals the measurement, with no headroom. | Owner explicitly withdrew source-count ceilings as blockers in the PR3345 repair chat; this applies that waiver to module residency while retaining every timing, case/job, worker/buffer, permission, native ownership and durability bound. |
 
 Row added retroactively on 2026-08-31 (TASK-25813), found while taking the
 ratchet baseline for the 2026-08-30 holistic review. **The decision was the
@@ -285,3 +286,55 @@ remain. Actual latency epoch725 passed13 checks. No runtime deadline, case/job
 cap, worker/buffer bound, permission, native ownership, FTS policy or durability
 rule changes. Existing diagnostic snapshots remain historical; no snapshot
 regeneration is claimed for this Test-constant-only exception.
+
+
+### PR3345 first-send source-count exception (2026-11-23)
+
+The existing owner source-count waiver also covers the three intentional feature
+warm-up entries measured at93 by current-source epoch1150. This extends the
+earlier UI-ready-only application above; it does not change a timing or resource
+allowance. The original90-count refusal and official force=false writer failure
+remain retained evidence. All functional census assertions, heavy-family and
+served-relay exclusions, genuine cold/warm behavior, original latency checks and
+the shared15-minute Perf cap remain. The official writer may refresh only this
+source snapshot without force at the exact93 pin. Runtime qualification and all
+seven current Perf steps are still required.
+
+
+### PR3345 source-size count exceptions after b31e integration (2026-11-23)
+
+The owner explicitly withdrew source ceilings in the PR3345 repair chat. The
+original current-source contracts run remains mixed:516passed and11 source-count
+failures,527cases, no skips/errors,113.777s under the original1200-second cap.
+Apply that waiver only to these exact measurements, without spare headroom:
+
+| Source metric | Old pin | Measured pin |
+| --- | ---: | ---: |
+| `Backup_Recovery/storage_admission.py` LOC | 4000 | 4111 |
+| `Chat/chat_persistence_service.py` LOC | 4239 | 4242 |
+| `Chat/console_agent_bridge.py` LOC | 10023 | 10074 |
+| `Chat/console_chat_controller.py` LOC | 28501 | 28519 |
+| `Chat/console_trace_repository.py` LOC (effective later row) | 4040 | 4131 |
+| `Chat/console_trace_service.py` LOC | 6494 | 6631 |
+| `app.py` LOC | 5687 | 5688 |
+| `UI/Screens/chat_screen.py` LOC | 24544 | 24546 |
+| `UI/Library_Modules/library_artifacts_controller.py` LOC (appended row) | 1057 | 1059 |
+| `UI/Library_Modules/library_prompts_controller.py` LOC | 5065 | 5066 |
+| `LibraryScreen.__init__` lambda count | 397 | 398 |
+
+This is a source-count exception, including the one source callback count. All
+existing test function and assertion ASTs remain identical; all other effective
+metrics and native runtime, case/job, worker, buffer and permission bounds stay
+unchanged. No production edit, new skip, behavioral assertion waiver, native
+ownership or durability change is authorized by this table. The ten LOC values
+come from the failed run's exact input bytes; the lambda count comes from its
+actual assertion. Earlier lower/duplicate historical entries are not silently
+rewritten: only each effective failing row is aligned. The original failure and
+source preimages remain retained. Re-running the affected contracts after this
+Test-only correction is required; previously passed runtime evidence remains
+source-bound rather than renamed as a new run.
+
+
+### Current dev3b5962 source measurements (2026-11-23)
+
+The existing PR3345 source-count waiver also covers the final current-dev measurements. Console controller LOC is 28523 (previous recorded pin 28519; incoming declined-notice handling adds four lines). The Library initializer has 355 lambdas: native host protocols remove 43 callbacks from the prior 398 while the required feature Prompts landing callback remains. Pins use these exact measurements without spare room. The earlier measurements remain historical evidence; executable code and behavioral assertions are unchanged. No runtime, case, job, worker, buffer or permission bound increases.

@@ -507,7 +507,7 @@ the entire Console P0 matrix to succeed. Each job uses the existing long-lane
 35-minute budget, below the 45-minute controller deadline. Dreams/Guardian
 also uses 35 minutes after reaching 91% of its final test group at its 20-minute
 cap. Per-test 180/300-second deadlines and test selection are unchanged.
-This adds one eligible job and follows ADR-360's disposable runner boundary.
+This adds one eligible job and follows ADR-367's disposable runner boundary.
 
 
 Follow-up in the same task: run 43496035687 passed Dreams in 21m08s and P0
@@ -573,7 +573,7 @@ shards, 19 at once". Round 14 appended 111 census entries (2145 in all), each
 charged its local serial time from its task's notes, about 36 pytest min.
 Replayed over the 25 latest PR runs whose 36 UI shards all finished
 (2026-11-14 03:20Z to 19:32Z: 17 on GitHub-hosted runners, 8 on the
-self-hosted runners of ADR-359), each entry at its slowest, the census carries
+self-hosted runners of ADR-367), each entry at its slowest, the census carries
 about 493 worst-case pytest min: a 13.7-min floor a shard at 36, so no re-deal
 of 36 keeps every job 5 min under the 20-min cap. At 38,
 `scripts/ui_lane_shard_replay.py --rebalance 13.0` (46 swaps) puts every
@@ -587,7 +587,7 @@ on GitHub-hosted runners and about 13.5 on self-hosted ones.
 
 The UI matrix runs 38 shards with `max-parallel: 19`: still two waves of UI
 jobs on GitHub-hosted runners, so no wall-clock change per PR there; on the
-self-hosted fleet (ADR-359, eight test slots) the slots, not this ceiling,
+self-hosted fleet (ADR-367, eight test slots) the slots, not this ceiling,
 bound how many run at once. From dev's counts before this change
 (30 concurrent test runners, 31 with perf-guard, 48 eligible test jobs), the
 two new shard jobs make 50 eligible test jobs per PR, and the one-higher
@@ -617,7 +617,7 @@ The unchanged required context depends on this job and rejects every result
 other than success through the existing fail-closed aggregate pattern. This
 adds one macOS application job per gate: 51 eligible test jobs, at most 32
 concurrent test runners (33 with perf-guard). The Linux shard matrix and the
-bounded self-hosted pool of ADR-359 stay unchanged. The broad, path-selected
+bounded self-hosted pool of ADR-367 stay unchanged. The broad, path-selected
 plugin-qualification workflow remains separate; running its entire three-OS
 suite is not necessary to qualify these two UI journeys.
 
@@ -636,7 +636,7 @@ per-process time from that task's notes (140 s).
 
 Replayed over the 33 latest PR runs whose 38 UI shards all finished and whose
 jobs GitHub served (2026-11-15 18:54Z to 2026-11-17 09:38Z: 27 on
-GitHub-hosted runners, 4 on the self-hosted runners of ADR-359, 2 with jobs
+GitHub-hosted runners, 4 on the self-hosted runners of ADR-367, 2 with jobs
 on both; 43898439593 is left out because it returned HTTP 502), each entry at
 its slowest, the census carries about 520 worst-case pytest min. That is a
 13.67-min floor a shard at 38, so no re-deal of 38 keeps every job 5 min

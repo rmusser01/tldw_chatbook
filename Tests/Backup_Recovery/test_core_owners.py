@@ -912,6 +912,8 @@ def test_factory_discovery_and_schema_policy_are_runtime_independent(tmp_path):
         + pure_child_guard(
             "tldw_chatbook.DB.recovery_core",
             "tldw_chatbook.DB.recovery_core_schema",
+            "tldw_chatbook.DB.mobile_import_authority",
+            "tldw_chatbook.DB.private_sqlite_values",
             "tldw_chatbook.DB.recovery_goal_schema",
             "tldw_chatbook.DB.recovery_operations",
             "tldw_chatbook.DB.recovery_review_boundary_schema",
@@ -944,6 +946,7 @@ assert not home.exists()
         [
             sys.executable,
             "-I",
+            "-B",
             "-c",
             program,
             str(Path(__file__).resolve().parents[2]),

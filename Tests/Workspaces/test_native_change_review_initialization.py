@@ -859,8 +859,10 @@ def test_retained_cleanups_hold_later_roots_until_restart_and_say_so(
             for binding in (h.binding, second, outside, inside)
         }
         wait_until(
-            lambda: len(readiness()) == 4
-            and all(state != "preparing" for state, _ in readiness().values()),
+            lambda: (
+                len(readiness()) == 4
+                and all(state != "preparing" for state, _ in readiness().values())
+            ),
             timeout=15,
         )
         assert readiness() == expected
@@ -1202,8 +1204,10 @@ def test_a_claim_held_without_a_retained_cleanup_stays_retryable(native_initiali
         h.registry.set_change_review_enabled("init-workspace", True)
         h.service.admit_turn("init-workspace")
         wait_until(
-            lambda: h.service.status("init-workspace").roots[0].state
-            is not RootReadinessState.PREPARING
+            lambda: (
+                h.service.status("init-workspace").roots[0].state
+                is not RootReadinessState.PREPARING
+            )
         )
         root = h.service.status("init-workspace").roots[0]
         assert (root.state, root.reason) == (
@@ -1215,8 +1219,10 @@ def test_a_claim_held_without_a_retained_cleanup_stays_retryable(native_initiali
         holder.finish_root()
         assert h.service.retry_failed_roots("init-workspace") == 1
         wait_until(
-            lambda: h.service.status("init-workspace").roots[0].state
-            is RootReadinessState.READY
+            lambda: (
+                h.service.status("init-workspace").roots[0].state
+                is RootReadinessState.READY
+            )
         )
     finally:
         retention.prove()
@@ -1224,6 +1230,384 @@ def test_a_claim_held_without_a_retained_cleanup_stays_retryable(native_initiali
         bystander.finish_root()
         claim.settle(durable=True)
         holder.finish_root()
+
+
+@pytest.mark.parametrize("primary_kind", ["error", "cancel"])
+def test_actual_initializer_outer_close_precedes_retirement_and_preserves_primary(
+    native_initializer, monkeypatch, primary_kind
+):
+    """A real held Workspace close retains its original leases and owner."""
+    import sqlite3
+    from concurrent.futures import CancelledError
+
+    from tldw_chatbook.Backup_Recovery import storage_admission
+    from tldw_chatbook.Backup_Recovery.participants import core_cached_connection
+    from tldw_chatbook.Workspaces.change_review_ownership import native_snapshot_ticket
+
+    h = native_initializer
+    primary = (
+        RuntimeError("controlled original completion error")
+        if primary_kind == "error"
+        else CancelledError("controlled original completion cancellation")
+    )
+    closed, release = threading.Event(), threading.Event()
+    observed, errors = {}, []
+    close, fail = h.registry.db.close, h.service._fail
+    with storage_admission._lock:
+        before = set(storage_admission._live_leases)
+
+    def original_failure(work, error):
+        assert error is None
+        ticket = native_snapshot_ticket()
+        connection = h.registry.db._thread_local.conn
+        sqlite3.Connection.in_transaction.__get__(connection)
+        assert core_cached_connection(h.registry.db, connection) is connection
+        observed.update(
+            ticket=ticket, connection=connection, thread=threading.get_ident()
+        )
+        with storage_admission._lock:
+            observed["leases"] = set(storage_admission._live_leases) - before
+        raise primary
+
+    def held_close():
+        if threading.get_ident() == observed.get("thread"):
+            assert h.registry.db._thread_local.conn is observed["connection"]
+            closed.set()
+            assert release.wait(5)
+        return close()
+
+    def observed_fail(work, error):
+        errors.append(error)
+        return fail(work, error)
+
+    monkeypatch.setattr(h.service, "_complete", original_failure)
+    monkeypatch.setattr(h.registry.db, "close", held_close)
+    monkeypatch.setattr(h.service, "_fail", observed_fail)
+    h.registry.set_change_review_enabled("init-workspace", True)
+    capture_change_review_admission(h.app, "init-workspace")
+    try:
+        assert closed.wait(3), "the original Workspace closer was not reached"
+        ticket = observed["ticket"]
+        assert ticket.owner.is_admitted
+        assert h.runtime.execution_capacity.snapshot().tool_workers == 1
+        assert not ticket.retired.is_set()
+        sqlite3.Connection.in_transaction.__get__(observed["connection"])
+        with storage_admission._lock:
+            assert len(observed["leases"]) >= 3
+            assert observed["leases"] <= storage_admission._live_leases
+        with h.runtime.worktree_activity.prelaunch(
+            footprint=WorktreeFootprint(opaque=True)
+        ) as claim:
+            assert claim is None
+    finally:
+        release.set()
+        wait_until(lambda: h.service._queue.unfinished_tasks == 0)
+    assert len(errors) == 1 and errors[0] is primary
+    assert h.runtime.execution_capacity.snapshot().executions == ()
+    assert observed["ticket"].retired.is_set()
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        sqlite3.Connection.in_transaction.__get__(observed["connection"])
+    assert core_cached_connection(h.registry.db, observed["connection"]) is None
+    with storage_admission._lock:
+        assert observed["leases"].isdisjoint(storage_admission._live_leases)
+
+
+@pytest.mark.parametrize("failure_kind", ["silent", "error", "cancel"])
+def test_actual_initializer_unproven_database_close_retains_original_custody(
+    native_initializer, monkeypatch, tmp_path, request, failure_kind
+):
+    """Process exit ends this isolated unknown lifetime; no fake proof releases it."""
+    import json
+    import os
+    import sqlite3
+    import subprocess
+    import sys
+    from asyncio import CancelledError
+    from pathlib import Path
+
+    marker = "TLDW_NATIVE_INITIALIZER_DATABASE_CLOSE_PROOF"
+    receipt = os.environ.get(marker)
+    if receipt is None:
+        proof = tmp_path / "database-close-proof.json"
+        result = subprocess.run(
+            [sys.executable, "-B", "-m", "pytest", "-q", request.node.nodeid],
+            env={**os.environ, marker: str(proof), "PYTHONDONTWRITEBYTECODE": "1"},
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        evidence = json.loads(proof.read_text())
+        assert evidence == {
+            "failure_kind": failure_kind,
+            "actual_handle_open": True,
+            "original_leases_held": True,
+            "native_retention_held": True,
+            "ticket_not_retired": True,
+            "primary_preserved": True,
+            "actual_close_reached": True,
+            "restart_required": True,
+        }
+        return
+
+    try:
+        from tldw_chatbook.Agents.execution_capacity import (
+            CleanupUnprovenRefused,
+            holds_unproven_custody,
+        )
+        from tldw_chatbook.Backup_Recovery import storage_admission
+        from tldw_chatbook.Backup_Recovery.participants import core_cached_connection
+        from tldw_chatbook.Workspaces.change_review_ownership import (
+            native_snapshot_ticket,
+        )
+
+        h = native_initializer
+        primary = (
+            None
+            if failure_kind == "silent"
+            else RuntimeError("controlled original completion error")
+            if failure_kind == "error"
+            else CancelledError("controlled original completion cancellation")
+        )
+        cleanup = OSError("controlled actual Workspace close refusal")
+        observed, errors, close_calls = {}, [], []
+        complete, close, fail = (
+            h.service._complete,
+            h.registry.db.close,
+            h.service._fail,
+        )
+        with storage_admission._lock:
+            before = set(storage_admission._live_leases)
+
+        def close_failure():
+            close_calls.append(threading.get_ident())
+            raise cleanup
+
+        def actual_completion(work, error):
+            assert error is None
+            ticket = native_snapshot_ticket()
+            connection = h.registry.db._thread_local.conn
+            sqlite3.Connection.in_transaction.__get__(connection)
+            assert core_cached_connection(h.registry.db, connection) is connection
+            observed.update(
+                ticket=ticket, connection=connection, thread=threading.current_thread()
+            )
+            with storage_admission._lock:
+                observed["leases"] = set(storage_admission._live_leases) - before
+            if failure_kind == "silent":
+                # Native DB.close catches this actual underlying close exception.
+                monkeypatch.setattr(connection, "close", close_failure)
+            if primary is not None:
+                raise primary
+            return complete(work, error)
+
+        def refused_close():
+            if threading.current_thread() is observed.get("thread"):
+                assert h.registry.db._thread_local.conn is observed["connection"]
+                return close_failure()
+            return close()
+
+        def observed_fail(work, error):
+            errors.append(error)
+            return fail(work, error)
+
+        monkeypatch.setattr(h.service, "_complete", actual_completion)
+        if failure_kind != "silent":
+            monkeypatch.setattr(h.registry.db, "close", refused_close)
+        monkeypatch.setattr(h.service, "_fail", observed_fail)
+        h.registry.set_change_review_enabled("init-workspace", True)
+        capture_change_review_admission(h.app, "init-workspace")
+        wait_until(lambda: h.service._queue.unfinished_tasks == 0)
+        assert close_calls and all(
+            ident == observed["thread"].ident for ident in close_calls
+        )
+        sqlite3.Connection.in_transaction.__get__(observed["connection"])
+        assert (
+            core_cached_connection(h.registry.db, observed["connection"])
+            is observed["connection"]
+        )
+        assert len(errors) == 1 and isinstance(errors[0], CleanupUnprovenRefused)
+        (retention,) = h.runtime.execution_capacity.retained()
+        assert errors[0].retention is retention
+        assert retention.operation is observed["ticket"].operation
+        assert holds_unproven_custody(observed["thread"])
+        assert observed["thread"].is_alive() and observed["thread"].daemon
+        assert retention.operation.owner.is_admitted
+        assert h.runtime.execution_capacity.snapshot().tool_workers == 1
+        assert not observed["ticket"].retired.is_set()
+        with storage_admission._lock:
+            assert len(observed["leases"]) >= 3
+            assert observed["leases"] <= storage_admission._live_leases
+        with h.runtime.worktree_activity.prelaunch(
+            footprint=WorktreeFootprint(opaque=True)
+        ) as claim:
+            assert claim is None
+        root = h.service.status("init-workspace").roots[0]
+        assert root.state is RootReadinessState.RESTART_REQUIRED
+        assert h.service.retry_failed_roots("init-workspace") == 0
+        cause = errors[0].__cause__
+        leaves = []
+
+        def visit(error):
+            if isinstance(error, BaseExceptionGroup):
+                for child in error.exceptions:
+                    visit(child)
+            else:
+                leaves.append(error)
+
+        visit(cause)
+        if primary is not None:
+            assert any(error is primary for error in leaves)
+            assert any(error is cleanup for error in leaves)
+        else:
+            assert any(
+                type(error) is RuntimeError
+                and str(error) == "native_initialization_database_return_unproven"
+                for error in leaves
+            )
+        Path(receipt).write_text(
+            json.dumps(
+                {
+                    "failure_kind": failure_kind,
+                    "actual_handle_open": True,
+                    "original_leases_held": True,
+                    "native_retention_held": True,
+                    "ticket_not_retired": True,
+                    "primary_preserved": True,
+                    "actual_close_reached": True,
+                    "restart_required": True,
+                }
+            )
+        )
+        # Keep the real failed handle and all original scopes until process death.
+        os._exit(0)
+    except BaseException:
+        import traceback
+
+        failure = traceback.format_exc()
+        Path(receipt).write_text(failure)
+        os.write(2, failure.encode())
+        os._exit(1)
+
+
+@pytest.mark.parametrize("seam", ["queued_discard", "queue_full"])
+def test_unstarted_preheld_initializer_retirement_does_not_reauthorize_revoked_source(
+    native_initializer, monkeypatch, seam
+):
+    """A popped or refused queue item returns only its original borrowed tool."""
+    from queue import Empty, Full
+
+    from tldw_chatbook.Agents.execution_capacity import bind_ordinary_tree
+    from tldw_chatbook.Workspaces import change_turn_tracker
+
+    h = native_initializer
+    capacity, activity = h.runtime.execution_capacity, h.runtime.worktree_activity
+    owner = capacity.begin_execution(
+        origin=WorkOrigin.AUTOMATIC, conversation_id="unstarted-original-tree"
+    )
+    footprint = WorktreeFootprint(opaque=True)
+    claim = activity.try_acquire(owner=owner, footprint=footprint)
+    assert claim is not None
+
+    class OriginalTree:
+        controller = None
+
+        def __init__(self):
+            self.owner = owner
+
+        def borrow(self, runtime, *, opaque=True):
+            assert runtime is h.runtime and opaque
+            activity.validate_claim(claim, owner=owner, footprint=footprint)
+            return owner
+
+    entered, release = threading.Event(), threading.Event()
+    get, put = h.service._queue.get, h.service._queue.put_nowait
+    initialize = change_turn_tracker.initialize_shadow_root
+    submitted, queue_failures, entries = [], [], []
+    marker = object()
+    outcome_error = None
+
+    def before_get(*args, **kwargs):
+        if threading.current_thread() in h.service._workers:
+            entered.set()
+            assert release.wait(5)
+        return get(*args, **kwargs)
+
+    def actual_initialize(root, **kwargs):
+        entries.append(root)
+        return initialize(root, **kwargs)
+
+    with monkeypatch.context() as changed:
+        changed.setattr(h.service._queue, "get", before_get)
+        changed.setattr(
+            change_turn_tracker, "initialize_shadow_root", actual_initialize
+        )
+        if seam == "queue_full":
+            # Test-owned capacity metadata; no marker is dispatched as native work.
+            for _ in range(h.service._queue.maxsize):
+                put(marker)
+
+            def refused_put(work):
+                assert h.service._queue.full()
+                assert work.ticket is not None and work.ticket.owner is owner
+                submitted.append(work)
+                changed.setattr(h.app, "workspace_registry_service", object())
+                try:
+                    return put(work)
+                except Full as error:
+                    queue_failures.append(error)
+                    raise
+
+            changed.setattr(h.service._queue, "put_nowait", refused_put)
+        try:
+            h.registry.set_change_review_enabled("init-workspace", True)
+            try:
+                with bind_ordinary_tree(OriginalTree()):
+                    h.service.admit_turn("init-workspace")
+            except BaseException as error:
+                outcome_error = error
+            assert entered.wait(3), "actual workers did not reach the pre-get gate"
+            if seam == "queued_discard":
+                with h.service._queue.mutex:
+                    (work,) = tuple(h.service._queue.queue)
+                submitted.append(work)
+                assert work.ticket is not None and work.ticket.owner is owner
+                changed.setattr(h.app, "workspace_registry_service", object())
+                try:
+                    h.service.begin_close()
+                except BaseException as error:
+                    outcome_error = error
+                assert h.service._queue.empty()
+                assert h.service._queue.unfinished_tasks == 0
+            else:
+                assert len(queue_failures) == 1 and isinstance(queue_failures[0], Full)
+                assert h.service._queue.full()
+            assert not entries, "a never-started callback entered native Git work"
+            (work,) = submitted
+            ticket = work.ticket
+            assert ticket.source.ordinary_tree is not None
+            with pytest.raises(ValueError, match="source changed"):
+                ticket.source.check()
+            assert outcome_error is None
+            assert ticket.retired.is_set()
+            assert ticket.claim is None and ticket.owner is owner
+            assert owner.is_admitted
+            assert capacity.snapshot().tool_workers == 0
+            with activity.prelaunch(footprint=footprint) as contender:
+                assert contender is None, "cleanup settled the original parent's claim"
+        finally:
+            if seam == "queue_full":
+                while True:
+                    try:
+                        item = h.service._queue.get_nowait()
+                    except Empty:
+                        break
+                    assert item is marker
+                    h.service._queue.task_done()
+            h.service.begin_close()
+            release.set()
+            owner.finish_root()
+            claim.settle(durable=True)
 
 
 def test_source_change_after_admission_still_returns_the_slot(
@@ -1257,3 +1641,171 @@ def test_source_change_after_admission_still_returns_the_slot(
     )
     assert tickets[0].retired.is_set(), "ticket never retired"
     assert h.runtime.execution_capacity.snapshot().executions == ()
+
+
+def test_later_storage_entry_refusal_keeps_original_operation_unproven(
+    native_initializer, monkeypatch, tmp_path, request
+):
+    """Actual later entry is not a first-check refusal, even after clean unwind."""
+    import json
+    import os
+    import sqlite3
+    import subprocess
+    import sys
+    from contextlib import contextmanager
+    from pathlib import Path
+
+    marker = "TLDW_NATIVE_INITIALIZER_LATER_ENTRY_PROOF"
+    receipt = os.environ.get(marker)
+    if receipt is None:
+        proof = tmp_path / "later-entry-proof.json"
+        result = subprocess.run(
+            [sys.executable, "-B", "-m", "pytest", "-q", request.node.nodeid],
+            env={**os.environ, marker: str(proof), "PYTHONDONTWRITEBYTECODE": "1"},
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert json.loads(proof.read_text()) == {
+            "entered_original_database_scope": True,
+            "three_original_storage_leases_entered": True,
+            "fresh_canonical_handle_was_open": True,
+            "real_registry_read_completed": True,
+            "native_second_check_refused": True,
+            "initializer_body_not_entered": True,
+            "original_operation_retained": True,
+            "ticket_not_retired": True,
+            "restart_required": True,
+            "actual_handle_closed_on_unwind": True,
+            "original_entry_leases_retired_on_unwind": True,
+        }
+        return
+
+    try:
+        from tldw_chatbook.Agents.execution_capacity import (
+            CleanupUnprovenRefused,
+            holds_unproven_custody,
+        )
+        from tldw_chatbook.Backup_Recovery import storage_admission
+        from tldw_chatbook.Backup_Recovery.participants import core_cached_connection
+        from tldw_chatbook.Workspaces.change_review_ownership import (
+            _InitializationSource,
+        )
+
+        h = native_initializer
+        actual_database_scope = _InitializationSource._database_scope
+        run_work, fail = h.service._run_work, h.service._fail
+        observed, body_entries, errors = {}, [], []
+        with storage_admission._lock:
+            before_leases = set(storage_admission._live_leases)
+
+        @contextmanager
+        def entered_database_then_replace(source, ticket):
+            assert ticket.source is source and source.issuer.registry is h.registry
+            assert getattr(h.registry.db._thread_local, "conn", None) is None
+            try:
+                with actual_database_scope(source, ticket):
+                    with storage_admission._lock:
+                        entry_leases = (
+                            set(storage_admission._live_leases) - before_leases
+                        )
+                        assert len(entry_leases) >= 3
+                    consent = h.registry.read_change_review_consent("init-workspace")
+                    assert consent.state.value == "enabled"
+                    assert consent.revision == source.work.revision
+                    connection = h.registry.db._thread_local.conn
+                    sqlite3.Connection.in_transaction.__get__(connection)
+                    assert (
+                        core_cached_connection(h.registry.db, connection) is connection
+                    )
+                    with storage_admission._lock:
+                        all_leases = set(storage_admission._live_leases) - before_leases
+                        assert entry_leases <= all_leases
+                    observed.update(
+                        ticket=ticket,
+                        connection=connection,
+                        thread=threading.current_thread(),
+                        leases=all_leases,
+                        database_entered=True,
+                    )
+                    # The first native check already passed; the next one is real.
+                    monkeypatch.setattr(h.app, "workspace_registry_service", object())
+                    yield
+            except BaseException as error:
+                observed["source_error"] = error
+                raise
+
+        def observed_work(work):
+            body_entries.append(work)
+            return run_work(work)
+
+        def observed_fail(work, error):
+            errors.append(error)
+            return fail(work, error)
+
+        monkeypatch.setattr(
+            _InitializationSource, "_database_scope", entered_database_then_replace
+        )
+        monkeypatch.setattr(h.service, "_run_work", observed_work)
+        monkeypatch.setattr(h.service, "_fail", observed_fail)
+        h.registry.set_change_review_enabled("init-workspace", True)
+        capture_change_review_admission(h.app, "init-workspace")
+        wait_until(lambda: h.service._queue.unfinished_tasks == 0)
+        assert observed.get("database_entered") is True
+        assert not body_entries
+        assert type(observed["source_error"]) is ValueError
+        assert str(observed["source_error"]) == "native initialization source changed"
+        # The genuine native rollback closes its handle and storage leases.
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            sqlite3.Connection.in_transaction.__get__(observed["connection"])
+        assert core_cached_connection(h.registry.db, observed["connection"]) is None
+        with storage_admission._lock:
+            assert observed["leases"].isdisjoint(storage_admission._live_leases)
+        assert len(errors) == 1 and isinstance(errors[0], CleanupUnprovenRefused)
+        assert errors[0].__cause__ is observed["source_error"]
+        (retention,) = h.runtime.execution_capacity.retained()
+        ticket = observed["ticket"]
+        assert errors[0].retention is retention
+        assert retention.operation is ticket.operation
+        assert holds_unproven_custody(observed["thread"])
+        assert observed["thread"].is_alive() and observed["thread"].daemon
+        assert ticket.owner.is_admitted
+        assert h.runtime.execution_capacity.snapshot().tool_workers == 1
+        assert h.runtime.execution_capacity.snapshot().executions
+        assert not ticket.retired.is_set()
+        with h.runtime.worktree_activity.prelaunch(
+            footprint=WorktreeFootprint(opaque=True)
+        ) as claim:
+            assert claim is None
+        assert (
+            h.service.status("init-workspace").roots[0].state
+            is RootReadinessState.RESTART_REQUIRED
+        )
+        assert h.service.retry_failed_roots("init-workspace") == 0
+        Path(receipt).write_text(
+            json.dumps(
+                {
+                    "entered_original_database_scope": True,
+                    "three_original_storage_leases_entered": True,
+                    "fresh_canonical_handle_was_open": True,
+                    "real_registry_read_completed": True,
+                    "native_second_check_refused": True,
+                    "initializer_body_not_entered": True,
+                    "original_operation_retained": True,
+                    "ticket_not_retired": True,
+                    "restart_required": True,
+                    "actual_handle_closed_on_unwind": True,
+                    "original_entry_leases_retired_on_unwind": True,
+                }
+            )
+        )
+        # Only process death ends this retained operation; no false close proof.
+        os._exit(0)
+    except BaseException:
+        import traceback
+
+        failure = traceback.format_exc()
+        Path(receipt).write_text(failure)
+        os.write(2, failure.encode())
+        os._exit(1)

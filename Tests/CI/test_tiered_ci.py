@@ -512,6 +512,7 @@ def test_light_gate_is_required_and_uses_hosted_runners():
     assert jobs["dev-light"]["if"] == "needs.preflight.outputs.light == 'true'"
     assert jobs["dev-light"]["runs-on"] == "ubuntu-latest"
     assert jobs["dev-light"]["timeout-minutes"] < 45
+    assert jobs["dev-light"]["timeout-minutes"] == 15
     steps = {s.get("name"): s for s in jobs["derived-artifacts"]["steps"]}
     for name, lane in [
         ("Require selected dev smoke tests", "dev-light"),

@@ -305,6 +305,7 @@ class ServedRelayPublisher:
                     else:
                         self._idle.set()
                         break
+                    self._idle.clear()
                 try:
                     await self._client.send_relay_event(message_type, payload)
                 except asyncio.CancelledError:

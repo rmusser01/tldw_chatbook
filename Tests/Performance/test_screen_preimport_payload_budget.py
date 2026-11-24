@@ -260,7 +260,8 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #: about 1,500 to 2,300 more lines. Counted right at ``_ui_ready`` with no
 #: settle, one tree read 80 and 93 in two runs, so that count is not
 #: comparable from one run to the next.
-MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 90
+# PR3345 owner source-count waiver, 2026-11-23: measured93, no headroom; ADR097.
+MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 93
 
 _CENSUS_SCRIPT = """
 import json

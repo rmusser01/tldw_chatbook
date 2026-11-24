@@ -367,3 +367,246 @@ def test_retained_source_scope_releases_only_after_proven_unwind(failure):
         raise body_error
     assert raised.value is (cleanup_error if failure == "cleanup" else body_error)
     assert tree.source_scopes == (0 if failure == "body" else 1)
+
+
+def test_ordinary_body_error_and_global_workspace_close_refusal_keep_custody(tmp_path):
+    """Actual tool caller retains a failed native return until restart."""
+    import os
+    import subprocess
+    import sys
+
+    setup = r"""
+    import types
+    from tldw_chatbook.Agents import activation as actual_activation
+    from tldw_chatbook.Agents.agent_service import _call_with_timeout
+    from tldw_chatbook.Agents.execution_capacity import UnprovenRetention, holds_unproven_custody
+    from tldw_chatbook.DB.private_sqlite import _ordinary_connections
+    from tldw_chatbook.Tools import workspace_file_roots
+    actual_global = workspace_file_roots._registry_factory()
+    assert actual_global.db is not app.workspace_registry_service.db
+    actual_global.db.close()
+    primary_error = RuntimeError('original ordinary callback body failure')
+    observed = {'fault_calls': 0, 'injected': False}
+    decorate_code = next(c for c in actual_activation.worker_guard.__code__.co_consts if isinstance(c, types.CodeType) and c.co_name == 'decorate')
+    guard_code = next(c for c in decorate_code.co_consts if isinstance(c, types.CodeType) and c.co_name == 'call')
+
+    def observe_body_and_return(frame, event, argument):
+        if event == 'call' and frame.f_code is _call_with_timeout.__code__ and frame.f_locals.get('tool_name') == 'calculator':
+            observed['body_code'] = frame.f_locals['fn'].__code__
+        elif event == 'call' and frame.f_code is guard_code:
+            function = frame.f_locals['function']
+            if function.__qualname__ == '_call_with_timeout.<locals>._admitted_call':
+                observed['global_before_guard'] = getattr(actual_global.db._thread_local, 'conn', None)
+                free = dict(zip(function.__code__.co_freevars, (cell.cell_contents for cell in function.__closure__)))
+                observed['box'] = free['box']
+        elif event == 'return' and frame.f_code is observed.get('body_code') and not observed['injected']:
+            tree = current_ordinary_tree()
+            assert tree is not None and getattr(argument, 'ok', False)
+            assert all(actual_global.db is not database for database in tree.source.databases)
+            assert observed['global_before_guard'] is None
+            actual_global.get_active_workspace()
+            connection = actual_global.db._thread_local.conn
+            observed.update(tree=tree, connection=connection, lease=_ordinary_connections[connection], worker=threading.current_thread(), had_binding='close' in vars(connection), binding=vars(connection).get('close'))
+            def refuse_actual_workspace_close():
+                observed['fault_calls'] += 1
+                print('F_GENUINE_GLOBAL_WORKSPACE_CLOSE_REFUSAL', flush=True)
+                raise RuntimeError('original global Workspace physical close refused')
+            connection.close = refuse_actual_workspace_close
+            observed['injected'] = True
+            print('F_GENUINE_ORDINARY_CALLBACK_RETURN', flush=True)
+            raise primary_error
+    threading.setprofile_all_threads(observe_body_and_return)
+"""
+    script = _SCRIPT
+    source = "    source = preparation.capture_console_received_configuration_preparation(app, store, controller, session_id=session.id)\n"
+    assert script.count(source) == 1
+    script = script.replace(source, setup + source, 1)
+    spawn = "fence(SPAWN_TOOL_NAME, {'task': 'survive original parent'})"
+    assert script.count(spawn) == 1
+    script = script.replace(spawn, "fence('calculator', {'expression': '2 + 2'})", 1)
+    proof = r"""
+    async with asyncio.timeout(60):
+        result = await task
+    assert observed['injected'] and observed['fault_calls'] > 0
+    tree = observed['tree']
+    retained = [item for item in runtime.execution_capacity.retained() if item.operation.owner is tree.owner and item.label == 'calculator']
+    assert len(retained) == 1, 'ordinary caller mistook cleanup failure for unchanged body failure'
+    retention = retained[0]
+    worker = observed['worker']
+    async with asyncio.timeout(10):
+        while worker.is_alive() and not holds_unproven_custody(worker):
+            await asyncio.sleep(.01)
+    assert worker.is_alive() and holds_unproven_custody(worker)
+    frame = sys._current_frames().get(worker.ident)
+    held_in_actual_scope = False
+    while frame is not None:
+        if frame.f_code is UnprovenRetention.hold.__code__ and frame.f_locals.get('self') is retention:
+            held_in_actual_scope = True
+            break
+        frame = frame.f_back
+    del frame
+    assert held_in_actual_scope
+    box = observed['box']
+    assert box['call_error'] is primary_error
+    assert isinstance(box['error'], BaseExceptionGroup) and box['error'] is not primary_error
+    assert box['error'].exceptions[0] is primary_error
+    connection = observed['connection']
+    assert retention in runtime.execution_capacity.retained()
+    assert retention.operation.owner is tree.owner
+    assert tree.owner.drain_state() == 'unproven'
+    assert tree.claim.id in runtime.worktree_activity._claims
+    assert not tree.retired.done() and tree.source_scopes > 0
+    assert not runtime._first_send_publishing and config.current_config_identity() == before
+    assert getattr(actual_global.db._thread_local, 'conn', None) is not connection  # Main-thread cache is distinct.
+    assert _ordinary_connections.get(connection) is observed['lease']
+    assert actual_global.db._connection_quiescence.is_registered(connection)
+    # Restore the exact instance binding; no cleanup marker or lease is reset.
+    if observed['had_binding']:
+        connection.close = observed['binding']
+    else:
+        del connection.close
+    assert ('close' in vars(connection)) is observed['had_binding']
+    assert not observed['had_binding'] or vars(connection)['close'] is observed['binding']
+    threading.setprofile_all_threads(None)
+    # Quit may close a provably idle handle through its native closer. It may
+    # not turn the historical unknown worker return into a proven tree drain.
+    disposal = asyncio.ensure_future(runtime.dispose())
+    await asyncio.wait({disposal}, timeout=30)
+    assert disposal.done(), 'Quit waited on retained cleanup instead of returning'
+    disposal.result()
+    assert not tree.retired.done() and retention in runtime.execution_capacity.retained()
+    assert not network_guard.blocked_attempts() and not real_profile_guard.take_violations()
+    print('F_NATIVE_BODY_AND_WORKSPACE_RETURN_HELD', flush=True)
+    os._exit(0)  # Expected restart-held custody; never a successful drain claim.
+"""
+    start = script.index("    # Hang detectors, not speed limits:")
+    end = script.index("    writer_calls = []", start)
+    script = script[:start] + proof + script[end:]
+    for name in ("home", "config", "data"):
+        (tmp_path / name).mkdir(mode=0o700)
+    environment = os.environ.copy()
+    environment.update(
+        HOME=str(tmp_path / "home"),
+        USERPROFILE=str(tmp_path / "home"),
+        XDG_CONFIG_HOME=str(tmp_path / "config"),
+        XDG_DATA_HOME=str(tmp_path / "data"),
+        TLDW_CONFIG_PATH=str(tmp_path / "config" / "config.toml"),
+        TLDW_TEST_MODE="1",
+        TLDW_DISABLE_CONFIG_WATCH="1",
+    )
+    log = tmp_path / "ordinary-cleanup-held.log"
+    with log.open("w", encoding="utf-8") as output:
+        result = subprocess.run(
+            [sys.executable, "-X", "utf8", "-c", script, "fix1", "native"],
+            env=environment,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=150,
+            check=False,
+        )
+    text = log.read_text(encoding="utf-8", errors="replace")
+    assert result.returncode == 0, text[-7000:]
+    assert "F_GENUINE_ORDINARY_CALLBACK_RETURN" in text
+    assert "F_GENUINE_GLOBAL_WORKSPACE_CLOSE_REFUSAL" in text
+    assert "F_NATIVE_BODY_AND_WORKSPACE_RETURN_HELD" in text
+
+
+@pytest.mark.parametrize("control", ["delayed-entry", "late-parent"])
+def test_runtime_optional_stop_admits_before_actual_producer_return(tmp_path, control):
+    script = _SCRIPT
+    if control == "late-parent":
+        configured = "    if sys.argv[2] == 'late_nonstop':\n"
+        assert script.count(configured) == 1
+        script = script.replace(
+            configured, "    if sys.argv[2] in {'late_nonstop', 'native'}:\n", 1
+        )
+        early = "    if engine is not None:\n        child_release.set()\n"
+        assert script.count(early) == 1
+        script = script.replace(
+            early,
+            "    if engine is not None and sys.argv[2] == 'late_nonstop':\n        child_release.set()\n",
+            1,
+        )
+    setup = r"""
+
+    from tldw_chatbook.Agents import activation as ack_activation, scratch_admission
+    from tldw_chatbook.Agents.hooks_v2.lifecycle import HookSessionLifecycle
+    from tldw_chatbook.Backup_Recovery.admission_runtime import execution_identity
+    import time
+    ack_waiting = threading.Event()
+    ack = {'delayed': False}
+    install_code = HookSessionLifecycle.install.__code__
+    wait_code = engine._wait_notification_admissions.__code__
+    deliver_code = engine._deliver.__code__
+    current_code = engine._deliver_current.__code__
+
+    def observe_native_entry(frame, event, argument):
+        if frame.f_code is install_code and event == 'call':
+            hook_event = frame.f_locals.get('event')
+            if getattr(hook_event, 'event', None) == 'SubagentStop':
+                lifecycle = frame.f_locals['self']
+                ack['owner_current'] = lifecycle.checkpoints.is_current(frame.f_locals['owner'])
+                ack['preheld'] = frame.f_locals['_execution'] is not None
+                ack['wait_requested'] = frame.f_locals['_wait_native_admission']
+                ack['producer'] = scratch_admission._current.get()
+                ack['producer_local'] = ack['producer'].identity == execution_identity()
+        elif frame.f_code is wait_code:
+            scope = frame.f_locals['execution']
+            if dict(scope._state.identity).get('event') == 'SubagentStop':
+                if event == 'call':
+                    ack_waiting.set()
+                elif event == 'return':
+                    entries = scope._state.notification_entries
+                    ack['all_entered'] = bool(entries) and all(entry.done() and entry.result() is True for entry in entries)
+        elif frame.f_code is deliver_code and event == 'call':
+            hook_event = frame.f_locals['event']
+            if hook_event.event == 'SubagentStop' and not ack['delayed']:
+                ack['delayed'] = True
+                scope = frame.f_locals['execution']
+                # Existing producer must actually enter its bounded ACK wait;
+                # the receiver cannot win by racing its lexical source return.
+                assert ack_waiting.wait(min(10, max(0, scope.deadline - time.monotonic())))
+                ack['producer_live_before_entry'] = ack['producer'].live
+        elif frame.f_code is current_code and event == 'call':
+            if frame.f_locals['event'].event == 'SubagentStop':
+                own = scratch_admission._current.get()
+                state = ack_activation._guard.context.get()
+                ack['receiver'] = own
+                ack['independent'] = own is not ack['producer'] and own.identity == execution_identity() and state.identity == execution_identity()
+
+    threading.setprofile_all_threads(observe_native_entry)
+"""
+    source = "    source = preparation.capture_console_received_configuration_preparation(app, store, controller, session_id=session.id)\n"
+    assert script.count(source) == 1
+    script = script.replace(source, setup + source, 1)
+    proof = r"""
+        assert ack['delayed'] and ack['preheld'] and ack['wait_requested']
+        assert ack['owner_current'] is EXPECT_CURRENT
+        assert ack['producer_local'] and ack['producer_live_before_entry']
+        assert ack['independent'] and ack['all_entered']
+        async with asyncio.timeout(10):
+            while ack['producer'].live:
+                await asyncio.sleep(.01)
+        assert ack['receiver'].live, 'optional command still needs its independent source scope'
+        print('F_NATIVE_STOP_ACK_' + ACK_CONTROL, flush=True)
+""".replace("EXPECT_CURRENT", repr(control == "delayed-entry")).replace(
+        "ACK_CONTROL", repr(control)
+    )
+    release = "        hook_release.touch()\n"
+    assert script.count(release) == 1
+    script = script.replace(release, proof + release, 1)
+    cleanup = "    await runtime.dispose()\n"
+    assert script.count(cleanup) == 1
+    script = script.replace(
+        cleanup, "    threading.setprofile_all_threads(None)\n" + cleanup, 1
+    )
+    _run(
+        tmp_path,
+        "fix1_ack",
+        "native" if control == "late-parent" else "late_nonstop",
+        script=script,
+        timeout=150,
+    )
+    text = (tmp_path / "restart-output.log").read_text(encoding="utf-8")
+    assert "F_NATIVE_STOP_ACK_" + control in text

@@ -61,9 +61,11 @@ async def test_the_commit_window_is_open_exactly_while_the_commit_runs(
     request: pytest.FixtureRequest,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    owned_console_databases,
     outcome: str,
 ) -> None:
     _db, store, controller, gateway = _controller(tmp_path)
+    owned_console_databases(_db, controller)
     entered, release = _held_commit(monkeypatch, store, fail=outcome == "failed")
     assert _started_at(store) is None
     task = asyncio.create_task(
@@ -102,6 +104,7 @@ async def test_a_chat_closed_during_its_native_commit_never_reads_as_an_owner_ch
     request: pytest.FixtureRequest,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    owned_console_databases,
     move: str,
 ) -> None:
     """TASK-39155: does a plain close reach the native-commit retain path
@@ -116,6 +119,7 @@ async def test_a_chat_closed_during_its_native_commit_never_reads_as_an_owner_ch
     from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
 
     _db, store, controller, gateway = _controller(tmp_path)
+    owned_console_databases(_db, controller)
     entered, release = _held_commit(monkeypatch, store)
     attention: list[str] = []
     sink = logger.add(

@@ -121,3 +121,19 @@ Maps each ADR number that was once shared by several files (TASK-36943.3, 2026-1
 | ADR-220 | [352-evaluation-defaults-and-private-overrides.md](352-evaluation-defaults-and-private-overrides.md) (was `220-evaluation-defaults-and-private-overrides.md`) | ADR-352 |
 | ADR-228 | [228-config-encryption-derived-key-memoization.md](228-config-encryption-derived-key-memoization.md) | ADR-228 (keeper) |
 | ADR-228 | [353-sqlite-store-kernel.md](353-sqlite-store-kernel.md) (was `228-sqlite-store-kernel.md`) | ADR-353 |
+
+## Later collision repairs (2026-11-23)
+
+These contextual mappings supplement the original TASK-36943.3 table above.
+Historical Done tasks and superpowers specs, plans and reviews retain their
+recorded numbers and filenames; use their topic or old filename to select
+the decision below.
+
+| Old number | Decision and historical filename | Now |
+| --- | --- | --- |
+| ADR-360 | [BeautifulSoup core dependency](360-beautifulsoup4-core-dependency.md) | ADR-360 (keeper; Date 2026-10-11) |
+| ADR-360 | [Isolated self-hosted CI runners](367-isolated-self-hosted-ci-runners.md), was `360-isolated-self-hosted-ci-runners.md`, originally `359-isolated-self-hosted-ci-runners.md` | ADR-367 (Date 2026-11-13) |
+| ADR-360 | [Tiered development and release CI](366-tiered-development-and-release-ci.md), was `360-tiered-development-and-release-ci.md` | ADR-366 (renumbered 2026-11-18) |
+
+Historical ADR-359 references naming the isolated runner decision also resolve
+to ADR-367. ADR-359 remains the separate [Windows Textual timer decision](359-windows-textual-timer-waits-use-the-event-loop.md), dated 2026-11-04.
