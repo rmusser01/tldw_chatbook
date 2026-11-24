@@ -34,8 +34,8 @@ class StoreDeclaration:
     #: store's owner instead of closing them.
     finite_worker: bool = True
     #: Owner method ``run_finite_local_worker`` retires its cache with, when
-    #: that must differ from ``closer`` (``None``: ``closer``). It runs on
-    #: interactive reads, so it must never wait on another connection.
+    #: that must differ from ``closer`` (``None``: ``closer``). ChaChaNotes'
+    #: skips the TRUNCATE checkpoint that restarts the WAL (N-24).
     finite_closer: str | None = None
     #: One native connection serves every thread, so a retirement on any
     #: thread refuses access and a live operation on any thread refuses close.

@@ -99,8 +99,8 @@ def run_finite_local_worker(function, /, *args, **kwargs):
             # outside maintenance, when the ordinary close API permits close.
             if any(connection.in_transaction for connection, _ in connections):
                 continue
-            # A store's finite closer never waits on another connection's
-            # writer: this runs on interactive reads (TASK-34100.16.1).
+            # A store's finite closer skips the close-time checkpoint that
+            # restarts the WAL under other deferred writes (N-24).
             closer = declaration.finite_closer or declaration.closer
             getattr(type(repository), closer)(repository)
 

@@ -815,11 +815,13 @@ async def test_console_retrieval_scope_read_and_write_retire_their_worker_connec
 
 # TASK-34100.16.1 pre-merge review (2026-11-13), Important 1: retiring a
 # finite worker's ChaChaNotes connection ran ``close_connection``, whose
-# ``PRAGMA wal_checkpoint(TRUNCATE)`` waits on the 15 s busy handler until no
-# other connection is writing. Every wrapped interactive read (the ``[[``
-# picker per keystroke, backlinks per note open, the RAG legs) then stalled
-# behind any long write: 3,004-3,101 ms behind a 3 s write transaction, where
-# the bare cached reads it replaced never waited on a writer.
+# ``PRAGMA wal_checkpoint(TRUNCATE)`` then waited on the 15 s busy handler
+# until no other connection was writing, so every wrapped interactive read
+# stalled 3,004-3,101 ms behind a 3 s write. Dev's TASK-41115 later made that
+# checkpoint never wait, so the two no-wait tests below pin the outcome
+# whichever closer runs. What the finite closer still prevents, a WAL restart
+# under another connection's deferred read-then-write (N-24), is pinned by
+# statement in ``test_finite_retirement_issues_no_wal_checkpoint``.
 _WRITER_HOLD_SECONDS = 3.0
 
 
@@ -848,8 +850,8 @@ async def test_finite_read_does_not_wait_for_another_connections_write(
 ):
     """A wrapped read returns while another connection still holds a write.
 
-    The bound is well under the 3 s hold: before the fix the read's retirement
-    checkpoint waited for the writer's commit, so the call took the full hold.
+    The bound is well under the 3 s hold, which a retirement checkpoint waiting
+    for the writer's commit once took in full (see the note above).
     """
     import time
 
@@ -903,6 +905,46 @@ async def test_note_link_picker_does_not_wait_for_another_connections_write(
     assert [row["id"] for row in rows] == [other]
     assert elapsed < 1.0, f"the picker waited {elapsed:.2f}s on another writer"
     assert not worker_leases(db), "the link-picker worker kept its connection"
+
+
+def test_finite_retirement_issues_no_wal_checkpoint(tmp_path, local_root, monkeypatch):
+    """A finite worker's ChaChaNotes retirement never checkpoints the WAL.
+
+    A ``wal_checkpoint(TRUNCATE)`` restarts the WAL under another connection's
+    DEFERRED transaction that has already read, and its first write then fails
+    with SQLITE_BUSY_SNAPSHOT (N-24, lessons-testing-evidence). Measured on dev
+    b31e3e9241 with a finite read retiring between such a transaction's read and
+    its write: 20 of 20 writes failed with 517 under ``close_connection``, none
+    under the finite closer. So the closer is pinned by the statements the
+    worker connection runs, not by timing.
+    """
+    import concurrent.futures
+
+    from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+    from tldw_chatbook.DB import ChaChaNotes_DB
+
+    db = CharactersRAGDB(tmp_path / "notes.db", "test")
+    db.add_note("Alpha", "body")
+    db.close_connection()  # setup's own main-thread handle is not under test
+    statements = []
+    original = ChaChaNotes_DB.connect_private_sqlite
+    test_thread = threading.current_thread()
+
+    def tracing(*args, **kwargs):
+        connection = original(*args, **kwargs)
+        if threading.current_thread() is not test_thread:
+            connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(ChaChaNotes_DB, "connect_private_sqlite", tracing)
+    with concurrent.futures.ThreadPoolExecutor(1) as pool:
+        rows = pool.submit(run_finite_local_worker, db.list_notes).result()
+
+    assert [row["title"] for row in rows] == ["Alpha"]
+    assert any("FROM notes" in sql for sql in statements), statements
+    assert not worker_leases(db), "the worker kept its connection"
+    checkpoints = [sql for sql in statements if "wal_checkpoint" in sql.lower()]
+    assert checkpoints == [], "a finite retirement checkpointed the WAL"
 
 
 def test_final_close_still_checkpoints_and_truncates_the_wal(tmp_path, local_root):
