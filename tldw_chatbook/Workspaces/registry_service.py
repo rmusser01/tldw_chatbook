@@ -61,6 +61,10 @@ from .change_review_consent import (
     ChangeReviewStateConflict,
     MISSING_CHANGE_REVIEW_REVISION,
 )
+from .output_membership import (
+    encode_output_membership_metadata,
+    output_membership_metadata,
+)
 
 
 _STORAGE_FAILURE_MESSAGE = "Workspace registry storage failed."
@@ -255,6 +259,13 @@ def _filesystem_binding_missing(locator: str) -> bool:
 
 class WorkspaceRegistryServiceError(Exception):
     """Base exception for workspace registry failures."""
+
+
+class WorkspaceMembershipConflict(WorkspaceRegistryServiceError):
+    """The output membership changed after the caller captured it."""
+
+    def __init__(self) -> None:
+        super().__init__("The workspace output link changed. Refresh and try again.")
 
 
 class WorkspaceArchiveConflict(WorkspaceRegistryServiceError):
@@ -1515,6 +1526,62 @@ class LocalWorkspaceRegistryService:
         if row is not None:
             return _membership_from_row(row)
         raise WorkspaceRegistryServiceError("Workspace membership link failed.")
+
+    def upsert_membership_metadata(
+        self,
+        membership: WorkspaceMembership,
+        *,
+        expected_updated_at: str | None = None,
+    ) -> WorkspaceMembership:
+        """Write provenance to an existing output link using its captured timestamp."""
+        metadata = output_membership_metadata(membership.metadata, membership.role)
+        if not membership.membership_id or not metadata:
+            raise ValueError(
+                "Link the canonical output before saving generation provenance"
+            )
+        try:
+            with self.db.transaction(immediate=True) as conn:
+                row = conn.execute(
+                    """
+                    SELECT * FROM workspace_memberships
+                    WHERE membership_id = ? AND workspace_id = ? AND item_type = ?
+                      AND item_id = ? AND role = 'output'
+                    """,
+                    (
+                        membership.membership_id,
+                        membership.workspace_id,
+                        membership.item_type,
+                        membership.item_id,
+                    ),
+                ).fetchone()
+                if row is None:
+                    raise WorkspaceMembershipConflict()
+                current = _membership_from_row(row)
+                if current.metadata == metadata:
+                    return current
+                if current.updated_at != expected_updated_at:
+                    raise WorkspaceMembershipConflict()
+                timestamp = _parse_utc_timestamp(self._now_factory())
+                if current.updated_at:
+                    timestamp = max(
+                        timestamp,
+                        _parse_utc_timestamp(current.updated_at)
+                        + timedelta(microseconds=1),
+                    )
+                updated_at = timestamp.isoformat()
+                conn.execute(
+                    "UPDATE workspace_memberships SET metadata_json = ?, updated_at = ? WHERE membership_id = ?",
+                    (
+                        encode_output_membership_metadata(metadata),
+                        updated_at,
+                        membership.membership_id,
+                    ),
+                )
+                saved = replace(current, metadata=metadata, updated_at=updated_at)
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        self._bump_mutation_generation()
+        return saved
 
     def unlink_membership(
         self,
@@ -3850,6 +3917,10 @@ def _membership_from_row(row: sqlite3.Row) -> WorkspaceMembership:
         transfer_policy=WorkspaceTransferPolicy(row["transfer_policy"]),
         title=row["title"],
         created_at=row["created_at"],
+        metadata=json.loads(row["metadata_json"])
+        if row["metadata_json"] is not None
+        else {},
+        updated_at=row["updated_at"],
     )
 
 

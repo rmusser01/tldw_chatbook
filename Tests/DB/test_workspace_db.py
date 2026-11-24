@@ -973,7 +973,9 @@ def test_v10_archive_chronology_migrates_unknown_history_and_rolls_back(tmp_path
     with db.transaction() as conn:
         conn.execute("ALTER TABLE workspace_records DROP COLUMN archived_at")
         conn.execute("ALTER TABLE workspace_records DROP COLUMN archive_revision")
-        conn.execute("DELETE FROM schema_version WHERE version = 10")
+        conn.execute("ALTER TABLE workspace_memberships DROP COLUMN metadata_json")
+        conn.execute("ALTER TABLE workspace_memberships DROP COLUMN updated_at")
+        conn.execute("DELETE FROM schema_version WHERE version >= 10")
         conn.execute("""CREATE TRIGGER refuse_v10 BEFORE INSERT ON schema_version
             WHEN NEW.version = 10 BEGIN SELECT RAISE(ABORT, 'version failure'); END""")
     db.close()

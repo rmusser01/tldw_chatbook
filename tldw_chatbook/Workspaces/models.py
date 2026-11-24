@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Mapping, NamedTuple
 
+from .output_membership import output_membership_metadata
+
 if TYPE_CHECKING:
     from .change_turn_tracker import TurnHandle
 
@@ -209,6 +211,8 @@ class WorkspaceMembership:
     title: str = ""
     created_at: str = field(default_factory=registry_now_iso)
     membership_id: str | None = None
+    metadata: Mapping[str, object] = field(default_factory=dict, repr=False)
+    updated_at: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -220,6 +224,17 @@ class WorkspaceMembership:
         object.__setattr__(self, "item_id", _required_text(self.item_id, "item_id"))
         object.__setattr__(self, "role", _required_text(self.role, "role"))
         object.__setattr__(self, "title", _optional_text(self.title))
+        object.__setattr__(
+            self, "metadata", output_membership_metadata(self.metadata, self.role)
+        )
+        if self.updated_at is not None:
+            if self.role != "output":
+                raise ValueError(
+                    "Only output memberships include a provenance update timestamp"
+                )
+            object.__setattr__(
+                self, "updated_at", _required_text(self.updated_at, "updated_at")
+            )
         object.__setattr__(
             self,
             "transfer_policy",
