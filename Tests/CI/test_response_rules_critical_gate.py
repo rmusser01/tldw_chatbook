@@ -58,7 +58,6 @@ INHERITED = {
         "Tests/Chat/test_console_trace_domain_append.py",  # TASK-34100.3
         "Tests/Chat/test_console_trace_domain_append_planner.py",  # TASK-34100.3
         "Tests/Chat/test_continuation_destination_identity.py",  # TASK-34100.3
-        "Tests/Chat/test_console_failed_call_retry_ownership.py",  # TASK-42472
         "Tests/Architecture/test_wizard_lifecycle_guards.py",
         "Tests/DB/test_chachanotes_v74_auxiliary_failure_reason.py",
         "Tests/UI/test_console_composer_run_controls.py::test_disabled_reason_names_the_queue_state_not_send_or_setup",

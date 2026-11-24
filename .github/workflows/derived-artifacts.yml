@@ -1192,11 +1192,6 @@ jobs:
       # append rule (18, 5.7 s) and its real-planner tests (28, 66.9 s), and the
       # continuation destination identity (8, 21.7 s), serially with this
       # step's flags at load 55-61.
-      # TASK-42472 (round 24, 2026-11-24), after the destination identity file:
-      # the failed-call retry rule, with its llama.cpp stream-fallback cases
-      # (sandboxed, no config read; its bootstrap_profile marker dropped), on
-      # no lane before: 59 passed in 32.3 s serially with this step's flags at
-      # load 5.
       - name: Run the sandboxed Console P0 regression tests
         if: ${{ !cancelled() && matrix.profile == 'sandboxed' }}
         run: |
@@ -1209,7 +1204,6 @@ jobs:
             Tests/Chat/test_console_trace_domain_append.py \
             Tests/Chat/test_console_trace_domain_append_planner.py \
             Tests/Chat/test_continuation_destination_identity.py \
-            Tests/Chat/test_console_failed_call_retry_ownership.py \
             Tests/Architecture/test_wizard_lifecycle_guards.py \
             Tests/DB/test_chachanotes_v74_auxiliary_failure_reason.py \
             Tests/UI/test_console_composer_run_controls.py::test_disabled_reason_names_the_queue_state_not_send_or_setup \
@@ -1570,6 +1564,13 @@ jobs:
       - name: Install fast-lane dependencies
         run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2 hypothesis
 
+      # TASK-42472 (round 24, 2026-11-24): the failed-call retry rule file,
+      # with its llama.cpp stream-fallback cases, on no lane before. It is
+      # bootstrap_profile (its gateway reads [model_catalog] use_models_dev
+      # through get_model_capabilities), so it runs after Tool_Packs; not in
+      # console-p0-gate's admission-sensitive profile, which ran 27-34 of its
+      # 35 min in CI (TASK-42533). 59 passed in 26.9 s serially with this
+      # step's flags at load 6.
       - name: Run the Dreams tracking tests and unlaned riders
         run: |
           pytest \
@@ -1597,6 +1598,7 @@ jobs:
             Tests/Wizards/test_first_run_discovery_base_url.py \
             Tests/Tool_Packs \
             Tests/Chat/test_console_trace_retry_recovery_proof.py \
+            Tests/Chat/test_console_failed_call_retry_ownership.py \
             Tests/Backup_Recovery/test_character_presentation_cadence.py \
             --timeout=180 \
             --tb=short

@@ -30,8 +30,12 @@ from tldw_chatbook.Chat.console_trace_provenance import (
 )
 from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
 
-# No bootstrap_profile (TASK-42472, 2026-11-24): nothing here reads config, so
-# the file runs in the per-test sandbox and the sandboxed Console P0 step.
+# The gateway reads config: stream_chat -> prepare_chat_request ->
+# get_model_capabilities reads [model_catalog] use_models_dev. In the per-test
+# sandbox that read raises RecoveryRequired and models_dev_catalog._enabled()
+# swallows it, so the file only looked config-free (TASK-42472 review,
+# 2026-11-24; the TASK-32628 swallowed-admission trap).
+pytestmark = pytest.mark.bootstrap_profile
 make_database = _make_database_fixture
 make_gateway = _make_gateway_fixture
 
