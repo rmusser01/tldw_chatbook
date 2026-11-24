@@ -47,6 +47,7 @@ def run_finite_local_worker(function, /, *args, **kwargs):
     worker event loop. Existing, foreign-thread, custom and in-memory handles
     remain caller-owned. Cancellation of the awaiting UI task does not shorten
     this worker's lifetime or close a connection while its work is running.
+    Retirement uses the store's ``finite_closer`` when it declares one.
     """
     from . import storage_admission as storage
 
@@ -98,7 +99,10 @@ def run_finite_local_worker(function, /, *args, **kwargs):
             # outside maintenance, when the ordinary close API permits close.
             if any(connection.in_transaction for connection, _ in connections):
                 continue
-            getattr(type(repository), declaration.closer)(repository)
+            # A store's finite closer skips the close-time checkpoint that
+            # restarts the WAL under other deferred writes (N-24).
+            closer = declaration.finite_closer or declaration.closer
+            getattr(type(repository), closer)(repository)
 
 
 def retire_current_thread_caches(pause) -> None:

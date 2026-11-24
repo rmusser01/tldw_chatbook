@@ -25,6 +25,7 @@ from ..Chat.rag_scope import (
     media_id_params,
     note_id_params,
 )
+from ..Backup_Recovery.participants import run_finite_local_worker
 from .pipeline_types import SearchResult
 from .local_citation_capture import (
     FINAL_SCORE_KIND_KEY,
@@ -199,40 +200,16 @@ async def search_media_fts5(
         # byte-identical to before this parameter existed.
         search_kwargs["media_ids_filter"] = id_allowlist
 
-    # Search media database
-    media_results = await asyncio.to_thread(
-        app.media_db.search_media_db, **search_kwargs
+    # Every media read this leg makes runs in one finite worker: one native
+    # open, retired at the end (TASK-34100.16.1). A bare executor read keeps a
+    # pool-thread connection a backup's local pause cannot revoke.
+    media_items, keywords_map, content_map = await asyncio.to_thread(
+        run_finite_local_worker,
+        _read_media_leg,
+        app.media_db,
+        search_kwargs,
+        bool(keyword_filter),
     )
-
-    # Extract results list
-    if isinstance(media_results, tuple):
-        media_items = media_results[0]
-    else:
-        media_items = media_results
-
-    media_ids = [item.get("id") for item in media_items if item.get("id")]
-
-    # Fetch keywords if needed
-    keywords_map = {}
-    if media_ids and keyword_filter:
-        keywords_map = await asyncio.to_thread(
-            app.media_db.fetch_keywords_for_media_batch, media_ids
-        )
-
-    # TASK-407: search_media_db's broad row carries no ``content`` key (full
-    # transcripts are deliberately kept out of the search SELECT), which used
-    # to leave every media hit with content="" -- and deduplicate_results'
-    # content-prefix key then collapsed ALL unscoped media results into one.
-    # One batched SQL-side substr fetch gives each hit a bounded, distinct
-    # snippet (500 chars > the dedup key's 200); rows with no content fall
-    # back to their title for display and dedup by their media record ID.
-    content_map: Dict[int, str] = {}
-    if media_ids:
-        content_map = await asyncio.to_thread(
-            app.media_db.fetch_content_prefixes_for_media_batch,
-            media_ids,
-            _MEDIA_SNIPPET_PREFIX_CHARS,
-        )
 
     # Convert to SearchResult objects
     results = []
@@ -264,6 +241,66 @@ async def search_media_fts5(
         )
 
     return results[:limit]
+
+
+def _read_media_leg(
+    media_db: Any, search_kwargs: Dict[str, Any], with_keywords: bool
+) -> tuple[list, dict, Dict[int, str]]:
+    """Run the media leg's store reads on one thread, sharing its connection.
+
+    Args:
+        media_db: The app's ``MediaDatabase``.
+        search_kwargs: Keyword arguments for ``search_media_db``.
+        with_keywords: Whether a keyword filter needs each hit's keywords.
+
+    Returns:
+        The hits, their keywords by media id (empty unless ``with_keywords``),
+        and their content prefixes by media id.
+    """
+    media_results = media_db.search_media_db(**search_kwargs)
+    media_items = (
+        media_results[0] if isinstance(media_results, tuple) else media_results
+    )
+    media_ids = [item.get("id") for item in media_items if item.get("id")]
+    keywords_map = {}
+    if media_ids and with_keywords:
+        keywords_map = media_db.fetch_keywords_for_media_batch(media_ids)
+    # TASK-407: search_media_db's broad row carries no ``content`` key (full
+    # transcripts are deliberately kept out of the search SELECT), which used
+    # to leave every media hit with content="" -- and deduplicate_results'
+    # content-prefix key then collapsed ALL unscoped media results into one.
+    # One batched SQL-side substr fetch gives each hit a bounded, distinct
+    # snippet (500 chars > the dedup key's 200); rows with no content fall
+    # back to their title for display and dedup by their media record ID.
+    content_map: Dict[int, str] = {}
+    if media_ids:
+        content_map = media_db.fetch_content_prefixes_for_media_batch(
+            media_ids, _MEDIA_SNIPPET_PREFIX_CHARS
+        )
+    return media_items, keywords_map, content_map
+
+
+def _read_conversations_leg(db: Any, query: str, limit: int) -> tuple[list, dict]:
+    """Run the conversations leg's store reads on one thread, sharing its connection.
+
+    Args:
+        db: The ChaChaNotes ``CharactersRAGDB``.
+        query: FTS search text.
+        limit: Maximum number of matched conversations to read.
+
+    Returns:
+        The matched conversations and their context messages by conversation id.
+    """
+    conv_results = db.search_conversations_by_content(search_query=query, limit=limit)
+    # task-260: one batched query for all matched conversations' context
+    # messages (was one query per conversation), and text-only snippets
+    # never fetch image BLOBs.
+    messages_by_conv = db.get_messages_for_conversations_batch(
+        conversation_ids=[conv["id"] for conv in conv_results],
+        limit_per_conversation=5,
+        include_image_data=False,
+    )
+    return conv_results, messages_by_conv
 
 
 def _resolve_chacha_db(app: Any):
@@ -346,18 +383,9 @@ async def search_conversations_fts5(
         return []
 
     logger.debug("RAG retrieval starting; source=conversations; search=fts5")
-    conv_results = await asyncio.to_thread(
-        db.search_conversations_by_content, search_query=query, limit=limit * 2
-    )
-
-    # task-260: one batched query for all matched conversations' context
-    # messages (was one query per conversation), and text-only snippets
-    # never fetch image BLOBs.
-    messages_by_conv = await asyncio.to_thread(
-        db.get_messages_for_conversations_batch,
-        conversation_ids=[conv["id"] for conv in conv_results],
-        limit_per_conversation=5,
-        include_image_data=False,
+    # One finite worker, one native open, for both reads (TASK-34100.16.1).
+    conv_results, messages_by_conv = await asyncio.to_thread(
+        run_finite_local_worker, _read_conversations_leg, db, query, limit * 2
     )
 
     results = []
@@ -441,7 +469,11 @@ async def search_notes_fts5(
     logger.debug("RAG retrieval starting; source=notes; search=fts5")
 
     note_results = await asyncio.to_thread(
-        db.search_notes, search_term=query, limit=limit, id_allowlist=id_allowlist
+        run_finite_local_worker,
+        db.search_notes,
+        search_term=query,
+        limit=limit,
+        id_allowlist=id_allowlist,
     )
 
     results = []

@@ -692,6 +692,36 @@ def test_a_deleted_file_root_holds_nothing_but_a_missing_folder_still_refuses(
 
 
 @pytest.mark.usefixtures("local_root")
+def test_the_refused_start_names_a_missing_folder_root_but_not_a_deleted_file_root(
+    tmp_path, monkeypatch
+):
+    """TASK-34100.16.1, ported onto TASK-42115 (2026-11-23): a refused start
+    lists the registered locations that refuse it. A deleted file root refuses
+    nothing, so only the removed folder is named, and once the folder is back
+    the start is admitted with the file still gone."""
+    authority, _, registered = _registered_file(tmp_path)
+    folder = tmp_path / "folder"
+    folder.mkdir(mode=0o700)
+    selector = tmp_path / "selected.toml"
+    selector.write_text('[general]\nusers_name="fixture"\n')
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(selector))
+    authority.register("backup.source.folder", (folder,))
+    registered.unlink()
+    folder.rmdir()
+
+    with pytest.raises(SystemExit) as refused:
+        storage.admit_startup()
+
+    text = str(refused.value)
+    assert text.startswith("Recovery required: storage_admission_unavailable")
+    assert str(folder) in text
+    assert str(registered) not in text
+
+    folder.mkdir(mode=0o700)
+    storage.admit_startup()
+
+
+@pytest.mark.usefixtures("local_root")
 def test_a_deleted_file_root_stays_strict_while_a_remap_is_pending(tmp_path):
     """TASK-42115: the deleted-file rule applies only to a settled registry;
     while any remap is pending, a missing root still refuses admission."""

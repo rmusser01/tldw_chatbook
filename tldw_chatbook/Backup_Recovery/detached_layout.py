@@ -488,8 +488,12 @@ def produce_detached_archive(
         report += (
             "Empty canonical restored embedding cache scaffolding is intentionally excluded.",
         )
+    # Presence comes from the path: excluded local SQLite rows carry no file
+    # metadata, so their sidecars never move the scope (TASK-34100.16.1).
     if any(
-        item.owner == "personal_context.interview_drafts" and item.metadata is not None
+        item.owner == "personal_context.interview_drafts"
+        and item.path is not None
+        and os.path.lexists(item.path)
         for item in items
     ):
         report += ("Personal Context interview drafts stay on the original device.",)
