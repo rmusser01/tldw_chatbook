@@ -455,6 +455,12 @@ inspect unmigrated or rollback snapshots, so new queries are version-gated.
   selection/citation membership before fetching article bodies. Freeze bounded
   text/provenance and allowlisted nonsecret voice/dependency values. Equal bytes
   from different items never establish shared ownership.
+  Admission carries saved content kind and format to the converter; change-report
+  items are unavailable. Prepared snapshots retain the physical DB image binding
+  as well as its selector/path and revision, so replacing an idle DB cannot admit
+  text prepared from the previous image. Constructor-free recovery validates the
+  same source/citation authority and strict integer/count/byte bounds before
+  materializing saved entries.
 - Use a stable private nonblocking OS lock outside replaceable asset trees,
   bound to the canonical SubscriptionsDB identity. DB aliases must converge on
   the same lock; custom DB locations do not move the profile's article asset
@@ -471,6 +477,9 @@ inspect unmigrated or rollback snapshots, so new queries are version-gated.
   exact lease only: they do not acquire native resources or expand an already-open
   core operation's pathname authority. Ordinary non-destructive polling writes
   retain their existing transaction path.
+  Retaining a physical pin through an outer transaction does not grant destructive
+  SQL intent: that intent is scoped independently to the explicit destructive
+  context, including after a nested checkpoint or reservation returns.
   The DB reaches the domain mutation context through its existing typed
   `Backup_Recovery.participants` seam; inert domain models keep the established
   layer rule. No broad upward-import exception or native-path grant is added.
