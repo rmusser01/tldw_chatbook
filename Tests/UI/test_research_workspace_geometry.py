@@ -7,9 +7,14 @@ import re
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, Input, Select, Static
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.library_quit_guard_support import _settings_without_splash, _until
+from Tests.UI.test_research_chat_region import build_research_app, open_chat
+from Tests.app_module_patches import patch_app_global
 from tldw_chatbook.app import TldwCli
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 class _ProductionWorkspaceHarness(ConsolidatedCSSApp):
@@ -36,6 +41,71 @@ def _painted_text(svg: str) -> str:
     """Flatten the screenshot's encoded SVG text nodes for frame assertions."""
     plain = unescape(re.sub(r"<[^>]+>", " ", svg)).replace("\N{NO-BREAK SPACE}", " ")
     return " ".join(plain.split())
+
+
+@pytest.mark.asyncio
+async def test_mounted_chat_controls_remain_reachable_through_all_supported_widths(
+    tmp_path, monkeypatch
+):
+    app, _, _ = build_research_app(tmp_path, monkeypatch)
+    with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
+        async with app.run_test(size=(160, 40)) as pilot:
+            screen, composer = await open_chat(app, pilot)
+            composer.load_text("Persistent geometry draft")
+            controls = screen.query_one("#research-chat-mode", Select)
+            controls.value = "rag"
+            send = screen.query_one("#research-chat-send", Button)
+            send.press()
+            status = screen.query_one("#research-chat-status", Static)
+            await _until(
+                pilot,
+                lambda: "selected ready source" in str(status.render()),
+                "grounded blocker",
+            )
+            for width, height in (
+                (160, 40),
+                (120, 30),
+                (100, 30),
+                (84, 24),
+                (80, 24),
+                (60, 20),
+            ):
+                await pilot.resize_terminal(width, height)
+                composer.focus()
+                await pilot.pause()
+                composer.scroll_visible(animate=False, top=True, immediate=True)
+                await pilot.pause()
+                assert app.focused is composer
+                assert composer.text == "Persistent geometry draft"
+                assert controls.value == "rag"
+                pane = screen.query_one("#research-chat-scroll")
+                painted = _painted_text(app.export_screenshot(simplify=True))
+                assert "geometry draft" in painted, (
+                    f"{width}x{height}: composer {composer.region}, pane {pane.region}, "
+                    f"scroll {pane.scroll_y}/{pane.max_scroll_y}\n{painted[-3000:]}"
+                )
+                assert "selected ready" in painted
+
+            screen.query_one("#research-chat-model", Input).value = "model"
+            screen.query_one("#research-chat-provider", Input).value = "fixture"
+            controls.value = "auto"
+            send.press()
+            await _until(
+                pilot, lambda: "Answer saved" in str(status.render()), "saved answer"
+            )
+            citation = screen.query_one("#research-chat-citations", Button)
+            await _until(pilot, lambda: not citation.disabled, "saved message selected")
+            citation.focus()
+            await pilot.press("enter")
+            await _until(
+                pilot,
+                lambda: (
+                    app.screen is not screen
+                    and bool(list(app.screen.query("#research-chat-citations-close")))
+                ),
+                "citation modal",
+            )
+            assert "No citations" in _painted_text(app.export_screenshot(simplify=True))
 
 
 @pytest.mark.asyncio

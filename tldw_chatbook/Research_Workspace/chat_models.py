@@ -196,10 +196,6 @@ class ResearchChatTurnRequest:
         retry_id = validate_chat_id(
             self.retry_user_message_id, "saved user message id", allow_empty=True
         )
-        if retry_id and self.workspace.data_source.value != "server":
-            raise ValueError(
-                "Only a Server append receipt can recover a saved user message"
-            )
         object.__setattr__(self, "retry_user_message_id", retry_id)
         if not validate_chat_draft(self.user_text).strip():
             raise ValueError("chat draft must contain a question")

@@ -328,6 +328,25 @@ class LocalResearchWorkspaceAdapter:
     ):
         return await self._require_chat(ref).load_messages(ref, conversation_id)
 
+    async def edit_chat_message(self, ref, conversation_id, selected, body):
+        await self._require_chat(ref).edit(ref, conversation_id, selected, body)
+
+    async def delete_chat_message(self, ref, conversation_id, selected):
+        return await self._require_chat(ref).delete(ref, conversation_id, selected)
+
+    async def restore_chat_messages(self, ref, conversation_id, tombstones):
+        return await self._require_chat(ref).restore(ref, conversation_id, tombstones)
+
+    async def branch_chat_session(
+        self, ref, conversation_id, selected, *, at_question=False
+    ):
+        return await self._require_chat(ref).branch(
+            ref,
+            conversation_id,
+            selected,
+            at_question=at_question,
+        )
+
     async def resolve_chat_route(
         self, ref: QualifiedWorkspaceRef, provider: str, model: str
     ):
@@ -336,6 +355,15 @@ class LocalResearchWorkspaceAdapter:
     async def capture_chat_sources(self, ref: QualifiedWorkspaceRef):
         from .chat_service import capture_selected_sources
 
+        self._require_local_ref(ref)
+        _, count = await asyncio.to_thread(
+            self._service.list_workspace_source_memberships,
+            ref.workspace_id,
+            limit=1,
+            offset=0,
+        )
+        if not count:
+            return ()
         return await capture_selected_sources(self, ref)
 
     async def send_chat_turn(
@@ -959,7 +987,9 @@ class LocalResearchWorkspaceAdapter:
                 selected=(membership.item_id in desired_ids),
                 position=page_offset + index,
             )
-            for index, (membership, detail) in enumerate(zip(memberships, details))
+            for index, (membership, detail) in enumerate(
+                zip(memberships, details, strict=True)
+            )
         )
         return ResearchSourcePage(
             items=rows,

@@ -9,6 +9,8 @@ from textual.widgets import Button
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 class _WorkspaceHarness(ConsolidatedCSSApp):
     async def on_mount(self) -> None:
@@ -53,7 +55,9 @@ async def test_workspace_composes_once_with_honest_regions_and_exact_handles() -
             assert button.name == accessible_name
 
         labels = {str(button.label) for button in screen.query(Button)}
-        assert not labels.intersection({"Generate", "Send"})
+        assert "Generate" not in labels
+        assert screen.query_one("#research-chat-send", Button).disabled
+        assert not screen.query_one("#research-chat-controls").display
         assert "Add" in labels  # Quick URL intake is now a real implemented action.
 
 

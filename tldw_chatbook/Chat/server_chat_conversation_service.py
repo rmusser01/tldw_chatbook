@@ -240,6 +240,18 @@ class ServerChatConversationService:
             conversation_id, **kwargs
         )
 
+    async def edit_message(self, message_id: str, content: str, **kwargs: Any) -> Any:
+        self._enforce(self._action_id("update"))
+        return await self._require_client().update_character_message(
+            message_id,
+            {"content": content},
+            **kwargs,
+        )
+
+    async def delete_message(self, message_id: str, **kwargs: Any) -> None:
+        self._enforce(self._action_id("delete"))
+        await self._require_client().delete_character_message(message_id, **kwargs)
+
     async def get_citations(self, conversation_id: str) -> dict[str, Any]:
         self._enforce(self._action_id("detail"))
         return await self._require_client().get_chat_conversation_citations(

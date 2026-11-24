@@ -33,6 +33,7 @@ from .chat_models import (
     ResearchChatTurnRequest,
     ResearchCitationRef,
     ResearchSourceVersionRef,
+    validate_chat_draft,
 )
 from .chat_service import collect_answer
 from .contracts import (
@@ -125,11 +126,9 @@ class LocalResearchChat:
 
         return await self._owned(create)
 
-    def _load_messages(
-        self, ref: QualifiedWorkspaceRef, conversation_id: str, limit: int
-    ):
-        db = self.persistence.db
-        conversation = db.get_conversation_by_id(conversation_id)
+    def _require_conversation(self, ref: QualifiedWorkspaceRef, conversation_id: str):
+        self._require_local(ref)
+        conversation = self.persistence.db.get_conversation_by_id(conversation_id)
         if (
             not conversation
             or conversation.get("scope_type") != "workspace"
@@ -137,7 +136,13 @@ class LocalResearchChat:
             or conversation.get("topic_label") != RESEARCH_CHAT_TOPIC
         ):
             raise ValueError("Conversation is unavailable in this Research workspace")
-        rows = db.get_messages_for_conversation(
+        return conversation
+
+    def _load_messages(
+        self, ref: QualifiedWorkspaceRef, conversation_id: str, limit: int
+    ):
+        self._require_conversation(ref, conversation_id)
+        rows = self.persistence.db.get_messages_for_conversation(
             conversation_id,
             limit=limit,
             order_by_timestamp="DESC",
@@ -152,6 +157,138 @@ class LocalResearchChat:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("message limit must be between 1 and 100")
         return await self._owned(self._load_messages, ref, conversation_id, limit)
+
+    def _checked_message(self, ref, conversation_id, selected):
+        self._require_conversation(ref, conversation_id)
+        row = self.persistence.db.get_message_by_id_without_blob(selected["id"])
+        if (
+            not row
+            or row["conversation_id"] != conversation_id
+            or row["version"] != selected.get("version")
+        ):
+            raise ValueError(
+                "The selected message changed. Reload the conversation and try again"
+            )
+        return row
+
+    async def edit(self, ref, conversation_id, selected, body):
+        if not validate_chat_draft(body).strip():
+            raise ValueError("Write a message before saving")
+
+        def edit():
+            with self.persistence.db.transaction(immediate=True):
+                row = self._checked_message(ref, conversation_id, selected)
+                if row[
+                    "content"
+                ] != body and not self.persistence.update_message_content(
+                    message_id=row["id"],
+                    content=body,
+                    image_data=None,
+                    image_mime_type=None,
+                    expected_version=row["version"],
+                    preserve_descendants=True,
+                    clear_generation_provenance=(row["role"] or row["sender"])
+                    == "assistant",
+                    metadata_json=_metadata_without_citations(row.get("metadata_json")),
+                ):
+                    raise ValueError("Could not update the selected message")
+
+        await self._owned(edit)
+
+    async def delete(self, ref, conversation_id, selected):
+        def delete():
+            with self.persistence.db.transaction(immediate=True):
+                row = self._checked_message(ref, conversation_id, selected)
+                tombstones = self.persistence.delete_message_subtree(
+                    message_id=row["id"]
+                )
+                return tuple(
+                    (item["message_id"], item["version"]) for item in tombstones
+                )
+
+        return await self._owned(delete)
+
+    async def restore(self, ref, conversation_id, tombstones):
+        def restore():
+            with self.persistence.db.transaction(immediate=True):
+                self._require_conversation(ref, conversation_id)
+                rows = self.persistence.restore_message_subtree(
+                    tombstones=tombstones,
+                    conversation_id=conversation_id,
+                )
+                if any(row["conversation_id"] != conversation_id for row in rows):
+                    raise ValueError(
+                        "Deleted messages belong to a different conversation"
+                    )
+                return rows
+
+        return await self._owned(restore)
+
+    async def branch(self, ref, conversation_id, selected, *, at_question=False):
+        db = self.persistence.db
+
+        def branch():
+            with db.transaction(immediate=True):
+                row = self._checked_message(ref, conversation_id, selected)
+                original = self._require_conversation(ref, conversation_id)
+                if at_question and (row["role"] or row["sender"]) == "assistant":
+                    parent_id = row.get("parent_message_id")
+                    row = (
+                        db.get_message_by_id_without_blob(parent_id)
+                        if parent_id
+                        else None
+                    )
+                if at_question and (
+                    not row
+                    or row["conversation_id"] != conversation_id
+                    or (row["role"] or row["sender"]) != "user"
+                ):
+                    raise ValueError("Choose a saved question to regenerate")
+                anchor = row["id"]
+                ancestry = []
+                while (
+                    row
+                    and row["conversation_id"] == conversation_id
+                    and len(ancestry) < 100
+                ):
+                    ancestry.append(row)
+                    parent_id = row.get("parent_message_id")
+                    if not parent_id:
+                        break
+                    row = db.get_message_by_id_without_blob(parent_id)
+                else:
+                    raise ValueError(
+                        "The branch exceeds the 100-message history limit or contains unavailable messages"
+                    )
+
+                title = f"Branch of {original['title']}"[:120]
+                target = self.conversations.create_conversation(
+                    scope_type="workspace",
+                    workspace_id=ref.workspace_id,
+                    conversation_title=title,
+                    topic_label=RESEARCH_CHAT_TOPIC,
+                    parent_conversation_id=conversation_id,
+                    forked_from_message_id=anchor,
+                    root_id=original.get("root_id") or conversation_id,
+                )
+                parent_id = None
+                for message in reversed(ancestry):
+                    parent_id = self.persistence.create_message(
+                        conversation_id=target,
+                        sender=message["role"] or message["sender"],
+                        parent_message_id=parent_id,
+                        content=message["content"],
+                        metadata_json=_metadata_without_citations(
+                            message.get("metadata_json")
+                        ),
+                        assistant_generation_state=message.get(
+                            "assistant_generation_state"
+                        ),
+                    )
+            self.persistence.project_workspace_membership(target)
+            return ResearchChatSession(ref, target, title)
+
+        return await self._owned(branch)
 
     @staticmethod
     def _route(resolution: Any) -> ProcessingRoute:
@@ -203,6 +340,16 @@ class LocalResearchChat:
             request.conversation_id,
             limit=max(1, request.retrieval.history_limit),
         )
+        parent = history[-1] if history else None
+        if request.retry_user_message_id and (
+            parent is None
+            or parent["id"] != request.retry_user_message_id
+            or (parent.get("role") or parent.get("sender")) != "user"
+            or parent["content"] != request.user_text
+        ):
+            raise ValueError(
+                "The saved question changed. Select it again to regenerate"
+            )
         sources = {item.catalog_item_id: item for item in request.retrieval_sources}
         if sources:
             await self._check_scope(request, read_sources)
@@ -243,7 +390,9 @@ class LocalResearchChat:
         if request.mode is ResearchChatMode.RAG and not retrieved:
             raise ValueError("No matching evidence was found in the selected sources")
 
-        messages = self._provider_history(request, history)
+        messages = self._provider_history(
+            request, history[:-1] if request.retry_user_message_id else history
+        )
         if retrieved:
             messages.insert(
                 0,
@@ -291,13 +440,12 @@ class LocalResearchChat:
             retrieved=retrieved,
             citations=citations,
         )
-        parent_id = history[-1]["id"] if history else None
         user_id, assistant_id = await self._owned(
             self._persist_answer,
             request,
             outcome,
             answer.text,
-            parent_id,
+            parent,
             citation_write,
             signals.usage_payloads(),
         )
@@ -426,21 +574,21 @@ class LocalResearchChat:
         )
         return sealed, references[:50]
 
-    def _persist_answer(
-        self, request, outcome, answer, parent_id, citation_write, usages
-    ):
+    def _persist_answer(self, request, outcome, answer, parent, citation_write, usages):
         persistence = self.persistence
         with persistence.db.transaction(immediate=True):
             tail = self._load_messages(request.workspace, request.conversation_id, 1)
-            if (tail[-1]["id"] if tail else None) != parent_id:
+            current = tail[-1] if tail else None
+            identity = (parent["id"], parent["version"]) if parent else None
+            if ((current["id"], current["version"]) if current else None) != identity:
                 raise ValueError(
                     "Conversation changed while answering. Retry from the current history"
                 )
-            user_id = persistence.create_message(
+            user_id = request.retry_user_message_id or persistence.create_message(
                 conversation_id=request.conversation_id,
                 sender="user",
                 content=request.user_text,
-                parent_message_id=parent_id,
+                parent_message_id=parent["id"] if parent else None,
             )
             details = {
                 "requested_mode": outcome.mode.value,
@@ -448,6 +596,14 @@ class LocalResearchChat:
                 "requested_settings": asdict(request.retrieval),
                 "effective_retrieval": outcome.effective_retrieval,
                 "sources": [asdict(source) for source in outcome.source_snapshot],
+                "citations": [
+                    {
+                        "citation_id": citation.citation_id,
+                        "source_id": citation.source.source_id,
+                        "catalog_item_id": citation.source.catalog_item_id,
+                    }
+                    for citation in outcome.citations
+                ],
                 "processing_route": asdict(request.processing_route),
                 "processing_route_fingerprint": outcome.processing_route_fingerprint,
                 "status": outcome.status,
@@ -471,6 +627,20 @@ class LocalResearchChat:
                 usage_json=_usage_json(usages, outcome),
             )
         return user_id, assistant_id
+
+
+def _metadata_without_citations(metadata: str | None) -> str | None:
+    if metadata is None:
+        return None
+    try:
+        row = json.loads(metadata)
+        details = row.get("research_chat")
+        if isinstance(details, dict):
+            details.pop("citations", None)
+        return json.dumps(row)
+    except (ValueError, AttributeError, TypeError):
+        # Invalid provenance already excludes this content from remote history.
+        return metadata
 
 
 def _contains_local_evidence(metadata: str | None) -> bool:

@@ -105,6 +105,7 @@ class ResearchQuickNotesSection(Vertical):
         self._get_available = False
         self._save_available = False
         self._delete_available = False
+        self._capture_message_available = False
         self._operation_id = f"research-note-{uuid4().hex}"
 
     def compose(self) -> ComposeResult:
@@ -142,10 +143,7 @@ class ResearchQuickNotesSection(Vertical):
                 "Capture message",
                 id="research-quick-note-capture-message",
                 disabled=True,
-                tooltip=(
-                    "Message capture becomes available when grounded Chat exposes "
-                    "a canonical message owner."
-                ),
+                tooltip="Select a saved message in Grounded Chat to capture it.",
             )
         yield Static(
             "No captured provenance",
@@ -205,6 +203,8 @@ class ResearchQuickNotesSection(Vertical):
 
         if ref == self.editor_ref:
             return
+        if self.editor_ref != ref:
+            self._capture_message_available = False
         self.editor_ref = ref
         self._selected_note_id = ""
         self._page_offset = 0
@@ -360,6 +360,17 @@ class ResearchQuickNotesSection(Vertical):
         self.query_one("#research-quick-note-delete", Button).disabled = (
             not self._delete_available or self._note_id is None
         )
+        self.query_one("#research-quick-note-capture-message", Button).disabled = (
+            not self._save_available or not self._capture_message_available
+        )
+
+    def sync_message_capture(
+        self, ref: QualifiedWorkspaceRef | None, available: bool
+    ) -> None:
+        self._capture_message_available = bool(
+            ref and ref == self.editor_ref and available
+        )
+        self._apply_capability_states()
 
     def set_source_provenance(self, source_ids: tuple[str, ...]) -> None:
         self._source_ids = tuple(dict.fromkeys(source_ids))[:100]

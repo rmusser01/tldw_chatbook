@@ -4249,7 +4249,7 @@ class TldwCli(
         # feature CSS exactly like an in-app navigation does.
         self._ensure_screen_owned_css(resolved_tab)
 
-        new_screen = screen_class(self)
+        new_screen = self._create_navigation_screen(resolved_screen_name, screen_class)
         # TASK-31520: retain the initial screen exactly like a navigated-to
         # one. Without this, a reusable initial tab (chat is the default!)
         # built here was never installed, so the first navigation away

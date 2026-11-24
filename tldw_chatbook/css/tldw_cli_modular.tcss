@@ -19209,7 +19209,8 @@ ResearchScreen #research-window.window {
     background: $panel;
 }
 
-#research-workspace-selection {
+#research-workspace-selection,
+#research-workspace-picker {
     width: $ds-width-fill;
     height: $ds-size-1;
     color: $text-muted;
@@ -19319,6 +19320,87 @@ ResearchScreen #research-window.window {
 #research-chat-pane {
     width: $ds-fr-4;
     min-width: $ds-research-chat-pane-floor;
+}
+
+#research-chat-scroll {
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+}
+
+#research-chat-controls,
+.research-chat-row {
+    width: $ds-width-full;
+    height: $ds-height-auto;
+}
+
+.research-chat-row > Select,
+.research-chat-row > Input {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    height: $ds-control-height;
+}
+
+.research-chat-row > Button {
+    width: $ds-width-auto;
+    min-width: $ds-size-0;
+}
+
+#research-chat-status,
+#research-chat-route,
+#research-chat-sources {
+    height: $ds-height-auto;
+    color: $ds-text-muted;
+}
+
+#research-chat-transcript {
+    height: $ds-size-12;
+    background: $ds-surface-sunken;
+}
+
+.research-chat-message {
+    height: $ds-height-auto;
+    padding: $ds-space-0 $ds-space-inline;
+}
+
+.research-chat-message-heading {
+    text-style: bold;
+    height: $ds-height-auto;
+}
+
+.research-chat-message-content,
+#research-chat-stream {
+    height: $ds-height-auto;
+}
+
+#research-chat-composer {
+    height: $ds-textarea-min-height;
+}
+
+ResearchCitationDetail,
+ResearchChatMessageEditor {
+    align: center middle;
+    background: $background 70%;
+}
+
+#research-chat-citations-dialog,
+#research-chat-edit-dialog {
+    width: $ds-percent-90;
+    max-width: $ds-size-76;
+    height: $ds-height-auto;
+    max-height: $ds-percent-90;
+    padding: $ds-space-inset;
+    border: round $accent;
+    background: $ds-surface-panel;
+}
+
+#research-chat-edit-body {
+    height: $ds-textarea-min-height;
+}
+
+#research-chat-edit-status {
+    height: $ds-height-auto;
+    color: $ds-text-muted;
 }
 
 #research-studio-pane {

@@ -34,6 +34,7 @@ class _Server:
         self.fail_context = False
         self.fail_assistant = False
         self.receipts = {}
+        self.prompt = ()
         self.conversation = {
             "id": "chat-1",
             "title": "Reading group",
@@ -100,6 +101,7 @@ class _Server:
         assert "Unselected server text" not in prompt
         if "rag" in self.calls:
             assert "Selected server excerpt" in prompt
+        self.prompt = tuple(message.content for message in request.messages)
         self.calls.append("completion")
         yield "The study found a result [S1]."
 
@@ -139,6 +141,30 @@ class _Server:
         self.calls.append("context")
         return {"success": True, "message_id": message_id}
 
+    async def get_character_message(self, message_id, **scope):
+        assert scope == {"scope_type": "workspace", "workspace_id": REF.workspace_id}
+        return SimpleNamespace(
+            **next(row for row in self.rows if row["id"] == message_id)
+        )
+
+    async def update_character_message(self, message_id, payload, **scope):
+        row = next(row for row in self.rows if row["id"] == message_id)
+        assert scope == {
+            "scope_type": "workspace",
+            "workspace_id": REF.workspace_id,
+            "expected_version": row["version"],
+        }
+        row.update(payload, version=row["version"] + 1)
+
+    async def delete_character_message(self, message_id, **scope):
+        row = next(row for row in self.rows if row["id"] == message_id)
+        assert scope == {
+            "scope_type": "workspace",
+            "workspace_id": REF.workspace_id,
+            "expected_version": row["version"],
+        }
+        self.rows.remove(row)
+
 
 @pytest.fixture
 def server_chat(tmp_path):
@@ -155,6 +181,45 @@ def server_chat(tmp_path):
         return (SOURCE,)
 
     return ServerResearchChat(bind, overlay), server, overlay, sources
+
+
+@pytest.mark.asyncio
+async def test_server_message_actions_use_the_current_scoped_version(server_chat):
+    chat, server, _, _ = server_chat
+    selected = {
+        "id": "message-1",
+        "conversation_id": "chat-1",
+        "version": 1,
+        "sender": "user",
+        "content": "Original question",
+    }
+    server.rows = [dict(selected)]
+    await chat.edit(REF, "chat-1", selected, "Revised question")
+    assert server.rows[0]["content"] == "Revised question"
+    with pytest.raises(ValueError, match="selected message changed"):
+        await chat.delete(REF, "chat-1", selected)
+    await chat.delete(REF, "chat-1", server.rows[0])
+    assert not server.rows
+
+
+@pytest.mark.asyncio
+async def test_server_treats_a_slash_question_as_literal_text(server_chat):
+    chat, server, _, sources = server_chat
+    text = "  /notes read this title"
+    request = ResearchChatTurnRequest(
+        REF,
+        "chat-1",
+        text,
+        "general",
+        (),
+        ResearchRetrievalSettings(),
+        chat.resolve_route(REF, "openai", "model"),
+        0,
+    )
+    outcome = await chat.answer(request, lambda _chunk: None, asyncio.Event(), sources)
+    assert outcome.status == "complete"
+    assert server.prompt[-1].startswith("Question:\n")
+    assert server.rows[0]["content"] == text
 
 
 @pytest.mark.parametrize("mode", ["general", "auto"])

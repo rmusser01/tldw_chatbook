@@ -393,6 +393,20 @@ class ServerResearchWorkspaceAdapter:
             self._require_chat(ref).load_messages(ref, conversation_id), context=context
         )
 
+    async def edit_chat_message(self, ref, conversation_id, selected, body):
+        context = self._context_for_ref(ref)
+        await self._server_call(
+            self._require_chat(ref).edit(ref, conversation_id, selected, body),
+            context=context,
+        )
+
+    async def delete_chat_message(self, ref, conversation_id, selected):
+        context = self._context_for_ref(ref)
+        await self._server_call(
+            self._require_chat(ref).delete(ref, conversation_id, selected),
+            context=context,
+        )
+
     async def resolve_chat_route(
         self, ref: QualifiedWorkspaceRef, provider: str, model: str
     ):

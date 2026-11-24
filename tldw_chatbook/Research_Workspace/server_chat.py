@@ -35,6 +35,7 @@ from .chat_models import (
     ResearchChatTurnRequest,
     ResearchCitationRef,
     ResearchSourceVersionRef,
+    validate_chat_draft,
     validate_chat_id,
 )
 from .chat_service import collect_answer
@@ -169,6 +170,47 @@ class ServerResearchChat:
     ):
         _, service = self._connection(ref)
         return await self._read_messages(service, ref, conversation_id, limit)
+
+    async def _check_selected_message(self, ref, conversation_id, selected):
+        client, service = self._connection(ref)
+        scope = {"scope_type": "workspace", "workspace_id": ref.workspace_id}
+        conversation = await service.get_conversation(conversation_id, **scope)
+        if self._session(ref, conversation).conversation_id != conversation_id:
+            raise ValueError("Server returned a different conversation")
+        message_id = validate_chat_id(selected.get("id"), "message ID")
+        version = selected.get("version")
+        if type(version) is not int or version < 1:
+            raise ValueError(
+                "The selected message has no server version. Reload the conversation"
+            )
+        row = await client.get_character_message(message_id, **scope)
+        if (
+            row.id != message_id
+            or row.conversation_id != conversation_id
+            or row.version != version
+        ):
+            raise ValueError(
+                "The selected message changed. Reload the conversation and try again"
+            )
+        if self.client_for(ref) is not client:
+            raise ValueError("The selected server changed. Reopen the workspace")
+        return service, row, {**scope, "expected_version": version}
+
+    async def edit(self, ref, conversation_id, selected, body):
+        if not validate_chat_draft(body).strip():
+            raise ValueError("Write a message before saving")
+        service, row, scope = await self._check_selected_message(
+            ref, conversation_id, selected
+        )
+        if row.sender != "user":
+            raise ValueError("Only questions are editable on the selected server")
+        await service.edit_message(row.id, body, **scope)
+
+    async def delete(self, ref, conversation_id, selected):
+        service, row, scope = await self._check_selected_message(
+            ref, conversation_id, selected
+        )
+        await service.delete_message(row.id, **scope)
 
     def resolve_route(
         self, ref: QualifiedWorkspaceRef, provider: str, model: str
@@ -327,7 +369,9 @@ class ServerResearchChat:
                     + evidence,
                 },
             )
-        messages.append({"role": "user", "content": request.user_text})
+        messages.append(
+            {"role": "user", "content": _literal_question(request.user_text)}
+        )
         route = request.processing_route
         completion = ResearchChatCompletionRequest(
             conversation_id=request.conversation_id,
@@ -575,8 +619,18 @@ def _history_rows(history, limit):
         if len(text) > remaining:
             break
         remaining -= len(text)
-        messages.append({"role": role, "content": text})
+        messages.append(
+            {
+                "role": role,
+                "content": _literal_question(text) if role == "user" else text,
+            }
+        )
     return list(reversed(messages))
+
+
+def _literal_question(text: str) -> str:
+    # The legacy completion route dispatches leading slash commands before inference.
+    return f"Question:\n{text}" if text.lstrip().startswith("/") else text
 
 
 def _validate_append(row, conversation_id, parent_id):
