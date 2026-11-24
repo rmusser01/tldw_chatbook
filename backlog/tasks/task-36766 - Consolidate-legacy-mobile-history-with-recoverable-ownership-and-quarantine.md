@@ -17,7 +17,7 @@ documentation:
 - Docs/superpowers/plans/2026-10-25-shared-console-mobile-supervision-implementation.md
 - Docs/superpowers/specs/2026-10-25-shared-console-mobile-supervision-design.md
 - backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
-updated_date: 2026-11-24 11:55
+updated_date: 2026-11-24 13:08
 ---
 
 ## Description
@@ -223,11 +223,22 @@ Fresh focused qualification is176 distinct passes/no errors/skips (39 native+con
 Original1239 browser15 passes/no skips (640.326s JUnit), including the genuine first-turn refusal and existing worker/phone controls only after retirement/persistence. Its post-operation guard passed. The following old mounted/whole envelope remains FAILED on raw-index drift68e102→7507 despite its native command0; writer unattributed and old raw bytes unavailable. A separately reviewed mounted-only continuation captured7507 before launch, added GIT_OPTIONAL_LOCKS=0 prevention and retained all strict guards/original limits. Stock mounted operation19897d75ed054cc4bbe6fcdee3ceddb3 passes parent+three children0, nine hash pairs/six empty guards/unchanged HOME/USERPROFILE and legacy fingerprints/one scripted generation/no tools/ordinary reopen/runtime disposed/gateway closed. All129 observed identities/groups are absent and all42,432 bytes/modes/member/HEAD/status/rawindex/122 artifacts stay exact. Independent raw review accepts the composed valid browser+fresh mounted evidence; no old-envelope green, combined wall-time or proven index-writer claim.
 
 This source snapshot leaves status In Progress and AC unchanged. Exact new committed-head review, corrected SOURCE own hosted checks and genuine DoD precede the one finite Task36766+QA README closeout. That metadata head then needs its own exact review/checks. Preserve every original file/ref/object/stash/capture/evidence and122 artifacts. Local software results are not Windows/hosted-wall/full-suite/device/VPN/live-provider/real-profile proof.
+
+PR #3345 current578 source qualification and original software UAT. The normal dev rebase preserves all115 feature commits plus the prior source commit:116 nodes/117 ordered edges/authors/full messages,113 equal patches/two source-pin contexts/no drop. The final exact pin is6639; no code was squeezed or ordinary runtime/case/job/worker/buffer/permission/custody allowance raised. Existing ADR244/285 and the native trace ADR apply; no new architectural decision.
+
+The native chain validator now refuses a link with no live row before writes, retaining the final live end row and real transaction/owner/range checks. Its exact method composes with the unchanged feature reader/header methods; all other module AST is preserved. Fresh1241 passes the whole13-case native file plus two original size parameters:15P/0E0S,22.790s JUnit under original project300/no override. Canonical inventory passes without a writer;7096 task IDs/files pass. Static checks introduce0 findings and preserve documented inherited findings. Native opt-in diagnostic benchmark remains unexecuted/unqualified; its large settings do not become ordinary limits or gates. All imported upstream task histories/statuses remain intact.
+
+Fresh original UAT1242 passes all15 browser cases/no skips (688.974s JUnit), including refusal before first-turn retirement/persistence and original worker/phone controls afterward. Stock mounted operation1f9979624bd14ee889b14fabce58ed6b passes parent/three children0, nine byte/hash pairs, six empty guards, unchanged real HOME/absent USERPROFILE/legacy fingerprints, one scripted generation/resolution/no tools, ordinary reopen/runtime disposed/gateway closed. Both new operations physically close and retain all42442 SHA/mode/member/HEAD/raw-index/status/122-artifact guards. Independent actual raw audit ef527f13 and replay/qualification audit c512ad2e accept0 findings. Old failed/mixed and source-bound UAT records remain historical; no old-map identity, index-writer attribution or full-suite/Windows/hosted-wall/live-provider/device result is invented.
+
+A testing-evidence lesson records the actual published-but-conflicted head that could not start pull_request CI. Empty shared-workflow intersection is not text mergeability; fresh native mergeability is verified before the next leased publication. This source note keeps In Progress/status/AC/Plan/Description unchanged. Exact final committed-head review, SOURCE own hosted gates and genuine DoD still precede the one Task36766+QA README closeout; that metadata head needs its own review/checks. All original files/refs/objects/stashes/captures/evidence and122 artifacts remain preserved.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Current dev578 integration preserves115 feature commits plus the prior source commit, all116 nodes/117 ordered edges/authors/messages. The exact native trace validator composes with the retained reader/header. Fresh15-case qualification and original whole15 browser+stock mounted UAT pass under ordinary original limits and independent raw review0 findings. All42442 source/index/artifact guards and122 preserved artifacts hold. Native opt-in diagnostic remains unqualified. Task stays In Progress with acceptance state unchanged until the corrected source's own hosted gates, exact final-head review and genuine DoD.
+
+Earlier source-bound summary (historical, retained verbatim):
 Current dev21ac integration preserves canonical Core88/Workspace11/AgentRuns33 and all115 feature commits. Fresh focused qualification passes176 cases. The original15-case browser component and separately guarded stock mounted continuation are independently accepted as a current-source UAT composition; the old mounted/envelope index-guard failure remains failed and unattributed. Runtime/custody limits are unchanged; only source/count ceilings are owner-waived. Task stays In Progress with AC unchanged until the corrected source's own hosted gates, exact committed-head review and final DoD.
 
 Earlier source-bound summary (historical, retained verbatim):
