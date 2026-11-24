@@ -152,6 +152,9 @@ their later task boundaries. This record was renumbered from provisional 366 to
   replacement, exact Stop/release and shutdown. A worker checks it at its spawn
   commitment point. Already-committed native work stays owned until it returns
   and its late resource is checked/retired; cancellation never invents absence.
+  A controlled start also checks that the exact lease holds that run's bound
+  retirement callback. Retain each cleanup task by identity while it settles;
+  a retry or confirmation attempt cannot let an earlier waiter grant authority.
 - Controlled preparation binds a full physical-file digest, source-frame bookmark,
   content/physical frame counts, PCM16 stereo 48 kHz and versioned 250 ms zero
   padding. Keep a read pin on the exact file and its path ancestry through launch
@@ -159,6 +162,9 @@ their later task boundaries. This record was renumbered from provisional 366 to
   Windows native path layer with a narrow read-sharing pin; preserve its existing
   default behavior. Recheck private artifact authority on the pinned ancestry.
   Pin and hash the qualified executable too; no unqualified wrapper is executed.
+  Pathname consumers must use stable physical volume ancestry, or refuse aliases
+  whose DOS-device mapping is outside the retained pins. Check auxiliary handle
+  closes and retain ambiguous process births instead of assuming no child.
 - Promote only the bounded stdlib progress parser. Keep physical progress distinct
   from the clamped logical bookmark. Natural completion requires corroborating
   advancing, current/fresh source clocks into validated padding, plausible elapsed
@@ -166,6 +172,9 @@ their later task boundaries. This record was renumbered from provisional 366 to
   stats sample or exit alone is insufficient. Weak evidence is Uncertain; Stop in
   padding is Stopped. The actual adapter's classifier must pass native short,
   near-EOF, resume, EOF and deliberately early-exit controls before activation.
+  Validate adjacent as well as cumulative clock progression. Observe the startup
+  deadline independently of a pending native spawn, revoke further starts on
+  expiry, and keep physical custody until any late birth is checked and retired.
 - Reaping ffplay is separate from endpoint silence. Qualify a bounded post-reap
   settling policy with actual old-source end versus successor onset, using the
   production adapter. A provisional 250 ms settling guard may be evaluated under
