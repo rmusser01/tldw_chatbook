@@ -45,8 +45,9 @@ dedicated per-sink daemon notify thread and delivered to `on_event` from
 there, never from the callback itself. Events that originate from a
 caller thread (`SinkBufferFull` from `feed()`, `SinkStopped` from
 `stop()`, `SinkFailed` from `open()`'s own failure paths) are delivered
-directly on a caller thread. A terminal event during open is delivered by
-the opener after it settles native startup and attempts checked cleanup.
+directly on a caller thread. An independent Stop caller delivers its logical
+interruption synchronously even during open. The opener itself defers its
+own terminal listener until native startup and checked cleanup have settled.
 
 `stop()` does not join the notify thread, so listeners may request it
 reentrantly. Native abort/close may block. Async callers use `retire()`,
@@ -720,6 +721,7 @@ class StreamingPcmSink:
         self._stop_requested = threading.Event()
         self._open_done = threading.Event()
         self._open_done.set()
+        self._opener: threading.Thread | None = None
         self._open_terminal_event: SinkFailed | SinkStopped | None = None
         self._native_lock = threading.RLock()
         self._silence_confirmed = False
@@ -1039,6 +1041,7 @@ class StreamingPcmSink:
             if self._state != "idle" or not self._open_done.is_set():
                 return
             self._open_done.clear()
+            self._opener = threading.current_thread()
         try:
             self._open(sample_rate, channels)
         except Exception as exc:
@@ -1054,6 +1057,7 @@ class StreamingPcmSink:
                 with self._native_lock:
                     with self._lock:
                         self._open_done.set()
+                        self._opener = None
                         event, self._open_terminal_event = (
                             self._open_terminal_event,
                             None,
@@ -1302,9 +1306,9 @@ class StreamingPcmSink:
                 self._publish_forced_terminal(SinkStopped())
 
     def _publish_forced_terminal(self, event: SinkStopped | SinkFailed) -> None:
-        """Defer an in-flight open's listener until its native cleanup settles."""
+        """Defer listeners on the opener so they cannot hold its native cleanup."""
         with self._lock:
-            if not self._open_done.is_set():
+            if self._opener is threading.current_thread():
                 self._open_terminal_event = event
                 return
         _clear_live_sink(self)
