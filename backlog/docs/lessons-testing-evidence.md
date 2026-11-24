@@ -354,6 +354,12 @@ Three traps cost a run each while finding it:
 
 **What to do.** For every test that fails at base and also reads code your change moves or edits, compare the failure messages at base and head, not only pass or fail. A path-keyed guard is the likeliest case. Run it with `-vv -o truncation_limit_lines=0` on both trees and diff the lists.
 
+## Publish custody before an eager callback can reenter (TASK-41177, 2026-11-23)
+
+**Incident.** The first audio-output coordinator passed ten isolated tests on the default asyncio factory. Review reproduced lost physical ownership with the eager factory used by Textual: `create_task` ran an old owner's retirement before the assignment storing that task. The callback acknowledged release and dispatched a playlist start; the outer assignment then installed the old completed task over the new state. A following console start skipped the playlist's refusing retirement callback. The public-API probe showed only the old callback had run while a new lease was granted.
+
+**What to do.** Publish pending custody before allowing callbacks to execute. The fix makes retirement await an Event until its exact task is recorded. An eager-loop regression now requires the playlist callback to run, refuse replacement and retain blocked ownership. Exercise the actual application task factory for reentrant async ownership code; ordinary pytest scheduling alone does not establish publication order. See `TTS/audio_output_ownership.py` and `Tests/TTS/test_audio_output_ownership.py`, fix `cd66a8aa10`.
+
 ## A process-wide `os.close` spy also counts another thread's closes, so a profile change moved a "pin count" (TASK-39114, 2026-11-10)
 
 **Incident.** `test_migration_immutable_failure_retains_complete_destination[True]` monkeypatched `os.close` and expected 6 closes after a failed view close, "Admission also owns two directory pins for a file-backed view." It failed `assert 4 == 6` on dev. A first-parent bisect over 905 commits (a `git archive` tree per step, one 4 s node) named 5a915a43e5, a test-only commit that moved `Tests/DB` to the bootstrap profile. Stacks recorded in the spy showed the two missing closes came from the `chatbook-storage-admission` hold thread (`admission._lock` and `native_files.pinned_directory`), which a per-test profile's admission happened to run in that window. The cleanup under test closed the same 4 descriptors under both profiles.
