@@ -651,6 +651,7 @@ def test_verify_command_checks_committed_assets_without_network(
         env={
             "PATH": str(tmp_path),
             "PYTHONPATH": str(ROOT),
+            "HOME": str(tmp_path),
             "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
         },
         stdin=subprocess.DEVNULL,
@@ -696,6 +697,7 @@ def test_pinned_archive_regeneration_is_reproducible_and_instantiable(
             env={
                 "PATH": str(Path(node).parent),
                 "PYTHONPATH": str(ROOT),
+                "HOME": str(tmp_path),
                 "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
             },
             stdin=subprocess.DEVNULL,

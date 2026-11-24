@@ -3999,6 +3999,8 @@ def test_target_imports_resolve_only_below_selected_root(tmp_path: Path) -> None
         env={
             "PATH": os.environ.get("PATH", ""),
             "PYTHONDONTWRITEBYTECODE": "1",
+            # With no HOME the child's Path.home() is the account's (TASK-42520).
+            "HOME": str(tmp_path),
             "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
         },
     )
@@ -11667,9 +11669,11 @@ async def test_scripted_mounted_sample_uses_real_composer_queue_and_fs_write(
         result = await run_scripted_mounted_sample(tmp_path / "mounted", arm="disabled")
     except AssertionError as error:
         # Only the known harness timeout is expected; any other failure
-        # (setup, a later assertion) still fails this test. Remove this
-        # branch with the TASK-33372 fix.
-        if "mounted sample did not settle before timeout" not in str(error):
+        # (setup, a later assertion) still fails this test. The turn-one wait
+        # re-raises that timeout as "turn-one diagnostics: ..." (TASK-42520).
+        # Remove this branch with the TASK-33372 fix.
+        timeout = "mounted sample did not settle before timeout"
+        if timeout not in str(error) and timeout not in str(error.__cause__):
             raise
         pytest.xfail(
             "TASK-33372: MCP compose_catalog fails in the harness, so the "

@@ -179,11 +179,31 @@ _EXEMPT = {
         "runner's allowlist drops the pin"
     ),
 }
+#: Exact (path, scope) pairs whose Python children are excused, with reasons.
+_SPAWN_EXEMPT = {
+    (
+        "Tests/CI/test_plugin_qualification_workflow.py",
+        "test_plugin_workflow_preserves_owned_loopback_and_asyncio",
+    ): (
+        "the allowlist is the workflow's own, read at run time; it holds HOME, "
+        "and the test pins the backend"
+    ),
+    ("Tests/Library/test_rag_answer_first_query_latency.py", "_run"): (
+        "pinned; HOME is dropped on purpose, and both child sources (_SEED, "
+        "_MEASURE) set HOME and the XDG paths in-process before any app import"
+    ),
+}
 #: An empty or broken scan must not pass. Measured on 2026-11-24 (TASK-42520):
 #: 179 profile moves (176 in the first three trees, 2 in `.github/`, 1 in
-#: `Packaging/`) and 272 Python spawns passing ``env=``.
+#: `Packaging/`) and 294 recognised Python spawns passing ``env=`` (290 in
+#: `Tests/`, 2 in `scripts/`, 1 each in `.github/` and `Packaging/`).
 _MIN_PROFILE_MOVES = 120
 _MIN_PYTHON_SPAWNS = 200
+#: Spawns whose environment the census cannot read (a parameter, another
+#: module's helper, a closure, a tuple unpacking): 26 on 2026-11-24 (25 in
+#: `Tests/`, 1 in `Packaging/`). A new one fails until someone checks that it
+#: pins the null backend and sets HOME, and raises this.
+_MAX_UNJUDGED_SPAWNS = 26
 
 
 def _is_environ(node: ast.AST | None) -> bool:
@@ -213,17 +233,27 @@ class _Env:
         self.table = False  # only a table of values copied into another mapping
         self.unknown = unknown  # starts from a mapping this scope cannot read
         self.helper: str | None = None  # starts from this module function's result
+        self.removed: set[str] = set()  # HOME or the pin, popped or deleted
+        #: HOME or the pin present without being set here: kept from the running
+        #: environment by a key filter, or brought in by a ``**base``.
+        self.carried: set[str] = set()
 
     def derived(self) -> _Env:
         env = _Env(self.copy, self.unknown)
         env.keys, env.pin, env.popped = set(self.keys), self.pin, self.popped
-        env.helper = self.helper
+        env.helper, env.removed = self.helper, set(self.removed)
+        env.carried = set(self.carried)
         return env
 
-    def unpin(self) -> None:
-        """A ``pop``/``del`` of the key: undoes any pin, and any inherited one."""
-        self.pin = None
-        self.popped = True
+    def remove(self, key: str) -> None:
+        """A ``pop``/``del`` of HOME or the pin; for the pin, it undoes any pin,
+        and any inherited one."""
+        self.keys.discard(key)
+        self.carried.discard(key)
+        self.removed.add(key)
+        if key == _KEYRING_KEY:
+            self.pin = None
+            self.popped = True
 
     def take(self, table: _Env) -> None:
         """Copy a table's entries in (a ``.items()`` loop or comprehension)."""
@@ -240,26 +270,39 @@ def _profile_moves(source: str, *, pytest_file: bool) -> list[tuple[str, int, bo
 def _python_spawns(source: str) -> list[tuple[str, int, bool | None]]:
     """(scope, line, pinned) for each mapping handed as ``env=`` to a Python child.
 
-    TASK-42520 (G1): a fresh environment drops the conftest's pin whatever keys
-    it sets. With no HOME, the child even reaches the real home
-    (``Path.home()`` falls back to the password database). So every mapping
-    passed as ``env=`` to a call that starts Python must pin the null backend,
-    or be a copy of the running environment (``{**os.environ}``,
-    ``dict(os.environ)``, ``os.environ.copy()``, ``os.environ``, ``None``),
-    which starts the child with this process's backend. A ``pop``/``del`` of
-    the key undoes a copy. The call starts Python when its argv's first
-    element is ``sys.executable`` (also through ``str``/``os.fspath``/
-    ``Path(...).resolve()``, or a name bound to it in the scope or module) or
-    a ``python*`` string, or when ``-m`` is among its leading options. A ``-c``
-    child whose source pins the null backend in-process
+    TASK-42520 (G1): a fresh environment drops the conftest's null pin, and
+    without HOME the child's ``Path.home()`` falls back to the password
+    database: the account's home, which is all
+    ``anthropic_subscription._home_is_account_home()`` checks before the
+    Keychain read. So every mapping passed as ``env=`` to a recognised Python
+    child must set the null pin AND HOME, or be a copy of the running
+    environment (``{**os.environ}``, ``dict(os.environ)``,
+    ``os.environ.copy()``, ``os.environ``, ``None``), which carries both. A
+    ``pop``/``del`` of either undoes a copy. A comprehension or loop that
+    copies from the running environment by key (``.items()`` with a key
+    filter, or by name from ``os.environ[n]``) carries what its filter
+    provably keeps (see ``keeps``).
+
+    Recognised children: an argv (a list, a name bound to one, ``list(...)``
+    or ``tuple(...)`` of one, a same-module function's returned list, a
+    starred first element resolving to one) whose first element is
+    ``sys.executable`` (also through ``str``/``os.fspath``/
+    ``Path(...).resolve()``), a ``python*`` string, or a variable whose name
+    contains ``python`` or is ``interpreter``; or one with ``-m`` among its
+    leading options; or ``sh``/``bash -c`` with an f-string that interpolates
+    ``sys.executable``; including through ``asyncio.to_thread`` and
+    ``create_subprocess_exec``. An argv held in a parameter (the generic
+    runners ``run_child_with_watchdog`` and ``supervise``) is not recognised.
+    A ``-c`` child whose source pins the null backend in-process
     (``keyring.set_keyring(Keyring())`` with ``Keyring`` from
-    ``keyring.backends.null``) before any ``tldw_chatbook`` import is
-    pinned too (G5).
+    ``keyring.backends.null``) before any ``tldw_chatbook`` import has the
+    pin (G5), but still needs HOME.
 
     ``pinned`` is None for a mapping the scan cannot read: a parameter,
-    another module's helper, a method's result. A same-module function's
-    result is judged by what that function returns. Limits: the verdict is
-    the mapping's state at the end of its scope, not at the call.
+    another module's helper, a method's result, a closure's variable, a name
+    bound by tuple unpacking. A same-module function's result is judged by
+    what that function returns. Limits: the verdict is the mapping's state at
+    the end of its scope, not at the call.
     """
     return _scan(source, pytest_file=False)[1]
 
@@ -331,7 +374,8 @@ def _scan(
     ``pop``/``del`` of it (a later re-pin still counts). In a pytest file, a copy of the running environment
     (``{**os.environ}``, ``dict(os.environ)``, ``os.environ.copy()``) or
     ``os.environ`` itself already carries the conftest's pin. An allowlist or
-    denylist built from ``os.environ.items()`` is a fresh environment. A table
+    denylist built from ``os.environ.items()`` is a fresh environment, which
+    carries the pin only when its key filter provably keeps it. A table
     copied in by a ``.items()`` comprehension or loop (``x[key] = ...``,
     ``monkeypatch.setenv``) counts for the mapping it fills, not on its own.
 
@@ -368,8 +412,77 @@ def _scan(
             return values.get(node.id) or module_values.get(node.id) or node
         return node
 
+    def keeps(
+        conditions: list[ast.AST], name: str, key: str, names: ast.AST | None = None
+    ) -> bool:
+        """Whether a filter over the running environment keeps ``key``: the
+        ``if`` of ``{name: v for name, v in os.environ.items() if ...}``, or of a
+        copy by name (``for name in names: if ...: e[name] = os.environ[name]``),
+        whose ``names`` must then hold ``key``. Only comparisons,
+        ``and``/``or``/``not``, string constants (or module constants holding
+        them), ``name``'s string methods and ``... in os.environ`` (true, as for
+        a copy) are evaluated; anything else counts as dropping it."""
+
+        class Everything:
+            def __contains__(self, item: object) -> bool:
+                return True
+
+        def value(node: ast.AST):
+            if _is_environ(node):
+                return Everything()
+            if isinstance(node, ast.Constant):
+                return node.value
+            if isinstance(node, ast.Name):
+                if node.id == name:
+                    return key
+                return value(module_values[node.id])
+            if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+                return tuple(value(item) for item in node.elts)
+            if isinstance(node, ast.BoolOp):
+                found = [bool(value(item)) for item in node.values]
+                return all(found) if isinstance(node.op, ast.And) else any(found)
+            if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+                return not value(node.operand)
+            if isinstance(node, ast.Compare) and len(node.ops) == 1:
+                left, right = value(node.left), value(node.comparators[0])
+                return {
+                    ast.Eq: lambda: left == right,
+                    ast.NotEq: lambda: left != right,
+                    ast.In: lambda: left in right,
+                    ast.NotIn: lambda: left not in right,
+                }[type(node.ops[0])]()
+            if isinstance(node, ast.Call) and not node.keywords:
+                func, args = node.func, [value(arg) for arg in node.args]
+                if isinstance(func, ast.Name) and func.id in ("frozenset", "set"):
+                    return tuple(args[0]) if args else ()
+                if isinstance(func, ast.Attribute) and func.attr in (
+                    "startswith",
+                    "endswith",
+                    "upper",
+                    "lower",
+                    "casefold",
+                ):
+                    target = value(func.value)
+                    if isinstance(target, str):
+                        return getattr(target, func.attr)(*args)
+            raise ValueError(ast.unparse(node))
+
+        try:
+            if names is not None and key not in value(names):
+                return False
+            return all(bool(value(condition)) for condition in conditions)
+        except (ValueError, KeyError, TypeError):
+            return False
+
     def is_python(node: ast.AST, values: dict[str, ast.AST]) -> bool:
         for _ in range(4):  # str(Path(sys.executable).resolve()) and the like
+            if ast.unparse(node) == "sys.executable":
+                return True
+            # An interpreter held in a variable: ``python``, ``venv_python``, ...
+            if isinstance(node, (ast.Name, ast.Attribute)):
+                name = getattr(node, "id", None) or node.attr
+                if "python" in name.lower() or name == "interpreter":
+                    return True
             node = resolve(node, values)
             if not isinstance(node, ast.Call):
                 break
@@ -385,8 +498,50 @@ def _scan(
             return Path(node.value).name.startswith("python")
         return ast.unparse(node) == "sys.executable"
 
-    def python_argv(call: ast.Call, values: dict[str, ast.AST]) -> list | None:
-        """The argv of the Python child ``call`` starts, or None."""
+    def execs_python(argv: list) -> bool:
+        """``["/bin/sh", "-c", f"... exec {sys.executable} ..."]``."""
+        head, options = argv[0], flags(argv)
+        if not (
+            isinstance(head, ast.Constant)
+            and isinstance(head.value, str)
+            and Path(head.value).name in ("sh", "bash", "zsh", "dash")
+            and options[-1:] == ["-c"]
+            and len(argv) > len(options) + 1
+        ):
+            return False
+        command = argv[len(options) + 1]
+        return isinstance(command, ast.JoinedStr) and any(
+            isinstance(part, ast.FormattedValue)
+            and ast.unparse(part.value) == "sys.executable"
+            for part in command.values
+        )
+
+    def argv_of(node: ast.AST, values: dict[str, ast.AST], depth: int = 0):
+        """An argv expression's elements and the names to read them with:
+        a list, a name bound to one, ``list(...)``/``tuple(...)`` of one, a
+        same-module function's returned list, a starred first element."""
+        node = resolve(node, values)
+        if depth > 6:
+            return None
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in ("list", "tuple") and len(node.args) == 1:
+                return argv_of(node.args[0], values, depth + 1)
+            for returned, helper_values in argv_returns.get(node.func.id, ()):
+                found = argv_of(returned, helper_values, depth + 1)
+                if found:
+                    return found
+            return None
+        if not isinstance(node, (ast.List, ast.Tuple)) or not node.elts:
+            return None
+        elts = list(node.elts)
+        if isinstance(elts[0], ast.Starred):
+            head = argv_of(elts[0].value, values, depth + 1)
+            return (head[0] + elts[1:], head[1]) if head else None
+        return elts, values
+
+    def python_argv(call: ast.Call, values: dict[str, ast.AST]):
+        """The argv of the Python child ``call`` starts, and the names to read
+        it with, or None."""
         args = (
             call.args[1:]
             if getattr(call.func, "attr", None) == "to_thread"
@@ -394,11 +549,10 @@ def _scan(
         )
         if not args:
             return None
-        first = resolve(args[0], values)
-        argv = list(first.elts) if isinstance(first, (ast.List, ast.Tuple)) else args
-        if not argv:
-            return None
-        return argv if "-m" in flags(argv) or is_python(argv[0], values) else None
+        argv, argv_values = argv_of(args[0], values) or (list(args), values)
+        if "-m" in flags(argv) or is_python(argv[0], argv_values) or execs_python(argv):
+            return argv, argv_values
+        return None
 
     def flags(argv: list) -> list[str]:
         """The constant options that follow the program, up to the first operand."""
@@ -419,8 +573,9 @@ def _scan(
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     ]
     moves = []
-    spawns: list[tuple[str, int, _Env | None, bool]] = []
+    candidates = []  # (scope, line, mapping, call, names) for each ``env=`` call
     returns: dict[str, list[_Env | None]] = {}
+    argv_returns: dict[str, list[tuple[ast.AST, dict[str, ast.AST]]]] = {}
     for scope in scopes:
         nodes = list(_own_nodes(scope))
         envs: dict[object, _Env] = {}
@@ -458,16 +613,14 @@ def _scan(
             if isinstance(node, ast.Dict):
                 for key, value in zip(node.keys, node.values):
                     if key is None:  # ``**base``: its provenance and pin, not its keys
-                        base = (
-                            _Env(copy=True)
-                            if _is_environ(value)
-                            else envs.get(ast.unparse(value), _Env(unknown=True))
-                        )
+                        base = known_env(value) or _Env(unknown=True)
                         env.copy = env.copy or base.copy
                         env.unknown = env.unknown or base.unknown
                         env.helper = env.helper or base.helper
                         env.popped = env.popped or base.popped
                         env.pin = base.pin or env.pin
+                        env.removed |= base.removed
+                        env.carried |= base.carried | (base.keys & {"HOME"})
                     elif isinstance(key, ast.Constant) and isinstance(key.value, str):
                         put(env, key.value, value)
             elif isinstance(node, ast.Call):
@@ -482,10 +635,81 @@ def _scan(
                     if keyword.arg:
                         put(env, keyword.arg, keyword.value)
 
+        def comp_env(comp: ast.DictComp) -> _Env:
+            """A comprehension is fresh; one that filters ``os.environ.items()``
+            by key, or copies names from it, carries HOME and the pin when it
+            provably keeps them."""
+            env, generator = _Env(), comp.generators[0]
+            target, iterable = generator.target, generator.iter
+            if (
+                len(comp.generators) == 1
+                and isinstance(target, ast.Name)
+                and ast.unparse(comp.key) == target.id
+                and isinstance(comp.value, ast.Subscript)
+                and _is_environ(comp.value.value)
+                and ast.unparse(comp.value.slice) == target.id
+            ):
+                env.carried = {
+                    key
+                    for key in ("HOME", _KEYRING_KEY)
+                    if keeps(generator.ifs, target.id, key, iterable)
+                }
+            elif (
+                len(comp.generators) == 1
+                and isinstance(target, ast.Tuple)
+                and len(target.elts) == 2
+                and ast.unparse(comp.key) == ast.unparse(target.elts[0])
+                and ast.unparse(comp.value) == ast.unparse(target.elts[1])
+                and isinstance(target.elts[0], ast.Name)
+                and getattr(getattr(iterable, "func", None), "attr", None) == "items"
+                and _is_environ(iterable.func.value)
+            ):
+                name = target.elts[0].id
+                env.carried = {
+                    key
+                    for key in ("HOME", _KEYRING_KEY)
+                    if keeps(generator.ifs, name, key)
+                }
+            return env
+
+        def copied_by_name(loop: ast.For) -> None:
+            """``for n in names: [if ...:] e[n] = os.environ[n]`` carries into
+            ``e`` whichever of HOME and the pin it provably copies."""
+            if not isinstance(loop.target, ast.Name):
+                return
+            name = loop.target.id
+            for statement in loop.body:
+                guarded = isinstance(statement, ast.If)
+                conditions = [statement.test] if guarded else []
+                for assign in statement.body if guarded else [statement]:
+                    if (
+                        isinstance(assign, ast.Assign)
+                        and isinstance(assign.targets[0], ast.Subscript)
+                        and ast.unparse(assign.targets[0].slice) == name
+                        and isinstance(assign.value, ast.Subscript)
+                        and _is_environ(assign.value.value)
+                        and ast.unparse(assign.value.slice) == name
+                    ):
+                        env_of(assign.targets[0].value).carried |= {
+                            key
+                            for key in ("HOME", _KEYRING_KEY)
+                            if keeps(conditions, name, key, loop.iter)
+                        }
+
+        def known_env(node: ast.AST) -> _Env | None:
+            """The mapping an expression names, when this scope can read it."""
+            if _is_environ(node):
+                return _Env(copy=True)
+            if isinstance(node, ast.DictComp):
+                return comp_env(node)
+            return envs.get(ast.unparse(node))
+
         def result_env(value: ast.AST) -> _Env:
             """A mapping that does not copy one: a comprehension is fresh, a
             same-module function's result is that function's, the rest unknown."""
-            env = _Env(unknown=not isinstance(value, ast.DictComp))
+            if isinstance(value, ast.DictComp):
+                return comp_env(value)
+            env = _Env(unknown=True)
             if isinstance(value, ast.Call) and isinstance(value.func, ast.Name):
                 env.unknown, env.helper = False, value.func.id
             return env
@@ -500,9 +724,7 @@ def _scan(
                     base = value.args[0] if value.args else None
                     if base is None or isinstance(base, ast.Dict):
                         return _Env()
-                    if _is_environ(base):
-                        return _Env(copy=True)
-                    known = envs.get(ast.unparse(base))
+                    known = known_env(base)
                     return known.derived() if known else _Env(unknown=True)
                 if isinstance(func, ast.Attribute) and func.attr == "copy":
                     if _is_environ(func.value):
@@ -542,6 +764,7 @@ def _scan(
                         fill(start, node.value)
                     envs[ast.unparse(target)] = start or result_env(node.value)
             elif isinstance(node, ast.For):
+                copied_by_name(node)
                 table = table_of(node.iter)
                 for inner in ast.walk(node) if table is not None else ():
                     if isinstance(inner, ast.Assign) and isinstance(
@@ -558,15 +781,18 @@ def _scan(
                     if isinstance(target, ast.Subscript) and isinstance(
                         target.slice, ast.Constant
                     ):
-                        if target.slice.value == _KEYRING_KEY:
-                            env_of(target.value).unpin()
+                        if target.slice.value in (_KEYRING_KEY, "HOME"):
+                            env_of(target.value).remove(target.slice.value)
             elif isinstance(node.func, ast.Attribute) and id(node) not in handled:
                 if node.func.attr == "update":
                     fill(env_of(node.func.value), node)
                 elif node.func.attr == "pop" and node.args:
                     first = node.args[0]
-                    if isinstance(first, ast.Constant) and first.value == _KEYRING_KEY:
-                        env_of(node.func.value).unpin()
+                    if isinstance(first, ast.Constant) and first.value in (
+                        _KEYRING_KEY,
+                        "HOME",
+                    ):
+                        env_of(node.func.value).remove(first.value)
         # Unnamed literals: a returned dict, a ``dict(x, ...)`` passed on, ...
         for node in nodes:
             if id(node) in handled:
@@ -580,7 +806,10 @@ def _scan(
         for env in envs.values():
             if not env.table and "HOME" in env.keys and env.keys & _PROFILE_KEYS:
                 pinned = env.pin == "null" or (
-                    env.pin is None and not env.popped and pytest_file and env.copy
+                    env.pin is None
+                    and not env.popped
+                    and pytest_file
+                    and (env.copy or _KEYRING_KEY in env.carried)
                 )
                 moves.append(
                     (
@@ -606,53 +835,62 @@ def _scan(
                 return start
             return result_env(value)
 
+        name = getattr(scope, "name", "<module>")
         for node in nodes:
             if isinstance(node, ast.Return) and node.value is not None:
-                returns.setdefault(getattr(scope, "name", ""), []).append(
-                    mapping_at(node.value)
+                returns.setdefault(name, []).append(mapping_at(node.value))
+                argv_returns.setdefault(name, []).append((node.value, values))
+            elif isinstance(node, ast.Call):
+                env_value = next(
+                    (k.value for k in node.keywords if k.arg == "env"), None
                 )
-                continue
-            if not isinstance(node, ast.Call):
-                continue
-            env_value = next((k.value for k in node.keywords if k.arg == "env"), None)
-            argv = python_argv(node, values) if env_value is not None else None
-            if argv is None:
-                continue
-            child, options = None, flags(argv)
-            if options and options[-1] == "-c" and len(argv) > len(options) + 1:
-                child = _python_source(resolve(argv[len(options) + 1], values))
-            spawns.append(
-                (
-                    getattr(scope, "name", "<module>"),
-                    env_value.lineno,
-                    mapping_at(env_value),
-                    _pins_in_process(child),
-                )
-            )
+                if env_value is not None:
+                    mapping = mapping_at(env_value)
+                    candidates.append((name, env_value.lineno, mapping, node, values))
 
-    def verdict(env: _Env | None, seen: tuple[str, ...] = ()) -> bool | None:
-        if env is None:
-            return None
-        if env.pin is not None:
-            return env.pin == "null"
-        if env.popped:
+    def combined(found: list[bool | None]) -> bool | None:
+        if any(item is False for item in found):
             return False
-        if env.copy:
-            return True
-        if env.helper is not None:
-            found = returns.get(env.helper)
-            if not found or env.helper in seen:
-                return None
-            each = [verdict(result, (*seen, env.helper)) for result in found]
-            if any(result is False for result in each):
-                return False
-            return True if all(each) else None
-        return None if env.unknown else False
+        return True if found and all(found) else None
 
-    return moves, [
-        (scope, line, True if in_process else verdict(env))
-        for scope, line, env, in_process in sorted(spawns, key=lambda s: s[1])
-    ]
+    def parts(env: _Env | None, seen: tuple[str, ...] = ()):
+        """(pinned, has HOME) for a mapping, each None when it cannot be read."""
+        if env is None:
+            return None, None
+        if env.helper is not None:
+            found = returns.get(env.helper) if env.helper not in seen else None
+            each = [parts(result, (*seen, env.helper)) for result in found or ()]
+            base = (combined([p for p, _ in each]), combined([h for _, h in each]))
+        elif env.copy:
+            base = (True, True)
+        else:
+            base = (None, None) if env.unknown else (False, False)
+        if env.pin is not None:
+            pin = env.pin == "null"
+        elif env.popped:
+            pin = False
+        else:
+            pin = True if _KEYRING_KEY in env.carried else base[0]
+        if "HOME" in env.keys or "HOME" in env.carried:
+            home = True
+        else:
+            home = False if "HOME" in env.removed else base[1]
+        return pin, home
+
+    spawns = []
+    for name, line, mapping, call, values in candidates:
+        found = python_argv(call, values)
+        if found is None:
+            continue
+        argv, argv_values = found
+        child, options = None, flags(argv)
+        if options[-1:] == ["-c"] and len(argv) > len(options) + 1:
+            child = _python_source(resolve(argv[len(options) + 1], argv_values))
+        pin, home = parts(mapping)
+        if _pins_in_process(child):
+            pin = True
+        spawns.append((name, line, False if False in (pin, home) else pin and home))
+    return moves, sorted(spawns, key=lambda spawn: spawn[1])
 
 
 _NULL = '"keyring.backends.null.Keyring"'
@@ -764,37 +1002,84 @@ def test_the_census_reads_each_way_an_environment_moves_home(
 
 _RUN = "import subprocess, sys\nsubprocess.run("
 _PIN = f'"{_KEYRING_KEY}": {_NULL}'
+_HOME = '"HOME": h'
+_FRESH = 'env={"PATH": p}'
+_HOMED = 'env={"PATH": p, "HOME": h}'
 _CHILD_PIN = (
     "import keyring\nfrom keyring.backends.null import Keyring\n"
     "keyring.set_keyring(Keyring())\n"
 )
 
 
+def _filtered(condition: str) -> str:
+    """A spawn whose environment filters ``os.environ.items()`` by key."""
+    return (
+        f"def f():\n    e = {{k: v for k, v in os.environ.items() if {condition}}}\n"
+        "    subprocess.run([sys.executable, 'x.py'], env=e)\n"
+    )
+
+
 @pytest.mark.parametrize(
     ("source", "pinned"),
     [
-        # G1: a fresh environment, with no HOME at all, is flagged; a pin passes.
-        (_RUN + '[sys.executable, "-c", s], env={"PATH": p})\n', [False]),
-        (_RUN + f'[sys.executable, "-c", s], env={{"PATH": p, {_PIN}}})\n', [True]),
+        # G1: a fresh environment needs the null pin AND HOME. Without HOME the
+        # child's Path.home() is the account's, which opens the Keychain read.
+        (_RUN + f'[sys.executable, "-c", s], {_FRESH})\n', [False]),
+        (_RUN + f'[sys.executable, "-c", s], env={{"PATH": p, {_PIN}}})\n', [False]),
+        (_RUN + f'[sys.executable, "-c", s], {_HOMED})\n', [False]),
+        (_RUN + f'[sys.executable, "-c", s], env={{{_HOME}, {_PIN}}})\n', [True]),
         (
-            f'def f(p):\n    e = {{"PATH": p}}\n    e["{_KEYRING_KEY}"] = {_NULL}\n'
+            f'def f(p, h):\n    e = {{"PATH": p, "HOME": h}}\n    e["{_KEYRING_KEY}"] = {_NULL}\n'
             '    subprocess.run([sys.executable, "-c", s], env=e)\n',
             [True],
         ),
-        # A copy of the running environment, or no env, inherits this process's.
+        # A copy of the running environment, or no env, inherits both.
         (_RUN + '[sys.executable, "-c", s], env=dict(os.environ))\n', [True]),
         (_RUN + '[sys.executable, "-c", s], env={**os.environ, "X": "1"})\n', [True]),
         (_RUN + '[sys.executable, "-c", s], env=os.environ.copy())\n', [True]),
         (_RUN + '[sys.executable, "-c", s], env=None)\n', [True]),
+        # ... unless it pops one of them.
         (
             f'def f():\n    e = os.environ.copy()\n    e.pop("{_KEYRING_KEY}")\n'
             "    subprocess.run([sys.executable], env=e)\n",
             [False],
         ),
-        # A filtered copy is fresh, as for the HOME moves.
         (
-            "def f():\n    e = {k: v for k, v in os.environ.items() if k != 'X'}\n"
-            "    subprocess.run([sys.executable, 'x.py'], env=e)\n",
+            'def f():\n    e = os.environ.copy()\n    del e["HOME"]\n'
+            "    subprocess.run([sys.executable], env=e)\n",
+            [False],
+        ),
+        # A key filter over os.environ.items() carries what it provably keeps.
+        (_filtered("k != 'X'"), [True]),
+        (_filtered("k in ('PATH', 'HOME')"), [False]),
+        (_filtered("not k.startswith(('PYTHON', 'X'))"), [False]),
+        (
+            f'A = frozenset({{"PATH", "HOME", "{_KEYRING_KEY}"}})\n'
+            + _filtered("k in A"),
+            [True],
+        ),
+        (_filtered("k in allowed()"), [False]),
+        # ... and so does a copy by name, in a comprehension or a loop.
+        (
+            f"def f():\n    e = {{n: os.environ[n] for n in ('PATH', 'HOME', '{_KEYRING_KEY}')"
+            " if n in os.environ}\n    subprocess.run([sys.executable], env=e)\n",
+            [True],
+        ),
+        (
+            "def f():\n    e = {n: os.environ[n] for n in ('PATH', 'HOME')}\n"
+            "    subprocess.run([sys.executable], env=e)\n",
+            [False],
+        ),
+        (
+            f"def f():\n    e = {{'PATH': 'x'}}\n    for n in ('HOME', '{_KEYRING_KEY}'):\n"
+            "        if n in os.environ:\n            e[n] = os.environ[n]\n"
+            "    subprocess.run([sys.executable], env=e)\n",
+            [True],
+        ),
+        (
+            f"def f():\n    e = {{'PATH': 'x'}}\n    for n in ('HOME', '{_KEYRING_KEY}'):\n"
+            "        if n != 'HOME':\n            e[n] = os.environ[n]\n"
+            "    subprocess.run([sys.executable], env=e)\n",
             [False],
         ),
         # ``e = {**e, ...}`` keeps what ``e`` was; a parameter is not judged.
@@ -803,25 +1088,51 @@ _CHILD_PIN = (
             "    subprocess.run([sys.executable], env=e)\n",
             [None],
         ),
-        # Each way the argv starts Python; other programs are not counted.
+        # Each argv shape that starts Python; other programs are not counted.
         (
             'def f(p):\n    cmd = [sys.executable, "-c", s]\n'
-            '    subprocess.Popen(cmd, env={"PATH": p})\n',
+            f"    subprocess.Popen(cmd, {_FRESH})\n",
+            [False],
+        ),
+        (_RUN + f'[str(Path(sys.executable).resolve()), "x.py"], {_FRESH})\n', [False]),
+        (_RUN + f'["python3", "x.py"], {_FRESH})\n', [False]),
+        (_RUN + f'[tool, "-m", "pytest"], {_FRESH})\n', [False]),
+        (_RUN + f'[tool, "-I", "-m", "pytest"], {_FRESH})\n', [False]),
+        (_RUN + f'[str(python), "-I", "-c", s], {_FRESH})\n', [False]),
+        (_RUN + f'[str(interpreter), "x.py"], {_FRESH})\n', [False]),
+        (_RUN + f'[runtime.python_executable, "x.py"], {_FRESH})\n', [False]),
+        (
+            "def child_command():\n    return [sys.executable, '-I', 'x.py']\n"
+            f"def f(p):\n    subprocess.run(child_command(), {_FRESH})\n",
             [False],
         ),
         (
-            _RUN + '[str(Path(sys.executable).resolve()), "x.py"], env={"PATH": p})\n',
+            "def f(p):\n    cmd = [sys.executable, '-m', 'child']\n"
+            f"    subprocess.run([*cmd, 'go'], {_FRESH})\n",
             [False],
         ),
-        (_RUN + '["python3", "x.py"], env={"PATH": p})\n', [False]),
-        (_RUN + '[venv_python, "-m", "pytest"], env={"PATH": p})\n', [False]),
-        (_RUN + '[venv_python, "-I", "-m", "pytest"], env={"PATH": p})\n', [False]),
+        (
+            "def f(p):\n    cmd = (sys.executable, 'x.py')\n"
+            f"    subprocess.Popen(list(cmd), {_FRESH})\n",
+            [False],
+        ),
+        (
+            _RUN
+            + f'["/bin/sh", "-c", f"umask 002; exec {{sys.executable}} -"], {_FRESH})\n',
+            [False],
+        ),
+        (_RUN + f'["/bin/sh", "-c", f"ls {{d}}"], {_FRESH})\n', []),
         (
             "async def f(p):\n    await asyncio.create_subprocess_exec("
-            'sys.executable, "-c", s, env={"PATH": p})\n',
+            f'sys.executable, "-c", s, {_FRESH})\n',
             [False],
         ),
-        (_RUN + '["git", "status"], env={"PATH": p})\n', []),
+        (
+            "async def f(p):\n    await asyncio.to_thread("
+            f'subprocess.run, [sys.executable, "x.py"], {_FRESH})\n',
+            [False],
+        ),
+        (_RUN + f'["git", "status"], {_FRESH})\n', []),
         # A same-module helper's result is judged by what it returns.
         (
             'def env():\n    return {"PATH": "x"}\n'
@@ -829,31 +1140,38 @@ _CHILD_PIN = (
             [False],
         ),
         (
-            f'def env():\n    return {{"PATH": "x", {_PIN}}}\n'
-            "def f():\n    e = env()\n    subprocess.run([sys.executable], env=e)\n",
+            f'def env(h):\n    return {{"PATH": "x", {_HOME}, {_PIN}}}\n'
+            "def f():\n    e = env(h)\n    subprocess.run([sys.executable], env=e)\n",
             [True],
         ),
         (
             "def f():\n    subprocess.run([sys.executable], env=imported_env())\n",
             [None],
         ),
-        # G5: a -c child that pins the null backend in-process before any app import.
+        # G5: a -c child that pins the null backend in-process before any app
+        # import stands for the env pin, never for HOME.
         (
             f"CHILD = {_CHILD_PIN + 'import tldw_chatbook'!r}\n"
             + _RUN
-            + '[sys.executable, "-c", CHILD, "mode"], env={"PATH": p})\n',
+            + f'[sys.executable, "-c", CHILD, "mode"], {_HOMED})\n',
             [True],
+        ),
+        (
+            f"CHILD = {_CHILD_PIN!r}\n"
+            + _RUN
+            + f'[sys.executable, "-c", CHILD], {_FRESH})\n',
+            [False],
         ),
         (
             f"CHILD = {'import tldw_chatbook' + chr(10) + _CHILD_PIN!r}\n"
             + _RUN
-            + '[sys.executable, "-c", CHILD], env={"PATH": p})\n',
+            + f'[sys.executable, "-c", CHILD], {_HOMED})\n',
             [False],
         ),
         (
             f"CHILD = {_CHILD_PIN.replace('null', 'macOS')!r}\n"
             + _RUN
-            + '[sys.executable, "-c", CHILD], env={"PATH": p})\n',
+            + f'[sys.executable, "-c", CHILD], {_HOMED})\n',
             [False],
         ),
         (  # the null class's name rebound to another backend before the call
@@ -866,13 +1184,13 @@ _CHILD_PIN = (
             )
             + "\n"
             + _RUN
-            + '[sys.executable, "-c", CHILD], env={"PATH": p})\n',
+            + f'[sys.executable, "-c", CHILD], {_HOMED})\n',
             [False],
         ),
         (  # options before -c
             f"CHILD = {_CHILD_PIN!r}\n"
             + _RUN
-            + '[sys.executable, "-I", "-B", "-c", CHILD], env={"PATH": p})\n',
+            + f'[sys.executable, "-I", "-B", "-c", CHILD], {_HOMED})\n',
             [True],
         ),
         # An f-string child (its fields read as None) or a dedented constant.
@@ -880,31 +1198,32 @@ _CHILD_PIN = (
             _RUN
             + '[sys.executable, "-c", f'
             + repr(_CHILD_PIN + "x = {y!r}")
-            + '], env={"PATH": p})\n',
+            + f"], {_HOMED})\n",
             [True],
         ),
         (
             f"CHILD = textwrap.dedent({_CHILD_PIN!r})\n"
             + _RUN
-            + '[sys.executable, "-c", CHILD], env={"PATH": p})\n',
+            + f'[sys.executable, "-c", CHILD], {_HOMED})\n',
             [True],
         ),
         # Only a -c source is read: a script path's pin is not seen.
-        (_RUN + '[sys.executable, "child.py"], env={"PATH": p})\n', [False]),
+        (_RUN + f'[sys.executable, "child.py"], {_HOMED})\n', [False]),
     ],
 )
-def test_the_census_reads_each_way_a_python_child_gets_its_environment(
+def test_the_census_reads_each_recognised_python_child_and_its_environment(
     source: str, pinned: list[bool | None]
 ) -> None:
-    """The negative control for G1 and G5 (TASK-42520)."""
+    """The negative controls for G1 and G5 (TASK-42520)."""
     assert [spawn[2] for spawn in _python_spawns(source)] == pinned
 
 
 @functools.cache
-def _census() -> tuple[int, list[str], set[tuple[str, str]], int, list[str]]:
-    """(moves, unpinned moves, exemptions seen, Python spawns, unpinned spawns)."""
+def _census() -> tuple:
+    """(moves, unpinned moves, exemptions seen, Python spawns, failing spawns,
+    spawn exemptions seen, spawns not judged)."""
     moves, unpinned, exempt_seen = 0, [], set()
-    spawns, unpinned_spawns = 0, []
+    spawns, unpinned_spawns, spawn_exempt_seen, unjudged = 0, [], set(), []
     for tree in _CENSUS_TREES:
         for path in sorted((_REPO_ROOT / tree).rglob("*.py")):
             source = path.read_text(encoding="utf-8")
@@ -921,23 +1240,45 @@ def _census() -> tuple[int, list[str], set[tuple[str, str]], int, list[str]]:
                     unpinned.append(f"{relative}:{line} {scope}")
             for scope, line, pinned in python_spawns:
                 spawns += 1
-                if pinned is False:
+                if (relative, scope) in _SPAWN_EXEMPT:
+                    spawn_exempt_seen.add((relative, scope))
+                elif pinned is False:
                     unpinned_spawns.append(f"{relative}:{line} {scope}")
-    return moves, unpinned, exempt_seen, spawns, unpinned_spawns
+                elif pinned is None:
+                    unjudged.append(f"{relative}:{line} {scope}")
+    return (
+        moves,
+        unpinned,
+        exempt_seen,
+        spawns,
+        unpinned_spawns,
+        spawn_exempt_seen,
+        unjudged,
+    )
 
 
-def test_every_fresh_environment_handed_to_a_python_child_pins_the_null_backend() -> (
+def test_each_recognised_python_child_with_a_fresh_environment_gets_the_pin_and_a_home() -> (
     None
 ):
-    """G1 (TASK-42520): a fresh ``env=`` drops the conftest's pin, HOME or not."""
-    *_, spawns, unpinned = _census()
+    """G1 (TASK-42520): a fresh ``env=`` drops the conftest's pin, and without
+    HOME the child's ``Path.home()`` is the account's, which is all the
+    Keychain read checks. Only the argv shapes `_python_spawns` names count."""
+    *_, spawns, unpinned, exempt_seen, unjudged = _census()
 
     assert spawns >= _MIN_PYTHON_SPAWNS, f"the census saw only {spawns} Python spawns"
     assert not unpinned, (
         "these start Python with a fresh environment that lacks "
-        "PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring (the child "
-        "resolves the OS store, and with no HOME the real home):\n"
+        "PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring (the child resolves "
+        "the OS store) or HOME (the child reaches the account's home):\n"
         + "\n".join(unpinned)
+    )
+    assert exempt_seen == set(_SPAWN_EXEMPT), (
+        f"stale exemptions: {set(_SPAWN_EXEMPT) - exempt_seen}"
+    )
+    assert len(unjudged) <= _MAX_UNJUDGED_SPAWNS, (
+        f"{len(unjudged)} Python spawns pass an environment the census cannot read "
+        f"(ceiling {_MAX_UNJUDGED_SPAWNS}). Check the new one pins the null backend "
+        "and sets HOME, then raise the ceiling:\n" + "\n".join(unjudged)
     )
 
 
