@@ -107,6 +107,7 @@ def build_isolated_environment(profile: Path) -> tuple[dict[str, str], Path, Pat
     env = {
         "PATH": os.pathsep.join(sorted(path for path in command_paths if path)),
         "HOME": str(home),
+        "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
         "XDG_CONFIG_HOME": str(xdg_config),
         "XDG_DATA_HOME": str(xdg_data),
         "XDG_CACHE_HOME": str(xdg_cache),

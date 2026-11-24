@@ -58,6 +58,7 @@ def _isolate_config() -> None:
     os.environ.update(
         {
             "HOME": str(scratch / "home"),
+            "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
             "USERPROFILE": str(scratch / "home"),
             "XDG_DATA_HOME": str(scratch / "data"),
             "XDG_CONFIG_HOME": str(scratch / "config"),

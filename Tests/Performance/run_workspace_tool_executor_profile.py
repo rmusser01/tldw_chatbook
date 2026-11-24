@@ -328,6 +328,8 @@ def _isolated_environment(
         "TLDW_CONFIG_PATH": str(config / "config.toml"),
         "TEMP": str(temp),
         "TMP": str(temp),
+        # TASK-42479: the child imports the app; never the OS keyring.
+        "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
         _ISOLATED_RUNTIME_MARKER: "1",
     }
     if platform_name == "nt":

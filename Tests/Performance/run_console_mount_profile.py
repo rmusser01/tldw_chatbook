@@ -64,6 +64,7 @@ def _configure_isolated_profile(root: Path) -> None:
     os.environ.update(
         {
             "HOME": str(home),
+            "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
             "XDG_DATA_HOME": str(data),
             "XDG_CONFIG_HOME": str(config),
             "TLDW_CONFIG_PATH": str(config_file),

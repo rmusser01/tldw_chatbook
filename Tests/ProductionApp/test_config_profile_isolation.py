@@ -105,6 +105,7 @@ def test_real_app_quit_persists_only_the_effective_config(tmp_path: Path) -> Non
     env.update(
         {
             "HOME": str(home),
+            "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
             "USERPROFILE": str(home),
             "XDG_CONFIG_HOME": str(xdg_config),
             "XDG_DATA_HOME": str(xdg_data),

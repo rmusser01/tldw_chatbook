@@ -244,8 +244,11 @@ def test_windows_isolated_environment_uses_only_temporary_home(
         "XDG_CONFIG_HOME",
         "XDG_DATA_HOME",
         "TLDW_CONFIG_PATH",
+        "PYTHON_KEYRING_BACKEND",
         profile._ISOLATED_RUNTIME_MARKER,
     }
+    # TASK-42479: the child imports the app; never the host's OS keyring.
+    assert environment["PYTHON_KEYRING_BACKEND"] == "keyring.backends.null.Keyring"
     assert "real-developer" not in repr(environment)
     assert "must-not-cross-profile-boundary" not in repr(environment)
     assert (tmp_path / "home").is_dir()

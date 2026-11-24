@@ -201,6 +201,7 @@ def _isolated_runtime_environment(scripts: Path, state: Path) -> dict[str, str]:
         (state / name).mkdir(parents=True, exist_ok=True)
     environment = {
         "HOME": str(state / "home"),
+        "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
         "PATH": str(scripts),
         "PYTHONDONTWRITEBYTECODE": "1",
         "PYTHONNOUSERSITE": "1",
@@ -213,6 +214,15 @@ def _isolated_runtime_environment(scripts: Path, state: Path) -> dict[str, str]:
     if "SYSTEMROOT" in os.environ:
         environment["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
     return environment
+
+
+def test_isolated_runtime_environment_pins_the_null_keyring_backend(tmp_path):
+    """TASK-42479: the installed helper runs with a moved HOME; never the OS keyring."""
+    environment = _isolated_runtime_environment(
+        tmp_path / "scripts", tmp_path / "state"
+    )
+
+    assert environment.get("PYTHON_KEYRING_BACKEND") == "keyring.backends.null.Keyring"
 
 
 def _install_artifact(

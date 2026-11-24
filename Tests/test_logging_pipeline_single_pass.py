@@ -464,14 +464,8 @@ print("RESULT " + json.dumps({
 """
 
 
-def test_production_wiring_drops_debug_before_evaluating_lazy_arguments(tmp_path):
-    """The real ``configure_application_logging``, in a fresh sandboxed process.
-
-    Out-of-process because production removes every loguru sink first: in this
-    session other sinks sit at DEBUG, and loguru evaluates lazy arguments
-    against the minimum level across all sinks.
-    """
-    home = tmp_path / "home"
+def _sandboxed_wiring_environment(home):
+    """The host environment less logging/test state, with a profile under ``home``."""
     environment = {
         key: value
         for key, value in os.environ.items()
@@ -479,6 +473,7 @@ def test_production_wiring_drops_debug_before_evaluating_lazy_arguments(tmp_path
     }
     environment.update(
         HOME=str(home),
+        PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
         USERPROFILE=str(home),
         XDG_CONFIG_HOME=str(home / ".config"),
         XDG_DATA_HOME=str(home / ".local" / "share"),
@@ -487,6 +482,28 @@ def test_production_wiring_drops_debug_before_evaluating_lazy_arguments(tmp_path
         TLDW_TEST_MODE="1",
         PYTHONPATH=str(Path(__file__).resolve().parents[1]),
     )
+    return environment
+
+
+def test_sandboxed_wiring_environment_pins_the_null_keyring_backend(
+    tmp_path, monkeypatch
+):
+    """TASK-42479: a denylist copy keeps the host's backend unless it pins one."""
+    monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.fail.Keyring")
+
+    environment = _sandboxed_wiring_environment(tmp_path / "home")
+
+    assert environment.get("PYTHON_KEYRING_BACKEND") == "keyring.backends.null.Keyring"
+
+
+def test_production_wiring_drops_debug_before_evaluating_lazy_arguments(tmp_path):
+    """The real ``configure_application_logging``, in a fresh sandboxed process.
+
+    Out-of-process because production removes every loguru sink first: in this
+    session other sinks sit at DEBUG, and loguru evaluates lazy arguments
+    against the minimum level across all sinks.
+    """
+    environment = _sandboxed_wiring_environment(tmp_path / "home")
     completed = subprocess.run(
         [sys.executable, "-c", _PRODUCTION_WIRING_SCRIPT, SECRET],
         capture_output=True,

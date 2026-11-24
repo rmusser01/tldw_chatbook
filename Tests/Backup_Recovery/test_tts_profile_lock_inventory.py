@@ -135,6 +135,7 @@ def test_actual_tts_profile_lock_inventory(tmp_path, mode):
     }
     environment.update(
         HOME=str(root / "home"),
+        PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
         USERPROFILE=str(root / "home"),
         XDG_CONFIG_HOME=str(root / "config"),
         XDG_DATA_HOME=str(root / "data"),

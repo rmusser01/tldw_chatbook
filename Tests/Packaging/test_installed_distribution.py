@@ -210,6 +210,7 @@ _BUILD_TOOL_DISTRIBUTIONS = (
 )
 _BUILD_ENV_KEYS = frozenset(_PRIVATE_CHILD_BASELINE_ENV_KEYS) | {
     "HOME",
+    "PYTHON_KEYRING_BACKEND",
     "USERPROFILE",
     "TMPDIR",
     "TEMP",
@@ -1393,6 +1394,8 @@ def _sanitized_build_env(state_root: Path) -> dict[str, str]:
     env.update(
         {
             "HOME": str(state_root),
+            # TASK-42479: HOME moves; never the OS keyring.
+            "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
             "USERPROFILE": str(state_root),
             "TMPDIR": str(temp_root),
             "TEMP": str(temp_root),
@@ -1750,6 +1753,8 @@ def test_sdist_build_env_excludes_host_state(
     env = _sanitized_build_env(tmp_path / "build-state")
 
     assert set(env) <= _BUILD_ENV_KEYS
+    # TASK-42479: the build child moves HOME; never the OS keyring.
+    assert env.get("PYTHON_KEYRING_BACKEND") == "keyring.backends.null.Keyring"
     assert "TASK16319_BUILD_API_KEY" not in env
     assert "HTTPS_PROXY" not in env
     assert "PYTHONPATH" not in env

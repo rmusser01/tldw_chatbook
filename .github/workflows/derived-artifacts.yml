@@ -1522,7 +1522,12 @@ jobs:
     # timer-path census after the network guard (sandboxed, so before the
     # ChaChaNotesDB and Tests/DB files, which keep the bootstrap profile by
     # directory name; 19 tests, ~37 s serially at load 10-17; red on dev
-    # unseen).
+    # unseen). TASK-42480 adds the keyring-isolation guard after the network
+    # guard (sandboxed; its app-building case runs in a private profile;
+    # 3 tests, ~10 s serially at load 45). TASK-42479 adds that file's
+    # HOME-move census and script pins (21 tests in the file, ~9 s at load
+    # 15-20, the census ~4 s), then the profilers' keyring-pin nodes (4 tests,
+    # about 1 s together; not the whole files).
     name: Architecture guard contracts
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -1586,6 +1591,11 @@ jobs:
             Tests/Backup_Recovery/test_sqlite_validation.py \
             Tests/test_stdlib_logging_format_style.py \
             Tests/test_network_guard.py \
+            Tests/test_keyring_isolation.py \
+            Tests/Performance/test_console_three_turn_profile.py::test_build_child_environment_is_strictly_allowlisted \
+            Tests/Performance/test_console_three_turn_profile.py::test_assert_child_environment_requires_sample_owned_paths \
+            Tests/Performance/test_console_three_turn_profile.py::test_parent_spawns_each_child_with_the_null_keyring_backend \
+            Tests/Performance/test_workspace_tool_executor_profile.py::test_windows_isolated_environment_uses_only_temporary_home \
             Tests/Architecture/test_timer_path_static_update_inventory.py \
             Tests/ChaChaNotesDB/test_historical_bootstrap.py \
             Tests/ChaChaNotesDB/test_trigger_census.py \

@@ -360,6 +360,8 @@ def test_benchmark_host_state_context_isolates_and_restores_environment(
         "TLDW_CONFIG_PATH": "sentinel-config.toml",
         "TLDW_TEST_MODE": "sentinel-test-mode",
         "OPENAI_API_KEY": "sentinel-secret",
+        # TASK-42479: a host backend (fail, never a real store) is replaced.
+        "PYTHON_KEYRING_BACKEND": "keyring.backends.fail.Keyring",
     }
     for key, value in original.items():
         monkeypatch.setenv(key, value)
@@ -375,6 +377,10 @@ def test_benchmark_host_state_context_isolates_and_restores_environment(
             assert Path(os.environ["TLDW_CONFIG_PATH"]).is_relative_to(tmp_path)
             assert Path(os.environ["TLDW_CONFIG_PATH"]).parent.is_dir()
             assert "OPENAI_API_KEY" not in os.environ
+            assert (
+                os.environ.get("PYTHON_KEYRING_BACKEND")
+                == "keyring.backends.null.Keyring"
+            )
 
         assert {key: os.environ.get(key) for key in original} == original
 

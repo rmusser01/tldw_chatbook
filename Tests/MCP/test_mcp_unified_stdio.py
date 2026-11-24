@@ -945,6 +945,7 @@ def _isolated_subprocess_environment(profile: Path) -> dict[str, str]:
         {
             "APPDATA": str(config_home),
             "HOME": str(home),
+            "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
             "HF_HUB_OFFLINE": "1",
             "HF_HUB_DISABLE_TELEMETRY": "1",
             "LOCALAPPDATA": str(data_home),
