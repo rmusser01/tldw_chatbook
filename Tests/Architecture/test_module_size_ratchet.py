@@ -493,6 +493,9 @@ _BUDGETS: dict[str, int] = {
     # PR 5 fix round 2, 2026-11-12, same owner rule: the restore also needs
     # the kind the clear left (a deep link sets it uncounted): +6
     # (17,052 -> 17,058).
+    # 2026-11-24: rebased onto dev d51f7b8482 (#3441 merged at 16,942, not the
+    # 16,938 the lines above count from); row set to the measurement at this
+    # head (16,942 + 120 = 17,062).
     "tldw_chatbook/UI/Screens/personas_screen.py": 17062,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
