@@ -3,6 +3,7 @@
 import asyncio
 import socket
 import subprocess
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
@@ -47,7 +48,9 @@ class Child:
 def linux(monkeypatch, tmp_path):
     monkeypatch.setattr(audio_player.platform, "system", lambda: "Linux")
     monkeypatch.setattr(
-        audio_player.shutil, "which", lambda name: name if name == "aplay" else None
+        audio_player.shutil,
+        "which",
+        lambda name: sys.executable if name == "aplay" else None,
     )
     path = tmp_path / "clip.wav"
     path.write_bytes(b"fixture")
@@ -297,7 +300,9 @@ def test_revocation_during_mpv_connection_fences_resume_command(linux, monkeypat
             return len(body)
 
     monkeypatch.setattr(
-        audio_player.shutil, "which", lambda name: name if name == "mpv" else None
+        audio_player.shutil,
+        "which",
+        lambda name: sys.executable if name == "mpv" else None,
     )
     monkeypatch.setattr(audio_player.subprocess, "Popen", lambda *a, **kw: child)
     monkeypatch.setattr(socket, "AF_UNIX", 1, raising=False)
@@ -331,7 +336,7 @@ def test_late_delegation_remains_handed_off_even_when_toast_fails(
     monkeypatch.setattr(
         windows_audio_launch,
         "wmplayer_argv",
-        lambda _: ["wmplayer", str(path)] if wmplayer else None,
+        lambda _: [sys.executable, str(path)] if wmplayer else None,
     )
     monkeypatch.setattr(audio_player.os, "startfile", launch, raising=False)
     monkeypatch.setattr(audio_player.subprocess, "Popen", launch)
@@ -371,3 +376,167 @@ async def test_async_cleanup_keeps_loop_free_while_joining_executor(linux):
     wrapper._executor = FinishingExecutor(max_workers=1)
     await wrapper.cleanup()
     assert responsive == [True]
+
+
+def test_shell_identity_change_during_final_validation_never_opens(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "clip.wav"
+    path.write_bytes(b"prepared")
+    monkeypatch.setattr(audio_player.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(windows_audio_launch, "wmplayer_argv", lambda _: None)
+    player = SimpleAudioPlayer()
+    plan = player.prepare(path)
+    verify = windows_audio_launch.can_hand_off
+    opened = []
+
+    def replace_while_validating(file):
+        file.write_bytes(b"changed during validation")
+        return verify(file)
+
+    monkeypatch.setattr(windows_audio_launch, "can_hand_off", replace_while_validating)
+    monkeypatch.setattr(audio_player.os, "startfile", opened.append, raising=False)
+    assert plan is not None
+    assert not player.play_prepared(plan)
+    assert not opened
+
+
+def test_removed_prepared_executable_preserves_playing_child(
+    linux, tmp_path, monkeypatch
+):
+    player, path = linux
+    executable = tmp_path / "aplay"
+    executable.touch()
+    executable.chmod(0o700)
+    monkeypatch.setattr(
+        audio_player.shutil,
+        "which",
+        lambda name: str(executable) if name == "aplay" else None,
+    )
+    old = Child()
+    launches = []
+
+    def spawn(argv, **kwargs):
+        launches.append(argv[0])
+        if not executable.exists():
+            raise FileNotFoundError
+        return old
+
+    monkeypatch.setattr(audio_player.subprocess, "Popen", spawn)
+    assert player.play(path)
+    try:
+        plan = player.prepare(path)
+        assert plan is not None
+        executable.unlink()
+        assert not player.play_prepared(plan)
+        assert player.get_state() is PlaybackState.PLAYING
+        assert old.signals == []
+        assert launches == [str(executable)]
+        assert plan.argv[0] == str(executable)
+    finally:
+        player.stop()
+
+
+def test_removed_wmplayer_preserves_prior_handoff(tmp_path, monkeypatch):
+    path, executable = tmp_path / "clip.wav", tmp_path / "wmplayer.exe"
+    path.touch()
+    executable.touch()
+    executable.chmod(0o700)
+    monkeypatch.setattr(audio_player.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(windows_audio_launch, "WMPLAYER_PATH", executable)
+    player, old, launcher = SimpleAudioPlayer(), object(), Child()
+    launched = []
+
+    def spawn(argv, **kwargs):
+        launched.append(argv)
+        return launcher
+
+    monkeypatch.setattr(audio_player.subprocess, "Popen", spawn)
+    try:
+        assert player.play(path, attempt_token=old)
+        plan = player.prepare(path)
+        assert plan is not None
+        executable.unlink()
+        assert not player.play_prepared(plan)
+        assert player.get_state(expected_token=old) is PlaybackState.HANDED_OFF
+        assert len(launched) == 1
+    finally:
+        launcher.exited.set()
+
+
+def test_failed_owned_spawn_records_exact_error_attempt(linux, monkeypatch):
+    player, path = linux
+    token = object()
+
+    def failed(*args, **kwargs):
+        raise OSError("spawn failed")
+
+    monkeypatch.setattr(audio_player.subprocess, "Popen", failed)
+    assert not player.play(path, attempt_token=token)
+    assert player.get_state(expected_token=token) is PlaybackState.ERROR
+    assert player.get_state(expected_token=object()) is PlaybackState.IDLE
+
+
+@pytest.mark.parametrize("cancel_observer", [True, False])
+async def test_queued_cleanup_survives_cancellation_and_joins_once(
+    linux, monkeypatch, cancel_observer
+):
+    player, path = linux
+    wrapper = AsyncAudioPlayer(player)
+    entering, release = threading.Event(), threading.Event()
+    cleaned, joined = threading.Event(), threading.Event()
+    queued = asyncio.Event()
+    child = Child()
+    calls = []
+    native_cleanup = player.cleanup
+
+    def held_spawn(*args, **kwargs):
+        entering.set()
+        assert release.wait(4)
+        return child
+
+    def cleanup():
+        native_cleanup()
+        calls.append("cleanup")
+        cleaned.set()
+
+    class ObservedExecutor(ThreadPoolExecutor):
+        def submit(self, fn, *args, **kwargs):
+            future = super().submit(fn, *args, **kwargs)
+            if fn is cleanup:
+                queued.set()
+            return future
+
+        def shutdown(self, wait=True, *, cancel_futures=False):
+            super().shutdown(wait=wait, cancel_futures=cancel_futures)
+            calls.append("joined")
+            joined.set()
+
+    monkeypatch.setattr(audio_player.subprocess, "Popen", held_spawn)
+    monkeypatch.setattr(player, "cleanup", cleanup)
+    wrapper._executor = ObservedExecutor(max_workers=1)
+    play = asyncio.create_task(wrapper.play(path))
+    try:
+        assert await asyncio.to_thread(entering.wait, 2)
+        first = asyncio.create_task(wrapper.cleanup())
+        await asyncio.wait_for(queued.wait(), 2)
+        if cancel_observer:
+            first.cancel()
+            await asyncio.sleep(0)  # deliver cancellation while play owns the worker
+        else:
+            second = asyncio.create_task(wrapper.cleanup())
+            await asyncio.sleep(0)
+        release.set()
+        assert await play
+        if cancel_observer:
+            with pytest.raises(asyncio.CancelledError):
+                await first
+        else:
+            await asyncio.gather(first, second)
+        assert await asyncio.to_thread(joined.wait, 2)
+        assert cleaned.is_set()
+        assert calls == ["cleanup", "joined"]
+        assert child.exited.is_set()
+    finally:
+        release.set()
+        child.exited.set()

@@ -645,6 +645,7 @@ class TestAudioPlayer:
     @pytest.fixture
     def player(self, monkeypatch):
         """An observable file child on all hosts, without launching a media app."""
+        import sys
         from threading import Event
 
         from tldw_chatbook.TTS import audio_player
@@ -662,7 +663,9 @@ class TestAudioPlayer:
         child.wait.side_effect = wait
         monkeypatch.setattr(audio_player.platform, "system", lambda: "Linux")
         monkeypatch.setattr(
-            audio_player.shutil, "which", lambda name: name if name == "aplay" else None
+            audio_player.shutil,
+            "which",
+            lambda name: sys.executable if name == "aplay" else None,
         )
         monkeypatch.setattr(
             audio_player.subprocess, "Popen", lambda *args, **kwargs: child

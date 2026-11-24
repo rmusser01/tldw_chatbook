@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import ast
 import os
+import sys
 import threading
 from contextvars import ContextVar, copy_context
 from pathlib import Path
@@ -53,7 +54,9 @@ def test_play_does_not_raise_unbound_local_error_on_a_non_darwin_afplay_path(
     player._player_cmd = ["aplay", "-q"]
     player._supports_pause = False
     monkeypatch.setattr(
-        audio_player.shutil, "which", lambda name: name if name == "aplay" else None
+        audio_player.shutil,
+        "which",
+        lambda name: sys.executable if name == "aplay" else None,
     )
 
     audio_file = tmp_path / "clip.wav"
@@ -79,9 +82,13 @@ def test_play_does_not_raise_unbound_local_error_on_a_non_darwin_afplay_path(
 def test_macos_opus_uses_a_compatible_player(tmp_path, monkeypatch):
     player = SimpleAudioPlayer()
     player._system = "Darwin"
+    ffplay = tmp_path / "ffplay"
+    ffplay.touch()
+    ffplay.chmod(0o700)
+    monkeypatch.setattr(audio_player, "_AFPLAY_EXECUTABLE", sys.executable)
     monkeypatch.setattr(
         "tldw_chatbook.TTS.audio_player.shutil.which",
-        lambda name: "/test/ffplay" if name == "ffplay" else None,
+        lambda name: str(ffplay) if name == "ffplay" else None,
     )
     commands = []
 
@@ -97,9 +104,9 @@ def test_macos_opus_uses_a_compatible_player(tmp_path, monkeypatch):
         path = tmp_path / f"reply.{suffix}"
         path.write_bytes(b"fixture")
         assert player.play(path)
-    assert commands[0][0] == "/test/ffplay"
+    assert commands[0][0] == str(ffplay)
     assert "-autoexit" in commands[0] and "-nodisp" in commands[0]
-    assert commands[1][0] == "/usr/bin/afplay"
+    assert commands[1][0] == sys.executable
     player.cleanup()
 
 
@@ -276,6 +283,12 @@ def test_windows_media_player_argv_is_unchanged_when_it_is_installed(
 ):
     """The legacy wmplayer.exe route keeps its list argv (no shell), and the
     hand-off is not used when that player exists."""
+    executable = tmp_path / "wmplayer.exe"
+    executable.touch()
+    executable.chmod(0o700)
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.windows_audio_launch.WMPLAYER_PATH", executable
+    )
     spawned, opened = _windows_host(monkeypatch, wmplayer=True)
     clip = tmp_path / "a&calc&.mp3"
     clip.write_bytes(b"fixture")
