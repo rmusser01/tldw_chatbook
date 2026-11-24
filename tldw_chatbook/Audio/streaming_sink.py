@@ -45,8 +45,8 @@ dedicated per-sink daemon notify thread and delivered to `on_event` from
 there, never from the callback itself. Events that originate from a
 caller thread (`SinkBufferFull` from `feed()`, `SinkStopped` from
 `stop()`, `SinkFailed` from `open()`'s own failure paths) are delivered
-directly, synchronously, on whichever thread called the method -- there
-is no PortAudio-callback-reentrancy risk there.
+directly on a caller thread. A terminal event during open is delivered by
+the opener after it settles native startup and attempts checked cleanup.
 
 `stop()` does not join the notify thread, so listeners may request it
 reentrantly. Native abort/close may block. Async callers use `retire()`,
@@ -720,6 +720,7 @@ class StreamingPcmSink:
         self._stop_requested = threading.Event()
         self._open_done = threading.Event()
         self._open_done.set()
+        self._open_terminal_event: SinkFailed | SinkStopped | None = None
         self._native_lock = threading.RLock()
         self._silence_confirmed = False
         self._quarantined = False
@@ -761,6 +762,7 @@ class StreamingPcmSink:
         # tests can uniformly probe it.
         self._notify_q: "queue.Queue[Any]" = queue.Queue()
         self._notify_thread: Optional[threading.Thread] = None
+        self._notify_interruption: BaseException | None = None
 
     def _emit(self, event: object) -> None:
         """Fire-and-forget event dispatch that never raises.
@@ -794,19 +796,31 @@ class StreamingPcmSink:
                     self._silence_confirmed = True
                 except Exception:
                     logger.warning("PCM stream abort was unconfirmed")
+                except BaseException as interrupted:
+                    self._quarantined = self._cannot_retry = True
+                    try:
+                        stream.close()
+                    except BaseException as close_error:
+                        raise interrupted from close_error
+                    raise
             try:
                 stream.close()
             except Exception:
                 # Only retry an alternate backend which positively reports
                 # its handle still open. _SoundDeviceOutput offers no such
                 # receipt: sounddevice may clear _ptr even when close raises.
-                self._quarantined = True
+                self._quarantined = self._cannot_retry = True
                 try:
                     self._cannot_retry = getattr(stream, "closed", None) is not False
                 except Exception:
                     self._cannot_retry = True
                 logger.warning("PCM stream close was unconfirmed")
                 return False
+            except BaseException:
+                # A control-flow interruption can arrive after native close
+                # invalidated the handle. An idempotent retry proves nothing.
+                self._quarantined = self._cannot_retry = True
+                raise
             if not self._silence_confirmed:
                 self._quarantined = self._cannot_retry = True
                 return False
@@ -834,6 +848,14 @@ class StreamingPcmSink:
         return not self._stop_requested.is_set() and (
             self._start_authority is None or self._start_authority()
         )
+
+    def _teardown_on_notify_thread(self, *, abort: bool = True) -> bool:
+        """Finish queued terminal work before propagating a native interruption."""
+        try:
+            return self._teardown_stream(abort=abort)
+        except BaseException as interrupted:
+            self._notify_interruption = interrupted
+            return False
 
     def _notify_loop(self) -> None:
         """Drain `self._notify_q`, delivering callback-thread-originated work.
@@ -867,6 +889,12 @@ class StreamingPcmSink:
                     if self._observer is not None:
                         with self._presentation_lock:
                             self._observer.release()
+                    if self._notify_interruption is not None:
+                        interrupted, self._notify_interruption = (
+                            self._notify_interruption,
+                            None,
+                        )
+                        raise interrupted
                     return
                 kind, event = job
                 if kind == "backend_finished":
@@ -877,7 +905,7 @@ class StreamingPcmSink:
                         event = SinkUnderrun(frames=self._underruns)
                         self._underrun_queued = False
                 if kind == "teardown_and_emit":
-                    self._teardown_stream()
+                    self._teardown_on_notify_thread()
                     self._end_presentation()
                     _clear_live_sink(self)
                 if isinstance(event, SinkStarted) and self._observer is not None:
@@ -950,7 +978,7 @@ class StreamingPcmSink:
             return
         if not self._open_done.is_set():
             return  # The notify loop revisits pending acknowledged drains.
-        closed = self._teardown_stream(abort=False)
+        closed = self._teardown_on_notify_thread(abort=False)
         with self._lock:
             if self._state != "draining":
                 return  # Explicit Stop won.
@@ -1021,12 +1049,21 @@ class StreamingPcmSink:
         finally:
             # A terminal open owns its late cleanup. A waiting retire joins
             # the native lock after it observes _open_done.
-            with self._native_lock:
-                with self._lock:
-                    self._open_done.set()
-                    terminal = self._state in ("failed", "stopped")
-                if terminal:
-                    self._teardown_stream()
+            event = None
+            try:
+                with self._native_lock:
+                    with self._lock:
+                        self._open_done.set()
+                        event, self._open_terminal_event = (
+                            self._open_terminal_event,
+                            None,
+                        )
+                        terminal = self._state in ("failed", "stopped")
+                    if terminal:
+                        self._teardown_stream()
+            finally:
+                if event is not None:
+                    self._publish_forced_terminal(event)
 
     def _open(self, sample_rate: int, channels: int) -> None:
         if type(sample_rate) is not int or sample_rate <= 0:
@@ -1258,21 +1295,22 @@ class StreamingPcmSink:
             self._buffered_bytes = 0
             self._leftover = b""
             self._leftover_off = 0
-        confirmed = self._teardown_stream()
-        self._end_presentation()
-        if already_terminal:
-            return confirmed
+        try:
+            return self._teardown_stream()
+        finally:
+            if not already_terminal:
+                self._publish_forced_terminal(SinkStopped())
+
+    def _publish_forced_terminal(self, event: SinkStopped | SinkFailed) -> None:
+        """Defer an in-flight open's listener until its native cleanup settles."""
+        with self._lock:
+            if not self._open_done.is_set():
+                self._open_terminal_event = event
+                return
         _clear_live_sink(self)
-        # Pushed unconditionally -- not gated on self._notify_thread being
-        # published yet (see N1). open() may still be mid-flight, between
-        # its own state flip to "open" and creating/publishing the notify
-        # thread; queuing the sentinel now means that thread, whenever it
-        # does start, finds it waiting and exits immediately instead of
-        # parking on get() forever. Queuing onto a queue nothing will ever
-        # read (open() never reaches "open" at all) is harmless.
         self._notify_q.put(_NOTIFY_STOP)
-        self._emit(SinkStopped())
-        return confirmed
+        self._end_presentation()
+        self._emit(event)
 
     async def retire(self) -> bool:
         """Fence starts and await checked native cleanup off the event loop.
@@ -1368,10 +1406,10 @@ class StreamingPcmSink:
             self._notify_q.put(("teardown_and_emit", SinkFailed(reason=reason)))
             self._notify_q.put(_NOTIFY_STOP)
             return
-        self._teardown_stream()
-        self._end_presentation()
-        _clear_live_sink(self)
-        self._emit(SinkFailed(reason=reason))
+        try:
+            self._teardown_stream()
+        finally:
+            self._publish_forced_terminal(SinkFailed(reason=reason))
 
     def _callback(self, outdata, frames, _time, _status) -> bool:
         """Device audio callback: fill `outdata` with the next block of audio.
