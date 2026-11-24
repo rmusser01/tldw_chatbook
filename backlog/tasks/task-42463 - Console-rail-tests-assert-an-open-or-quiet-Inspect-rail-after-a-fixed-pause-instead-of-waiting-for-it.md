@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-23 06:38
-updated_date: 2026-11-24 01:49
+updated_date: 2026-11-24 03:22
 labels:
 - follow-up
 - console
@@ -95,6 +95,7 @@ Two fixed pauses stay: the geometry-only test's final two-pause stability rechec
 - `test_console_right_rail.py` with `test_console_rail_reconciliation.py`: 20 of 20 runs green, 92 passed each, load 38-143 (several agents' runs plus this branch's other checks).
 - The "Run admission-sensitive suites 4" step, which runs both files, serial with the lane flags: 600 passed.
 - `test_console_shell_regions.py` with the helper's two importers: 62 passed.
+- Final tip, after TASK-42475's review round: both files with `test_console_shell_regions.py` and `test_console_credential_poll_config.py`, 20 of 20 runs green (139 passed each) at load 18-52.
 
 Every assertion is kept.
 
