@@ -1073,7 +1073,12 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
         )
 
     def rebind_listening_profile(
-        self, item: StorageItem, candidate: Path, mapping: Mapping[str, Path]
+        self,
+        item: StorageItem,
+        candidate: Path,
+        mapping: Mapping[str, Path],
+        *,
+        aliases: tuple[StorageItem, ...] = (),
     ) -> None:
         """Rebind a reviewed selector and discard device-local custody on a private image."""
         from tldw_chatbook.DB.private_sqlite import open_recovery_validation
@@ -1081,25 +1086,37 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
             listening_profile_key,
         )
 
-        parts = item.logical_id.split(":")
-        if (
-            len(parts) != 3
-            or parts[0] != "profile"
-            or parts[2] != self.owner_id
-            or item.owner != self.owner_id
-        ):
-            raise ValueError("listening_profile_mapping_required")
-        source = parts[1]
-        config_id = f"profile:{source}:config"
-        selector = mapping.get(config_id)
-        if (
-            config_id not in item.dependencies
-            or not isinstance(selector, Path)
-            or not selector.is_absolute()
-            or ".." in selector.parts
-        ):
-            raise ValueError("listening_profile_mapping_required")
-        target = listening_profile_key(selector)
+        profiles = {}
+        for row in (item, *aliases):
+            parts = row.logical_id.split(":")
+            if (
+                len(parts) != 3
+                or parts[0] != "profile"
+                or not parts[1]
+                or parts[2] != self.owner_id
+                or row.owner != self.owner_id
+                or aliases
+                and (
+                    not item.shared_group
+                    or row.shared_group != item.shared_group
+                    or row.path != item.path
+                )
+            ):
+                raise ValueError("listening_profile_mapping_required")
+            source = parts[1]
+            config_id = f"profile:{source}:config"
+            selector = mapping.get(config_id)
+            if (
+                config_id not in row.dependencies
+                or not isinstance(selector, Path)
+                or not selector.is_absolute()
+                or ".." in selector.parts
+            ):
+                raise ValueError("listening_profile_mapping_required")
+            profiles[source] = listening_profile_key(selector)
+        if len(set(profiles.values())) != len(profiles):
+            raise ValueError("listening_profile_collision")
+        moves = [(source, target) for source, target in profiles.items() if source != target]
         with open_recovery_validation(
             self.owner_id, candidate, writable=True, with_restrictions=True
         ) as opened:
@@ -1135,13 +1152,14 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
                     != 4
                 ):
                     return
-                if source != target:
+                for _, target in moves:
                     if connection.execute(
                         "SELECT 1 FROM listening_session WHERE profile=? UNION ALL "
                         "SELECT 1 FROM article_audio WHERE profile=? LIMIT 1",
                         (target, target),
                     ).fetchone():
                         raise ValueError("listening_profile_collision")
+                for source, target in moves:
                     connection.execute(
                         "UPDATE listening_session SET profile=? WHERE profile=?",
                         (target, source),
@@ -1305,15 +1323,13 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
             or not parts[1]
         ):
             return ("invalid_dependency_context",)
-        issues = self.validate_restore(item, candidate)
-        if issues:
-            return issues
         try:
             with open_recovery_validation(
                 self.owner_id, candidate, writable=False
             ) as connection:
-                if self._validate_catalog(connection):
-                    return ("dependency_unavailable",)
+                issues = self._validate_catalog(connection)
+                if issues:
+                    return issues
                 article_issues = self._check_article_peers(
                     connection,
                     item,

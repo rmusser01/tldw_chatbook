@@ -260,9 +260,51 @@ def selected_absent_target_ids(doc, scope, target, restore, retained_configs):
         current_config_paths[current[1]] = path
     selected = set(scope.member_ids)
     absent = set()
+    from tldw_chatbook.Subscriptions.recovery import _BriefingAudio
+    from .models import DiscoveryContext
+
+    for declaration in doc.producer_inventory:
+        if (
+            declaration.owner_id != "subscriptions.assets"
+            or declaration.status != "unused"
+            or declaration.logical_id not in selected
+        ):
+            continue
+        parts = declaration.logical_id.split(":", 2)
+        owner = installed.get(declaration.owner_id)
+        if (
+            len(parts) != 3
+            or parts[0] != "profile"
+            or type(owner) is not _BriefingAudio
+            or declaration.logical_id in represented
+        ):
+            raise ValueError("selected_absence_mapping_required")
+        source_profile = parts[1]
+        matches = [
+            current for current, source in profiles.items() if source == source_profile
+        ]
+        if len(matches) != 1:
+            raise ValueError("selected_absence_mapping_required")
+        current = matches[0]
+        path = current_config_paths[current]
+        if current not in current_configs:
+            current_configs[current] = _reviewed_config_data(path)
+        absent.update(
+            owner.absent_target_ids(
+                source_profile,
+                declaration,
+                doc.producer_inventory,
+                DiscoveryContext(path, current),
+                current_configs[current],
+                target.items,
+            )
+        )
     active_owners = set()
     matched = set()
     for item in target.items:
+        if item.owner == "subscriptions.assets":
+            # This owner emits two distinct root absences and no member absences.
+            continue
         parts = item.logical_id.split(":", 2)
         primary_sqlite = (
             item.metadata is None
@@ -335,21 +377,6 @@ def selected_absent_target_ids(doc, scope, target, restore, retained_configs):
                 and (current_profile, declaration.owner_id) in active_owners
                 and (current_profile, declaration.logical_id) not in matched
             ):
-                if declaration.owner_id == "subscriptions.assets":
-                    from tldw_chatbook.Subscriptions.recovery import _BriefingAudio
-                    from .models import DiscoveryContext
-
-                    owner = installed.get(declaration.owner_id)
-                    config_path = current_config_paths[current_profile]
-                    if type(owner) is _BriefingAudio and owner.briefing_already_absent(
-                        source_profile,
-                        declaration,
-                        doc.producer_inventory,
-                        DiscoveryContext(config_path, current_profile),
-                        _reviewed_config_data(config_path),
-                        target.items,
-                    ):
-                        continue
                 raise ValueError("selected_absence_mapping_required")
     absent_paths = {item.path for item in target.items if item.logical_id in absent}
     if any(

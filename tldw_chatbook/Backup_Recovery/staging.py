@@ -824,6 +824,7 @@ def stage_restore(
                     if issues:
                         raise ValueError(issues[0])
                 remap_credential_copies(stage, credentials, publication_payloads)
+            subscriptions = {}
             for payload in doc.files:
                 if payload.logical_id not in selected:
                     continue
@@ -951,7 +952,10 @@ def stage_restore(
                         payload.owner_id == "db.subscriptions"
                         and plan.local_snapshot is None
                     ):
-                        owner.rebind_listening_profile(item, candidate, relocation_mapping)
+                        # Migrate and check each authenticated input and legacy
+                        # briefing relocation before sharing a private DB image.
+                        group = (item.shared_group or item.logical_id, item.path)
+                        subscriptions.setdefault(group, []).append(payload)
                 else:
                     owner.relocate(candidate, relocation_mapping)
                 if (
@@ -970,6 +974,25 @@ def stage_restore(
                     )
                 if issues:
                     raise ValueError(issues[0])
+            for group in subscriptions.values():
+                first, *peers = group
+                candidate = extracted[first.logical_id]
+                if peers:
+                    digest = reader._hash(candidate, cancel)
+                    if any(
+                        (peer.sha256, peer.size) != (first.sha256, first.size)
+                        or reader._hash(extracted[peer.logical_id], cancel) != digest
+                        for peer in peers
+                    ):
+                        raise ValueError("shared_candidate_mismatch")
+                owners[first.owner_id].rebind_listening_profile(
+                    items[first.logical_id],
+                    candidate,
+                    relocation_mapping,
+                    aliases=tuple(items[peer.logical_id] for peer in peers),
+                )
+                for peer in peers:
+                    extracted[peer.logical_id] = candidate
             _stamp_personal_context(doc, plan, selected, extracted, stage)
         validated = {
             key: reader._hash(path, cancel)

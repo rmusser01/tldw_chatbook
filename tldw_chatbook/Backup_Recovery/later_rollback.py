@@ -6,6 +6,7 @@ import stat
 import tomllib
 from contextlib import nullcontext
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from threading import Event
 from uuid import uuid4
@@ -1602,20 +1603,80 @@ def _article_member_parent(
         if row.path is not None and (row.path == parent or parent in row.path.parents)
     ]
     parents = [row for row in artifact.parents if Path(row.path) == parent]
+    if len(parents) != 1 or any(row.path == item.path for row in original_items):
+        raise ValueError("local_snapshot_created_scope_unverified")
     if (
-        len(parents) != 1
-        or len(current) != len(observed)
+        len(current) != len(observed)
         or set(current) != set(observed)
         or any(row.status not in {"included", "included_directory"} for row in observed)
-        or any(row.path == item.path for row in original_items)
     ):
-        raise ValueError("local_snapshot_created_scope_unverified")
+        raise ValueError("local_snapshot_created_members_changed")
     previous = parents[0]
     with pinned_directory(parent) as directory:
         checked = os.fstat(directory)
         if (checked.st_dev, checked.st_ino) != (previous.device, previous.inode):
             raise ValueError("local_snapshot_created_root_changed")
     return local_root_id, parent, previous.device, previous.inode
+
+
+def _subscription_content_proof(item, candidate, members, tree, rediscover, limit):
+    """Hash only approved members of the committed object, with their reviewed identities."""
+    from .journal import _artifact_digest
+    from .storage_admission import _digest_recovery_file, _recovery_stat_identity
+
+    def identity(row):
+        with pinned_directory(row.path.parent) as parent:
+            return os.stat(row.path.name, dir_fd=parent, follow_symlinks=False)
+
+    stamps = {row.path: identity(row) for row in members}
+    root = stamps[item.path]
+    if (root.st_dev, root.st_ino) != (candidate.device, candidate.inode):
+        raise ValueError("local_snapshot_created_root_changed")
+    for row in members:
+        info = stamps[row.path]
+        directory = row.status == "included_directory"
+        if (
+            info.st_dev != root.st_dev
+            or info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) != row.metadata.mode
+            or info.st_mtime_ns != row.metadata.mtime_ns
+            or directory
+            and not stat.S_ISDIR(info.st_mode)
+            or not directory
+            and (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1)
+        ):
+            raise ValueError("local_snapshot_created_members_changed")
+    if rediscover() != tree:
+        raise ValueError("local_snapshot_created_members_changed")
+    rows, observations = [], []
+    total = 0
+    # Journal evidence uses relative paths in depth-first name order.
+    for entry in sorted(members, key=lambda row: row.path.relative_to(item.path).parts):
+        relative = "".join(
+            "/" + name for name in entry.path.relative_to(item.path).parts
+        )
+        info = stamps[entry.path]
+        if entry.status == "included_directory":
+            rows.append((relative, "directory"))
+        else:
+            size, digest = _digest_recovery_file(
+                item.owner, entry.path, max_bytes=limit, expected_stat=info
+            )
+            rows.append((relative, "file", size, digest))
+            observations.append((str(entry.path), (size, digest)))
+            total += size
+    if (
+        total != candidate.size
+        or _artifact_digest(rows) != candidate.sha256
+        or rediscover() != tree
+        or any(
+            _recovery_stat_identity(identity(row))
+            != _recovery_stat_identity(stamps[row.path])
+            for row in members
+        )
+    ):
+        raise ValueError("local_snapshot_created_members_changed")
+    return observations
 
 
 def _created_destination_target(
@@ -1851,7 +1912,6 @@ def _created_destination_target(
             context = DiscoveryContext(config.path, config.logical_id.split(":", 2)[1])
             if subscriptions_tree:
                 from .profile_paths import user_data_dir
-                from .journal import observe_artifact
                 from .recovery_files import article_id, article_tree
 
                 data = tomllib.loads(
@@ -1874,17 +1934,10 @@ def _created_destination_target(
                 )
                 if item.path != expected_item or item.logical_id in synthetic_roots:
                     raise ValueError("local_snapshot_created_scope_unverified")
-                observed = observe_artifact(item.path)
-                if (observed["sha256"], observed["size"]) != (
-                    artifact.candidate.sha256,
-                    artifact.candidate.size,
-                ):
-                    raise ValueError("local_snapshot_created_members_changed")
-                entries = (
-                    article_tree(data, expected)
-                    if article
-                    else owner._tree(data, item.path)
+                rediscover = partial(
+                    article_tree if article else owner._tree, data, expected
                 )
+                tree = entries = rediscover()
                 if new_article_member:
                     local_root_id = article_id(context.profile_id)
                     active_ancestors[artifact.logical_id] = (
@@ -1937,7 +1990,18 @@ def _created_destination_target(
                 row.status not in {"included", "included_directory"} for row in entries
             ):
                 raise ValueError("local_snapshot_created_members_changed")
-            for row in entries:
+            if subscriptions_tree:
+                observations.extend(
+                    _subscription_content_proof(
+                        item,
+                        artifact.candidate,
+                        entries,
+                        tree,
+                        rediscover,
+                        min(limits.member_bytes, _RAW_RECOVERY_LIMITS[item.owner]),
+                    )
+                )
+            for row in (() if subscriptions_tree else entries):
                 if row.status == "included":
                     if item.owner in _RAW_RECOVERY_LIMITS or not created_file:
                         if owner.validate(row.path):

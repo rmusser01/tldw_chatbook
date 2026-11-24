@@ -1842,6 +1842,19 @@ class _CaptureLease:
         self.close()
 
 
+def _recovery_stat_identity(info):
+    return (
+        info.st_dev,
+        info.st_ino,
+        info.st_mode,
+        info.st_nlink,
+        info.st_uid,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
 class _CaptureScope:
     def __init__(self, session, sources, staging, limits, byte_budget):
         self.session = session
@@ -1886,19 +1899,6 @@ class _CaptureScope:
                 shutil.rmtree(self.sqlite_directory)
                 self.sqlite_directory = None
 
-    @staticmethod
-    def _sqlite_identity(info):
-        return (
-            info.st_dev,
-            info.st_ino,
-            info.st_mode,
-            info.st_nlink,
-            info.st_uid,
-            info.st_size,
-            info.st_mtime_ns,
-            info.st_ctime_ns,
-        )
-
     def _sqlite_state(self, source):
         self.check()
         resources = _CaptureFileDescriptors(self)
@@ -1920,12 +1920,12 @@ class _CaptureScope:
                         or info.st_uid != os.geteuid()
                     ):
                         raise ValueError("capture_sqlite_source_changed")
-                    result.append(self._sqlite_identity(info))
+                    result.append(_recovery_stat_identity(info))
                 if result[0] is None or (source, *result[0][:2]) not in self.sources:
                     raise ValueError("capture_sqlite_source_changed")
                 if result[3] is not None and result[3][5]:
                     raise ValueError("capture_sqlite_hot_journal")
-                return (self._sqlite_identity(parent_info), tuple(result))
+                return (_recovery_stat_identity(parent_info), tuple(result))
         finally:
             resources.retire()
 
@@ -1958,7 +1958,7 @@ class _CaptureScope:
                         )
                     except FileNotFoundError:
                         info = None
-                    actual = None if info is None else self._sqlite_identity(info)
+                    actual = None if info is None else _recovery_stat_identity(info)
                     if actual != identity:
                         raise ValueError("capture_sqlite_target_changed")
         finally:
@@ -2032,7 +2032,7 @@ class _CaptureScope:
             wal_header = False
             main_header = bytearray()
             with resources.pinned_directory(source.parent) as parent:
-                if self._sqlite_identity(os.fstat(parent)) != before[0]:
+                if _recovery_stat_identity(os.fstat(parent)) != before[0]:
                     raise ValueError("capture_sqlite_source_changed")
                 for suffix, expected in zip(("", "-wal"), before[1][:2], strict=True):
                     if expected is None and not (suffix == "-wal" and wal_header):
@@ -2044,7 +2044,7 @@ class _CaptureScope:
                             dir_fd=parent,
                         )
                         resources.fds.append(descriptor)
-                        if self._sqlite_identity(os.fstat(descriptor)) != expected:
+                        if _recovery_stat_identity(os.fstat(descriptor)) != expected:
                             raise ValueError("capture_sqlite_source_changed")
                     with resources.pinned_directory(target_root) as output_parent:
                         info = os.fstat(output_parent)
@@ -2087,7 +2087,7 @@ class _CaptureScope:
                             view = view[written:]
                     if expected is not None and (
                         count != expected[5]
-                        or self._sqlite_identity(os.fstat(descriptor)) != expected
+                        or _recovery_stat_identity(os.fstat(descriptor)) != expected
                     ):
                         raise ValueError("capture_sqlite_source_changed")
                     current_parent = os.stat(target_root, follow_symlinks=False)
@@ -2103,7 +2103,7 @@ class _CaptureScope:
                         held.st_ino,
                     ):
                         raise ValueError("capture_sqlite_staging_changed")
-                    private_identities[bool(suffix)] = self._sqlite_identity(held)
+                    private_identities[bool(suffix)] = _recovery_stat_identity(held)
         finally:
             try:
                 self.verify_sqlite_sources()
@@ -3028,6 +3028,7 @@ def _digest_recovery_file(
     *,
     max_bytes: int,
     cancel: threading.Event | None = None,
+    expected_stat: os.stat_result | None = None,
 ) -> tuple[int, str]:
     """Return actual byte count/SHA256 only after positive native retirement."""
     return _consume_recovery_file(
@@ -3037,6 +3038,7 @@ def _digest_recovery_file(
         collect=False,
         cancel=cancel,
         digest=True,
+        expected_stat=expected_stat,
     )
 
 
@@ -3049,9 +3051,17 @@ def _consume_recovery_file(
     cancel: threading.Event | None = None,
     digest: bool = False,
     private: bool = False,
+    expected_stat: os.stat_result | None = None,
 ) -> bytes | tuple[int, str] | None:
     """Return bounded definition bytes after native reader retirement."""
     _recovery_file_limit(owner_id, max_bytes)
+
+    def check_reviewed(info):
+        if expected_stat is not None and _recovery_stat_identity(
+            info
+        ) != _recovery_stat_identity(expected_stat):
+            raise ValueError("recovery_file_changed")
+
     selected = lexical_path(candidate)
     # Final rediscovery may run inside capture_scope. Its bounded reads use the
     # explicitly held discovery namespace, not the narrower payload source set.
@@ -3073,6 +3083,7 @@ def _consume_recovery_file(
             )
             resources.fds.append(fd)
             info = os.fstat(fd)
+            check_reviewed(info)
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
                 raise bootstrap.RecoveryRequired("capture_file_not_regular")
             if private and (info.st_uid != os.geteuid() or info.st_mode & 0o077):
@@ -3111,6 +3122,18 @@ def _consume_recovery_file(
                     held_parent.st_ino,
                 ):
                     raise bootstrap.RecoveryRequired("capture_target_changed")
+            if expected_stat is not None:
+                check_reviewed(os.fstat(fd))
+                check_reviewed(
+                    os.stat(selected.name, dir_fd=parent, follow_symlinks=False)
+                )
+                named_parent = os.stat(selected.parent, follow_symlinks=False)
+                held_parent = os.fstat(parent)
+                if (named_parent.st_dev, named_parent.st_ino) != (
+                    held_parent.st_dev,
+                    held_parent.st_ino,
+                ):
+                    raise ValueError("recovery_file_changed")
             if hasher is not None:
                 return total, hasher.hexdigest()
             return b"".join(chunks) if collect else None

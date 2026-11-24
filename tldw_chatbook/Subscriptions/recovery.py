@@ -5,9 +5,10 @@ import re
 import stat
 
 from tldw_chatbook.Backup_Recovery.models import (
+    DISCOVERY_CONTEXT_KEY,
+    DiscoveryContext,
     OwnerAdapter,
     StorageItem,
-    storage_logical_id,
 )
 from tldw_chatbook.Backup_Recovery.profile_paths import database_path, user_data_dir
 from tldw_chatbook.Backup_Recovery.recovery_files import (
@@ -54,51 +55,77 @@ def article_member(item: StorageItem | None) -> bool:
 
 
 class _BriefingAudio(_RawDeclaration):
-    def briefing_already_absent(
+    def absent_target_ids(
         self, source, declaration, producers, context, configured, target
     ):
-        """Recognize one legacy absent root only when there is nothing to retire."""
-        from tldw_chatbook.Backup_Recovery.file_inventory import _inventory_root
+        """Only a complete installed root observation can cover a source root absence."""
         from tldw_chatbook.Backup_Recovery.recovery_files import _tree_member_id
 
         prefix = f"profile:{source}:{self.owner_id}"
-        # The bare ID was used by detached import. Live captures used an
-        # opaque path hash. A disappearing child is never reported as unused.
-        legacy = [
-            row
-            for row in producers
-            if row.owner_id == self.owner_id
-            and (
-                row.logical_id == prefix
-                or re.fullmatch(re.escape(prefix) + ":[0-9a-f]{64}", row.logical_id)
-            )
-        ]
         if (
-            legacy != [declaration]
+            declaration.owner_id != self.owner_id
             or declaration.status != "unused"
             or declaration.shared_group
             or declaration.dependencies != (f"profile:{source}:config",)
         ):
-            return False
-        root = user_data_dir(configured) / "briefing_audio"
-        root_id = _tree_member_id(context, self.owner_id, root, root)
-        matches = [
-            item for item in target if item.path == root or item.logical_id == root_id
-        ]
-        if len(matches) != 1:
-            return False
-        item = matches[0]
-        return (
-            item.owner == self.owner_id
-            and item.path == root
-            and item.logical_id == root_id
-            and item.status == "unused"
-            and item.metadata is None
-            and item.shared_group is None
-            and item.dependencies == (storage_logical_id(context, "config"),)
-            and _inventory_root(root, owner=self.owner_id, external=False).status
-            == "unused"
-        )
+            raise ValueError("selected_absence_mapping_required")
+        configured = {**configured, DISCOVERY_CONTEXT_KEY: context}
+        source_root = article_id(source)
+        if declaration.logical_id == source_root:
+            if any(row.logical_id.startswith(source_root + "-") for row in producers):
+                raise ValueError("selected_absence_mapping_required")
+            root = user_data_dir(configured) / "article_audio"
+            observed = article_tree(configured, root)
+        else:
+            # All legacy briefing entries use opaque hashes, and detached
+            # acquisition also has a bare absent root. A root absent on the
+            # source cannot have any other legacy children in its inventory.
+            legacy = [
+                row
+                for row in producers
+                if row.owner_id == self.owner_id
+                and (
+                    row.logical_id == prefix
+                    or re.fullmatch(re.escape(prefix) + ":[0-9a-f]{64}", row.logical_id)
+                )
+            ]
+            if legacy != [declaration]:
+                raise ValueError("selected_absence_mapping_required")
+            root = user_data_dir(configured) / "briefing_audio"
+            observed = self._tree(configured, root)
+            same_location = _tree_member_id(
+                DiscoveryContext(context.config_path, source), self.owner_id, root, root
+            )
+            if (
+                observed[0].status != "unused"
+                and declaration.logical_id != same_location
+            ):
+                raise ValueError("selected_absence_mapping_required")
+
+        root_id = observed[0].logical_id
+        local = {
+            replace(row, shared_group=None)
+            for row in target
+            if row.owner == self.owner_id
+            and row.logical_id.startswith(f"profile:{context.profile_id}:")
+            and (
+                row.logical_id == root_id
+                or row.metadata is not None
+                and row.metadata.root_id == root_id
+                or row.path is not None
+                and (row.path == root or root in row.path.parents)
+            )
+        }
+        if (
+            set(observed) != local
+            or any(
+                row.status not in {"included", "included_directory", "unused"}
+                for row in observed
+            )
+            or observed[0].status not in {"unused", "included_directory"}
+        ):
+            raise ValueError("selected_absence_mapping_required")
+        return {row.logical_id for row in observed if row.status != "unused"}
 
     def discover(self, config):
         from tldw_chatbook.Backup_Recovery.config_adapter import _excluded_root

@@ -117,6 +117,78 @@ def test_candidate_rebind_keeps_bookmark_and_refuses_foreign_audio_partition(rec
         adapter.rebind_listening_profile(item, candidate, {config_id: selector})
 
 
+@pytest.mark.parametrize(
+    "declaration_kind", ["member", "stage", "lock", "article_root", "changed_topology"]
+)
+def test_only_installed_subscription_root_absence_can_select_retirements(
+    records, declaration_kind
+):
+    from types import SimpleNamespace
+    from tldw_chatbook.Backup_Recovery.archive_models import ProducerItem
+    from tldw_chatbook.Backup_Recovery.data_groups import ResolvedGroups
+    from tldw_chatbook.Backup_Recovery.models import Inventory, StorageItem
+    from tldw_chatbook.Backup_Recovery.restore_groups import selected_absent_target_ids
+
+    _, owner, config, root, _, binding, _, _ = owners(records)
+    selector = config[DISCOVERY_CONTEXT_KEY].config_path
+    selector.write_text(
+        toml.dumps({k: v for k, v in config.items() if k != DISCOVERY_CONTEXT_KEY})
+    )
+    selector.chmod(0o600)
+    audio = root / "article_audio"
+    create_private_directory(audio)
+    member = audio / ("a" * 32 + ".wav")
+    with create_private_file(member):
+        pass
+    observed = {item.path: item for item in owner.discover(config)}
+    prefix = f"profile:{binding[0].profile}:"
+    config_id = prefix + "config"
+    root_id = observed[audio].logical_id
+    claim = {
+        "member": observed[member].logical_id,
+        "stage": root_id + "-excluded-" + "b" * 64,
+        "lock": prefix + "subscriptions.assets:listening_lock",
+        "article_root": root_id,
+        "changed_topology": root_id,
+    }[declaration_kind]
+    declaration = ProducerItem(
+        logical_id=claim,
+        owner_id=owner.owner_id,
+        status="unused",
+        dependencies=(config_id,),
+    )
+    config_row = StorageItem("config", config_id, selector, "included", ())
+    doc = SimpleNamespace(
+        producer_inventory=(
+            ProducerItem(
+                logical_id=config_id,
+                owner_id="config",
+                status="included",
+                dependencies=(),
+            ),
+            declaration,
+        ),
+        files=(),
+        directories=(),
+    )
+    scope = ResolvedGroups(("research",), ("research",), (), (claim,), ())
+    target = Inventory((config_row, *observed.values()), True, "", ())
+    if declaration_kind == "changed_topology":
+        with create_private_file(audio / ("b" * 32 + ".wav")):
+            pass
+    with _preview_reads():
+        if declaration_kind == "article_root":
+            assert selected_absent_target_ids(
+                doc, scope, target, ((config_id, selector),), ()
+            ) == {root_id, observed[member].logical_id}
+        else:
+            with pytest.raises(ValueError, match="selected_absence_mapping_required"):
+                selected_absent_target_ids(
+                    doc, scope, target, ((config_id, selector),), ()
+                )
+    assert member.exists()
+
+
 def seed_audio(db, profile, root):
     import os
     from Tests.Subscriptions.test_article_audio_assets import metadata, publish, wav
@@ -175,7 +247,37 @@ def seed_audio(db, profile, root):
     return session, audio
 
 
-def capture_audio(records, root, config, adapter, assets, tmp_path, monkeypatch):
+def test_reviewed_digest_refuses_a_replaced_member_before_read(tmp_path, monkeypatch):
+    from tldw_chatbook.Backup_Recovery.storage_admission import _digest_recovery_file
+    from tldw_chatbook.Utils.platform_files import os
+
+    candidate = tmp_path / "candidate.wav"
+    with create_private_file(candidate) as fd:
+        os.write(fd, b"reviewed")
+        reviewed = os.fstat(fd)
+    candidate.rename(tmp_path / "reviewed.wav")
+    with create_private_file(candidate) as fd:
+        replacement = os.fstat(fd)
+    read = os.read
+
+    def guard(fd, size):
+        opened = os.fstat(fd)
+        assert (opened.st_dev, opened.st_ino) != (
+            replacement.st_dev,
+            replacement.st_ino,
+        )
+        return read(fd, size)
+
+    monkeypatch.setattr(os, "read", guard)
+    with _preview_reads(), pytest.raises(ValueError, match="recovery_file_changed"):
+        _digest_recovery_file(
+            "subscriptions.assets", candidate, max_bytes=64, expected_stat=reviewed
+        )
+
+
+def capture_audio(
+    records, root, config, adapter, assets, tmp_path, monkeypatch, *, peers=()
+):
     """Run the installed finite owners under real native admission and package the result."""
     from tldw_chatbook.Backup_Recovery import bootstrap, capture, owner_registry
     from tldw_chatbook.Backup_Recovery.archive_reader import acquire
@@ -189,28 +291,42 @@ def capture_audio(records, root, config, adapter, assets, tmp_path, monkeypatch)
     from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
     from tldw_chatbook.Backup_Recovery.models import StorageItem
 
-    context = config[DISCOVERY_CONTEXT_KEY]
-    selector = context.config_path
-    selector.write_text(
-        toml.dumps({k: v for k, v in config.items() if k != DISCOVERY_CONTEXT_KEY}),
-        encoding="utf8",
-    )
-    selector.chmod(0o600)
-    config_item = StorageItem(
-        "config", f"profile:{context.profile_id}:config", selector, "included", ()
-    )
+    configs = (config, *peers)
+    selectors = tuple(c[DISCOVERY_CONTEXT_KEY].config_path for c in configs)
+    for selected, selector in zip(configs, selectors, strict=False):
+        selector.write_text(
+            toml.dumps(
+                {k: v for k, v in selected.items() if k != DISCOVERY_CONTEXT_KEY}
+            ),
+            encoding="utf8",
+        )
+        selector.chmod(0o600)
 
     def discover(*args, **kwargs):
-        return classify_entries(
-            (config_item, *adapter.discover(config), *assets.discover(config))
-        )
+        rows = []
+        for selected, selector in zip(configs, selectors, strict=False):
+            profile = selected[DISCOVERY_CONTEXT_KEY].profile_id
+            rows.append(
+                StorageItem(
+                    "config", f"profile:{profile}:config", selector, "included", ()
+                )
+            )
+            (db,) = adapter.discover(selected)
+            rows.append(
+                replace(db, shared_group="shared:subscriptions") if peers else db
+            )
+            rows.extend(assets.discover(selected))
+        return classify_entries(tuple(rows))
 
     controls = tmp_path / "native"
     authority = admission_authority(controls)
-    authority.register("subscriptions", (selector, records.db_path, root))
-    bind_profile(controls, selector, ("subscriptions",), controls / "admission")
+    authority.register(
+        "subscriptions", (*selectors, records.db_path, root.parent if peers else root)
+    )
+    for selector in selectors:
+        bind_profile(controls, selector, ("subscriptions",), controls / "admission")
     monkeypatch.setattr(bootstrap, "default_bootstrap_root", lambda: controls)
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(selector))
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(selectors[0]))
     monkeypatch.setattr(capture, "discover", discover)
     declarations = (config_adapter(), adapter, assets)
     monkeypatch.setattr(
@@ -222,7 +338,7 @@ def capture_audio(records, root, config, adapter, assets, tmp_path, monkeypatch)
     with authority.maintenance(("subscriptions", "bootstrap.unbound"), 4) as session:
         result = capture._capture_under_maintenance(
             session,
-            (selector,),
+            selectors,
             preview.scope_digest,
             dest,
             options={"staging_parent": tmp_path},
@@ -336,7 +452,86 @@ def test_packaged_audio_relocates_to_target_selector_with_original_removed(
             )
 
 
-def test_detached_acquisition_rebinds_only_normalized_bytes(records, tmp_path):
+def test_shared_subscription_image_relocates_all_selected_partitions(
+    records, tmp_path, monkeypatch
+):
+    import sqlite3
+    from contextlib import closing
+    from tldw_chatbook.Backup_Recovery import bootstrap
+    from tldw_chatbook.Backup_Recovery.destinations import resolve_destinations
+    from tldw_chatbook.Backup_Recovery.isolated_restore import restore_isolated
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+
+    adapter, assets, config, root, m, binding, store, voice = owners(records)
+    first = binding[0]
+    other_selector = tmp_path / "second-config.toml"
+    second = replace(first, profile=m.listening_profile_key(other_selector))
+    foreign = replace(
+        first, profile=m.listening_profile_key(tmp_path / "unselected.toml")
+    )
+    expected = {}
+    for number, authority in enumerate((first, second, foreign), start=1):
+        binding[0] = authority
+        store = ArticleListeningStore(records, current_authority=lambda: binding[0])
+        expected[authority.profile] = store.replace_session(
+            prepare(store, authority, voice, item=number), expected_revision=None
+        )
+        with records.transaction() as c:
+            c.execute(
+                "INSERT INTO article_audio(profile,file_key,status,custody_witness) VALUES(?,?,'pending_delete',?)",
+                (authority.profile, str(number) * 32 + ".wav", str(number) * 64),
+            )
+    records.close()
+    peer = dict(config)
+    peer[DISCOVERY_CONTEXT_KEY] = DiscoveryContext(other_selector, second.profile)
+    peer["general"] = {"users_name": "second"}
+    create_private_directory(root.parent / "second")
+    archive = capture_audio(
+        records, root, config, adapter, assets, tmp_path, monkeypatch, peers=(peer,)
+    )
+    destination = tmp_path / "destinations"
+    create_private_directory(destination)
+    monkeypatch.setattr(
+        bootstrap, "default_bootstrap_root", lambda: tmp_path / "restore-native"
+    )
+    profiles = {first.profile: "One", second.profile: "Two"}
+    plan = resolve_destinations(
+        archive,
+        mode="isolated",
+        profile_bases={key: destination / label for key, label in profiles.items()},
+        external_destinations={},
+        target=None,
+        profile_names=profiles,
+    )
+    mapping = dict(plan.restore)
+    databases = {mapping[f"profile:{key}:db.subscriptions"] for key in profiles}
+    assert len(databases) == 1
+    monkeypatch.setenv(
+        "TLDW_CONFIG_PATH", str(mapping[f"profile:{first.profile}:config"])
+    )
+    restore_isolated(archive, plan, tmp_path / "shared-control", Event())
+    (database,) = databases
+    keys = {
+        key: m.listening_profile_key(mapping[f"profile:{key}:config"])
+        for key in profiles
+    }
+    assert len(set(keys.values()) | set(profiles)) == 4
+    with closing(SubscriptionsDB(database)) as restored:
+        for source, target in (*keys.items(), (foreign.profile, foreign.profile)):
+            binding[0] = replace(first, profile=target)
+            selected = ArticleListeningStore(
+                restored, current_authority=lambda: binding[0]
+            )
+            assert selected.load_session().foreground == expected[source].foreground
+    with closing(sqlite3.connect(database)) as db:
+        assert dict(
+            db.execute("SELECT profile,custody_witness FROM article_audio")
+        ) == {key: None for key in (*keys.values(), foreign.profile)}
+
+
+def test_detached_acquisition_rebinds_only_normalized_bytes(
+    records, tmp_path, monkeypatch
+):
     import sqlite3
     import zipfile
     from contextlib import closing
@@ -372,6 +567,22 @@ def test_detached_acquisition_rebinds_only_normalized_bytes(records, tmp_path):
     shutil.copyfile(records.db_path, database)
     database.chmod(0o600)
     before = {path: path.read_bytes() for path in source.rglob("*") if path.is_file()}
+    from tldw_chatbook.TTS.TTS_Generation import TTSService
+    from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
+    from tldw_chatbook.TTS.audio_player import SimpleAudioPlayer
+    from tldw_chatbook.TTS.controlled_wav_playback import ControlledWavPlayback
+
+    def unexpected_audio(*args, **kwargs):
+        pytest.fail("Passive recovery invoked a provider or player")
+
+    for component, methods in (
+        (TTSService, ("__init__", "synthesize", "synthesize_exact")),
+        (TTSAdapterRegistry, ("__init__", "acquire")),
+        (SimpleAudioPlayer, ("__init__", "play", "play_prepared")),
+        (ControlledWavPlayback, ("__init__", "prepare", "start")),
+    ):
+        for method in methods:
+            monkeypatch.setattr(component, method, unexpected_audio)
     result = produce_detached_archive(source, tmp_path / "normalized", Event())
     assert all(path.read_bytes() == data for path, data in before.items())
     with zipfile.ZipFile(result.archive) as archive:
@@ -394,9 +605,64 @@ def test_detached_acquisition_rebinds_only_normalized_bytes(records, tmp_path):
             "SELECT file_path FROM briefing_audio"
         ).fetchone() == (str(briefing),)
 
+    from tldw_chatbook.Backup_Recovery import bootstrap
+    from tldw_chatbook.Backup_Recovery.archive_reader import acquire
+    from tldw_chatbook.Backup_Recovery.destinations import resolve_destinations
+    from tldw_chatbook.Backup_Recovery.isolated_restore import restore_isolated
+    from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+    from tldw_chatbook.Subscriptions.article_audio_assets import ArticleAudioAssets
+    from tldw_chatbook.Subscriptions.article_listening_models import ListeningAuthority
+
+    source.rename(tmp_path / "removed-acquired-profile")
+    assert not source.exists() and not original.exists()
+    archive = acquire(
+        result.archive, tmp_path / "sealed", ArchiveLimits(), None, Event()
+    )
+    destinations = tmp_path / "destinations"
+    create_private_directory(destinations)
+    monkeypatch.setattr(
+        bootstrap, "default_bootstrap_root", lambda: tmp_path / "new-native"
+    )
+    plan = resolve_destinations(
+        archive,
+        mode="isolated",
+        profile_bases={acquired_key: destinations / "relocated"},
+        external_destinations={},
+        target=None,
+        profile_names={acquired_key: "Final"},
+    )
+    mapped = dict(plan.restore)
+    prefix = f"profile:{acquired_key}:"
+    final = ListeningAuthority(
+        listening_profile_key(mapped[prefix + "config"]), "local", 7
+    )
+    assert len({old_key, acquired_key, final.profile}) == 3
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(mapped[prefix + "config"]))
+    restore_isolated(archive, plan, tmp_path / "final-control", Event())
+    with closing(SubscriptionsDB(mapped[prefix + "db.subscriptions"])) as db:
+        store = ArticleListeningStore(db, current_authority=lambda: final)
+        restored = store.load_session()
+        assert (restored.foreground, restored.queue) == (state.foreground, state.queue)
+        actual_briefing = Path(db.get_briefing_audio(1)["file_path"])
+        assert actual_briefing.read_bytes() == b"complete briefing"
+        actual = ArticleAudioAssets(
+            store, profile_data_root=actual_briefing.parent.parent
+        )
+        assert actual.read_verified(audio.generation).wav.sha256 == audio.wav.sha256
+
 
 @pytest.mark.parametrize(
-    "rollback", ["rejected", "created", "empty", "prior", "unrelated_briefing"]
+    "rollback",
+    [
+        "rejected",
+        "created",
+        "empty",
+        "prior",
+        "unrelated_briefing",
+        "preview_topology",
+        "held_topology",
+    ],
 )
 def test_research_replacement_rebinds_and_rolls_back_owned_audio(
     records, tmp_path, monkeypatch, helper_resource_root, rollback
@@ -558,6 +824,57 @@ def test_research_replacement_rebinds_and_rolls_back_owned_audio(
             ).fetchone() == (local_profile, source_state.revision)
         new_root = local / "article_audio"
         fresh = inventory()
+        if rollback in {"preview_topology", "held_topology"}:
+            from tldw_chatbook.Utils.platform_files import os as native_os
+
+            stage = new_root / ("." + "e" * 32 + ".wav.stage")
+            added = []
+            read = native_os.read
+            inspect = later_rollback._created_destination_target
+
+            def guard_content(fd, count):
+                info = native_os.fstat(fd)
+                assert (info.st_dev, info.st_ino) not in added, "read unreviewed stage"
+                return read(fd, count)
+
+            def add_stage(*args, session=None, **kwargs):
+                if (session is not None) == (rollback == "held_topology") and not added:
+                    with create_private_file(stage) as fd:
+                        info = native_os.fstat(fd)
+                        added.append((info.st_dev, info.st_ino))
+                return inspect(*args, session=session, **kwargs)
+
+            monkeypatch.setattr(native_os, "read", guard_content)
+            monkeypatch.setattr(
+                later_rollback, "_created_destination_target", add_stage
+            )
+
+            def preview():
+                return later_rollback.preview_rollback(
+                    operation,
+                    control_root=control,
+                    old_password=b"old",
+                    target=fresh,
+                    cancel=Event(),
+                )
+
+            with pytest.raises(
+                ValueError, match="local_snapshot_created_members_changed"
+            ):
+                if rollback == "preview_topology":
+                    preview()
+                else:
+                    approved = preview()
+                    later_rollback.execute_rollback(
+                        operation,
+                        control_root=control,
+                        old_password=b"old",
+                        new_password=b"new",
+                        cancel=Event(),
+                        approved_plan=approved,
+                    )
+            assert len(added) == 1 and stage.is_file()
+            return
         p = later_rollback.preview_rollback(
             operation,
             control_root=control,
