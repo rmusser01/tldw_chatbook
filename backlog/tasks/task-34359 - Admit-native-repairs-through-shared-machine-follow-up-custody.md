@@ -1,11 +1,11 @@
 ---
 id: TASK-34359
 title: Admit native repairs through shared machine follow-up custody
-status: In Progress
+status: Done
 assignee:
   - '@codex'
-created_date: '2026-10-04 05:55'
-updated_date: '2026-10-12 23:14'
+created_date: '2026-10-04T05:55:00Z'
+updated_date: '2026-11-24T18:21:43Z'
 labels: []
 dependencies:
   - TASK-34358
@@ -23,9 +23,9 @@ Enable the approved Console response-rule behavior for plan task 6. Preserve exi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Native and genuine hook feedback produce one atomic follow-up and shared receipt.
-- [ ] #2 Stale, forged, duplicate or historical assessments cannot authorize repairs.
-- [ ] #3 Two native and three shared continuation limits, foreground priority and permission gates hold.
+- [x] #1 Native and genuine hook feedback produce one atomic follow-up and shared receipt.
+- [x] #2 Stale, forged, duplicate or historical assessments cannot authorize repairs.
+- [x] #3 Two native and three shared continuation limits, foreground priority and permission gates hold.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -48,4 +48,8 @@ Current-dev PR3010 integration: follow Docs/superpowers/plans/2026-10-11-pr3010-
 Native references resolve current runtime-owned assessments and pinned rules, compose only owned Stop results, preserve hook receipts and share one queue custody. Source versions and strict host counters join the acceptance fingerprint; shared receipt writes on the message/checkpoint cursor. Duplicate callbacks, vetoes, required barriers, foreground input and limits refuse repair. ADR-232. RED-GREEN includes hybrid chain identity and missing genuine hook provenance. 25 focused cases; 38 existing queue cases; 5 supported hook/agent budget controls; 54 passing DB/UI owner cases (9 exact baseline DB failures excluded). External Stop tests also fail on unchanged source in this Windows environment; no assertion/guard weakened. black/ruff/mypy pass.
 
 2026-10-12 current integration (historical source evidence above remains unchanged): Native and genuine external Stop-hook corrections share the existing receipt, causal limits, deadline and queue admission. Settled Goal repair explicitly refuses because no same-run continuation can preserve the existing accepted Goal attempt and native_run_id. No record_outcome guard or allowance changed. Current checkpoint roots and canonical mutation epochs preserve admitted semantic revisions until real trace reservation; revoked/orphan revisions are reclaimed by real GC. Existing ADR232 governs, with ADR337 live-revision GC and ADR227 Goal constraints applied. Current report: E/pr3010-current-integration/task-1-report.md. All tasks stay In Progress and acceptance remains open pending independent review, actual-base/hosted qualification and unmet external/model checks.
+
+All 25 current-dev correction cases and 41 runtime cases passed in the targeted run. They cover stale and forged receipts, duplicate rejection, foreground priority, continuation limits and retaining the original tool work. The genuine external-hook integration is on the required Linux Console P0 lane and awaits this candidate run.
+
+The genuine external Stop hook and native violation passed together in the hosted Linux Console P0 run at 524ed761. The test observed two genuine subprocess invocations and one shared follow-up receipt with both contributors. The external-hook test, response-rule package, Console runtime, controller, received-dispatch path and Hooks v2 package match the dev baseline used for this work. Together with the 25 passing current correction cases and 41 passing current runtime cases, this closes the original acceptance record. [Hosted hook execution](https://github.com/rmusser01/tldw_chatbook/actions/runs/45388820378/job/138435412474).
 <!-- SECTION:NOTES:END -->

@@ -57,7 +57,9 @@ async def test_received_draft_publication_obeys_original_save_outcome(
     monkeypatch.setattr(
         runtime,
         "_project_received_input",
-        lambda record: publications.append(record.turn_id),
+        lambda record, *, draft_committed=False: publications.append(
+            (record.turn_id, draft_committed)
+        ),
     )
     successor = None
     task = None
@@ -93,7 +95,7 @@ async def test_received_draft_publication_obeys_original_save_outcome(
         assert result.accepted and len(calls) == 1 and exited.is_set()
         assert record.inputs.durable_accepted
         if outcome == "normal":
-            assert session.draft == "" and publications == [intent.turn_id]
+            assert session.draft == "" and publications == [(intent.turn_id, True)]
             assert gateway.calls == 1
         elif outcome == "retyped":
             assert session.draft == intent.inputs.draft

@@ -1,11 +1,11 @@
 ---
 id: TASK-34356
 title: Bound native rule helper request lifetime and usage
-status: In Progress
+status: Done
 assignee:
   - '@codex'
-created_date: '2026-10-04 05:54'
-updated_date: '2026-11-12 19:38'
+created_date: '2026-10-04T05:54:00Z'
+updated_date: '2026-11-24T17:54:23Z'
 labels: []
 dependencies:
   - TASK-34355
@@ -23,11 +23,11 @@ Enable the approved Console response-rule behavior for plan task 3. Preserve exi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Four app-wide and one per-Chat helper slots remain held through physical provider settlement.
-- [ ] #2 Native helpers obey deadlines and zero transport retries without changing existing auxiliary behavior.
-- [ ] #3 Late cancelled output is rejected and original-owner usage is charged once.
-- [ ] #4 Cancelled off-loop preparation retains its Chat and app capacity until the physical preparer settles and never dispatches a late provider request.
-- [ ] #5 Explicit DeepSeek reasoning effort reaches ordinary and native helper requests unchanged; omitted settings retain defaults and unsupported API mode refuses before network.
+- [x] #1 Four app-wide and one per-Chat helper slots remain held through physical provider settlement.
+- [x] #2 Native helpers obey deadlines and zero transport retries without changing existing auxiliary behavior.
+- [x] #3 Late cancelled output is rejected and original-owner usage is charged once.
+- [x] #4 Cancelled off-loop preparation retains its Chat and app capacity until the physical preparer settles and never dispatches a late provider request.
+- [x] #5 Explicit DeepSeek reasoning effort reaches ordinary and native helper requests unchanged; omitted settings retain defaults and unsupported API mode refuses before network.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -58,4 +58,6 @@ Task3 implementation phase: attachment/subtree, generation/scope and editor-dige
 Evidence is private under C:/Users/GDesktop-1/.codex/worktrees/console-response-rules/test-logs/rr34356-20261124. Installed DeepSeek stalled-loopback RED retained a physical worker after logical expiry; initial GREEN 1pass5.36s. Unknown-route RED1fail9.88s and tighter pinned-timeout RED2fail8.82s preceded their corrections. Anthropic actual-loopback RED1fail1pass7.39s proved the hidden second POST and preserved the ordinary control. Final focused transport/resource/unchanged async control: 18passed64deselected20.89s. The earlier full route/resource selection was 79passed1failed130.04s: all64 route cases passed; its new subsecond stalled fixture expired during cold preparation before HTTP. That fixture now uses the unchanged30s helper allowance and a tighter5s pinned transport timeout against an unreleased server; the final focused run proves actual physical settlement. Earlier two-second route-fixture run49pass19fail148.66s and interrupted startup/import attempts remain retained; no product deadline was enlarged. Final all-route repetition and hosted qualification remain root-owned. New test and Utils Ruff pass; legacy Chat_Functions/gateway/LLM_API_Calls retain exactly16/2/16 baseline Ruff findings with zero additions. Gateway8429/8429 and LLM_API_Calls5231/5232 fit existing size caps. Black is unavailable in this interpreter; new tests were Ruff-formatted. No paid calls, real credentials, full sweep, CI edit or commit. All AC remain open pending final integration evidence.
 
 Transport limits bound connect/read inactivity, not total time receiving a trickled response. Per ADR232/spec4.5, logical expiry still rejects output immediately and keeps the lease until physical settlement; no thread-kill or hard whole-response wall-clock guarantee is claimed. Credential selection/recovery review and API-mode compatibility are unchanged; testing used disposable API-key fixtures, not live subscription credentials or alternate paid API modes.
+
+At 7cd7a61ada, 109 final-head tests passed across transport, preparation custody, and explicit DeepSeek mode. The earlier final focused run passed the resource and async llama controls. All 64 installed synchronous dispatch keys reached the audited HTTP adapter with the bounded timeout and zero retries. Held real loopback HTTP demonstrated physical retirement after timeout. Anthropic native and ordinary calls produced one and two requests respectively in the cache-error control. Connect and read-inactivity limits follow the remaining logical allowance and tighter pinned limits. A trickling response can hold the lease until physical settlement, as specified by ADR-232. The forced-shutdown abandonment exception is tracked in TASK-40325.
 <!-- SECTION:NOTES:END -->

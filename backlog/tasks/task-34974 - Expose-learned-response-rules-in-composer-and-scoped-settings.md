@@ -1,18 +1,18 @@
 ---
 id: TASK-34974
 title: Expose learned response rules in composer and scoped settings
-status: In Progress
+status: Done
 assignee:
-- '@codex'
-created_date: 2026-10-04 05:55
-updated_date: 2026-10-22 19:20
+  - '@codex'
+created_date: '2026-10-04T05:55:00Z'
+updated_date: '2026-11-24T18:23:21Z'
 labels: []
 dependencies:
-- TASK-34973
+  - TASK-34973
 references:
-- Docs/superpowers/plans/2026-10-03-console-response-rules.md
+  - Docs/superpowers/plans/2026-10-03-console-response-rules.md
 documentation:
-- backlog/decisions/232-console-learned-response-rules.md
+  - backlog/decisions/232-console-learned-response-rules.md
 ---
 
 ## Description
@@ -23,10 +23,10 @@ Enable the approved Console response-rule behavior for plan task 8. Preserve exi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Composer commands dispatch natively and refusals preserve the draft.
-- [ ] #2 Chat, Workspace and global settings reach one scoped manager with explicit promotion and tested revisions.
-- [ ] #3 Stop remains reachable during checking and token-backed controls render at 80x24 and 120x35.
-- [ ] #4 Detached or superseded manager reload/action callbacks cannot read removed children or project stale scope results; mounted edits and exact saved revision remain intact.
+- [x] #1 Composer commands dispatch natively and refusals preserve the draft.
+- [x] #2 Chat, Workspace and global settings reach one scoped manager with explicit promotion and tested revisions.
+- [x] #3 Stop remains reachable during checking and token-backed controls render at 80x24 and 120x35.
+- [x] #4 Detached or superseded manager reload/action callbacks cannot read removed children or project stale scope results; mounted edits and exact saved revision remain intact.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,6 +50,7 @@ ADR required: no new ADR. ADR path: backlog/decisions/232-console-learned-respon
 3. Run the exact failing node, complete existing saved-edit manager-action selector, and a controlled delayed-reload witness with independent release; record RED/GREEN receipts, scoped lint/format and source identity.
 4. Independently review the narrow correction, append implementation evidence and CI qualification, then verify actual current-head hosted CI. Keep this broader task In Progress; unrelated paid/native/owner acceptance remains open.
 <!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
@@ -73,3 +74,7 @@ Source TASK-34361 at codex/wave2-source-pr-3010 (73823fde3a4e) was created on 20
 Renumbered from task-34806 to TASK-34974 (2026-10-13): this ID collided
 with a concurrently filed task after the branches merged; per the
 2026-08-21 owner rule (TASK-19601) the older arrival kept the id.
+
+Current mounted and modal checks verified native composer refusal and draft preservation, detached and superseded manager reads, exact revisions, and in-flight Promote. The isolated run passed eight additional scope, editor and mapped-learning Stop checks at 80x24 and 120x35. The canonical Chat settings and completed-answer Stop cases still need qualification after local timeouts.
+
+All four mounted learn, repair, reopen and exclude journeys passed across focused reruns. Completed-answer Stop also passed. The canonical Chat Settings case reproduced a timeout on clean dev and on the candidate while the real settings worker was still reading context. The test now awaits that specific worker before checking the modal and then opens both the Chat and global managers through their buttons. The updated case passed. These receipts are from focused runs across the mounted sizes and do not erase the earlier combined-run timeouts.

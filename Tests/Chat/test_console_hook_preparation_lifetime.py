@@ -111,24 +111,15 @@ async def test_original_admission_snapshot_keeps_received_custody_through_stop_a
                 probe.entered.is_set, 5
             ), "original snapshot not reached"
             probe.assert_live()
-            assert record.store is state.store and record.received_claim is claim
-            assert record.inputs.attachments == (state.attachment,)
+            _assert_received_live(state, record, claim)
             assert state.controller.stop_active_run()
             assert claim.sealed
             for _ in range(2):
                 task.cancel()
                 await asyncio.sleep(0.05)
                 probe.assert_live()
-                assert (
-                    not task.done()
-                ), "cancellation abandoned original native snapshot"
-                assert state.store.received_turn_for_session(state.session.id) is claim
-                assert state.runtime._turn_custody[turn_id] is record
+                _assert_received_live(state, record, claim)
                 assert record.request is state.request
-                assert record.store is state.store and record.received_claim is claim
-                assert record.inputs.attachments[0] is state.attachment
-                assert any(row is state.session for row in state.store.sessions())
-                assert state.gateway.user_turns == []
         finally:
             probe.release.set()
             if task is not None:
@@ -143,8 +134,9 @@ async def test_original_admission_snapshot_keeps_received_custody_through_stop_a
     assert state.session.draft == state.request.draft
     (recovery,) = state.runtime.recoveries_for_session(state.session.id)
     assert recovery.draft == state.request.draft
-    assert recovery.attachments == (state.attachment,)
-    assert recovery.attachments[0] is state.attachment
+    assert recovery.attachments == ()
+    (attachment,) = state.store.pending_attachments(state.session.id)
+    assert attachment is state.attachment
 
 
 async def _stock_request(state):
@@ -175,12 +167,15 @@ def _start_received(state, request):
 
 
 def _assert_received_live(state, record, claim):
-    assert not record.task.done()
+    assert not record.task.done(), "cancellation abandoned original native snapshot"
     assert state.runtime._turn_custody[record.turn_id] is record
     assert record.store is state.store and record.received_claim is claim
     assert state.store.received_turn_for_session(state.session.id) is claim
-    assert record.request is not None
-    assert record.inputs.attachments[0] is state.attachment
+    assert record.request.attachment_ids == (state.attachment.attachment_id,)
+    assert not record.inputs.attachments_transferred
+    assert record.inputs.attachments == ()
+    (attachment,) = state.store.pending_attachments(state.session.id)
+    assert attachment is state.attachment
     assert any(row is state.session for row in state.store.sessions())
     assert state.gateway.user_turns == []
 

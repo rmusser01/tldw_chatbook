@@ -1,28 +1,30 @@
 ---
 id: TASK-42346
-title: "Replace the open-coded Console runtime currentness checks with one shared helper"
+title: >-
+  Replace the open-coded Console runtime currentness checks with one shared
+  helper
 status: In Progress
 assignee: []
-created_date: 2026-11-22 16:37
-updated_date: 2026-11-22 16:56
+created_date: '2026-11-22T16:37:00Z'
+updated_date: '2026-11-24T18:08:44Z'
 labels:
-- follow-up
-- console
-- refactor
-priority: low
-references:
-- tldw_chatbook/Chat/console_runtime.py
-- tldw_chatbook/Chat/console_received_dispatch.py
-- tldw_chatbook/Chat/console_automatic_submission.py
-- tldw_chatbook/Chat/console_context_repository.py
-- tldw_chatbook/Chat/console_configuration_preparation.py
-- tldw_chatbook/Chat/console_reference_preparation.py
-- tldw_chatbook/Chat/console_raw_cli_custody.py
-- tldw_chatbook/Chat/console_hook_preparation.py
-- tldw_chatbook/Chat/console_workflow_runs.py
-- tldw_chatbook/Agents/hooks_v2/native_commands.py
+  - follow-up
+  - console
+  - refactor
 dependencies:
-- TASK-34975
+  - TASK-34975
+references:
+  - tldw_chatbook/Chat/console_runtime.py
+  - tldw_chatbook/Chat/console_received_dispatch.py
+  - tldw_chatbook/Chat/console_automatic_submission.py
+  - tldw_chatbook/Chat/console_context_repository.py
+  - tldw_chatbook/Chat/console_configuration_preparation.py
+  - tldw_chatbook/Chat/console_reference_preparation.py
+  - tldw_chatbook/Chat/console_raw_cli_custody.py
+  - tldw_chatbook/Chat/console_hook_preparation.py
+  - tldw_chatbook/Chat/console_workflow_runs.py
+  - tldw_chatbook/Agents/hooks_v2/native_commands.py
+priority: low
 ---
 
 ## Description
@@ -37,13 +39,14 @@ Proposed by the review of the PR #3493 port (TASK-34975, round 20) as optional c
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 One runtime-owned check answers whether a runtime is current for a given controller, store and session, and the copies of the common shape call it, except in files held by other open work, which the implementation notes list
-- [ ] #2 Sites that check a different set of fields either use the shared check plus their own extra conditions, or the implementation notes say why they keep their own
+- [x] #1 One runtime-owned check answers whether a runtime is current for a given controller, store and session, and the copies of the common shape call it, except in files held by other open work, which the implementation notes list
+- [x] #2 Sites that check a different set of fields either use the shared check plus their own extra conditions, or the implementation notes say why they keep their own
 - [ ] #3 Behaviour is unchanged: the covering tests of every edited module pass through the scratch wrapper at `-n 4`, and the module-size ratchets pass
 <!-- AC:END -->
 
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 1. Compare runtime ownership checks with their surrounding guards. Move the common disposed, controller, store and session-admission check behind a runtime method.
 2. Preserve checks with a different contract and leave configuration preparation to its current owner.
 3. Run the edited modules' ownership regressions and the module-size ratchets.
@@ -51,7 +54,14 @@ Proposed by the review of the PR #3493 port (TASK-34975, round 20) as optional c
 ADR required: no
 ADR path: N/A
 Reason: Mechanical consolidation of the current runtime authority boundary.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 The runtime predicate is shared by received sends, automatic submissions, context presentation, reference preparation and hook preparation. Each caller retains its checks of the original app, source or receipt where applicable. Configuration preparation remains under the other active work identified above. Raw CLI capture owns a session and store without a controller binding. Workflow submission has a separate native receipt and closing check. Terminal command hooks may settle after admission closes. Those paths retain their existing tests.
+
+Independent review confirmed the shared predicate preserves the original field checks and the documented exceptions. All six touched-module size ratchet cases passed locally. A serial sample reproduced six ownership-suite failures at the same assertions on candidate 7cd7a61ada and clean dev 9fa2bf1b1d. The broader Windows run remains red, including cases that require native process groups. Linux and repaired-fixture verification are pending.
+
+Three additional headless-wake cases reproduced the same late assertions and teardown warning on clean dev and the candidate. The hook preparation fixture now verifies that the exact attachment remains staged until physical admission. The received-draft observer now accepts the committed publication argument. A focused run passed the original hook snapshot and all four save cases (5 total). The broader Windows close and native process-group cases still await supported Linux evidence.
+<!-- SECTION:NOTES:END -->
