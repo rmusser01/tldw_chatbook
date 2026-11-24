@@ -1,0 +1,287 @@
+"""TASK-34100.13 (entry-exit-handoff-18, E7): Welcome no longer oversells.
+
+The time line is the approved setup-shape spec's D1 copy, the Full choice
+says what Full adds, the privacy line is scoped to local models, the empty
+error band is gone, Tab reaches Next before "Restore a backup" (which says
+who it is for), and a "Reduce motion" choice applies at once.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from textual.app import ComposeResult
+from textual.widgets import Button, Checkbox, Static
+
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    FirstRunSetupWizard,
+    SetupWizardContainer,
+)
+from tldw_chatbook.UI.Wizards.first_run_welcome_step import WelcomeStep
+
+pytestmark = pytest.mark.bootstrap_profile
+
+_BUNDLE = str(
+    Path(__file__).resolve().parents[2] / "tldw_chatbook/css/tldw_cli_modular.tcss"
+)
+
+D1_TIME_LINE = (
+    "Quick takes about 2 minutes if you have an API key or a local AI server "
+    "running. You can change any of this later by running setup again."
+)
+
+
+class _Host(ConsolidatedCSSApp):
+    CSS_PATH = _BUNDLE
+
+    def __init__(self, wizard) -> None:
+        super().__init__()
+        self._wizard = wizard
+
+    def compose(self) -> ComposeResult:
+        yield from ()
+
+    async def on_mount(self) -> None:
+        self.push_screen(self._wizard)
+
+
+def _wizard(app_config=None):
+    app_instance = MagicMock()
+    app_instance.app_config = {} if app_config is None else app_config
+    return FirstRunSetupWizard(app_instance), app_instance
+
+
+def _welcome_text(screen) -> str:
+    step = screen.query_one(WelcomeStep)
+    return "\n".join(str(static.render()) for static in step.query(Static))
+
+
+@pytest.mark.parametrize("size", [(120, 40), (80, 24)])
+@pytest.mark.asyncio
+async def test_welcome_copy_is_honest(size) -> None:
+    wizard, _ = _wizard()
+    app = _Host(wizard)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause(0.3)
+        text = _welcome_text(app.screen)
+        full = str(app.screen.query_one("#setup-track-full").label)
+        step = app.screen.query_one(WelcomeStep)
+        empty_bands = [
+            widget
+            for widget in step.query(".setup-step-error")
+            if not str(widget.render()).strip()
+        ]
+    assert D1_TIME_LINE in text
+    assert "Full about 10" not in text
+    assert "configure everything" not in full
+    assert full.startswith("Full setup — adds ")
+    assert "With a model running on this computer" in text
+    assert "nothing leaves" not in text.lower()
+    assert empty_bands == []
+
+
+@pytest.mark.parametrize("size", [(120, 40), (80, 24)])
+@pytest.mark.asyncio
+async def test_tab_reaches_next_before_restore_a_backup(size) -> None:
+    wizard, _ = _wizard()
+    app = _Host(wizard)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause(0.3)
+        chain = [widget.id for widget in app.screen.focus_chain]
+        restore = app.screen.query_one("#setup-backup-restore", Button)
+        label = str(
+            restore.parent.query_one(".setup-welcome-restore-label", Static).render()
+        )
+        assert restore.region.height > 0, "Restore is not on screen"
+    assert chain.index("wizard-next") < chain.index("setup-backup-restore")
+    assert chain.index("setup-track-choice") < chain.index("wizard-next")
+    assert label == "Moving from another computer?"
+
+
+@pytest.mark.asyncio
+async def test_welcome_rows_leave_with_welcome() -> None:
+    wizard, _ = _wizard()
+    app = _Host(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        container = app.screen.query_one(SetupWizardContainer)
+        footer = app.screen.query_one("#setup-welcome-footer")
+        assert footer.display
+        container.show_step(1)
+        await pilot.pause()
+        assert not footer.display
+        container.show_step(0)
+        await pilot.pause()
+        assert footer.display
+
+
+@pytest.mark.asyncio
+async def test_reduce_motion_applies_live_and_is_written_only_when_ticked() -> None:
+    wizard, app_instance = _wizard({"appearance": {"reduce_motion": False}})
+    app = _Host(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        step = app.screen.query_one(WelcomeStep)
+        container = app.screen.query_one(SetupWizardContainer)
+        container.commit_config = AsyncMock(return_value=True)
+        step.wizard = container
+        ok, _ = await step.commit()
+        assert ok
+        container.commit_config.assert_not_awaited()  # untouched: nothing written
+
+        box = app.screen.query_one("#setup-welcome-reduce-motion", Checkbox)
+        box.value = True
+        await pilot.pause()
+        assert app_instance.app_config["appearance"]["reduce_motion"] is True
+        ok, _ = await step.commit()
+    assert ok
+    container.commit_config.assert_awaited_once_with(
+        {"appearance": {"reduce_motion": True}}
+    )
+
+
+@pytest.mark.asyncio
+async def test_back_to_welcome_shows_the_reduce_motion_saved_later_in_the_run() -> None:
+    """Review G13-R1-03 (TASK-34100.13): Welcome took its Reduce motion state
+    once, at mount. After Appearance saved it (and mirrored it into
+    app_config), Back to Welcome showed the old value against the old
+    baseline: the shown state disagreed with the saved one, and Next wrote
+    nothing. Showing Welcome re-reads it."""
+    wizard, app_instance = _wizard({"appearance": {"reduce_motion": False}})
+    app = _Host(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        step = app.screen.query_one(WelcomeStep)
+        container = app.screen.query_one(SetupWizardContainer)
+        container.commit_config = AsyncMock(return_value=True)
+        step.wizard = container
+        box = app.screen.query_one("#setup-welcome-reduce-motion", Checkbox)
+        container.show_step(1)
+        await pilot.pause()
+        # Appearance's Next saved reduce_motion = true and mirrored it.
+        app_instance.app_config["appearance"]["reduce_motion"] = True
+        container.show_step(0)
+        await pilot.pause()
+        shown = box.value
+        ok, _ = await step.commit()
+        untouched_writes = container.commit_config.await_count
+        box.value = False
+        await pilot.pause()
+        await step.commit()
+    assert shown is True
+    assert ok
+    assert untouched_writes == 0
+    container.commit_config.assert_awaited_once_with(
+        {"appearance": {"reduce_motion": False}}
+    )
+
+
+async def _toggle_reduce_motion_then_leave(app_config, leave, *, commit_first=False):
+    """Tick Welcome's Reduce motion, optionally Next, then leave setup."""
+    from tldw_chatbook.UI.Wizards.first_run_finish_later import skip_setup
+
+    wizard, app_instance = _wizard(app_config)
+    app = _Host(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        step = app.screen.query_one(WelcomeStep)
+        container = app.screen.query_one(SetupWizardContainer)
+        container.commit_config = AsyncMock(return_value=True)
+        container._complete_setup_locked = AsyncMock(return_value=True)
+        app.screen.query_one("#setup-welcome-reduce-motion", Checkbox).value = True
+        await pilot.pause()
+        live = app_instance.app_config["appearance"]["reduce_motion"]
+        if commit_first:
+            ok, _ = await step.commit()
+            assert ok
+        if leave == "skip":
+            await skip_setup(container)
+        else:
+            container._dismiss_screen(None)
+        await pilot.pause(0.3)
+        assert not isinstance(app.screen, FirstRunSetupWizard)
+    return live, app_instance.app_config
+
+
+@pytest.mark.parametrize("leave", ["skip", "exit"])
+@pytest.mark.asyncio
+async def test_an_unsaved_welcome_reduce_motion_is_undone_when_setup_closes(leave) -> None:
+    """Pre-merge review (2026-11-12): Welcome's Reduce motion applies live to
+    the in-memory settings, and Skip setup (or Exit setup) left it applied
+    but unsaved -- a later Settings ▸ Appearance save then wrote it. Leaving
+    setup without Welcome's Next puts the in-memory value back."""
+    live, app_config = await _toggle_reduce_motion_then_leave(
+        {"appearance": {"reduce_motion": False, "theme_hint": "kept"}}, leave
+    )
+    assert live is True
+    assert app_config["appearance"] == {"reduce_motion": False, "theme_hint": "kept"}
+
+
+@pytest.mark.asyncio
+async def test_an_unsaved_reduce_motion_leaves_no_trace_in_a_config_without_it() -> None:
+    live, app_config = await _toggle_reduce_motion_then_leave({}, "skip")
+    assert live is True
+    assert "reduce_motion" not in app_config.get("appearance", {})
+
+
+@pytest.mark.asyncio
+async def test_a_reduce_motion_saved_on_welcomes_next_stays_when_setup_closes() -> None:
+    live, app_config = await _toggle_reduce_motion_then_leave(
+        {"appearance": {"reduce_motion": False}}, "exit", commit_first=True
+    )
+    assert live is True
+    assert app_config["appearance"]["reduce_motion"] is True
+
+
+def test_the_welcome_rows_keep_their_handlers_on_a_message_pump() -> None:
+    """The Restore handler moved with its button (TASK-34100.1's frozen-list rule)."""
+    from tldw_chatbook.UI.Wizards.first_run_welcome_step import WelcomeFooter
+
+    registered = {
+        handler.__name__
+        for klass in WelcomeFooter.__mro__
+        for handlers in vars(klass).get("_decorated_handlers", {}).values()
+        for handler, _selectors in handlers
+    }
+    assert {"open_backup_restore", "_on_reduce_motion"} <= registered
+
+
+@pytest.mark.asyncio
+async def test_a_replaced_welcome_takes_its_rows_with_it() -> None:
+    """Review F11 (TASK-34100.13): the rows live in the wizard container, not
+    the step. Replacing a failed Welcome (``_retry_failed_step``) orphaned
+    them, and the new step's rows collided with the old ids."""
+    wizard, _app_instance = _wizard()
+    app = _Host(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        container = app.screen.query_one(SetupWizardContainer)
+        old = app.screen.query_one(WelcomeStep)
+        await old.remove()
+        await pilot.pause()
+        orphaned = len(app.screen.query("#setup-welcome-footer"))
+        replacement = WelcomeStep(wizard=container, config=old.config)
+        await container.mount(replacement, before=0)
+        await pilot.pause(0.2)
+        rows = len(app.screen.query("#setup-welcome-footer"))
+    assert orphaned == 0
+    assert rows == 1
+
+
+@pytest.mark.asyncio
+async def test_reduce_motion_is_not_offered_where_it_cannot_apply_live() -> None:
+    """review-tests F12: with no in-memory settings to change, the checkbox is
+    left out and Restore is still there."""
+    wizard, app_instance = _wizard()
+    app_instance.app_config = None
+    app = _Host(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        boxes = list(app.screen.query("#setup-welcome-reduce-motion"))
+        restore = list(app.screen.query("#setup-backup-restore"))
+    assert boxes == []
+    assert len(restore) == 1

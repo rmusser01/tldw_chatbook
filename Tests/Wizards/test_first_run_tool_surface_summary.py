@@ -102,9 +102,11 @@ def test_the_quick_track_note_describes_the_light_surface():
 
     note = quick_track_defaults_note({})
 
+    # TASK-34100.13 (rebased onto this): the rest of the note is derived too
+    # -- the Search step's flag instead of "RAG off", no notes-sync claim.
     assert note.startswith(
         "Left at recommended defaults: light tools only (date and time, "
-        "calculator and ask you a question), RAG off"
+        "calculator and ask you a question), Library searched only when you ask"
     )
     assert "tools off" not in note
     assert quick_track_defaults_note(

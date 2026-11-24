@@ -168,7 +168,9 @@ _BUDGETS: dict[str, int] = {
     # hands the module the app's services explicitly, per the app-lookup
     # census); 2026-11-23, ported onto dev b31e3e9241 (round 24): dev's
     # 5,711 plus 24, exact measurement 5,735.
-    "tldw_chatbook/app.py": 5744,
+    # 2026-11-23, TASK-34100.13 port (round 24): -5, the launch splash decision
+    # is Widgets.splash_screen.splash_options; 5,735 -> 5,730, exact measurement.
+    "tldw_chatbook/app.py": 5739,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
@@ -871,7 +873,9 @@ _BUDGETS: dict[str, int] = {
     # Skip setup's save into first_run_finish_later.skip_setup (3,119); its
     # review v5r1 dropped the resume's stale Protect status line (3,106).
     # 2026-10-31 user size waiver: preserve provider warning via shared tracker.
-    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3107,
+    # 2026-11-23, TASK-34100.13 port (round 24): -17, the draft restore drops the
+    # Notes step, embedding model and card gallery; 3,107 -> 3,090, exact.
+    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3090,
     # TASK-34100.1: the step modules the split left at 1,000 lines or more
     # are pinned at their exact size, so the split cannot regrow a god module
     # a step at a time: Provider, Speech, Voice (moved out by TASK-33921) and
@@ -911,7 +915,14 @@ _BUDGETS: dict[str, int] = {
     # first_run_speech_step_state.external_vad_install_status -> 1,766;
     # then +2 (review F5), a progress tick handled after the install's
     # result no longer rewrites the status line -> 1,768.
-    "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1768,
+    # 2026-11-05, TASK-34100.13 rebase onto dev 29592ecc9b: 1,768 -> 1,713
+    # (-55). The step's widget tree moved to first_run_speech_layout.py and
+    # its engine choice to first_run_speech_engine.py; the keyboard-retention
+    # and engine-chosen additions (+15 under the 2026-10-04 expand-limits
+    # ruling on the branch) are inside this figure.
+    # 2026-11-19, TASK-34100.13 rebase onto dev a6df4d8d48: 1,713 -> 1,712,
+    # the exact measurement (the unused Vertical import was dropped).
+    "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1712,
     # TASK-34100.8: Voice 1,070 -> 1,014 -- its OmniVoice half moved to
     # first_run_voice_omnivoice.py and its Advanced fields to
     # first_run_voice_pickers.compose_voice_advanced while the step gained
@@ -1033,7 +1044,12 @@ _BUDGETS: dict[str, int] = {
     # config-write switch interval, republishes through the full reload and
     # takes root-level dotted [tools] keys); 2026-11-23, ported onto dev
     # b31e3e9241 (round 24): dev's 8,932 plus 145, exact measurement 9,077.
-    "tldw_chatbook/config.py": 9077,
+    # 2026-11-12, TASK-34100.13 (owner decision 2026-10-04, expand limits):
+    # +3, the three-line comment saying TLDW_REDUCE_MOTION / NO_MOTION apply
+    # where motion is read, never in the saved table (review F5); 2026-11-23,
+    # ported onto fu/r24-p3519 (round 24): its 9,077 plus 3, exact
+    # measurement 9,080.
+    "tldw_chatbook/config.py": 9080,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
@@ -1396,7 +1412,13 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/RAG_Search/simplified/rag_service.py": 4605,
     # owner decision 2026-10-04 (expand limits): TASK-34100.4 +2 (remote
     # Whisper never sends an enc: key).
-    "tldw_chatbook/Local_Ingestion/transcription_service.py": 4496,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.13 +42 -- remote
+    # Whisper reuses the OpenAI provider key for api.openai.com over https,
+    # resolved by provider_readiness (measured on the rebase onto 29592ecc9b).
+    # owner decision 2026-10-04 (expand limits): TASK-34100.13 +3 -- pre-merge
+    # review 2026-11-12: the OpenAI provider's key is withheld when its own
+    # endpoint is another host (a gateway key never reaches api.openai.com).
+    "tldw_chatbook/Local_Ingestion/transcription_service.py": 4541,
     # 2026-10-29 (TASK-33620.3, owner decision: a fix over a size ratchet
     # raises the row): 4263 -> 4272 (+9) -- the durable turn commit writes
     # a legacy/imported chat's missing Library-policy row (the safe

@@ -46,7 +46,6 @@ from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
 from tldw_chatbook.UI.Wizards import first_run_step_guard as step_guard
 from tldw_chatbook.UI.Wizards.first_run_setup_widgets import (
     SetupRadioButton as SetupRadioButton,  # re-exported: old import path
-    _radio_model_id,
     SetupCheckbox as SetupCheckbox,  # re-exported: old import path
     SetupRadioSet,
     REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES as REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES,
@@ -62,7 +61,6 @@ from tldw_chatbook.UI.Wizards.first_run_busy_status import (
 )
 from tldw_chatbook.UI.Wizards.first_run_finish_later import finish_later, skip_setup
 from tldw_chatbook.UI.Wizards.first_run_model_step import ModelStep
-from tldw_chatbook.UI.Wizards.first_run_notes_step import NotesSyncStep
 from tldw_chatbook.UI.Wizards.first_run_protect_step import ProtectKeysStep
 from tldw_chatbook.UI.Wizards.first_run_provider_step import ProviderStep
 from tldw_chatbook.UI.Wizards.first_run_rag_step import RagStep
@@ -277,6 +275,9 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
     # see _advance_on_input_submit; SetupRadioSet requests an advance).
     # Merges with WizardContainer's escape/ctrl+b/ctrl+n bindings.
     BINDINGS = [Binding("enter", "next", "Next step", show=False)]
+    #: TASK-34100.13 review F8: steps read the config as it is now, not the
+    #: launch snapshot (first_run_setup_state.wizard_config_sections).
+    reads_live_config = True
 
     @on(SetupRadioSet.AdvanceRequested)
     def _on_radio_advance_requested(
@@ -1200,40 +1201,28 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
 
             rag_values = draft.values.get(wizard_state.STEP_RAG, {})
             rag_step = self.steps[self._step_index_for_id(wizard_state.STEP_RAG)]
-            if isinstance(rag_step, RagStep) and "embedding_model" in rag_values:
-                embedding_model = str(rag_values["embedding_model"])
-                rag_step.selected_embedding_model = embedding_model
-                self._restore_radio_selection(
-                    rag_step.query_one("#setup-rag-model-choice", RadioSet),
-                    lambda button: _radio_model_id(button) == embedding_model,
+            if isinstance(rag_step, RagStep) and "auto_retrieve" in rag_values:
+                automatic = rag_values["auto_retrieve"] is True
+                rag_radio = rag_step.query_one("#setup-rag-auto-retrieve", RadioSet)
+                draft_pick = next(
+                    (b for b in rag_radio.query(RadioButton)
+                     if (b.id or "").endswith("-automatic") == automatic),
+                    None,
                 )
+                # Pre-merge review (2026-11-12): never press a row the step
+                # disabled ("automatic — unavailable" without the RAG extras).
+                if draft_pick is not None and not draft_pick.disabled:
+                    rag_step.auto_retrieve = automatic
+                    self._restore_radio_selection(rag_radio, lambda b: b is draft_pick)
 
             appearance_values = draft.values.get(wizard_state.STEP_APPEARANCE, {})
             appearance_step = self.steps[
                 self._step_index_for_id(wizard_state.STEP_APPEARANCE)
             ]
             if isinstance(appearance_step, AppearanceStep):
-                if "theme" in appearance_values:
-                    theme = str(appearance_values["theme"])
-                    appearance_step.selected_theme = theme
-                    self._restore_radio_selection(
-                        appearance_step.query_one("#setup-theme-choice", RadioSet),
-                        lambda button: getattr(button, "_theme_name", "") == theme,
-                    )
-                if "splash_card" in appearance_values:
-                    splash_card = str(appearance_values["splash_card"])
-                    appearance_step.selected_splash_card = splash_card
-                    appearance_step._picked_surprise_me = False
-                    self._restore_radio_selection(
-                        appearance_step.query_one("#setup-splash-choice", RadioSet),
-                        # Qodo review fix: labels are humanized (TASK-21149);
-                        # match on the raw-id rider, mirroring _theme_name.
-                        lambda button: (
-                            getattr(button, "_card_name", "") == splash_card
-                            if splash_card
-                            else str(button.label).startswith("Surprise me")
-                        ),
-                    )
+                appearance_step.restore_draft(
+                    appearance_values, self._restore_radio_selection
+                )
             # Protect is not restored here: it re-reads config.toml itself
             # (TASK-34100.4 review v5r1, F1), never a saved "Encryption enabled."
         except Exception:
@@ -1270,7 +1259,6 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
             wizard_state.STEP_RAG: RagStep,
             wizard_state.STEP_SPEECH: SpeechSetupStep,
             wizard_state.STEP_TOOLS: ToolsStep,
-            wizard_state.STEP_NOTES: NotesSyncStep,
             wizard_state.STEP_APPEARANCE: AppearanceStep,
             wizard_state.STEP_PROTECT: ProtectKeysStep,
             wizard_state.STEP_SUMMARY: SummaryStep,
@@ -1311,14 +1299,9 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
             ),
             cfg(wizard_state.STEP_SPEECH, titles[wizard_state.STEP_SPEECH], 6),
             cfg(wizard_state.STEP_TOOLS, titles[wizard_state.STEP_TOOLS], 7),
-            cfg(wizard_state.STEP_NOTES, titles[wizard_state.STEP_NOTES], 8),
-            cfg(
-                wizard_state.STEP_APPEARANCE,
-                titles[wizard_state.STEP_APPEARANCE],
-                9,
-            ),
-            cfg(wizard_state.STEP_PROTECT, titles[wizard_state.STEP_PROTECT], 10),
-            cfg(wizard_state.STEP_SUMMARY, titles[wizard_state.STEP_SUMMARY], 11),
+            cfg(wizard_state.STEP_APPEARANCE, titles[wizard_state.STEP_APPEARANCE], 8),
+            cfg(wizard_state.STEP_PROTECT, titles[wizard_state.STEP_PROTECT], 9),
+            cfg(wizard_state.STEP_SUMMARY, titles[wizard_state.STEP_SUMMARY], 10),
         )
         return [self._build_step(config) for config in configs]
 

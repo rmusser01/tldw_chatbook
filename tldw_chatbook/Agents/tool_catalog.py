@@ -1140,6 +1140,16 @@ class GateableTool(NamedTuple):
             on allows -- shown under the wizard's switch and as the hub
             row's tooltip. ``⚠`` marks a tool that creates or changes data
             on disk (a static judgment mirroring its ``risk_tags``).
+            TASK-34100.13: every row is risk-tagged, so the gate floors it
+            to ``ask`` and its approval row offers Once, Until Chatbook
+            exits and Deny (``build_tool_review_hook``); every blurb ends
+            "Asks before running unless you approve a longer scope." A file
+            tool also names where it can reach: the chat scratch area and
+            the run's LOCAL Workspace folders (``allowed_file_roots`` skips
+            SSH bindings; ``write_file`` gets only read-write ones).
+        worktree_effect: What the tool does to the run's bound folders --
+            ``"read"``, ``"write"``, ``"none"`` or ``"opaque"`` -- for the
+            ordinary Console tree's footprint.
     """
 
     gate_key: str
@@ -1166,7 +1176,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "ReadFileTool",
         "read_file",
         "Read file",
-        "Read a file you point the assistant at. Asks before running unless you approve a longer scope.",
+        "Read a file in your local Workspace folders or the chat scratch area. Asks before running unless you approve a longer scope.",
         worktree_effect='read',
     ),
     GateableTool(
@@ -1175,7 +1185,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "ListDirectoryTool",
         "list_directory",
         "List directory",
-        "Browse the contents of a folder. Asks before running unless you approve a longer scope.",
+        "List a folder in your local Workspace folders or the chat scratch area. Asks before running unless you approve a longer scope.",
         worktree_effect='read',
     ),
     GateableTool(
@@ -1184,7 +1194,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "WriteFileTool",
         "write_file",
         "Write file",
-        "⚠ Creates or overwrites files on disk.",
+        "⚠ Creates or overwrites files in your read-write local Workspace folders or the chat scratch area. Asks before running unless you approve a longer scope.",
         worktree_effect='write',
     ),
     GateableTool(
@@ -1193,7 +1203,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "CreateNoteTool",
         "create_note",
         "Create note",
-        "⚠ Adds new notes to your notebook.",
+        "⚠ Adds new notes to your notebook. Asks before running unless you approve a longer scope.",
         worktree_effect='none',
     ),
     GateableTool(
@@ -1202,7 +1212,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "UpdateNoteTool",
         "update_note",
         "Update note",
-        "⚠ Edits your existing notes.",
+        "⚠ Edits your existing notes. Asks before running unless you approve a longer scope.",
         worktree_effect='none',
     ),
     GateableTool(
@@ -1211,7 +1221,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "GlobFiles",
         "glob_files",
         "Find files",
-        "Match file names by pattern (like *.md). Asks before running unless you approve a longer scope.",
+        "Match file names (like *.md) in your local Workspace folders or the chat scratch area. Asks before running unless you approve a longer scope.",
         worktree_effect='read',
     ),
     GateableTool(
@@ -1220,7 +1230,7 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
         "GrepFiles",
         "grep_files",
         "Search in files",
-        "Search inside files for text. Asks before running unless you approve a longer scope.",
+        "Search inside files in your local Workspace folders or the chat scratch area. Asks before running unless you approve a longer scope.",
         worktree_effect='read',
     ),
     GateableTool(

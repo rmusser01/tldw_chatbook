@@ -1389,6 +1389,13 @@ jobs:
       # step's flags, serial at load 40-44: 3.9, 132 and 59 s), for the same
       # reason, after the QwenCloud file and before the bootstrap-profile
       # suites (TASK-32873).
+      # TASK-34100.13 (port, round 24): the setup wizard's Full-track step
+      # files, on no lane before. The two sandboxed ones (Tools posture,
+      # Appearance comfort) close the sandboxed block; the five with
+      # bootstrap_profile tests (splash policy, Full-track shape, Search step,
+      # speech engine choice, Welcome copy) open the bootstrap block. Timed
+      # 2026-11-24 with this step's flags, serial at load 10-14 on 18 CPUs:
+      # 4.7, 4.6, 4.2, 13.6, 4.8, 47.7 and 33.2 s (113 s together).
       - name: Run Dreams and Guardian boundary contracts
         if: ${{ !cancelled() }}
         run: |
@@ -1423,6 +1430,13 @@ jobs:
             Tests/Architecture/test_console_agent_bridge_light_surface_wiring.py \
             Tests/Agents/test_full_agent_tools_upgrade.py \
             Tests/App/test_full_agent_tools_upgrade_boot.py \
+            Tests/Wizards/test_first_run_tools_posture.py \
+            Tests/Wizards/test_first_run_appearance_comfort.py \
+            Tests/Utils/test_startup_splash_policy.py \
+            Tests/Wizards/test_first_run_full_track_shape.py \
+            Tests/Wizards/test_first_run_search_step.py \
+            Tests/Wizards/test_first_run_speech_engine_choice.py \
+            Tests/Wizards/test_first_run_welcome_copy.py \
             Tests/UI/test_library_modal_dismissal.py \
             Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_single_app_route_cycle \
             Tests/Web_Server/test_mobile_service.py \

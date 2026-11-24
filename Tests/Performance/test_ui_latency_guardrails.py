@@ -358,3 +358,83 @@ async def test_library_opens_within_budget_on_a_seeded_profile(
         f"Notes ({SEEDED_PROFILE_NOTES})" in counted[0]
         and f"Media ({SEEDED_PROFILE_MEDIA})" in counted[0]
     ), f"the seeded profile never reached the screen: {counted[:3]}"
+
+
+# ---------------------------------------------------------------------------
+# TASK-34100.13 (E7, entry-exit-handoff-17): fresh-profile time to Welcome.
+# A first launch played the full splash (7 s plus a random joke card) before
+# the setup wizard could appear; reviewers measured 10-16 s to Welcome. A
+# profile's first launch now plays no splash. This pins both halves: the
+# splash never mounts on a first launch (deterministic: that half fails on
+# any machine), and Welcome is on screen within the budget. The deterministic
+# half is the real splash guard: a returning splash fails it at once.
+# The clock starts once run_test() has the app up. Review F13 asked for
+# construction to count too; tried 2026-10-27 and reverted, because building
+# TldwCli is import-dominated and load-sensitive: on the same M-series Mac at
+# load average ~57 the construction-inclusive clock read 12.3 s against 4.5 s
+# for this one (and 4.0-4.4 s at load 15-25), and a ratchet that may never
+# be raised must not fail on a busy runner. Budget: its own literal, ~3.5x
+# this clock's measurement (2.5-2.9 s, 2026-10-05), the same CI headroom as
+# the screen-switch guard. RATCHET (ADR-097): never raise it; a breach means new
+# work landed between the app coming up and Welcome.
+# ---------------------------------------------------------------------------
+
+#: Seconds from run_test()'s running app to the first-run wizard's Welcome step.
+TIME_TO_WELCOME_BUDGET_SECONDS = 10.0
+
+
+def _fresh_profile_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A scratch profile with no config file: the real first launch."""
+    for name in ("HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME"):
+        Path(os.environ[name]).mkdir(parents=True, exist_ok=True)
+    config_file = Path(os.environ["TLDW_CONFIG_PATH"])
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    if config_file.exists():
+        config_file.unlink()
+    for name in (
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GOOGLE_API_KEY",
+        "GEMINI_API_KEY",
+        "OPENROUTER_API_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("TLDW_TEST_MODE", "1")
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "latency_guardrails")
+    from tldw_chatbook.config import load_settings
+
+    load_settings(force_reload=True)
+
+
+@pytest.mark.ui
+@pytest.mark.asyncio
+@private_profile_test
+async def test_fresh_profile_reaches_welcome_without_a_splash(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """First launch: no splash, and Welcome inside the time-to-Welcome budget."""
+    _fresh_profile_env(monkeypatch)
+    from tldw_chatbook.UI.Wizards.first_run_welcome_step import WelcomeStep
+    from tldw_chatbook.app import TldwCli
+
+    app = TldwCli()
+    splash_seen = False
+    welcome_after: float | None = None
+    async with app.run_test(size=(120, 40)) as pilot:
+        started = asyncio.get_running_loop().time()
+        deadline = started + 30.0
+        while asyncio.get_running_loop().time() < deadline:
+            await pilot.pause(0.05)
+            splash_seen = splash_seen or bool(app.splash_screen_active)
+            steps = list(app.screen.query(WelcomeStep))
+            if steps and steps[0].display and steps[0].region.height > 0:
+                welcome_after = asyncio.get_running_loop().time() - started
+                break
+        stuck_on = type(app.screen).__name__
+
+    assert not splash_seen, "a profile's first launch played the splash"
+    assert welcome_after is not None, f"Welcome never appeared (on {stuck_on})"
+    assert welcome_after <= TIME_TO_WELCOME_BUDGET_SECONDS, (
+        f"fresh profile reached Welcome in {welcome_after:.1f}s "
+        f"(budget {TIME_TO_WELCOME_BUDGET_SECONDS}s)"
+    )

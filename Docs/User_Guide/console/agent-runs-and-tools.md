@@ -65,7 +65,10 @@ To turn more on:
   setup's Tools step (`[tools] full_agent_tools_enabled`). It brings back
   everything this page describes: sub-agents and the fleet, skills, the
   local workspace, web and Watchlists tools, character tools, Canvas, chat
-  forks, the run-log tools and chatbook's own MCP tools.
+  forks, the run-log tools and chatbook's own MCP tools, except a built-in
+  MCP tool whose own switch is off (`create_note` while Create note is off;
+  `create_character`/`update_character` while character tools or the local
+  master are off).
 - **One tool at a time** — an individual gate in the same pane (Read file,
   Create note, Expand document, `web_deep_search`, …) is offered in plain
   chat on the next send, without the rest of the agent surface. So are
@@ -93,7 +96,10 @@ the profile already uses agent features:
   use still counts.
 
 If it finds any of them, it turns **Full agent tools** on for you, so plain
-chat keeps the tools it had. It adds one line, `full_agent_tools_enabled =
+chat keeps the tools it had, except a built-in MCP tool whose own switch is
+off (`create_note` while Create note is off;
+`create_character`/`update_character` while character tools or the local
+master are off). It adds one line, `full_agent_tools_enabled =
 true`, under `[tools]` in config.toml (or a new `[tools]` table at the end of
 the file). If your tool settings are written as `tools.…` lines at the top
 of the file, with no `[tools]` header, the line is
