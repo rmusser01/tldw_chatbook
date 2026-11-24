@@ -19,6 +19,10 @@ from tldw_chatbook.DB.recovery_core import core_adapters
 
 pytestmark = pytest.mark.bootstrap_profile
 
+# The chain lands every candidate at the current schema: the literal 80 went
+# stale at v81 and each later bump (TASK-42516).
+CURRENT = CharactersRAGDB._CURRENT_SCHEMA_VERSION
+
 
 def _owner():
     return next(a for a in core_adapters() if a.owner_id == "db.chachanotes.primary")
@@ -44,16 +48,19 @@ def test_fleet_upgrade_preserves_native_receipts_and_predecessor_rows(
     if route == "recovery76":
         for row in after:
             assert row.pop("agent_chat_start_attempt_id") is None
+    # v86 (ADR-286) added the mix-in column; a predecessor row has none.
+    for row in after:
+        assert row.pop("mixin_snapshot_schema_version") is None
     assert after == before
     assert actual_messages == messages
     assert all(index in actual_indexes for index in indexes)
     assert validate_candidate(_owner(), path, Event(), migrate=False) == ()
     with closing(sqlite3.connect(path)) as connection:
-        # ADR-224 moved the head to v79; the chain (constructor and recovery
-        # routes alike) now lands these candidates there.
+        # The chain (constructor and recovery routes alike) lands these
+        # candidates at the current head.
         assert connection.execute(
             "SELECT version FROM db_schema_version"
-        ).fetchone() == (80,)
+        ).fetchone() == (CURRENT,)
         assert connection.execute(
             "SELECT count(*) FROM fleet_progress_messages"
         ).fetchone() == (0,)
@@ -84,7 +91,7 @@ def test_installed_fleet_migration_refuses_foreign_ddl_and_rolls_back(
 
 
 @pytest.mark.parametrize("shared", [False, True])
-@pytest.mark.parametrize("stamp", [77, 78, 79, 80])
+@pytest.mark.parametrize("stamp", [77, 78, 79, 80, CURRENT])
 def test_current_fleet_catalog_accepts_only_its_complete_matching_stamp(
     tmp_path, shared, stamp
 ):
@@ -104,8 +111,8 @@ def test_current_fleet_catalog_accepts_only_its_complete_matching_stamp(
         if shared
         else _owner()
     )
-    # ADR-216: the current catalog is the v80 browse-order one; only its
-    # own complete stamp validates read-only.
+    # Only the current catalog's own complete stamp validates read-only; 80
+    # (ADR-216's browse-order head when this was written) is now a stale one.
     assert validate_candidate(owner, path, Event(), migrate=False) == (
-        () if stamp == 80 else ("unsupported_schema_version",)
+        () if stamp == CURRENT else ("unsupported_schema_version",)
     )

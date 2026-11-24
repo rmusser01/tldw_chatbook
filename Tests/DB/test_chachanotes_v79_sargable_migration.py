@@ -27,6 +27,10 @@ from tldw_chatbook.DB.recovery_core import core_adapters
 
 pytestmark = pytest.mark.bootstrap_profile
 
+# The chain lands every candidate at the current schema: the literal 80 went
+# stale at v81 and each later bump (TASK-42516).
+CURRENT = CharactersRAGDB._CURRENT_SCHEMA_VERSION
+
 
 def _owner():
     return next(a for a in core_adapters() if a.owner_id == "db.chachanotes.primary")
@@ -47,7 +51,7 @@ def test_recovery_migration_through_v79_normalizes_and_validates(tmp_path, seed)
     with closing(_connect(path)) as connection:
         assert connection.execute(
             "SELECT version FROM db_schema_version"
-        ).fetchone() == (80,)
+        ).fetchone() == (CURRENT,)
         assert not connection.execute("PRAGMA foreign_key_check").fetchall()
         if seed:
             values = [
@@ -107,7 +111,7 @@ def test_installed_sargable_migration_refuses_foreign_ddl_and_rolls_back(
 
 
 @pytest.mark.parametrize("shared", [False, True])
-@pytest.mark.parametrize("stamp", [77, 78, 79, 80])
+@pytest.mark.parametrize("stamp", [77, 78, 79, 80, CURRENT])
 def test_current_sargable_catalog_accepts_only_its_stamp(tmp_path, shared, stamp):
     from tldw_chatbook.DB.recovery_operations import recovery_adapters
     from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
@@ -125,8 +129,9 @@ def test_current_sargable_catalog_accepts_only_its_stamp(tmp_path, shared, stamp
         if shared
         else _owner()
     )
+    # 80 was the head when this was written; now it is a stale stamp too.
     assert validate_candidate(owner, path, Event(), migrate=False) == (
-        () if stamp == 80 else ("unsupported_schema_version",)
+        () if stamp == CURRENT else ("unsupported_schema_version",)
     )
 
 

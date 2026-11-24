@@ -20,7 +20,9 @@ def test_v54_adds_local_before_message_cursor(tmp_path: Path) -> None:
                 "WHERE schema_name = 'rag_char_chat_schema'"
             ).fetchone()[0]
 
-        assert version == CharactersRAGDB._CURRENT_SCHEMA_VERSION == 54
+        # The upgrade runs on to the current schema; the literal 54 went stale
+        # at v55 (TASK-42516).
+        assert version == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         assert "active_leaf_before_message_id" in columns
     finally:
         upgraded.close_connection()
@@ -37,7 +39,10 @@ def test_v54_reenters_when_column_exists_but_stamp_is_v53(tmp_path: Path) -> Non
 
     recovered = CharactersRAGDB(path, client_id="v54-recover")
     try:
-        assert recovered._get_db_version(recovered.get_connection()) == 54
+        assert (
+            recovered._get_db_version(recovered.get_connection())
+            == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        )
     finally:
         recovered.close_connection()
 
