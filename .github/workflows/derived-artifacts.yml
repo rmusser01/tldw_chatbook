@@ -900,6 +900,10 @@ jobs:
             Tests/UI/test_theme_contrast.py::test_roleplay_items_search_placeholder_and_typed_text_clear_aa_on_every_theme \
             Tests/DB/test_automatic_work_deadlines.py \
             Tests/Chat/test_console_automatic_turn_compaction_hold.py \
+            Tests/Chat/test_rate_limit_reads_as_rate_limit.py \
+            Tests/LLM_Calls/test_openrouter_response_extras.py \
+            Tests/Wizards/test_first_run_key_check.py \
+            Tests/Wizards/test_first_run_local_streaming.py \
             --timeout=300 \
             --tb=short
 
@@ -1526,6 +1530,10 @@ jobs:
     # cannot drain, and 18 finite-retirement cases failed "a backup's local
     # pause could not drain" when they ran after them. Its fourth file, the
     # slower registered-root one, runs in console-p0-gate's restore profile.
+    # TASK-34100.2 (PR #3517's round-24 port): the first-chat files that are
+    # sandboxed or private-profile (13; before Tool_Packs), on no lane before;
+    # its four files with bootstrap_profile nodes are in admission-sensitive 3.
+    # Serial seconds per file are in the task's notes.
     name: Dreams tracking tests and unlaned riders
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -1555,6 +1563,19 @@ jobs:
             Tests/Workspaces/test_workspace_create_modal.py \
             Tests/Notes/test_agent_lessons_seed.py \
             Tests/Notes/test_chachanotes_read_then_write_contention.py \
+            Tests/Chat/test_console_send_gate.py \
+            Tests/Chat/test_env_key_first_launch.py \
+            Tests/Chat/test_first_chat_capacity.py \
+            Tests/Chat/test_first_chat_readiness.py \
+            Tests/Chat/test_template_sample_upgrade.py \
+            Tests/LLM_Provider_Catalog/test_key_checks_and_native_listing.py \
+            Tests/LLM_Provider_Catalog/test_shipped_google_catalog.py \
+            Tests/LLM_Provider_Catalog/test_shipped_openai_anthropic_catalog.py \
+            Tests/LLM_Provider_Catalog/test_smoke_shipped_model_ids.py \
+            Tests/Library/test_analysis_follows_chat.py \
+            Tests/Packaging/test_first_chat_boot_closure.py \
+            Tests/Wizards/test_env_key_launch_notice_sequencing.py \
+            Tests/Wizards/test_first_run_discovery_base_url.py \
             Tests/Tool_Packs \
             Tests/Backup_Recovery/test_character_presentation_cadence.py \
             --timeout=180 \

@@ -3920,9 +3920,31 @@ Tests/UI/test_console_moonshot_reasoning_reply.py::test_continue_and_regenerate_
 Tests/UI/test_console_moonshot_reasoning_reply.py::test_continue_and_regenerate_keep_one_row_per_reply[openai-gpt-4.1]
 # TASK-34100.2 review round 1 (TE-9): the model switcher's 'window too small'
 # rows with Fix model limits, and the Get started card's env-key offers with
-# their one atomic commit. Appended, so no other file changes shard.
-Tests/UI/test_switcher_capacity_rows.py
+# their one atomic commit. Appended, so no other file changes shard. PR
+# #3517's round-24 port (2026-11-23): the switcher file ran 34.2 s serially
+# with the lane's flags (load ~65), over the 30 s entry budget, so it is one
+# node per test function; the card file (16.4 s) stays whole.
+Tests/UI/test_switcher_capacity_rows.py::test_rows_judge_capacity_per_model_under_ready_providers
+Tests/UI/test_switcher_capacity_rows.py::test_this_chats_row_uses_the_chats_own_reply_maximum
+Tests/UI/test_switcher_capacity_rows.py::test_a_full_context_row_names_its_fix_and_enter_refuses_until_fixed
+Tests/UI/test_switcher_capacity_rows.py::test_the_highlighted_row_is_judged_with_the_pending_max_tokens
+Tests/UI/test_switcher_capacity_rows.py::test_fix_model_limits_opens_settings_on_max_tokens
+Tests/UI/test_switcher_capacity_rows.py::test_save_as_model_default_refuses_a_full_window_with_its_own_words
+Tests/UI/test_switcher_capacity_rows.py::test_chat_settings_will_not_save_a_default_whose_replies_fill_the_window
 Tests/UI/test_console_env_key_card.py
 # TASK-34100.2 pass 3 review round 1 (TE-2): the switcher's template-sample
-# grouping (AC#9). Appended, so no other file changes shard.
-Tests/UI/test_template_sample_switcher.py
+# grouping (AC#9). Appended, so no other file changes shard. Round-24 port:
+# 35.2 s serially (load ~65), so one node per test function.
+Tests/UI/test_template_sample_switcher.py::test_the_shipped_placeholders_carry_an_explicit_marker
+Tests/UI/test_template_sample_switcher.py::test_the_marker_reader_sees_a_saved_or_unmarked_table_as_no_sample
+Tests/UI/test_template_sample_switcher.py::test_a_sample_whose_port_answers_without_models_is_not_ready
+Tests/UI/test_template_sample_switcher.py::test_a_marked_sample_whose_model_the_user_edited_is_theirs
+Tests/UI/test_template_sample_switcher.py::test_a_hand_edited_marked_mlx_lm_is_ready_and_pickable
+Tests/UI/test_template_sample_switcher.py::test_a_keyed_marked_vllm_pointed_at_the_users_server_is_ready
+Tests/UI/test_template_sample_switcher.py::test_a_marked_sample_at_its_shipped_values_stays_not_running
+Tests/UI/test_template_sample_switcher.py::test_a_sample_that_lists_models_is_ready
+Tests/UI/test_template_sample_switcher.py::test_a_saved_sample_keeps_its_ready_row
+Tests/UI/test_template_sample_switcher.py::test_a_refused_sample_whose_other_keys_drifted_is_not_running
+Tests/UI/test_template_sample_switcher.py::test_a_refused_marked_sample_with_its_own_endpoint_keeps_its_row
+Tests/UI/test_template_sample_switcher.py::test_a_refused_marked_sample_sent_to_its_own_api_base_url_keeps_its_row
+Tests/UI/test_template_sample_switcher.py::test_a_marked_mlx_lm_pointed_at_the_users_port_is_theirs

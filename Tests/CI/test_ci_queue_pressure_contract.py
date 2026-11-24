@@ -505,6 +505,21 @@ DREAMS_TRACKING_RIDERS = (
     "Tests/Notes/test_agent_lessons_seed.py",
     # TASK-34000.84: sandboxed, so before Tool_Packs.
     "Tests/Notes/test_chachanotes_read_then_write_contention.py",
+    # TASK-34100.2 (PR #3517's round-24 port): its sandboxed and
+    # private-profile first-chat files, on no lane before; before Tool_Packs.
+    "Tests/Chat/test_console_send_gate.py",
+    "Tests/Chat/test_env_key_first_launch.py",
+    "Tests/Chat/test_first_chat_capacity.py",
+    "Tests/Chat/test_first_chat_readiness.py",
+    "Tests/Chat/test_template_sample_upgrade.py",
+    "Tests/LLM_Provider_Catalog/test_key_checks_and_native_listing.py",
+    "Tests/LLM_Provider_Catalog/test_shipped_google_catalog.py",
+    "Tests/LLM_Provider_Catalog/test_shipped_openai_anthropic_catalog.py",
+    "Tests/LLM_Provider_Catalog/test_smoke_shipped_model_ids.py",
+    "Tests/Library/test_analysis_follows_chat.py",
+    "Tests/Packaging/test_first_chat_boot_closure.py",
+    "Tests/Wizards/test_env_key_launch_notice_sequencing.py",
+    "Tests/Wizards/test_first_run_discovery_base_url.py",
     "Tests/Tool_Packs",
     # TASK-42468: bootstrap_profile, so after Tool_Packs (nothing sandboxed
     # may follow it).
@@ -1230,6 +1245,13 @@ ADMISSION_3_TARGETS = (
     # bootstrap_profile, 77 s serial), both at load 22-27.
     "Tests/DB/test_automatic_work_deadlines.py",
     "Tests/Chat/test_console_automatic_turn_compaction_hold.py",
+    # TASK-34100.2 (PR #3517's round-24 port): its first-chat files with
+    # bootstrap_profile nodes (rate limits, OpenRouter replies, the wizard's
+    # key check and local streaming), on no lane before.
+    "Tests/Chat/test_rate_limit_reads_as_rate_limit.py",
+    "Tests/LLM_Calls/test_openrouter_response_extras.py",
+    "Tests/Wizards/test_first_run_key_check.py",
+    "Tests/Wizards/test_first_run_local_streaming.py",
 )
 
 #: Follow-ups burn-down lanes (owner decision 2026-11-18, "New job"): the
