@@ -682,6 +682,65 @@ async def test_llamacpp_agent_retries_a_transient_failure_in_place(
             assert lineage == [("agent_first", "error")]
 
 
+_LLAMA_FAILURE_COPY = {
+    "http429": "provider returned HTTP 429 (fixture)",
+    "http500": "provider returned HTTP 500 (fixture)",
+    "http503": "provider returned HTTP 503 (fixture)",
+    "connect": "could not connect to the provider (fixture)",
+    "timeout": "request timed out waiting for the provider (fixture)",
+    "remote_protocol": "unexpected provider error (fixture)",
+}
+
+
+@pytest.mark.parametrize("failures", [4, 99], ids=["recovered", "exhausted"])
+@pytest.mark.parametrize("failure", list(_LLAMA_FAILURE_COPY))
+async def test_a_captured_llamacpp_stream_retries_after_its_fallback_fails(
+    tmp_path, monkeypatch, failure, failures
+):
+    """TASK-42472 AC#8: a failed stream fallback never refuses the retry.
+
+    A llama.cpp stream that fails before any content is sent once more without
+    streaming (task-19324). When that fails too, the agent retries the streamed
+    call in place. The trace checked that retry against the failed fallback,
+    the segment's latest call, and refused it: the run ended on 'Trace capture
+    could not start' instead of the provider's error. Two failed rounds then a
+    reply recover; a failure that never clears ends on the provider's error.
+    """
+    async with _project_console(
+        tmp_path,
+        monkeypatch,
+        response_mode="stream",
+        first_failure=_llama_failure(failure),
+        failures=failures,
+    ) as app:
+        result = await app.controller.submit_draft("Hello", session_id=app.session.id)
+        assert result.accepted
+        with app.db.transaction() as cursor:
+            calls = app.factory.repository.read_conversation_call_lineage(
+                cursor, app.session.persisted_conversation_id
+            )
+        lineage = [(call.route_identity, call.state.value) for call in calls]
+        failed_round = [("tool_loop", "error"), ("llama_fallback", "error")]
+        first_round = [("agent_first", "error"), ("llama_fallback", "error")]
+        messages = app.store.messages_for_session(app.session.id)
+        assert app.reservation_errors == []
+        assert app.store.dispatch_recovery_for_session(app.session.id) is None
+        if failures == 4:
+            assert app.controller.run_state.status.value == "completed"
+            assert len(app.attempts) == 5
+            assert lineage == [*first_round, *failed_round, ("tool_loop", "complete")]
+            assert [m.content for m in messages if m.role.value == "assistant"] == [
+                "Fixture reply"
+            ]
+        else:
+            assert app.controller.run_state.status.value == "failed"
+            assert len(app.attempts) == 6
+            assert lineage == [*first_round, *failed_round, *failed_round]
+            copy = f"Agent run failed: {_LLAMA_FAILURE_COPY[failure]}."
+            assert app.controller.run_state.visible_copy == copy
+            assert [m.content for m in messages if m.role.value == "system"] == [copy]
+
+
 _PARTIAL = "The capital of Fr"
 
 

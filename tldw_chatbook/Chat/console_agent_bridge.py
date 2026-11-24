@@ -716,47 +716,19 @@ def console_run_budget() -> RunBudget:
     )
 
 
-def captured_run_budget(
-    run_budget: RunBudget | None, capture_mode: ConsoleTraceCaptureMode
-) -> RunBudget | None:
-    """A captured run never retries a failed model request (TASK-34100.2 AC#18).
-
-    TASK-25901 retries a transient model failure (a 429, a 5xx) in place. Under
-    trace capture that retry is the run's next call, but the call before it
-    bore no response, so the trace contract refuses to reserve it
-    (``trace_tool_chain_unavailable``) and the Console showed 'Trace capture
-    blocked -- The provider was not contacted' for a send the provider had
-    just answered with a 429. Until the trace contract can record a retry,
-    the provider's own error ends a captured run; Capture Off keeps the
-    configured retries.
-
-    Args:
-        run_budget: The admitted budget, or ``None`` for the live one.
-        capture_mode: The run's trace capture mode.
-
-    Returns:
-        The budget to plan the run with.
-    """
-    if capture_mode is not ConsoleTraceCaptureMode.CAPTURE_ON:
-        return run_budget
-    return dataclass_replace(
-        run_budget if run_budget is not None else console_run_budget(),
-        max_model_retries=0,
-    )
-
-
 def captured_fallback_providers(
     capture_mode: ConsoleTraceCaptureMode,
 ) -> tuple[str, ...] | None:
     """A captured run plans no provider fallback (TASK-34100.2 review F7).
 
-    ADR-110's fallback call comes after a failed model request, exactly like
-    the TASK-25901 retry ``captured_run_budget`` turns off: under trace
-    capture it is the run's next call after one that bore no response, the
-    trace contract refuses to reserve it, and the Console showed 'Trace
+    ADR-110's fallback call follows a failed model request and goes to another
+    provider, model or endpoint. The trace contract admits a call after a
+    failed one only as an unchanged retry of it, so it refuses to reserve the
+    fallback (``trace_tool_chain_unavailable``), and the Console showed 'Trace
     capture blocked -- the provider was not contacted' instead of the
     provider's own error. Until the trace contract can record that call
-    (TASK-34100.2.1), the provider's error ends a captured run.
+    (TASK-42525), a captured run ends on the provider's error once its in-place
+    retries are spent.
 
     Args:
         capture_mode: The run's trace capture mode.

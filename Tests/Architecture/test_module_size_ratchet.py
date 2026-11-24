@@ -1119,7 +1119,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-23, PR #3517's port onto dev b31e3e9241 (round 24; owner decision
     # 2026-10-04, expand limits): dev measures 10,110, plus this branch's
     # +60, exact: 10,170.
-    "tldw_chatbook/Chat/console_agent_bridge.py": 10170,
+    # 2026-11-24, TASK-42472 AC#9 (round-24 stack): `captured_run_budget` is
+    # deleted, 10,170 -> 10,142, exact measurement.
+    "tldw_chatbook/Chat/console_agent_bridge.py": 10142,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # TASK-36944.2, 2026-11-03: +6 for the public `setting` Console reads.
