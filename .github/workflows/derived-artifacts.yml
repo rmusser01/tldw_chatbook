@@ -1462,9 +1462,9 @@ jobs:
     # 8.4 / max 9.65 min of the 20; +~33 s at 2.6x keeps ~10 min headroom.
     # TASK-42468 (2026-11-23): the Character display cadence file, red on dev
     # unseen. It is bootstrap_profile, so it goes after Tool_Packs, never
-    # before a sandboxed target. 54 tests: the first 47 took 63-72 s serially
-    # at load 14-18, all 54 took 138-140 s at load 37-64; at 2.6x the quiet
-    # time (~3.5 min) the job keeps about 7 min of headroom.
+    # before a sandboxed target. 55 tests: the first 47 took 63-72 s serially
+    # at load 14-18, 54 took 138-140 s at load 37-64 and all 55 188 s at load
+    # 71-92; at 2.6x the quiet time (~3.7 min) the job keeps ~6.5 min headroom.
     name: Dreams tracking tests and unlaned riders
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}

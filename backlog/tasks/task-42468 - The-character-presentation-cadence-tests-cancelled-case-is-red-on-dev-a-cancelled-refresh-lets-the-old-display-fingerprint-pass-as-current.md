@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-23 06:38
-updated_date: 2026-11-24 00:25
+updated_date: 2026-11-24 01:21
 labels:
 - follow-up
 - console
@@ -88,7 +88,7 @@ AC #5-#8 added 2026-11-23 (round 24, coordinator request): the stuck phase is th
 
 **Paths that do not stick (AC #7), with evidence.**
 - Exits where a newer operation took the generation (`generation != self._generation` in refresh and search): the newer operation publishes its own phase. The guard checks the generation; `[superseded]` passes.
-- A refresh with no owner (Retry, the first load): `presentation_is_current()` is always True, a moved scope `continue`s, and the loop ends by publishing "Local character chats changed · Retry". No unpublished return remains, apart from cancellation or a raise.
+- A refresh with no owner (Retry, the first load): `presentation_is_current()` is always True, and most moved-scope exits `continue` until the loop publishes "Local character chats changed · Retry". One does not (corrected in review): with no database, the loop publishes "unavailable" only when the scope is still current, and returns unpublished, at the same generation, when the scope moved during that check (`character_context.py`, the original loop's `database is None` branch). That exit stuck at base and the guard now settles it. `test_unowned_refresh_without_a_database_whose_scope_moves_leaves_the_panel_idle` (the open chat moves inside the scope check) is red at base on the stuck phase, with the phase confirmed REFRESHING during the check, and green with the guard. Apart from that exit, only cancellation or a raise remain.
 - Search's moved-scope exits `continue` and end by publishing the same Retry. What remains is a cancellation or raise, and the database-unavailable branch when the scope moved; both now take the guard.
 - The display check's merged read (`_check_recent_batch`) publishes without `_begin`, so it never sets a loading phase. In this task's first test draft the barrier fired in that read with the phase IDLE, so that draft took the run route instead.
 
@@ -133,4 +133,5 @@ AC #5-#8 added 2026-11-23 (round 24, coordinator request): the stuck phase is th
 
 **Files (OPENING/REPAIRING).** `tldw_chatbook/UI/Console_Modules/character_context.py` (`finally` guards in `activate`, `_prepare_unavailable_repair` and `open_unavailable`; the guard's docstring now names every operation), `Tests/Backup_Recovery/test_character_presentation_cadence.py` (3 tests), `.github/workflows/derived-artifacts.yml` (lane note), `Docs/User_Guide/console/sessions-tabs-workspaces.md` (an interrupted open or repair shows its Retry; a repair opens nothing).
 - Checks on this code: `Tests/CI` at `-n 4` gave 1823 passed, 2 skipped. `Tests/Architecture` serially (the product file is scanned) gave 1492 passed, 5 skipped. `preflight.sh`, `ruff --select F` and `ruff_gate.py` passed.
+**Review fix (2026-11-23).** The AC #7 record wrongly said a refresh with no owner had no unpublished exit apart from cancellation or a raise; the bullet above now names the no-database moved-scope exit, and `test_unowned_refresh_without_a_database_whose_scope_moves_leaves_the_panel_idle` covers it (red at base on the stuck phase, green with the guard). The character file now has 55 tests. Soak: 20 of 20 runs at `-n 4` (two loops of 10, load 63-136), 55 of 55 each. Serially with the step's flags: 188 s at load 71-92; the riders-job note says so.
 <!-- SECTION:NOTES:END -->

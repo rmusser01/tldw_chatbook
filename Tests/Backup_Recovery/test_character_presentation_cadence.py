@@ -567,6 +567,42 @@ async def test_refresh_that_publishes_nothing_leaves_the_panel_idle(tmp_path, ch
 
 
 @pytest.mark.asyncio
+async def test_unowned_refresh_without_a_database_whose_scope_moves_leaves_the_panel_idle(
+    tmp_path,
+):
+    """TASK-42468: with no database, refresh()'s original loop publishes
+    "unavailable" only when the scope is still current; when the open chat
+    moved during that check it returned unpublished, at the same generation,
+    and the panel stayed REFRESHING."""
+    database = CharactersRAGDB(tmp_path / "unavailable.db", "unavailable")
+    controller, screen, active, _current, conversation = _character(database)
+    phase_during_check = []
+    try:
+        await controller.refresh()
+        await _display(controller, screen)
+        active[0] = None
+        real = controller._scope_is_current
+
+        async def moved_during_check(snapshot):
+            phase_during_check.append(controller.state.phase)
+            conversation[0] = "conversation-b"  # The open chat moved meanwhile.
+            return await real(snapshot)
+
+        controller._scope_is_current = moved_during_check
+        await controller.refresh()
+        assert phase_during_check == [ConsoleCharacterOperationPhase.REFRESHING]
+        assert (
+            controller.state.phase is ConsoleCharacterOperationPhase.IDLE
+            and not controller.state.loading
+        ), "a refresh that published nothing left the panel refreshing"
+        assert controller.state.scope_fingerprint is None, (
+            "the next display check would not reload the moved scope"
+        )
+    finally:
+        database.close()
+
+
+@pytest.mark.asyncio
 async def test_cancelled_character_search_does_not_leave_the_panel_searching(tmp_path):
     """TASK-42468: a cancelled search kept SEARCHING ("Searching local character
     chats..."), and the display check, which runs only while IDLE, never ran
