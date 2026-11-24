@@ -131,11 +131,26 @@ Commands below use `python` as shorthand for that verified interpreter. Check su
 - `AudioOutputOwnership.acquire(owner: str, retire: Callable[[], Awaitable[bool]]) -> AudioOutputLease`; a lease has `generation: int`, `is_current() -> bool`, `release() -> None`. A failed retirement leaves admission blocked. Serialize intent through the owning app, not a new player singleton.
 - `ControlledWavPlayback.prepare(artifact, bookmark)` validates and pins before takeover; `start(lease)`, `position()` and retained `retire()` consume exact authority and publish typed completion separately from retirement. Concrete typed descriptors carry full digest/frame/format/padding identity. Calls involving native opens, hashing and process waits execute off-loop.
 
-- [ ] **Step 1: Write failing tests.** Assert all file/stream/media start orders retire the previous output before admitting the next; a startup-stop race never launches late; old unmount/cleanup cannot stop a new lease; failed kill retains ownership; missing ffplay or unsupported OS refuses before synthesis. Validate PCM16 stereo 48 kHz WAV duration/digest/padding before launch and reject stale telemetry/early successful exit as completion evidence. Exact logical-EOF Resume launches no player; Stop during padding cannot publish natural completion or release a newer owner.
-- [ ] **Step 2: Observe RED.** Run `python -m pytest Tests/TTS/test_controlled_wav_playback.py Tests/TTS/test_audio_output_ownership.py -q`; verify failures name missing contract behavior.
-- [ ] **Step 3: Implement the qualified adapter and owner.** Promote only needed qualified parser logic, retain legacy ordinary playback behavior, wrap actual streaming/file/media acquisition and owner-scoped cleanup, and preserve external-handoff takeover acknowledgement.
-- [ ] **Step 4: Observe GREEN.** Run those tests plus existing `Tests/TTS/test_audio_player_formats.py` and mapped affected surface tests; verify native cross-surface takeover with synthetic audio. Run Ruff on changed Python and the repository's targeted architecture checks for message-loop waits.
+- [x] **Step 1: Write failing tests.** Assert all file/stream/media start orders retire the previous output before admitting the next; a startup-stop race never launches late; old unmount/cleanup cannot stop a new lease; failed kill retains ownership; missing ffplay or unsupported OS refuses before synthesis. Validate PCM16 stereo 48 kHz WAV duration/digest/padding before launch and reject stale telemetry/early successful exit as completion evidence. Exact logical-EOF Resume launches no player; Stop during padding cannot publish natural completion or release a newer owner.
+- [x] **Step 2: Observe RED.** Run `python -m pytest Tests/TTS/test_controlled_wav_playback.py Tests/TTS/test_audio_output_ownership.py -q`; verify failures name missing contract behavior.
+- [x] **Step 3: Implement the qualified adapter and owner.** Promote only needed qualified parser logic, retain legacy ordinary playback behavior, wrap actual streaming/file/media acquisition and owner-scoped cleanup, and preserve external-handoff takeover acknowledgement.
+- [x] **Step 4: Observe GREEN.** Run those tests plus existing `Tests/TTS/test_audio_player_formats.py` and mapped affected surface tests; verify native cross-surface takeover with synthetic audio. Run Ruff on changed Python and the repository's targeted architecture checks for message-loop waits.
 - [ ] **Step 5: Review and commit.** Record caller coverage and native evidence in task notes; commit `feat: coordinate controlled audio playback ownership`.
+
+**Implementation evidence, 2026-11-24:** The controlled adapter, app-owned intent/lease
+service and audited file/PCM/realtime/duplex/media/preview/replay/shutdown callers
+are implemented. Normal guarded pytest uses `tools/run_guarded_pytest.py` with
+verified private temporary storage; recovery policy and existing profiles/ACLs
+stay intact. Root foundation checks passed 237 cases; a cp1252 architecture read
+was rerun successfully with UTF-8 in the 346-pass caller selection (three POSIX
+signal skips). Subsequent two-race integration fixes passed 111 affected cases.
+These selections overlap and must not be summed as unique coverage. The native
+[controlled-output report](../../Testing/watchlist-controlled-audio-qualification.md)
+records the canonical 12 controls, early-zero negative, and six transfer
+conditions repeated three times. The offline evidence suite passes 96 tests;
+independent audit fixes preserve all recorded measurements. Detailed increment
+reviews precede the final whole-task review; Task2 status/AC remain with TASK-41177.
+Later tasks have not begun.
 
 ### Task 3: Persist listening state and source-owned assets safely (TASK-41178)
 

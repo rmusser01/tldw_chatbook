@@ -26457,3 +26457,33 @@ and keep the first run and repeat beside the instrumented comparison.
 **Incident.** To free time in console-p0-gate's admission-sensitive profile, TASK-42472's first review round dropped `Tests/Chat/test_console_failed_call_retry_ownership.py`'s `bootstrap_profile` marker and moved the file to the sandboxed Console P0 step. The only evidence was that it stayed green: 59 passed without the marker. The second review recorded `get_cli_setting` calls and found the file does read config. Its gateway reads `[model_catalog] use_models_dev` (`stream_chat` -> `prepare_chat_request` -> `get_model_capabilities` -> `models_dev_catalog._enabled`). Without the marker every such read raised `RecoveryRequired: raw_source_selection_changed`, and `_enabled()`'s `except Exception: return False` swallowed it. The tests passed only because that fallback equals the default. A temporary recorder (serial) counted 5 `model_catalog` reads with 0 `RecoveryRequired` with the marker, and 5 reads with 5 `RecoveryRequired` without it.
 
 **What to do.** Before dropping `bootstrap_profile` or calling a file sandboxed, count the fail-closed admissions it hits. In a temporary autouse fixture, wrap `tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired.__init__` and count calls. Every admission refusal goes through it, whoever the caller (its subclasses either call `super().__init__` or inherit it). Then require zero `RecoveryRequired` without the marker before dropping it. Do not rely on wrapping `tldw_chatbook.config.get_cli_setting`: 70 `tldw_chatbook` modules import it at module level (35 by absolute import, 35 relative; counted with `ast` on 2026-11-24) and keep the original before any fixture runs, and reads through `load_settings` or other raw-participant sources never pass through it. This incident was caught that way only because `_enabled()` imports the function inside its body. If you also want the reads themselves, patch the `get_cli_setting` binding in every loaded `tldw_chatbook` module. Re-checked 2026-11-24 on this file: the class-level counter saw 0 with the marker and 5 without it. A pass/fail run cannot see an admission that a broad `except` swallowed (see "A broad except can dress `RecoveryRequired` up as an egress block").
+
+## A private pytest fixture needs an admitted native parent (TASK-41177, 2026-11-24)
+
+**Incident.** Normal pytest stopped before collection with
+`recovery_scope_uncertain`: the sandbox account could not open the Windows drive
+root through the native path verifier. Normal-user execution exposed a second
+failure, shared-writable ancestors in the default temporary location. A fresh
+native-verified subtree under the user home, with process-local TEMP/TMP/TMPDIR
+and pytest basetemp, passed the same ownership tests with normal conftest and
+real-profile guards. No existing profile, recovery marker or ACL was changed.
+
+**What to do.** Diagnose the actual failing native admission before modifying
+recovery policy or bypassing conftest. Use `tools/run_guarded_pytest.py` for
+explicit targeted runs on this Windows host; its private parent is checked
+before creating disposable test state and its cleanup checks the exact boundary.
+
+## Reconstruct measurement claims from their retained primitives (TASK-41177, 2026-11-24)
+
+**Incident.** The controlled-WAV captures contained correct source tails and
+separated transfers, but independent review copied the truncated negative
+control's matcher frames into a Natural row and the offline grader still passed
+its cached summary. Moving both absolute packet clocks also preserved a positive
+gap while detaching the evidence from the playback lifetime. Removing schema-2
+fixture metadata silently selected historical rules.
+
+**What to do.** Recompute edges from matcher frame fields, relate absolute clocks
+to launch/grant/Stop, and enforce the declared receipt schema before aggregating.
+Keep a deliberate early-exit control and mutate numerical receipts without
+replaying hardware. A valid recording and a grader resistant to false passes
+are separate pieces of evidence.

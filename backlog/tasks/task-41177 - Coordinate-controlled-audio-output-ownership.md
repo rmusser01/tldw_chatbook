@@ -67,3 +67,69 @@ The user authorized the controlled WAV adapter and all production wiring. Both s
 The normal pytest bootstrap blocker is diagnosed: the sandbox account cannot perform the native drive-root open, and default TEMP/worktree ancestors grant the sandbox group destructive access. A fresh native-verified private temp subtree under the user home, a process-local TEMP/TMP/TMPDIR plus pytest basetemp, and normal-user execution pass all eleven tests with normal conftest/guards. No recovery marker, existing ACL or product recovery policy was changed. The guarded runner and numerical diagnosis are retained in this plan's workspace for targeted verification.
 
 ADR367's production contract and the Superpowers Task2 continuation specify preparation/pins, worker revocation, native classifier/settling qualification, full caller wiring, external handoff acknowledgement, duplex/media/shutdown policy and remaining acceptance evidence. All whole-task AC remain open.
+
+## Implementation Notes
+
+Implemented Windows controlled retained-WAV playback and serialized app output
+admission under ADR367. The descriptor binds private PCM16 stereo 48 kHz bytes,
+digest, logical/physical frames, 250 ms zero tail and saved frame. Native read
+pins hold the qualified executable and physical file ancestry. A private Windows
+CreateProcessW boundary retains birth/cleanup evidence. Typed results distinguish
+Natural, Stopped, Failed, Uncertain and AlreadyAtEnd; exact EOF launches nothing,
+padding Stop is interrupted, and premature zero exit cannot imply completion.
+
+The app reserves exact intents before asynchronous preparation and acquires only
+when ready. Exact callback-bound leases and worker revocation fence late starts,
+stale cleanup and shutdown. Positive native retirement precedes replacement;
+unknown birth/failed close retains blocked custody and exact retry. Ordinary
+file delegation records an external handoff epoch; the canonical Cancel-focused
+dialog acknowledges only the current action and epoch. File expiry never clears
+that epoch. Artifact holds last until positive local retirement, including late
+cleanup after a view is gone.
+
+Production coverage includes Console manual/automatic/status speech, streaming
+PCM and file fallback, provider realtime, the complete speculative duplex
+session, Speech Lab, both first-run voice samples, Watchlists cast, Artifacts
+and Library replay, video playback/seek/external delegation and quick/full/direct
+unmount shutdown. Failed replacement leaves current output playing and retains
+its exact Stop target even while its first native receipt is pending. Realtime
+keeps input gated on uncertain output close. Natural frame EOF waits for the
+exact audible process pair. Windows audible inherited-descriptor media refuses
+before takeover; ordinary supported POSIX paths retain their compatibility.
+
+The bootstrap failure is resolved by the documented guarded targeted runner and
+normal account with native-verified private process TEMP/basetemp. Normal
+conftest, recovery admission and real-profile guards remain enabled. No existing
+profile, recovery marker or ACL is mutated. New PCM-to-WAV files set native
+private permissions on their retained descriptor before writing audio/header.
+
+Validation: targeted root runs passed 237 foundation cases and 346 caller cases
+(three POSIX signal skips); the unchanged architecture source-read node needed
+UTF-8 and passed on rerun. The later two-race integration selection passed 111
+cases, including both pending-start/failing-replacement orders and concrete
+versus opaque opener failure. Incremental file/PCM/media/duplex/mounted reviews
+have separate overlapping tests; these counts are not a unique aggregate.
+All 23 new nonmeasurement Python files pass Ruff lint/format; edited legacy files
+have no introduced Ruff diagnostics and changed-range formatting. The message
+pump and affected architecture checks pass. No full repository test sweep ran.
+
+Native Windows qualification records twelve canonical controls plus an early
+zero-exit negative, and eighteen controlled/PCM transfers (six conditions, three
+rounds). Fifteen matched pairs have 78.317–586.411 ms positive source gaps; three
+startup old channels are independently quiet. Exact EOF, same-file saved Resume
+and startup/active/padding Stop pass. The one-frame remainder has transport
+evidence with waveform fidelity explicitly unqualified. All measured resources
+retired. The independent offline evidence suite passes 96 tests; audit fixes
+reconstruct integer frame/absolute-clock evidence, enforce schema and negative
+identity, and check error cleanup without changing receipts. See
+[controlled-output evidence](../../Docs/Testing/watchlist-controlled-audio-qualification.md)
+and [living speech architecture](../../Docs/Architecture/speech.md).
+
+Limits: endpoint evidence applies to the recorded Windows default route/build,
+not acoustic silence or all devices. Linux/macOS controlled output remain
+unqualified. Separate Windows saved-video capacity tests refuse existing POSIX
+pinned-save primitives before audio delegation; their methods/tests are
+unchanged and this task does not repair that feature. Two older controller
+teardown errors did not reproduce in two current and two baseline runs; their
+cause remains unverified. Final whole-task review, base synchronization and
+publication are still pending; status and AC stay open until those gates finish.
