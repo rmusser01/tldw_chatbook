@@ -168,7 +168,9 @@ _BUDGETS: dict[str, int] = {
     # hands the module the app's services explicitly, per the app-lookup
     # census); 2026-11-23, ported onto dev b31e3e9241 (round 24): dev's
     # 5,711 plus 24, exact measurement 5,735.
-    "tldw_chatbook/app.py": 5744,
+    # 2026-11-23, TASK-34100.13 port (round 24): -5, the launch splash decision
+    # is Widgets.splash_screen.splash_options; 5,735 -> 5,730, exact measurement.
+    "tldw_chatbook/app.py": 5739,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
@@ -871,7 +873,9 @@ _BUDGETS: dict[str, int] = {
     # Skip setup's save into first_run_finish_later.skip_setup (3,119); its
     # review v5r1 dropped the resume's stale Protect status line (3,106).
     # 2026-10-31 user size waiver: preserve provider warning via shared tracker.
-    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3107,
+    # 2026-11-23, TASK-34100.13 port (round 24): -17, the draft restore drops the
+    # Notes step, embedding model and card gallery; 3,107 -> 3,090, exact.
+    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3090,
     # TASK-34100.1: the step modules the split left at 1,000 lines or more
     # are pinned at their exact size, so the split cannot regrow a god module
     # a step at a time: Provider, Speech, Voice (moved out by TASK-33921) and
