@@ -1192,6 +1192,11 @@ jobs:
       # append rule (18, 5.7 s) and its real-planner tests (28, 66.9 s), and the
       # continuation destination identity (8, 21.7 s), serially with this
       # step's flags at load 55-61.
+      # TASK-42472 (round 24, 2026-11-24), after the destination identity file:
+      # the failed-call retry rule, with its llama.cpp stream-fallback cases
+      # (sandboxed, no config read; its bootstrap_profile marker dropped), on
+      # no lane before: 59 passed in 32.3 s serially with this step's flags at
+      # load 5.
       - name: Run the sandboxed Console P0 regression tests
         if: ${{ !cancelled() && matrix.profile == 'sandboxed' }}
         run: |
@@ -1204,6 +1209,7 @@ jobs:
             Tests/Chat/test_console_trace_domain_append.py \
             Tests/Chat/test_console_trace_domain_append_planner.py \
             Tests/Chat/test_continuation_destination_identity.py \
+            Tests/Chat/test_console_failed_call_retry_ownership.py \
             Tests/Architecture/test_wizard_lifecycle_guards.py \
             Tests/DB/test_chachanotes_v74_auxiliary_failure_reason.py \
             Tests/UI/test_console_composer_run_controls.py::test_disabled_reason_names_the_queue_state_not_send_or_setup \
@@ -1263,6 +1269,11 @@ jobs:
       # mix-in reads (both kinds), and a controller read started during Close's
       # hook drain, that Close must drain. 3 passed in 2.8 s serially with this
       # step's flags at load 12.
+      # TASK-42472 (round 24, 2026-11-24), after the project-instruction traces
+      # file whose harness it uses: dev's captured model-retry contract
+      # (bootstrap_profile: that harness reads the tool gates through config),
+      # red on the stack and on no lane before. 4 passed in 10.2 s serially
+      # with this step's flags at load 5.
       - name: Run the admission-sensitive Console P0 regression tests
         if: ${{ !cancelled() && matrix.profile == 'admission-sensitive' }}
         run: |
@@ -1312,7 +1323,6 @@ jobs:
             Tests/Chat/test_response_rules_builder.py::test_new_learning_timestamps_are_canonical_and_old_offsets_still_parse \
             Tests/Chat/test_console_project_instruction_traces.py \
             Tests/Chat/test_console_trace_model_retries.py \
-            Tests/Chat/test_console_failed_call_retry_ownership.py \
             Tests/Chat/test_console_trace_failed_tool_run.py \
             Tests/Chat/test_console_trace_discarded_tool_run.py \
             Tests/Chat/test_console_agent_call_thinking.py \

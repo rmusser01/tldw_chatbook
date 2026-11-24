@@ -58,6 +58,7 @@ INHERITED = {
         "Tests/Chat/test_console_trace_domain_append.py",  # TASK-34100.3
         "Tests/Chat/test_console_trace_domain_append_planner.py",  # TASK-34100.3
         "Tests/Chat/test_continuation_destination_identity.py",  # TASK-34100.3
+        "Tests/Chat/test_console_failed_call_retry_ownership.py",  # TASK-42472
         "Tests/Architecture/test_wizard_lifecycle_guards.py",
         "Tests/DB/test_chachanotes_v74_auxiliary_failure_reason.py",
         "Tests/UI/test_console_composer_run_controls.py::test_disabled_reason_names_the_queue_state_not_send_or_setup",
@@ -114,10 +115,9 @@ INHERITED = {
         "Tests/UI/test_console_queue_subclass_controller.py",
         # Round 16 (TASK-41508, TASK-41511): trace files and the capture file.
         "Tests/Chat/test_console_project_instruction_traces.py",
-        # TASK-42472 (round 24, 2026-11-24): dev's captured-retry contract and
-        # the failed-call retry rule, on no lane while the stack refused them.
+        # TASK-42472 (round 24, 2026-11-24): dev's captured-retry contract, on
+        # no lane while the stack refused it.
         "Tests/Chat/test_console_trace_model_retries.py",
-        "Tests/Chat/test_console_failed_call_retry_ownership.py",
         "Tests/Chat/test_console_trace_failed_tool_run.py",
         "Tests/Chat/test_console_trace_discarded_tool_run.py",
         "Tests/Chat/test_console_agent_call_thinking.py",
