@@ -4,7 +4,7 @@ title: "A Console agent's provider fallback is refused at dispatch when Capture 
 status: To Do
 assignee: []
 created_date: 2026-11-23 23:00
-updated_date: 2026-11-23 23:00
+updated_date: 2026-11-24 04:30
 labels:
 - follow-up
 - console
@@ -17,6 +17,8 @@ references:
 - tldw_chatbook/Chat/console_agent_bridge.py
 - tldw_chatbook/Chat/console_trace_service.py
 - Tests/Chat/test_console_failed_call_retry_ownership.py
+- backlog/decisions/110-cross-provider-fallback-and-history-projection.md
+- backlog/decisions/200-preset-pre-tool-fallback-targets.md
 dependencies: []
 ---
 
@@ -26,6 +28,8 @@ dependencies: []
 Found by the round-24 review of TASK-42472 (2026-11-23) and reproduced on fu/r24-diag (dev b31e3e9241 plus round 24). Paths are under `tldw_chatbook/` unless they start with `Tests/`.
 
 **Why.** Capture is on by default for saved chats, and with Capture On a user's configured provider fallback never runs. When an agent's model call fails, `Agents/agent_runtime.py::_recover_model_failure` first retries in place. After the retries are spent (a transient error), or at once (a 402/403 credit-terminal error, or `ChatModelUnavailableError` for a preset target), it switches to the next ready fallback provider. Users set that chain in `[console] agent_fallback_providers` (`Chat/console_agent_bridge.py::console_fallback_providers`, wired into `AgentConfig.fallback_providers`) or with preset fallback targets. The switched call is the run's next call, so it goes out as a TOOL_LOOP call with a different provider, model and endpoint.
+
+Since c24acf71683aa2f3f6a0a9c459f7194b284a7f3b (TASK-42472), llama.cpp direct HTTP failures are transient too (an `httpx.HTTPStatusError` with a retryable status, a timeout, a refused connection or a protocol error). Once a llama.cpp run's in-place retries run out, it now reaches the fallback as well, and hits the same refusal.
 
 The previous call is in `error`, so `ConsoleTraceService.persist_request` (`Chat/console_trace_service.py`, the `previous.state is TraceCallState.ERROR` check) compares the two request headers. Provider, model and endpoint differ, so it raises `ValueError("trace_tool_chain_unavailable")`. This is the rule "a failed call authorizes an unchanged retry", pinned by `Tests/Chat/test_console_failed_call_retry_ownership.py::test_failed_call_retry_requires_exact_durable_chain[changed_provider|changed_model|changed_endpoint]`. The rule is right for a retry, but it also catches the fallback, which is meant to change the target.
 
@@ -49,7 +53,7 @@ Also decide what happens to the call the refusal leaves in `reserved`.
 <!-- AC:BEGIN -->
 - [ ] #1 With Capture On, an agent run whose primary provider fails switches to a ready configured fallback provider and completes, as it does with Capture Off
 - [ ] #2 The captured trace shows the failed calls and the fallback call, and which provider each went to
-- [ ] #3 A retry after a failed call that changes the provider, model or endpoint without being a fallback is still refused (the existing `changed_*` cases stay red-to-refusal)
+- [ ] #3 A retry after a failed call that changes the provider, model or endpoint without being a fallback is still refused; the existing `changed_*` cases are still refused
 - [ ] #4 No call is left in `reserved` after a refused or completed fallback
 - [ ] #5 A test drives a Capture-On agent run through a fallback; it is red before the change and green after
 <!-- AC:END -->

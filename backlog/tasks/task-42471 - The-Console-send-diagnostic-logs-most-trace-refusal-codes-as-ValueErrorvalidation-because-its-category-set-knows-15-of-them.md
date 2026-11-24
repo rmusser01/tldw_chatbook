@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-23 06:38
-updated_date: 2026-11-24 01:53
+updated_date: 2026-11-24 05:28
 labels:
 - follow-up
 - console
@@ -64,7 +64,10 @@ The send diagnostic now names every code-shaped refusal that a `Chat/console_tra
   - the literal field names passed to `_required_string` (`provider_name`, `model_name`).
 - *The drift guard* is `test_every_coded_trace_refusal_has_a_send_diagnostic_category`, with `_trace_refusal_codes()` in the same file. It reads every `console_trace_*.py` file's syntax tree (AST) and:
   - fails on a code the set lacks;
-  - fails on any raise whose argument it cannot prove literal, unless that site is in `_UNCODED_TRACE_VALUE_ERRORS`;
+  - fails on any raise whose argument is neither a literal nor the exact argument expression its `_UNCODED_TRACE_VALUE_ERRORS` row pins (`field_name`, `name`, `capture_error`), so a new `ValueError(some_var)`, even in a listed function, fails;
+  - fails when a row is no longer used by any raise (the used rows must equal the table);
+  - counts the raises that carry no code against pinned totals in `_UNCODED_TRACE_RAISE_COUNTS`: 9 formatted messages, 45 prose sites (42 distinct messages), 2 argument-less raises. A new one fails until it is reviewed;
+  - accepts the `or` form only as `<Name> or "<literal>"`;
   - fails below a floor of 209 codes, the count measured on 2026-11-23, so a scan that finds nothing cannot pass.
 
   I chose a test-time derivation over a runtime one: parsing the modules at runtime would cost every first failure, and matching a regex would make tokens from text.
@@ -87,6 +90,9 @@ The send diagnostic now names every code-shaped refusal that a `Chat/console_tra
   - First version (two modules): red at base, `assert ['available_b...y_value', ...] == []`, 73 codes missing. Red with only `surface_replacement_checkpoint_unavailable` removed from the set.
   - Widened version: red against the first version's 88-code set, 121 codes missing, among them `trace_reservation_refused` and `custom_pii_invalid_batch`. Red with only `trace_reservation_refused` removed: `assert ['trace_reservation_refused'] == []`.
   - Green with the full set. Each of the ten `_UNCODED_TRACE_VALUE_ERRORS` rows is used: emptying the table lists 17 unchecked sites.
+  - Second review (each is a temporary edit, reverted, and red):
+    - In the test tables: an extra row no raise site uses fails the used-rows check; a row repinned to `other_name` fails `_nonempty`'s raise site as unchecked; a count pinned to `bare: 1` fails the counts check.
+    - In trace source: a new `ValueError(f"temp {x}")` makes formatted 10 against 9; a bare `raise ValueError`, bare 3 against 2; `ValueError("a new prose message")`, prose 46 against 45; `ValueError(a or b)` is unchecked (`console_trace_models:671`); and `raise ValueError(value)` inside `_nonempty`, a pinned function whose row is `field_name`, is unchecked (`console_trace_repository:322`).
 - AC#3, `test_a_refused_reservation_logs_the_refusal_and_its_code`: a real refused reservation (`trace_revision_unavailable`) through `ConsoleProviderGateway._reserve_trace_call`, inside a send-diagnostic scope. Red at base (`assert 'ValueError' == 'TraceReservationRefused'`), green now. It also asserts that neither the draft text nor the opaque revision id reaches the recorded fields.
 - Live check, using TASK-42412's forced reproduction (a temporary 8 s sleep in `_read_default_stop`, the stop-path wait removed, both reverted): the child's line read `error_category=surface_replacement_checkpoint_unavailable exception_type=TraceReservationRefused phase=trace_reservation`. Base logged `ValueError`/`validation`.
 
@@ -94,6 +100,7 @@ The send diagnostic now names every code-shaped refusal that a `Chat/console_tra
 - *Soak (`-n 4`).* The changed file + `Tests/Chat/test_console_send_diagnostics.py` + `Tests/Chat/test_console_trace_surface_refusal_diagnostics.py`, 20 times each round:
   - First version: 20/20 runs, 400/400 tests, load 15-22.
   - After review: 20/20 runs, 400/400 tests, load 41-95.
+  - After the second review: the same files with `Tests/Chat/test_console_project_instruction_traces.py` and `Tests/Chat/test_console_thinking_capture.py`, 20/20 rounds, 2320/2320 tests, load 8-16.
   - The last two files are unedited (AC#4).
 - *Covering Chat trace and diagnostic files:* 341 passed (first version).
 - *Fast lane.* "Run fast PR contract", serial with its flags, through the fixed `r19-step.sh`: 4739 passed, 4 skipped. This file is a rider of that step.

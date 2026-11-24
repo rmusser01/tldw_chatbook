@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-23 06:38
-updated_date: 2026-11-24 01:53
+updated_date: 2026-11-24 05:28
 labels:
 - follow-up
 - console
@@ -31,6 +31,7 @@ Found during round 22 of the follow-up burn-down (2026-11-23), by TASK-42412. Ch
 **AC amendment (2026-11-23, round-24 review).** Three criteria were added, for these reasons:
 - AC#4: review found that the first close-out covered only in-place retries. The agent's other follow-up call after a failure, the ADR-110 provider fallback, goes to a different provider or model, and the retry check refuses that.
 - AC#5 and AC#6: the coordinator chose to fix, in this task, the two defects the investigation found, rather than file them. These are the managed received test's `**kwargs` stand-in, and llama.cpp agent runs never retrying.
+- AC#7 (second review): a retry after a stream that broke mid-reply wrote the retry's text after the failed call's partial text in the same assistant message ("The capital of FrThe capital of France is Paris."). AC#6 made this reachable for llama.cpp, and it already happened on dev for hosted providers whose broken stream surfaces as `ChatProviderError(502)` (OpenAI, Groq, Mistral, OpenRouter, Moonshot, Fireworks, Together, Hugging Face).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -41,6 +42,7 @@ Found during round 22 of the follow-up burn-down (2026-11-23), by TASK-42412. Ch
 - [x] #4 The notes record the provider-fallback path after a failed call and whether a Capture-On run refuses it, from a probe on a real Console agent send; if it does, a follow-up task records the evidence and the options
 - [x] #5 `Tests/Performance/test_console_managed_received_acceptance.py`'s provider stand-in keeps `chat_api_call`'s signature, and the test asserts its Capture-On trace has no omission node; red before the fix, green after
 - [x] #6 A llama.cpp (direct HTTP) agent run retries a transient failure in place (HTTP 408, 425, 429, 500, 502, 503, 504 or 529; a timeout; a refused connection; a protocol error), while a 400/401/404 still ends the run at once; a test drives such a run, red before and green after
+- [x] #7 When an agent run retries a model call in place, or falls back, after a call failed mid-stream, the reply starts again from what the message held before the failed call: no partial text or thinking from the failed call survives. If the retries run out, the failed message keeps only the last attempt's partial, as a run that fails without retrying does. Tests drive a llama.cpp and a hosted (OpenAI) streaming run through a mid-stream failure, red before the fix
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -100,6 +102,27 @@ Found during round 22 of the follow-up burn-down (2026-11-23), by TASK-42412. Ch
   - The file already runs in "Run the admission-sensitive Console P0 regression tests".
 - *User Guide.* No page documents the agent's in-place model retry (`agent_max_model_retries` appears nowhere under `Docs/User_Guide`), so none changed.
 
+**AC#7: a retry after a mid-stream failure no longer garbles the reply.**
+- *Cause.* The Console streaming adapter (`Chat/console_streaming_request.py`) writes each visible chunk into the assistant message as it arrives (`append_stream_chunk`), and discards streamed prose only when a call succeeds and turns out to be a tool call. When a stream broke mid-reply, the partial stayed. The in-place retry, or a fallback, then streamed into the same message, so the reply read `<partial><retry text>`.
+- *Where it happens.* For llama.cpp, since c24acf71683aa2f3f6a0a9c459f7194b284a7f3b (`RemoteProtocolError`, `ReadTimeout`). On dev already, for the hosted providers whose broken stream surfaces as a retryable `ChatProviderError(502)`. A temporary probe (deleted) checked 14 providers through the real gateway and `chat_api_call`, with a `requests` transport that broke mid-body:
+  - OpenAI, Groq, Mistral, OpenRouter, Moonshot, Fireworks, Together, Hugging Face: content, then 502, so the call is retried.
+  - DeepSeek: status `None`. Its hosted engine turns the broken read into `HostedChatProtocolError`, so the call is not retried.
+  - Anthropic, Google, xAI, custom: 502 before any content.
+  - Cohere: no failure surfaced.
+- *Fix,* where the partial was written.
+  - Before each primary (non-subagent) model call, the adapter records a rollback point: the message's text and `ThinkingCapture.checkpoint()`. It clears the point only when the call returns.
+  - If the call raised, the next primary call on that message restores the point first. Only an in-place retry or a fallback follows a failed call in a run.
+  - Restoring means: `reset_stream_content` (clears the content and the store's per-message chunk buffers); re-append the text the message held before the failed call (a prefill, or a redirect-cut turn); and `ThinkingCapture.restore()`, which drops the failed call's reasoning and republishes it through `replace_message_thinking` when it changed. Block ids keep counting, so a discarded block's id is never reused.
+  - A message missing from the store arms nothing.
+  - A run that ends after the failure keeps the last attempt's partial and its failure row, unchanged from a run that fails without retrying. An earlier attempt's text never reaches the database.
+  - Not covered: character emote capture. It is armed only on the direct (non-agent) send path.
+- *Tests.* `test_a_retry_after_a_mid_stream_failure_replaces_the_partial_reply`, in `Tests/Chat/test_console_project_instruction_traces.py`, covers llama.cpp and OpenAI, each retried and exhausted. For llama.cpp, a reasoning event and a content event come first, then `RemoteProtocolError`. For OpenAI, the real `chat_api_call` runs over a faked `requests.Session.post` whose stream breaks with `ChunkedEncodingError`. The harness gained `failures`, `hosted` and `structured_thinking`.
+  - Red before the fix: retried read `'The caFixture reply'` for both providers; exhausted read `'The caThe caThe ca'` for both. (The stream gate holds back a short tail, so the visible partial is `The ca`.)
+  - With the text reset but no thinking rollback: llama.cpp retried kept the failed call's reasoning block (`['Reasoning t...'] == []`), and exhausted repeated it.
+  - Green: 4 passed. The saved database row equals the store's message in every case.
+- *Fallback evidence* (temporary probe, deleted). Capture Off; a deepseek stream gives a partial, then 429, three times; then it falls back to groq. Before the fix the reply read `'The capital of FThe capital of FThe capital of Frecovered'`; after, `'recovered'`.
+- *User Guide.* No page documents the agent's in-place retry or fallback, so none changed.
+
 **Runs.**
 - *Soak, 20 times each:*
   - The new llama.cpp test at `-n 4`: 20/20 runs, 160/160 cases, load 41-95.
@@ -108,10 +131,16 @@ Found during round 22 of the follow-up burn-down (2026-11-23), by TASK-42412. Ch
 - *Covering files* (`-n 4`): `Tests/Agents/test_model_retry*.py`, `test_preset_fallback.py`, `test_fallback_chain.py`, `Tests/LLM_Calls/test_deepseek_protocol_failures.py`, `test_hosted_provider_engine_policy.py`, and the Chat project-instruction, failure-copy, provider-gateway, run-budget, self-hosted-retry, failed-call-retry and retry-recovery files.
   - Result: 956 passed, 4 failed.
   - The 4 fail the same way with base `model_retry.py` and `console_send_diagnostics.py` swapped in, so they are pre-existing locally: `test_console_send_leaves_base_url_unpinned_in_default_case[deepseek]`, `test_all_qwencloud_kwargs_paths_forward_pinned_mode_and_base`, `TestGatewayExchangeCapture::test_openai_stop_closes_transport_through_gateway_boundary`, `test_stream_chat_provider_400_reports_one_consistent_status`.
+- *Second review (AC#7 and the scan pins).*
+  - Soak at `-n 4`, 20 rounds: the whole `Tests/Chat/test_console_project_instruction_traces.py` (with the new mid-stream tests), the trace-diagnostic files and `Tests/Chat/test_console_thinking_capture.py`. 20/20 rounds, 2320/2320 tests, load 8-16.
+  - Covering, `-n 4`: the 115 non-UI test files that drive the streaming adapter. 144 failed and 18 errored locally; an A/B on those 145 ids (`-n 4`, base `b31e3e9241` source for the four changed modules, then current) gave the same 143 failures on both trees, and none failing now that passes at base. Nearly all are the local `RecoveryRequired: raw_source_selection_changed` trap or `OriginalSourceChanged`.
+  - The 30 UI/Performance files that drive the adapter, `-n 4`: 224 failed, 441 passed. Of those, 211 hit the `RecoveryRequired` trap. A/B on the 224 ids: 223 fail at base too. The one difference, `test_console_agent_rail.py::test_full_log_probe_is_cached_per_run_id_while_open`, failed once with a `TypeError` from the test's own lambda stub (`available_columns`), raised in `chat_screen.py`'s log probe, which this change does not touch; it passed 3/3 alone on the current tree.
+  - `Tests/CI` 1823 passed, 2 skipped; `Tests/Architecture` serial 1492 passed, 5 skipped; preflight passed; ruff F clean; ruff gate OK.
+  - "Run fast PR contract" 4739 passed, 4 skipped; "Run the admission-sensitive Console P0 regression tests" 512 passed (508 plus the 4 new mid-stream cases).
 - *Lane steps,* serial with their flags, through the fixed `r19-step.sh`:
   - "Run fast PR contract": 4739 passed, 4 skipped.
   - "Run the admission-sensitive Console P0 regression tests": 508 passed.
   - "Run the recovered suites": 2006 passed, 1 skipped, 1 deselected.
 
-**Files.** `tldw_chatbook/Agents/model_retry.py`; `Tests/Chat/test_console_project_instruction_traces.py`; `Tests/Performance/test_console_managed_received_acceptance.py`; `backlog/tasks/task-42525 - A-Console-agents-provider-fallback-is-refused-at-dispatch-when-Capture-is-On.md` (new); one sentence on TASK-42412's entry in `backlog/docs/lessons-testing-evidence.md` (first close-out).
+**Files.** `tldw_chatbook/Agents/model_retry.py`; `tldw_chatbook/Chat/console_streaming_request.py` and `tldw_chatbook/Chat/console_thinking_capture.py` (AC#7); `Tests/Chat/test_console_project_instruction_traces.py`; `Tests/Performance/test_console_managed_received_acceptance.py`; `backlog/tasks/task-42525 - A-Console-agents-provider-fallback-is-refused-at-dispatch-when-Capture-is-On.md` (new); one sentence on TASK-42412's entry in `backlog/docs/lessons-testing-evidence.md` (first close-out).
 <!-- SECTION:NOTES:END -->
