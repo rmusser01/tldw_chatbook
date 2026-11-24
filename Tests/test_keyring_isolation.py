@@ -485,25 +485,47 @@ def _scan(
     def is_environ(node: ast.AST | None) -> bool:
         return _is_environ(node, environ_names)
 
-    #: Module names a ``global`` statement or a module-level ``+=`` may rebind.
+    #: Module names bound other than exactly once at module scope (any store,
+    #: import, def, class, ``except ... as``, match capture), or named by a
+    #: ``global`` statement: their value is not the one ``module_values`` holds.
+    bindings: Counter[str] = Counter()
+    for node in _own_nodes(tree):
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            bindings[node.id] += 1
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                bindings[alias.asname or alias.name.split(".")[0]] += 1
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bindings[node.name] += 1
+        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+            if node.name:
+                bindings[node.name] += 1
     rebound = {
         name
         for node in ast.walk(tree)
         if isinstance(node, ast.Global)
         for name in node.names
-    } | {
-        node.target.id
-        for node in tree.body
-        if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name)
+    } | {name for name, count in bindings.items() if count != 1}
+
+    #: Each function's enclosing node, so a nested scope sees its outer names.
+    parents = {
+        id(child): node
+        for node in ast.walk(tree)
+        for child in ast.iter_child_nodes(node)
     }
-    bindings = [
-        target.id
-        for node in tree.body
-        if isinstance(node, ast.Assign)
-        for target in node.targets
-        if isinstance(target, ast.Name)
-    ]
-    rebound |= {name for name in bindings if bindings.count(name) > 1}
+
+    def bound_in(function: ast.AST) -> set[str]:
+        """The names a function binds: stores in its own body and its parameters."""
+        arguments = function.args
+        return {
+            node.id
+            for node in _own_nodes(function)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+        } | {
+            arg.arg
+            for arg in [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs]
+            + [arg for arg in (arguments.vararg, arguments.kwarg) if arg]
+        }
 
     def literal(node: ast.AST):
         """An immutable literal: a string, a tuple display, ``frozenset(...)``."""
@@ -759,24 +781,14 @@ def _scan(
         envs: dict[object, _Env] = {}
         handled: set[int] = set()
         values: dict[str, ast.AST] = {}
-        arguments = getattr(scope, "args", None)
-        local = (  # the names this scope binds, for ``keeps``
-            {
-                node.id
-                for node in nodes
-                if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
-            }
-            | {
-                arg.arg
-                for arg in (
-                    [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs]
-                    + [arg for arg in (arguments.vararg, arguments.kwarg) if arg]
-                    if arguments
-                    else []
-                )
-            },
-            values,
-        )
+        # The names this scope and every enclosing function bind, for ``keeps``.
+        bound: set[str] = set()
+        outer = scope
+        while outer is not None:
+            if isinstance(outer, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                bound |= bound_in(outer)
+            outer = parents.get(id(outer))
+        local = (bound, values)
 
         def env_of(target: ast.AST) -> _Env:
             key = ast.unparse(target)
@@ -916,15 +928,24 @@ def _scan(
         def removed(mapping: ast.AST, key: ast.AST, node: ast.AST) -> None:
             """A ``pop``/``del``: a constant key drops itself if it is HOME or
             the pin. Another key may be either, so it drops both, unless it is
-            the variable of a loop that provably never reaches one of them."""
+            the variable of a loop that provably never reaches one of them and
+            that nothing in the loop rebinds."""
             if isinstance(key, ast.Constant):
                 if key.value in (_KEYRING_KEY, "HOME"):
                     env_of(mapping).remove(key.value)
                 return
             loop, guards = loop_removals.get(id(node), (None, []))
+            rebinds = loop is not None and any(  # ``n = ...``, ``(n := ...)``, ...
+                isinstance(inner, ast.Name)
+                and isinstance(inner.ctx, ast.Store)
+                and inner.id == loop.target.id
+                for statement in loop.body
+                for inner in ast.walk(statement)
+            )
             for dropped in ("HOME", _KEYRING_KEY):
                 if not (
                     loop is not None
+                    and not rebinds
                     and isinstance(key, ast.Name)
                     and key.id == loop.target.id
                     and never_reaches(guards, key.id, dropped, loop.iter, local)
@@ -1381,6 +1402,42 @@ def _filtered(condition: str) -> str:
             "        if n.startswith('COV_CORE_'):\n            e.pop(n)\n"
             "    subprocess.run([sys.executable], env=e)\n",
             [True],
+        ),
+        # Final check: a rebound loop variable, a module name bound twice, a name
+        # an enclosing function binds (each was True).
+        (
+            "def f():\n    e = os.environ.copy()\n    for n in ('PYTEST_ADDOPTS',):\n"
+            "        n = 'HOME'\n        e.pop(n, None)\n"
+            "    subprocess.run([sys.executable], env=e)\n",
+            [False],
+        ),
+        (
+            "def f():\n    e = os.environ.copy()\n    for n in ('PYTEST_ADDOPTS',):\n"
+            "        if (n := 'HOME'):\n            e.pop(n, None)\n"
+            "    subprocess.run([sys.executable], env=e)\n",
+            [False],
+        ),
+        (
+            "A = ('PYTEST_ADDOPTS',)\nfrom x import A\n"
+            "def f():\n    e = os.environ.copy()\n    for n in A:\n"
+            "        e.pop(n, None)\n    subprocess.run([sys.executable], env=e)\n",
+            [False],
+        ),
+        (
+            f'A = ("PATH", "HOME", "{_KEYRING_KEY}")\ndef A():\n    pass\n'
+            + _filtered("k in A"),
+            [False],
+        ),
+        (
+            f'A = ("PATH", "HOME", "{_KEYRING_KEY}")\nfor A in [("PATH",)]:\n    pass\n'
+            + _filtered("k in A"),
+            [False],
+        ),
+        (
+            f'A = ("PATH", "HOME", "{_KEYRING_KEY}")\n'
+            "def outer():\n    A = ('PATH',)\n"
+            + textwrap.indent(_filtered("k in A"), "    "),
+            [False],
         ),
         # ``e = {**e, ...}`` keeps what ``e`` was; a parameter is not judged.
         (

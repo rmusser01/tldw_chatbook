@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-24 17:21
-updated_date: 2026-11-24 20:11
+updated_date: 2026-11-24 20:24
 labels:
 - follow-up
 - tests
@@ -118,6 +118,13 @@ The plan was written after a pure-AST survey of every `env=` call in the five tr
 - **Spawns the census cannot read** are now an exact table, `_UNJUDGED_SPAWNS` (26 spawns, 24 rows). Swapping one row for another with the same count goes red, naming both rows.
 - **Wording.** The lesson now says four children really dropped the pin (`:3999` and three others), as do these notes. The docstring and these notes give the parameter-argv runners as examples: `run_child_with_watchdog`, `supervise`, `_run_helper`, `_spawn_owned_process`, `_run_child`.
 - Counts are unchanged: 179 HOME moves, 294 Python spawns, 26 not judged, now 3 spawn exemptions. The census file has 90 tests: 62 spawn controls, 18 HOME-move controls, the two census tests and 8 others.
+
+**Final check (2026-11-24).** Three more evaluator gaps in `_scan`, each fixed with controls that were red against the round-2 scanner (7889c882ff) and are green now (6 of 6):
+- **A loop variable rebound inside the loop** (`n = 'HOME'`, or a walrus in the guard) no longer gets the "never reaches" exception. Any `Name` store to it in the loop body counts. Controls: an assignment and a walrus.
+- **Module names bound other than exactly once.** Every module-scope binding is counted: stores (including `for` targets, tuple unpacking and `with ... as`), imports, `def` and `class` names, `except ... as`, match captures. Names a `global` statement rebinds count too. Controls: `from x import A`, `def A`, and a module-level `for A in ...` after `A = (...)`.
+- **Names an enclosing function binds.** These now count as local to a nested function, so a module constant they shadow is not evaluated. Control: `outer()` binds `A = ('PATH',)` and its nested function filters with `k in A`.
+- Repo effect: none. Counts are unchanged (179 HOME moves, 294 spawns, the same 26 unjudged, 3 spawn exemptions). The census file has 96 tests.
+- Checks: the census file, the 10 pinned test files and the `.github` scripts' tests, `-n 4`, once: 1136 passed, 14 skipped (load ~4-7). `Tests/CI` `-n 4`: 1948 passed, 2 skipped. `preflight.sh` rc 0; `ruff check tldw_chatbook --select F` clean; `ruff_gate.py` rc 0.
 
 **TASK-33372 node (AC #8).** `test_scripted_mounted_sample_uses_real_composer_queue_and_fs_write` failed instead of xfailing when turn one was slow. The harness's turn-one wait (`run_console_three_turn_profile.py`, about :5620) used `wait_until`'s 10 s default. When it timed out, it re-raised the error as "turn-one diagnostics: ...". The xfail matcher accepted only "mounted sample did not settle before timeout". The reviewer measured base failing 2 of 5 and this branch 3 of 5 at load 14-54, all with that message. My first-round failures (4, all "turn-one diagnostics: gateway_calls=0 ... run_status=streaming") were the same.
 - **Review round 1** widened the matcher to accept an error caused by that timeout. Review round 2 pointed out that this hid a load flake under the TASK-33372 reason, and would let a real turn-one regression xfail. It is reverted: the matcher is back to base.
