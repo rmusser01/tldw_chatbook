@@ -13,6 +13,11 @@ import threading
 import time
 
 from .audio_output_ownership import AudioOutputLease
+from ._controlled_wav_windows import (
+    SpawnRefused,
+    UncertainBirth,
+    spawn_player as _spawn,
+)
 from .controlled_wav_profile import (
     ControlledWavError,
     RATE,
@@ -28,22 +33,6 @@ from .controlled_wav_progress import (
     ProgressObservation,
     StatsReader,
 )
-
-
-class _IncompleteBirth(Exception):
-    """Retain CPython's constructor object when its native post-birth cleanup fails."""
-
-    def __init__(self, child):
-        self.child = child
-
-
-def _spawn(argv, **options):
-    child = subprocess.Popen.__new__(subprocess.Popen)
-    try:
-        child.__init__(argv, **options)
-    except Exception:
-        raise _IncompleteBirth(child) from None
-    return child
 
 
 _now = time.perf_counter
@@ -344,21 +333,19 @@ class ControlledWavPlayback:
             reason = "player_start_failed"
             try:
                 child = _spawn(
-                    argv,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                    bufsize=0,
-                    env=env,
+                    argv, env=env, start_allowed=lambda: not self._interrupted()
                 )
+            except SpawnRefused:
+                kind, reason = CompletionKind.FAILED, "player_start_refused"
+                return
             except Exception as error:
-                # Windows Popen can raise after CreateProcess but before it
-                # publishes the process/thread handles or checks pipe closes.
+                # Only positive refusal and checked setup retirement acknowledge
+                # absence. Unknown creation or cleanup retains the exact pins.
                 birth_unknown = True
                 self._unconfirmed_pins = pins
-                if isinstance(error, _IncompleteBirth):
+                if isinstance(error, UncertainBirth):
                     self._partial_birth = error.child
-                    if getattr(error.child, "_handle", None) is not None:
+                    if error.child.has_process:
                         child = error.child
                 return
             reader = threading.Thread(
@@ -384,10 +371,10 @@ class ControlledWavPlayback:
                         clean = False
                         self._unclosed_pipe = child.stderr
                 try:
-                    child._handle.Close()  # Windows Popen.wait leaves this kernel HANDLE open.
-                except OSError:
+                    child.close_process_handle()
+                except Exception:
                     clean = False
-                    self._unclosed_process_handle = child._handle
+                    self._unclosed_process = child
                 if kind is CompletionKind.NATURAL and not (
                     self._reader_ok and self._clock.natural_candidate(self._reaped_at)
                 ):
