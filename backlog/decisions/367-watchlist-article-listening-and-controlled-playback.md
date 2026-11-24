@@ -560,6 +560,13 @@ inspect unmigrated or rollback snapshots, so new queries are version-gated.
   and rollback. Relative article keys need no SQL pathname rewrite; keep the
   existing briefing relocation authorizer narrow. Do not infer declared peer
   identity from owner/basename alone or reopen historical source paths.
+  Rollback establishes finite owner membership and metadata identities before
+  reading content. Its committed tree digest uses the scoped bounded reader on
+  each approved file, with an optional expected identity checked on the same
+  descriptor before and after reading and against the final named entry. This
+  contracts the existing read operation; it adds no path or inode authority.
+  Unexpected stage or foreign member content is never recursively hashed before
+  the topology check.
   A reviewed incoming candidate can rebind listening profile keys to the exact
   declared destination config selector through a separate narrow installed data
   update. Reject destination-key collisions, including foreign audio records when
