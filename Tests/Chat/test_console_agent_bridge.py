@@ -1791,8 +1791,6 @@ def test_run_reply_adds_the_honest_default_workspace_note(
     )
 
 
-# TASK-33620.1.12: a real agent run, whose tool calls read the emergency stop.
-@pytest.mark.usefixtures("sandbox_emergency_stop_path")
 def test_run_reply_refuses_write_file_in_an_ephemeral_session_end_to_end(
     tmp_path, monkeypatch
 ):

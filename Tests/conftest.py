@@ -2145,27 +2145,51 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             _release_profile_startups(test_data_dir)
 
 
-@pytest.fixture
-def sandbox_emergency_stop_path(isolate_test_environment, tmp_path, monkeypatch):
-    """Give a per-test-sandbox agent run a readable emergency-stop file.
+@pytest.fixture(autouse=True)
+def _redirect_emergency_stop_path(request, tmp_path, monkeypatch):
+    """Point the emergency stop at this test's own file, and make its fail-safe loud.
 
     TASK-33620.1.12: every agent run reads the emergency stop before each tool
-    call, through ``emergency_stop.default_emergency_stop_path()``. In the
-    per-test sandbox that path's guarded config read refuses
-    (``RecoveryRequired: raw_source_selection_changed``) and the read fails
-    SAFE, so every agent tool call of such a test is refused. This points the
-    stop at the test's own data directory instead (absent means clear), as the
-    scheduler's stop tests do. A ``bootstrap_profile`` test is left alone: its
-    profile admits the real read. Opt in per module; Tests/Agents opts in all.
-    """
-    data_dir = Path(isolate_test_environment)
-    if not data_dir.is_relative_to(tmp_path):
-        return None
-    from tldw_chatbook import emergency_stop
+    call, through ``emergency_stop.default_emergency_stop_path()``. That lookup
+    is a guarded config read: it refuses in the per-test sandbox
+    (``RecoveryRequired: raw_source_selection_changed``) and in any
+    ``bootstrap_profile`` test that monkeypatches the config readers
+    (``config_directory_selection_unavailable``). The read fails SAFE, so
+    such a test's tool calls were refused in silence -- some still passed,
+    for the wrong reason. Every test therefore gets
+    ``tmp_path / "emergency_stop.json"`` (absent means clear), unless it is
+    marked ``real_emergency_stop_path``.
 
-    path = data_dir / "emergency_stop.json"
-    monkeypatch.setattr(emergency_stop, "default_emergency_stop_path", lambda: path)
-    return path
+    And a run whose stop check could not read the stop at all
+    (``tool_refusals.emergency_stop_unavailable_tool_refusal``) fails the
+    test at teardown, unless it is marked ``emergency_stop_unavailable``:
+    that hold is never silent here.
+    """
+    from tldw_chatbook import emergency_stop
+    from tldw_chatbook.Agents import tool_refusals
+
+    path = tmp_path / "emergency_stop.json"
+    if request.node.get_closest_marker("real_emergency_stop_path") is None:
+        monkeypatch.setattr(emergency_stop, "default_emergency_stop_path", lambda: path)
+    held: list[str] = []
+    unavailable = tool_refusals.emergency_stop_unavailable_tool_refusal
+
+    def record_unavailable() -> str:
+        held.append(request.node.nodeid)
+        return unavailable()
+
+    monkeypatch.setattr(
+        tool_refusals, "emergency_stop_unavailable_tool_refusal", record_unavailable
+    )
+    yield path
+    if held and request.node.get_closest_marker("emergency_stop_unavailable") is None:
+        pytest.fail(
+            f"{len(held)} agent tool call(s) were held because the emergency "
+            "stop's state could not be read (TASK-33620.1.12). Fix the test's "
+            "stop path, or mark it emergency_stop_unavailable if that hold is "
+            "what it tests.",
+            pytrace=False,
+        )
 
 
 def _release_profile_startups(profile_dir: Path) -> None:
