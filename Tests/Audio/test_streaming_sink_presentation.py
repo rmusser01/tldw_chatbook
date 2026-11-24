@@ -390,17 +390,15 @@ async def test_missing_native_finish_acknowledgement_has_bounded_pump_failure(
 
     monkeypatch.setattr(module, "_DRAIN_WAIT_MARGIN_SECONDS", 0.02)
     sink, stream, _events, _speech, _clock = device_case()
+    source_done = asyncio.Event()
 
     async def chunks():
         yield struct.pack(f"<{FRAMES}h", *([8192] * FRAMES))
+        source_done.set()
 
     task = asyncio.create_task(module.pump(sink, chunks()))
-
-    async def wait_for_close():
-        while sink.state == "open":
-            await asyncio.sleep(0)
-
-    await asyncio.wait_for(wait_for_close(), timeout=1)
+    await asyncio.wait_for(source_done.wait(), timeout=1)
+    assert sink.state == "draining"
     stream.tick()
     result = await asyncio.wait_for(task, timeout=1)
     assert result.outcome == "failed" and "drain wait" in result.reason
@@ -441,12 +439,23 @@ def test_production_backend_wrapper_requests_graceful_completion_before_native_a
 
     holder = {}
 
-    def output_stream(**kwargs):
-        kwargs.pop("dtype")
-        holder["stream"] = DelayedStream(**kwargs)
-        return holder["stream"]
+    class OutputStream(DelayedStream):
+        def __init__(self, *, dtype, **kwargs):
+            assert dtype == "int16"
+            super().__init__(**kwargs)
+            self._ptr = object()
+            holder["stream"] = self
 
-    backend = SimpleNamespace(OutputStream=output_stream, CallbackStop=CallbackStop)
+        def close(self, *, ignore_errors):
+            assert ignore_errors is False
+            self._ptr = None
+            super().close()
+
+    backend = SimpleNamespace(
+        OutputStream=OutputStream,
+        CallbackStop=CallbackStop,
+        _ffi=SimpleNamespace(NULL=None, typeof=type),
+    )
     monkeypatch.setattr(module, "_import_sounddevice", lambda: backend)
     sink = module.StreamingPcmSink(on_event=lambda _: None)
     try:
@@ -737,7 +746,29 @@ def test_deferred_tail_completion_keeps_native_close_in_settled_work(
         clock[0] = 10.3
         assert entered.wait(1)
         assert not sink.settle(timeout=0.01)
+        assert not sink.retirement_confirmed
     finally:
         release.set()
         assert sink.settle()
     assert stream.closed
+    assert sink.retirement_confirmed
+
+
+def test_checked_close_failure_after_native_drain_cannot_publish_success(device_case):
+    sink, stream, events, _speech, _clock = device_case()
+    close = stream.close
+
+    def failed_close():
+        raise OSError("native close failed")
+
+    stream.close = failed_close
+    sink.close()
+    stream.tick()
+    stream.finish_output()
+    assert sink.settle()
+    assert sink.terminal_reason == "failed"
+    assert not any(isinstance(event, SinkDrained) for event in events)
+    assert sink.quarantined and not sink.retirement_confirmed
+    stream.close = close
+    assert sink.stop()
+    assert stream.closed and not stream.aborted  # Already drained.
