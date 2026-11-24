@@ -87,6 +87,19 @@ def _retryable(error: Exception) -> bool:
     return isinstance(error, (APIConnectionError, OSError, TimeoutError))
 
 
+def _notify_progress(
+    observer: Callable[[ResearchCopyReceipt], None] | None, receipt: ResearchCopyReceipt
+) -> None:
+    if observer is None:
+        return
+    try:
+        observer(receipt)
+    except Exception as exc:
+        logger.warning(
+            "Copy progress display failed (exception_category={})", type(exc).__name__
+        )
+
+
 def _checkpoint(receipt: ResearchCopyReceipt) -> dict:
     return {"expected_revision": receipt.revision, "lease_token": receipt.lease_token}
 
@@ -128,6 +141,9 @@ class ResearchCopyService:
         self,
         manifest: ResearchCopyManifest,
         confirmation: ResearchCopyConfirmation,
+        *,
+        cancel_event: asyncio.Event | None = None,
+        on_progress: Callable[[ResearchCopyReceipt], None] | None = None,
     ) -> ResearchCopyReceipt:
         confirmation.validate(manifest)
         self.assert_current(manifest)
@@ -142,10 +158,15 @@ class ResearchCopyService:
         stored = await self._off_loop(
             self.receipts.create_from_manifest, manifest, confirmation
         )
-        return await self._execute(stored)
+        return await self._execute(
+            stored, cancel_event=cancel_event, on_progress=on_progress
+        )
 
     async def get_copy_receipt(
-        self, transfer_id: str, *, workspace: QualifiedWorkspaceRef
+        self,
+        transfer_id: str,
+        *,
+        workspace: QualifiedWorkspaceRef,
     ) -> ResearchCopyReceipt | None:
         receipt = await self._off_loop(self.receipts.get, transfer_id)
         if receipt is not None and workspace in (
@@ -156,14 +177,21 @@ class ResearchCopyService:
         return None
 
     async def resume_copy(
-        self, transfer_id: str, *, workspace: QualifiedWorkspaceRef
+        self,
+        transfer_id: str,
+        *,
+        workspace: QualifiedWorkspaceRef,
+        cancel_event: asyncio.Event | None = None,
+        on_progress: Callable[[ResearchCopyReceipt], None] | None = None,
     ) -> ResearchCopyReceipt:
         receipt = await self.get_copy_receipt(transfer_id, workspace=workspace)
         if receipt is None:
             raise ValueError(
                 "This Copy receipt belongs to another workspace or is unavailable"
             )
-        return await self._execute(receipt)
+        return await self._execute(
+            receipt, cancel_event=cancel_event, on_progress=on_progress
+        )
 
     async def _finish(
         self, receipt: ResearchCopyReceipt, status: ResearchCopyStatus
@@ -175,7 +203,13 @@ class ResearchCopyService:
             **_checkpoint(receipt),
         )
 
-    async def _execute(self, receipt: ResearchCopyReceipt) -> ResearchCopyReceipt:
+    async def _execute(
+        self,
+        receipt: ResearchCopyReceipt,
+        *,
+        cancel_event: asyncio.Event | None = None,
+        on_progress: Callable[[ResearchCopyReceipt], None] | None = None,
+    ) -> ResearchCopyReceipt:
         manifest = receipt.manifest
         self.assert_current(manifest)
         migrations = self._require_migrations(manifest)
@@ -190,6 +224,9 @@ class ResearchCopyService:
             manifest.transfer_id,
             expected_revision=receipt.revision,
         )
+        _notify_progress(on_progress, receipt)
+        if cancel_event is not None and cancel_event.is_set():
+            return await self._finish(receipt, ResearchCopyStatus.FAILED_RETRYABLE)
         if migrations is not None:
             try:
                 state = await migrations.begin(
@@ -209,6 +246,9 @@ class ResearchCopyService:
             )
         all_acknowledged = True
         for item in receipt.items:
+            if cancel_event is not None and cancel_event.is_set():
+                outcome = self._failure_status(receipt, TimeoutError())
+                return await self._finish(receipt, outcome)
             if not item.item.actionable:
                 all_acknowledged &= item.item.treatment is CopyTreatment.OMIT
                 continue
@@ -224,6 +264,11 @@ class ResearchCopyService:
             )
             receipt, acknowledged = await self._apply_item(receipt, item, migrations)
             all_acknowledged &= acknowledged
+            _notify_progress(on_progress, receipt)
+        if cancel_event is not None and cancel_event.is_set():
+            return await self._finish(
+                receipt, self._failure_status(receipt, TimeoutError())
+            )
         if not all_acknowledged:
             return await self._finish(receipt, self._failure_status(receipt))
         if migrations is not None and not receipt.server_migration_finalized:

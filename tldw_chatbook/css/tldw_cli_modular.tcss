@@ -19216,7 +19216,8 @@ ResearchScreen #research-window.window {
     color: $text-muted;
 }
 
-#research-manage-workspaces {
+#research-manage-workspaces,
+#research-workspace-actions {
     width: auto;
     min-width: $ds-size-0;
     height: $ds-size-1;
@@ -19227,7 +19228,8 @@ ResearchScreen #research-window.window {
     color: $text;
 }
 
-#research-manage-workspaces:focus {
+#research-manage-workspaces:focus,
+#research-workspace-actions:focus {
     border: none;
     outline: none;
     background: $primary;
@@ -19438,6 +19440,43 @@ ResearchStudioOptions, ResearchStudioActions, ResearchStudioEdit {
 .research-studio-action-scroll, #research-studio-edit-body {
     height: $ds-height-fill;
     min-height: $ds-size-0;
+}
+
+ResearchWorkspaceActions, ResearchCopyTargetDialog, ResearchCopyPreview,
+ResearchCopyProgress, ResearchCopyReceiptView, ResearchSharingDialog {
+    align: center middle;
+    background: $background $ds-opacity-dim;
+}
+
+.research-transfer-dialog {
+    width: $ds-percent-90;
+    max-width: $ds-size-76;
+    height: auto;
+    max-height: $ds-percent-90;
+    padding: $ds-space-1;
+    border: round $accent;
+    background: $panel;
+}
+
+.research-transfer-dialog Static {
+    height: auto;
+}
+
+.research-transfer-scroll-dialog {
+    height: $ds-percent-90;
+}
+
+.research-transfer-scroll {
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+}
+
+.research-share-page {
+    height: auto;
+}
+
+#research-sharing-status {
+    max-height: $ds-size-3;
 }
 
 #research-studio-dialog Static, #research-studio-actions-dialog Static {

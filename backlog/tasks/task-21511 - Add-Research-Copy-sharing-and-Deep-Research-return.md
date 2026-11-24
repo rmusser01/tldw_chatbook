@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@codex'
 created_date: 2026-08-24 05:54
-updated_date: 2026-11-24 18:58
+updated_date: 2026-11-24 20:47
 labels:
 - research
 - workspace
@@ -47,10 +47,15 @@ Add explicit, receipted cross-authority Copy, real server sharing, and a durable
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no new ADR
 
-ADR path: `backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md`
+ADR path: backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md
 
-Reason: ADR-322 already defines Copy-only transfer, receipt ownership, server-only sharing, overlay exclusion, and Deep Research ownership/return. The durable tables and UI implement that accepted boundary.
+Reason: ADR-322 defines Copy-only transfer, receipt ownership, server-only sharing, overlay exclusion, and Deep Research return. The client implements those existing boundaries.
 
-Follow `Docs/superpowers/plans/2026-08-23-research-workspace-copy-sharing-deep-research.md` task-by-task with test-first checkpoints and one scoped commit per completed plan task.
-Implement the approved Copy, Sharing, and Deep Research plan in order under ADR-322. Start with the immutable read-only preflight contract. Server Study generation remains open in TASK-21510 and does not participate in Copy unless both canonical owners advertise a safe import.
+Follow the approved Copy, Sharing, and Deep Research plan in order with targeted tests and a scoped commit for each completed step. TASK-21510 has a canonical Server Study save contract. Generic Copy still requires both owners to expose a safe transfer contract.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+The workspace Actions menu now opens explicit Copy, Local bundle export, and Server sharing. Copy shows the frozen manifest, device-only exclusions, and durable receipts. A repeat Server-to-Local Copy finds its previous owner from the exact qualified receipt. Replacement requires the captured owner revision and a second confirmation. Server sharing supports access edits, guarded links, recipient verification and import, and clone through the sharing service. The compound action opens Share after Copy and its Server migration both complete. Local export uses the same transfer policy and an atomic private file write. A detached Sources pane discards late refresh results.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

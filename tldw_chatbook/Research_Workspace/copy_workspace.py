@@ -2,33 +2,30 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 
 from tldw_chatbook.Workspaces.models import WorkspaceTransferPolicy
 
 from .contracts import (
-    MAX_RESEARCH_SELECTION_IDS,
     CapabilityUnavailableError,
     QualifiedWorkspaceRef,
     WorkspaceDataSource,
 )
 from .copy_adapters import CopyTextArtifact, LocalCopyNoteOwner, TextArtifactCopyOwner
+from .copy_catalog import capture_copy_candidates, get_local_copy_policy
 from .copy_manifest import ResearchCopyCandidate, ResearchCopyPreflightBuilder
 from .copy_models import (
     CopyConflictChoice,
     CopyItemKind,
-    CopyOwnerRef,
     CopyTreatment,
     ResearchCopyItem,
     ResearchCopyManifest,
 )
 from .copy_receipts import CopyReceiptFailure, ResearchCopyReceiptStore
 from .copy_service import CopyOwnerActionError, ResearchCopyService
-from .quick_notes import ResearchNotePageRequest, ResearchQuickNote
+from .quick_notes import ResearchQuickNote
 from .server_migration_receipts import ServerMigrationReceiptService
-from .studio_models import StudioOwnerKind
 
 
 class ResearchWorkspaceCopy:
@@ -104,17 +101,8 @@ class ResearchWorkspaceCopy:
     def new_server_target(self) -> QualifiedWorkspaceRef:
         return self.server.new_copy_workspace()
 
-    async def _page_items(self, fetch: Callable) -> tuple:
-        items = []
-        offset = 0
-        while True:
-            page = await fetch(offset)
-            items.extend(page.items)
-            if not page.has_more:
-                return tuple(items)
-            if not page.items or len(items) >= MAX_RESEARCH_SELECTION_IDS:
-                raise ValueError("Copy inspection exceeded the workspace page limit")
-            offset += len(page.items)
+    async def list_recoverable(self, ref: QualifiedWorkspaceRef):
+        return await self.service._off_loop(self.service.receipts.list_recoverable, ref)
 
     async def candidates(
         self, ref: QualifiedWorkspaceRef
@@ -122,84 +110,7 @@ class ResearchWorkspaceCopy:
         port = (
             self.local if ref.data_source is WorkspaceDataSource.LOCAL else self.server
         )
-        candidates = {}
-        for source in await self._page_items(
-            lambda offset: port.list_sources(ref, limit=100, offset=offset)
-        ):
-            owner = CopyOwnerRef(
-                ref,
-                CopyItemKind.MEDIA,
-                source.catalog_item_id,
-                source.catalog_item_version,
-            )
-            candidates[owner.kind, owner.owner_id] = ResearchCopyCandidate(
-                owner, membership_id=source.source_id
-            )
-        try:
-            notes = await self._page_items(
-                lambda offset: port.list_notes(
-                    ref, ResearchNotePageRequest(limit=100, offset=offset)
-                )
-            )
-        except CapabilityUnavailableError:
-            notes = ()
-        for note in notes:
-            owner = CopyOwnerRef(ref, CopyItemKind.NOTE, note.note_id, note.version)
-            candidates[owner.kind, owner.owner_id] = ResearchCopyCandidate(
-                owner, estimated_bytes=len(note.content.encode("utf-8"))
-            )
-        try:
-            outputs = await self._page_items(
-                lambda offset: port.list_outputs(ref, limit=100, offset=offset)
-            )
-        except CapabilityUnavailableError:
-            outputs = ()
-        for output in outputs:
-            if output.workspace != ref:
-                raise ValueError("The output list returned a different workspace")
-            if output.owner_kind in {
-                StudioOwnerKind.LOCAL_STUDY_DECK,
-                StudioOwnerKind.SERVER_STUDY_DECK,
-            }:
-                kind = CopyItemKind.STUDY_DECK
-            elif output.owner_kind in {
-                StudioOwnerKind.LOCAL_QUIZ,
-                StudioOwnerKind.SERVER_QUIZ,
-            }:
-                kind = CopyItemKind.QUIZ
-            else:
-                kind = CopyItemKind.ARTIFACT
-            owner = CopyOwnerRef(ref, kind, output.owner_id, output.owner_version)
-            candidates[kind, owner.owner_id] = ResearchCopyCandidate(owner)
-        return tuple(candidates.values())
-
-    async def _local_policy(
-        self, candidate: ResearchCopyCandidate
-    ) -> WorkspaceTransferPolicy:
-        ref = candidate.source
-        item_type, role = {
-            CopyItemKind.MEDIA: ("media", "source"),
-            CopyItemKind.NOTE: ("note", "note"),
-            CopyItemKind.ARTIFACT: ("chatbook", "output"),
-            CopyItemKind.STUDY_DECK: ("study_deck", "output"),
-            CopyItemKind.QUIZ: ("study_quiz", "output"),
-        }.get(ref.kind, ("", ""))
-        if not item_type:
-            return candidate.transfer_policy
-        links = await self.service._off_loop(
-            self.registry.get_item_memberships, item_type, ref.owner_id
-        )
-        match = next(
-            (
-                link
-                for link in links
-                if link.workspace_id == ref.workspace.workspace_id and link.role == role
-            ),
-            None,
-        )
-        if match and match.transfer_policy is WorkspaceTransferPolicy.LOCAL_ONLY:
-            return WorkspaceTransferPolicy.LOCAL_ONLY
-        return WorkspaceTransferPolicy(candidate.transfer_policy)
+        return await capture_copy_candidates(port, ref)
 
     async def preflight_copy(
         self,
@@ -234,6 +145,14 @@ class ResearchWorkspaceCopy:
                     {CopyTreatment.CONTENT, CopyTreatment.REFERENCE}
                 )
         rows = await self.candidates(source) if candidates is None else candidates
+        previous = (
+            await self.service._off_loop(
+                self.service.receipts.previous_destinations, source, destination
+            )
+            if candidates is None
+            and destination.data_source is WorkspaceDataSource.LOCAL
+            else {}
+        )
         projected = []
         for candidate in rows:
             owner = (
@@ -243,9 +162,26 @@ class ResearchWorkspaceCopy:
             )
             if candidate.source.workspace != source:
                 raise ValueError("The selected item belongs to another workspace")
+            target = previous.get((candidate.source.kind, candidate.source.owner_id))
+            if target and candidate.source.kind in available:
+                if candidate.source.kind is CopyItemKind.ARTIFACT:
+                    target = await self.artifacts.current_local_destination(target)
+                elif candidate.source.kind is CopyItemKind.NOTE:
+                    note = await self.local.get_note(destination, target.owner_id)
+                    version = (
+                        note.version
+                        if note
+                        and (note.ref, note.note_id) == (destination, target.owner_id)
+                        else None
+                    )
+                    target = replace(target, version=version, snapshot_hash="")
+                candidate = replace(candidate, destination=target)
             if source.data_source is WorkspaceDataSource.LOCAL:
                 candidate = replace(
-                    candidate, transfer_policy=await self._local_policy(candidate)
+                    candidate,
+                    transfer_policy=await get_local_copy_policy(
+                        self.registry, candidate
+                    ),
                 )
             if (
                 candidate.source.kind is CopyItemKind.ARTIFACT

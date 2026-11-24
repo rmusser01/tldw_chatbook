@@ -143,3 +143,40 @@ async def test_copy_blocks_a_changed_source_before_any_destination_write(tmp_pat
         assert owner.saved == {}
     finally:
         db.close()
+
+
+async def test_copy_reports_checkpoints_and_stops_between_items(tmp_path):
+    import asyncio
+
+    db = WorkspaceDB(tmp_path / "workspaces.sqlite")
+    manifest = scoped_copy_manifest()
+    owner = ItemOwner(LOCAL)
+    stop = asyncio.Event()
+    checkpoints = []
+
+    def observe(receipt):
+        checkpoints.append(tuple(row.stage for row in receipt.items))
+        if receipt.items[0].stage is CopyItemStage.VERIFIED:
+            stop.set()
+            raise RuntimeError("detached progress screen")
+
+    try:
+        service = ResearchCopyService(
+            ResearchCopyReceiptStore(db),
+            lambda _item, _target: owner,
+            assert_current=lambda _manifest: None,
+        )
+        partial = await service.execute_copy(
+            manifest,
+            ResearchCopyConfirmation(manifest.manifest_hash, confirmed=True),
+            cancel_event=stop,
+            on_progress=observe,
+        )
+        assert partial.status is ResearchCopyStatus.PARTIALLY_COMPLETED
+        assert checkpoints[-1][0] is CopyItemStage.VERIFIED
+        assert len(owner.saved) == 1
+        completed = await service.resume_copy(manifest.transfer_id, workspace=LOCAL)
+        assert completed.status is ResearchCopyStatus.COMPLETED
+        assert owner.calls.count("create") == 2
+    finally:
+        db.close()

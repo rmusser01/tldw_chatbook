@@ -22,6 +22,9 @@ class ResearchWorkspaceMenu(Horizontal):
             super().__init__()
             self.ref = ref
 
+    class ActionsRequested(Message):
+        """Open the selected workspace's action menu."""
+
     def compose(self) -> ComposeResult:
         yield Static(
             "No research workspace selected.", id="research-workspace-selection"
@@ -29,6 +32,7 @@ class ResearchWorkspaceMenu(Horizontal):
         yield Select(
             [], id="research-workspace-picker", prompt="Workspace", compact=True
         )
+        yield Button("Actions", id="research-workspace-actions", tooltip="Workspace actions", compact=True, disabled=True)
         yield Button(
             "Manage Workspaces...",
             id="research-manage-workspaces",
@@ -48,6 +52,7 @@ class ResearchWorkspaceMenu(Horizontal):
                 ref if any(row.ref == ref for row in workspaces) else Select.NULL
             )
         picker.display = len(choices) > 1
+        self.query_one("#research-workspace-actions", Button).disabled = ref is None
         self.query_one(
             "#research-workspace-selection", Static
         ).display = not picker.display
@@ -61,6 +66,10 @@ class ResearchWorkspaceMenu(Horizontal):
     def open_workspace_owner(self, event: Button.Pressed) -> None:
         event.stop()
         self.post_message(NavigateToScreen("settings", {"category": "workspaces"}))
+
+    @on(Button.Pressed, "#research-workspace-actions")
+    def open_actions(self) -> None:
+        self.post_message(self.ActionsRequested())
 
 
 ResearchPaneName = Literal["sources", "chat", "studio"]

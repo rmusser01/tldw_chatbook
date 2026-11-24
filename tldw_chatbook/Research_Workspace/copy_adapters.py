@@ -169,10 +169,7 @@ class TextArtifactCopyOwner:
         return any(
             link.workspace_id == ref.workspace.workspace_id
             and link.role == "output"
-            and (
-                not outbound
-                or link.transfer_policy is not WorkspaceTransferPolicy.LOCAL_ONLY
-            )
+            and (not outbound or link.transfer_policy is WorkspaceTransferPolicy.COPY)
             for link in links
         )
 
@@ -363,12 +360,19 @@ class TextArtifactCopyOwner:
         links = await _off_loop(
             self.registry.get_item_memberships, "chatbook", target.owner_id
         )
-        return any(
-            link.workspace_id == target.workspace.workspace_id
-            and link.role == "output"
-            and not link.metadata
-            for link in links
+        return len(links) == 1 and (
+            links[0].workspace_id == target.workspace.workspace_id
+            and links[0].role == "output"
+            and not links[0].metadata
         )
+
+    async def current_local_destination(self, target: CopyOwnerRef) -> CopyOwnerRef:
+        """Refresh a previously copied destination through its canonical owner."""
+        if target.workspace.data_source is not WorkspaceDataSource.LOCAL:
+            raise ValueError("Choose a Local artifact destination")
+        row = await self._read(target)
+        version = row.get("artifact_revision") if row else None
+        return replace(target, version=version, snapshot_hash="")
 
     async def reference_destination(
         self, item: ResearchCopyItem, source: CopySourceSnapshot
@@ -376,8 +380,12 @@ class TextArtifactCopyOwner:
         target = item.destination
         if target is None:
             raise CopyOwnerActionError(CopyReceiptFailure.OWNER_UNAVAILABLE)
-        existing = await self.inspect_source(target)
-        if existing.owner != target or existing.body != source.body:
+        row = await self._read(target)
+        if (
+            not row
+            or row.get("artifact_revision") != target.version
+            or self._body(target, row, local=True) != source.body
+        ):
             raise CopyOwnerActionError(CopyReceiptFailure.DESTINATION_CHANGED)
         return target
 
@@ -397,6 +405,7 @@ class TextArtifactCopyOwner:
                 item_type="chatbook",
                 item_id=destination.owner_id,
                 role="output",
+                transfer_policy=WorkspaceTransferPolicy.COPY,
                 title=row["name"],
             )
 

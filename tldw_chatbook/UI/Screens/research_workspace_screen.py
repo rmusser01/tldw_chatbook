@@ -152,6 +152,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         self._quick_note_offset = 0
         self._quick_note_lock = asyncio.Lock()
         self._quick_note_switch_running = False
+        self._workspace_action_open = False
 
     def save_state(self) -> dict[str, object]:
         """Save Phase-1 authority, workspace intent, and responsive view state."""
@@ -527,6 +528,51 @@ class ResearchWorkspaceScreen(BaseAppScreen):
 
         self.run_worker(
             switch(), group="research-quick-note-owner-switch", exit_on_error=False
+        )
+
+    @on(ResearchWorkspaceMenu.ActionsRequested)
+    def open_workspace_actions(self) -> None:
+        if self.controller.selected_ref is None or self._workspace_action_open:
+            return
+        self._workspace_action_open = True
+        self.run_worker(
+            self._show_workspace_actions(), group="research-workspace-actions", exit_on_error=False,
+        )
+
+    async def _show_workspace_actions(self) -> None:
+        from ..Research_Workspace_Modules.workspace_transfer_actions import show_workspace_actions
+
+        try:
+            await show_workspace_actions(self, self.controller.capture_request())
+        finally:
+            self._workspace_action_open = False
+
+    async def _open_research_sharing(self, ref: QualifiedWorkspaceRef, *, draft=None) -> None:
+        from ...Sharing_Interop.server_sharing_service import ServerSharingService
+        from ...Sharing_Interop.sharing_scope_service import SharingScopeService
+        from ..Research_Workspace_Modules.sharing_dialog import ResearchSharingDialog
+
+        adapter = self.controller.port_for_data_source(WorkspaceDataSource.SERVER)
+        if adapter is None:
+            raise ValueError("Configure a Server profile to use workspace sharing.")
+        client = adapter.copy_client(ref)
+        capture = self.controller.capture_request()
+
+        def current():
+            return (
+                self.is_mounted and self.controller.is_current_request(capture)
+                and adapter.copy_client(ref) is client
+            )
+
+        policy = self.app_instance.service_policy_enforcer
+        scope = SharingScopeService(
+            server_service=ServerSharingService(client, policy_enforcer=policy),
+            policy_enforcer=policy,
+        )
+        await self.app.push_screen_wait(
+            ResearchSharingDialog(
+                ref, scope, current=current, draft=draft, server_base_url=client.base_url
+            )
         )
 
     async def _apply_catalog_state(
@@ -1250,13 +1296,25 @@ class ResearchWorkspaceScreen(BaseAppScreen):
     def _show_source_action_recovery(self, message: str) -> None:
         """Publish one sanitized recovery message in the pane and notification log."""
 
-        if self.is_mounted:
+        if self.is_attached and self.app.is_running:
             self.query_one("#research-source-recovery", Static).update(message)
             self.notify(message, severity="warning")
 
     async def _refresh_source_workbench(self) -> None:
+        if not self.is_attached or not self.app.is_running:
+            return
+        if self.controller.selected_ref is None:
+            return
         capture = self.controller.capture_request()
         region = self.query_one("#research-sources-pane", ResearchSourcesRegion)
+
+        def current() -> bool:
+            return (
+                region.is_attached
+                and self.app.is_running
+                and self.controller.is_current_request(capture)
+            )
+
         region.query_one("#research-source-recovery", Static).update(
             f"Loading {capture.ref.data_source.value.title()} sources..."
         )
@@ -1264,36 +1322,38 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             operations = await self._recent_operations(capture.ref)
         except (OSError, ValueError, RuntimeError):
             operations = ()
-            if self.controller.is_current_request(capture):
+            if current():
                 self.notify(
                     "Recent source receipts could not be loaded; owner sources can still refresh.",
                     severity="warning",
                 )
-        if not self.controller.is_current_request(capture):
+        if not current():
             return
         region.sync_receipts(operations, incomplete=len(operations) == 20)
         try:
             capabilities_current = await self.controller.refresh_selected_capabilities()
+            if not capabilities_current or not current():
+                return
             sources_current = await self.controller.refresh_selected_sources(
                 limit=25, offset=self._source_page_offset
             )
             page = self.controller.visible_source_page
-            if not capabilities_current or not sources_current or page is None:
+            if not sources_current or page is None or not current():
                 return
             readiness_current = await self.controller.refresh_selected_readiness(
                 source_ids=tuple(source.source_id for source in page.items)
             )
-            if not readiness_current or not self.controller.is_current_request(capture):
+            if not readiness_current:
                 return
         except CapabilityUnavailableError as exc:
-            if self.controller.is_current_request(capture):
+            if current():
                 region.clear_source_projection(
                     authority=capture.ref.data_source.value.title(),
                     reason=f"{exc.capability.user_message} {exc.capability.recovery_action}".strip(),
                 )
             return
         except Exception:
-            if self.controller.is_current_request(capture):
+            if current():
                 region.clear_source_projection(
                     authority=capture.ref.data_source.value.title(),
                     reason=(
@@ -1302,7 +1362,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                     ),
                 )
             return
-        if not self.controller.is_current_request(capture):
+        if not current():
             return
         region.sync_workspace(
             page,

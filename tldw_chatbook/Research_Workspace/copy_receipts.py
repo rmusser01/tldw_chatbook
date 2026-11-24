@@ -13,6 +13,7 @@ from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 
 from .contracts import QualifiedWorkspaceRef, WorkspaceDataSource
 from .copy_models import (
+    CopyItemKind,
     CopyOwnerRef,
     CopyTreatment,
     ResearchCopyConfirmation,
@@ -283,6 +284,34 @@ class ResearchCopyReceiptStore:
                 (*identity, *identity, limit),
             ).fetchall()
             return tuple(self._require(conn, row["transfer_id"]) for row in rows)
+
+    def previous_destinations(
+        self, source: QualifiedWorkspaceRef, destination: QualifiedWorkspaceRef
+    ) -> dict[tuple[CopyItemKind, str], CopyOwnerRef]:
+        """Find the last receipted owner for each item in this exact authority pair."""
+        validate_copy_workspace(source)
+        validate_copy_workspace(destination)
+        targets = {}
+        with self.db.transaction() as conn:
+            rows = conn.execute(
+                """SELECT transfer_id FROM research_copy_operations
+                   WHERE (source_data_source, source_server_profile_id, source_principal_id, source_workspace_id) = (?, ?, ?, ?)
+                     AND (destination_data_source, destination_server_profile_id, destination_principal_id, destination_workspace_id) = (?, ?, ?, ?)
+                     AND status IN ('completed', 'partially_completed')
+                   ORDER BY updated_at DESC, created_at DESC, transfer_id LIMIT 20""",
+                (*_identity(source), *_identity(destination)),
+            ).fetchall()
+            for row in rows:
+                for item in self._require(conn, row["transfer_id"]).items:
+                    if (
+                        item.destination
+                        and item.stage is CopyItemStage.VERIFIED
+                        and not item.rolled_back
+                    ):
+                        targets.setdefault(
+                            item.item.canonical_identity, item.destination
+                        )
+        return targets
 
     def _require(
         self, conn, transfer_id: str, expected_revision: int | None = None

@@ -282,6 +282,11 @@ class LocalStudioAdapter:
                     item_type=owner.membership_item_type,
                     item_id=owner_id,
                     role="output",
+                    transfer_policy=(
+                        "copy"
+                        if owner.owner_kind is StudioOwnerKind.LOCAL_CHATBOOK
+                        else "reference"
+                    ),
                     title=str(record.get("name") or request.output_kind.value),
                 )
                 return await self._link_metadata(ref, owner, record, link, metadata)

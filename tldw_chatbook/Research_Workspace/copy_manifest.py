@@ -25,6 +25,13 @@ _POLICY_TREATMENTS = {
     WorkspaceTransferPolicy.METADATA_ONLY: CopyTreatment.METADATA_ONLY,
     WorkspaceTransferPolicy.LOCAL_ONLY: CopyTreatment.OMIT,
 }
+
+
+def copy_treatment(policy: WorkspaceTransferPolicy) -> CopyTreatment:
+    """Resolve an outbound membership policy to its content treatment."""
+    return _POLICY_TREATMENTS[WorkspaceTransferPolicy(policy)]
+
+
 _OMIT_CHOICES = {
     CopyConflictChoice.KEEP_DESTINATION,
     CopyConflictChoice.OMIT,
@@ -76,9 +83,7 @@ class ResearchCopyPreflightBuilder:
             CopyConflictChoice(candidate.conflict) if candidate.conflict else None
         )
         allowed = available.get(source.kind, frozenset())
-        treatment = _POLICY_TREATMENTS[
-            WorkspaceTransferPolicy(candidate.transfer_policy)
-        ]
+        treatment = copy_treatment(candidate.transfer_policy)
         if treatment is CopyTreatment.OMIT:
             reason = CopyReason.LOCAL_ONLY
         elif conflict in _OMIT_CHOICES:

@@ -101,6 +101,31 @@ Study also checks the active server profile, account, and workspace before
 consuming the handoff. The Artifacts handoff reuses the Library's canonical
 Chatbook selection.
 
+## Copy, export, and sharing
+
+The workspace Actions menu opens Copy for the selected Local or Server
+workspace. The preview freezes the source, destination, owner revisions,
+treatments, size estimate, and conflict choices. A repeat Server-to-Local Copy
+can find the previous destination in its qualified receipt and refresh the
+current version through its canonical owner. Replacing an eligible Local
+artifact requires a second confirmation. The owner checks that version before
+writing. Copy currently has canonical transfer adapters for text artifacts in
+both directions and Server notes into Local Notes. The preview reports other
+owner types as blocked when their import contract is unavailable.
+
+WorkspaceDB records each item checkpoint and the Server migration receipt.
+Stopping finishes the current checkpoint so a later attempt can recover
+acknowledged owners. Local Export uses the same outbound policy and writes
+reviewed text plus a Markdown manifest into a ZIP at the chosen path. Copy and
+export omit device-only content. Reference and metadata entries contribute no
+document content to the export.
+
+Server sharing uses the captured profile, account, and workspace. Share offers
+team and organization access, clone permission, password and limit settings for
+links, active access editing and revocation, and recipient preview, verification,
+import, and clone. Copy to Server and Share opens the separate Share dialog after
+the Server migration is finalized and Copy reports completion.
+
 ## Runs lifecycle
 
 The Runs screen creates a run through the scope service; the local engine executes in an exclusive worker group per run, persisting progress/events/artifacts and a budget ledger, honoring pause/cancel **between phases**, and on completion optionally inserting an assistant message via the chat handoff (which never raises — failure degrades to a notification). Outputs land in the research DB and as chat messages — not as Library media or workspace quick notes. The server side declares session CRUD and filtered run lists unsupported; see the gotcha below about run deletion.

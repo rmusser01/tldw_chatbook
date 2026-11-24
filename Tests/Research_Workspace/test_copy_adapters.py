@@ -12,8 +12,16 @@ from tldw_chatbook.Research_Workspace.copy_adapters import (
     LocalCopyNoteOwner,
     TextArtifactCopyOwner,
 )
-from tldw_chatbook.Research_Workspace.copy_models import CopyOwnerRef, ResearchCopyItem
+from tldw_chatbook.Research_Workspace.copy_manifest import ResearchCopyCandidate
+from tldw_chatbook.Research_Workspace.copy_models import (
+    CopyConflictChoice,
+    CopyOwnerRef,
+    CopyReason,
+    ResearchCopyConfirmation,
+    ResearchCopyItem,
+)
 from tldw_chatbook.Research_Workspace.copy_service import CopyOwnerActionError
+from tldw_chatbook.Research_Workspace.copy_workspace import ResearchWorkspaceCopy
 from tldw_chatbook.Research_Workspace.local_adapter import LocalResearchWorkspaceAdapter
 from tldw_chatbook.Research_Workspace.quick_notes import ResearchQuickNote
 
@@ -66,6 +74,7 @@ async def test_text_artifacts_copy_both_directions_and_retry_without_new_owner(
         item_type="chatbook",
         item_id=source["id"],
         role="output",
+        transfer_policy="copy",
     )
     item = ResearchCopyItem(
         CopyOwnerRef(LOCAL, "artifact", source["id"], version=1), "copy_content"
@@ -132,6 +141,65 @@ async def test_server_note_copies_to_canonical_local_notes_and_recovers_its_id(
     note = await local.get_note(LOCAL, owner.owner_id)
     assert note.content == "Exact note text" and note.source_ids == ()
     assert await adapter.verify_destination(item, owner)
+
+
+async def test_repeat_copy_preflight_finds_the_exact_receipted_local_artifact(
+    local_studio, monkeypatch
+):
+    registry = local_studio.registry
+    registry.create_workspace(workspace_id=LOCAL.workspace_id, name="Local copy")
+    native = ArtifactServer()
+    native.records["source-report"] = {
+        "id": "source-report",
+        "workspace_id": SERVER.workspace_id,
+        "artifact_type": "report",
+        "status": "complete",
+        "title": "Canonical report",
+        "content": "Original body",
+        "version": 1,
+    }
+    source = CopyOwnerRef(SERVER, "artifact", "source-report", version=1)
+
+    async def candidates(ref):
+        assert ref == SERVER
+        return (ResearchCopyCandidate(source),)
+
+    workspace = ResearchWorkspaceCopy(
+        LocalResearchWorkspaceAdapter(registry),
+        SimpleNamespace(copy_client=lambda ref: native),
+        registry,
+        local_studio.artifacts,
+    )
+    monkeypatch.setattr(workspace, "candidates", candidates)
+    manifest = await workspace.preflight_copy(SERVER, LOCAL)
+    initial = await workspace.service.execute_copy(
+        manifest, ResearchCopyConfirmation(manifest.manifest_hash, True)
+    )
+    target = initial.items[0].destination
+    assert target is not None
+
+    next_preview = await workspace.preflight_copy(SERVER, LOCAL)
+    assert next_preview.items[0].destination == target
+    assert next_preview.items[0].reason is CopyReason.CHOOSE_CONFLICT
+
+    other = registry.create_workspace(
+        workspace_id="other-workspace", name="Other workspace"
+    )
+    registry.link_membership(
+        other.workspace_id, item_type="chatbook", item_id=target.owner_id, role="output"
+    )
+    replace_preview = await workspace.preflight_copy(
+        SERVER,
+        LOCAL,
+        (
+            ResearchCopyCandidate(
+                source,
+                destination=target,
+                conflict=CopyConflictChoice.REPLACE_DESTINATION,
+            ),
+        ),
+    )
+    assert replace_preview.items[0].reason is CopyReason.REPLACE_UNAVAILABLE
 
 
 async def test_local_only_link_cannot_be_read_for_outbound_copy(local_studio):
