@@ -445,6 +445,11 @@ inspect unmigrated or rollback snapshots, so new queries are version-gated.
   recreate state after create/clear. Checkpoints atomically update the identified
   foreground and queue bookmarks, cursor, return intent and revision. Read-only
   restoration projects unfinished state paused without rewriting snapshots.
+  The profile key uses the installed owner's selector domain:
+  `sha256(str(profile_paths.lexical_path(config_selector)).encode("utf-8"))[:24]`
+  in hexadecimal. Display names and installation/catalog UUIDs are different
+  identities. Profiles intentionally sharing a physical DB keep separate session
+  and empty witnesses; the common DB lease serializes their live holders.
 - Bind local DB integer item IDs explicitly; UI/server identifier strings grant
   no local lookup authority. Brief admission validates the saved briefing's
   selection/citation membership before fetching article bodies. Freeze bounded
@@ -459,6 +464,16 @@ inspect unmigrated or rollback snapshots, so new queries are version-gated.
   Supported raw-SQL deletion/cascades must not bypass source invalidation or the
   active-holder guard. Arbitrary external legacy writers remain outside the
   cooperative protocol.
+  Public destructive methods admit their DB and lock companions before entering
+  the transaction. Direct SQL affecting protected listening state uses an explicit
+  destructive-transaction context; an ordinary transaction refuses unowned effects
+  even when no competing holder exists. SQLite effect guards check an existing
+  exact lease only: they do not acquire native resources or expand an already-open
+  core operation's pathname authority. Ordinary non-destructive polling writes
+  retain their existing transaction path.
+  The DB reaches the domain mutation context through its existing typed
+  `Backup_Recovery.participants` seam; inert domain models keep the established
+  layer rule. No broad upward-import exception or native-path grant is added.
 - Source deletion scrubs affected speech snapshots and private provenance,
   detaches bookmarks/artifacts and revokes generation in the same transaction.
   Keep unavailable queue placeholders. Retain only generation-unique relative
@@ -476,6 +491,11 @@ inspect unmigrated or rollback snapshots, so new queries are version-gated.
   contract supports these primitives; its three focused no-replace/barrier cases
   passed without changing qualification policy. This is primitive evidence,
   not yet article-persistence or backup evidence.
+  The existing TTS package is lazy and its container validator imports no runtime
+  owner or optional audio/UI dependency. Expose the same callable as
+  `validate_controlled_wav`, retaining its physical-frame argument and private
+  alias; recovery/storage reuse it directly. A fresh-interpreter regression blocks
+  runtime imports and native DLL loading. No parser move or format change is needed.
 - All entry roles protect their referenced artifacts. Missing/corrupt/DB-only
   restored audio remains unavailable with its old bookmark identity; only explicit
   regeneration binds new bytes at zero. Reconcile interrupted rows and managed
@@ -488,6 +508,14 @@ inspect unmigrated or rollback snapshots, so new queries are version-gated.
   and rollback. Relative article keys need no SQL pathname rewrite; keep the
   existing briefing relocation authorizer narrow. Do not infer declared peer
   identity from owner/basename alone or reopen historical source paths.
+  A reviewed incoming candidate can rebind listening profile keys to the exact
+  declared destination config selector through a separate narrow installed data
+  update. Reject destination-key collisions, including foreign audio records when
+  no source session exists. Same-place local-snapshot rollback does no rebinding
+  and retains its original DB bytes. Detached import bridges the portable
+  selector to the acquired selector on the normalized private image before sealing;
+  the later restore then uses its reviewed destination mapping. Rebinding grants
+  no playback, provider or filesystem authority.
 - A cheap installed producer gate closes intake and drains actual storage work
   before maintenance. Ordinary storage admission covers DB, lock and asset paths
   through physical retirement. Long-lived listening holders must release/drain
