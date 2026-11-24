@@ -711,6 +711,14 @@ def _bulk_keyword_refusal_reason(error: BaseException) -> str:
 #: Counted in layout passes since PR #3423 rebase 21: refreshes ran out in ms.
 _TRASH_LANDING_SETTLE_DEFERRALS = 5
 
+#: PR #3423 rebase 21 fix round 1 (review M-2): the separate, generous bound
+#: on the layout passes a keep-in-view waits while the Trash's canvas has a
+#: Notes sync queued or a recompose running. Those waits end when that
+#: recompose runs, but only by convention: ``LibraryNotesCanvas.sync_state``'s
+#: ``lasting_add`` branch can leave a queued follow-up with no recompose, and
+#: then the flag never clears and the offset would stay withheld until input.
+_TRASH_LANDING_RESYNC_WAITS = 4 * _TRASH_LANDING_SETTLE_DEFERRALS
+
 
 def _is_framework_focus_landing(host: Any, focused: Any) -> bool:
     """Whether focus sits where Textual parked it, not where anyone put it.
@@ -8642,7 +8650,9 @@ class LibraryNotesController:
             role,
         )
 
-    def _keep_landed_trash_control_in_view(self, role: str, deferrals: int = 0) -> None:
+    def _keep_landed_trash_control_in_view(
+        self, role: str, deferrals: int = 0, resync_waits: int = 0
+    ) -> None:
         """Scroll a landed Trash control into view, if it still has focus.
 
         Only while the landing still stands: the owed role unchanged (a real
@@ -8661,44 +8671,57 @@ class LibraryNotesController:
         on that framework landing, the check is deferred -- a bounded number
         of times -- with the offset still withheld.
 
-        PR #3423 rebase 21 (2026-11-24, traced under 8-way load): in all 48
+        PR #3423 rebase 21 (2026-11-24, traced under 8-way load): in all 57
         traced landings the check settled before its control had any layout
         -- the screen runs ``call_after_refresh`` callbacks before a
         recomposed list is laid out, and five refresh deferrals burned out in
         about 6 ms -- so the scroll did nothing; and a sync queued after the
         landing then replaced the row before any later scroll reached it (the
-        last row purged below the fold, 2 runs in 40). So the check waits for
-        the screen's next LAYOUT pass instead (``_recheck_landed_trash_
-        control_after_layout``): while a Notes sync is still queued -- its
-        recompose will prune the control and its replay land the new one,
-        so that wait is not counted -- and, bounded, while the control has
-        no layout yet or focus is parked.
+        last row purged below the fold, 2 of 48 instrumented runs). So the
+        check waits for the screen's next LAYOUT pass instead (``_recheck_
+        landed_trash_control_after_layout``): while the Trash's canvas has a
+        Notes sync queued or a recompose running -- it will prune the control
+        and its replay land the new one, so that wait has its own, larger
+        bound (``_TRASH_LANDING_RESYNC_WAITS``) -- and, bounded, while the
+        control has no layout yet or focus is parked. Fix round 1 (review
+        M-1): no control to resolve (a recompose between its prune and its
+        mount) waits on that canvas the same way instead of settling.
+
+        Args:
+            role: The landing's Trash role.
+            deferrals: Layout passes spent waiting on the control itself.
+            resync_waits: Layout passes spent waiting on the canvas.
         """
         in_view = self._library_notes_view == "trash" and self._trash_focus_role == role
         target = self._library_notes_trash_focus_target(role) if in_view else None
         focused = self.focused
-        if target is not None and (
-            focused is target or _is_framework_focus_landing(self, focused)
+        if in_view and (
+            target is None
+            or focused is target
+            or _is_framework_focus_landing(self, focused)
         ):
-            # The canvas whose recompose rebuilds the control (the Notes work
-            # pane hosts the Trash), where every Notes sync queues its replay.
-            canvas = next(
-                (
-                    node
-                    for node in target.ancestors
-                    if isinstance(node, PostRecomposeCallback)
-                ),
-                None,
+            canvas = LibraryNotesController._library_notes_trash_canvas(self, target)
+            rebuilding = (
+                canvas is not None
+                and resync_waits < _TRASH_LANDING_RESYNC_WAITS
+                and (
+                    canvas.has_pending_recompose_callback
+                    # ``RecomposeCaptureGuard``'s flag: a separate mixin.
+                    or getattr(canvas, "recompose_in_flight", False)
+                )
             )
-            resync_queued = (
-                canvas is not None and canvas.has_pending_recompose_callback
+            unsettled = (
+                target is not None
+                and deferrals < _TRASH_LANDING_SETTLE_DEFERRALS
+                and (focused is not target or not target.size)
             )
-            unsettled = deferrals < _TRASH_LANDING_SETTLE_DEFERRALS and (
-                focused is not target or not target.size
-            )
-            if (resync_queued or unsettled) and (
+            if (rebuilding or unsettled) and (
                 LibraryNotesController._recheck_landed_trash_control_after_layout(
-                    self, canvas, role, deferrals if resync_queued else deferrals + 1
+                    self,
+                    canvas,
+                    role,
+                    deferrals if rebuilding else deferrals + 1,
+                    resync_waits + 1 if rebuilding else resync_waits,
                 )
             ):
                 return
@@ -8708,8 +8731,41 @@ class LibraryNotesController:
             return
         target.scroll_visible(animate=False, force=True, immediate=True)
 
+    def _library_notes_trash_canvas(self, control: Any = None) -> Any:
+        """The canvas that composes the Trash, where every Notes sync queues.
+
+        With a control, its nearest ``PostRecomposeCallback`` ancestor (the
+        Notes work pane today). Without one -- a recompose between pruning
+        the Trash's controls and mounting new ones -- the canvas in Trash
+        mode: the work pane, or ``#library-notes-canvas`` in the legacy
+        compose that has no work pane. ``_sync_library_canvas`` queues its
+        replay on exactly that canvas (``follow_up_canvas``).
+
+        Args:
+            control: A mounted Trash control, or ``None``.
+
+        Returns:
+            The canvas, or ``None`` when no canvas shows the Trash.
+        """
+        if control is not None:
+            return next(
+                (
+                    node
+                    for node in control.ancestors
+                    if isinstance(node, PostRecomposeCallback)
+                ),
+                None,
+            )
+        for canvas in (
+            self._library_compose_scoped_ref("#library-note-work-pane"),
+            self._library_layout_ref("#library-notes-canvas"),
+        ):
+            if canvas is not None and canvas.mode == "trash":
+                return canvas
+        return None
+
     def _recheck_landed_trash_control_after_layout(
-        self, canvas: Any, role: str, deferrals: int
+        self, canvas: Any, role: str, deferrals: int, resync_waits: int = 0
     ) -> bool:
         """Run a landing's keep-in-view again after the screen's next layout.
 
@@ -8721,7 +8777,8 @@ class LibraryNotesController:
         Args:
             canvas: The canvas holding the landed control, or ``None``.
             role: The landing's Trash role.
-            deferrals: The bounded waits spent, this one included.
+            deferrals: The bounded waits on the control, this one included.
+            resync_waits: The waits on the canvas, this one included.
 
         Returns:
             False when there is no running canvas to wait on: the caller
@@ -8737,6 +8794,7 @@ class LibraryNotesController:
                 partial(LibraryNotesController._keep_landed_trash_control_in_view, self),
                 role,
                 deferrals,
+                resync_waits,
             )
 
         signal.subscribe(canvas, after_layout, immediate=True)

@@ -936,7 +936,12 @@ _BUDGETS: dict[str, int] = {
     # layout``) while a Notes sync is queued, its control has no layout yet
     # or focus is parked, instead of settling before any layout:
     # 9195 -> 9258 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 9258,
+    # 2026-11-24, that fix's review round 1 (same owner decision: expand
+    # limits, don't contort code): a check with no control to resolve waits
+    # on the canvas in Trash mode (``_library_notes_trash_canvas``, M-1), and
+    # the wait on a queued sync has its own cap, ``_TRASH_LANDING_RESYNC_
+    # WAITS`` (M-2): 9258 -> 9316 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 9316,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

@@ -40,6 +40,7 @@ from tldw_chatbook.Library.library_notes_state import (
 from tldw_chatbook.Library.library_notes_tree_paging import NotesBranchKey
 from tldw_chatbook.Notes.note_folder_models import FolderPlacementId
 from tldw_chatbook.UI.Library_Modules.library_notes_controller import (
+    _TRASH_LANDING_RESYNC_WAITS,
     LibraryNotesController,
 )
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
@@ -1241,7 +1242,11 @@ def test_the_trash_offset_is_withheld_only_while_a_page_landing_settles() -> Non
     """
     listing = SimpleNamespace(trash_page=1)
     fake = SimpleNamespace(
-        _library_layout_ref=lambda _selector: listing,
+        _library_layout_ref=lambda selector: (
+            listing if selector == "#library-notes-trash-list" else None
+        ),
+        # No canvas shows the Trash: a check with no control settles at once.
+        _library_compose_scoped_ref=lambda _selector: None,
         _library_notes_trash=SimpleNamespace(page=1),
         _library_notes_view="trash",
         _trash_focus_role="trash-previous",
@@ -1765,15 +1770,22 @@ class _WorkPane(PostRecomposeCallback):
     """The canvas holding the Trash: a queued replay, a screen to lay out."""
 
     is_running = True
+    recompose_in_flight = False
 
-    def __init__(self) -> None:
+    def __init__(self, mode: str = "trash") -> None:
+        self.mode = mode
         self.screen = SimpleNamespace(screen_layout_refresh_signal=_LayoutSignal())
 
 
-def _landing_fake(control) -> SimpleNamespace:
+def _landing_fake(
+    control, *, work_pane: _WorkPane | None = None, notes_canvas: _WorkPane | None = None
+) -> SimpleNamespace:
     """A controller one Restore landed (``trash-restore:19``), still settling.
 
     Focus starts on ``control``; ``fake.grip`` is Textual's reset landing.
+    ``work_pane``/``notes_canvas`` are what the controller resolves for a
+    check with no control (``#library-note-work-pane``/``#library-notes-
+    canvas``).
     """
     queued: list[tuple] = []
     grip = SimpleNamespace(id="library-browse-items-grip")
@@ -1782,6 +1794,12 @@ def _landing_fake(control) -> SimpleNamespace:
         _trash_focus_role="trash-restore:19",
         _trash_landing_settling="trash-restore:19",
         _library_notes_trash_focus_target=lambda _role: control,
+        _library_compose_scoped_ref=lambda selector: (
+            work_pane if selector == "#library-note-work-pane" else None
+        ),
+        _library_layout_ref=lambda selector: (
+            notes_canvas if selector == "#library-notes-canvas" else None
+        ),
         focused=control,
         call_later=lambda *args: queued.append(args),
         _screen=SimpleNamespace(
@@ -1855,9 +1873,9 @@ def test_a_landing_waits_while_a_pruning_sync_has_focus_parked() -> None:
 def test_a_landing_waits_for_its_control_to_be_laid_out() -> None:
     """PR #3423 rebase 21: a focused control with no layout is not settled.
 
-    Under 8-way load all 48 traced landings ran this check before the
+    Under 8-way load all 57 traced landings ran this check before the
     recomposed list was laid out: the scroll did nothing and the marker went,
-    and the purged-below-the-fold row stayed under the fold (2 runs in 40).
+    and the purged-below-the-fold row stayed under the fold (2 of 48 instrumented runs).
     The check waits for the next layout pass, counted against the bound.
     """
     scrolled: list[str] = []
@@ -1915,10 +1933,10 @@ def test_a_landing_waits_out_a_queued_notes_sync_without_spending_the_bound() ->
     # A layout pass while it is still queued: the check runs again, with the
     # bound unspent, and waits again.
     canvas.screen.screen_layout_refresh_signal.publish()
-    ((check, role, deferrals),) = fake.queued
-    assert (role, deferrals) == ("trash-restore:19", 5)
+    ((check, role, deferrals, resync_waits),) = fake.queued
+    assert (role, deferrals, resync_waits) == ("trash-restore:19", 5, 1)
     fake.queued.clear()
-    check(role, deferrals)
+    check(role, deferrals, resync_waits)
     assert scrolled == []
     assert list(canvas.screen.screen_layout_refresh_signal.subscribed) == [canvas]
 
@@ -1926,6 +1944,92 @@ def test_a_landing_waits_out_a_queued_notes_sync_without_spending_the_bound() ->
     _layout_pass(fake, canvas)
     assert scrolled == ["row"]
     assert fake._trash_landing_settling == ""
+
+
+def test_a_queued_sync_that_never_recomposes_is_waited_out_only_so_long() -> None:
+    """Fix round 1 (review M-2): the wait on a queued sync has its own cap.
+
+    The flag clears only when the canvas recomposes, and ``sync_state``'s
+    ``lasting_add`` branch can leave a follow-up queued with no recompose.
+    The check then waits ``_TRASH_LANDING_RESYNC_WAITS`` layout passes, not
+    until the next input, and settles on its laid-out control.
+    """
+    scrolled: list[str] = []
+    canvas = _WorkPane()
+    canvas.queue_after_recompose(lambda: None)  # never runs
+    control = SimpleNamespace(
+        scroll_visible=lambda **_kwargs: scrolled.append("row"),
+        size=Size(11, 1),
+        ancestors=(canvas,),
+    )
+    fake = _landing_fake(control)
+
+    LibraryNotesController._keep_landed_trash_control_in_view(fake, "trash-restore:19")
+    passes = 0
+    while fake._trash_landing_settling and passes < 2 * _TRASH_LANDING_RESYNC_WAITS:
+        assert scrolled == []
+        _layout_pass(fake, canvas)
+        passes += 1
+    assert passes == _TRASH_LANDING_RESYNC_WAITS
+    assert fake._trash_landing_settling == ""
+    assert scrolled == ["row"]
+    assert canvas.screen.screen_layout_refresh_signal.subscribed == {}
+
+
+def test_a_check_with_no_control_waits_on_the_canvas_in_trash_mode() -> None:
+    """Fix round 1 (review M-1): the prune window does not settle the landing.
+
+    A recompose between pruning the Trash's controls and mounting the new ones
+    leaves the role with no control. The check waits on the canvas in Trash
+    mode -- the work pane, or ``#library-notes-canvas`` in the legacy compose
+    with no work pane -- while it recomposes or has a sync queued, and
+    settles as before when no canvas shows the Trash or nothing is pending.
+    """
+    scrolled: list[str] = []
+    work_pane = _WorkPane()
+    control = SimpleNamespace(
+        scroll_visible=lambda **_kwargs: scrolled.append("row"),
+        size=Size(11, 1),
+        ancestors=(work_pane,),
+    )
+    mounted: list[object] = []
+    fake = _landing_fake(None, work_pane=work_pane, notes_canvas=_WorkPane("list"))
+    fake._library_notes_trash_focus_target = lambda _role: (
+        mounted[0] if mounted else None
+    )
+    fake.focused = fake.grip  # the prune parked focus
+
+    work_pane.recompose_in_flight = True
+    LibraryNotesController._keep_landed_trash_control_in_view(fake, "trash-restore:19")
+    assert fake._trash_landing_settling == "trash-restore:19"
+    assert list(work_pane.screen.screen_layout_refresh_signal.subscribed) == [work_pane]
+
+    # The recompose mounted the new row and its replay focused it.
+    work_pane.recompose_in_flight = False
+    mounted.append(control)
+    fake.focused = control
+    _layout_pass(fake, work_pane)
+    assert scrolled == ["row"]
+    assert fake._trash_landing_settling == ""
+
+    # The legacy compose: the Trash in ``#library-notes-canvas``, no work pane.
+    legacy = _WorkPane()
+    legacy.queue_after_recompose(lambda: None)
+    fake = _landing_fake(None, notes_canvas=legacy)
+    fake.focused = fake.grip
+    LibraryNotesController._keep_landed_trash_control_in_view(fake, "trash-restore:19")
+    assert fake._trash_landing_settling == "trash-restore:19"
+    assert list(legacy.screen.screen_layout_refresh_signal.subscribed) == [legacy]
+
+    # Nothing pending, or no canvas in Trash mode: it settles as before.
+    for quiet in (_WorkPane(), _WorkPane("list")):
+        fake = _landing_fake(None, work_pane=quiet)
+        fake.focused = fake.grip
+        LibraryNotesController._keep_landed_trash_control_in_view(
+            fake, "trash-restore:19"
+        )
+        assert fake._trash_landing_settling == ""
+        assert quiet.screen.screen_layout_refresh_signal.subscribed == {}
 
 
 @pytest.mark.asyncio
