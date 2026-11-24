@@ -8,8 +8,17 @@ import struct
 import threading
 import wave
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
+from Tests.TTS.owned_output_fakes import (  # noqa: F401
+    ConsoleFilePlayer,
+    drain_handler_playback,
+    forbid_native_audio,
+)
+from tldw_chatbook.TTS import audio_output_runs
+from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership
 
 from Tests.TTS_Events.test_spoken_feedback_streaming import _RecordingSink
 from tldw_chatbook.Event_Handlers.TTS_Events import tts_events
@@ -18,6 +27,7 @@ from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
 from tldw_chatbook.TTS.legacy_bridge import legacy_provider_specs
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.TTS_Generation import TTSService
+from tldw_chatbook.Utils.platform_files import os as platform_os
 
 PCM = struct.pack("<hh", 2000, -2000) * 1200
 SELECTIONS = {
@@ -131,6 +141,7 @@ async def test_custom_openai_endpoint_does_not_claim_an_unknown_pcm_rate(audio_f
 class _Handler(tts_events.TTSEventHandler):
     def __init__(self, service):
         super().__init__()
+        self.app = SimpleNamespace(audio_output=AudioOutputOwnership())
         self._tts_service = service
         self.messages = []
 
@@ -156,7 +167,7 @@ async def test_explicit_legacy_pcm_uses_the_existing_sink_without_a_file(
             sinks.append(self)
 
     monkeypatch.setattr(tts_events, "sink_available", lambda: True)
-    monkeypatch.setattr(tts_events, "StreamingPcmSink", Sink)
+    monkeypatch.setattr(audio_output_runs, "StreamingPcmSink", Sink)
     try:
         for _turn in range(2):
             await handler._generate_tts("Explicit PCM request.", "pcm-stream", None)
@@ -194,13 +205,16 @@ async def test_pcm_file_fallback_is_complete_wav_and_repeated_playable(
     class CannotOpenSink(_RecordingSink):
         _open_should_fail = True
 
-    def play(path):
-        _assert_complete_wav(path)
-        played.append(path)
+    class Player(ConsoleFilePlayer):
+        def play_prepared(self, plan, **kwargs):
+            accepted = super().play_prepared(plan, **kwargs)
+            _assert_complete_wav(plan.file_path)
+            played.append(plan.file_path)
+            return accepted
 
     monkeypatch.setattr(tts_events, "sink_available", lambda: sink_present)
-    monkeypatch.setattr(tts_events, "StreamingPcmSink", CannotOpenSink)
-    monkeypatch.setattr(tts_events, "play_audio_file", play)
+    monkeypatch.setattr(audio_output_runs, "StreamingPcmSink", CannotOpenSink)
+    monkeypatch.setattr(audio_output_runs, "SimpleAudioPlayer", Player)
     try:
         for turn in range(2):
             await handler._generate_tts("A synthetic PCM reply.", "pcm-turn", None)
@@ -217,6 +231,7 @@ async def test_pcm_file_fallback_is_complete_wav_and_repeated_playable(
             await handler.handle_tts_playback(
                 tts_events.TTSPlaybackEvent(message_id="pcm-turn", action="play")
             )
+            await drain_handler_playback(handler)
             assert len(played) == turn + 1
         assert len(requests) == 2
         assert all(request.response_format == "pcm" for request in requests)
@@ -343,7 +358,7 @@ def test_pcm_playback_copy_is_complete_stereo_and_preserves_source(tmp_path):
             assert audio.getnframes() == len(PCM) * 20 // 4
             assert audio.readframes(audio.getnframes()) == PCM * 20
         assert source.read_bytes() == PCM * 20
-        assert copied.stat().st_mode & 0o777 == 0o600
+        assert platform_os.stat(copied).st_mode & 0o777 == 0o600
     finally:
         copied.unlink()
 
@@ -352,22 +367,23 @@ def test_pcm_copy_writer_failure_removes_only_its_partial_copy(tmp_path, monkeyp
     source = tmp_path / "source.pcm"
     source.write_bytes(PCM * 20)
     destinations = []
-    create = pcm_playback.create_secure_temp_file
+    create = pcm_playback.NamedTemporaryFile
 
     def track(*args, **kwargs):
         result = create(*args, **kwargs, dir=str(tmp_path))
-        destinations.append(result)
+        destinations.append(Path(result.name))
         return result
 
     write = wave.Wave_write.writeframesraw
 
     def broken_write(self, chunk):
+        assert platform_os.stat(destinations[-1]).st_mode & 0o777 == 0o600
         write(self, chunk)
         raise OSError("Synthetic local copy failure")
 
-    monkeypatch.setattr(pcm_playback, "create_secure_temp_file", track)
+    monkeypatch.setattr(pcm_playback, "NamedTemporaryFile", track)
     monkeypatch.setattr(wave.Wave_write, "writeframesraw", broken_write)
     with pytest.raises(OSError, match="Synthetic"):
         pcm_playback.create_pcm16_wav_copy(source, 24000)
-    assert destinations and all(not Path(path).exists() for path in destinations)
+    assert destinations and all(not path.exists() for path in destinations)
     assert source.read_bytes() == PCM * 20
