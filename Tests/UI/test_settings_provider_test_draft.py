@@ -884,7 +884,8 @@ def test_exact_evidence_copy_keeps_listing_and_generation_independent():
 
 def test_a_key_accepted_by_its_listing_reads_verified_and_never_generated():
     """TASK-33005.3 (AC#2/#5/#6): Settings words a listing-accepted cloud key
-    'Ready · verified HH:MM' and keeps Generation 'not tested'."""
+    'Key verified HH:MM' (TASK-34100.2: the check proves the key, not a
+    reply) and keeps Generation 'not tested'."""
     from datetime import datetime
 
     identity = _semantic_identity(
@@ -913,7 +914,7 @@ def test_a_key_accepted_by_its_listing_reads_verified_and_never_generated():
         )
     )
 
-    assert rows["Readiness"] == "Ready · verified 14:04"
+    assert rows["Readiness"] == "Key verified 14:04"
     # TASK-33005.4 (rewritten on purpose): the ADR-012 outcome phrase.
     assert rows["Key"] == "saved in config · key accepted (1 model listed)"
     assert rows["Generation"] == "not tested"

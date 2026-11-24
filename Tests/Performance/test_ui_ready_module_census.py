@@ -389,6 +389,23 @@ ABSENT_AT_READY_MODULES = (
     "tldw_chatbook.UI.LLM_Management.vllm_setup",
     "tldw_chatbook.LLM_Calls.anthropic_subscription",
     "tldw_chatbook.Chat.console_trace_regex_worker",
+    # PR #3517 CI (TASK-34100.2, ADR-097): a send's transport retry and a
+    # 429's provider reason are send-time work (Tests/Packaging/
+    # test_first_chat_boot_closure.py). `Provider_Contract.provider_setup_facts`
+    # left this list on the 2026-11-19 rebase onto dev a6df4d8d48: dev's
+    # TASK-40300 (40a1ca25ae) readiness checks every provider's endpoint at
+    # compose (`endpoint_refusal -> _route_owning_presets`), so it is resident
+    # at ready on dev itself. The branch's window ledger still interprets an
+    # endpoint only when a window was recorded (test_first_chat_readiness.py).
+    "tldw_chatbook.LLM_Calls.chat_transport_retry",
+    "tldw_chatbook.LLM_Calls.provider_reason",
+    # PR #3517's round-24 port (TASK-34100.2; owner decision 2026-11-23,
+    # "lazy-load, no raises"): the env-key launch notice loads only once a
+    # notice is held (app.py's `_env_key_notice`), and the Get started card's
+    # offers only when a blocking card syncs or an offer is clicked
+    # (chat_screen.py), never on a boot whose card is quiet.
+    "tldw_chatbook.app_env_key_notice",
+    "tldw_chatbook.UI.Console_Modules.setup_card_offers",
 )
 
 #: Anti-vacuity: if these are not resident, the boot did not actually mount

@@ -332,3 +332,103 @@ async def test_a_refused_enter_names_the_blocker_the_gate_stopped_on(monkeypatch
             "Console send blocked: Library search has no available evidence. "
             "Review source authority before sending."
         ]
+
+
+@pytest.mark.asyncio
+async def test_a_full_context_strip_names_its_fix_and_never_links_setup(monkeypatch):
+    """TASK-34100.2 review v5r2 G2C-R3-2: the capacity strip is not a setup link.
+
+    A model whose reply reservation fills its context window reads 'Send
+    blocked — fix model limits to continue'. The composer made every blocker
+    but an image refusal a link into the first-run wizard, so this strip
+    opened setup, where no model limit is set. The fix lives in Chat settings
+    (the header's and the switcher's Fix model limits open Max tokens), so
+    the strip names it and never links setup; since review v5r4 (G2C-R4-3)
+    it links Chat settings instead (the click is the next test). Real
+    readiness: an OpenAI key in the environment and gpt-4o, whose 128k
+    catalog window the session's reply maximum fills.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-strip-capacity")
+    _app, host = _ready_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        session_id = store.ensure_session().id
+        store.replace_session_settings(
+            session_id,
+            ConsoleSessionSettings(provider="openai", model="gpt-4o", max_tokens=128_000),
+        )
+        await console._sync_native_console_chat_ui()
+        composer.load_draft("hello")
+        console._sync_console_control_bar()
+        await pilot.pause()
+
+        assert console._console_composer_send_blocker().code == "model_limits"
+        strip = composer.query_one("#console-send-disabled-reason", Static)
+        assert strip.content.plain == "Send blocked — fix model limits to continue ›"
+        assert "run_setup_wizard" not in strip.content.markup
+        assert "@click=fix_model_limits" in strip.content.markup
+        assert not composer.has_class("console-composer-setup-blocked")
+        assert composer.has_class("console-composer-limits-blocked")
+        assert composer.query_one("#console-send-message", Button).disabled
+
+
+@pytest.mark.asyncio
+async def test_clicking_the_full_context_strip_opens_chat_settings_on_max_tokens(
+    monkeypatch,
+):
+    """TASK-34100.2 review v5r4 (G2C-R4-3, LV3-1): the strip is a way out.
+
+    After G2C-R3-2 the capacity strip stopped linking setup and became plain
+    text that did nothing (live r3-fresh/11, v3-hand/22). TASK-21145 ruled
+    that a Send blocker carries its own way out, so a click now does what
+    the transcript's **Fix model limits** does: the screen's provider
+    recovery opens Chat settings with the cursor in Max tokens. It never
+    opens the setup wizard (spied here: the harness has no such action).
+    Same real readiness as above.
+    """
+    from Tests.UI.test_console_hook_review_send_freeze import _until
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsModal,
+    )
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-strip-capacity")
+    _app, host = _ready_host()
+    wizard_runs: list[bool] = []
+    monkeypatch.setattr(
+        type(host),
+        "action_run_setup_wizard",
+        lambda self: wizard_runs.append(True),
+        raising=False,
+    )
+    async with host.run_test(size=(235, 52)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        session_id = store.ensure_session().id
+        store.replace_session_settings(
+            session_id,
+            ConsoleSessionSettings(provider="openai", model="gpt-4o", max_tokens=128_000),
+        )
+        await console._sync_native_console_chat_ui()
+        composer.load_draft("hello")
+        console._sync_console_control_bar()
+        await pilot.pause()
+        strip = composer.query_one("#console-send-disabled-reason", Static)
+        assert strip.content.plain.startswith(
+            "Send blocked — fix model limits to continue"
+        )
+
+        # Inside the text, past the strip's one-cell padding.
+        await pilot.click(strip, offset=(4, 0))
+        opened = await _until(
+            lambda: isinstance(host.screen, ConsoleSettingsModal)
+            and getattr(host.focused, "id", None) == "console-settings-max-tokens",
+            10,
+        )
+        focused_id = getattr(host.focused, "id", None)
+        top = type(host.screen).__name__
+
+    assert wizard_runs == []
+    assert opened, f"top screen {top}, focus {focused_id}"

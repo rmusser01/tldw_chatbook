@@ -94,6 +94,10 @@ class ModelDiscoveryError:
     #: categories: "unauthorized", "timeout", "connection_refused", ...);
     #: ``None`` when no request was sent or none applies.
     category: str | None = None
+    #: TASK-34100.2 (gap-01): a rejected key's reason in the provider's own
+    #: words (scrubbed, bounded, never the key), for every surface to show;
+    #: ``""`` when the provider gave none.
+    provider_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -107,6 +111,11 @@ class ModelDiscoveryResult:
     models: tuple[DiscoveredModel, ...] = ()
     error: ModelDiscoveryError | None = None
     policy_action: str = "llm.catalog.models.discover.local"
+    #: TASK-34100.2 (gap-01/gap-03): an authenticated check proved the key
+    #: this discovery was sent -- OpenRouter's /api/v1/key, Hugging Face's
+    #: whoami-v2, or Google's models.list. A public listing alone never sets
+    #: it, so it is what lets such a listing accept a key.
+    key_verified: bool = False
 
 
 @dataclass(frozen=True)

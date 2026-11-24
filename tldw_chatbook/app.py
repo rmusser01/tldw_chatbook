@@ -462,6 +462,13 @@ def _speech():
     return app_speech
 
 
+def _env_key_notice():
+    """Import ``app_env_key_notice`` once a notice is held (never at boot; ADR-097)."""
+    from tldw_chatbook import app_env_key_notice
+
+    return app_env_key_notice
+
+
 DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
 #: Collections capture persistence and remote adapters are first-use work.
 #: Compose them after the first interactive frame, or synchronously when a
@@ -3720,25 +3727,19 @@ class TldwCli(
                     severity="information",
                     timeout=8,
                 )
-            elif action == "none" and (
-                env_key_names := env_keys_that_silenced_first_run(
+            elif action == "none" and env_keys_that_silenced_first_run(
+                self.app_config, os.environ
+            ):
+                # TASK-21147: say once that env keys skipped setup. TASK-34100.2
+                # AC#7/#11: honest copy from the shared readiness verdict, held
+                # until the model-list consent question is answered.
+                from tldw_chatbook.Chat.console_onboarding_state import (
+                    build_env_key_first_launch_notice,
+                )
+
+                self._pending_env_key_notice = build_env_key_first_launch_notice(
                     self.app_config, os.environ
                 )
-            ):
-                # TASK-21147 (UAT E-1): the env-key install skipped the
-                # wizard silently — say so exactly once, and where the
-                # wizard's other value (voice, tools, encryption) lives.
-                shown = ", ".join(env_key_names[:2]) + (
-                    " (and more)" if len(env_key_names) > 2 else ""
-                )
-                self.notify(
-                    f"Found {shown} — you're ready to chat. Run setup any "
-                    "time: Settings ▸ Diagnostics ▸ Run setup wizard.",
-                    title="Provider key detected",
-                    severity="information",
-                    timeout=10,
-                )
-                self._persist_env_key_notice_flag()
         except Exception as exc:
             logger.error(
                 "First-run startup action failed (error_type={})",
@@ -3787,43 +3788,34 @@ class TldwCli(
             timeout=10,
         )
 
+    # TASK-34100.2's env-key launch notice (AC#7, AC#11): the bodies live in
+    # ``app_env_key_notice``, imported only once a notice is held or shown, so
+    # a normal launch never loads it (ADR-097; round-24 port, no boot raise).
+    def _schedule_catalog_refresh_then_env_key_notice(self) -> bool:
+        """AC#11 (R2-5): schedule the catalog pass, then show the held notice
+        unless it opened the consent question, whose answer flushes it.
+        Returns whether that question is still open."""
+        self._schedule_startup_model_catalog_refresh()
+        consent_pending = getattr(self, "_startup_model_catalog_consent_required", False)
+        if self.is_headless or not consent_pending:  # headless: no modal to wait on
+            self._show_pending_env_key_notice()
+        return consent_pending
+
+    async def _handle_model_catalog_consent(self, allowed: bool | None) -> None:
+        """AC#11: the consent decision comes first, then the env-key notice."""
+        try:
+            await FeatureGlueMixin._handle_model_catalog_consent(self, allowed)
+        finally:
+            TldwCli._show_pending_env_key_notice(self)
+
+    def _show_pending_env_key_notice(self) -> None:
+        """Show the held env-key notice once, then record it (TASK-34100.2)."""
+        if getattr(self, "_pending_env_key_notice", None) is not None:
+            _env_key_notice().EnvKeyNoticeMixin._show_pending_env_key_notice(self)
+
     def _persist_env_key_notice_flag(self) -> None:
         """Record the one-time env-key notice (TASK-21147, UAT E-1)."""
-
-        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
-            ENV_KEY_NOTICE_KEY,
-            WIZARD_STATE_SECTION,
-        )
-
-        app_config = self.app_config
-        if isinstance(app_config, dict):
-            app_config.setdefault(WIZARD_STATE_SECTION, {})[ENV_KEY_NOTICE_KEY] = True
-
-        def _write() -> None:
-            from tldw_chatbook.config import save_settings_to_cli_config
-
-            try:
-                saved = save_settings_to_cli_config(
-                    {WIZARD_STATE_SECTION: {ENV_KEY_NOTICE_KEY: True}}
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Failed to persist env-key notice flag "
-                    f"(category=persistence, error_type={type(exc).__name__})"
-                )
-                return
-            if not saved:
-                logger.warning(
-                    "Failed to persist env-key notice flag "
-                    "(category=persistence, error_type=save_returned_false)"
-                )
-
-        self.run_worker(
-            _write,
-            thread=True,
-            group="first-run-env-key-notice-flag",
-            exit_on_error=False,
-        )
+        _env_key_notice().EnvKeyNoticeMixin._persist_env_key_notice_flag(self)
 
     def _push_first_run_wizard(self) -> None:
         from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import FirstRunSetupWizard
@@ -4355,10 +4347,8 @@ class TldwCli(
 
         # Schedule after splash and the initial screen, before optional startup
         # offers; ADR-020 consent owns this launch when it is still required.
-        self._schedule_startup_model_catalog_refresh()
-        if not wizard_offered and not getattr(
-            self, "_startup_model_catalog_consent_required", False
-        ):
+        consent_pending = self._schedule_catalog_refresh_then_env_key_notice()
+        if not wizard_offered and not consent_pending:
             # Spec 2026-08-17 §5.4: wizard wins; .SKILLS offer defers to next launch.
             self._maybe_offer_project_skills_import()
         try:

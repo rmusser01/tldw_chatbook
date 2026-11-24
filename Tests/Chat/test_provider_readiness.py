@@ -302,14 +302,22 @@ def test_exact_probe_result_can_settle_without_retaining_server_content():
         identity, "reachable", ("model-a", "model-b")
     )
     # TASK-33005.3: key_accepted is the listing's own bool verdict on the key
-    # it was sent -- no server content.
+    # it was sent -- no server content. TASK-34100.2: key_check_passed is the
+    # authenticated key check's bool verdict on that same key -- also no
+    # server content (the provider's reason never reaches the evidence store;
+    # __post_init__ refuses anything but a bool).
     assert [item.name for item in fields(ProviderProbeResult)] == [
         "endpoint",
         "model_ids",
         "category",
         "key_accepted",
+        "key_check_passed",
     ]
     assert not hasattr(probe, "__dict__")
+    with pytest.raises(ValueError):
+        ProviderProbeResult(
+            "reachable", ("model-a",), None, True, "Google accepted this key"
+        )
 
 
 def test_probe_result_rejects_string_in_place_of_model_id_tuple():

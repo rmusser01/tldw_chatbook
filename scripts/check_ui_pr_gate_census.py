@@ -1309,6 +1309,15 @@ MINIMUM_FILES = 2721
 # so this resolver reads each id). Times are in the task's notes. The floor
 # is the measured entry count.
 MINIMUM_FILES = 2744
+# TASK-34100.2 (ported 2026-11-23 onto dev b31e3e9241, round 24) appends 21
+# entries at the tail: test_switcher_capacity_rows.py (the switcher's 'window
+# too small' rows and Fix model limits) as its 7 test functions,
+# test_console_env_key_card.py (the Get started card's env-key offers and
+# their one atomic commit) whole, and test_template_sample_switcher.py (AC#9:
+# shipped samples never read Ready) as its 13 test functions; the two split
+# files ran 34-35 s serially, over the 30 s entry budget. Appended after dev's
+# tail, so no other entry changes shard. The floor is the measured entry count.
+MINIMUM_FILES = 2765
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 

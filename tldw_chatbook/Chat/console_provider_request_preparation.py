@@ -252,6 +252,21 @@ def prepare_chat_request(
     context_window = resolution.context_window or resolve_context_window(
         resolution.provider, resolution.model or ""
     )
+    if (
+        resolution.context_window is not None
+        and getattr(resolution.context_window, "source", None) == "server metadata"
+    ):
+        # TASK-34100.2 AC#2: readiness checks capacity against the window
+        # the serving endpoint reported, exactly as this preflight does.
+        # Only a server's report is kept: a catalog window is re-read from
+        # the catalog, so a window saved in Settings is never shadowed.
+        native_host.CONSOLE_SEND_OUTCOMES.record_window(
+            resolution.provider,
+            resolution.model,
+            context_window.tokens,
+            context_window.verified,
+            endpoint=resolution.base_url,
+        )
     capacity = native_host.resolve_request_capacity(
         context_window_tokens=context_window.tokens,
         context_window_verified=context_window.verified,

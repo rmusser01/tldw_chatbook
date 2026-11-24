@@ -45,8 +45,15 @@ make_database = _database_fixture
 make_gateway = _gateway_fixture
 
 
+# The gateway reads config: prepare_chat_request -> get_model_capabilities
+# reads [model_catalog] use_models_dev. In the per-test sandbox that read
+# raises RecoveryRequired and models_dev_catalog._enabled() swallows it, so
+# the tests that looked sandboxed only passed on the swallowed default
+# (round-24 review, 2026-11-24; the TASK-32628 swallowed-admission trap).
+pytestmark = pytest.mark.bootstrap_profile
+
+
 @pytest.mark.asyncio
-@pytest.mark.bootstrap_profile
 @pytest.mark.loopback_network
 @pytest.mark.parametrize("provider", ["vllm", "llama_cpp"])
 @pytest.mark.parametrize("empty_stream", [True, False])
@@ -107,8 +114,8 @@ async def test_physical_fallback_outcomes_bound_retry_recovery(
                     capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
                 ):
                     pass
-            # vLLM may retry a 429 inside its nonstreaming adapter. Every
-            # such request is refused; no new request may come from recovery.
+            # Every non-streaming request is refused; no new request may come
+            # from recovery.
             assert server.stream_flags[0] is True
             assert server.stream_flags[1:] and not any(server.stream_flags[1:])
             posts_before_recovery = list(server.stream_flags)
@@ -149,9 +156,13 @@ async def test_physical_fallback_outcomes_bound_retry_recovery(
                     )
             scope = gateway._trace_preparation_scope(signals)
             assert scope.provider_dispatches == 2
-            # Exhausted vLLM 429 retries have no response-owned final error;
-            # they remain unproven, even though our server observed rejection.
-            expected_rejections = (0 if provider == "vllm" else 1) if empty_stream else 2
+            # TASK-34100.2 AC#18: no adapter retries a 429 in its transport,
+            # so vLLM's 429 reaches raise_for_status as a response-owned
+            # refusal and counts, as llama.cpp's does. (Before, urllib3's
+            # exhausted 429 retry raised a RetryError with no response, so it
+            # stayed unproven.) The empty 200 still answered, so neither mode
+            # recovers above.
+            expected_rejections = 1 if empty_stream else 2
             assert scope.provider_rejections == expected_rejections
             assert scope.provider_answered is empty_stream
             assert server.stream_flags == posts_before_recovery
@@ -165,7 +176,6 @@ def _record_call(gateway, signals, outcome) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.bootstrap_profile
 async def test_real_adapter_timeout_cannot_authorize_refusal_only_replay(
     tmp_path, make_database, make_gateway, monkeypatch
 ):
@@ -521,7 +531,6 @@ async def test_only_an_http_error_status_counts_as_a_refusal(
 
 
 @pytest.mark.asyncio
-@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("outcome", ["answer", "refusal", "empty", "unavailable"])
 async def test_gateway_contact_proof_keeps_accepted_count_attached(
     tmp_path, make_database, make_gateway, outcome, record_property
