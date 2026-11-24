@@ -740,7 +740,7 @@ def test_propagation_follows_imports_not_names():
 # Port of PR #3517 (round 24, 2026-11-23, onto dev b31e3e9241): re-measured on
 # this base, over dev's schema version 3, engine-preset placeholder and
 # TASK-42482 opt-in line, from the test's failure output.
-_TEMPLATE_SHA256 = "e623bcfb26d67b7701ff57d29622107dae8e2a6ad06a1a70aa430db5c76d257c"
+_TEMPLATE_SHA256 = "2e1dd524edfb7d82e4b65f99413d626c8bd1bf1133fe4b07534ba583dd2a8fd7"
 _TEMPLATE_RELATIVE = "tldw_chatbook/Config_Files/default_config.toml"
 
 
