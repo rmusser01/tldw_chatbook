@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "method": "Instrumented installed SoundCard 0.4.6 legacy reader",
+  "forced_empty_poll_seconds": 0.075,
+  "cases": [
+    {
+      "generation": 1,
+      "forced_idle": false,
+      "pending_frames_when_forced": 0,
+      "reason": "marker_unmatched",
+      "timeline": {
+        "trace_rows": 108,
+        "total_idle_estimate_frames": 99649,
+        "total_empty_packet_fill_frames": 0,
+        "correlated_interval_idle_estimate_frames": 0,
+        "correlated_interval_empty_packet_fill_frames": 0,
+        "correlated_interval_captured_frames": 10736,
+        "correlated_interval_source_frames": 21296,
+        "correlated_interval_excess_frames": -10560,
+        "correlated_interval_device_frames": 21296,
+        "correlated_interval_capture_minus_device_frames": -10560
+      },
+      "alignment_drift_s": 0.22,
+      "early_score": 0.8738366231140345,
+      "tail_score": 0.9999962352583516,
+      "discontinuities": 1,
+      "player_reaped": true,
+      "capture_reaped": true
+    },
+    {
+      "generation": 2,
+      "forced_idle": true,
+      "pending_frames_when_forced": 480,
+      "reason": "marker_unmatched",
+      "timeline": {
+        "trace_rows": 134,
+        "total_idle_estimate_frames": 35264,
+        "total_empty_packet_fill_frames": 0,
+        "correlated_interval_idle_estimate_frames": 3871,
+        "correlated_interval_empty_packet_fill_frames": 0,
+        "correlated_interval_captured_frames": 25167,
+        "correlated_interval_source_frames": 21296,
+        "correlated_interval_excess_frames": 3871,
+        "correlated_interval_device_frames": 21296,
+        "correlated_interval_capture_minus_device_frames": 3871
+      },
+      "alignment_drift_s": -0.08064583333333333,
+      "early_score": 0.9999955367177743,
+      "tail_score": 0.9999962352583516,
+      "discontinuities": 0,
+      "player_reaped": true,
+      "capture_reaped": true
+    },
+    {
+      "generation": 3,
+      "forced_idle": false,
+      "pending_frames_when_forced": 0,
+      "reason": null,
+      "timeline": {
+        "trace_rows": 145,
+        "total_idle_estimate_frames": 33320,
+        "total_empty_packet_fill_frames": 0,
+        "correlated_interval_idle_estimate_frames": 0,
+        "correlated_interval_empty_packet_fill_frames": 0,
+        "correlated_interval_captured_frames": 37483,
+        "correlated_interval_source_frames": 37483,
+        "correlated_interval_excess_frames": 0,
+        "correlated_interval_device_frames": 37483,
+        "correlated_interval_capture_minus_device_frames": 0
+      },
+      "alignment_drift_s": 0,
+      "early_score": 0.9999952093502681,
+      "tail_score": 0.9999948832970437,
+      "discontinuities": 0,
+      "player_reaped": true,
+      "capture_reaped": true
+    },
+    {
+      "generation": 4,
+      "forced_idle": true,
+      "pending_frames_when_forced": 480,
+      "reason": "marker_unmatched",
+      "timeline": {
+        "trace_rows": 144,
+        "total_idle_estimate_frames": 35479,
+        "total_empty_packet_fill_frames": 0,
+        "correlated_interval_idle_estimate_frames": 1948,
+        "correlated_interval_empty_packet_fill_frames": 0,
+        "correlated_interval_captured_frames": 38963,
+        "correlated_interval_source_frames": 37975,
+        "correlated_interval_excess_frames": 988,
+        "correlated_interval_device_frames": 37975,
+        "correlated_interval_capture_minus_device_frames": 988
+      },
+      "alignment_drift_s": -0.020583333333333332,
+      "early_score": 0.9999952093502681,
+      "tail_score": 0.9999946511062368,
+      "discontinuities": 1,
+      "player_reaped": true,
+      "capture_reaped": true
+    }
+  ]
+}

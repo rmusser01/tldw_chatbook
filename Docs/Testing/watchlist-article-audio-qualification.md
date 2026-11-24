@@ -1,7 +1,7 @@
 # Watchlist article audio: controlled-playback qualification
 
-Date: 2026-11-15
-Status: Windows 250 ms workaround not qualified; repeated matrix retains rejected/skipped cases
+Date: 2026-11-23
+Status: Windows packet-based 21-case matrix passed; portable/listener gate remains open
 Task: [TASK-41176](../../backlog/tasks/task-41176%20-%20Qualify-ffplay-controlled-WAV-playback.md)
 ADR: [366](../../backlog/decisions/366-watchlist-article-listening-and-controlled-playback.md)
 Plan: [Task 1](../superpowers/plans/2026-11-15-watchlist-article-listening.md)
@@ -47,7 +47,116 @@ for these two preflights.
 The [ffplay documentation](https://ffmpeg.org/ffplay.html) describes seeking and
 statistics but promises neither exact seeking nor a stable machine protocol.
 
-## Current Windows 250 ms decision
+## Current packet-based result, 2026-11-23
+
+After the user muted the active background session, **all 21 cases passed
+Windows endpoint-loopback qualification**. The same source revision
+`b66e13d0ca` ran three rounds with 250 ms WAV padding and a 4,800-frame
+capture buffer. All original thresholds remained unchanged: 250 ms seek and
+bookmark error, 20 ms tail and alignment drift, correlation at least 0.70,
+0.0002 quiet RMS, and the 1.5 s Stop bound.
+
+| Case | Passing rounds |
+| --- | --- |
+| Fixed nonzero seek, 0.8 s | 3/3 |
+| 120 ms clip | 3/3 |
+| 500 ms clip | 3/3 |
+| Near EOF, 140 ms remaining | 3/3 |
+| Near EOF, 60 ms remaining | 3/3 |
+| Playing Stop, bookmark alignment and post-stop silence | 3/3 |
+| Resume from that Stop's saved frame against the identical WAV | 3/3 |
+
+Maximum absolute seek error was 3.250 ms; natural-content tail error was
+2.417 ms. All three Stops interrupted original content before logical EOF.
+Maximum bookmark-versus-stopped-source error was 69.542 ms, process Stop
+latency 10.003 ms, and last detected signal after Stop 32.633 ms. All 21
+telemetry comparisons passed, with maximum absolute error 25.492 ms.
+Saved resumes used frames 36,480, 35,520 and 36,000 at 48 kHz and the
+identical retained artifact digest.
+
+Every prelaunch and post-stop quiet measurement had RMS 0.0. All source spans
+were contiguous, with zero alignment drift, zero later discontinuities and
+zero timestamp-error flags. First-packet origin flags remain counted
+separately. All 21 players and capture workers were reaped. The
+[complete passing 21-case result](evidence/watchlist-article-audio/windows-wasapi-packet-21-session-muted.json)
+retains the per-case measurements and retirement evidence.
+
+The fixed 250 ms profile passes for this Windows build, PCM16 stereo 48 kHz,
+ffplay executable and default-render route. Native macOS/Linux, other output
+routes and acoustic/listener verification remain unqualified. The portable
+feature gate remains open and dependent implementation remains gated. No application
+playback behavior or runtime dependency changed.
+
+### Preserved background-audio rejections
+
+The [first packet matrix](evidence/watchlist-article-audio/windows-wasapi-packet-21.json)
+launched 18 base players, rejected every prelaunch baseline at RMS
+0.004150–0.018304, and skipped three dependent resumes. A
+[retry after the initial pause](evidence/watchlist-article-audio/windows-wasapi-packet-21-pause-retry.json)
+had the same 18 rejections and three skips at RMS 0.001626–0.009073.
+Read-only session enumeration still showed an active render session, with
+nonzero peaks approximately 0.054 before the first run and 0.017 after the
+retry. An independent code audit confirmed that baseline sampling ends
+before player launch and excludes samples outside that interval.
+
+Both rejected runs had zero later discontinuities/timestamp errors and all
+started resources retired. They provide no qualified seek, tail or Resume
+result. Muting that active session produced the passing matrix above; no
+baseline rejection was converted into a pass. Previous wrapper-based
+matrices and the reproduced capture mechanisms remain below.
+
+## Capture timeline investigation
+
+The previous 500 ms clip and playing Stop had early and late waveform
+correlations above 0.99999. Their capture windows contained 5,305 and 5,441
+more frames than the aligned source interval, or 110.521 ms and 113.354 ms at
+48 kHz. Neither reported a WASAPI discontinuity. A dropped span alone would
+shorten the captured interval.
+
+SoundCard 0.4.6 estimates silence from elapsed wall time when an empty read
+persists beyond four default device periods. It can insert those frames before
+the next real packet, and its wrapper drops the packet's device position and
+timestamp. In a device-free control of the installed `_record_chunk`, an empty
+poll and a scripted 112 ms wait between two contiguous real-packet fixtures
+produced 5,376 extra zero frames. The unchanged matcher rejected the result
+with −112 ms drift and both edge correlations effectively 1.0. The same two
+packet fixtures matched when concatenated without the inserted frames. This
+reproduces the signature of the earlier excess-frame cases. Those earlier
+receipts lack packet positions and cannot identify the cause of each rejection.
+[SoundCard 0.4.6 capture implementation](https://github.com/bastibe/SoundCard/blob/0.4.6/soundcard/mediafoundation.py#L639-L754).
+
+An instrumented native control traced the legacy reads to their device
+positions. It hid a ready packet from the legacy reader for 75 ms once
+playback had started. The 500 ms clip then contained exactly 3,871 wrapper
+zeros between the matched edges. Capture counted 25,167 frames across those
+edges while device position and source both counted 21,296. The drift was
+−80.646 ms with both correlations above 0.99999 and zero discontinuity flags.
+The undelayed 500 ms control showed the opposite failure. Capture counted
+10,560 fewer frames than device and source and WASAPI reported one
+discontinuity. An undelayed playing Stop matched without added or missing
+frames. The delayed Stop showed both inserted zeros and one discontinuity.
+All four players and capture workers were reaped. The
+[durable control summary](evidence/watchlist-article-audio/windows-legacy-idle-control.json)
+records the frame counts, correlations, flags, and resource retirement.
+The full numerical receipt is
+`windows-legacy-idle-control/legacy-idle-control.json` in the plan workspace.
+
+The noisy baseline and two discontinuities remain separate observed defects in
+the original matrix. The Windows rerun measures real packet frame positions,
+QPC timestamps and flags, with no inferred waveform samples for an empty poll.
+The existing waveform, seek, bookmark and tail thresholds apply to the same
+21 planned cases. [WASAPI packet contract](https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudiocaptureclient-getbuffer).
+
+The packet path drains the endpoint independently of analysis and uses the
+native first-frame QPC timestamp. A first-packet stream-origin discontinuity
+is counted separately. Later discontinuities, invalid timestamps, and
+discontinuous matched spans remain ineligible. A quiet window requires
+continuous drain observations limited by the actual endpoint buffer capacity
+and a drain after the window. A monitored empty interval has no sampled RMS.
+The 500 ms and playing Stop wiring controls both matched with zero alignment
+drift and no later discontinuity or timestamp-error flag.
+
+## Windows 250 ms decision from the 2026-11-15 wrapper-based run
 
 **Keep the workaround provisional.** The final three-round matrix has 21 planned
 cases, 20 player launches, and one correctly skipped dependent Resume. Thirteen
@@ -271,7 +380,17 @@ pass even when source-edge matching succeeds.
 
 ## Deterministic verification
 
-The final padding runner passes **38 targeted tests**, Ruff check and format.
+The packet correction passes **47 targeted tests** in 21.138 s, Ruff check,
+and formatting for four files. Coverage includes native packet counts and
+release, silent/null buffers, empty-buffer status, device-frame and QPC gaps,
+invalid timestamps/PCM, monitored quiet intervals, content-time Stop
+eligibility, and packet quality before saved Resume. Independent code review
+found no actionable Important/Critical issue. Native preflight passed the
+500 ms natural clip and playing Stop before the full contaminated-baseline
+matrices were recorded. The subsequent quiet-endpoint matrix passed all 21
+Windows cases; portable and listener qualification remain open.
+
+The wrapper-based padding runner passed **38 targeted tests**, Ruff check and format.
 Independent review confirmed both capture-diagnostic and partial-evidence/cleanup
 findings addressed, with no new Important/Critical finding in the fix diff.
 Tests include exact padding geometry, original PCM preservation, 60/140 ms
@@ -300,10 +419,10 @@ Use the verified Python environment with the isolated helper directory on
 `PYTHONPATH`. Run deterministic tests and static checks first:
 
 ```text
-python -m unittest discover -s tools/evidence/watchlist_article_audio -p test_qualification.py -v
+python -m unittest discover -s tools/evidence/watchlist_article_audio -v
 python -m ruff check tools/evidence/watchlist_article_audio
 python -m ruff format --check tools/evidence/watchlist_article_audio
-python tools/evidence/watchlist_article_audio/qualification.py --capture-loopback --ffplay <direct-executable> --output-dir <this-plan-ignored-workspace/run-directory> --tail-padding-ms 250 --repeat 3 --capture-buffer-frames 4800
+python tools/evidence/watchlist_article_audio/qualification.py --capture-loopback --ffplay <direct-executable> --output-dir <this-plan-ignored-workspace/run-directory> --tail-padding-ms 250 --repeat 3 --capture-buffer-frames 4800 --capture-clock wasapi-packet
 ```
 
 The native invocation plays short quiet markers. Without `--capture-loopback`,
