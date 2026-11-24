@@ -690,6 +690,7 @@ def test_a_deleted_file_root_holds_nothing_but_a_missing_folder_still_refuses(
         with storage.acquire_storage(tmp_path / "app.db"):
             pass
 
+
 @pytest.mark.usefixtures("local_root")
 def test_the_refused_start_names_a_missing_folder_root_but_not_a_deleted_file_root(
     tmp_path, monkeypatch
