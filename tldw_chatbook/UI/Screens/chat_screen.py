@@ -7152,6 +7152,8 @@ class ChatScreen(BaseAppScreen):
         self._console_credential_poll_timer: Any | None = None
         self._console_credential_snapshot: tuple[int, str | None, int] | None = None
         self._console_credential_pre_gate: tuple[str | None, int, int] | None = None
+        # The gate the poll last read; console_pending_startup_work reads it.
+        self._console_credential_pre_gate_seen: tuple[str | None, int, int] | None = None
         # TASK-42478: the active chat's last readiness used the Claude subscription.
         self._console_subscription_selected = False
         # The six Console controllers -- their construction and every
@@ -10596,22 +10598,6 @@ class ChatScreen(BaseAppScreen):
             self._record_ui_timer_stopped("console-environment-poll")
             self._console_environment_poll_timer = None
 
-    def _console_credential_pre_gate_now(self) -> tuple[str | None, int, int]:
-        """Return the gate the credential poll would read now (TASK-34956)."""
-        from tldw_chatbook.LLM_Calls.anthropic_subscription import (
-            subscription_credential_status,
-            subscription_readiness_revision,
-        )
-
-        return (
-            # TASK-42478: only a chat on the Claude subscription reads it.
-            subscription_credential_status(background=True)
-            if self._console_subscription_selected
-            else None,
-            subscription_readiness_revision(),
-            getattr(shared_connection_evidence(lambda: self.app), "version", 0),
-        )
-
     def console_pending_startup_work(self) -> tuple[str, ...]:
         """Name the Console's pending startup and sync work; empty when quiet.
 
@@ -10619,10 +10605,16 @@ class ChatScreen(BaseAppScreen):
         read from the state each producer keeps: attach, a native sync
         running or requested, a control-bar sync or whole-sync replay owed, a
         background credential read in flight or a credential-poll pass owed
-        (its committed pre-gate differs from the one it would read now, while
-        the poll runs), a config-rebuild retry, and this screen's workers.
+        (while the poll runs), a config-rebuild retry, and this screen's
+        workers. The credential half reads the gate the poll last read, never
+        the credential: a status or connection-evidence change shows at the
+        poll's next 0.25 s tick, a readiness revision at once.
         """
-        gate = self._console_credential_pre_gate_now()
+        from tldw_chatbook.LLM_Calls.anthropic_subscription import (
+            subscription_readiness_revision,
+        )
+
+        seen = self._console_credential_pre_gate_seen
         flags = (
             ("attach not reconciled", not self._console_attach_reconciled),
             ("sync in progress", self._console_sync_in_progress),
@@ -10630,11 +10622,15 @@ class ChatScreen(BaseAppScreen):
             # Set lazily by config_sync, so absent means never requested.
             ("control-bar sync scheduled", getattr(self, "_console_control_bar_sync_scheduled", False)),
             ("control-bar replay owed", getattr(self, "_console_control_bar_replay_whole_sync", False)),
-            ("credential read", gate[0] == "pending"),
+            ("credential read", seen is not None and seen[0] == "pending"),
             (
                 "credential poll pass",
                 self._console_credential_poll_timer is not None
-                and gate != self._console_credential_pre_gate,
+                and (
+                    seen is None
+                    or seen != self._console_credential_pre_gate
+                    or seen[1] != subscription_readiness_revision()
+                ),
             ),
         )
         return (
@@ -10650,6 +10646,7 @@ class ChatScreen(BaseAppScreen):
     def _poll_console_credential_readiness(self) -> None:
         """Refresh send controls as background credentials complete or expire."""
         from tldw_chatbook.LLM_Calls.anthropic_subscription import (
+            subscription_credential_status,
             subscription_readiness_revision,
         )
 
@@ -10667,8 +10664,18 @@ class ChatScreen(BaseAppScreen):
         # draft edits sync the send controls through their own watcher
         # paths; this poll only owns background credential transitions.
         # Reads no config, so it sits ahead of the maintenance locks.
-        pre_gate = self._console_credential_pre_gate_now()
-        version = pre_gate[2]
+        version = getattr(
+            shared_connection_evidence(lambda: self.app), "version", 0
+        )
+        pre_gate = (
+            # TASK-42478: only a chat on the Claude subscription reads it.
+            subscription_credential_status(background=True)
+            if self._console_subscription_selected
+            else None,
+            subscription_readiness_revision(),
+            version,
+        )
+        self._console_credential_pre_gate_seen = pre_gate  # TASK-42475 review.
         if pre_gate == getattr(self, "_console_credential_pre_gate", None):
             return
         from contextlib import ExitStack

@@ -2310,14 +2310,27 @@ async def test_console_pending_startup_work_names_each_pending_producer(
         assert "control-bar replay owed" in pending()
         await quiet()
 
+        # A subscription chat: the accessor reads the gate the poll recorded,
+        # never the credential, so it starts no reader thread (review).
+        reads: list[bool] = []
+
+        def credential_status(*, background: bool = False) -> str:
+            reads.append(background)
+            return "pending"
+
         with monkeypatch.context() as patch:
             patch.setattr(
-                anthropic_subscription,
-                "subscription_credential_status",
-                lambda *, background=False: "pending",
+                anthropic_subscription, "subscription_credential_status", credential_status
             )
             patch.setattr(screen, "_console_subscription_selected", True)
-            assert pending() == ("credential read", "credential poll pass")
+            names = pending()
+            assert reads == [], "the accessor read the credential"
+            assert names == ()
+            screen._poll_console_credential_readiness()
+            assert reads == [True]
+            assert "credential read" in pending()
+            assert reads == [True], "the accessor read the credential"
+        await quiet()
         revision = anthropic_subscription.subscription_readiness_revision()
         with monkeypatch.context() as patch:
             patch.setattr(
