@@ -1,24 +1,25 @@
 ---
 id: TASK-21511
 title: Add Research Copy sharing and Deep Research return
-status: To Do
-assignee: []
-created_date: '2026-08-24 05:54'
-updated_date: '2026-08-24 05:54'
+status: In Progress
+assignee:
+- '@codex'
+created_date: 2026-08-24 05:54
+updated_date: 2026-11-24 18:58
 labels:
-  - research
-  - workspace
-  - copy
-  - sharing
+- research
+- workspace
+- copy
+- sharing
 dependencies:
-  - TASK-21507
-  - TASK-21508
-  - TASK-21509
-  - TASK-21510
+- TASK-21507
+- TASK-21508
+- TASK-21509
+- TASK-21510
 references:
-  - Docs/superpowers/specs/2026-08-23-research-workspace-design.md
-  - Docs/superpowers/plans/2026-08-23-research-workspace-copy-sharing-deep-research.md
-  - backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md
+- Docs/superpowers/specs/2026-08-23-research-workspace-design.md
+- Docs/superpowers/plans/2026-08-23-research-workspace-copy-sharing-deep-research.md
+- backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md
 priority: high
 ---
 
@@ -51,4 +52,5 @@ ADR path: `backlog/decisions/322-research-workspace-authority-and-screen-boundar
 Reason: ADR-322 already defines Copy-only transfer, receipt ownership, server-only sharing, overlay exclusion, and Deep Research ownership/return. The durable tables and UI implement that accepted boundary.
 
 Follow `Docs/superpowers/plans/2026-08-23-research-workspace-copy-sharing-deep-research.md` task-by-task with test-first checkpoints and one scoped commit per completed plan task.
+Implement the approved Copy, Sharing, and Deep Research plan in order under ADR-322. Start with the immutable read-only preflight contract. Server Study generation remains open in TASK-21510 and does not participate in Copy unless both canonical owners advertise a safe import.
 <!-- SECTION:PLAN:END -->

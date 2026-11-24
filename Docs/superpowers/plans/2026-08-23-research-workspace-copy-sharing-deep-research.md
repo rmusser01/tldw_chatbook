@@ -59,9 +59,9 @@ owners, SharingScopeService, ResearchScopeService, private overlay, pytest.
 ADR required: no new ADR
 
 ADR path:
-`backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md`
+`backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md`
 
-Reason: ADR-078 already defines Copy-only transfer, receipt ownership,
+Reason: ADR-322 already defines Copy-only transfer, receipt ownership,
 server-only sharing, overlay exclusion, and Deep Research ownership/return.
 
 ## Task 1: Define Copy manifest, item treatment, conflict, and receipt contracts
