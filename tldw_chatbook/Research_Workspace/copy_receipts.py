@@ -124,6 +124,7 @@ def _decode_manifest(row) -> ResearchCopyManifest:
         QualifiedWorkspaceRef(**payload["destination"]),
         tuple(items),
         payload["created_at"],
+        payload.get("target_name", ""),
     )
     if (manifest.transfer_id, manifest.manifest_hash) != (
         row["transfer_id"],

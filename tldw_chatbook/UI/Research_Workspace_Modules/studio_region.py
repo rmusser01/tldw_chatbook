@@ -584,7 +584,7 @@ class ResearchStudioRegion(VerticalScroll):
                 elif replace_capability and replace_capability.available:
                     if record.get("review_state") == "accepted":
                         actions["export"] = "Export accepted Markdown"
-                    elif record.get("review_state") in {"draft", "in_review"}:
+                    elif record.get("review_state") in {"draft", "reviewing"}:
                         actions["accept"] = "Accept reviewed version"
             limits = (
                 "Undo requires a restorable version from the owner."

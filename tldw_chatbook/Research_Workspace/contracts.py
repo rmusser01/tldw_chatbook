@@ -18,9 +18,6 @@ if TYPE_CHECKING:
         ResearchChatTurnRequest,
         ResearchSourceVersionRef,
     )
-    from .copy_manifest import ResearchCopyCandidate
-    from .copy_models import ResearchCopyConfirmation, ResearchCopyManifest
-    from .copy_receipts import ResearchCopyReceipt
     from .quick_notes import (
         ResearchNotePage,
         ResearchNotePageRequest,
@@ -761,18 +758,3 @@ class ResearchWorkspacePort(Protocol):
     ) -> bytes: ...
 
     async def delete_output(self, output_ref: WorkspaceOutputRef) -> None: ...
-
-    async def preflight_copy(
-        self,
-        source: QualifiedWorkspaceRef,
-        destination: QualifiedWorkspaceRef,
-        item_refs: tuple[ResearchCopyCandidate, ...],
-    ) -> ResearchCopyManifest: ...
-
-    async def execute_copy(
-        self, manifest: ResearchCopyManifest, confirmation: ResearchCopyConfirmation
-    ) -> ResearchCopyReceipt: ...
-
-    async def get_copy_receipt(self, transfer_id: str) -> ResearchCopyReceipt | None: ...
-
-    async def resume_copy(self, transfer_id: str) -> ResearchCopyReceipt: ...

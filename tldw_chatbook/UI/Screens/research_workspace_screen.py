@@ -103,6 +103,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         operation_store: Any | None = None,
         association_scheduler: Any | None = None,
         paste_staging_store: Any | None = None,
+        copy_workspace: Any | None = None,
         operation_id_factory: Callable[[], str] | None = None,
         now_factory: Callable[[], str] | None = None,
         **kwargs: Any,
@@ -113,6 +114,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         self.operation_store = operation_store
         self.association_scheduler = association_scheduler
         self.paste_staging_store = paste_staging_store
+        self.copy_workspace = copy_workspace
         self._operation_id_factory = operation_id_factory or (
             lambda: f"research-source-operation-{uuid4().hex}"
         )

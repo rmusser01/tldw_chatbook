@@ -112,11 +112,9 @@ server-only sharing, overlay exclusion, and Deep Research ownership/return.
 4. Implement `ResearchCopyPreflightBuilder.build(...)` using explicit adapter
    capabilities. It returns per-item treatment, conflict, version, size,
    redaction, unsupported reason, and recovery; it does not mutate owners.
-5. Extend `ResearchWorkspacePort` with forward-typed
-   `preflight_copy(source, destination, item_refs)`, `execute_copy(manifest,
-   confirmation)`, `get_copy_receipt(transfer_id)`, and
-   `resume_copy(transfer_id)` methods. The selected source/destination adapters
-   are captured in the manifest; neither is re-resolved from current UI state.
+5. Provide `preflight_copy`, `execute_copy`, `get_copy_receipt`, and
+   `resume_copy` through the workspace Copy coordinator. It captures both
+   authority adapters and qualifies them through the frozen manifest.
 6. Define item types initially supported by real owner adapters: media/source,
    note, textual output/Chatbook, Study deck/cards, and Quiz/questions.
    Conversations and any owner without a complete import contract are
@@ -283,6 +281,14 @@ server-only sharing, overlay exclusion, and Deep Research ownership/return.
      membership;
    - Study/Quiz -> Local Study/Quiz owners then output membership.
 
+   The first executable adapters cover primary text artifacts in both
+   directions and Server notes to Local Notes. The current Server workspace
+   note, Study, and Quiz create routes assign their own IDs without an
+   operation lookup. These writes require a retry-safe owner contract.
+   Media still needs a verified full-file handoff through the ingest
+   coordinator. The preflight identifies these items as blocked until the
+   corresponding adapters are available.
+
 5. Use the ingestion coordinator from TASK-21508 so canonical media creation
    and workspace association keep their independent receipts. Securely remove
    any temporary download after Local canonical ingest accepts it; failure
@@ -293,7 +299,9 @@ server-only sharing, overlay exclusion, and Deep Research ownership/return.
    skip acknowledged items before resuming.
 7. `Reference existing` is available only when the destination owner proves an
    exact canonical match. `Replace` requires destination version plus the
-   second confirmation token. No operation deletes the source.
+   second confirmation token. Replacement preserves generated-output
+   provenance by limiting this path to compatible Local artifacts without
+   Studio generation metadata.
 8. Finish fully acknowledged Local-to-Server Copy by finalizing and re-reading
    the server migration, then finishing the local receipt. Server-to-Local
    finishes from verified Local owners plus the local receipt.

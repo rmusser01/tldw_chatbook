@@ -256,7 +256,7 @@ class ServerNotesWorkspaceService:
     ) -> dict[str, Any]:
         producer = artifact.get("producer_metadata")
         version = artifact.get("version")
-        if isinstance(producer, Mapping) and "research_generation" in producer:
+        if isinstance(producer, Mapping) and ({"research_generation", "research_copy"} & producer.keys()):
             if type(version) is not int or version < 1:
                 raise ValueError("The Server artifact has no confirmed revision")
         return {

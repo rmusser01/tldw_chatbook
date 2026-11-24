@@ -80,6 +80,17 @@ def create_research_workspace_screen(app: Any, screen_class: type, user_data_dir
             chat_overlay=overlay_store,
             chat_policy_enforcer=getattr(app, "service_policy_enforcer", None),
         )
+    copy_workspace = None
+    if WorkspaceDataSource.LOCAL in ports and WorkspaceDataSource.SERVER in ports:
+        from .Research_Workspace.copy_workspace import ResearchWorkspaceCopy
+
+        copy_workspace = ResearchWorkspaceCopy(
+            ports[WorkspaceDataSource.LOCAL],
+            ports[WorkspaceDataSource.SERVER],
+            local_service,
+            getattr(app, "local_chatbook_service", None),
+            policy_enforcer=getattr(app, "service_policy_enforcer", None),
+        )
     return screen_class(
         app,
         controller=ResearchWorkspaceController(ports),
@@ -87,4 +98,5 @@ def create_research_workspace_screen(app: Any, screen_class: type, user_data_dir
         operation_store=operation_store,
         association_scheduler=association_scheduler,
         paste_staging_store=getattr(app, "research_paste_staging_store", None),
+        copy_workspace=copy_workspace,
     )

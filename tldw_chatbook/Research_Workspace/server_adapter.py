@@ -348,6 +348,20 @@ class ServerResearchWorkspaceAdapter:
         require_capability(self._capabilities_for_context(context), "get")
         return self._context_provider.build_client()
 
+    def copy_client(self, ref: QualifiedWorkspaceRef):
+        """Resolve the authenticated client for an exact Copy authority."""
+        return self._chat_client(ref)
+
+    def new_copy_workspace(self) -> QualifiedWorkspaceRef:
+        """Mint a destination without publishing a workspace to the server."""
+        from uuid import uuid4
+
+        context, profile, principal = self._active_identity()
+        require_capability(self._capabilities_for_context(context), "create")
+        if not principal:
+            raise ValueError("Sign in to the selected server before copying")
+        return QualifiedWorkspaceRef(WorkspaceDataSource.SERVER, str(uuid4()), profile, principal)
+
     def _require_chat(self, ref: QualifiedWorkspaceRef):
         self._context_for_ref(ref)
         if self._chat is None:

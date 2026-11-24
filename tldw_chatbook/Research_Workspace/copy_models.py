@@ -221,6 +221,7 @@ class ResearchCopyManifest:
     destination: QualifiedWorkspaceRef
     items: tuple[ResearchCopyItem, ...]
     created_at: str
+    target_name: str = ""
     manifest_hash: str = field(init=False)
     transfer_id: str = field(init=False)
 
@@ -252,14 +253,25 @@ class ResearchCopyManifest:
             raise ValueError("Copy requires a timestamp with a timezone") from None
         if created_at.tzinfo is None:
             raise ValueError("Copy requires a timestamp with a timezone")
+        target_name = _safe_identity(self.target_name, "destination name")
+        if (
+            len(target_name) > 256
+            or target_name.startswith(("/", "~"))
+            or "://" in target_name
+            or any(ord(char) < 32 for char in target_name)
+        ):
+            raise ValueError("The destination name must be a bounded workspace label")
         ordered = tuple(by_identity[key] for key in sorted(by_identity))
         payload = {
             "source": asdict(self.source),
             "destination": asdict(self.destination),
             "items": [asdict(item) for item in ordered],
         }
+        if target_name:
+            payload["target_name"] = target_name
         digest = copy_digest(payload)
         object.__setattr__(self, "items", ordered)
+        object.__setattr__(self, "target_name", target_name)
         object.__setattr__(self, "manifest_hash", digest)
         object.__setattr__(self, "transfer_id", f"copy-{digest}")
 

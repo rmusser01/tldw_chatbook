@@ -40,6 +40,7 @@ class ResearchCopyCandidate:
     conflict: CopyConflictChoice | None = None
     membership_id: str = ""
     estimated_bytes: int = 0
+    replacement_available: bool = True
 
 
 class ResearchCopyPreflightBuilder:
@@ -54,12 +55,13 @@ class ResearchCopyPreflightBuilder:
         available: Mapping[CopyItemKind, frozenset[CopyTreatment]],
         versioned_replacements: frozenset[CopyItemKind] = frozenset(),
         created_at: str,
+        target_name: str = "",
     ) -> ResearchCopyManifest:
         items = tuple(
             self._item(candidate, available, versioned_replacements)
             for candidate in candidates
         )
-        return ResearchCopyManifest(source, destination, items, created_at)
+        return ResearchCopyManifest(source, destination, items, created_at, target_name)
 
     @staticmethod
     def _item(candidate, available, versioned_replacements) -> ResearchCopyItem:
@@ -90,7 +92,9 @@ class ResearchCopyPreflightBuilder:
                 conflict,
                 treatment,
                 allowed,
-                versioned_replacements,
+                versioned_replacements
+                if candidate.replacement_available
+                else frozenset(),
             )
             if reason is not CopyReason.NONE:
                 treatment = CopyTreatment.BLOCKED
@@ -121,7 +125,7 @@ class ResearchCopyPreflightBuilder:
             or treatment is not CopyTreatment.CONTENT
         ):
             return CopyReason.REPLACE_UNAVAILABLE
-        if conflict is CopyConflictChoice.REFERENCE_EXISTING and (
+        if treatment is CopyTreatment.REFERENCE and (
             destination is None or not destination.has_revision
         ):
             return CopyReason.OWNER_UNSUPPORTED

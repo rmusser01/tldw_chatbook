@@ -46,6 +46,10 @@ def test_manifest_is_stable_across_item_order_and_time_but_changes_with_versions
     )
     with pytest.raises(FrozenInstanceError):
         first.items[0].source.version = 3
+    renamed = replace(first, target_name="Reading group copy")
+    assert renamed.manifest_hash != first.manifest_hash
+    with pytest.raises(ValueError, match="different manifest"):
+        ResearchCopyConfirmation(first.manifest_hash, confirmed=True).validate(renamed)
 
 
 def test_manifest_rejects_ambiguous_authority_duplicate_and_wrong_item_scope():

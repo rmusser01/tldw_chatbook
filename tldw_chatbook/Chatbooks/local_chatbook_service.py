@@ -463,6 +463,7 @@ class LocalChatbookService:
         categories: list[Any] | None = None,
         metadata: dict[str, Any] | None = None,
         provenance_owner_request: CitationArtifactOwnerRequest | None = None,
+        copy_operation_key: str | None = None,
         **extra: Any,
     ) -> dict[str, Any]:
         with self._registry_lock:
@@ -486,6 +487,21 @@ class LocalChatbookService:
                 record["metadata"].update(
                     {key: value for key, value in extra.items() if value is not None}
                 )
+            if copy_operation_key is not None:
+                if (
+                    not re.fullmatch(r"[a-f0-9]{64}", copy_operation_key)
+                    or provenance_owner_request is not None
+                ):
+                    raise ValueError("Copy requires a canonical artifact operation key")
+                previous = next(
+                    (row for row in registry["records"] if row.get("research_copy_key") == copy_operation_key), None
+                )
+                if previous is not None:
+                    fields = ("name", "description", "file_path", "tags", "categories", "metadata")
+                    if any(previous.get(field) != record[field] for field in fields):
+                        raise ChatbookRevisionConflict("The saved Copy artifact changed")
+                    return self._record_copy(previous)
+                record["research_copy_key"] = copy_operation_key
             coordinator = self._citation_ownership_coordinator
             if (
                 provenance_owner_request is not None
