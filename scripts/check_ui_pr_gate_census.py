@@ -1300,6 +1300,15 @@ MINIMUM_FILES = 2683
 # ran over 30 s serially (TASK-24705's still-red responsive hide/reveal node
 # is left out). The floor is the measured entry count.
 MINIMUM_FILES = 2721
+# 2026-11-23, TASK-34100.3 (round 24 port): the Moonshot P0 gap-02 pilots, on
+# no lane before, at the tail: the activity-sync race and the refused trace
+# retry as whole files, and the saved-Kimi reasoning reply (about 17 min
+# serially, more than one shard's budget) split up: two single-case test
+# functions whole, then the 16 cases of its two smoke-matrix functions and
+# the 3 Continue/Regenerate cases one per entry (the matrix is a literal list
+# so this resolver reads each id). Times are in the task's notes. The floor
+# is the measured entry count.
+MINIMUM_FILES = 2744
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 

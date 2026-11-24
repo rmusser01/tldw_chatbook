@@ -564,6 +564,10 @@ jobs:
       # invocation keeps both green.
       # Roleplay frame B1 (TASK-33910.2): the mounted Roleplay frame suites (both
       # styled tiers, hostile names, the journeys) are bootstrap_profile files too.
+      # TASK-34100.3 (round 24 port, 2026-11-23): the continuation store's
+      # flush-race and "unwritten" failure files (bootstrap_profile, on no PR
+      # lane before) after the chat-create integration file: 3 passed in 9.2 s
+      # and 4 passed in 11.7 s serially at load 57.
       - name: Run admission-sensitive suites
         run: |
           pytest \
@@ -576,6 +580,8 @@ jobs:
             Tests/Chat/test_console_viewless_hooks.py \
             Tests/Agents/test_install_skill_runtime_tool.py \
             Tests/Chat/test_console_chat_create_integration.py \
+            Tests/Chat/test_continuation_create_flush_race.py \
+            Tests/Chat/test_continuation_unwritten_store_failures.py \
             Tests/Notes/test_notes_sync_tail_edit.py \
             Tests/Notes/test_notes_sync_delete_restore_signal.py \
             Tests/Notes/test_notes_sync_crlf_single_line.py \
@@ -1176,6 +1182,12 @@ jobs:
       # TASK-42008 (round 18): the Dreams query-synthesis file, here for this
       # job's hypothesis install (sandboxed, no config read; on no PR lane
       # before): 311 passed in 3.8 s serially with this step's flags at load 18.
+      # TASK-34100.3 (round 24 port, 2026-11-23): the Moonshot P0 gap-02 files,
+      # sandboxed and on no PR lane before, after the trace provenance file:
+      # the continuation reason codes (53 passed, 5.5 s), the per-domain trace
+      # append rule (18, 5.7 s) and its real-planner tests (28, 66.9 s), and the
+      # continuation destination identity (8, 21.7 s), serially with this
+      # step's flags at load 55-61.
       - name: Run the sandboxed Console P0 regression tests
         if: ${{ !cancelled() && matrix.profile == 'sandboxed' }}
         run: |
@@ -1184,6 +1196,10 @@ jobs:
             Tests/Chat/test_console_trace_row_sources.py \
             Tests/Chat/test_console_trace_rewritten_tail.py \
             Tests/Chat/test_console_trace_provenance.py \
+            Tests/Agents/test_continuation_error_reasons.py \
+            Tests/Chat/test_console_trace_domain_append.py \
+            Tests/Chat/test_console_trace_domain_append_planner.py \
+            Tests/Chat/test_continuation_destination_identity.py \
             Tests/Architecture/test_wizard_lifecycle_guards.py \
             Tests/DB/test_chachanotes_v74_auxiliary_failure_reason.py \
             Tests/UI/test_console_composer_run_controls.py::test_disabled_reason_names_the_queue_state_not_send_or_setup \

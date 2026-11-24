@@ -47,6 +47,10 @@ INHERITED = {
         "Tests/Chat/test_console_trace_row_sources.py",
         "Tests/Chat/test_console_trace_rewritten_tail.py",
         "Tests/Chat/test_console_trace_provenance.py",  # TASK-41508
+        "Tests/Agents/test_continuation_error_reasons.py",  # TASK-34100.3
+        "Tests/Chat/test_console_trace_domain_append.py",  # TASK-34100.3
+        "Tests/Chat/test_console_trace_domain_append_planner.py",  # TASK-34100.3
+        "Tests/Chat/test_continuation_destination_identity.py",  # TASK-34100.3
         "Tests/Architecture/test_wizard_lifecycle_guards.py",
         "Tests/DB/test_chachanotes_v74_auxiliary_failure_reason.py",
         "Tests/UI/test_console_composer_run_controls.py::test_disabled_reason_names_the_queue_state_not_send_or_setup",

@@ -52,6 +52,17 @@ _BLOCKED = "Tests/UI/test_console_blocked_send_recovery.py::"
 _SWEEP = "Tests/UI/test_console_row_menu_action_sweep.py::"
 _MENU = "Tests/UI/test_console_conversation_action_menu.py::"
 _KEEP = "Tests/UI/test_app_keep_alive_dead_screen.py::"
+_KIMI = "Tests/UI/test_console_moonshot_reasoning_reply.py::"
+_KIMI_CASES = (
+    "moonshot-kimi-k2.6",
+    "moonshot-kimi-k2.7-code",
+    "moonshot-kimi-k2.7-code-highspeed",
+    "moonshot-kimi-k3",
+    "moonshot-kimi-k3.1-pro",
+    "moonshot-kimi-k3.1-pro-highspeed",
+    "moonshot-kimi-k3-streaming",
+    "openai-gpt-4.1",
+)
 
 #: P0 task -> the gated regression tests (a file, or one test's node id).
 P0_REGRESSION_TESTS: dict[str, tuple[str, ...]] = {
@@ -170,6 +181,34 @@ P0_REGRESSION_TESTS: dict[str, tuple[str, ...]] = {
         _COMPOSER + "test_palette_lists_stop_and_the_composer_menu_actions_class_safe",
         # TASK-33622.2, same PR: Enter on a focused composer button runs it.
         _COMPOSER + "test_enter_on_each_idle_composer_button_runs_its_own_action",
+    ),
+    # gap-02: every saved-chat Moonshot (Kimi) reply was billed, then dropped
+    # behind a false delivery-unknown card (round 24 port, 2026-11-23).
+    "TASK-34100.3": (
+        "Tests/Agents/test_continuation_error_reasons.py",
+        "Tests/Chat/test_console_trace_domain_append.py",
+        "Tests/Chat/test_console_trace_domain_append_planner.py",
+        "Tests/Chat/test_continuation_destination_identity.py",
+        "Tests/Chat/test_continuation_create_flush_race.py",
+        "Tests/Chat/test_continuation_unwritten_store_failures.py",
+        "Tests/UI/test_console_activity_sync_race.py",
+        "Tests/UI/test_console_trace_retry_refusal.py",
+        # The Kimi pilot file is about 17 min serially: its two single-case
+        # functions whole, every other case one per census entry.
+        _KIMI + "test_unstored_reasoning_checkpoint_keeps_the_reply",
+        _KIMI + "test_destination_refused_reasoning_checkpoint_fails_the_reply",
+        *(
+            f"{_KIMI}test_continue_and_regenerate_keep_one_row_per_reply[{case}]"
+            for case in ("moonshot-kimi-k3", "moonshot-kimi-k2.6", "openai-gpt-4.1")
+        ),
+        *(
+            f"{_KIMI}{function}[{case}]"
+            for function in (
+                "test_saved_chat_replies_like_a_temporary_chat",
+                "test_saved_chat_five_turns_with_trace_capture_on",
+            )
+            for case in _KIMI_CASES
+        ),
     ),
 }
 

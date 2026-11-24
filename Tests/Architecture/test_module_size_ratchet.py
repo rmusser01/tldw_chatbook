@@ -340,7 +340,15 @@ _BUDGETS: dict[str, int] = {
     # adopted reply row writes the durable active-leaf cursor and legacy mix-in state.
     # 2026-11-08, TASK-36949.4: 22445 -> 22440 (-5), chat-sync reads go
     # through the Sync_Interop adapter instead of getattr method lookups.
-    "tldw_chatbook/Chat/console_chat_store.py": 22244,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.3 +11 -- the
+    # continuation owner row is created under the stream flush's insert lock
+    # with a re-check, kept inline so the semantic mutation census still sees
+    # the ``create_assistant_with_continuation`` write (review v5r1 F1).
+    # Rebased onto dev a6df4d8d48 (2026-11-19): dev's 22,231 + 11 = 22,242,
+    # exact measurement (under dev's row of 22,244, so the row comes down).
+    # 2026-11-23, port onto dev b31e3e9241: re-measured, dev's file is still
+    # 22,231, so the row stays 22,242 (dev's 22,231 + the branch's 11).
+    "tldw_chatbook/Chat/console_chat_store.py": 22242,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).
@@ -1254,7 +1262,17 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-20, TASK-40577 (owner rule 2026-10-04: raise by the change's own
     # lines): 6739 -> 6747 (+8) -- dispatch binding refuses a chain link that
     # holds no live row, before it writes anything. Exact measurement.
-    "tldw_chatbook/Chat/console_trace_service.py": 6747,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.3 +24 -- the
+    # planner hook for the per-domain append (rule in
+    # console_trace_domain_append.py) and its non-contiguous admitted delta.
+    # owner decision 2026-10-04 (expand limits), applied 2026-11-13:
+    # TASK-34100.3 pre-merge review +2 -- the hook hands the rule the flat
+    # prefix and the retained values it restores after a refused probe; +1,
+    # the delta's tool-loop overlay is read from the admitted indices.
+    # Rebased onto dev a6df4d8d48 (2026-11-19): 6739 -> 6766, exact measurement.
+    # 2026-11-23, port onto dev b31e3e9241: re-measured, dev's file is still
+    # 6,739, so the row stays 6,766 (dev's 6,739 + the branch's 27).
+    "tldw_chatbook/Chat/console_trace_service.py": 6774,
     # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
     # approved child trace segments (ADR-337 amendment 2026-11-17): create and
@@ -1264,6 +1282,15 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-18, TASK-41650: 4021 -> 4040 (+19), exact measurement. The
     # owner-requested Trace view read of spawned children's calls.
     "tldw_chatbook/Chat/console_trace_repository.py": 4040,
+    # owner decision 2026-10-04 (expand limits), applied 2026-11-19 on the
+    # rebase onto dev a6df4d8d48: TASK-34100.3 crosses 4000 at 4,069, exact
+    # measurement (dev's 3,961 + 108). Each continuation-error exit names its
+    # reason code, a failed persist logs the store's precondition as a code
+    # (``acknowledge_failed`` after the commit), and an unwritten optional
+    # reasoning checkpoint keeps the delivered reply (AC#2, AC#3).
+    # 2026-11-23, port onto dev b31e3e9241: re-measured, dev's file is still
+    # 3,961, so the row stays 4,069 (dev's 3,961 + the branch's 108).
+    "tldw_chatbook/Agents/agent_runtime.py": 4069,
     # 2026-11-20, TASK-42014 (owner rule: raise by the change's own lines):
     # 6108 -> 6110 (+2) -- the credential buttons carry the class their
     # press handler selects, so a press a recompose forwards still runs it.

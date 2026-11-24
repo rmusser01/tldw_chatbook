@@ -904,6 +904,8 @@ ADMISSION_TARGETS = (
     "Tests/Chat/test_console_viewless_hooks.py",
     "Tests/Agents/test_install_skill_runtime_tool.py",
     "Tests/Chat/test_console_chat_create_integration.py",
+    "Tests/Chat/test_continuation_create_flush_race.py",  # TASK-34100.3
+    "Tests/Chat/test_continuation_unwritten_store_failures.py",  # TASK-34100.3
     "Tests/Notes/test_notes_sync_tail_edit.py",
     "Tests/Notes/test_notes_sync_delete_restore_signal.py",
     "Tests/Notes/test_notes_sync_crlf_single_line.py",
