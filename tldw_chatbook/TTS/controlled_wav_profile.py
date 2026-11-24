@@ -8,8 +8,6 @@ import hashlib
 import os
 from pathlib import Path
 import re
-import shutil
-import stat
 import struct
 import sys
 from typing import BinaryIO
@@ -59,11 +57,17 @@ def _pin_executable(explicit: Path | None) -> tuple[Path, WindowsReadPin]:
     if explicit is not None:
         candidates = [explicit]
     else:
-        candidates = sorted((custom / "lib").glob("ffmpeg*/tools/**/ffplay.exe"))
-        found = shutil.which("ffplay")
-        if found:
-            candidates.append(Path(found))
-    for candidate in candidates:
+        candidates = [
+            candidate
+            for root in dict.fromkeys((custom, install))
+            for candidate in sorted((root / "lib").glob("ffmpeg*/tools/**/ffplay.exe"))
+        ]
+        candidates.extend(
+            Path(entry.strip('"')) / "ffplay.exe"
+            for entry in os.get_exec_path()
+            if entry
+        )
+    for candidate in dict.fromkeys(candidates):
         if (
             not isinstance(candidate, Path)
             or candidate.suffix.lower() != ".exe"
@@ -79,7 +83,7 @@ def _pin_executable(explicit: Path | None) -> tuple[Path, WindowsReadPin]:
                 == QUALIFIED_SHA256
             )
             if matched:
-                return candidate, pin
+                return pin.physical_path, pin
         except (OSError, ValueError):
             pass
         finally:
@@ -143,8 +147,6 @@ def _check_wave(stream: BinaryIO, frames: int) -> None:
 def _validate(
     artifact: RetainedWav, bookmark: WavBookmark, pin: WindowsReadPin
 ) -> None:
-    from tldw_chatbook.Utils import private_paths
-
     if (
         not isinstance(artifact.path, Path)
         or not isinstance(artifact.sha256, str)
@@ -171,18 +173,7 @@ def _validate(
     pin.open(artifact.path)
     # Validate the existing private source without changing its ACL. Every
     # component is now pinned; the byte reads below use only the pinned leaf.
-    parent_fd, _ = private_paths._open_verified_parent(
-        artifact.path, missing_leaf_allowed=False
-    )
-    private_paths._native_close(parent_fd)
-    info = private_paths.os.fstat(pin.stream.fileno())
-    if (
-        private_paths._classify_private_file_stat(
-            info, expected_uid=private_paths.os.geteuid()
-        )
-        or stat.S_IMODE(info.st_mode) != 0o600
-    ):
-        raise ControlledWavError("private_wave_required")
+    pin.verify_private()
     if hashlib.file_digest(pin.stream, "sha256").hexdigest() != artifact.sha256:
         raise ControlledWavError("artifact_digest_mismatch")
     _check_wave(pin.stream, artifact.file_frames)

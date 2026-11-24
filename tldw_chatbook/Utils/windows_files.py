@@ -23,6 +23,7 @@ import functools
 import ntpath
 import os as _os
 import platform
+import re
 import stat as _stat
 import struct
 from pathlib import Path
@@ -249,6 +250,7 @@ class _Native:
             ),
             (self.kernel, "LocalFree", [_P], _P),
             (self.kernel, "GetCurrentProcess", [], _HANDLE),
+            (self.kernel, "GetFinalPathNameByHandleW", [_HANDLE, _P, _U32, _U32], _U32),
             (
                 self.kernel,
                 "GetFileInformationByHandle",
@@ -694,6 +696,18 @@ class _AdmissionMetadataCloseError(OSError):
         super().__init__(errno.EIO, "windows_admission_metadata_not_retired")
 
 
+def _volume_root_name(handle: int) -> str:
+    """Resolve the object actually opened for the DOS root to a volume GUID."""
+    native = _native()
+    buffer = C.create_unicode_buffer(64)  # a volume root needs only 49 characters
+    size = native.check(
+        native.kernel.GetFinalPathNameByHandleW(handle, buffer, len(buffer), 1)
+    )
+    if size >= len(buffer):
+        raise ValueError("physical_volume_root_required")
+    return buffer.value
+
+
 class WindowsReadPin:
     """Hold a local NTFS file and its full name stable for a pathname consumer."""
 
@@ -705,6 +719,7 @@ class WindowsReadPin:
         self._handles: list[_AdmissionMetadataHandle] = []
         self.stream = None
         self._failed = False
+        self.physical_path: Path | None = None
 
     def open(self, path: Path) -> None:
         """Open every component relative to its parent without following links."""
@@ -731,6 +746,15 @@ class WindowsReadPin:
                 share_mode=3 if directory else 1,
                 _metadata_record=record,
             )
+            if index == 0:
+                root = _volume_root_name(parent)
+                if not re.fullmatch(
+                    r"\\\\\?\\Volume\{[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\}\\",
+                    root,
+                    re.IGNORECASE,
+                ):
+                    raise ValueError("physical_volume_root_required")
+                self.physical_path = Path(root + "\\".join(parts))
         if native.info(parent).attributes & _DIRECTORY:
             raise ValueError("regular_file_required")
         fd = native.crt.open_osfhandle(parent, _os.O_RDONLY | _os.O_BINARY)
@@ -744,6 +768,25 @@ class WindowsReadPin:
                 self._failed = True
                 self._uncertain_closes.append(fd)
             raise
+
+    def verify_private(self) -> None:
+        """Validate ownership and ACLs on the retained objects without reopening names."""
+        from . import private_paths
+
+        win = private_paths.os
+        uid = win.geteuid()
+        for record in self._handles[:-1]:
+            info = win._stat_handle(record.handle)
+            if not private_paths._trusted_directory_owner(info, uid) or (
+                info.st_mode & 0o022 and not info.st_mode & _stat.S_ISVTX
+            ):
+                raise PermissionError("untrusted_private_ancestry")
+        info = win.fstat(self.stream.fileno())
+        if (
+            private_paths._classify_private_file_stat(info, expected_uid=uid)
+            or _stat.S_IMODE(info.st_mode) != 0o600
+        ):
+            raise PermissionError("private_file_required")
 
     def close(self) -> bool:
         """Close all acquired handles once, retaining uncertain closes."""

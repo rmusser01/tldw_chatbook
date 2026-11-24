@@ -52,3 +52,11 @@ def test_late_or_future_record_does_not_poison_last_trustworthy_bookmark():
     clock.observe(0.05, 5.06, 1, now_s=5.70)
     clock.observe(0.08, 5.08, 1, now_s=5.02)
     assert clock.position(5.09).frame == 0
+
+
+def test_adjacent_jump_cannot_cross_content_end_inside_cumulative_skew_bound():
+    clock = ProgressClock(0, 14400, 3, 0)
+    for source, stamp in [(0, 0), (0.001, 0.249), (0.499, 0.251)]:
+        clock.observe(source, stamp, 3)
+    assert clock.position(0.301).frame == 48
+    assert not clock.natural_candidate(0.301)
