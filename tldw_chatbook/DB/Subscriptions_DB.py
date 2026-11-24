@@ -1943,6 +1943,15 @@ class SubscriptionsDB(BaseDB):
         cached = core_cached_connection(self, getattr(self._local, "conn", None))
         if cached is None:
             connection = self._get_connection()
+            # Core admission prevents cooperative replacement while the SQLite handle
+            # opens. Keep its image receipt for later prepared-snapshot checks.
+            try:
+                self._local.listening_image = (
+                    uuid4().hex if self.is_memory_db else self._listening_file_image()
+                )
+            except BaseException:
+                connection.close()
+                raise
             self._local.conn = connection
             with self._connections_lock:
                 self._connections[threading.get_ident()] = connection
@@ -2622,12 +2631,26 @@ class SubscriptionsDB(BaseDB):
             return self._memory_listening_binding.resolve()
         return Path(self.db_path_str).resolve()
 
+    def _listening_file_image(self) -> tuple[int, int, int | None]:
+        info = self.listening_binding.stat()
+        return info.st_dev, info.st_ino, getattr(info, "st_birthtime_ns", None)
+
+    @property
+    def listening_image(self) -> tuple[int, int, int | None] | str:
+        """Identify the active thread's actual open image under its DB admission."""
+        image = self._local.listening_image
+        if not self.is_memory_db and image != self._listening_file_image():
+            raise ValueError("listening_database_changed")
+        return image
+
     def _pin_listening(self, stack, lease, profile):
         return stack.enter_context(listening_mutation_context(self, lease, profile))
 
     def _guard_listening_delete(self):
         """SQLite invokes this for each affected row, even with cached statements."""
-        if getattr(self._local, "listening_write", None) is None:
+        if not getattr(self._local, "listening_destructive", False) or (
+            getattr(self._local, "listening_write", None) is None
+        ):
             raise ValueError("listening_destructive_transaction_required")
         return 1
 
@@ -2683,7 +2706,12 @@ class SubscriptionsDB(BaseDB):
                 yield conn
         else:
             with self.listening_transaction(lease=lease) as conn:
-                yield conn
+                previous = getattr(self._local, "listening_destructive", False)
+                self._local.listening_destructive = True
+                try:
+                    yield conn
+                finally:
+                    self._local.listening_destructive = previous
 
     def delete_article(self, item_id: int, *, lease=None) -> bool:
         with self.destructive_transaction(lease=lease) as conn:

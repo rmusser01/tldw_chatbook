@@ -14,6 +14,10 @@ from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path
 from tldw_chatbook.TTS.audio_limits import MAX_BUFFERED_AUDIO_BYTES
 from tldw_chatbook.TTS.controlled_wav_profile import PADDING_FRAMES, RATE, WavBookmark
 
+DatabaseImage = tuple[int, int, int | None] | str
+UnavailableReason = Literal["missing_item", "unsupported_content", "empty_body"]
+_UNAVAILABLE_REASONS = ("missing_item", "unsupported_content", "empty_body")
+
 MAX_ENTRIES = 256
 MAX_TEXT_BYTES = 256 * 1024
 MAX_SESSION_BYTES = 2 * 1024 * 1024
@@ -162,18 +166,19 @@ class EntryCandidate:
     text: str | None
     converter: str | None
     voice: FrozenVoice | None
-    origin: tuple[ListeningAuthority, Path] | None = None
+    origin: tuple[ListeningAuthority, Path, DatabaseImage] | None = None
+    unavailable_reason: UnavailableReason | None = None
 
     def __post_init__(self):
         if self.origin is not None and (
             type(self.origin) is not tuple
-            or len(self.origin) != 2
+            or len(self.origin) != 3
             or type(self.origin[0]) is not ListeningAuthority
             or not isinstance(self.origin[1], Path)
         ):
             raise ValueError("invalid_listening_origin")
         if self.item_id is None:
-            if any(
+            if self.unavailable_reason not in _UNAVAILABLE_REASONS or any(
                 v is not None
                 for v in (
                     self.source_id,
@@ -189,7 +194,8 @@ class EntryCandidate:
         _int(self.source_id, 1)
         _id(self.converter)
         if (
-            type(self.voice) is not FrozenVoice
+            self.unavailable_reason is not None
+            or type(self.voice) is not FrozenVoice
             or type(self.title) is not str
             or len(self.title.encode()) > 2048
             or (
@@ -200,14 +206,18 @@ class EntryCandidate:
         ):
             raise ValueError("invalid_listening_entry")
 
-
-_UNAVAILABLE = EntryCandidate(None, None, None, None, None, None)
+    @classmethod
+    def unavailable(cls, reason: UnavailableReason, *, origin=None) -> EntryCandidate:
+        return cls(
+            None, None, None, None, None, None, origin=origin, unavailable_reason=reason
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class ListeningCandidate:
     authority: ListeningAuthority
     database: Path
+    image: DatabaseImage
     observed_revision: int
     observed_incarnation: str
     voice: FrozenVoice
@@ -248,6 +258,7 @@ class ListeningEntry:
     artifact: int | None
     bookmark: WavBookmark | None
     availability: Literal["pending", "ready", "missing", "unavailable"]
+    unavailable_reason: UnavailableReason | None
 
 
 @dataclass(frozen=True, slots=True)

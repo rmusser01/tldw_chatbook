@@ -64,6 +64,12 @@ class ListeningLease:
         self._open = True
         self._borrowers = 0
 
+    def __copy__(self):
+        raise TypeError("listening_lease_cannot_be_copied")
+
+    def __deepcopy__(self, memo):
+        raise TypeError("listening_lease_cannot_be_copied")
+
     @contextmanager
     def borrow(self, database: Path, *, profile: str | None):
         with self._condition:

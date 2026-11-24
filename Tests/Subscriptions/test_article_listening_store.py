@@ -68,7 +68,7 @@ def prepare(store, authority, voice, *, brief=False, item=1):
         authority=authority,
         voice=voice,
         converter="speech-v1",
-        prepare_text=str.strip,
+        prepare_text=lambda text, kind, fmt: text.strip(),
     )
 
 
@@ -358,7 +358,7 @@ def test_empty_replacement_and_global_source_deletion_with_foreign_owner(records
         prepare(store, a, voice, brief=True), expected_revision=None
     )
     empty = prepare(store, a, voice, brief=True)
-    unavailable = m.EntryCandidate(None, None, None, None, None, None)
+    unavailable = m.EntryCandidate.unavailable("missing_item")
     with pytest.raises(m.ListeningConflict):
         store.replace_session(
             replace(empty, queue=(unavailable, unavailable)),
@@ -499,7 +499,7 @@ def test_live_id_and_source_have_to_agree_before_speech_preparation(records):
         c.execute("UPDATE subscription_items SET content='not selected' WHERE id=3")
     seen = []
 
-    def prepare_text(text):
+    def prepare_text(text, kind, fmt):
         seen.append(text)
         return text
 
@@ -628,3 +628,249 @@ def test_foreground_prepared_under_other_selector_cannot_enter_session(records):
             replace(queue, foreground=foreign), expected_revision=None
         )
     assert store.load_session() is None
+
+
+def test_stored_article_format_and_unavailable_reasons_survive_reopen(records):
+    _, binding, store, voice = setup_store(records)
+    with records.transaction() as c:
+        c.executemany(
+            "UPDATE subscription_items SET content_kind=?,content_format=?,content=? WHERE id=?",
+            [
+                ("article", "text", "plain", 1),
+                ("article", "markdown", "**rich**", 2),
+                ("change", "diff", "private diff", 3),
+            ],
+        )
+        c.execute(
+            "INSERT INTO briefing_items(briefing_id,item_id,live_item_id,source_id,cited,citation_position,provenance_version) VALUES(1,3,3,1,1,2,2)"
+        )
+    calls = []
+
+    def convert(raw, kind, fmt):
+        calls.append((raw, kind, fmt))
+        return raw.strip("*")
+
+    opts = dict(authority=binding[0], voice=voice, converter="v1", prepare_text=convert)
+    diff = store.prepare_item(3, **opts)
+    assert diff.foreground.unavailable_reason == "unsupported_content"
+    assert not calls
+    queue = store.prepare_brief(1, **opts)
+    assert calls == [("**rich**", "article", "markdown"), ("plain", "article", "text")]
+    saved = store.replace_session(queue, expected_revision=None)
+    assert [e.unavailable_reason for e in saved.queue] == [
+        None,
+        None,
+        "unsupported_content",
+    ]
+    with records.transaction() as c:
+        c.execute("UPDATE subscription_items SET content=' ' WHERE id=1")
+    assert (
+        store.prepare_item(
+            1, **(opts | {"prepare_text": lambda *args: "fallback"})
+        ).foreground.unavailable_reason
+        == "empty_body"
+    )
+    assert (
+        store.prepare_item(900, **opts).foreground.unavailable_reason == "missing_item"
+    )
+    records.delete_article(2)
+    with closing(SubscriptionsDB(records.db_path)) as reopened:
+        _, _, other, _ = setup_store(reopened)
+        assert [e.unavailable_reason for e in other.load_session().queue] == [
+            "missing_item",
+            None,
+            "unsupported_content",
+        ]
+
+
+@pytest.mark.parametrize(
+    "tamper", ["modern_source", "modern_historical", "legacy", "incomplete"]
+)
+def test_recovery_uses_live_brief_authority(records, tamper):
+    from tldw_chatbook.DB.subscriptions_schema import listening_issues
+
+    _, binding, store, voice = setup_store(records)
+    store.replace_session(
+        prepare(store, binding[0], voice, brief=True), expected_revision=None
+    )
+    with records.transaction() as c:
+        if tamper == "modern_source":
+            c.execute(
+                "INSERT INTO subscriptions(id,name,type,source) VALUES(2,'other','rss','other')"
+            )
+            c.execute("UPDATE briefing_items SET source_id=2 WHERE item_id=2")
+        elif tamper == "modern_historical":
+            c.execute("UPDATE briefing_items SET item_id=3 WHERE item_id=2")
+        elif tamper == "legacy":
+            c.execute(
+                "UPDATE briefing_items SET provenance_version=1,cited=0,citation_position=NULL"
+            )
+            c.execute(
+                "UPDATE briefings SET body_markdown='[item 3] [item 1]' WHERE id=1"
+            )
+        else:
+            c.execute("UPDATE briefings SET status='failed' WHERE id=1")
+        assert listening_issues(c) == ("invalid_listening_state",)
+
+
+@pytest.mark.parametrize("tamper", ["slot", "count", "cursor", "bookmark"])
+def test_recovery_preflights_sqlite_integer_roles(records, tamper):
+    from tldw_chatbook.DB.subscriptions_schema import listening_issues
+
+    m, binding, store, voice = setup_store(records)
+    s = store.replace_session(
+        prepare(store, binding[0], voice, brief=True), expected_revision=None
+    )
+    job = store.reserve_audio(s.queue[0].entry_id, expected_revision=s.revision)
+    store.complete_audio(job, m.AudioMetadata("a" * 64, 48000, 12, 12012, 48092))
+    with records.transaction() as c:
+        c.execute("PRAGMA ignore_check_constraints=ON")
+        if tamper in ("slot", "count"):
+            c.executemany(
+                "INSERT INTO listening_entries(slot,session_id,entry_id) VALUES(?,1,?)",
+                [
+                    (-i / 300, f"extra{i}")
+                    for i in range(1, (258 if tamper == "count" else 2))
+                ],
+            )
+        elif tamper == "cursor":
+            c.execute("UPDATE listening_session SET cursor=0.5")
+        else:
+            c.execute("UPDATE listening_entries SET bookmark_frame=0.5 WHERE slot=0")
+        queries = []
+        c.set_trace_callback(queries.append)
+        try:
+            assert listening_issues(c) == ("invalid_listening_state",)
+        finally:
+            c.set_trace_callback(None)
+        if tamper in ("slot", "count"):
+            assert not any("SELECT e.*" in q for q in queries)
+
+
+def test_old_image_cannot_supply_queue_or_foreground_after_replacement(
+    records, tmp_path
+):
+    m, binding, store, voice = setup_store(records)
+    old = prepare(store, binding[0], voice, brief=True)
+    foreground = prepare(store, binding[0], voice).foreground
+    unavailable = prepare(store, binding[0], voice, item=858).foreground
+    path = records.db_path
+    records.close()
+    replacement_path = tmp_path / "replacement.db"
+    with (
+        closing(SubscriptionsDB(replacement_path)) as replacement,
+        replacement.transaction() as c,
+    ):
+        c.execute(
+            "INSERT INTO subscriptions(id,name,type,source) VALUES(1,'new','rss','new')"
+        )
+        c.execute(
+            "INSERT INTO subscription_items(id,subscription_id,url,title,content) VALUES(1,1,'n','new','new body')"
+        )
+    replacement_path.replace(path)
+    with closing(SubscriptionsDB(path)) as replacement:
+        _, binding, other, voice = setup_store(replacement)
+        single = replace(old, brief_id=None, queue=(), foreground=foreground)
+        with pytest.raises(m.ListeningConflict):
+            other.replace_session(single, expected_revision=None)
+        current = other.replace_session(
+            prepare(other, binding[0], voice), expected_revision=None
+        )
+        update = m.ListeningCheckpoint(
+            binding[0],
+            current.incarnation,
+            current.playback_generation,
+            None,
+            False,
+            "paused",
+            foreground=foreground,
+        )
+        with pytest.raises(m.ListeningConflict):
+            other.checkpoint(update, expected_revision=current.revision)
+        with pytest.raises(m.ListeningConflict):
+            other.checkpoint(
+                replace(update, foreground=unavailable),
+                expected_revision=current.revision,
+            )
+        assert other.load_session() == current
+
+
+def test_store_pin_never_implies_destructive_sql_intent(records):
+    _, binding, store, voice = setup_store(records)
+    s = store.replace_session(
+        prepare(store, binding[0], voice, brief=True), expected_revision=None
+    )
+    delete = "DELETE FROM subscription_items WHERE id=?"
+    with store.mutation_lease() as lease, records.transaction() as c:
+        store.reserve_audio(
+            s.queue[0].entry_id, expected_revision=s.revision, lease=lease
+        )
+        with pytest.raises(sqlite3.OperationalError):
+            c.execute(delete, (2,))
+        with records.destructive_transaction(lease=lease) as admitted:
+            admitted.execute(delete, (2,))
+        with pytest.raises(sqlite3.OperationalError):
+            c.execute(delete, (1,))
+    assert [e.item_id for e in store.load_session().queue] == [None, 1]
+
+
+def test_native_lease_cannot_copy_independent_borrow_counts(records):
+    from concurrent.futures import ThreadPoolExecutor
+    from copy import copy, deepcopy
+    from queue import Queue
+    from threading import Event
+
+    m, binding, store, _ = setup_store(records)
+    published, wait_for_borrow, retiring = Queue(), Event(), Event()
+
+    def owner():
+        with store.mutation_lease() as lease:
+            published.put(lease)
+            assert wait_for_borrow.wait(10)
+            lease.revoke()
+            retiring.set()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        retired = pool.submit(owner)
+        lease = published.get(timeout=10)
+        with lease.borrow(store.database, profile=binding[0].profile):
+            try:
+                for clone in (copy, deepcopy):
+                    with pytest.raises(TypeError):
+                        clone(lease)
+            finally:
+                wait_for_borrow.set()
+            assert retiring.wait(10)
+            with pytest.raises(m.ListeningBusy), store.mutation_lease():
+                pass
+            assert not retired.done()
+        retired.result(timeout=10)
+    with store.mutation_lease():
+        pass
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_recovery_accepts_bounded_queue_from_larger_saved_selection(records, legacy):
+    from threading import Event
+    from tldw_chatbook.DB.recovery_operations import recovery_adapters
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
+
+    _, binding, store, voice = setup_store(records)
+    with records.transaction() as c:
+        c.executemany(
+            "INSERT INTO briefing_items(briefing_id,item_id,source_id,cited,provenance_version) VALUES(1,?,1,0,2)",
+            [(i,) for i in range(10, 310)],
+        )
+        if legacy:
+            c.execute(
+                "UPDATE briefing_items SET provenance_version=1,cited=0,citation_position=NULL"
+            )
+    saved = store.replace_session(
+        prepare(store, binding[0], voice, brief=True), expected_revision=None
+    )
+    expected = [2, 1] if not legacy else [None, 2, 1]
+    assert [e.item_id for e in saved.queue] == expected
+    records.delete_article(2)
+    records.close()
+    owner = next(o for o in recovery_adapters() if o.owner_id == "db.subscriptions")
+    assert validate_candidate(owner, records.db_path, Event(), migrate=False) == ()

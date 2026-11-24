@@ -6,7 +6,7 @@ CREATE TABLE listening_session (
     policy_epoch INTEGER NOT NULL,
     default_voice TEXT,
     brief_id INTEGER REFERENCES briefings(id),
-    cursor INTEGER,
+    cursor INTEGER CHECK (cursor IS NULL OR (typeof(cursor)='integer' AND cursor BETWEEN 0 AND 255)),
     resume_queue INTEGER NOT NULL DEFAULT 0 CHECK (resume_queue IN (0,1)),
     transport TEXT NOT NULL CHECK (transport IN ('empty','paused','playing','preparing','completed')),
     playback_generation INTEGER NOT NULL DEFAULT 0,
@@ -41,7 +41,7 @@ CREATE TABLE article_audio (
 );
 
 CREATE TABLE listening_entries (
-    slot INTEGER NOT NULL CHECK (slot >= -1),
+    slot INTEGER NOT NULL CHECK (typeof(slot)='integer' AND slot BETWEEN -1 AND 255),
     session_id INTEGER NOT NULL REFERENCES listening_session(id),
     entry_id TEXT NOT NULL UNIQUE,
     item_id INTEGER REFERENCES subscription_items(id),
@@ -55,8 +55,11 @@ CREATE TABLE listening_entries (
     dependency_hash TEXT,
     artifact INTEGER REFERENCES article_audio(generation),
     bookmark_hash TEXT,
-    bookmark_rate INTEGER,
-    bookmark_frame INTEGER CHECK (bookmark_frame >= 0),
+    bookmark_rate INTEGER CHECK (bookmark_rate IS NULL OR typeof(bookmark_rate)='integer'),
+    bookmark_frame INTEGER CHECK (bookmark_frame IS NULL OR (typeof(bookmark_frame)='integer' AND bookmark_frame >= 0)),
+    unavailable_reason TEXT,
+    CHECK ((item_id IS NULL AND unavailable_reason IS NOT NULL AND unavailable_reason IN ('missing_item','unsupported_content','empty_body'))
+        OR (item_id IS NOT NULL AND unavailable_reason IS NULL)),
     UNIQUE(session_id,slot)
 );
 
@@ -78,7 +81,7 @@ BEGIN
         WHERE id IN (SELECT session_id FROM listening_entries WHERE item_id=OLD.id);
     UPDATE listening_entries SET item_id=NULL,source_id=NULL,title=NULL,text=NULL,speech_hash=NULL,
         converter=NULL,voice=NULL,voice_hash=NULL,dependency_hash=NULL,artifact=NULL,
-        bookmark_hash=NULL,bookmark_rate=NULL,bookmark_frame=NULL WHERE item_id=OLD.id;
+        bookmark_hash=NULL,bookmark_rate=NULL,bookmark_frame=NULL,unavailable_reason='missing_item' WHERE item_id=OLD.id;
     UPDATE article_audio SET item_id=NULL,speech_hash=NULL,converter=NULL,voice_hash=NULL,
         dependency_hash=NULL,status='pending_delete',sha256=NULL,sample_rate=NULL,content_frames=NULL,
         file_frames=NULL,byte_size=NULL,last_used=NULL,created_at=NULL,target_entry=NULL,target_revision=NULL,

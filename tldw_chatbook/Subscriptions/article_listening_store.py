@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.DB.subscriptions_schema import listening_brief_items
 from tldw_chatbook.TTS.controlled_wav_profile import WavBookmark
 
 from .article_listening_lease import ListeningBusy, ListeningLease, hold_listening
@@ -23,16 +24,20 @@ from .article_listening_models import (
     ListeningEntry,
     ListeningSession,
     VoiceDependency,
-    MAX_ENTRIES,
     MAX_TEXT_BYTES,
     MAX_SESSION_BYTES,
     listening_profile_key,
     _KEY,
-    _UNAVAILABLE,
     _encoded,
     _hash,
     _int,
     _id,
+)
+
+from .item_persist import (
+    CONTENT_FORMAT_MARKDOWN,
+    CONTENT_FORMAT_TEXT,
+    CONTENT_KIND_ARTICLE,
 )
 
 __all__ = [
@@ -158,6 +163,7 @@ class ArticleListeningStore:
                 r["artifact"],
                 point,
                 availability,
+                r["unavailable_reason"],
             )
             if r["slot"] == -1:
                 foreground = entry
@@ -177,54 +183,32 @@ class ArticleListeningStore:
             "completed" if s["transport"] == "completed" else "paused",
         )
 
-    @staticmethod
-    def _brief_items(c, brief_id):
-        brief = c.execute(
-            "SELECT status,length(CAST(body_markdown AS BLOB)) FROM briefings WHERE id=?",
-            (brief_id,),
-        ).fetchone()
-        if not brief or brief[0] != "complete":
-            raise ListeningConflict("listening_brief_unavailable")
-        rows = c.execute(
-            "SELECT bi.item_id,CASE WHEN bi.item_id=i.id AND bi.source_id=i.subscription_id THEN i.id END AS live_item_id,"
-            "bi.cited,bi.provenance_version FROM briefing_items bi "
-            "LEFT JOIN subscription_items i ON i.id=bi.live_item_id "
-            "WHERE bi.briefing_id=? ORDER BY bi.citation_position,bi.item_id LIMIT ?",
-            (brief_id, MAX_ENTRIES + 1),
-        ).fetchall()
-        if len(rows) > MAX_ENTRIES:
-            raise ValueError("listening_brief_limit")
-        if any(row["provenance_version"] != 1 for row in rows):
-            return tuple(r["live_item_id"] for r in rows if r["cited"])
-        from .briefing_service import extract_citation_ids
-
-        if (brief[1] or 0) > MAX_SESSION_BYTES:
-            raise ValueError("listening_brief_limit")
-        body = c.execute(
-            "SELECT body_markdown FROM briefings WHERE id=?", (brief_id,)
-        ).fetchone()[0]
-        members = {row["item_id"]: row["live_item_id"] for row in rows}
-        ids = extract_citation_ids(body)
-        if len(ids) > MAX_ENTRIES:
-            raise ValueError("listening_brief_limit")
-        return tuple(members.get(i) for i in ids)
-
-    def _snapshot(self, c, item_id, voice, converter, prepare_text, authority):
+    def _snapshot(self, c, item_id, voice, converter, prepare_text, origin):
         if item_id is None:
-            return _UNAVAILABLE
+            return EntryCandidate.unavailable("missing_item", origin=origin)
         row = c.execute(
-            "SELECT subscription_id,length(CAST(title AS BLOB)),length(CAST(content AS BLOB)) "
+            "SELECT subscription_id,length(CAST(title AS BLOB)),length(CAST(content AS BLOB)),content_kind,content_format "
             "FROM subscription_items WHERE id=?",
             (_int(item_id, 1),),
         ).fetchone()
         if not row:
-            return _UNAVAILABLE
+            return EntryCandidate.unavailable("missing_item", origin=origin)
+        kind, fmt = row[3], row[4]
+        if (kind, fmt) != (None, None) and (
+            kind != CONTENT_KIND_ARTICLE
+            or fmt not in (CONTENT_FORMAT_TEXT, CONTENT_FORMAT_MARKDOWN)
+        ):
+            return EntryCandidate.unavailable("unsupported_content", origin=origin)
         if (row[1] or 0) > 2048 or (row[2] or 0) > MAX_TEXT_BYTES:
             raise ValueError("listening_article_limit")
         title, raw = c.execute(
             "SELECT title,content FROM subscription_items WHERE id=?", (item_id,)
         ).fetchone()
-        text = prepare_text(raw or "")
+        if raw is None or isinstance(raw, str) and not raw.strip():
+            return EntryCandidate.unavailable("empty_body", origin=origin)
+        if type(raw) is not str:
+            return EntryCandidate.unavailable("unsupported_content", origin=origin)
+        text = prepare_text(raw, kind, fmt)
         if type(text) is not str:
             raise ValueError("invalid_listening_text")
         return (
@@ -235,10 +219,10 @@ class ArticleListeningStore:
                 text,
                 converter,
                 voice,
-                (authority, self.database),
+                origin,
             )
             if text.strip()
-            else _UNAVAILABLE
+            else EntryCandidate.unavailable("empty_body", origin=origin)
         )
 
     def prepare_item(
@@ -248,21 +232,24 @@ class ArticleListeningStore:
         authority: ListeningAuthority,
         voice: FrozenVoice,
         converter: str,
-        prepare_text: Callable[[str], str],
+        prepare_text: Callable[[str, str | None, str | None], str],
     ) -> ListeningCandidate:
         self._authority(authority)
         _int(item_id, 1)
         with self.db.artifact_read_snapshot() as c:
             s = self._state(c)
+            image = self.db.listening_image
+            origin = (authority, self.database, image)
             return ListeningCandidate(
                 authority,
                 self.database,
+                image,
                 s["revision"],
                 s["incarnation"],
                 voice,
                 None,
                 (),
-                self._snapshot(c, item_id, voice, converter, prepare_text, authority),
+                self._snapshot(c, item_id, voice, converter, prepare_text, origin),
             )
 
     def prepare_brief(
@@ -272,18 +259,18 @@ class ArticleListeningStore:
         authority: ListeningAuthority,
         voice: FrozenVoice,
         converter: str,
-        prepare_text: Callable[[str], str],
+        prepare_text: Callable[[str, str | None, str | None], str],
     ) -> ListeningCandidate:
         self._authority(authority)
         _int(brief_id, 1)
         with self.db.artifact_read_snapshot() as c:
             s = self._state(c)
+            image = self.db.listening_image
+            origin = (authority, self.database, image)
             queue = []
             total = 0
-            for item in self._brief_items(c, brief_id):
-                entry = self._snapshot(
-                    c, item, voice, converter, prepare_text, authority
-                )
+            for item in listening_brief_items(c, brief_id):
+                entry = self._snapshot(c, item, voice, converter, prepare_text, origin)
                 total += len((entry.text or "").encode())
                 if total > MAX_SESSION_BYTES:
                     raise ValueError("listening_brief_limit")
@@ -293,6 +280,7 @@ class ArticleListeningStore:
             return ListeningCandidate(
                 authority,
                 self.database,
+                image,
                 s["revision"],
                 s["incarnation"],
                 voice,
@@ -301,16 +289,16 @@ class ArticleListeningStore:
                 None,
             )
 
-    def _insert(self, c, session_id, slot, e, authority):
+    def _insert(self, c, session_id, slot, e, origin):
+        if e.origin != origin:
+            raise ListeningConflict("listening_entry_authority_changed")
         key = uuid4().hex
         if e.item_id is None:
             c.execute(
-                "INSERT INTO listening_entries(session_id,slot,entry_id) VALUES (?,?,?)",
-                (session_id, slot, key),
+                "INSERT INTO listening_entries(session_id,slot,entry_id,unavailable_reason) VALUES (?,?,?,?)",
+                (session_id, slot, key, e.unavailable_reason),
             )
             return
-        if e.origin != (authority, self.database):
-            raise ListeningConflict("listening_entry_authority_changed")
         source = c.execute(
             "SELECT subscription_id FROM subscription_items WHERE id=?", (e.item_id,)
         ).fetchone()
@@ -347,13 +335,19 @@ class ArticleListeningStore:
         a = self._authority(candidate.authority)
         with self.db.listening_transaction(lease=lease, profile=a.profile) as c:
             s = self._checked(c, expected_revision, a, new_intent=True)
-            if candidate.database != self.database or (
-                s["revision"],
-                s["incarnation"],
-            ) != (candidate.observed_revision, candidate.observed_incarnation):
+            image = self.db.listening_image
+            if (
+                candidate.database != self.database
+                or candidate.image != image
+                or (
+                    s["revision"],
+                    s["incarnation"],
+                )
+                != (candidate.observed_revision, candidate.observed_incarnation)
+            ):
                 raise ListeningConflict("stale_listening_candidate")
             if candidate.brief_id is not None:
-                authorized = self._brief_items(c, candidate.brief_id)
+                authorized = listening_brief_items(c, candidate.brief_id)
                 if len(authorized) != len(candidate.queue) or any(
                     e.item_id is not None and e.item_id != item
                     for e, item in zip(candidate.queue, authorized, strict=True)
@@ -373,7 +367,7 @@ class ArticleListeningStore:
                 ).lastrowid
             c.execute("DELETE FROM listening_entries WHERE session_id=?", (session_id,))
             for slot, entry in entries:
-                self._insert(c, session_id, slot, entry, a)
+                self._insert(c, session_id, slot, entry, (a, self.database, image))
             c.execute(
                 "UPDATE listening_session SET revision=revision+1,incarnation=?,profile=?,policy_epoch=?,"
                 "default_voice=?,brief_id=?,cursor=?,resume_queue=0,transport='paused',playback_generation=playback_generation+1,"
@@ -443,7 +437,13 @@ class ArticleListeningStore:
                     (s["id"],),
                 )
                 if isinstance(update.foreground, EntryCandidate):
-                    self._insert(c, s["id"], -1, update.foreground, a)
+                    self._insert(
+                        c,
+                        s["id"],
+                        -1,
+                        update.foreground,
+                        (a, self.database, self.db.listening_image),
+                    )
             slots = {
                 row[0]
                 for row in c.execute(
