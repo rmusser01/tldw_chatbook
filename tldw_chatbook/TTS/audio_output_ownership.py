@@ -50,7 +50,11 @@ class AudioOutputOwnership:
     def _owns(self, lease: AudioOutputLease) -> bool:
         return self._slot is not None and self._slot[0] is lease
 
-    async def _retire_owned(self, lease: AudioOutputLease, retire: _Retire) -> None:
+    async def _retire_owned(
+        self, lease: AudioOutputLease, retire: _Retire, published: asyncio.Event
+    ) -> None:
+        # An eager task can enter here before create_task returns to acquire.
+        await published.wait()
         try:
             confirmed = await retire()
         except (Exception, asyncio.CancelledError):
@@ -78,7 +82,11 @@ class AudioOutputOwnership:
         self._generation += 1
         generation = self._generation
         if self._retirement is None and self._slot is not None:
-            self._retirement = asyncio.create_task(self._retire_owned(*self._slot))
+            published = asyncio.Event()
+            self._retirement = asyncio.create_task(
+                self._retire_owned(*self._slot, published)
+            )
+            published.set()
         if self._retirement is not None:
             # The coordinator retains this work even if every waiting start leaves.
             await asyncio.shield(self._retirement)
