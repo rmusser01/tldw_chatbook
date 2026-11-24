@@ -66,6 +66,8 @@ def create_research_workspace_screen(app: Any, screen_class: type, user_data_dir
             media_scope_service=media_scope_service,
             operation_store=operation_store,
             association_scheduler=association_scheduler,
+            chat_overlay=overlay_store,
+            chat_policy_enforcer=getattr(app, "service_policy_enforcer", None),
         )
     return screen_class(
         app,

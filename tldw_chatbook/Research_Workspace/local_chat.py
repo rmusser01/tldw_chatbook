@@ -25,6 +25,7 @@ from tldw_chatbook.RAG_Search.local_citation_capture import (
 )
 
 from .chat_models import (
+    RESEARCH_CHAT_TOPIC,
     ResearchChatMode,
     ResearchChatSession,
     ResearchChatSessionRequest,
@@ -43,7 +44,6 @@ from .contracts import (
 )
 from .egress_consent import ResearchEgressConsentService
 
-RESEARCH_CHAT_TOPIC = "research-chat"
 _CONTEXT_CHARS = 16_000
 _HISTORY_CHARS = 64_000
 ReadSources = Callable[

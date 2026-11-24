@@ -23,6 +23,7 @@ from .contracts import (
 MAX_CHAT_DRAFT_BYTES = 64 * 1024
 MAX_CHAT_APPEND_RECEIPTS = 128
 MAX_CHAT_SOURCES = 100
+RESEARCH_CHAT_TOPIC = "research-chat"
 
 ResearchTurnStatus = Literal["complete", "cancelled", "failed"]
 AppendStage = Literal["pending", "user_committed", "assistant_committed", "complete"]
@@ -151,12 +152,18 @@ class ResearchCitationRef:
 @dataclass(frozen=True, slots=True)
 class ResearchChatSessionRequest:
     title: str = "Research Chat"
+    operation_id: str = field(default_factory=lambda: uuid4().hex)
 
     def __post_init__(self) -> None:
         title = _required_text(self.title, "title")
         if len(title) > 300:
             raise ValueError("title exceeds 300 characters")
         object.__setattr__(self, "title", title)
+        object.__setattr__(
+            self,
+            "operation_id",
+            validate_chat_id(self.operation_id, "session operation id"),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,6 +184,7 @@ class ResearchChatTurnRequest:
     processing_route: ProcessingRoute
     context_revision: int
     turn_id: str = field(default_factory=lambda: uuid4().hex)
+    retry_user_message_id: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.workspace, QualifiedWorkspaceRef):
@@ -185,6 +193,14 @@ class ResearchChatTurnRequest:
             raise ValueError("processing route does not match the workspace authority")
         for name in ("conversation_id", "turn_id"):
             object.__setattr__(self, name, validate_chat_id(getattr(self, name), name))
+        retry_id = validate_chat_id(
+            self.retry_user_message_id, "saved user message id", allow_empty=True
+        )
+        if retry_id and self.workspace.data_source.value != "server":
+            raise ValueError(
+                "Only a Server append receipt can recover a saved user message"
+            )
+        object.__setattr__(self, "retry_user_message_id", retry_id)
         if not validate_chat_draft(self.user_text).strip():
             raise ValueError("chat draft must contain a question")
         try:

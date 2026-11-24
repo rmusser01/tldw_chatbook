@@ -695,6 +695,10 @@ class ResearchWorkspacePort(Protocol):
         self, ref: QualifiedWorkspaceRef, *, limit: int = 20, offset: int = 0
     ) -> BoundedPageResult[ResearchChatSession]: ...
 
+    async def chat_capability(
+        self, ref: QualifiedWorkspaceRef
+    ) -> ResearchCapability: ...
+
     async def create_chat_session(
         self, ref: QualifiedWorkspaceRef, request: ResearchChatSessionRequest
     ) -> ResearchChatSession: ...

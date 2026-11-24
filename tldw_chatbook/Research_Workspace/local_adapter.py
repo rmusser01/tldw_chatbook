@@ -284,16 +284,7 @@ class LocalResearchWorkspaceAdapter:
         capabilities.update(
             {name: note_capability for name in _LOCAL_NOTE_CAPABILITIES}
         )
-        chat_capability = (
-            _LOCAL_AVAILABLE
-            if self._chat is not None
-            else ResearchCapability(
-                False,
-                "local_chat_unavailable",
-                "Local conversation storage is unavailable.",
-                "local",
-            )
-        )
+        chat_capability = await self.chat_capability(ref)
         capabilities.update(
             {
                 "list_chat_sessions": chat_capability,
@@ -302,6 +293,17 @@ class LocalResearchWorkspaceAdapter:
             }
         )
         return capabilities
+
+    async def chat_capability(self, ref: QualifiedWorkspaceRef) -> ResearchCapability:
+        self._require_local_ref(ref)
+        if self._chat is not None:
+            return _LOCAL_AVAILABLE
+        return ResearchCapability(
+            False,
+            "local_chat_unavailable",
+            "Local conversation storage is unavailable.",
+            "local",
+        )
 
     def _require_chat(self, ref: QualifiedWorkspaceRef) -> LocalResearchChat:
         self._require_local_ref(ref)

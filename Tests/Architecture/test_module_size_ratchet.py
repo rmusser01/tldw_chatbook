@@ -947,7 +947,8 @@ _BUDGETS: dict[str, int] = {
     # `_request(...)` -> `Model.model_validate` shape, so the honest
     # decomposition is per-API-namespace delegates -- `MCPUnifiedClient` is
     # the precedent already in the package.
-    "tldw_chatbook/tldw_api/client.py": 16678,
+    # TASK-21509: the shared chat message append moves to the completion mixin.
+    "tldw_chatbook/tldw_api/client.py": 16658,
     # Added 2026-09-21 (task-32901), each at its exact measured size as of
     # `origin/dev` 9e33252708 — see the module docstring's second pass.
     "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": 14283,

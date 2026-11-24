@@ -39,6 +39,10 @@ from typing import Any
 
 __all__ = [
     "TLDWAPIClient",
+    "ResearchChatCompletionRequest",
+    "ResearchChatRagContext",
+    "ResearchChatRagSearch",
+    "ResearchChatStartup",
     "MCPUnifiedClient",
     "TLDWAPIError",
     "APIConnectionError",
@@ -1033,6 +1037,10 @@ __all__ = [
 # in `__all__` (and so are not covered by `from tldw_chatbook.tldw_api
 # import *`), matching the previous file's behavior exactly.
 _SUBMODULE_BY_NAME = {
+    "ResearchChatCompletionRequest": "chat_completion_schemas",
+    "ResearchChatRagContext": "chat_completion_schemas",
+    "ResearchChatRagSearch": "chat_completion_schemas",
+    "ResearchChatStartup": "chat_completion_schemas",
     "ABTestArm": "evaluations_schemas",
     "ABTestQuery": "evaluations_schemas",
     "ABTestRetrieval": "evaluations_schemas",

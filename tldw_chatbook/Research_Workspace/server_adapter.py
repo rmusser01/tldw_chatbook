@@ -149,6 +149,8 @@ class ServerResearchWorkspaceAdapter:
         association_scheduler: Any | None = None,
         operation_id_factory: Callable[[], str] | None = None,
         now_factory: Callable[[], str] | None = None,
+        chat_overlay: Any | None = None,
+        chat_policy_enforcer: Any | None = None,
     ) -> None:
         self._service = service
         self._context_provider = server_context_provider
@@ -160,6 +162,18 @@ class ServerResearchWorkspaceAdapter:
             lambda: f"source-operation-{uuid4().hex}"
         )
         self._now_factory = now_factory or _utc_now
+        self._chat = None
+        self._chat_turns = None
+        if chat_overlay is not None and callable(
+            getattr(server_context_provider, "build_client", None)
+        ):
+            from .chat_service import ResearchChatService
+            from .server_chat import ServerResearchChat
+
+            self._chat = ServerResearchChat(
+                self._chat_client, chat_overlay, policy_enforcer=chat_policy_enforcer
+            )
+            self._chat_turns = ResearchChatService(self._answer_chat_turn)
 
     async def list_workspaces(
         self, *, include_archived: bool = False
@@ -316,6 +330,95 @@ class ServerResearchWorkspaceAdapter:
         lifecycle.update(self._project_source_capabilities(ref, projection, context))
         lifecycle.update(self._note_capabilities(context))
         return lifecycle
+
+    def _chat_client(self, ref: QualifiedWorkspaceRef):
+        context = self._context_for_ref(ref)
+        require_capability(self._capabilities_for_context(context), "get")
+        return self._context_provider.build_client()
+
+    def _require_chat(self, ref: QualifiedWorkspaceRef):
+        self._context_for_ref(ref)
+        if self._chat is None:
+            raise ValueError("Server Research Chat is unavailable")
+        return self._chat
+
+    async def chat_capability(self, ref: QualifiedWorkspaceRef) -> ResearchCapability:
+        context = self._context_for_ref(ref)
+        unavailable = self._context_health_unavailable(
+            context, revision=self._capability_revision(context)
+        )
+        if unavailable is not None:
+            return unavailable
+        if self._chat is not None:
+            capability = await self._server_call(
+                self._chat_client(ref).get_research_chat_capability(), context=context
+            )
+            if capability.get("status") in {"ready", "degraded"} and capability.get(
+                "mode"
+            ) in {"allow", "warn"}:
+                return ResearchCapability(
+                    True,
+                    "available",
+                    "Chat is available on the selected server.",
+                    "server",
+                )
+        return ResearchCapability(
+            False,
+            "server_chat_unavailable",
+            "Chat is unavailable on the selected server.",
+            "server",
+            recovery_action="Check the server's model and Research Workspace configuration.",
+        )
+
+    async def list_chat_sessions(
+        self, ref: QualifiedWorkspaceRef, *, limit: int = 20, offset: int = 0
+    ):
+        context = self._context_for_ref(ref)
+        return await self._server_call(
+            self._require_chat(ref).list_sessions(ref, limit=limit, offset=offset),
+            context=context,
+        )
+
+    async def create_chat_session(self, ref: QualifiedWorkspaceRef, request):
+        context = self._context_for_ref(ref)
+        return await self._server_call(
+            self._require_chat(ref).create_session(ref, request), context=context
+        )
+
+    async def load_chat_messages(
+        self, ref: QualifiedWorkspaceRef, conversation_id: str
+    ):
+        context = self._context_for_ref(ref)
+        return await self._server_call(
+            self._require_chat(ref).load_messages(ref, conversation_id), context=context
+        )
+
+    async def resolve_chat_route(
+        self, ref: QualifiedWorkspaceRef, provider: str, model: str
+    ):
+        require_capability({"chat": await self.chat_capability(ref)}, "chat")
+        return self._require_chat(ref).resolve_route(ref, provider, model)
+
+    async def capture_chat_sources(self, ref: QualifiedWorkspaceRef):
+        from .chat_service import capture_selected_sources
+
+        return await capture_selected_sources(self, ref)
+
+    async def send_chat_turn(self, request, on_chunk, cancel_event):
+        self._require_chat(request.workspace)
+        return await self._chat_turns.send(request, on_chunk, cancel_event)
+
+    async def _answer_chat_turn(self, request, on_chunk, cancel_event):
+        context = self._context_for_ref(request.workspace)
+        return await self._server_call(
+            self._require_chat(request.workspace).answer(
+                request, on_chunk, cancel_event, self.capture_chat_sources
+            ),
+            context=context,
+        )
+
+    async def stop_chat_turn(self, ref: QualifiedWorkspaceRef, turn_id: str) -> bool:
+        return self._chat_turns is not None and self._chat_turns.stop(ref, turn_id)
 
     async def list_notes(
         self, ref: QualifiedWorkspaceRef, page: ResearchNotePageRequest

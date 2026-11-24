@@ -10,6 +10,7 @@ from tldw_chatbook.runtime_policy.bootstrap import (
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
 
 if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api.chat_completion_schemas import ResearchChatRagContext
     from tldw_chatbook.tldw_api import (
         CharacterChatSessionCreate,
         ChatKnowledgeSaveRequest,
@@ -25,6 +26,13 @@ class ServerChatConversationClient(Protocol):
     async def approve_chat_loop_call(self, *args: Any, **kwargs: Any) -> Any: ...
     async def cancel_chat_loop_run(self, *args: Any, **kwargs: Any) -> Any: ...
     async def create_character_chat_session(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def create_research_chat_workspace_session(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def create_character_message(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def persist_chat_message_rag_context(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
     async def create_chat_conversation_share_link(
         self, *args: Any, **kwargs: Any
     ) -> Any: ...
@@ -331,6 +339,16 @@ class ServerChatConversationService:
 
         self._enforce(self._action_id("create"))
         payload = dict(kwargs)
+        if "workspace_assistant_selection" in payload:
+            from tldw_chatbook.tldw_api.chat_completion_schemas import (
+                ResearchChatStartup,
+            )
+
+            key = payload.pop("idempotency_key")
+            return await self._require_client().create_research_chat_workspace_session(
+                ResearchChatStartup.model_validate(payload),
+                idempotency_key=key,
+            )
         seed_first_message = bool(payload.pop("seed_first_message", False))
         greeting_strategy = payload.pop("greeting_strategy", "default")
         alternate_index = payload.pop("alternate_index", None)
@@ -349,6 +367,43 @@ class ServerChatConversationService:
             seed_first_message=seed_first_message,
             greeting_strategy=greeting_strategy,
             alternate_index=alternate_index,
+        )
+
+    async def create_message(
+        self,
+        conversation_id: str,
+        *,
+        workspace_id: str,
+        role: str,
+        content: str,
+        parent_message_id: str | None,
+        idempotency_key: str,
+    ) -> Any:
+        from tldw_chatbook.tldw_api import CharacterMessageCreate
+
+        self._enforce(self._action_id("create"))
+        return await self._require_client().create_character_message(
+            conversation_id,
+            CharacterMessageCreate(
+                role=role, content=content, parent_message_id=parent_message_id
+            ),
+            scope_type="workspace",
+            workspace_id=workspace_id,
+            idempotency_key=idempotency_key,
+        )
+
+    async def persist_rag_context(
+        self,
+        message_id: str,
+        context: ResearchChatRagContext,
+        *,
+        workspace_id: str,
+    ) -> dict[str, Any]:
+        self._enforce(self._action_id("update"))
+        return await self._require_client().persist_chat_message_rag_context(
+            message_id,
+            context,
+            workspace_id=workspace_id,
         )
 
     async def delete_conversation(

@@ -869,6 +869,7 @@ from .chat_documents_schemas import (
     PromptConfigResponse,
     SavePromptConfigRequest,
 )
+from .chat_completion_client import ChatCompletionClientMixin
 from .character_persona_schemas import (
     ArchetypePreviewResponse,
     ArchetypeSummary,
@@ -876,7 +877,6 @@ from .character_persona_schemas import (
     CharacterChatSessionCreate,
     CharacterChatSessionUpdate,
     CharacterCreateRequest,
-    CharacterMessageCreate,
     CharacterMessageListResponse,
     CharacterMessageResponse,
     CharacterMessageUpdate,
@@ -1119,7 +1119,7 @@ def _reject_unsafe_endpoint(endpoint: str) -> str:
         raise APIRequestError(str(exc)) from exc
 
 
-class TLDWAPIClient:
+class TLDWAPIClient(ChatCompletionClientMixin):
     # Ceiling on how long a *connection* may take to establish.
     #
     # `timeout` is the budget for a whole operation, and some are legitimately
@@ -1508,6 +1508,8 @@ class TLDWAPIClient:
         endpoint: str,
         params: Optional[Dict[str, Any]] = None,
         headers: Optional[Dict[str, str]] = None,
+        *,
+        json_data: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         client = await self._get_client()
         endpoint = _reject_unsafe_endpoint(endpoint)
@@ -1539,6 +1541,7 @@ class TLDWAPIClient:
                 endpoint,
                 params=params,
                 headers=headers,
+                **({"json": json_data} if json_data is not None else {}),
             ) as response:
                 await self._raise_if_redirected(response, endpoint)
                 if response.status_code >= 400:
@@ -12685,29 +12688,6 @@ class TLDWAPIClient:
         return await self._request(
             "POST", f"/api/v1/chats/{chat_id}/restore", params=params or None
         )
-
-    async def create_character_message(
-        self,
-        chat_id: str,
-        request_data: CharacterMessageCreate | Dict[str, Any],
-        scope_type: Optional[Literal["global", "workspace"]] = None,
-        workspace_id: Optional[str] = None,
-    ) -> CharacterMessageResponse:
-        scope_params = self._normalize_conversation_scope_params(
-            scope_type=scope_type, workspace_id=workspace_id
-        )
-        params = (
-            scope_params.model_dump(exclude_none=True, mode="json")
-            if scope_params is not None
-            else None
-        )
-        response = await self._request(
-            "POST",
-            f"/api/v1/chats/{chat_id}/messages",
-            json_data=self._dump_request_payload(request_data, exclude_none=True),
-            params=params,
-        )
-        return CharacterMessageResponse.model_validate(response)
 
     async def list_character_messages(
         self,
