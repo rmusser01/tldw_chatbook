@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from threading import Event
 
 _Retire = Callable[[], Awaitable[bool]]
 
@@ -16,14 +17,30 @@ class AudioOutputLease:
     generation: int
     _host: AudioOutputOwnership
     _owner: str
+    _revoked: Event = field(default_factory=Event, init=False, repr=False)
+
+    @property
+    def revoked(self) -> bool:
+        """Return the one-way, thread-visible cancellation signal."""
+        return self._revoked.is_set()
+
+    def revoke(self) -> None:
+        """Fence the exact held lease on the owner loop without releasing it."""
+        if self._host._owns(self):
+            self._revoked.set()
 
     def is_current(self) -> bool:
         """Return whether this exact lease can still start or publish output."""
-        return self._host._owns(self) and self._host._generation == self.generation
+        return (
+            not self.revoked
+            and self._host._owns(self)
+            and self._host._generation == self.generation
+        )
 
     def release(self) -> None:
         """Acknowledge that this lease's exact output has physically retired."""
         if self._host._owns(self):
+            self._revoked.set()
             self._host._slot = None
             self._host._blocked = False
 
@@ -81,6 +98,8 @@ class AudioOutputOwnership:
         """
         self._generation += 1
         generation = self._generation
+        if self._slot is not None:
+            self._slot[0].revoke()
         if self._retirement is None and self._slot is not None:
             published = asyncio.Event()
             self._retirement = asyncio.create_task(
