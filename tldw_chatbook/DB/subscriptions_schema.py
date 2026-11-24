@@ -272,6 +272,9 @@ def listening_issues(connection) -> tuple[str, ...]:
             "OR typeof(content_frames) NOT IN ('integer','null') OR typeof(file_frames) NOT IN ('integer','null') "
             "OR typeof(byte_size) NOT IN ('integer','null') OR typeof(target_revision) NOT IN ('integer','null') "
             "OR length(CAST(status AS BLOB))>16 OR length(CAST(file_key AS BLOB))<>36 OR "
+            "(custody_witness IS NOT NULL AND (typeof(custody_witness)<>'text' "
+            "OR length(CAST(custody_witness AS BLOB))<>64 OR length(custody_witness)<>64 "
+            "OR custody_witness GLOB '*[^0-9a-f]*')) OR "
             "length(CAST(profile AS BLOB))>128 OR length(CAST(converter AS BLOB))>128 OR "
             "length(CAST(target_entry AS BLOB))>128 OR length(CAST(sha256 AS BLOB))>64 OR "
             "length(CAST(speech_hash AS BLOB))>64 OR length(CAST(voice_hash AS BLOB))>64 OR "
@@ -287,7 +290,14 @@ def listening_issues(connection) -> tuple[str, ...]:
                 if any(
                     r[k] is not None
                     for k in r.keys()
-                    if k not in {"generation", "file_key", "status", "profile"}
+                    if k
+                    not in {
+                        "generation",
+                        "file_key",
+                        "status",
+                        "profile",
+                        "custody_witness",
+                    }
                 ):
                     return invalid
                 continue

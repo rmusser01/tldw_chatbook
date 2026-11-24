@@ -30,6 +30,7 @@ from .article_listening_models import (
     listening_profile_key,
     _KEY,
     _encoded,
+    _digest,
     _hash,
     _int,
     _id,
@@ -677,12 +678,29 @@ class ArticleListeningStore:
             if changed != 1:
                 raise ListeningConflict("article_audio_reservation_changed")
 
+    def seal_audio_custody(
+        self, claim: AudioReservation, witness: str, *, lease: ListeningLease
+    ) -> None:
+        """Journal a verified local stage under the exact pending reservation."""
+        with self.db.listening_transaction(
+            lease=lease, profile=self._authority().profile
+        ) as c:
+            self._reservation(c, claim)
+            changed = c.execute(
+                "UPDATE article_audio SET custody_witness=? WHERE generation=? "
+                "AND status='pending' AND custody_witness IS NULL",
+                (_digest(witness), claim.generation),
+            ).rowcount
+            if changed != 1:
+                raise ListeningConflict("article_audio_reservation_changed")
+
     def complete_audio(
         self,
         reservation: AudioReservation,
         metadata: AudioMetadata,
         *,
         lease: ListeningLease | None = None,
+        custody_witness: str | None = None,
     ) -> ListeningSession:
         """Commit metadata for the asset owner's validated, published immutable generation."""
         a = self._authority(reservation.authority)
@@ -693,7 +711,7 @@ class ArticleListeningStore:
             changed = c.execute(
                 "UPDATE article_audio SET status='ready',sha256=?,sample_rate=?,content_frames=?,"
                 "file_frames=?,byte_size=?,last_used=unixepoch(),target_entry=NULL,target_revision=NULL,"
-                "regenerate=NULL WHERE generation=? AND status='pending'",
+                "regenerate=NULL WHERE generation=? AND status='pending' AND custody_witness IS ?",
                 (
                     metadata.sha256,
                     metadata.sample_rate,
@@ -701,6 +719,7 @@ class ArticleListeningStore:
                     metadata.file_frames,
                     metadata.byte_size,
                     reservation.generation,
+                    custody_witness,
                 ),
             ).rowcount
             if changed != 1:
@@ -746,7 +765,10 @@ class ArticleListeningStore:
         """Return this selector's storage receipts and reference protection."""
         profile = self._authority().profile
         query = (
-            "SELECT a.*, EXISTS(SELECT 1 FROM listening_entries e WHERE e.artifact=a.generation) "
+            "SELECT generation,file_key,item_id,status,sha256,sample_rate,content_frames,file_frames,byte_size,"
+            "last_used,CASE WHEN typeof(custody_witness)='text' AND length(CAST(custody_witness AS BLOB))=64 "
+            "THEN custody_witness WHEN custody_witness IS NOT NULL THEN '' END AS custody_witness, "
+            "EXISTS(SELECT 1 FROM listening_entries e WHERE e.artifact=a.generation) "
             "AS referenced FROM article_audio a WHERE profile=?"
         )
         params = (profile,)
@@ -789,13 +811,13 @@ class ArticleListeningStore:
             )
 
     def finish_audio_deletion(
-        self, generation: int, key: str, *, lease: ListeningLease
+        self, generation: int, key: str, witness: str | None, *, lease: ListeningLease
     ) -> None:
         """Retire the exact tombstone after its private names are gone."""
         profile = self._authority().profile
         with self.db.listening_transaction(lease=lease, profile=profile) as c:
             c.execute(
                 "DELETE FROM article_audio WHERE profile=? AND generation=? AND file_key=? "
-                "AND status='pending_delete'",
-                (profile, _int(generation, 1), key),
+                "AND status='pending_delete' AND custody_witness IS ?",
+                (profile, _int(generation, 1), key, witness),
             )

@@ -8,6 +8,7 @@ import shutil
 import struct
 import subprocess
 import sys
+from contextlib import contextmanager
 from dataclasses import replace
 from importlib import import_module, util
 
@@ -20,6 +21,11 @@ from Tests.Subscriptions.test_article_listening_store import (
 )
 from tldw_chatbook.Backup_Recovery.native_files import create_private_directory
 from tldw_chatbook.Subscriptions import article_listening_models as models
+
+native_effects = pytest.mark.skipif(
+    os.name != "nt",
+    reason="same-object article file effects require native Windows NTFS",
+)
 
 
 def wav(frames=8, *, extra=b""):
@@ -39,6 +45,26 @@ def api():
     name = "tldw_chatbook.Subscriptions.article_audio_assets"
     assert util.find_spec(name) is not None, "article asset owner missing"
     return import_module(name)
+
+
+def intercept_handle(monkeypatch, method, hook):
+    """Inject an observation at an actual held-file effect in the asset owner."""
+    original = api().held_regular_file
+
+    @contextmanager
+    def instrumented(*args, **kwargs):
+        with original(*args, **kwargs) as held:
+
+            class Proxy:
+                def __getattr__(self, name):
+                    actual = getattr(held, name)
+                    if name == method:
+                        return lambda *values: hook(actual, *values)
+                    return actual
+
+            yield Proxy()
+
+    monkeypatch.setattr(api(), "held_regular_file", instrumented)
 
 
 @pytest.fixture
@@ -91,6 +117,7 @@ def test_shared_validator_checks_complete_pinned_stream_and_read_budget():
         models.validate_article_audio(io.BytesIO(many), metadata(many))
 
 
+@native_effects
 def test_physical_share_bookmarks_and_distinct_source_ownership(listening):
     store, session, root = listening
     owner = api().ArticleAudioAssets(store, profile_data_root=root)
@@ -177,7 +204,8 @@ def store_module():
     return import_module("tldw_chatbook.Subscriptions.article_listening_store")
 
 
-@pytest.mark.parametrize("boundary", ["staged", "published"])
+@pytest.mark.parametrize("boundary", ["unsealed", "staged", "published"])
+@native_effects
 def test_dead_physical_publisher_leaves_only_owned_retryable_evidence(
     listening, boundary
 ):
@@ -193,12 +221,15 @@ from tldw_chatbook.Subscriptions import article_audio_assets as a
 _, _, store, _ = setup_store(SubscriptionsDB(Path(sys.argv[1])))
 session = store.load_session()
 claim = store.reserve_audio(session.foreground.entry_id, expected_revision=session.revision)
-real_move = a.publish_new
-def die(stage, final, **kwargs):
-    if sys.argv[3] == 'published':
-        real_move(stage, final, **kwargs)
+real_seal = store.seal_audio_custody
+def die(*args, **kwargs):
+    if sys.argv[3] == 'staged':
+        real_seal(*args, **kwargs)
     os._exit(54)
-a.publish_new = die
+if sys.argv[3] == 'published':
+    store.complete_audio = die
+else:
+    store.seal_audio_custody = die
 data = wav()
 a.ArticleAudioAssets(store, profile_data_root=Path(sys.argv[2]), reservation=claim).publish(
     a.GeneratedArticleAudio(data, metadata(data).sha256, 8), source_item_id=claim.item_id, generation=claim.generation)
@@ -212,15 +243,19 @@ a.ArticleAudioAssets(store, profile_data_root=Path(sys.argv[2]), reservation=cla
     assert child.returncode == 54, child.stderr
     names = list((root / "article_audio").iterdir())
     assert len(names) == 1 and names[0].name.endswith(
-        ".stage" if boundary == "staged" else ".wav"
+        ".wav" if boundary == "published" else ".stage"
     )
     assert store.load_session().foreground.artifact is None
     receipt = a.ArticleAudioAssets(store, profile_data_root=root).reconcile()
-    assert receipt.interrupted == 1 and receipt.removed == 1
-    assert not names[0].exists()
+    assert receipt.interrupted == 1
+    if boundary == "unsealed":
+        assert receipt.uncertain == receipt.retry == 1 and names[0].exists()
+    else:
+        assert receipt.removed == 1 and not names[0].exists()
     assert store.load_session().foreground.artifact is None
 
 
+@native_effects
 def test_collision_never_transfers_or_unlinks_existing_name(listening):
     store, session, root = listening
     a = api()
@@ -243,6 +278,7 @@ def test_collision_never_transfers_or_unlinks_existing_name(listening):
     assert store.load_session().foreground.artifact is None
 
 
+@native_effects
 def test_missing_file_retains_bookmark_and_linked_file_refuses_cleanup(listening):
     store, session, root = listening
     a = api()
@@ -261,6 +297,7 @@ def test_missing_file_retains_bookmark_and_linked_file_refuses_cleanup(listening
     assert store.pending_deletions()
 
 
+@native_effects
 def test_retention_uses_last_use_then_generation_and_excludes_references(
     listening, monkeypatch
 ):
@@ -290,6 +327,7 @@ def test_retention_uses_last_use_then_generation_and_excludes_references(
     assert not third.wav.path.exists()
 
 
+@native_effects
 def test_cleanup_obeys_commit_retries_and_preserves_rowless_files(
     listening, monkeypatch
 ):
@@ -310,14 +348,11 @@ def test_cleanup_obeys_commit_retries_and_preserves_rowless_files(
     assert first.wav.path.read_bytes() == wav()
     store.db.delete_article(first.source_item_id)
     with monkeypatch.context() as patch:
-        original_unlink = a.os.unlink
 
-        def refuse(name, **kwargs):
-            if name == first.wav.path.name:
-                raise PermissionError("sharing")
-            return original_unlink(name, **kwargs)
+        def refuse(original):
+            raise PermissionError("sharing")
 
-        patch.setattr(a.os, "unlink", refuse)
+        intercept_handle(patch, "delete", refuse)
         assert owner.reconcile().retry == 1
     assert store.pending_deletions()
     receipt = owner.reconcile()
@@ -361,6 +396,7 @@ def owner_for(listening, lease=None, claim=None):
     )
 
 
+@native_effects
 def test_disk_full_and_cas_race_preserve_bounded_retryable_state(
     listening, monkeypatch
 ):
@@ -372,7 +408,7 @@ def test_disk_full_and_cas_race_preserve_bounded_retryable_state(
         raise OSError(errno.ENOSPC, str(root))
 
     with monkeypatch.context() as patch:
-        patch.setattr(a, "create_private_file", full)
+        patch.setattr(a, "held_regular_file", full)
         with pytest.raises(a.ArticleAudioError, match="^article_audio_disk_full$"):
             owner.publish(
                 data, source_item_id=claim.item_id, generation=claim.generation
@@ -381,9 +417,9 @@ def test_disk_full_and_cas_race_preserve_bounded_retryable_state(
     owner, claim, data = owner_for(listening)
     real = store.complete_audio
 
-    def source_changed(claim, m, *, lease):
+    def source_changed(claim, m, *, lease, custody_witness):
         store.clear(expected_revision=session.revision, lease=lease)
-        return real(claim, m, lease=lease)
+        return real(claim, m, lease=lease, custody_witness=custody_witness)
 
     monkeypatch.setattr(store, "complete_audio", source_changed)
     with pytest.raises(models.ListeningConflict):
@@ -407,6 +443,7 @@ def test_idle_claim_cannot_revive_after_same_path_restore(listening):
     assert not owner.root.exists()
 
 
+@native_effects
 def test_borrowed_worker_prevents_same_holder_sweep_during_publication(
     listening, monkeypatch
 ):
@@ -419,19 +456,17 @@ def test_borrowed_worker_prevents_same_holder_sweep_during_publication(
         owner.root / claim.file_key,
         owner.root / ("." + claim.file_key + ".stage"),
     )
-    a = api()
-    original = a.publish_new
     with store.mutation_lease(related_paths=paths) as lease:
         active, _, _ = owner_for(listening, lease, claim)
 
-        def intercept(*args, **kwargs):
+        def intercept(original, target):
             with pytest.raises(store_module().ListeningBusy):
                 active.reconcile()
             with pytest.raises(store_module().ListeningBusy):
                 owner.reconcile()
-            original(*args, **kwargs)
+            original(target)
 
-        monkeypatch.setattr(a, "publish_new", intercept)
+        intercept_handle(monkeypatch, "rename_new", intercept)
         with ThreadPoolExecutor() as pool:
             asset = pool.submit(
                 active.publish,
@@ -442,6 +477,7 @@ def test_borrowed_worker_prevents_same_holder_sweep_during_publication(
     assert asset.wav.path.read_bytes() == wav()
 
 
+@native_effects
 def test_cleanup_unlinks_only_in_pinned_root_during_rename(listening, monkeypatch):
     store, session, root = listening
     a = api()
@@ -491,6 +527,7 @@ def test_unsafe_restored_name_is_refused_before_path_work(listening, bad):
     assert not (root / "article_audio").exists()
 
 
+@native_effects
 def test_cleanup_leaves_late_tombstone_outside_admitted_names(listening, monkeypatch):
     store, session, root = listening
     owner, claim, _ = owner_for(listening)
@@ -501,6 +538,7 @@ def test_cleanup_leaves_late_tombstone_outside_admitted_names(listening, monkeyp
         owner.root / ("." + claim.file_key + ".stage"),
     )
     late = []
+    store.cancel_audio(claim)
     with store.mutation_lease(related_paths=paths) as lease:
         owner = api().ArticleAudioAssets(store, profile_data_root=root, lease=lease)
 
@@ -532,6 +570,7 @@ def test_ambiguous_two_names_are_preserved_for_owned_reconciliation(listening):
     assert owner.store.pending_deletions() == ((claim.generation, claim.file_key),)
 
 
+@native_effects
 def test_absent_profile_directory_projects_db_only_restore_as_missing(listening):
     store, session, root = listening
     audio = publish(store, session, root, session.foreground)
@@ -546,41 +585,50 @@ def test_absent_profile_directory_projects_db_only_restore_as_missing(listening)
     ("changed", "revoked"),
     [("stage", None), ("final", None), ("stage", "cancel"), ("final", "delete")],
 )
-def test_known_substituted_inode_is_never_unlinked_on_reconcile(
+@native_effects
+def test_effect_handle_keeps_issued_leaf_through_publication(
     listening, monkeypatch, changed, revoked
 ):
     owner, claim, data = owner_for(listening)
-    a = api()
-    original = owner._verify
-    name = claim.file_key if changed == "final" else "." + claim.file_key + ".stage"
+    stage = owner.root / ("." + claim.file_key + ".stage")
+    final = owner.root / claim.file_key
+    source = stage if changed == "stage" else final
+    paths = (owner.root, stage, final)
+    observations = []
+    with owner.store.mutation_lease(related_paths=paths) as lease:
+        active, _, _ = owner_for(listening, lease, claim)
 
-    def verify(directory, selected, expected, **kwargs):
-        if selected == name:
-            target = owner.root / name
-            target.rename(owner.root.parent / "displaced-private-object")
-            target.write_bytes(b"another object")
+        def check_native_boundary(rename, target):
+            if changed == "final":
+                rename(target)
+            with pytest.raises(PermissionError):
+                source.rename(owner.root.parent / "displaced-private-object")
+            observations.append(source.name)
             if revoked == "cancel":
                 owner.store.cancel_audio(claim, lease=lease)
             elif revoked == "delete":
                 owner.store.db.delete_article(claim.item_id, lease=lease)
-        return original(directory, selected, expected, **kwargs)
+            if changed == "stage":
+                rename(target)
 
-    paths = (
-        owner.root,
-        owner.root / claim.file_key,
-        owner.root / ("." + claim.file_key + ".stage"),
-    )
-    with owner.store.mutation_lease(related_paths=paths) as lease:
-        active, _, _ = owner_for(listening, lease, claim)
-        monkeypatch.setattr(active, "_verify", verify)
-        with pytest.raises(a.ArticleAudioError, match="custody_changed"):
+        intercept_handle(monkeypatch, "rename_new", check_native_boundary)
+        if revoked:
+            with pytest.raises(models.ListeningConflict):
+                active.publish(
+                    data, source_item_id=claim.item_id, generation=claim.generation
+                )
+        else:
             active.publish(
                 data, source_item_id=claim.item_id, generation=claim.generation
             )
-    assert owner.reconcile().uncertain >= 1
-    assert (owner.root / name).read_bytes() == b"another object"
+    assert observations == [source.name]
+    assert not (owner.root.parent / "displaced-private-object").exists()
+    assert final.read_bytes() == wav()
+    if revoked:
+        assert owner.reconcile().removed == 1 and not final.exists()
 
 
+@native_effects
 def test_linked_tree_refuses_publication_without_touching_target(listening):
     owner, claim, data = owner_for(listening)
     external = owner.root.parent / "outside-tree"
@@ -596,21 +644,163 @@ def test_linked_tree_refuses_publication_without_touching_target(listening):
     assert not list(external.iterdir())
 
 
+@native_effects
 def test_post_rename_flush_error_preserves_journal_and_unattached_file(
     listening, monkeypatch
 ):
     owner, claim, data = owner_for(listening)
     a = api()
-    original = a.publish_new
 
-    def interrupted(*args, **kwargs):
-        original(*args, **kwargs)
+    def interrupted(rename, target):
+        rename(target)
         raise FileExistsError
 
-    monkeypatch.setattr(a, "publish_new", interrupted)
+    intercept_handle(monkeypatch, "rename_new", interrupted)
     with pytest.raises(a.ArticleAudioError, match="publication_uncertain"):
         owner.publish(data, source_item_id=claim.item_id, generation=claim.generation)
     assert (owner.root / claim.file_key).read_bytes() == wav()
     assert owner.store.audio_inventory(claim.generation)[0]["status"] == "pending"
     assert owner.store.load_session().foreground.artifact is None
     assert owner.reconcile().removed == 1
+
+
+def test_absent_generation_never_reads_another_ready_article(listening):
+    store, session, root = listening
+    claim = store.reserve_audio(
+        session.foreground.entry_id, expected_revision=session.revision
+    )
+    store.complete_audio(claim, metadata(wav()))
+    with pytest.raises(ValueError):
+        api().ArticleAudioAssets(store, profile_data_root=root).read_verified(None)
+
+
+def test_wrong_lease_refused_before_any_pending_delete_work(listening):
+    store, _, root = listening
+    owner, claim, _ = owner_for(listening)
+    store.cancel_audio(claim)
+    create_private_directory(owner.root)
+    leaf = owner.root / claim.file_key
+    leaf.write_bytes(b"private")
+    with pytest.raises(ValueError, match="invalid_listening_lease"):
+        api().ArticleAudioAssets(
+            store, profile_data_root=root, lease=object()
+        ).reconcile()
+    assert leaf.read_bytes() == b"private"
+    assert store.pending_deletions()
+
+
+@native_effects
+def test_borrowed_sweep_preserves_preparing_claim(listening):
+    store, session, root = listening
+    claim = store.reserve_audio(
+        session.foreground.entry_id, expected_revision=session.revision
+    )
+    directory = root / "article_audio"
+    paths = (
+        directory,
+        directory / claim.file_key,
+        directory / ("." + claim.file_key + ".stage"),
+    )
+    with store.mutation_lease(related_paths=paths) as lease:
+        owner, _, data = owner_for(listening, lease, claim)
+        assert owner.reconcile().interrupted == 0
+        audio = owner.publish(
+            data, source_item_id=claim.item_id, generation=claim.generation
+        )
+    assert audio.wav.path.read_bytes() == wav()
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "cancel-never-staged",
+        pytest.param("delete-replaced", marks=native_effects),
+        pytest.param("ttl-missing", marks=native_effects),
+        pytest.param("changed-content", marks=native_effects),
+    ],
+)
+def test_reopened_cleanup_preserves_unproven_singleton(listening, reason):
+    store, session, root = listening
+    if reason == "cancel-never-staged":
+        owner, claim, _ = owner_for(listening)
+        store.cancel_audio(claim)
+        create_private_directory(owner.root)
+        path = owner.root / claim.file_key
+        path.write_bytes(wav())
+    else:
+        audio = publish(store, session, root, session.foreground)
+        path = audio.wav.path
+        if reason == "changed-content":
+            path.write_bytes(b"other content")
+        else:
+            path.rename(root / "previous-object")
+            path.write_bytes(wav())
+        if reason == "ttl-missing":
+            store.mark_audio_missing(audio.generation)
+            store.clear(expected_revision=store.load_session().revision)
+        else:
+            store.db.delete_article(audio.source_item_id)
+    prior = path.read_bytes()
+    store.db.close()
+    _, _, reopened, _ = setup_store(store.db)
+    owner = api().ArticleAudioAssets(reopened, profile_data_root=root)
+    report = owner.prune(2**62)
+    assert report.uncertain == 1 and report.retry == 1 and not report.removed
+    assert path.read_bytes() == prior and reopened.pending_deletions()
+
+
+@native_effects
+def test_generation_witness_is_sealed_and_preserved_on_source_delete(listening):
+    store, session, root = listening
+    audio = publish(store, session, root, session.foreground)
+    row = store.audio_inventory(audio.generation)[0]
+    assert "custody_witness" in row.keys()
+    witness = row["custody_witness"]
+    assert len(witness) == 64 and all(c in "0123456789abcdef" for c in witness)
+    store.db.delete_article(audio.source_item_id)
+    row = store.audio_inventory(audio.generation)[0]
+    assert row["custody_witness"] == witness and row["sha256"] is None
+    store.db.close()
+    _, _, reopened, _ = setup_store(store.db)
+    assert (
+        api().ArticleAudioAssets(reopened, profile_data_root=root).reconcile().removed
+        == 1
+    )
+    assert not audio.wav.path.exists()
+
+
+@native_effects
+def test_absent_name_requires_successful_directory_barrier_on_retry(
+    listening, monkeypatch
+):
+    store, session, root = listening
+    audio = publish(store, session, root, session.foreground)
+    store.db.delete_article(audio.source_item_id)
+    audio.wav.path.unlink()  # State after a successful disposition with an uncertain flush.
+    owner = api().ArticleAudioAssets(store, profile_data_root=root)
+    with monkeypatch.context() as patch:
+
+        def unconfirmed(fd):
+            raise OSError("barrier_failed")
+
+        patch.setattr(api(), "flush_regular_parent", unconfirmed, raising=False)
+        assert owner.reconcile().retry == 1
+    assert store.pending_deletions()
+    assert owner.reconcile().removed == 1 and not store.pending_deletions()
+
+
+def test_unqualified_volume_refuses_before_creating_article_tree(
+    listening, monkeypatch
+):
+    owner, claim, data = owner_for(listening)
+    if os.name == "nt":
+
+        def unavailable(_parent):
+            raise OSError("regular_file_effects_unqualified")
+
+        monkeypatch.setattr(api(), "require_regular_file_effects", unavailable)
+    with pytest.raises(
+        api().ArticleAudioError, match="article_audio_effects_unqualified"
+    ):
+        owner.publish(data, source_item_id=claim.item_id, generation=claim.generation)
+    assert not owner.root.exists()

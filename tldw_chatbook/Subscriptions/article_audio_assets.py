@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import errno
+import hashlib
+import json
 import os as stdlib_os
 import sqlite3
 import stat
@@ -12,11 +14,12 @@ from pathlib import Path
 
 from tldw_chatbook.Backup_Recovery.native_files import (
     create_private_directory,
-    create_private_file,
+    flush_regular_parent,
+    held_regular_file,
     pinned_directory,
-    publish_new,
+    require_regular_file_effects,
 )
-from tldw_chatbook.Backup_Recovery.native_platform import flush_directory
+from tldw_chatbook.TTS.audio_limits import MAX_BUFFERED_AUDIO_BYTES
 from tldw_chatbook.TTS.controlled_wav_profile import RetainedWav
 from tldw_chatbook.Utils.path_validation import validate_recovery_relative_path
 from tldw_chatbook.Utils.platform_files import os
@@ -62,19 +65,47 @@ def _identity(info):
     return info.st_dev, info.st_ino
 
 
-def _exact(parent, name):
+class _Census:
     """Case-insensitive native lookup must never claim an unrecognized spelling."""
-    names = os.listdir(parent)
-    if name in names:
-        return True
-    if any(other.casefold() == name.casefold() for other in names):
-        raise ArticleAudioError("article_audio_name_collision")
-    return False
+
+    def __init__(self, parent):
+        self.names = set(os.listdir(parent)) if parent is not None else set()
+        self.folded = {name.casefold() for name in self.names}
+
+    def contains(self, name):
+        if name in self.names:
+            return True
+        if name.casefold() in self.folded:
+            raise ArticleAudioError("article_audio_name_collision")
+        return False
+
+
+def _confirm_absent(parent, name):
+    try:
+        os.stat(name, dir_fd=parent, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    raise ArticleAudioError("article_audio_custody_uncertain")
+
+
+def _witness(image, generation, key, physical, digest, size):
+    fields = (
+        "article-audio-custody-v1",
+        image,
+        generation,
+        key,
+        physical,
+        digest,
+        size,
+    )
+    return hashlib.sha256(
+        json.dumps(fields, separators=(",", ":")).encode("ascii")
+    ).hexdigest()
 
 
 @contextmanager
-def _leaf(parent, name):
-    if parent is None or not _exact(parent, name):
+def _leaf(parent, name, census=None):
+    if parent is None or not (census or _Census(parent)).contains(name):
         raise FileNotFoundError
     fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
     try:
@@ -134,6 +165,8 @@ class ArticleAudioAssets:
 
     @contextmanager
     def _hold(self, keys):
+        if self.lease is not None and type(self.lease) is not ListeningLease:
+            raise ValueError("invalid_listening_lease")
         if self.store.db.conn.in_transaction or getattr(
             self.store.db._local, "transaction_depth", 0
         ):
@@ -156,6 +189,8 @@ class ArticleAudioAssets:
                 raise ArticleAudioError("article_audio_disk_full") from None
             raise ArticleAudioError("article_audio_database_unavailable") from None
         except OSError as exc:
+            if exc.args == ("regular_file_effects_unqualified",):
+                raise ArticleAudioError("article_audio_effects_unqualified") from None
             if exc.errno == errno.ENOSPC or getattr(exc, "winerror", None) == 112:
                 raise ArticleAudioError("article_audio_disk_full") from None
             raise ArticleAudioError("article_audio_storage_unavailable") from None
@@ -170,7 +205,9 @@ class ArticleAudioAssets:
                     raise
                 yield None
                 return
-            if not _exact(parent, self.root.name):
+            if create:
+                require_regular_file_effects(parent)
+            if not _Census(parent).contains(self.root.name):
                 if not create:
                     yield None
                     return
@@ -186,10 +223,8 @@ class ArticleAudioAssets:
             if _identity(os.fstat(current)) != _identity(os.fstat(directory)):
                 raise ArticleAudioError("article_audio_identity_changed")
 
-    def _verify(self, directory, name, expected, *, identity=None):
-        with _leaf(directory, name) as (fd, before):
-            if identity is not None and _identity(before) != identity:
-                raise ArticleAudioError("article_audio_identity_changed")
+    def _verify(self, directory, name, expected, census=None):
+        with _leaf(directory, name, census) as (fd, before):
             with stdlib_os.fdopen(fd, "rb", closefd=False) as stream:
                 validate_article_audio(stream, expected)
             after = os.stat(name, dir_fd=directory, follow_symlinks=False)
@@ -217,26 +252,10 @@ class ArticleAudioAssets:
             m.byte_size,
         )
 
-    def _verify_issued(self, directory, name, expected, identity, claim, lease):
-        try:
-            self._verify(directory, name, expected, identity=identity)
-        except (ArticleAudioError, FileNotFoundError):
-            self.store.relinquish_audio(claim, lease=lease)
-            raise ArticleAudioError("article_audio_custody_changed") from None
-        except OSError as exc:
-            if exc.errno != errno.ELOOP:
-                raise
-            self.store.relinquish_audio(claim, lease=lease)
-            raise ArticleAudioError("article_audio_custody_changed") from None
-        except ValueError:
-            # The exclusively created file is ours, but its WAV is invalid.
-            self.store.cancel_audio(claim, lease=lease)
-            raise ArticleAudioError("invalid_article_audio") from None
-
     def publish(
         self, candidate: GeneratedArticleAudio, *, source_item_id: int, generation: int
     ) -> ArticleAudio:
-        """Validate and atomically attach a new immutable, reserved generation."""
+        """Validate and attach a reserved generation while the same native object is held."""
         claim = self.reservation
         if (
             type(candidate) is not GeneratedArticleAudio
@@ -249,60 +268,62 @@ class ArticleAudioAssets:
         key, stage = _names(claim.file_key)
         with self._hold((key,)) as lease:
             self.store.check_reservation(claim, lease=lease)
-            with self._directory(create=True) as directory:
+            if self.store.audio_inventory(generation)[0]["custody_witness"] is not None:
+                raise ArticleAudioError("article_audio_publication_uncertain")
+            with self._directory(create=True) as directory, ExitStack() as stack:
+                names = _Census(directory)
                 try:
-                    if _exact(directory, key) or _exact(directory, stage):
+                    if names.contains(key) or names.contains(stage):
                         raise ArticleAudioError("article_audio_name_collision")
-                except ArticleAudioError:
-                    self.store.relinquish_audio(claim, lease=lease)
-                    raise
-                try:
-                    with create_private_file(self.root / stage) as fd:
-                        staged_identity = _identity(os.fstat(fd))
-                        with stdlib_os.fdopen(fd, "wb", closefd=False) as stream:
-                            stream.write(candidate.wav_bytes)
-                except FileExistsError:
+                    held = stack.enter_context(
+                        held_regular_file(directory, stage, create=True)
+                    )
+                except (FileExistsError, ArticleAudioError):
                     self.store.relinquish_audio(claim, lease=lease)
                     raise ArticleAudioError("article_audio_name_collision") from None
-                self._verify_issued(
-                    directory, stage, expected, staged_identity, claim, lease
-                )
-                self.store.check_reservation(claim, lease=lease)
-                parent = _identity(os.fstat(directory))
+                if held.stream.write(candidate.wav_bytes) != expected.byte_size:
+                    raise ArticleAudioError("article_audio_write_incomplete")
+                held.flush_file()
                 try:
-                    publish_new(
-                        self.root / stage,
-                        self.root / key,
-                        parent_identities=(parent, parent),
-                    )
+                    validate_article_audio(held.stream, expected)
+                except ValueError:
+                    self.store.cancel_audio(claim, lease=lease)
+                    raise ArticleAudioError("invalid_article_audio") from None
+                self._check_directory(directory)
+                witness = _witness(
+                    claim.image,
+                    generation,
+                    key,
+                    held.identity,
+                    expected.sha256,
+                    expected.byte_size,
+                )
+                self.store.seal_audio_custody(claim, witness, lease=lease)
+                try:
+                    held.rename_new(key)
                 except FileExistsError:
-                    if not _exact(directory, stage) or not _exact(directory, key):
-                        # A post-rename error is ambiguous even if it reports
-                        # EEXIST. Keep the journal and let reconciliation own it.
+                    # The native barrier can fail after the rename has happened.
+                    names = _Census(directory)
+                    if not (names.contains(stage) and names.contains(key)):
                         raise ArticleAudioError(
                             "article_audio_publication_uncertain"
                         ) from None
                     self.store.relinquish_audio(claim, lease=lease)
-                    # Our stage was created exclusively. The collided target is foreign.
-                    with _leaf(directory, stage) as (_, info):
-                        if _identity(info) == staged_identity:
-                            self._unlink(directory, stage)
+                    held.delete()
                     raise ArticleAudioError("article_audio_name_collision") from None
-                # Flush failure after rename and final SQLite failures leave a pending
-                # journal row. A later physical owner reconciles the actual names.
-                self._verify_issued(
-                    directory, key, expected, staged_identity, claim, lease
+                self._check_directory(directory)
+                self.store.complete_audio(
+                    claim, expected, lease=lease, custody_witness=witness
                 )
-                self.store.complete_audio(claim, expected, lease=lease)
                 return self._audio(generation, source_item_id, key, expected)
 
-    def _read(self, directory, row, lease):
+    def _read(self, directory, row, lease, census=None):
         g, key = row["generation"], row["file_key"]
         if row["status"] != "ready":
             raise ArticleAudioError("article_audio_missing")
         m = _metadata(row)
         try:
-            self._verify(directory, key, m)
+            self._verify(directory, key, m, census)
         except (ValueError, FileNotFoundError) as exc:
             self.store.mark_audio_missing(g, lease=lease)
             code = (
@@ -315,7 +336,7 @@ class ArticleAudioAssets:
 
     def read_verified(self, generation: int) -> ArticleAudio:
         """Read and verify one ready receipt; preserve the old bookmark on failure."""
-        rows = self.store.audio_inventory(generation)
+        rows = self.store.audio_inventory(_int(generation, 1))
         if not rows:
             raise ArticleAudioError("article_audio_missing")
         key = rows[0]["file_key"]
@@ -354,38 +375,68 @@ class ArticleAudioAssets:
                 return audio
         return None
 
-    def _unlink(self, directory, name):
-        if directory is None or not _exact(directory, name):
+    def _clean_names(self, directory, census, row):
+        """Confirm absence, or remove one independently proven local object."""
+        final, stage = _names(row["file_key"])
+        present = [name for name in (final, stage) if census.contains(name)]
+        if len(present) > 1:
+            raise ArticleAudioError("article_audio_custody_uncertain")
+        if directory is None:
+            # The profile directory is the immediate parent of an absent asset
+            # tree. If it too is unavailable, retain the tombstone for retry.
+            with pinned_directory(self.root.parent) as parent:
+                _confirm_absent(parent, self.root.name)
+                flush_regular_parent(parent)
             return
-        with _leaf(directory, name) as (_, expected):
+        self._check_directory(directory)
+        if not present:
+            for name in (final, stage):
+                _confirm_absent(directory, name)
+            flush_regular_parent(directory)
+            return
+        saved = row["custody_witness"]
+        if saved is None:
+            raise ArticleAudioError("article_audio_custody_uncertain")
+        with held_regular_file(directory, present[0]) as held:
+            size = held.stream.seek(0, 2)
+            if not 0 < size <= MAX_BUFFERED_AUDIO_BYTES:
+                raise ArticleAudioError("article_audio_custody_uncertain")
+            held.stream.seek(0)
+            digest = hashlib.file_digest(held.stream, "sha256").hexdigest()
+            current = _witness(
+                self.store.db.listening_image,
+                row["generation"],
+                final,
+                held.identity,
+                digest,
+                size,
+            )
+            if current != saved:
+                raise ArticleAudioError("article_audio_custody_uncertain")
+            # Refuse a second leaf born since the planning census. The native
+            # operation itself acts only on the verified, share-frozen handle.
+            _confirm_absent(directory, stage if present[0] == final else final)
             self._check_directory(directory)
-            observed = os.stat(name, dir_fd=directory, follow_symlinks=False)
-            if _identity(observed) != _identity(expected) or observed.st_nlink != 1:
-                raise ArticleAudioError("article_audio_identity_changed")
-            os.unlink(name, dir_fd=directory)
-            flush_directory(directory)
+            held.delete()
 
-    def _cleanup(self, lease, directory, receipt, rows):
-        admitted = {(r["generation"], r["file_key"]) for r in rows}
+    def _cleanup(self, lease, directory, census, receipt, rows):
+        admitted = {(r["generation"], r["file_key"]): r for r in rows}
         for gen, key in self.store.pending_deletions():
-            if (gen, key) not in admitted:
+            row = admitted.get((gen, key))
+            if row is None:
                 continue
             try:
-                names = _names(key)
-                if directory is not None and all(
-                    _exact(directory, name) for name in names
-                ):
-                    # An atomic move cannot leave both names. The tombstone
-                    # alone cannot decide which object belonged to the writer.
-                    receipt.retry += 1
-                    receipt.uncertain += 1
-                    continue
-                for name in names:
-                    self._unlink(directory, name)
-            except (OSError, ArticleAudioError):
+                self._clean_names(directory, census, row)
+            except ArticleAudioError:
+                receipt.uncertain += 1
                 receipt.retry += 1
                 continue
-            self.store.finish_audio_deletion(gen, key, lease=lease)
+            except OSError:
+                receipt.retry += 1
+                continue
+            self.store.finish_audio_deletion(
+                gen, key, row["custody_witness"], lease=lease
+            )
             receipt.removed += 1
 
     @contextmanager
@@ -397,25 +448,22 @@ class ArticleAudioAssets:
             if keys != tuple(row["file_key"] for row in rows):
                 raise ListeningConflict("article_audio_inventory_changed")
             with self._directory() as directory:
-                yield rows, lease, directory
+                yield rows, lease, directory, _Census(directory)
 
     def reconcile(self) -> ArticleAudioCleanup:
         """Recover interrupted claims and missing artifacts under physical ownership."""
         receipt = ArticleAudioCleanup()
-        with self._inventory() as (rows, lease, directory):
+        with self._inventory() as (rows, lease, directory, census):
             pending = [r["generation"] for r in rows if r["status"] == "pending"]
-            if pending:
+            if self.lease is None and pending:
                 self.store.retire_audio(pending, lease=lease)
                 receipt.interrupted = len(pending)
             owned = {name for row in rows for name in _names(row["file_key"])}
-            if directory is not None:
-                receipt.uncertain = sum(
-                    name not in owned for name in os.listdir(directory)
-                )
+            receipt.uncertain = len(census.names - owned)
             for row in rows:
                 if row["status"] == "ready":
                     try:
-                        self._read(directory, row, lease)
+                        self._read(directory, row, lease, census)
                     except ArticleAudioError as exc:
                         if str(exc) not in (
                             "article_audio_missing",
@@ -423,14 +471,14 @@ class ArticleAudioAssets:
                         ):
                             raise
                         receipt.missing += 1
-            self._cleanup(lease, directory, receipt, rows)
+            self._cleanup(lease, directory, census, receipt, rows)
         return receipt
 
     def prune(self, now: int) -> ArticleAudioCleanup:
         """Retire expired and least-recently used unreferenced private bytes."""
         _int(now)
         receipt = ArticleAudioCleanup()
-        with self._inventory() as (rows, lease, directory):
+        with self._inventory() as (rows, lease, directory, census):
             eligible = sorted(
                 (
                     r
@@ -445,7 +493,7 @@ class ArticleAudioAssets:
             over_limit = False
             for row in eligible:
                 try:
-                    with _leaf(directory, row["file_key"]) as (_, info):
+                    with _leaf(directory, row["file_key"], census) as (_, info):
                         size = info.st_size
                 except FileNotFoundError:
                     size = 0
@@ -460,5 +508,5 @@ class ArticleAudioAssets:
                     retired.append(row["generation"])
             if retired:
                 self.store.retire_audio(retired, lease=lease)
-            self._cleanup(lease, directory, receipt, rows)
+            self._cleanup(lease, directory, census, receipt, rows)
         return receipt

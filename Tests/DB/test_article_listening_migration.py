@@ -19,6 +19,39 @@ from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from Tests.DB.historical_subscriptions import catalog, historical_database
 
 
+def test_v4_custody_witness_has_strict_sql_and_recovery_bounds(tmp_path):
+    from tldw_chatbook.DB.subscriptions_schema import listening_issues
+
+    with closing(SubscriptionsDB(tmp_path / "source.db")) as db:
+        c = db.conn
+        assert "custody_witness" in {
+            r[1] for r in c.execute("PRAGMA table_info(article_audio)")
+        }
+        c.execute(
+            "INSERT INTO article_audio(file_key,profile,status) VALUES (?,?, 'pending_delete')",
+            ("0" * 32 + ".wav", "a" * 24),
+        )
+        for value in (None, "1" * 64):
+            c.execute("UPDATE article_audio SET custody_witness=?", (value,))
+            assert listening_issues(c) == ()
+        for value in ("1" * 64 + "\x00" + "X" * 65536, "A" * 64, b"b" * 64, "0" * 63):
+            with pytest.raises(sqlite3.IntegrityError):
+                c.execute("UPDATE article_audio SET custody_witness=?", (value,))
+            c.execute("PRAGMA ignore_check_constraints=ON")
+            c.execute("UPDATE article_audio SET custody_witness=?", (value,))
+            queries = []
+            c.set_trace_callback(queries.append)
+            try:
+                assert listening_issues(c) == ("invalid_listening_state",)
+            finally:
+                c.set_trace_callback(None)
+            assert not any(
+                "SELECT * FROM article_audio" in statement for statement in queries
+            )
+            c.execute("PRAGMA ignore_check_constraints=OFF")
+        c.rollback()
+
+
 @pytest.mark.parametrize("existing", [False, True])
 def test_concurrent_initializers_install_exact_current_schema(tmp_path, existing):
     path = tmp_path / "subscriptions.db"

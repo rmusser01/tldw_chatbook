@@ -28,6 +28,10 @@ CREATE TABLE article_audio (
     voice_hash TEXT,
     dependency_hash TEXT,
     status TEXT NOT NULL CHECK (status IN ('pending','ready','missing','pending_delete')),
+    custody_witness TEXT CHECK (custody_witness IS NULL OR (
+        typeof(custody_witness)='text' AND length(CAST(custody_witness AS BLOB))=64
+        AND length(custody_witness)=64 AND custody_witness NOT GLOB '*[^0-9a-f]*'
+    )),
     sha256 TEXT,
     sample_rate INTEGER,
     content_frames INTEGER,
