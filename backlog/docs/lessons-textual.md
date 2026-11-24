@@ -2846,7 +2846,7 @@ cancellation reaches its code as a `WorkerCancelled` exception, not a
 
 **What to do.** To tell the framework's focus move from the app's or the user's, record the framework's move where it happens, and do not infer it from the state around the landing.
 
-## Waiting for `app.focused` has not waited for the container's focus handler (TASK-42462, 2026-11-24)
+## Waiting for `app.focused` does not wait for the container's focus handler (TASK-42462, 2026-11-24)
 
 **Incident.** Eight Inspector recovery tests in `Tests/UI/test_console_inspector_navigation.py` focused a control, waited until `pilot.app.focused is control`, then removed it and waited for the rail to recover focus. On base, four of them failed 2 to 6 times in 7 whole-file runs at load 37-80, and a fifth failed 3 times in 6 runs once the rest of the file was fixed. `Screen.set_focus` sets `app.focused` at once, but the rail records the section's focus history in `on_descendant_focus`, a message that reaches it some hops later. Removed first, the control left the rail no history: a probe saw focus stay on Textual's fallback (another section's button) with no recovery incident in 5 of 12 runs. Holding the rail's handler 0.3 s (a class-level async wrapper) made 8 of their 9 cases fail. The file's one test that waited on the rail's own record (`_section_focus_history[...]`) passed under the same delay.
 

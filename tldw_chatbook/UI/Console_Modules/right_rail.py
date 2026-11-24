@@ -1193,14 +1193,13 @@ class ConsoleInspectorRail(Vertical):
         # the time the handler reads it.
         self._last_boundary_index = index if target is outer else None
         # TASK-42462: no focus scroll. Textual applies `focus()` later and then
-        # scrolls the target's top into view, which for an overflowing
-        # viewport pushed the header just revealed below out by a row. The
-        # delayed reveal stops when it runs before focus lands, so nothing put
-        # the header back. The reveal below is the only scroll this needs.
+        # scrolled the target's top into view, which for an overflowing
+        # viewport pushed the header revealed below out by a row; the delayed
+        # reveal stops when it runs before focus lands, so nothing put the
+        # header back. Header visibility is the navigation contract: reveal the
+        # header now; the after-refresh passes below repeat it once focus has
+        # landed.
         target.focus(scroll_visible=False)
-        # Focusing a descendant may make Textual reveal that control and push
-        # its external heading off the top edge. Header visibility is the
-        # navigation contract, so apply it after the focus target is settled.
         outer.scroll_to_widget(
             header,
             animate=False,
