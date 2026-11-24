@@ -151,6 +151,17 @@ async def _wait_for_right_rail_condition(
     pytest.fail(f"Timed out waiting for {detail}")
 
 
+async def _wait_for_console_quiet(pilot, screen) -> None:
+    """Wait until the Console owes no startup or sync work, on two polls in a row."""
+    await _wait_for_right_rail_condition(
+        pilot,
+        lambda: not screen.console_pending_startup_work(),
+        description=lambda: f"Console work: {screen.console_pending_startup_work()}",
+        timeout=15.0,
+        stable_polls=2,
+    )
+
+
 _EXPECTED_BOUNDARY_ANCHORS = (
     ("console-project-instruction-status", "Project Instructions"),
     ("console-send-authority-summary", "Next send authority"),
@@ -415,10 +426,20 @@ async def test_mounted_inspector_semantic_census_matches_actual_right_rail_order
 
     async with make_console_pilot() as pilot:
         await click_inspect_rail_open(pilot)
-        rail = pilot.app.screen.query_one("#console-right-rail")
+        screen = pilot.app.screen
+        rail = screen.query_one("#console-right-rail")
+        # The Console's own control-bar syncs push the screen's built
+        # Inspector state into the mounted inspector. One still owed from
+        # startup when this test swapped in its own state landed after the
+        # swap under load, and the census read the screen's state instead
+        # ("More" at index 4, round 24). So swap only once that work is done,
+        # and read only once nothing new is owed.
+        await _wait_for_console_quiet(pilot, screen)
         rail._inspector_state = exhaustive_state
         await rail.recompose()
-        await pilot.pause()
+        await _wait_for_console_quiet(pilot, screen)
+        inspector = rail.query_one("#console-run-inspector-state", ConsoleRunInspector)
+        assert inspector.state is exhaustive_state, "a Console sync replaced the state"
 
         mounted_ids = _mounted_boundary_ids(rail)
         expected_ids = tuple(item[0] for item in _EXPECTED_BOUNDARY_ANCHORS)
