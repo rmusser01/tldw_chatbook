@@ -75,7 +75,7 @@ The files guard the v75 hook-receipt and v77 agent-chat-start migrations: exact 
 **Checks.**
 - **Red/green:** dev, 26 failed and 30 passed; after, 56 passed.
 - **Soak:** both files plus the queue-pressure contract, 10 runs at `-n 4`: 10/10 green (212 passed each), 1-min load 14.0-43.0 with an 8-process CPU burner.
-- **`Tests/CI` at `-n 4`:** 1947 passed, 2 skipped, 1 failed. The failure, `test_bootstrap_root_cleanup.py::test_owned_root_is_removed[fork-child-terminated]` (`child=None`, at load ~13), is code this branch does not touch; the file passed 5/5 on rerun. It is the fork-SIGTERM class in TASK-42470's lesson.
+- **`Tests/CI` at `-n 4`:** 1947 passed, 2 skipped, 1 failed. The failure, `test_bootstrap_root_cleanup.py::test_owned_root_is_removed[fork-child-terminated]` (`child=None`, at load ~13), is code this branch does not touch; the file passed 5/5 on rerun. It is the fork-SIGTERM class in TASK-42470's lesson. After the lane commit, `Tests/CI` at `-n 4`: 1948 passed, 2 skipped (load 8.7-8.9).
 - **Static gates:** preflight passed, `ruff check tldw_chatbook --select F` is clean, and `Tests/lint/ruff_gate.py` passed.
 - **The step:** `r19-step.sh fu-r25-devreds "Run the Dreams tracking tests and unlaned riders" r25-step2 -p no:xdist --timeout=180`: 30 targets, 1442 passed, 6 skipped, 0 failed, 13 min 53 s wall (pytest 822.83 s), 1-min load 35.9 at start, 9.1 at end.
 
