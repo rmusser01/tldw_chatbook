@@ -609,6 +609,13 @@ class OrdinaryTurn:
             self.check_personal_source()
         if source == "virtual_cli":
             self.check_virtual_call(provider)
+        if source == "code_review" and name != "code_review_guide":
+            # Review prep and reads open the bound root and its checks run
+            # there; like a skill install, the call takes the workspace.
+            try:
+                self.widen()
+            except CapacityRefused as refused:
+                raise RuntimeError(widen_refusal(name, refused)) from None
 
     def check_mcp_definition(self, tool, name):
         if self.mcp_source_maximum is None:
