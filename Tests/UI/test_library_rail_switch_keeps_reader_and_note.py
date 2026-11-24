@@ -1242,6 +1242,10 @@ async def test_a_reset_onto_a_grip_inside_the_media_entry_window_keeps_the_entry
 
         monkeypatch.setattr(type(screen), "set_focus", recorded_set_focus)
         monkeypatch.setattr(LibraryMediaRowScroll, "_compose", held_rows)
+        # Review: a loaded host must not close the window mid-test.
+        monkeypatch.setattr(
+            library_screen_module, "LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS", 10.0
+        )
         try:
             screen._arm_library_list_entry_focus()
             # The repaint removes the focused control; its rows wait.
@@ -1272,13 +1276,16 @@ async def test_a_reset_onto_a_grip_inside_the_media_entry_window_keeps_the_entry
             lambda: getattr(screen.focused, "id", None) == _FIRST_ROW["media"]
             and not screen._library_pending_list_entry_focus,
             message=lambda: f"The entry never landed: {screen.focused!r}",
+            timeout=30.0,
         )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("route", ["media", "notes"])
 @pytest.mark.parametrize("gesture", ["click", "tab"])
-async def test_a_users_own_move_to_a_grip_disarms_the_list_entry(route, gesture):
+async def test_a_users_own_move_to_a_grip_disarms_the_list_entry(
+    route, gesture, monkeypatch
+):
     """TASK-42473: only Textual's reset onto a grip is the app's own. A click
     on a grip, or Tab from the last row onto one, inside the entry window is
     the user's move on Media and Notes alike: the entry disarms and focus
@@ -1300,6 +1307,10 @@ async def test_a_users_own_move_to_a_grip_disarms_the_list_entry(route, gesture)
             and not screen._library_pending_list_entry_focus,
             message=lambda: f"{route} entry never settled: {screen.focused!r}",
         )
+        # Review: a loaded host must not close the window before the gesture.
+        monkeypatch.setattr(
+            library_screen_module, "LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS", 10.0
+        )
         screen._arm_library_list_entry_focus()
         await pilot.pause()  # the entry's own landing on the first row
         if gesture == "tab":
@@ -1316,3 +1327,31 @@ async def test_a_users_own_move_to_a_grip_disarms_the_list_entry(route, gesture)
         assert getattr(screen.focused, "id", None) == "library-browse-items-grip"
         await pilot.pause(0.3)
         assert getattr(screen.focused, "id", None) == "library-browse-items-grip"
+
+
+@pytest.mark.asyncio
+async def test_a_no_op_focus_reset_records_no_landing():
+    """TASK-42473 review: Textual's reset does nothing for a widget that
+    does not hold focus (a blur of an unfocused control), so it must not
+    record whatever holds focus as a reset landing.
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), notes=_two_notes(), media=_two_media_items()
+    )
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", None) == _FIRST_ROW["media"]
+            and not screen._library_pending_list_entry_focus,
+            message=lambda: f"Media entry never settled: {screen.focused!r}",
+        )
+        row = screen.focused
+        screen._library_reset_landing = None
+        screen.query_one("#library-browse-items-grip").blur()
+        assert screen.focused is row
+        assert screen._library_reset_landing is None

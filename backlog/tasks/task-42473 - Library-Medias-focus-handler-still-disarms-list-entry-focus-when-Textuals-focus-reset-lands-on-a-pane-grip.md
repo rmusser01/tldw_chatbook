@@ -70,10 +70,16 @@ Found during round 22 of the follow-up burn-down (2026-11-23), by TASK-42422. Ch
 - Covering run: the 24 Tests/UI files that reach the entry channel or the grips, plus every `test_library_media*.py` (44 files), at `-n 4` with a temporary local plugin that adds the `bootstrap_profile` marker (as TASK-41504 did; deleted), load 31-61. 29 failed and 2115 passed. Every one of the 29 also fails at base (screen and canvas reverted, same command): the 25 from the first covering run, then the 7 left of 14 new ones on rerun. That run was one commit earlier, before the reset record was made one-use (which only narrows the exemption). After that change, the 25, the rail-switch file and the retry node were rerun: nothing failed that passes at base.
 - The whole rail-switch file (27 tests) passed in that final rerun.
 
-**Size.** `library_screen.py` 32866 -> 32901 lines, 1288 -> 1289 methods (the `_reset_focus` override); the ratchet row is raised by exactly that, with a dated note. No timer added, so no clock-root row.
+**Size.** `library_screen.py` 32866 -> 32903 lines, 1288 -> 1289 methods (the `_reset_focus` override), then 32906 after the review fix below; each ratchet raise is the exact growth, with a dated note. No timer added, so no clock-root row.
 
 **Docs.** No User Guide change: the documented landing (the list's first row) is unchanged; the fix removes a race.
 
 **Files.** `tldw_chatbook/UI/Screens/library_screen.py`, `Tests/UI/test_library_rail_switch_keeps_reader_and_note.py`, `Tests/UI/test_library_shell.py`, `Tests/Architecture/test_screen_size_ratchet.py`.
 
 **Checks (final tree, shared by TASK-41723, 42470 and 42473).** `Tests/CI` at `-n 4`: 1823 passed, 2 skipped. `Tests/Architecture` serially: 1491 passed, 5 skipped, 1 failed. The failure was `test_persistent_diagnostic_inventory.py::test_task_15103_review_ledger_canonical_schema_and_arithmetic`, at its 300 s timeout while the run shared the host at load 33-67. Alone it passed in 194 s (load ~45-50). `./scripts/preflight.sh` passed; `ruff check tldw_chatbook --select F` passed; `Tests/lint/ruff_gate.py` passed (RATCHET OK).
+
+**Review fixes (review of the round-24 branch, Minors 2-5).**
+- `_reset_focus` recorded a landing even when Textual's reset did nothing (`self.focused is not widget`). It now records only when the widget it was called for held focus. New test `test_a_no_op_focus_reset_records_no_landing` (blur of an unfocused grip): red on the first round-24 commit (it recorded `library-media-row-0`), green after.
+- The two new tests set `LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS` to 10.0 before they re-arm, as the first-row test does at 6.0, so a loaded host cannot close the window under them. Their assertions are unchanged; the AC#1 test's final wait, which now includes the 10 s window closing, has a 30 s timeout.
+- `lessons-textual.md`: the TASK-34000.28 entry and this task's entry now reference each other. That entry ruled out an override that changed where the reset lands; this one only records it, and a rename turns the AC#1 test red.
+- The Size line above is corrected (32903, not 32901), and re-measured after the guard: 32906 lines, 1289 methods.

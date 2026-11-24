@@ -7659,12 +7659,15 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Record where Textual's own focus reset lands (TASK-42473).
 
-        Textual moves focus here off a control that is removed or hidden. The
-        move itself is unchanged; ``on_descendant_focus`` reads the landing to
-        tell it from a focus the app or the user chose.
+        Textual moves focus here off a control that is removed or hidden, and
+        does nothing for one that does not hold focus. The move itself is
+        unchanged; ``on_descendant_focus`` reads the landing to tell it from a
+        focus the app or the user chose.
         """
+        resetting = self.focused is widget
         super()._reset_focus(widget, avoiding)
-        self._library_reset_landing = self.focused
+        if resetting:
+            self._library_reset_landing = self.focused
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
         """Let click-driven focus changes supersede resize memory."""

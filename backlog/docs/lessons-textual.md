@@ -1984,7 +1984,9 @@ Pilot pins were green.
   - **Overriding the private `Screen._reset_focus` worked, but was ruled
     out.** It changed every prune and blur landing screen-wide: Media and
     Conversations read the same generation. A Textual rename would also have
-    silently dropped the override.
+    silently dropped the override. (TASK-42473 later overrides it only to
+    record where the reset lands, leaving the landing itself alone; see that
+    entry.)
 - **Rule.** Any "has the user moved focus since X?" counter must not count
   Textual's reset after a removal, which every recompose of the focused
   control produces and which looks exactly like a click. Prefer parking focus
@@ -2840,6 +2842,6 @@ cancellation reaches its code as a `WorkerCancelled` exception, not a
 
 ## "Focus landed on a grip" does not say who put it there; record Textual's reset itself (TASK-42473, 2026-11-23)
 
-**Incident.** Media's list entry was disarmed by Textual's reset onto a pane grip, and Notes is exempt from that. Giving Media the Notes rule (any grip landing in the entry window keeps the entry armed) failed 9 Media tests that passed at base. Media focuses grips itself (the resize hand-off to the Items grip), tests focus grips in code, and a kept window later took focus back to row 0 from a bulk-delete Undo. A second cut, "a grip landing while the control that had focus is being removed", still cleared a test's own `grip.focus()` (2 compact Trash tests): a repaint happened to be removing the old control at that moment. What held: `LibraryScreen._reset_focus` calls Textual's reset unchanged and records where it landed; the handler counts only that landing, once, and only before the entry has landed a row. Each condition has a failing pin when removed.
+**Incident.** Media's list entry was disarmed by Textual's reset onto a pane grip, and Notes is exempt from that. Giving Media the Notes rule (any grip landing in the entry window keeps the entry armed) failed 9 Media tests that passed at base. Media focuses grips itself (the resize hand-off to the Items grip), tests focus grips in code, and a kept window later took focus back to row 0 from a bulk-delete Undo. A second cut, "a grip landing while the control that had focus is being removed", still cleared a test's own `grip.focus()` (2 compact Trash tests): a repaint happened to be removing the old control at that moment. What held: `LibraryScreen._reset_focus` calls Textual's reset unchanged and records where it landed, only when the reset actually moved focus; the handler counts only that landing, once, and only before the entry has landed a row. Each condition has a failing pin when removed. This does not contradict the TASK-34000.28 entry, which ruled out overriding `Screen._reset_focus`: that override changed where the reset lands, screen-wide, and a rename would have dropped it silently. This one only records the landing, and a rename turns the AC#1 test (`test_a_reset_onto_a_grip_inside_the_media_entry_window_keeps_the_entry`) red.
 
 **What to do.** To tell the framework's focus move from the app's or the user's, record the framework's move where it happens, and do not infer it from the state around the landing.
