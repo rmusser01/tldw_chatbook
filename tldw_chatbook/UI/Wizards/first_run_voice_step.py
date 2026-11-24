@@ -413,6 +413,7 @@ class VoiceSetupStep(OmniVoiceStepBase):
         self._on_test_and_hear()
 
     def _invalidate_sample_evidence(self) -> None:
+        self._sample_output.stop()
         self._test_generation += 1
         self._test_in_progress_generation = None
         self._verified_draft = None
@@ -573,6 +574,7 @@ class VoiceSetupStep(OmniVoiceStepBase):
         self._start_probe()
 
     def _cancel_active_sample(self) -> None:
+        self._sample_output.stop()
         if self._test_in_progress_generation is None:
             self._refresh_sample_state()
             return
@@ -598,9 +600,6 @@ class VoiceSetupStep(OmniVoiceStepBase):
     def on_unmount(self) -> None:
         self._cancel_active_sample()
         self._staged_key = None
-        if self._sample_audio_path is not None:
-            self._sample_audio_path.unlink(missing_ok=True)
-            self._sample_audio_path = None
 
     @on(Button.Pressed, "#setup-voice-test")
     def _on_test_and_hear(self) -> None:
@@ -623,7 +622,7 @@ class VoiceSetupStep(OmniVoiceStepBase):
         self._hold_test_focus(held)
         run_wizard_worker(
             self,
-            self._run_voice_sample(generation, draft),
+            self._run_voice_sample(generation, draft, self._begin_sample()),
             exclusive=True,
             group="setup-voice-sample",
         )
@@ -696,6 +695,7 @@ class VoiceSetupStep(OmniVoiceStepBase):
         self,
         generation: int,
         draft: voice_state.VoiceSetupDraft,
+        attempt,
     ) -> None:
         try:
             result = await voice_state.run_voice_sample(
@@ -728,7 +728,7 @@ class VoiceSetupStep(OmniVoiceStepBase):
             self._verified_draft = draft
             self._mark_sample_verified()
             try:
-                played = await self._play_sample(result)
+                played = await self._play_sample(result, attempt, generation)
             except asyncio.CancelledError:
                 if generation == self._test_generation:
                     self.query_one("#setup-voice-status", Static).update(

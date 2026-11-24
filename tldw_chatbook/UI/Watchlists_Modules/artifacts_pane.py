@@ -58,16 +58,8 @@ script` already uses), and never touches the table's mounted identity.
 The body is markdown an LLM wrote from remote feed content, so it is
 rendered with `hyperlinks=False` -- see `_MARKDOWN_HYPERLINKS` below.
 
-Spec #2 phase 2b, Task 7 (audio): `selected_script`/`script_audio` rebuild
-`ScriptDetailRegion` (task-16852) on every script selection or audio
-arrival, so EVERY one of those rebuilds every widget `compose_script_
-detail()` yields -- including Play/Stop. That rules out ever holding "is
-this row currently playing" as a reactive/attribute on this widget: it
-would be silently reset to its default on the very next selection, wrong
-by construction. The shared `SimpleAudioPlayer` singleton (`TTS/audio_
-player.get_audio_player`) is the only thing that survives a recompose, so
-it is also the only thing consulted for playback state -- see
-`WatchlistsCollectionsScreen.handle_stop_audio_requested`.
+The screen retains file playback attempts across detail recomposition. The pane
+captures the selected script and audio row at Play and the exact attempt at Stop.
 """
 
 from __future__ import annotations
@@ -295,21 +287,20 @@ class SynthesizeAudioRequested(Message):
 
 
 class PlayAudioRequested(Message):
-    """Posted when the user asks to play the selected script's audio.
+    """Play the exact row captured by the pane's button action."""
 
-    Carries nothing: the file to play is the screen's own `_loaded_script_
-    audio` state, resolved alongside `_selected_script` inside `_load_
-    briefings`. Playback state itself is never held on THIS widget -- see
-    the module docstring's own note on `selected_script`'s `recompose=True`
-    rebuilding every control on every selection.
-    """
+    def __init__(self, attempt, key):
+        super().__init__()
+        self.attempt = attempt
+        self.key = key
 
 
 class StopAudioRequested(Message):
-    """Posted when the user asks to stop the selected script's audio.
+    """Stop the attempt visible when this message was posted."""
 
-    Carries nothing, for the identical reason `PlayAudioRequested` does.
-    """
+    def __init__(self, attempt):
+        super().__init__()
+        self.attempt = attempt
 
 
 class ExportFeedRequested(Message):
@@ -745,6 +736,9 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: Same Rich terminal-agnostic "current row" idiom as
     #: `NotificationsPane._SELECTED_ROW_STYLE` -- a `DataTable` cell's `Text`
     #: cannot reference Textual CSS variables the way a widget's styles can.
+    playback_attempt_for = None
+    begin_playback = None
+
     _SELECTED_ROW_STYLE = "reverse bold"
 
     #: Review round 1, Minor #4. A plain, app-controlled glyph -- never
@@ -2300,10 +2294,25 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             self.post_message(CastScriptRequested())
         elif button_id == "artifacts-synthesize-button":
             self.post_message(SynthesizeAudioRequested())
-        elif button_id == "artifacts-play-button":
-            self.post_message(PlayAudioRequested())
-        elif button_id == "artifacts-stop-button":
-            self.post_message(StopAudioRequested())
+        elif button_id in {"artifacts-play-button", "artifacts-stop-button"}:
+            if self.selected_script and self.script_audio:
+                key = (
+                    self.selected_script.get("id"),
+                    self.script_audio.get("id"),
+                    self.script_audio.get("file_path"),
+                )
+                if (
+                    button_id == "artifacts-play-button"
+                    and self.begin_playback is not None
+                ):
+                    self.post_message(PlayAudioRequested(self.begin_playback(key), key))
+                elif (
+                    button_id == "artifacts-stop-button"
+                    and self.playback_attempt_for is not None
+                ):
+                    self.post_message(
+                        StopAudioRequested(self.playback_attempt_for(key))
+                    )
         elif button_id == "artifacts-export-feed-button":
             self.post_message(ExportFeedRequested())
         elif button_id == "artifacts-serve-feed-button":

@@ -22,6 +22,7 @@ from Tests.UI.speech_playground_fixtures import (
     _resolved,
     _wait_until,
 )
+from tldw_chatbook.app_service_wiring import ServiceWiringMixin
 from tldw_chatbook.TTS.adapter_types import (
     TTSProviderCatalog,
     TTSProviderReconfiguringError,
@@ -642,6 +643,7 @@ async def test_current_result_disabled_actions_explain_the_current_state(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("auto_play", [False, True])
+@pytest.mark.bootstrap_profile
 async def test_generation_honors_studio_auto_play_and_keyboard_recovery(
     auto_play,
     tmp_path,
@@ -659,9 +661,15 @@ async def test_generation_honors_studio_auto_play_and_keyboard_recovery(
         await pilot.pause()
         pane = app.query_one(SpeechPlaygroundPane)
         play_calls: list[bool] = []
-        monkeypatch.setattr(pane, "_play_audio", lambda: play_calls.append(True))
+        monkeypatch.setattr(pane, "_play_audio", lambda **kwargs: play_calls.append(True))
 
-        pane._generation_complete(_generated_artifact(tmp_path))
+        artifact = _generated_artifact(tmp_path)
+        if auto_play:
+            pane._autoplay_intent = (
+                artifact.operation_id,
+                app.audio_output.begin_intent(),
+            )
+        pane._generation_complete(artifact)
         await pilot.pause()
         await pilot.pause()
 
@@ -673,6 +681,7 @@ async def test_generation_honors_studio_auto_play_and_keyboard_recovery(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_new_result_stops_active_playback_before_replacing_controls(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -685,31 +694,7 @@ async def test_new_result_stops_active_playback_before_replacing_controls(
         lambda self, *args, **kwargs: None,
     )
 
-    class Player:
-        def __init__(self) -> None:
-            self.state = PlaybackState.IDLE
-            self.stop_calls = 0
-
-        async def get_state(self) -> PlaybackState:
-            return self.state
-
-        async def stop(self) -> bool:
-            self.stop_calls += 1
-            self.state = PlaybackState.IDLE
-            return True
-
-        async def play(self, _path: Path) -> bool:
-            self.state = PlaybackState.PLAYING
-            return True
-
-        async def is_playing(self) -> bool:
-            return self.state is PlaybackState.PLAYING
-
-        async def get_position(self) -> float:
-            return 0.0
-
-        async def get_duration(self) -> float:
-            return 1.0
+    from Tests.TTS.test_audio_output_runs import FilePlayer
 
     old_path = tmp_path / "old.wav"
     new_path = tmp_path / "new.wav"
@@ -724,8 +709,8 @@ async def test_new_result_stops_active_playback_before_replacing_controls(
         operation_id="new-operation",
     )
     app = _AxisHarness()
-    player = Player()
-    app.audio_player = player
+    player = FilePlayer()
+    monkeypatch.setattr("tldw_chatbook.TTS.audio_output_runs.SimpleAudioPlayer", lambda: player)
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -750,7 +735,7 @@ async def test_new_result_stops_active_playback_before_replacing_controls(
             ),
         )
 
-        assert player.stop_calls >= 2
+        assert player.stops == [player.token]
         assert app.query_one("#audio-play-btn", Button).disabled is False
         save_profile = app.query_one("#audio-save-profile-btn", Button)
         assert save_profile.disabled is False
@@ -758,6 +743,7 @@ async def test_new_result_stops_active_playback_before_replacing_controls(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_auto_play_new_result_cancels_prior_start_worker_before_takeover(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -770,37 +756,21 @@ async def test_auto_play_new_result_cancels_prior_start_worker_before_takeover(
         lambda self, *args, **kwargs: None,
     )
 
-    class GatedPlayer:
-        def __init__(self) -> None:
-            self.state = PlaybackState.IDLE
-            self.first_get_state_started = asyncio.Event()
-            self.get_state_calls = 0
-            self.played: list[Path] = []
+    from Tests.UI.file_output_fakes import capture_file_playback
+    from tldw_chatbook.TTS.audio_output_runs import FileOutputRun
 
-        async def get_state(self) -> PlaybackState:
-            self.get_state_calls += 1
-            if self.get_state_calls == 1:
-                self.first_get_state_started.set()
-                await asyncio.Event().wait()
-            return self.state
+    entered, resume = asyncio.Event(), asyncio.Event()
+    played = []
+    capture_file_playback(monkeypatch, played)
+    prepare = FileOutputRun.prepare
 
-        async def stop(self) -> bool:
-            self.state = PlaybackState.IDLE
-            return True
+    async def gated_prepare(path):
+        if path == old_path:
+            entered.set()
+            await resume.wait()
+        return await prepare(path)
 
-        async def play(self, path: Path) -> bool:
-            self.played.append(path)
-            self.state = PlaybackState.PLAYING
-            return True
-
-        async def is_playing(self) -> bool:
-            return self.state is PlaybackState.PLAYING
-
-        async def get_position(self) -> float:
-            return 0.0
-
-        async def get_duration(self) -> float:
-            return 1.0
+    monkeypatch.setattr(FileOutputRun, "prepare", gated_prepare)
 
     old_path = tmp_path / "old-starting.wav"
     new_path = tmp_path / "new-auto-play.wav"
@@ -827,26 +797,25 @@ async def test_auto_play_new_result_cancels_prior_start_worker_before_takeover(
         content_type="audio/wav",
     )
     app = _AxisHarness(studio_preferences=StudioTTSPreferencesSnapshot(auto_play=True))
-    player = GatedPlayer()
-    app.audio_player = player
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         pane = app.query_one(SpeechPlaygroundPane)
         pane._store_delivered_artifact(old_artifact, announce=False)
         pane._play_audio()
-        await wait_for_signal(
-            player.first_get_state_started, what="the first playback get_state"
-        )
+        await asyncio.wait_for(entered.wait(), 2)
+        pane._autoplay_intent = new_artifact.operation_id, app.audio_output.begin_intent()
 
         pane._generation_complete(new_artifact)
-        await _wait_until(pilot, lambda: player.played == [new_path])
+        resume.set()
+        await _wait_until(pilot, lambda: played == [new_path])
 
         assert type(pane.current_audio_artifact) is STTSPlaygroundResultProjection
         assert pane.current_audio_artifact.operation_id == new_artifact.operation_id
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_profile_navigation_fences_result_waiting_for_playback_stop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -859,36 +828,7 @@ async def test_profile_navigation_fences_result_waiting_for_playback_stop(
         lambda self, *args, **kwargs: None,
     )
 
-    class GatedStopPlayer:
-        def __init__(self) -> None:
-            self.state = PlaybackState.IDLE
-            self.stop_calls = 0
-            self.replacement_stop_started = asyncio.Event()
-            self.release_replacement_stop = asyncio.Event()
-
-        async def get_state(self) -> PlaybackState:
-            return self.state
-
-        async def stop(self) -> bool:
-            self.stop_calls += 1
-            if self.stop_calls == 2:
-                self.replacement_stop_started.set()
-                await self.release_replacement_stop.wait()
-            self.state = PlaybackState.IDLE
-            return True
-
-        async def play(self, _path: Path) -> bool:
-            self.state = PlaybackState.PLAYING
-            return True
-
-        async def is_playing(self) -> bool:
-            return self.state is PlaybackState.PLAYING
-
-        async def get_position(self) -> float:
-            return 0.0
-
-        async def get_duration(self) -> float:
-            return 1.0
+    from Tests.UI.file_output_fakes import GatedStopPlayer
 
     old_artifact = _generated_artifact(tmp_path)
     new_path = tmp_path / "retired-result.wav"
@@ -905,7 +845,7 @@ async def test_profile_navigation_fences_result_waiting_for_playback_stop(
     )
     app = _AxisHarness()
     player = GatedStopPlayer()
-    app.audio_player = player
+    monkeypatch.setattr("tldw_chatbook.TTS.audio_output_runs.SimpleAudioPlayer", lambda: player)
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -920,11 +860,9 @@ async def test_profile_navigation_fences_result_waiting_for_playback_stop(
         )
 
         pane._generation_complete(new_artifact)
-        await wait_for_signal(
-            player.replacement_stop_started, what="the replacement playback stop"
-        )
+        assert await asyncio.to_thread(player.stop_entered.wait, 2)
         pane.apply_profile_preset(_profile_preset(model_id="new-profile-model"))
-        player.release_replacement_stop.set()
+        player.release_stop.set()
         await app.workers.wait_for_complete()
 
         assert type(pane.current_audio_artifact) is STTSPlaygroundResultProjection
@@ -933,6 +871,7 @@ async def test_profile_navigation_fences_result_waiting_for_playback_stop(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_play_is_blocked_while_new_result_waits_for_playback_stop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -945,38 +884,7 @@ async def test_play_is_blocked_while_new_result_waits_for_playback_stop(
         lambda self, *args, **kwargs: None,
     )
 
-    class GatedStopPlayer:
-        def __init__(self) -> None:
-            self.state = PlaybackState.IDLE
-            self.stop_calls = 0
-            self.get_state_calls = 0
-            self.replacement_stop_started = asyncio.Event()
-            self.release_replacement_stop = asyncio.Event()
-
-        async def get_state(self) -> PlaybackState:
-            self.get_state_calls += 1
-            return self.state
-
-        async def stop(self) -> bool:
-            self.stop_calls += 1
-            if self.stop_calls == 2:
-                self.replacement_stop_started.set()
-                await self.release_replacement_stop.wait()
-            self.state = PlaybackState.IDLE
-            return True
-
-        async def play(self, _path: Path) -> bool:
-            self.state = PlaybackState.PLAYING
-            return True
-
-        async def is_playing(self) -> bool:
-            return self.state is PlaybackState.PLAYING
-
-        async def get_position(self) -> float:
-            return 0.0
-
-        async def get_duration(self) -> float:
-            return 1.0
+    from Tests.UI.file_output_fakes import GatedStopPlayer
 
     old_artifact = _generated_artifact(tmp_path)
     new_path = tmp_path / "replacement.wav"
@@ -993,7 +901,7 @@ async def test_play_is_blocked_while_new_result_waits_for_playback_stop(
     )
     app = _AxisHarness()
     player = GatedStopPlayer()
-    app.audio_player = player
+    monkeypatch.setattr("tldw_chatbook.TTS.audio_output_runs.SimpleAudioPlayer", lambda: player)
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -1008,20 +916,18 @@ async def test_play_is_blocked_while_new_result_waits_for_playback_stop(
         )
 
         pane._generation_complete(new_artifact)
-        await wait_for_signal(
-            player.replacement_stop_started, what="the replacement playback stop"
-        )
+        assert await asyncio.to_thread(player.stop_entered.wait, 2)
         try:
             play = app.query_one("#audio-play-btn", Button)
             stop = app.query_one("#stop-audio-btn", Button)
             assert play.disabled is True
             assert stop.disabled is False
-            get_state_calls = player.get_state_calls
+            launches = player.launches
             pane._play_audio()
             await pilot.pause(0.05)
-            assert player.get_state_calls == get_state_calls
+            assert player.launches == launches
         finally:
-            player.release_replacement_stop.set()
+            player.release_stop.set()
         await app.workers.wait_for_complete()
 
         assert type(pane.current_audio_artifact) is STTSPlaygroundResultProjection
@@ -1108,8 +1014,11 @@ def test_playground_action_copy_names_the_resulting_action() -> None:
 
 
 class _AxisHarness(App[None]):
+
     """Mounts the pane alone, so a real catalog load can drive `_apply_controls`
     without the Lab frame or screen-navigation plumbing."""
+
+    audio_output = ServiceWiringMixin.audio_output
 
     def __init__(self, **pane_kwargs) -> None:
         super().__init__()

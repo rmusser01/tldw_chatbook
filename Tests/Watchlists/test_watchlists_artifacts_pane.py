@@ -65,7 +65,6 @@ from tldw_chatbook.Subscriptions.briefing_cast import dump_roster
 from tldw_chatbook.Subscriptions.briefing_export import default_briefing_filename
 from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 from tldw_chatbook.Third_Party.textual_fspicker import FileSave, SelectDirectory
-from tldw_chatbook.TTS import audio_player as audio_player_module
 from tldw_chatbook.UI.Screens import watchlists_collections_screen as screen_module
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
     WatchlistsCollectionsScreen,
@@ -3696,34 +3695,6 @@ def _use_fake_audio_service(monkeypatch, fake) -> None:
     monkeypatch.setattr(screen_module, "generate_script_audio", fake)
 
 
-class _FakePlayer:
-    """A stand-in for `SimpleAudioPlayer`, the three methods `handle_play_
-    audio_requested`/`handle_stop_audio_requested` reach through
-    `stop_audio_playback_if_current` (TASK-39040: it reads the state to
-    refuse a clip handed to the default app, and returns `stop()`'s result).
-    """
-
-    def __init__(self) -> None:
-        self.stopped = False
-        self._current: Path | None = None
-
-    def get_current_file(self) -> Path | None:
-        return self._current
-
-    def get_state(self):
-        from tldw_chatbook.TTS.audio_player import PlaybackState
-
-        return PlaybackState.PLAYING if self._current else PlaybackState.IDLE
-
-    def set_current(self, path: Path) -> None:
-        self._current = path
-
-    def stop(self) -> bool:
-        self.stopped = True
-        self._current = None
-        return True
-
-
 def _patch_audio_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Redirect `briefing_audio_dir()` into `tmp_path` (Qodo review round 1,
     FIX B): `_audio_file_is_playable`/`handle_play_audio_requested` now
@@ -4572,16 +4543,9 @@ async def test_play_calls_the_player_with_the_rows_path_and_stop_stops_it(
     )
 
     play_calls: list[Path] = []
-    monkeypatch.setattr(
-        screen_module, "play_audio_file", lambda path: play_calls.append(path)
-    )
-    # `handle_stop_audio_requested` delegates to `tts_events.stop_audio_
-    # playback_if_current`, which does its OWN local `from tldw_chatbook.
-    # TTS.audio_player import get_audio_player` at call time -- so faking
-    # it means patching THAT module's attribute, not the screen's (the
-    # screen no longer holds a `get_audio_player` reference at all).
-    fake_player = _FakePlayer()
-    monkeypatch.setattr(audio_player_module, "get_audio_player", lambda: fake_player)
+    from Tests.UI.file_output_fakes import capture_file_playback
+
+    players = capture_file_playback(monkeypatch, play_calls)
 
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
         await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
@@ -4594,23 +4558,64 @@ async def test_play_calls_the_player_with_the_rows_path_and_stop_stops_it(
             "Play must hand the player exactly this row's own file path"
         )
 
-        fake_player.set_current(audio_file)
+        # Capture a Stop in the pane before playing this exact row a second time.
+        posted = []
+        post = pane.post_message
+
+        def hold_stop(message):
+            if isinstance(message, StopAudioRequested):
+                posted.append(message)
+                return True
+            return post(message)
+
+        with monkeypatch.context() as held:
+            held.setattr(pane, "post_message", hold_stop)
+            pane.query_one("#artifacts-stop-button", Button).press()
+            await pilot.pause()
+        (old_stop,) = posted
+        pane.query_one("#artifacts-play-button", Button).press()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        assert play_calls == [audio_file, audio_file]
+        screen.handle_stop_audio_requested(old_stop)
+        await pilot.pause()
+        assert not players[1].stops
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         pane.query_one("#artifacts-stop-button", Button).press()
         await pilot.pause()
 
-        assert fake_player.stopped is True
+        assert players[1].stops == [players[1].token]
+
+        # A Stop posted while this row's next attempt is still probing must
+        # fence it before the resulting private player can launch.
+        from tldw_chatbook.TTS.audio_output_runs import FileOutputRun
+
+        prepare = FileOutputRun.prepare
+        entered, finish = asyncio.Event(), asyncio.Event()
+        prepared = []
+
+        async def delayed(path):
+            entered.set()
+            await finish.wait()
+            run = await prepare(path)
+            prepared.append(run)
+            return run
+
+        monkeypatch.setattr(FileOutputRun, "prepare", delayed)
+        pane.query_one("#artifacts-play-button", Button).press()
+        await asyncio.wait_for(entered.wait(), 3)
+        pane.query_one("#artifacts-stop-button", Button).press()
+        await pilot.pause()
+        finish.set()
+        await host.workers.wait_for_complete()
+        assert prepared[0].retirement_confirmed
+        assert players[-1].launches == 0
 
 
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stop_does_not_silence_a_different_currently_playing_file(monkeypatch):
-    """Trap #3 (`tts_events.stop_audio_playback_if_current`'s own
-    docstring): the shared player is a single-slot APP-WIDE singleton, so
-    Stop must compare against what the player actually has loaded before
-    touching it -- never a bare, unconditional `.stop()`, which could
-    silence a completely unrelated clip.
-    """
+    """A Watchlists Stop without a local attempt preserves another live lease."""
     app = _build_test_app()
     app.notify = Mock()
     watchlist_id = _seed_watchlist(app)
@@ -4625,18 +4630,19 @@ async def test_stop_does_not_silence_a_different_currently_playing_file(monkeypa
         turn_count=1,
     )
 
-    fake_player = _FakePlayer()
-    fake_player.set_current(Path("/tmp/an-unrelated-clip.wav"))
-    monkeypatch.setattr(audio_player_module, "get_audio_player", lambda: fake_player)
+    from Tests.TTS.test_audio_output_runs import FilePlayer
+    from tldw_chatbook.TTS.audio_output_runs import FileOutputRun
 
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
         await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
 
-        screen.handle_stop_audio_requested(StopAudioRequested())
-
-        assert fake_player.stopped is False, (
-            "Stop must not touch a DIFFERENT file the player is currently playing"
-        )
+        other = FilePlayer()
+        run = await FileOutputRun.prepare(Path("other.wav"), player=other)
+        lease = await host.audio_output.acquire("another screen", run.retire)
+        assert await run.start(lease)
+        screen.handle_stop_audio_requested(StopAudioRequested(None))
+        assert lease.is_current() and other.stops == []
+        assert await host.audio_output.stop(lease)
 
 
 @pytest.mark.asyncio
@@ -4826,6 +4832,7 @@ def test_audio_file_is_playable_true_for_a_real_in_dir_file(
     assert _audio_file_is_playable(row) is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_handle_play_audio_requested_refuses_an_unsafe_path_with_no_probe_or_playback(
     monkeypatch, tmp_path
@@ -4843,9 +4850,9 @@ async def test_handle_play_audio_requested_refuses_an_unsafe_path_with_no_probe_
     briefing_id, script_id = _seed_complete_script(app, watchlist_id)
 
     play_calls: list[Path] = []
-    monkeypatch.setattr(
-        screen_module, "play_audio_file", lambda path: play_calls.append(path)
-    )
+    from Tests.UI.file_output_fakes import capture_file_playback
+
+    capture_file_playback(monkeypatch, play_calls)
 
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
         await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
@@ -4854,7 +4861,9 @@ async def test_handle_play_audio_requested_refuses_an_unsafe_path_with_no_probe_
             "file_path": "/etc/passwd",
             "status": "complete",
         }
-        screen.handle_play_audio_requested(PlayAudioRequested())
+        key = (script_id, None, screen._loaded_script_audio["file_path"])
+        attempt = screen._begin_file_output(key)
+        screen.handle_play_audio_requested(PlayAudioRequested(attempt, key))
         await pilot.pause()
 
         assert play_calls == [], "an unsafe path must never reach the player"
@@ -4863,6 +4872,7 @@ async def test_handle_play_audio_requested_refuses_an_unsafe_path_with_no_probe_
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_handle_play_audio_requested_still_plays_a_normal_in_dir_path(
     monkeypatch, tmp_path
@@ -4878,9 +4888,9 @@ async def test_handle_play_audio_requested_still_plays_a_normal_in_dir_path(
     audio_file.write_bytes(b"RIFF....WAVEfmt ")
 
     play_calls: list[Path] = []
-    monkeypatch.setattr(
-        screen_module, "play_audio_file", lambda path: play_calls.append(path)
-    )
+    from Tests.UI.file_output_fakes import capture_file_playback
+
+    capture_file_playback(monkeypatch, play_calls)
 
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
         await _select_briefing_and_script(screen, pilot, host, briefing_id, script_id)
@@ -4889,7 +4899,9 @@ async def test_handle_play_audio_requested_still_plays_a_normal_in_dir_path(
             "file_path": str(audio_file),
             "status": "complete",
         }
-        screen.handle_play_audio_requested(PlayAudioRequested())
+        key = (script_id, None, screen._loaded_script_audio["file_path"])
+        attempt = screen._begin_file_output(key)
+        screen.handle_play_audio_requested(PlayAudioRequested(attempt, key))
         await pilot.pause()
 
         assert play_calls == [audio_file]

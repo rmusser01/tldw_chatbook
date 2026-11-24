@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from textual.widgets import Input
 
+from ..file_output_attempt import FileOutputSurface
 from ...Library.library_artifacts_catalog import LibraryArtifactsCatalog
 from ...Library.library_artifacts_state import ArtifactKey, ArtifactScope
 from ...Utils.adaptive_reader_state import (
@@ -55,6 +56,7 @@ class LibraryArtifactsController:
 
     def __init__(self, screen: LibraryScreen) -> None:
         self.screen = screen
+        self._file_output = FileOutputSurface()
         self.scope = ArtifactScope()
         self.page = None
         self.selected = None
@@ -641,6 +643,9 @@ class LibraryArtifactsController:
         shell.query_one("#library-artifacts-body").scroll_to(y=body_y, animate=False)
 
     def suspend(self) -> None:
+        if self._file_output.confirming():
+            return
+        self._file_output.stop()
         self.suspended = True
         self.presentation += 1
         self.stop_timer()
@@ -665,6 +670,7 @@ class LibraryArtifactsController:
             self.sync()
 
     def leave(self) -> None:
+        self._file_output.stop()
         self.capture_view()
         if self.scope.view in self._views:
             self._restore_scroll = self._views[self.scope.view][2:]
@@ -673,6 +679,7 @@ class LibraryArtifactsController:
         self.stop_timer()
 
     def dispose(self) -> None:
+        self._file_output.stop()
         self.disposed = True
         self.generation += 1
         self.detail_generation += 1
@@ -751,8 +758,16 @@ class LibraryArtifactsController:
                 self.detail.revision,
                 self.presentation,
             )
+            attempt = (
+                self._file_output.begin(
+                    self.screen.app, self.screen.app.audio_output.begin_intent()
+                )
+                if name == "play"
+                else None
+            )
             self.screen.run_worker(
-                self._run_action(name, identity), group="library-artifacts-action"
+                self._run_action(name, identity, attempt),
+                group="library-artifacts-action",
             )
 
     def open_watchlists(self) -> None:
@@ -883,7 +898,7 @@ class LibraryArtifactsController:
                 )
             )
 
-    async def _run_action(self, name, identity) -> None:
+    async def _run_action(self, name, identity, attempt=None) -> None:
         profile, key, revision, presentation = identity
         try:
             catalog = self.catalog()
@@ -963,7 +978,11 @@ class LibraryArtifactsController:
                     if launch:
                         self.app_instance.open_console_for_live_work(**launch)
             elif name == "play" and fresh.can_play:
-                await self._play(key, profile, presentation)
+                from .library_artifact_audio import play_report_audio
+
+                await play_report_audio(
+                    self, key, revision, profile, presentation, attempt
+                )
         except Exception as exc:  # noqa: BLE001 - storage/action failures must remain recoverable
             from ...Subscriptions.briefing_keep import KeepRefused
 
@@ -1043,23 +1062,3 @@ class LibraryArtifactsController:
         from .library_file_export import export_library_report_file
 
         await export_library_report_file(self, path, report, profile)
-
-    async def _play(self, key, profile, presentation) -> None:
-        from ...Subscriptions.briefing_audio import briefing_audio_dir
-        from ...TTS.audio_player import play_audio_file
-        from ...Utils.path_validation import validate_path
-
-        db = getattr(self.app_instance, "subscriptions_db", None)
-        raw = await self.screen._run_library_service_call(
-            db.get_artifact_audio_path, key
-        )
-        if not self.presentable(presentation, profile) or key != self.selected:
-            return
-        if not raw:
-            self.notify("This report's audio is no longer available.", "warning")
-            return
-        path = validate_path(raw, briefing_audio_dir(), redact_paths=True)
-        if not path.is_file():
-            self.notify("This report's audio is no longer available.", "warning")
-            return
-        play_audio_file(path)

@@ -954,6 +954,10 @@ class StaticHomeActiveWorkAdapter:
 
 
 class DestinationHarness(ConsolidatedCSSApp):
+    @property
+    def audio_output(self):
+        return self.app_instance.audio_output
+
     def __init__(
         self,
         app_instance,

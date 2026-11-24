@@ -500,7 +500,11 @@ def _speech_host():
     host.app.call_from_thread = lambda callback, *args, **kwargs: callback(
         *args, **kwargs
     )
-    host.app.audio_player = audio_player.AsyncAudioPlayer()
+    from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership
+
+    host.app.audio_output = AudioOutputOwnership()
+    host.is_attached = True
+    host.screen = host.app.screen
     host.init_playback_state()
     host.query_one = MagicMock(return_value=MagicMock())
     host._sync_idle_transport_actions = MagicMock()
@@ -509,12 +513,15 @@ def _speech_host():
     return host
 
 
+async def _play_speech_file(host, clip, release):
+    host.current_audio_file = clip
+    host._capture_audio_for_action = lambda: (clip, release)
+    attempt = host._file_output.begin(host.app, host.app.audio_output.begin_intent())
+    await host._play_audio_async(attempt, None)
+
+
 async def _settle_speech_host(host) -> None:
-    await host._retire_progress_timer()
-    retire_retention = getattr(host, "_retire_hand_off_retention", None)
-    if retire_retention is not None:
-        await retire_retention()
-    await host.app.audio_player.cleanup()
+    await host.on_unmount()
 
 
 def _speech_messages(host) -> list[str]:
@@ -545,8 +552,8 @@ async def test_speech_playground_reports_no_pause_or_stop_after_a_hand_off(
     host = _speech_host()
     token = _active_app_var().set(host.app)
     try:
-        await host._play_audio_async(clip, lambda: None)
-        await host._pause_audio_async()
+        await _play_speech_file(host, clip, lambda: None)
+        await host._pause_audio_async(host._file_output.latest)
         assert await host._stop_audio_async() is True
     finally:
         _active_app_var().reset(token)
@@ -578,15 +585,14 @@ async def test_speech_playground_stop_after_a_hand_off_keeps_the_copy_for_the_bo
     host = _speech_host()
     token = _active_app_var().set(host.app)
     try:
-        assert await host.app.audio_player.play(clip) is True
-        host._active_playback_release = _deleting_release(clip, released)
+        await _play_speech_file(host, clip, _deleting_release(clip, released))
 
         assert await host._stop_audio_async() is True
 
         assert released == [] and clip.exists(), "Stop deleted a playing clip"
-        assert host._active_playback_release is None, "the in-app slot is free"
+        assert host._file_output.latest.run.retirement_confirmed, "the in-app slot is free"
         assert "Playback stopped" not in _speech_messages(host)
-        assert await host.app.audio_player.get_state() is PlaybackState.IDLE
+        assert host.app.audio_output.owner is None
         await asyncio.sleep(0.5)
         assert released == [True] and not clip.exists(), "not released at the bound"
         assert host._hand_off_releases == {}
@@ -614,7 +620,7 @@ async def test_speech_playground_progress_polling_ends_on_a_hand_off(
     host = _speech_host()
     token = _active_app_var().set(host.app)
     try:
-        await host._play_audio_async(clip, _deleting_release(clip, released))
+        await _play_speech_file(host, clip, _deleting_release(clip, released))
         timer = host._progress_timer_task
         assert timer is not None
         await asyncio.wait_for(timer, timeout=1.0)
@@ -633,7 +639,7 @@ async def test_speech_playground_progress_polling_ends_on_a_hand_off(
         assert released == [] and clip.exists(), (
             "the copy was freed under the default app"
         )
-        assert host._active_playback_release is None
+        assert host._file_output.latest.run.retirement_confirmed
         assert "Playback complete" not in _speech_messages(host)
         await asyncio.sleep(0.5)
         assert released == [True] and not clip.exists()
@@ -658,16 +664,15 @@ async def test_speech_playground_exit_releases_a_retained_hand_off_copy_at_once(
     host = _speech_host()
     token = _active_app_var().set(host.app)
     try:
-        assert await host.app.audio_player.play(clip) is True
-        host._active_playback_release = _deleting_release(clip, released)
+        await _play_speech_file(host, clip, _deleting_release(clip, released))
         assert await host._stop_audio_async() is True
         assert released == [] and len(host._hand_off_releases) == 1
 
-        await host._retire_hand_off_retention()
+        await host.on_unmount()
 
         assert released == [True] and not clip.exists()
         assert host._hand_off_releases == {}
-        await host._retire_hand_off_retention()
+        await host.on_unmount()
         assert released == [True], "a retained release must run once"
     finally:
         _active_app_var().reset(token)

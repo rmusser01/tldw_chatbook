@@ -10,12 +10,13 @@ import asyncio
 import io
 import json
 import struct
+import sys
 import threading
 import wave
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import MagicMock, Mock
 
 import httpx
 import pytest
@@ -24,6 +25,7 @@ from textual.widgets import Button, Input, Select, Static, TextArea
 from textual.worker import WorkerCancelled
 
 from Tests.UI.speech_playground_fixtures import _resolved, _wait_until
+from tldw_chatbook.app_service_wiring import ServiceWiringMixin
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler,
     STTSPlaygroundGenerateEvent,
@@ -203,6 +205,8 @@ class _RecordingAudioCppAdapter(AudioCppAdapter):
 
 
 class _Host(App):
+    audio_output = ServiceWiringMixin.audio_output
+
     def __init__(self, pane):
         super().__init__()
         self.pane = pane
@@ -580,39 +584,28 @@ async def test_returning_to_global_provider_keeps_its_voice_when_studio_owns_ano
         ("openai", "unknown"),
     ],
 )
+@pytest.mark.bootstrap_profile
 async def test_pcm_lab_playback_preserves_raw_export_and_refuses_unknown_shape(
     provider, terminal, backend_lab_factory, monkeypatch, tmp_path
 ):
     preferences = replace(_preferences(provider), response_format="pcm")
     pcm = struct.pack("<hh", 2000, -2000) * 1200
 
-    class Player:
+    from Tests.TTS.test_audio_output_runs import FilePlayer
+
+    played, bodies, players = [], [], []
+
+    class Player(FilePlayer):
         def __init__(self):
-            self.played = []
-            self.bodies = []
-            self.state = PlaybackState.IDLE
+            super().__init__()
+            players.append(self)
 
-        async def play(self, path):
-            self.played.append(path)
-            self.bodies.append(path.read_bytes())
-            self.state = PlaybackState.PLAYING
-            return terminal != "failure"
+        def play_prepared(self, plan, **kwargs):
+            played.append(plan.file_path)
+            bodies.append(plan.file_path.read_bytes())
+            return super().play_prepared(plan, **kwargs) and terminal != "failure"
 
-        async def stop(self):
-            self.state = PlaybackState.IDLE
-            return True
-
-        async def get_state(self):
-            return self.state
-
-        async def is_playing(self):
-            return self.state is PlaybackState.PLAYING
-
-        async def get_position(self):
-            return 0
-
-        async def get_duration(self):
-            return 0.1
+    monkeypatch.setattr("tldw_chatbook.TTS.audio_output_runs.SimpleAudioPlayer", Player)
 
     async with backend_lab_factory(provider, preferences=preferences) as lab:
         host = lab.adapters[provider].host
@@ -624,8 +617,6 @@ async def test_pcm_lab_playback_preserves_raw_export_and_refuses_unknown_shape(
             yield pcm[3:]
 
         monkeypatch.setattr(host, "generate", generate)
-        player = Player()
-        lab.app.audio_player = player
         lab.pane.query_one("#tts-text-input", TextArea).text = "A synthetic PCM reply."
         lab.pane.action_generate_tts()
         await lab.handler.handle_playground_generate(
@@ -650,18 +641,18 @@ async def test_pcm_lab_playback_preserves_raw_export_and_refuses_unknown_shape(
             await lab.app.workers.wait_for_complete()
             if provider == "openai":
                 # The fixture's custom origin offers no sample-rate contract.
-                assert player.played == []
+                assert played == []
                 assert any("PCM" in message for message, _ in lab.app.notices)
             else:
-                assert len(player.played) == attempt + 1
-                playback_path = player.played[-1]
+                assert len(played) == attempt + 1
+                playback_path = played[-1]
                 assert playback_path != artifact.path
                 assert playback_path.suffix == ".wav"
-                _assert_wav(player.bodies[-1])
+                _assert_wav(bodies[-1])
                 if terminal == "stop":
                     await lab.pane._stop_audio_async()
                 elif terminal in {"finish", "error"}:
-                    player.state = (
+                    players[-1].state = (
                         PlaybackState.ERROR
                         if terminal == "error"
                         else PlaybackState.FINISHED
@@ -669,7 +660,7 @@ async def test_pcm_lab_playback_preserves_raw_export_and_refuses_unknown_shape(
                     await _wait_until(
                         lab.pilot, lambda path=playback_path: not path.exists()
                     )
-                    assert lab.pane._progress_timer_task.done()
+                    await _wait_until(lab.pilot, lab.pane._progress_timer_task.done)
                 assert not playback_path.exists()
             assert release.call_count == attempt + 1
             assert lab.handler._playground_file_leases.get(artifact.path, 0) == 0
@@ -689,6 +680,7 @@ async def test_pcm_lab_playback_preserves_raw_export_and_refuses_unknown_shape(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_cancelled_lab_pcm_copy_releases_its_lease_after_the_reader_retires(
     backend_lab_factory, monkeypatch, tmp_path
 ):
@@ -723,11 +715,10 @@ async def test_cancelled_lab_pcm_copy_releases_its_lease_after_the_reader_retire
         lab.pane._generation_complete(artifact)
         release = Mock(wraps=lab.handler.release_playground_result)
         monkeypatch.setattr(lab.handler, "release_playground_result", release)
-        lab.app.audio_player = SimpleNamespace(
-            get_state=AsyncMock(return_value=PlaybackState.IDLE),
-            stop=AsyncMock(return_value=True),
-            play=AsyncMock(return_value=True),
-        )
+        from Tests.UI.file_output_fakes import capture_file_playback
+
+        played = []
+        capture_file_playback(monkeypatch, played)
         try:
             lab.pane.action_play_audio()
             assert await asyncio.to_thread(entered.wait, 5)
@@ -745,25 +736,28 @@ async def test_cancelled_lab_pcm_copy_releases_its_lease_after_the_reader_retire
             assert original.exists()
             assert lab.handler._playground_file_leases.get(original, 0) == 0
             release.assert_called_once_with(artifact.operation_id, original)
-            lab.app.audio_player.play.assert_not_called()
+            assert not played
         finally:
             finish.set()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("exit_code", [0, 17, None])
+@pytest.mark.bootstrap_profile
 async def test_opus_lab_action_uses_real_player_and_observes_terminal_failure(
     exit_code, backend_lab_factory, monkeypatch, tmp_path
 ):
     """Exercise application transport; the fake process makes no codec claim."""
     player = audio_player_module.SimpleAudioPlayer()
     player._system = "Darwin"
-    monkeypatch.setattr(audio_player_module, "_audio_player_instance", player)
+    monkeypatch.setattr(
+        "tldw_chatbook.TTS.audio_output_runs.SimpleAudioPlayer", lambda: player
+    )
     monkeypatch.setattr(
         audio_player_module.shutil,
         "which",
         lambda name: (
-            "/test/ffplay" if name == "ffplay" and exit_code is not None else None
+            sys.executable if name == "ffplay" and exit_code is not None else None
         ),
     )
     finished = threading.Event()
@@ -800,16 +794,12 @@ async def test_opus_lab_action_uses_real_player_and_observes_terminal_failure(
         try:
             lab.pane.action_play_audio()
             await lab.app.workers.wait_for_complete()
-            assert isinstance(
-                lab.app.audio_player, audio_player_module.AsyncAudioPlayer
-            )
-            assert lab.app.audio_player._player is player
             if exit_code is None:
                 spawn.assert_not_called()
                 assert ("Failed to start playback", "error") in lab.app.notices
             else:
-                assert spawn.call_args.args[0] == [
-                    "/test/ffplay",
+                assert list(spawn.call_args.args[0]) == [
+                    sys.executable,
                     "-nodisp",
                     "-autoexit",
                     "-loglevel",
@@ -823,7 +813,9 @@ async def test_opus_lab_action_uses_real_player_and_observes_terminal_failure(
                 expected_state = (
                     PlaybackState.FINISHED if exit_code == 0 else PlaybackState.ERROR
                 )
-                assert await lab.app.audio_player.get_state() is expected_state
+                assert (
+                    await lab.pane._file_output.latest.run.get_state() is expected_state
+                )
                 expected_notice = (
                     ("Playback complete", "information")
                     if exit_code == 0
@@ -847,3 +839,82 @@ async def test_opus_lab_action_uses_real_player_and_observes_terminal_failure(
             release.assert_called_once_with(artifact.operation_id, original)
         finally:
             finished.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(
+    ("autoplay", "supersede"), [(True, False), (True, True), (False, False)]
+)
+async def test_generation_reserves_only_intended_autoplay_before_provider_execution(
+    backend_lab_factory, monkeypatch, autoplay, supersede
+):
+    from Tests.UI.file_output_fakes import capture_file_playback
+
+    played = []
+    capture_file_playback(monkeypatch, played)
+    async with backend_lab_factory(
+        "kokoro", studio=StudioTTSPreferencesSnapshot(auto_play=autoplay)
+    ) as lab:
+        before = lab.app.audio_output.begin_intent()
+        lab.pane.query_one("#tts-text-input", TextArea).text = "A synthetic reply."
+        lab.pane.action_generate_tts()
+        assert before.is_current() is (not autoplay)
+        if supersede:
+            later = lab.app.audio_output.begin_intent()
+        await lab.handler.handle_playground_generate(
+            STTSPlaygroundGenerateEvent(lab.app.requests[-1])
+        )
+        await lab.pilot.pause()
+        await lab.app.workers.wait_for_complete()
+        artifact = lab.pane.current_audio_artifact
+        assert artifact is not None
+        assert played == ([artifact.path] if autoplay and not supersede else [])
+        if supersede:
+            assert later.is_current()
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_newer_manual_play_keeps_its_transport_until_stop_when_autoplay_arrives(
+    backend_lab_factory, monkeypatch, tmp_path
+):
+    from Tests.UI.file_output_fakes import capture_file_playback
+
+    played = []
+    players = capture_file_playback(monkeypatch, played)
+    async with backend_lab_factory(
+        "kokoro", studio=StudioTTSPreferencesSnapshot(auto_play=True)
+    ) as lab:
+        prior = tmp_path / "prior.wav"
+        prior.write_bytes(_wav_sample())
+        artifact = STTSGeneratedAudio(
+            path=prior,
+            provider_id="kokoro",
+            model_id="kokoro",
+            voice_id="af_alloy",
+            source_text="prior result",
+            operation_id="prior",
+            audio_format="wav",
+            content_type="audio/wav",
+        )
+        lab.handler._accept_playground_artifact(artifact)
+        lab.pane._generation_complete(artifact)
+        lab.pane.query_one(
+            "#tts-text-input", TextArea
+        ).text = "Another synthetic reply."
+        lab.pane.action_generate_tts()
+        request = lab.app.requests[-1]
+        lab.pane.action_play_audio()
+        await lab.app.workers.wait_for_complete()
+        assert played == [prior]
+        await lab.handler.handle_playground_generate(
+            STTSPlaygroundGenerateEvent(request)
+        )
+        await lab.pilot.pause()
+        assert players[0].stops == []
+        assert not lab.pane.query_one("#stop-audio-btn", Button).disabled
+        lab.pane.action_stop_audio()
+        await lab.app.workers.wait_for_complete()
+        assert lab.pane.current_audio_artifact.operation_id == request.operation_id
+        assert played == [prior]

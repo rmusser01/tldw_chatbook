@@ -30,6 +30,7 @@ from tldw_chatbook.TTS.omnivoice_artifact_catalog import (
     run_omnivoice_provision,
 )
 from tldw_chatbook.Model_Artifacts.model_browser_state import install_failure_message
+from tldw_chatbook.UI.file_output_attempt import FileOutputSurface
 from tldw_chatbook.UI.Wizards import first_run_voice_status as voice_status
 from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
 from tldw_chatbook.UI.Wizards.first_run_setup_widgets import SetupStep
@@ -74,54 +75,74 @@ class OmniVoiceStepBase(SetupStep):
         # (which waits for it), and carries the progress widget's Cancel.
         self._omnivoice_download: DownloadControl | None = None
         self._omnivoice_seed: int | None = None
+        self._sample_output = FileOutputSurface()
         self._sample_audio_path: Path | None = None
         self._refocus_test = False
         self._refocus_from: Any = None
 
-    async def _play_sample(self, result: voice_state.VoiceSampleResult) -> bool:
-        audio_player = getattr(self.app, "audio_player", None)
-        if audio_player is None:
-            # First run: no Speech screen has created the shared player yet
-            # (speech_playback_mixin creates it lazily the same way).
-            try:
-                from tldw_chatbook.TTS.audio_player import AsyncAudioPlayer
+    def _begin_sample(self):
+        return self._sample_output.begin(self.app, self.app.audio_output.begin_intent())
 
-                audio_player = self.app.audio_player = AsyncAudioPlayer()
-            except Exception:
-                logger.debug("Voice sample player unavailable (category=playback)")
-                return False
-        play = getattr(audio_player, "play", None)
-        if not callable(play):
+    async def _play_sample(
+        self, result: voice_state.VoiceSampleResult, attempt, generation: int
+    ) -> bool:
+        def current() -> bool:
+            return (
+                self.is_attached
+                and self._test_generation == generation
+                and (self.app.screen is self.screen or self._sample_output.confirming())
+            )
+
+        if not current() or not attempt.ticket.is_current():
             return False
-        suffix = "." + result.response_format
-        sample_path: Path | None = None
+
+        def write_sample() -> Path:
+            path = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    prefix="chatbook-voice-sample-",
+                    suffix="." + result.response_format,
+                    delete=False,
+                ) as handle:
+                    path = Path(handle.name)
+                    handle.write(result.body)
+                return path
+            except OSError:
+                if path is not None:
+                    path.unlink(missing_ok=True)
+                raise
+
         try:
-            with tempfile.NamedTemporaryFile(
-                prefix="chatbook-voice-sample-",
-                suffix=suffix,
-                delete=False,
-            ) as handle:
-                handle.write(result.body)
-                sample_path = Path(handle.name)
-            prior_path = self._sample_audio_path
-            played = play(sample_path)
-            if asyncio.iscoroutine(played):
-                played = await played
-            if played is False:
-                # AsyncAudioPlayer reports "no OS player found" as False.
-                sample_path.unlink(missing_ok=True)
+            writing = asyncio.create_task(asyncio.to_thread(write_sample))
+            try:
+                path = await asyncio.shield(writing)
+            except asyncio.CancelledError:
+
+                def discard(task: asyncio.Task[Path]) -> None:
+                    if not task.cancelled() and task.exception() is None:
+                        task.result().unlink(missing_ok=True)
+
+                writing.add_done_callback(discard)
+                raise
+
+            if (
+                not current()
+                or self._sample_output.latest is not attempt
+                or not attempt.ticket.is_current()
+            ):
+                path.unlink(missing_ok=True)
                 return False
-            if prior_path is not None:
-                prior_path.unlink(missing_ok=True)
-            self._sample_audio_path = sample_path
-            return True
-        except asyncio.CancelledError:
-            if sample_path is not None:
-                sample_path.unlink(missing_ok=True)
-            raise
+
+            def release() -> None:
+                path.unlink(missing_ok=True)
+                if self._sample_audio_path == path:
+                    self._sample_audio_path = None
+
+            self._sample_audio_path = path
+            return await self._sample_output.play(
+                attempt, path, "First-run voice sample", current, release=release
+            )
         except Exception:
-            if sample_path is not None:
-                sample_path.unlink(missing_ok=True)
             logger.debug("Voice sample playback failed (category=playback)")
             return False
 
@@ -489,7 +510,11 @@ class OmniVoiceStepBase(SetupStep):
         run_wizard_worker(
             self,
             self._run_omnivoice_sample(
-                generation, text, self._speed_or_default(), self._omnivoice_seed_value()
+                generation,
+                text,
+                self._speed_or_default(),
+                self._omnivoice_seed_value(),
+                self._begin_sample(),
             ),
             exclusive=True,
             group="setup-voice-sample",
@@ -518,7 +543,7 @@ class OmniVoiceStepBase(SetupStep):
             status.update(line)
 
     async def _run_omnivoice_sample(
-        self, generation: int, text: str, speed: float, seed: int
+        self, generation: int, text: str, speed: float, seed: int, attempt
     ) -> None:
         try:
             try:
@@ -538,7 +563,7 @@ class OmniVoiceStepBase(SetupStep):
                 return
             if generation != self._test_generation:
                 return
-            played = await self._play_sample(result)
+            played = await self._play_sample(result, attempt, generation)
             # A newer test (or a control change) during playback owns the
             # status now; this older result must not overwrite it.
             if generation != self._test_generation:

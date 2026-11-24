@@ -96,7 +96,7 @@ from ...Subscriptions.watchlist_failure import (
 )
 from ...Subscriptions.watchlist_item_page import WatchlistItemPage
 from ...Third_Party.textual_fspicker import FileSave, SelectDirectory
-from ...TTS.audio_player import play_audio_file
+from ..file_output_attempt import FileOutputSurface
 from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
 from ...Utils.path_validation import validate_path_simple
 from ...Widgets.confirmation_dialog import ConfirmationDialog
@@ -932,6 +932,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `None` when it has never been synthesized -- the rebuild-survival
         # mirror of `pane.script_audio`, resolved alongside `_selected_
         # script` inside `_load_briefings` (see that method).
+        self._file_output = FileOutputSurface()
+        self._file_row = None
         self._loaded_script_audio: dict[str, Any] | None = None
         # True only while THIS screen's `wl-audio` worker is running -- the
         # exact sibling of `_cast_in_flight` above, for the same reason:
@@ -2836,6 +2838,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # must not fire -- `watch_selected_briefing` even guards
             # specifically against wiping this very seeding.
             artifacts_pane = ArtifactsPane(id="watchlists-artifacts-pane")
+            artifacts_pane.begin_playback = self._begin_file_output
+            artifacts_pane.playback_attempt_for = self._file_attempt_for
             seed = artifacts_pane.set_reactive
             seed(ArtifactsPane.briefings, self._loaded_briefings)
             seed(ArtifactsPane.selected_briefing, self._selected_briefing)
@@ -9932,6 +9936,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         never served anything, exactly like `ArtifactsScreen.on_unmount`'s
         own guard around its worker cancellation.
         """
+        self._file_output.stop()
         self._item_detail_generation += 1
         if self._feed_server.is_running:
             self._feed_server.stop()
@@ -11464,86 +11469,61 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if self.is_attached:
                 self._request_briefings_refresh()
 
+    def _file_attempt_for(self, key):
+        if self._file_row == (self._briefings_db(), self._briefing_watchlist_id(), key):
+            return self._file_output.latest
+        return None
+
+    def _begin_file_output(self, key):
+        self._file_row = self._briefings_db(), self._briefing_watchlist_id(), key
+        return self._file_output.begin(self.app, self.app.audio_output.begin_intent())
+
     @on(PlayAudioRequested)
     def handle_play_audio_requested(self, event: PlayAudioRequested) -> None:
-        """Play the selected script's audio file, if it still exists.
-
-        Never routed through a worker/`asyncio.to_thread`: `play_audio_
-        file` only spawns a detached subprocess and returns
-        (`SimpleAudioPlayer.play`) -- `TTSEventHandler.handle_tts_
-        playback`'s own "play" branch calls it exactly this way, direct,
-        with no thread hop. Playback state itself is never held here or
-        on the pane: the shared `SimpleAudioPlayer` singleton (`TTS.
-        audio_player.get_audio_player`) is the only source of truth for
-        "what's currently loaded" -- see `ArtifactsPane`'s own module
-        docstring on why (a script selection recomposes every widget this
-        pane renders).
-
-        A missing file is refused with a toast rather than handed to the
-        player: `ArtifactsPane.compose` already disables Play for exactly
-        this case (`_audio_file_is_playable`), so reaching here with no
-        file, or a file since deleted, means the disk state changed
-        between that render and this press -- an honest race, not a bug
-        to silently swallow.
-
-        Qodo review round 1, FIX B: `audio_file_path_is_safe` is checked
-        BEFORE any filesystem access -- a path that resolves outside
-        `briefing_audio_dir()` (a tampered or corrupted row) is treated
-        exactly like the "no file at all" case: a silent return, no
-        `.exists()` probe, no exception. `ArtifactsPane.compose` already
-        disables Play for this case too (`_audio_file_is_playable` uses the
-        same helper), so reaching here with an unsafe path is the same kind
-        of race as the missing-file case above, not a new failure mode.
-        """
         event.stop()
-        row = self._loaded_script_audio
-        file_path = row.get("file_path") if row else None
-        if not file_path:
-            return
-        if not audio_file_path_is_safe(file_path):
-            return
-        path = Path(str(file_path))
-        if not path.exists():
-            self._notify_watchlists(
-                "This audio file no longer exists on disk.",
-                severity="warning",
-                markup=False,
+        attempt = event.attempt
+
+        def current() -> bool:
+            row = self._loaded_script_audio or {}
+            key = (
+                (self._selected_script or {}).get("id"),
+                row.get("id"),
+                row.get("file_path"),
             )
+            return (
+                self.is_attached
+                and self.active_section == "artifacts"
+                and (self.app.screen is self or self._file_output.confirming())
+                and self._file_attempt_for(key) is attempt
+                and key == event.key
+            )
+
+        if self._file_output.latest is not attempt or not current():
             return
-        play_audio_file(path)
+        file_path = event.key[2]
+        if not file_path or not audio_file_path_is_safe(file_path):
+            return
+        from ...Subscriptions.briefing_audio import briefing_audio_dir
+        from ...Utils.path_validation import validate_path
+
+        try:
+            path = validate_path(file_path, briefing_audio_dir(), redact_paths=True)
+        except ValueError:
+            return
+        if not path.is_file():
+            self._notify_watchlists("This audio file no longer exists on disk.", severity="warning", markup=False)
+            return
+        self.run_worker(self._file_output.play(attempt, path, "Watchlists", current), group="watchlists-artifact-play")
 
     @on(StopAudioRequested)
     def handle_stop_audio_requested(self, event: StopAudioRequested) -> None:
-        """Stop playback, but only if THIS script's audio is what the
-        shared player actually has loaded.
-
-        Delegates to `tts_events.stop_audio_playback_if_current` rather
-        than reimplementing its comparison here: that function's own
-        docstring records the task-559 fix rounds (the guard must key off
-        the player's LIVE `get_current_file()`, never a local cache with a
-        TTL -- `SimpleAudioPlayer` is a single-slot, APP-WIDE singleton, so
-        a bare `.stop()` could silence a completely unrelated clip playing
-        elsewhere, e.g. Console TTS). A private copy of that same
-        comparison here would only ever be one edit away from drifting
-        from it -- exactly the failure mode that cost this branch a whole
-        task to reconcile for the two legacy TTS id-builders (Task 2's own
-        carried finding, `TTS/legacy_request_builder.py`'s module
-        docstring). Imported locally rather than at module scope, matching
-        `chat_screen.py`'s own lazy-import convention for this exact
-        module: `Event_Handlers.TTS_Events.tts_events` pulls in the TTS
-        adapter package (`tldw_chatbook.TTS`'s own imports), a cost most
-        Watchlists sessions never need to pay just to stop a clip.
-        """
         event.stop()
-        row = self._loaded_script_audio
-        file_path = row.get("file_path") if row else None
-        if not file_path:
-            return
-        from ...Event_Handlers.TTS_Events.tts_events import (
-            stop_audio_playback_if_current,
-        )
+        if event.attempt is not None:
+            event.attempt.stop()
 
-        stop_audio_playback_if_current(Path(str(file_path)))
+    def on_screen_suspend(self) -> None:
+        if not self._file_output.confirming():
+            self._file_output.stop()
 
     def _items_status_kwargs(self, status_filter: str | None = None) -> dict[str, Any]:
         """The status predicate the item PAGE should be fetched with.

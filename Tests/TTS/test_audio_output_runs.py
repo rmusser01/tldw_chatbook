@@ -729,3 +729,34 @@ async def test_native_media_resume_rechecks_revocation_after_child_poll(
     finally:
         release.set()
         await media.retire()
+
+
+async def test_positive_retirement_observers_wait_for_exact_proof_even_after_timeout(
+    monkeypatch,
+):
+    class BlockedRun(runs.PreparedOutputRun):
+        def __init__(self):
+            super().__init__()
+            self.closed = asyncio.Event()
+            self.confirm = False
+
+        async def _close_native(self):
+            await self.closed.wait()
+            return self.confirm
+
+    run = BlockedRun()
+    proofs = []
+    run.on_retired(lambda: proofs.append("original"))
+    run.on_retired(lambda: 1 / 0)
+    monkeypatch.setattr(runs, "_RETIRE_TIMEOUT", 0.01)
+    assert not await run.retire()
+    assert proofs == []
+    monkeypatch.setattr(runs, "_RETIRE_TIMEOUT", 2)
+    run.closed.set()
+    assert not await run.retire()
+    assert proofs == []
+    run.confirm = True
+    assert await run.retire()
+    run.on_retired(lambda: proofs.append("immediate"))
+    assert await run.retire()
+    assert proofs == ["original", "immediate"]
