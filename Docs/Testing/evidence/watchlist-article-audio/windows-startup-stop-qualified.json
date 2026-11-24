@@ -1,0 +1,214 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-23",
+  "source_revision": "1128d94be2903e7511b441f0a2772bfa978c1cb7",
+  "platform": "Windows",
+  "os_version": "10.0.19045",
+  "executable": {
+    "sha256": "f6536c4caf9bac0fee1e8ffaafa5b13b6ad3e386a9a9f0b6613360e8c6d59919",
+    "version": "7.1-essentials_build-www.gyan.dev"
+  },
+  "capture_clock": "wasapi-packet",
+  "capture_buffer_frames": 4800,
+  "tail_padding_ms": 250,
+  "capture_rate_hz": 48000,
+  "capture_channels": 2,
+  "stop_wait_bound_s": 1.5,
+  "startup_stop_delay_s": 0.02,
+  "repeat": 3,
+  "portable_gate": "unqualified",
+  "physical_output": "unqualified",
+  "listener_confirmation": "not_requested_for_startup_cancellation",
+  "case_count": 3,
+  "run_count": 3,
+  "native_startup_result": "pass",
+  "scope": "Windows padded-WAV startup Stop supplement; no portable qualification",
+  "rows": [
+    {
+      "generation": 1,
+      "case": "stop_startup",
+      "round": 1,
+      "launched": true,
+      "reason": "marker_unmatched",
+      "process_exit": "pass",
+      "stop_clock": "launch",
+      "stop_after_launch_s": 0.02,
+      "stop_after_playing_s": null,
+      "stop_requested_after_launch_s": 0.02007900003809482,
+      "stop_process_latency_s": 0.003384399984497577,
+      "post_stop_silence": "pass",
+      "post_stop_latency": "pass",
+      "last_signal_after_stop_s": 0,
+      "baseline_monitor": {
+        "status": "pass",
+        "evidence": "monitored_packets",
+        "rms": 0.0,
+        "packet_frames": 16750
+      },
+      "post_stop_monitor": {
+        "status": "pass",
+        "evidence": "monitored_packets",
+        "rms": 0.0,
+        "packet_frames": 12162
+      },
+      "player_reaped": true,
+      "capture_reaped": true,
+      "cleanup_status": "pass",
+      "capture_packets": 99,
+      "capture_frames": 47520,
+      "capture_poll_observations": 99,
+      "artifact_sha256": "3b07a8cade33ae005a9eecc402883e60386b92bfa59a7155da99870342d5ab24",
+      "content_frames": 120000,
+      "file_frames": 132000,
+      "padding_frames": 12000,
+      "sample_rate_hz": 48000,
+      "capture_ready_timeout_s": 30,
+      "playing_ready_timeout_s": null,
+      "capture_lifetime_s": 45,
+      "endpoint_loopback": "unqualified",
+      "seek": "unqualified",
+      "tail_coverage": "unqualified",
+      "telemetry": "unqualified",
+      "capture": {
+        "packet_count": 99,
+        "session_origin_discontinuity_count": 1,
+        "discontinuity_count": 0,
+        "timestamp_error_count": 0,
+        "poll_gap_max_s": 0.010641700006090105
+      },
+      "final_matcher": {
+        "timeline_stage": "no_signal_packets",
+        "startup_signal_diagnostics": {
+          "packet_count": 65,
+          "nonzero_packet_count": 0,
+          "packet_rms_max": 0.0,
+          "packets_above_existing_quiet_limit": 0
+        }
+      }
+    },
+    {
+      "generation": 2,
+      "case": "stop_startup",
+      "round": 2,
+      "launched": true,
+      "reason": "marker_unmatched",
+      "process_exit": "pass",
+      "stop_clock": "launch",
+      "stop_after_launch_s": 0.02,
+      "stop_after_playing_s": null,
+      "stop_requested_after_launch_s": 0.02216789999511093,
+      "stop_process_latency_s": 0.004506700031924993,
+      "post_stop_silence": "pass",
+      "post_stop_latency": "pass",
+      "last_signal_after_stop_s": 0,
+      "baseline_monitor": {
+        "status": "pass",
+        "evidence": "monitored_packets",
+        "rms": 0.0,
+        "packet_frames": 16762
+      },
+      "post_stop_monitor": {
+        "status": "pass",
+        "evidence": "monitored_packets",
+        "rms": 0.0,
+        "packet_frames": 12217
+      },
+      "player_reaped": true,
+      "capture_reaped": true,
+      "cleanup_status": "pass",
+      "capture_packets": 99,
+      "capture_frames": 47520,
+      "capture_poll_observations": 99,
+      "artifact_sha256": "3b07a8cade33ae005a9eecc402883e60386b92bfa59a7155da99870342d5ab24",
+      "content_frames": 120000,
+      "file_frames": 132000,
+      "padding_frames": 12000,
+      "sample_rate_hz": 48000,
+      "capture_ready_timeout_s": 30,
+      "playing_ready_timeout_s": null,
+      "capture_lifetime_s": 45,
+      "endpoint_loopback": "unqualified",
+      "seek": "unqualified",
+      "tail_coverage": "unqualified",
+      "telemetry": "unqualified",
+      "capture": {
+        "packet_count": 99,
+        "session_origin_discontinuity_count": 1,
+        "discontinuity_count": 0,
+        "timestamp_error_count": 0,
+        "poll_gap_max_s": 0.008672499970998615
+      },
+      "final_matcher": {
+        "timeline_stage": "no_signal_packets",
+        "startup_signal_diagnostics": {
+          "packet_count": 65,
+          "nonzero_packet_count": 0,
+          "packet_rms_max": 0.0,
+          "packets_above_existing_quiet_limit": 0
+        }
+      }
+    },
+    {
+      "generation": 3,
+      "case": "stop_startup",
+      "round": 3,
+      "launched": true,
+      "reason": "marker_unmatched",
+      "process_exit": "pass",
+      "stop_clock": "launch",
+      "stop_after_launch_s": 0.02,
+      "stop_after_playing_s": null,
+      "stop_requested_after_launch_s": 0.021190500003285706,
+      "stop_process_latency_s": 0.0018826000159606338,
+      "post_stop_silence": "pass",
+      "post_stop_latency": "pass",
+      "last_signal_after_stop_s": 0,
+      "baseline_monitor": {
+        "status": "pass",
+        "evidence": "monitored_packets",
+        "rms": 0.0,
+        "packet_frames": 16513
+      },
+      "post_stop_monitor": {
+        "status": "pass",
+        "evidence": "monitored_packets",
+        "rms": 0.0,
+        "packet_frames": 12092
+      },
+      "player_reaped": true,
+      "capture_reaped": true,
+      "cleanup_status": "pass",
+      "capture_packets": 98,
+      "capture_frames": 47040,
+      "capture_poll_observations": 99,
+      "artifact_sha256": "3b07a8cade33ae005a9eecc402883e60386b92bfa59a7155da99870342d5ab24",
+      "content_frames": 120000,
+      "file_frames": 132000,
+      "padding_frames": 12000,
+      "sample_rate_hz": 48000,
+      "capture_ready_timeout_s": 30,
+      "playing_ready_timeout_s": null,
+      "capture_lifetime_s": 45,
+      "endpoint_loopback": "unqualified",
+      "seek": "unqualified",
+      "tail_coverage": "unqualified",
+      "telemetry": "unqualified",
+      "capture": {
+        "packet_count": 98,
+        "session_origin_discontinuity_count": 1,
+        "discontinuity_count": 0,
+        "timestamp_error_count": 0,
+        "poll_gap_max_s": 0.0069824999663978815
+      },
+      "final_matcher": {
+        "timeline_stage": "no_signal_packets",
+        "startup_signal_diagnostics": {
+          "packet_count": 64,
+          "nonzero_packet_count": 0,
+          "packet_rms_max": 0.0,
+          "packets_above_existing_quiet_limit": 0
+        }
+      }
+    }
+  ]
+}
