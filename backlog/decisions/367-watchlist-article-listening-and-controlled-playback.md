@@ -506,6 +506,34 @@ inspect unmigrated or rollback snapshots, so new queries are version-gated.
   UUID-shaped file or ambiguous preexisting collision grants no cleanup authority;
   preserve and report uncertain custody. Live cleanup needs the current profile's
   row-backed generation and proven file custody, even when data roots alias.
+  Article publication and removal require a qualified same-object regular-file
+  effect. On Windows, keep a private read/write/delete-capable handle with
+  exclusive sharing through verification and no-replace rename or disposition.
+  Rename retains the file through the pinned parent's durability barrier. For
+  POSIX disposition on Windows, close that exact delete handle before flushing
+  the retained parent: the name disappears on delete-handle close, as specified
+  by [Microsoft's disposition contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/ns-ntddk-_file_disposition_information_ex).
+  Do not reopen a checked basename for
+  the effect, recurse through a replacement directory or repair its permissions.
+  Existing generic backup primitives keep their current contracts. Article write
+  and destructive cleanup refuse platforms without the qualified same-object
+  primitive; read-only parsing remains portable for this Windows-first delivery.
+  The unpublished v4 article-audio row gains one nullable bounded opaque custody
+  `custody_witness`. Seal it from the issuing DB image, generation/key and the pinned
+  parent/regular-file identities, creation time and verified payload before
+  publication. Preserve it through cancellation and source-deletion tombstones,
+  independently of scrubbed text, voice and payload metadata. Recompute it from
+  the effect handle; a reserved name, copied row or witness string alone grants
+  no authority. Unsealed partials and mismatched objects remain uncertain and
+  preserved. Retiring even an absent-name retry requires the directory barrier.
+  Incoming restore and detached acquisition clear foreign custody witnesses on
+  their private DB candidates. Same-place snapshot rollback preserves DB bytes;
+  copied receipts cannot pass a different physical-image check. Restored bytes
+  remain readable after full artifact verification, but automatic cleanup keeps
+  them uncertain until independently proven local custody exists. Preserve and
+  report that uncertainty rather than minting authority from a pathname or digest.
+  Startup reconciliation must establish a fresh/quiesced producer boundary;
+  borrowing a live holder is insufficient to retire its pending synthesis claims.
   The existing TTS package is lazy and its container validator imports no runtime
   owner or optional audio/UI dependency. Expose the same callable as
   `validate_controlled_wav`, retaining its physical-frame argument and private
