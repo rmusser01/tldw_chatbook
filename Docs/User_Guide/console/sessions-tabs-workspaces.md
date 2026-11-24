@@ -113,7 +113,11 @@ without first showing "Refreshing local character chats…". While the section
 is collapsed, those checks still run but the hidden list is not redrawn;
 expanding the section shows the latest result straight away. **Retry** reloads
 directly and shows "Refreshing local character chats…" while it works, or
-"Searching local character chats…" when a Context search is active.
+"Searching local character chats…" when a Context search is active. A reload
+that is interrupted before it finishes, or whose chat or data profile changes
+while it reads, clears "Refreshing local character chats…", and the next check
+loads the list again. An interrupted search shows "Could not search local
+character chats" with **Retry** for the same query.
 When a Context search is active, **Continue search in Character chats** opens
 that same validated query in Ctrl+K's complete local Character-chat results.
 Enter or double-click opens an exact saved conversation in its Console tab;
@@ -121,7 +125,10 @@ single-click selects it. **View all N in Roleplay** opens that character's
 complete saved history. A current card with no saved chats offers **Start in
 Console**, while the overall empty state offers **Open Roleplay**. Chats whose
 card was deleted or cannot be identified are never guessed open: use **Repair
-in Library**, or **View all N in Library**, to resolve them. Turning off
+in Library**, or **View all N in Library**, to resolve them. If opening a chat
+or preparing its Library repair or details is interrupted, the section shows
+the same "Could not …" line with **Retry** as when it fails; an interrupted
+repair opens nothing in Library. Turning off
 `show_character_avatar` hides only the image; these navigation controls remain.
 
 **Details section** (left rail, collapsed by default). Status lines for

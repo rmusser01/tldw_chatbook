@@ -180,8 +180,11 @@ def _controller(notes, bridge):
     tasks = []
     runtime = SimpleNamespace(agent_bridge=bridge)
 
-    def schedule(awaitable, **options):
-        task = asyncio.create_task(awaitable)
+    def schedule(work, **options):
+        # As Textual's run_worker: a coroutine, or a coroutine function the
+        # worker calls (the count publication hands over the repaint itself
+        # since d043e22438).
+        task = asyncio.create_task(work() if callable(work) else work)
         tasks.append(task)
         return task
 

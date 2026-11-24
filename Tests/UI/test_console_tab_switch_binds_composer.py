@@ -174,7 +174,7 @@ def _record_dispatch(console) -> list[tuple[str | None, str]]:
     """Record the chat each send is dispatched to, instead of sending it."""
     dispatched: list[tuple[str | None, str]] = []
 
-    async def dispatch(draft, stash=None, *, session_id=None):
+    async def dispatch(draft, stash=None, *, session_id=None, _captured_inputs=None):
         dispatched.append((session_id, draft))
         return True
 
@@ -433,7 +433,14 @@ async def test_pressing_a_session_tab_leaves_the_keyboard_in_the_composer():
         await pilot.pause()
         focused = console.app.focused
         press(host, "y", "y")
-        await pilot.pause()
+        # TASK-42467: pilot.pause() returns once the process looks idle, and a
+        # CPU-starved runner looks idle before the Key lands (2 of 8 loaded
+        # runs). Wait for it to land somewhere; the assertion says where.
+        with contextlib.suppress(AssertionError):
+            await until(
+                lambda: composer.draft_text() != B_LEFTOVER or bool(traces),
+                timeout=10.0,
+            )
         assert {
             "focused": getattr(focused, "id", focused),
             "trace opened": traces,
@@ -762,7 +769,14 @@ async def test_pressing_tab_strip_buttons_leaves_the_keyboard_in_the_composer(
         await pilot.pause()
         focused = console.app.focused
         press(host, "y", "y")
-        await pilot.pause()
+        # TASK-42467: pilot.pause() returns once the process looks idle, and a
+        # CPU-starved runner looks idle before the Key lands (2 of 8 loaded
+        # runs). Wait for it to land somewhere; the assertion says where.
+        with contextlib.suppress(AssertionError):
+            await until(
+                lambda: composer.draft_text() != B_LEFTOVER or bool(traces),
+                timeout=10.0,
+            )
         assert {
             "focused": getattr(focused, "id", focused),
             "trace opened": traces,
@@ -845,7 +859,13 @@ async def test_an_activation_that_loses_authority_after_switching_asks_for_a_rep
         "pass started": (
             []
             if pass_running
-            else [(("sync pass",), {"exclusive": True, "group": "console-sync"})]
+            # The sync method itself: the worker calls it (d043e22438).
+            else [
+                (
+                    (screen._sync_native_console_chat_ui,),
+                    {"exclusive": True, "group": "console-sync"},
+                )
+            ]
         ),
     }
 
