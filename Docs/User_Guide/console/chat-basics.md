@@ -151,6 +151,9 @@ three-column handles; expanded rails, tooltips, and badges keep their normal
 behavior. Return to Console after a successful save to see the change — no app
 restart is required.
 
+A collapsed **Context ▸** handle is exactly as tall as the workspace beside it,
+so in a short terminal (under 30 rows) the whole handle stays on screen.
+
 You can also open and close the rails with the keyboard — **Alt+C** for the
 Context rail, **Alt+I** for the Inspector — which works at every width,
 including the single-pane sizes where the handles hide. The handle badges

@@ -1291,6 +1291,10 @@ MINIMUM_FILES = 2610
 # green tests by node id, its two slowest functions by parameter (TASK-35830's
 # two red send-guard functions stay out). The floor is the measured entry count.
 MINIMUM_FILES = 2677
+# 2026-11-24, TASK-42461: the collapsed Context handle's short-height
+# containment test at the tail, one entry per size (about 64 s serial as one).
+# The floor is the measured entry count.
+MINIMUM_FILES = 2683
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 
