@@ -428,6 +428,77 @@ descriptor before writing any header or audio bytes.
 Article storage, synthesis/queue orchestration and listening controls remain
 TASK-41178 onward. This output foundation does not close issue #2864.
 
+## Persistence implementation contract, 2026-11-24
+
+TASK-41178 starts from SubscriptionsDB version 3 on dev `9fa2bf1b1d`.
+Use the shipped v3-to-v4 SQL step, statement-by-statement inside the existing
+IMMEDIATE transaction, and stamp only after successful DDL. Recheck the version
+under the writer reservation, including concurrent initializers. Fresh and
+upgraded stores must have the same installed listening catalog. Preserve every
+qualified historical v2/v3 standalone and shared-ChaChaNotes catalog; append exact
+v4 successors and retain their predecessor stamp associations. Recovery may
+inspect unmigrated or rollback snapshots, so new queries are version-gated.
+
+- Keep purpose-specific session, entry and article-audio records. One active
+  session per explicit profile has a durable incarnation and monotonic revision.
+  Clear retains an empty revision witness, so an old empty-state candidate cannot
+  recreate state after create/clear. Checkpoints atomically update the identified
+  foreground and queue bookmarks, cursor, return intent and revision. Read-only
+  restoration projects unfinished state paused without rewriting snapshots.
+- Bind local DB integer item IDs explicitly; UI/server identifier strings grant
+  no local lookup authority. Brief admission validates the saved briefing's
+  selection/citation membership before fetching article bodies. Freeze bounded
+  text/provenance and allowlisted nonsecret voice/dependency values. Equal bytes
+  from different items never establish shared ownership.
+- Use a stable private nonblocking OS lock outside replaceable asset trees,
+  bound to the canonical SubscriptionsDB identity. DB aliases must converge on
+  the same lock; custom DB locations do not move the profile's article asset
+  directory. The exact holder can lend a checked capability to off-loop work;
+  revocation refuses new borrowers and physical borrowers retain custody. Direct
+  destructive DB/bundle operations coordinate through that boundary or fail busy.
+  Supported raw-SQL deletion/cascades must not bypass source invalidation or the
+  active-holder guard. Arbitrary external legacy writers remain outside the
+  cooperative protocol.
+- Source deletion scrubs affected speech snapshots and private provenance,
+  detaches bookmarks/artifacts and revokes generation in the same transaction.
+  Keep unavailable queue placeholders. Retain only generation-unique relative
+  file keys in pending-delete audio records until post-commit safe unlink is
+  confirmed; failed cleanup and crashes remain retryable. Brief/watchlist deletion
+  retires that queue while preserving a valid unrelated foreground. Membership
+  removal preserves source items and other listening references.
+- Reserve each synthesis generation durably before later expensive work. The
+  asset boundary uses bounded immutable normalized WAV input, strict flat opaque
+  keys, full digest/frame/padding validation and the existing private staging and
+  native no-replace publication helpers. Recheck source, exact reservation and
+  attachment identity under the final IMMEDIATE transaction. A publication or DB
+  failure cannot overwrite retained audio or attach a stale generation. Keep
+  uncertain outcomes for owned reconciliation. The existing Windows NTFS native
+  contract supports these primitives; its three focused no-replace/barrier cases
+  passed without changing qualification policy. This is primitive evidence,
+  not yet article-persistence or backup evidence.
+- All entry roles protect their referenced artifacts. Missing/corrupt/DB-only
+  restored audio remains unavailable with its old bookmark identity; only explicit
+  regeneration binds new bytes at zero. Reconcile interrupted rows and managed
+  orphan/temp files only under ownership. Apply seven-day/512 MiB LRU limits to
+  unreferenced audio, retaining retryable cleanup evidence.
+- Extend the existing `subscriptions.assets` owner with the profile data root's
+  `article_audio` sibling tree. Preserve legacy briefing IDs and distinguish new
+  article root/member identities, including absent/empty trees and identical
+  basenames, consistently through discovery, staging, detached import, relocation
+  and rollback. Relative article keys need no SQL pathname rewrite; keep the
+  existing briefing relocation authorizer narrow. Do not infer declared peer
+  identity from owner/basename alone or reopen historical source paths.
+- A cheap installed producer gate closes intake and drains actual storage work
+  before maintenance. Ordinary storage admission covers DB, lock and asset paths
+  through physical retirement. Long-lived listening holders must release/drain
+  ordinary authority before exclusive maintenance, and cannot regain authority
+  merely because an observer timed out. Owner-absent recovery must work without
+  constructing listening services. Resume of storage is never playback or synthesis.
+
+These choices implement the accepted storage boundary. Provider synthesis,
+transport orchestration and controls remain later deliveries; no new runtime
+dependency, alternate manifest or independent backup owner is introduced.
+
 ## Alternatives
 
 - A profile-local JSON queue manifest avoids SQL changes but splits atomic state,

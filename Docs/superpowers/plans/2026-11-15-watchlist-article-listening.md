@@ -166,6 +166,16 @@ TASK-41177 is complete in draft PR #3742; later tasks have not begun.
 - `ArticleAudioAssets.publish(candidate: GeneratedArticleAudio, *, source_item_id: int, generation: int) -> ArticleAudio`; validate private relative identity, WAV shape, source validity, digest and ownership before publication/reference attachment.
 - Provide a profile-local nonblocking listening mutation lease using existing private-lock primitives; service, deletion, cleanup and restore share it. Register the writer with existing recovery quiescence.
 
+**Implementation preflight, 2026-11-24:** Rebased onto dev `9fa2bf1b1d` before
+storage work; the schema remains v3 and the next step is v4. The dated ADR367
+persistence contract fixes the empty-session revision witness, source deletion
+tombstones, exact borrowable mutation ownership, historical/shared SQLite catalogs
+and two-tree recovery identities. Existing Windows NTFS no-replace/barrier tests
+pass (three cases); this is primitive evidence, not feature completion. Deliver
+and review the constructible schema/store/ownership foundation first, then build
+asset publication and complete recovery on its released interfaces. Keep all four
+TASK-41178 AC open until the complete database/file/restore evidence passes.
+
 - [ ] **Step 1: Write failing real-SQLite/file tests.** Exercise old-profile upgrade and migration rollback, two independently opened DBs, revision collisions, atomic cursor/two-bookmark updates, source deletion during candidate admission and artifact publication, source-bound sharing, all-unavailable replacement, missing/corrupt WAV, publication failure/orphans, lock crash release, and fail-busy destructive mutation. Deleting membership preserves sources; deleting a brief preserves an unrelated valid foreground reading.
 - [ ] **Step 2: Observe RED.** Run only the two new Subscriptions test files and selected migration nodes. Expect missing tables/contracts, with existing base migration cases still green.
 - [ ] **Step 3: Implement store, migration and asset lifecycle.** Allocate next schema version at the implementation base (v3 here), add its SQL artifact and indexes/allowlists. Enforce source existence/generation transactionally, use existing private atomic writers/path validation, and reconcile only after ownership. Enforce seven-day/512 MiB unreferenced LRU while protecting references.
@@ -231,4 +241,4 @@ TASK-41177 is complete in draft PR #3742; later tasks have not begun.
 
 The seven deliveries cover all ten design acceptance outcomes. The five Review Focus cases each have an owning test step above. Store, preparation, output and service signatures match their consumers. Tasks are ordered so a storage/voice/UI implementation cannot bypass qualification. SQL names and schema number are intentionally selected against the implementation base, while their ownership and rollback contracts are fixed here.
 
-Gate status: [native evidence](../../Testing/watchlist-article-audio-qualification.md) records the passing 21-case Windows matrix, explicit Windows listener confirmation and passing current-profile three-round startup-Stop supplement. The Windows-first release gate passes; the two earlier supplemental attempts remain preserved and all nine players/captures retired. Linux route/timing/listener evidence and native macOS evidence remain unqualified; they are unsupported for this first delivery and the portable gate remains open. Task 1 is Done under its revised Windows-first AC. Task 2 is In Progress for the isolated ownership increment; Tasks 3-7 have not started.
+Gate status: [native evidence](../../Testing/watchlist-article-audio-qualification.md) records the passing 21-case Windows matrix, explicit Windows listener confirmation and passing current-profile three-round startup-Stop supplement. The Windows-first release gate passes; the two earlier supplemental attempts remain preserved and all nine players/captures retired. Linux route/timing/listener evidence and native macOS evidence remain unqualified; they are unsupported for this first delivery and the portable gate remains open. Tasks 1 and 2 are Done under their revised Windows-first AC. Task 3 is In Progress for persistence/assets/recovery; Tasks 4-7 have not started.
