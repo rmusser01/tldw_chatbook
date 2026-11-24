@@ -830,8 +830,11 @@ async def test_skill_tool_child_joins_the_original_ordinary_claim(
             trees.append(current_ordinary_tree())
             self.payloads.append(messages)
             if len(self.payloads) == 1:
-                yield fence("code-review", {"args": "the diff"})
+                # Skill schemas are disclosed on demand (load_tools) since 2d9504cfd9.
+                yield fence("load_tools", {"ids": ["code-review"]})
             elif len(self.payloads) == 2:
+                yield fence("code-review", {"args": "the diff"})
+            elif len(self.payloads) == 3:
                 yield "skill child completed"
             else:
                 yield "parent completed"
@@ -846,7 +849,7 @@ async def test_skill_tool_child_joins_the_original_ordinary_claim(
     )
     assert result.accepted
     await until(lambda: not h.runtime.execution_capacity.snapshot().executions)
-    assert len(gateway.payloads) == 3 and skills.execute_calls == ["the diff"]
+    assert len(gateway.payloads) == 4 and skills.execute_calls == ["the diff"]
     assert child_owned == [True]
     assert trees and trees[0] is not None and all(tree is trees[0] for tree in trees)
     children = [
@@ -1380,18 +1383,14 @@ async def test_actual_received_turn_with_native_killed_mcp_is_bounded(
     turn_id = h.runtime.accept_received_intent(intent)
     task = h.runtime._turn_custody[turn_id].task
     h.tasks.append(task)
-    if replace_metadata:
-        with pytest.raises(RuntimeError, match="Hook review source or session changed"):
-            await task
-        assert (
-            not trees
-            and h.store.session_draft(h.session.id) == "received original draft"
-        )
-    else:
-        assert (await task).accepted
-        assert trees and all(
-            tree is trees[0] and not tree.footprint.opaque for tree in trees
-        )
+    assert (await task).accepted
+    # Killed MCP with complete metadata runs bounded. Replaced metadata
+    # (incomplete MCP definitions) can never run bounded: it runs OPAQUE.
+    # (TASK-41028: it no longer reaches a hook review, which once refused it.)
+    assert trees and all(
+        tree is trees[0] and tree.footprint.opaque is replace_metadata
+        for tree in trees
+    )
 
 
 async def test_busy_received_turn_preserves_original_draft_and_attachment(
