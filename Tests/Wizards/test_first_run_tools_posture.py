@@ -715,3 +715,43 @@ async def test_an_untouched_step_writes_nothing_when_the_config_moves_after_comp
         gate_values={"read_file_enabled": False}
     )
     assert writes == 1
+
+
+@pytest.mark.asyncio
+async def test_the_apps_wizard_shows_an_upgrade_saved_after_compose(monkeypatch) -> None:
+    """TASK-34100.13 port (round 24) onto TASK-34100.5.3.2: under the app's
+    own wizard the step reads the live config, so #3519's on-show re-read
+    must read it too. The Full agent tools upgrade lands in the live config
+    after the step composed OFF; showing the step follows it (switch and
+    posture), and the untouched Next writes nothing."""
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.plain_chat_tool_surface import FULL_AGENT_TOOLS_GATE_KEY
+
+    live = {"tools": {}, "console": {}}
+    monkeypatch.setattr(
+        config_module, "load_cli_config_and_ensure_existence", lambda **_: live
+    )
+    wizard = _LiveWizard(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = ToolsStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="tools", title="Tools", step_number=7),
+    )
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        switch = step.query_one("#setup-tool-full_agent_tools", Switch)
+        composed = switch.value
+        live["tools"] = {FULL_AGENT_TOOLS_GATE_KEY: True}  # the boot upgrade's write
+        step.on_show()
+        await pilot.pause()
+        shown = switch.value
+        sentence = _posture(step)
+        ok, _ = await step.commit()
+    assert composed is False
+    assert shown is True
+    assert sentence == _expected_posture(live)
+    assert ok
+    wizard.commit_config.assert_not_awaited()

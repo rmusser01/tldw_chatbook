@@ -167,6 +167,53 @@ class ToolsStep(SetupStep):
                         markup=False,
                     )
 
+    def on_show(self) -> None:
+        super().on_show()
+        self._show_saved_gates()
+
+    def _show_saved_gates(self) -> None:
+        """Bring switches the user has not moved up to the saved gates.
+
+        TASK-34100.5.3.2 review round 1 (F2-3): the wizard composes every
+        step when it mounts, before the boot's staggered workers run, so the
+        one-time Full agent tools upgrade can turn the gate on after this
+        step composed it OFF. A switch still showing what it was composed
+        (or last re-shown) with follows the saved value; one the user moved
+        keeps theirs. TASK-34100.13 port (round 24): the saved value is this
+        step's own reading (``_gates`` over the config as it is now), and a
+        switch that follows it moves its ``_composed_gates`` baseline too, so
+        commit still writes only what the user moved.
+        """
+        from tldw_chatbook.Agents.plain_chat_tool_surface import (
+            summarize_tool_surface,
+            tools_step_posture,
+        )
+
+        composed = getattr(self, "_composed_gates", None)
+        if composed is None:
+            return
+        view = posture_mod.gate_config_view(self.wizard)
+        saved = {gate.key: gate.enabled for gate in self._gates(view)}
+        shown = self._shown_gates()
+        followed: dict[str, bool] = {}
+        for switch in self.query(Switch):
+            gate_key = self.gate_key_for(switch)
+            if gate_key not in shown or gate_key not in saved:
+                continue
+            value = saved[gate_key]
+            if bool(switch.value) == shown[gate_key] and value != shown[gate_key]:
+                switch.value = followed[gate_key] = value
+        if followed:
+            self._composed_gates = [
+                replace(gate, enabled=followed[gate.key])
+                if gate.key in followed
+                else gate
+                for gate in composed
+            ]
+            self.query_one("#setup-tools-posture", Static).update(
+                tools_step_posture(summarize_tool_surface(view))
+            )
+
     def gate_key_for(self, switch: Switch) -> str:
         tool_name = (switch.id or "").removeprefix("setup-tool-")
         if tool_name == FULL_AGENT_TOOLS_SWITCH:
