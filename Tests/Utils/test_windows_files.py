@@ -50,6 +50,30 @@ native = pytest.mark.skipif(
 
 
 @native
+def test_read_pin_blocks_content_change_and_ancestor_move(tmp_path):
+    from tldw_chatbook.Utils.windows_files import WindowsReadPin
+
+    parent = tmp_path / "private"
+    parent.mkdir()
+    leaf = parent / "source"
+    leaf.write_bytes(b"pinned")
+    pin = WindowsReadPin()
+    try:
+        pin.open(leaf)
+        assert pin.stream.read() == b"pinned"
+        assert leaf.read_bytes() == b"pinned"
+        with pytest.raises(OSError):
+            leaf.write_bytes(b"changed")
+        with pytest.raises(OSError):
+            leaf.rename(parent / "other")
+        with pytest.raises(OSError):
+            parent.rename(tmp_path / "another")
+    finally:
+        pin.close()
+    parent.rename(tmp_path / "another")
+
+
+@native
 def test_private_relative_file_and_exclusive_rename(tmp_path):
     win = WindowsOS()
     namespace = tmp_path / "namespace"
@@ -115,6 +139,15 @@ def test_directory_junction_is_refused(tmp_path):
     )  # nosec B603 B607 -- synthetic temp paths, fixed command
     with pytest.raises(OSError):
         win.open(junction, win.O_RDONLY | win.O_DIRECTORY | win.O_NOFOLLOW)
+    from tldw_chatbook.Utils.windows_files import WindowsReadPin
+
+    (target / "audio.wav").write_bytes(b"audio")
+    pin = WindowsReadPin()
+    try:
+        with pytest.raises(OSError):
+            pin.open(junction / "audio.wav")
+    finally:
+        assert pin.close()
 
 
 @native

@@ -534,6 +534,7 @@ class _Native:
         directory=False,
         metadata=False,
         extra_access=0,
+        share_mode=_SHARE_ALL,
         _metadata_record=None,
     ):
         access = _READ_CONTROL | _READ_ATTRIBUTES | _SYNCHRONIZE | extra_access
@@ -580,7 +581,7 @@ class _Native:
                 C.byref(status),
                 None,
                 0x80,
-                _SHARE_ALL,
+                share_mode,
                 disposition,
                 options,
                 None,
@@ -691,6 +692,77 @@ class _AdmissionMetadataCloseError(OSError):
     def __init__(self, failed_handles):
         self.failed_handles = tuple(failed_handles)
         super().__init__(errno.EIO, "windows_admission_metadata_not_retired")
+
+
+class WindowsReadPin:
+    """Hold a local NTFS file and its full name stable for a pathname consumer."""
+
+    # An ambiguous close must never retry a potentially recycled identifier.
+    # Keep custody even when an admission/readiness caller has gone away.
+    _uncertain_closes: list[object] = []
+
+    def __init__(self):
+        self._handles: list[_AdmissionMetadataHandle] = []
+        self.stream = None
+        self._failed = False
+
+    def open(self, path: Path) -> None:
+        """Open every component relative to its parent without following links."""
+        if self._handles or self.stream is not None or self._failed:
+            raise RuntimeError("windows_pin_in_use")
+        if (
+            not path.is_absolute()
+            or len(path.drive) != 2
+            or path.drive[1] != ":"
+            or not path.name
+        ):
+            raise ValueError("local_absolute_drive_file_required")
+        parts = [_component(part) for part in path.parts[1:]]
+        native = _native()
+        parent = None
+        for index, name in enumerate(["\\??\\" + path.drive + "\\", *parts]):
+            directory = index < len(parts)
+            record = _AdmissionMetadataHandle(native, path)
+            self._handles.append(record)
+            parent = native.open_handle(
+                name,
+                parent=parent,
+                directory=directory,
+                share_mode=3 if directory else 1,
+                _metadata_record=record,
+            )
+        if native.info(parent).attributes & _DIRECTORY:
+            raise ValueError("regular_file_required")
+        fd = native.crt.open_osfhandle(parent, _os.O_RDONLY | _os.O_BINARY)
+        self._handles[-1].handle = None  # ownership transferred to the CRT
+        try:
+            self.stream = _os.fdopen(fd, "rb")
+        except BaseException:
+            try:
+                _os.close(fd)
+            except OSError:
+                self._failed = True
+                self._uncertain_closes.append(fd)
+            raise
+
+    def close(self) -> bool:
+        """Close all acquired handles once, retaining uncertain closes."""
+        if self.stream is not None:
+            try:
+                self.stream.close()
+            except OSError:
+                self._failed = True
+                self._uncertain_closes.append(self.stream)
+            self.stream = None
+        while self._handles:
+            record = self._handles.pop()
+            if record.handle is not None:
+                try:
+                    record.native.check(record.native.kernel.CloseHandle(record.handle))
+                except OSError:
+                    self._failed = True
+                    self._uncertain_closes.append(record)
+        return not self._failed
 
 
 class WindowsOS:
