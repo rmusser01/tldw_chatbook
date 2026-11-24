@@ -141,6 +141,7 @@ _TRACE_FAILURE_CATEGORIES = frozenset(
         "rendered_system_slot_mismatch",
         "rendered_system_slot_unavailable",
         "replacement_chain_gap",
+        "replacement_chain_link_inactive",
         "replacement_component_domain",
         "replacement_component_ordinal",
         "replacement_predecessor_mismatch",
