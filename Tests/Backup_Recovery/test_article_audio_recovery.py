@@ -529,6 +529,99 @@ def test_shared_subscription_image_relocates_all_selected_partitions(
         ) == {key: None for key in (*keys.values(), foreign.profile)}
 
 
+@pytest.mark.parametrize(
+    "empty_first", [False, True], ids=["occupied-first", "empty-first"]
+)
+def test_shared_db_only_overlap_rebinds_the_original_partition(
+    records, tmp_path, empty_first
+):
+    import sqlite3
+    from contextlib import closing
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+
+    adapter, _, config, root, m, binding, _, voice = owners(records)
+    first = binding[0]
+    middle_selector = tmp_path / "middle.toml"
+    final_selector = tmp_path / "final.toml"
+    middle = replace(first, profile=m.listening_profile_key(middle_selector))
+    final = replace(first, profile=m.listening_profile_key(final_selector))
+    unselected = replace(
+        first, profile=m.listening_profile_key(tmp_path / "other.toml")
+    )
+    session, audio = seed_audio(records, first.profile, root)
+    assert (session.foreground.bookmark.frame, session.queue[0].bookmark.frame) == (
+        6,
+        2,
+    )
+    audio.wav.path.unlink()
+    other_store = ArticleListeningStore(records, current_authority=lambda: unselected)
+    other_session = other_store.replace_session(
+        prepare(other_store, unselected, voice, item=3), expected_revision=None
+    )
+    with records.transaction() as db:
+        db.execute(
+            "INSERT INTO article_audio(profile,file_key,status,custody_witness) VALUES(?,?,'pending_delete',?)",
+            (unselected.profile, "a" * 32 + ".wav", "1" * 64),
+        )
+        db.execute(
+            "UPDATE article_audio SET custody_witness=? WHERE generation=?",
+            ("2" * 64, audio.generation),
+        )
+    peer = {
+        **config,
+        DISCOVERY_CONTEXT_KEY: DiscoveryContext(middle_selector, middle.profile),
+    }
+    inputs = [
+        replace(adapter.discover(data)[0], shared_group="shared:subscriptions")
+        for data in (config, peer)
+    ]
+    if empty_first:
+        inputs.reverse()
+    mapping = {
+        f"profile:{first.profile}:config": middle_selector,
+        f"profile:{middle.profile}:config": final_selector,
+    }
+    records.close()
+    candidate = tmp_path / "db-only.sqlite"
+    shutil.copyfile(records.db_path, candidate)
+    candidate.chmod(0o600)
+
+    def audio_rows():
+        with closing(sqlite3.connect(candidate)) as db:
+            db.row_factory = sqlite3.Row
+            return [
+                dict(row)
+                for row in db.execute("SELECT * FROM article_audio ORDER BY generation")
+            ]
+
+    original = audio_rows()
+    assert {row["profile"] for row in original} == {first.profile, unselected.profile}
+    with _preview_reads():
+        adapter.rebind_listening_profile(
+            inputs[0], candidate, mapping, aliases=(inputs[1],)
+        )
+    assert audio_rows() == [
+        {
+            **row,
+            "profile": middle.profile
+            if row["profile"] == first.profile
+            else unselected.profile,
+            "custody_witness": None,
+        }
+        for row in original
+    ]
+    with closing(SubscriptionsDB(candidate)) as db:
+
+        def load(authority):
+            return ArticleListeningStore(
+                db, current_authority=lambda: authority
+            ).load_session()
+
+        assert load(middle) == replace(session, authority=middle)
+        assert load(unselected) == other_session
+        assert load(first) is None and load(final) is None
+
+
 def test_detached_acquisition_rebinds_only_normalized_bytes(
     records, tmp_path, monkeypatch
 ):

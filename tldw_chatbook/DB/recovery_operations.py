@@ -1152,7 +1152,8 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
                     != 4
                 ):
                     return
-                for _, target in moves:
+                destinations = {target for _, target in moves}
+                for target in destinations:
                     if connection.execute(
                         "SELECT 1 FROM listening_session WHERE profile=? UNION ALL "
                         "SELECT 1 FROM article_audio WHERE profile=? LIMIT 1",
@@ -1160,6 +1161,10 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
                     ).fetchone():
                         raise ValueError("listening_profile_collision")
                 for source, target in moves:
+                    # Every destination was empty in both tables before any move.
+                    # An overlapping source can now contain only newly moved rows.
+                    if source in destinations:
+                        continue
                     connection.execute(
                         "UPDATE listening_session SET profile=? WHERE profile=?",
                         (target, source),
