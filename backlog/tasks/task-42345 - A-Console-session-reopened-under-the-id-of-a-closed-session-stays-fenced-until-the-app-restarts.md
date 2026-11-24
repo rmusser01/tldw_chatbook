@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-11-22T16:37:00Z'
-updated_date: '2026-11-24T18:05:08Z'
+updated_date: '2026-11-24T19:54:53Z'
 labels:
   - follow-up
   - console
@@ -41,9 +41,9 @@ The root cause is the id reuse. The latches are deliberate: a close that timed o
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 After a clean close of a goal run's chat, resuming that paused or ready goal gives a session the user can send in and close
+- [x] #1 After a clean close of a goal run's chat, resuming that paused or ready goal gives a session the user can send in and close
 - [x] #2 Late callbacks from a closed session, including one whose close timed out, still cannot reach the reopened session
-- [ ] #3 A test closes a goal run's chat, resumes the goal, then sends and closes, and is shown red before the fix
+- [x] #3 A test closes a goal run's chat, resumes the goal, then sends and closes, and is shown red before the fix
 - [ ] #4 The new test runs on a PR lane
 <!-- AC:END -->
 
@@ -65,4 +65,6 @@ Reason: The fix preserves the durable goal and its existing authority and repair
 Both close variants reproduced the closed-session refusal. The live-session fix passed those two cases and 11 ledger tests locally. The timeout case holds an old producer across hydration and observes its original close fence, then sends in the reopened chat and closes it. Required Linux CI also exercises public Resume on a real paused goal and verifies the saved conversation and the new live session in the next durable attempt. ADR-227 records the identity distinction.
 
 The provider send and second close pass locally after an old producer outlives the original close, and the late producer still observes its exact admission fence.
+
+The tightened regression uses one real runtime for close, public Resume, a native automatic iteration, an ordinary provider send, and the second close. Final Ubuntu qualification passed all 39 Goal and ledger cases at four workers. The same test with clean dev 9fa2bf1b1d production code failed in 6.17 seconds because the reopened live ID equaled the closed ID. [Linux job](https://github.com/rmusser01/tldw_chatbook/actions/runs/45475265787/job/138733698986).
 <!-- SECTION:NOTES:END -->

@@ -6,6 +6,12 @@
 
 **What to do.** Before arming a dev PR, compute what the light tier will run: `select_changes(changed_paths(<merge-base sha>, <head sha>), Path.cwd())` from `scripts/ci/tier_policy.py`, with full SHAs (it refuses short ones). Run every selected file. A red shared with dev is not a pass there. Either fix it on the branch (it was test-only in all 13 cases here) or stop editing the file that drags it in.
 
+## Stop can collide with the turn it is stopping (TASK-42344, 2026-11-24)
+
+**Incident.** The real MCP Interrupt test on Ubuntu reached the native event guard and hit `hook_activity_busy`. Stop ran in a different task and tried to acquire a second opaque claim while the accepted turn still owned the first. Rebinding the exact turn fixed admission. Superpowers review then found that the queued delivery still lost the source used to revalidate the original agent configuration. A regression that replaced the app config after event capture reproduced that missing check.
+
+**What to do.** Exercise Stop from outside the accepted turn task. Check that a foreign cancellation cannot select the parent and that a source replacement after capture refuses delivery through the worker's original check. A passing synchronous admission alone leaves the deferred check untested.
+
 ## A double attached to a mounted Console is read by the Console's own tick too, so its flakes looked random (TASK-42469, 2026-11-23)
 
 **Incident.** `Tests/UI/test_console_agent_rail.py`'s full-log tests failed run to run under load, each with a different message: `'Bridge' object has no attribute 'live_snapshot'`, a stubbed `_current_console_rail_state` rejecting `inspector_state`, a recorder holding `[False, False]` where the test expected `[False]`, and `WorkerCancelled` out of `host.workers.wait_for_complete()`. None came from the test's own calls. After mount the Console keeps ticking, and its control-bar sync and tick projection (`_sync_console_rail_and_controls`) read the Agent section's lines, fleet rows and rail state from whatever the test attached, and sync the section the test was counting. One forced `console._sync_console_rail_and_controls()` right after a double was attached reproduced the first three every time; restarting the workspace tray's exclusive alias worker during the wait reproduced the fourth. The forced tick also found seven more tests with the same exposure that had not failed yet.

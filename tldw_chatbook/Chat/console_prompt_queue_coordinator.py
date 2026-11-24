@@ -11,6 +11,7 @@ from threading import Event
 from typing import TYPE_CHECKING, Protocol
 from uuid import uuid4
 
+from tldw_chatbook.Agents.execution_capacity import current_ordinary_tree
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleControllerActivity,
     ConsoleQueuedAcceptanceEvent,
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
     )
     from tldw_chatbook.Agents.hooks_v2.lifecycle import HookSessionLifecycle
     from tldw_chatbook.Agents.hooks_v2.models import HookResult
+    from tldw_chatbook.Agents.ordinary_tree import OrdinaryTurn
     from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
     from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryPolicySnapshot
     from tldw_chatbook.Chat.console_received_turn import ConsoleReceivedTurnClaim
@@ -110,6 +112,7 @@ class _PromptChain:
     logical_outcome_id: str | None = None
     request: ConsoleTurnCustodyRequest | None = None
     hook_parent: object | None = None
+    hook_parent_tree: OrdinaryTurn | None = None
     hook_execution: object | None = None
     pending_stop_key: tuple[str, str] | None = None
     hook_cancel_event: Event | None = None
@@ -291,6 +294,15 @@ class ConsolePromptQueueCoordinator:
             lifecycle.engine.notification_omissions += 1
             chain.hook_execution = False
         chain.hook_parent = (lifecycle, scope, event, assistant_id, request)
+        tree = current_ordinary_tree()
+        chain.hook_parent_tree = (
+            tree
+            if tree is not None
+            and tree.session.id == session_id
+            and tree.owner is not None
+            and tree.footprint.opaque
+            else None
+        )
 
     async def settle_hook_parent(self, session_id: str, scope: str) -> None:
         """Join exact required gates before the provisional scope retires."""
@@ -302,6 +314,7 @@ class ConsolePromptQueueCoordinator:
             await parent[0].wait(scope)
         except BaseException:
             chain.hook_parent = None
+            chain.hook_parent_tree = None
             if chain.hook_execution not in (None, False):
                 chain.hook_execution.close()
             chain.hook_execution = None
@@ -319,6 +332,7 @@ class ConsolePromptQueueCoordinator:
                 )
             return
         chain.hook_parent = None
+        chain.hook_parent_tree = None
         lifecycle, _scope, event, _assistant_id, request = parent
         execution, chain.hook_execution = chain.hook_execution, None
         if execution is False:
@@ -1014,16 +1028,19 @@ class ConsolePromptQueueCoordinator:
                 chain.pending_stop_task.cancel()
 
     def interrupt_parent(
-        self, session_id: str
-    ) -> tuple[HookSessionLifecycle, str] | None:
+        self, session_id: str, cancellation: Event
+    ) -> tuple[HookSessionLifecycle, str, OrdinaryTurn | None] | None:
         """Return the exact accepted live root or its pending Stop settlement."""
         chain = self._chains.get(session_id)
-        if chain is None:
+        if chain is None or chain.hook_cancel_event is not cancellation:
             return None
         parent = chain.hook_parent if chain.accepted_live_turn else None
-        if parent is None and self.pending_stop_cancellation(session_id) is not None:
+        if parent is not None:
+            return parent[0], parent[4].turn_id, chain.hook_parent_tree
+        if self.pending_stop_cancellation(session_id) is cancellation:
             parent = self._stop_parents[chain.pending_stop_key][1]
-        return (parent[0], parent[4].turn_id) if parent is not None else None
+            return parent[0], parent[4].turn_id, None
+        return None
 
     def continuation_receipt(
         self, session_id: str, entry_id: str | None

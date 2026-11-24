@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-11-22T16:37:00Z'
-updated_date: '2026-11-24T17:39:27Z'
+updated_date: '2026-11-24T19:54:19Z'
 labels:
   - follow-up
   - tests
@@ -52,4 +52,6 @@ Reason: Test fixtures and CI coverage only.
 
 <!-- SECTION:NOTES:BEGIN -->
 On dev 9fa2bf1b1d the three reported cases failed at four workers. The fixed exact cases passed 3/3, and the full module passed 15/15 at four workers (43.33 seconds) and 15/15 serially (74.12 seconds). The cold/expired check observes the original callback without changing its identity. The compaction test persists memory before capturing the initial revision. Required PR Fast Lane (admission-sensitive 3) now selects the whole module. Hosted execution is pending.
+
+The final Ubuntu 24.04 qualification passed all 15 cases at four workers in 15.37 seconds. Its scheduled PR Fast Lane job was still queued when this evidence was recorded. [Linux job](https://github.com/rmusser01/tldw_chatbook/actions/runs/45475265787/job/138733698816).
 <!-- SECTION:NOTES:END -->

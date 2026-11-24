@@ -3,10 +3,10 @@ id: TASK-42346
 title: >-
   Replace the open-coded Console runtime currentness checks with one shared
   helper
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-22T16:37:00Z'
-updated_date: '2026-11-24T18:08:44Z'
+updated_date: '2026-11-24T20:01:51Z'
 labels:
   - follow-up
   - console
@@ -41,7 +41,7 @@ Proposed by the review of the PR #3493 port (TASK-34975, round 20) as optional c
 <!-- AC:BEGIN -->
 - [x] #1 One runtime-owned check answers whether a runtime is current for a given controller, store and session, and the copies of the common shape call it, except in files held by other open work, which the implementation notes list
 - [x] #2 Sites that check a different set of fields either use the shared check plus their own extra conditions, or the implementation notes say why they keep their own
-- [ ] #3 Behaviour is unchanged: the covering tests of every edited module pass through the scratch wrapper at `-n 4`, and the module-size ratchets pass
+- [x] #3 Behaviour is unchanged: the covering tests of every edited module pass through the scratch wrapper at `-n 4`, and the module-size ratchets pass
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -64,4 +64,6 @@ The runtime predicate is shared by received sends, automatic submissions, contex
 Independent review confirmed the shared predicate preserves the original field checks and the documented exceptions. All six touched-module size ratchet cases passed locally. A serial sample reproduced six ownership-suite failures at the same assertions on candidate 7cd7a61ada and clean dev 9fa2bf1b1d. The broader Windows run remains red, including cases that require native process groups. Linux and repaired-fixture verification are pending.
 
 Three additional headless-wake cases reproduced the same late assertions and teardown warning on clean dev and the candidate. The hook preparation fixture now verifies that the exact attachment remains staged until physical admission. The received-draft observer now accepts the committed publication argument. A focused run passed the original hook snapshot and all four save cases (5 total). The broader Windows close and native process-group cases still await supported Linux evidence.
+
+Ubuntu 24.04 passed all 325 covering ownership and module ratchet cases at four workers in 82.21 seconds. Load moved from 0.80/0.37/0.17 to 2.56/1.15/0.47. Two source-drift controls now pause the exact runtime-owned callback. The workspace close control follows attachment custody after physical admission. Independent review confirmed that the callers kept their source-specific checks. [Linux job](https://github.com/rmusser01/tldw_chatbook/actions/runs/45475265787/job/138733698960).
 <!-- SECTION:NOTES:END -->

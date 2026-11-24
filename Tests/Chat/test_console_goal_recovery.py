@@ -218,10 +218,6 @@ async def test_stable_nonactivating_hydration_reads_real_tree(
         if commit_close:
             paused = co.service.pause(goal.id)
             await co.resume(goal.id, expected_revision=paused.revision, app=app)
-            settled = await co._runner
-            assert settled.iteration_count > paused.iteration_count, (
-                settled.pause_reason
-            )
 
         restored = await co.restore_session(goal.id, app=app)
         assert restored.persisted_conversation_id == goal.conversation_id
@@ -232,6 +228,10 @@ async def test_stable_nonactivating_hydration_reads_real_tree(
         )
         assert await co.restore_session(goal.id, app=app) is restored
         if commit_close:
+            settled = await co._runner
+            assert (
+                settled.iteration_count > paused.iteration_count
+            ), settled.pause_reason
             with stores[0].connection() as connection:
                 next_attempt = connection.execute(
                     "SELECT attempt_id, run_id FROM goal_iterations WHERE goal_id=? AND ordinal=2",
@@ -244,9 +244,26 @@ async def test_stable_nonactivating_hydration_reads_real_tree(
             assert attempt.session_id == restored.id
             assert attempt.conversation_id == goal.conversation_id
             assert len(calls) > 1
+            controller.switch_session(restored.id)
+            sent = await controller.submit_draft(
+                "Manual follow-up after Goal Resume", session_id=restored.id
+            )
+            assert sent.accepted and sent.provider_started, sent
+            await runtime.close_session(
+                restored.id,
+                expected_revision=controller.lifecycle_impact(
+                    session_id=restored.id
+                ).revision,
+            )
+            assert restored.id not in {
+                open_session.id for open_session in store.sessions()
+            }
         else:
             assert len(calls) == 1
     finally:
+        if co._runner is not None and not co._runner.done():
+            co._runner.cancel()
+            await asyncio.gather(co._runner, return_exceptions=True)
         await gateway.aclose()
 
 

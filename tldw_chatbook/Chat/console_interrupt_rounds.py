@@ -54,6 +54,7 @@ from tldw_chatbook.Agents.approval_provenance import (
     stamp_answer_provenance as _stamp_answer_provenance,  # noqa: F401 - retained host alias
     approval_was_unanswered as approval_was_unanswered,  # noqa: PLC0414 - retained public seam
 )
+from tldw_chatbook.Agents.execution_capacity import bind_ordinary_tree
 from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
 from .console_local_review_hook import (
     build_local_review_hook as build_local_review_hook,
@@ -260,21 +261,18 @@ class InterruptRoundHost(InitialHookReviewMixin):
 
     POLL_SECONDS = 1.0
 
-    def notify_hook_interrupt(self, cancellation, lifecycle, turn_id: str) -> bool:
-        """Publish once after the host's irreversible per-turn cancel seal.
-
-        H2 owns notification deadlines and real process cleanup; no UI card,
-        permission prompt or process wait runs under this host's registry lock.
-        """
+    def notify_hook_interrupt(self, cancellation, lifecycle, turn_id: str, tree) -> bool:
+        """Publish once after cancellation, borrowing the live turn's claim."""
         if not cancellation.is_set():
             return False
         with self.lock:
             if cancellation in self._hook_interrupts:
                 return False
             self._hook_interrupts.add(cancellation)
-        return lifecycle.engine.notify_teardown(
-            lifecycle.event("Interrupt", turn_id=turn_id, initiator="manual")
-        )
+        with bind_ordinary_tree(tree):
+            return lifecycle.engine.notify_teardown(
+                lifecycle.event("Interrupt", turn_id=turn_id, initiator="manual")
+            )
 
     def __init__(
         self,
