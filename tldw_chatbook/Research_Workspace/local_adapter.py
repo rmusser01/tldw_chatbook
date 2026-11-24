@@ -729,11 +729,8 @@ class LocalResearchWorkspaceAdapter:
                 raise ResearchNoteConflictError(ref, receipt.canonical_note_id)
 
             try:
-                deleted = await notes.delete_note(
-                    scope="local_note",
-                    note_id=receipt.canonical_note_id,
-                    version=receipt.expected_version,
-                    user_id=self._notes_user_id,
+                deleted = await self._delete_canonical_note(
+                    notes, receipt.canonical_note_id, receipt.expected_version
                 )
             except ConflictError as exc:
                 await asyncio.to_thread(
@@ -788,11 +785,8 @@ class LocalResearchWorkspaceAdapter:
                 expected_version=expected_version,
             )
             try:
-                deleted = await notes.delete_note(
-                    scope="local_note",
-                    note_id=safe_note_id,
-                    version=expected_version,
-                    user_id=self._notes_user_id,
+                deleted = await self._delete_canonical_note(
+                    notes, safe_note_id, expected_version
                 )
             except ConflictError as exc:
                 remaining = await self._load_local_note(notes, ref, safe_note_id)
@@ -1248,6 +1242,22 @@ class LocalResearchWorkspaceAdapter:
     ) -> ResearchQuickNote | None:
         row = await self._load_local_note_row(notes, note_id)
         return None if row is None else self._note_from_row(ref, row)
+
+    async def _delete_canonical_note(self, notes: Any, note_id: str, version: int) -> bool:
+        from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+
+        def delete_in_worker() -> bool:
+            # The local scope's async dispatch performs a synchronous SQLite write.
+            return asyncio.run(  # policy-exception: worker-thread loop
+                notes.delete_note(
+                    scope="local_note",
+                    note_id=note_id,
+                    version=version,
+                    user_id=self._notes_user_id,
+                )
+            )
+
+        return await asyncio.to_thread(run_finite_local_worker, delete_in_worker)
 
     async def _load_local_note_row(
         self, notes: Any, note_id: str

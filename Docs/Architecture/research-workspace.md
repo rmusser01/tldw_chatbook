@@ -45,6 +45,10 @@ shared confirmation dialog focuses **Keep editing** and requires explicit
 approval to discard the draft. Edits typed while the save is in flight remain
 in the editor with the saved note's current version.
 
+Local Quick Note deletion runs the canonical Notes write in a finite worker,
+including during receipt recovery. It waits for the owner result before
+cleaning up workspace memberships.
+
 ## Runs lifecycle
 
 The Runs screen creates a run through the scope service; the local engine executes in an exclusive worker group per run, persisting progress/events/artifacts and a budget ledger, honoring pause/cancel **between phases**, and on completion optionally inserting an assistant message via the chat handoff (which never raises — failure degrades to a notification). Outputs land in the research DB and as chat messages — not as Library media or workspace quick notes. The server side declares session CRUD and filtered run lists unsupported; see the gotcha below about run deletion.
