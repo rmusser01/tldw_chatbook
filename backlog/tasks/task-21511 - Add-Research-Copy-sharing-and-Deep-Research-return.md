@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@codex'
 created_date: 2026-08-24 05:54
-updated_date: 2026-11-24 20:47
+updated_date: 2026-11-24 21:21
 labels:
 - research
 - workspace
@@ -58,4 +58,5 @@ Follow the approved Copy, Sharing, and Deep Research plan in order with targeted
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 The workspace Actions menu now opens explicit Copy, Local bundle export, and Server sharing. Copy shows the frozen manifest, device-only exclusions, and durable receipts. A repeat Server-to-Local Copy finds its previous owner from the exact qualified receipt. Replacement requires the captured owner revision and a second confirmation. Server sharing supports access edits, guarded links, recipient verification and import, and clone through the sharing service. The compound action opens Share after Copy and its Server migration both complete. Local export uses the same transfer policy and an atomic private file write. A detached Sources pane discards late refresh results.
+Deep Research launches preserve the qualified workspace and selected versions in native Runs. The Server companion uses an authenticated launch receipt and an exact bundle projection. Chatbook previews the Report before writing a draft and can recover its owner on re-import. Verified the mounted Local flow and real localhost Server dispatch, lost-response replay, and native draft persistence with a stored report fixture. The targeted Runs and Studio suite passed 85 tests.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

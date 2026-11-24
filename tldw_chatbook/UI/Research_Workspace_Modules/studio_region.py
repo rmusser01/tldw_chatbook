@@ -45,6 +45,11 @@ class ResearchStudioRegion(VerticalScroll):
             self.action = action
             self.row = row
 
+    class LaunchResearch(Message):
+        def __init__(self, row: StudioHistoryRow | None = None) -> None:
+            super().__init__()
+            self.row = row
+
     def __init__(self, *, controller, overlay_store=None, **kwargs) -> None:
         super().__init__(**kwargs)
         self.controller = controller
@@ -58,12 +63,19 @@ class ResearchStudioRegion(VerticalScroll):
         self._retry = None
         self._last_saved = None
         self._dialog_open = False
+        self._deep_research_available = False
 
     def compose(self) -> ComposeResult:
         yield Static(
             "Studio", id="research-studio-heading", classes="research-pane-title"
         )
         yield Button("Quick Notes", id="research-studio-quick-notes", compact=True)
+        yield Button(
+            "Deep Research",
+            id="research-studio-deep-research",
+            compact=True,
+            disabled=True,
+        )
         yield Input(placeholder="Provider", id="research-studio-provider")
         yield Input(placeholder="Model", id="research-studio-model")
         yield Button(
@@ -122,6 +134,7 @@ class ResearchStudioRegion(VerticalScroll):
         self.ref = ref
         self._availability = {}
         self._capabilities = {}
+        self._deep_research_available = False
         self._retry = self._last_saved = None
         self._offset = 0
         self.history.sync_page(())
@@ -141,6 +154,12 @@ class ResearchStudioRegion(VerticalScroll):
                 busy=self.is_busy or self._dialog_open,
             )
         for key, enabled in (
+            (
+                "deep-research",
+                self._deep_research_available
+                and not self.is_busy
+                and not self._dialog_open,
+            ),
             ("check-route", self.ref is not None and not self.is_busy),
             ("stop", self.is_busy and not self._cancel.is_set()),
             (
@@ -220,8 +239,22 @@ class ResearchStudioRegion(VerticalScroll):
                     "Research Studio readiness failed (error_type={})",
                     type(exc).__name__,
                 )
+        research_available = (
+            self.overlay_store is not None
+            and getattr(self.app, "research_scope_service", None) is not None
+            and any(source.ready_modes for source in sources or ())
+        )
+        if research_available and capture.ref.data_source.value == "server":
+            try:
+                research_available = await port.deep_research_available(capture.ref)
+            except Exception as exc:
+                logger.debug(
+                    "Workspace Research capability unavailable ({})", type(exc).__name__
+                )
+                research_available = False
         if not self._current(capture) or revision != self._refresh_revision:
             return
+        self._deep_research_available = research_available
         self._capabilities = capabilities
         self._availability = project_studio_availability(
             capture.ref, sources or (), route, capabilities
@@ -278,6 +311,11 @@ class ResearchStudioRegion(VerticalScroll):
     @on(Button.Pressed, "#research-studio-check-route")
     def check_route(self) -> None:
         self.refresh_studio()
+
+    @on(Button.Pressed, "#research-studio-deep-research")
+    def launch_deep_research(self) -> None:
+        if self._deep_research_available and not self.is_busy:
+            self.post_message(self.LaunchResearch())
 
     @on(Button.Pressed, ".research-studio-create")
     def create(self, event: Button.Pressed) -> None:
@@ -532,6 +570,8 @@ class ResearchStudioRegion(VerticalScroll):
             self._configure(output.output_kind, replace_output=output)
         elif key == "new-version":
             self._configure(output.output_kind, supersedes=output)
+        elif key == "deep-research":
+            self.post_message(self.LaunchResearch(row))
         else:
             self.post_message(self.OwnerAction(key, row))
 
@@ -560,6 +600,11 @@ class ResearchStudioRegion(VerticalScroll):
             replace_capability = self._capabilities.get(owner.replace_capability)
             if row.content:
                 actions["discuss"] = "Discuss in Grounded Chat"
+                if self._deep_research_available and output.owner_kind in {
+                    StudioOwnerKind.LOCAL_CHATBOOK,
+                    StudioOwnerKind.SERVER_ARTIFACT,
+                }:
+                    actions["deep-research"] = "Launch Deep Research"
                 notes = self.query_one(ResearchQuickNotesSection)
                 if notes.can_save_note:
                     actions["note"] = "Save to a new Quick Note"

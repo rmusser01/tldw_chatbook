@@ -14,6 +14,7 @@ from pydantic import (
     StringConstraints,
     ValidationError,
     field_validator,
+    model_validator,
 )
 
 MAX_OUTPUT_PROVENANCE_BYTES = 32 * 1024
@@ -47,6 +48,15 @@ class _OutputSourceVersion(BaseModel):
     )
 
 
+class _ResearchRunRef(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    backend: Literal["local", "server"]
+    workspace_id: _IDENTIFIER
+    launch_id: _IDENTIFIER
+    run_id: _IDENTIFIER
+
+
 class OutputGenerationProvenance(BaseModel):
     """Fields the workspace can retain alongside the canonical owner ID."""
 
@@ -64,6 +74,13 @@ class OutputGenerationProvenance(BaseModel):
     status: Literal["complete", "cancelled", "failed"]
     owner_version: _REVISION | None = None
     supersedes_owner_id: _IDENTIFIER | None = None
+    research_run_ref: _ResearchRunRef | None = None
+
+    @model_validator(mode="after")
+    def validate_research_run(self):
+        if self.research_run_ref is not None and self.output_kind != "report":
+            raise ValueError("Only Reports carry Research run provenance")
+        return self
 
     @field_validator("provider", "model")
     @classmethod

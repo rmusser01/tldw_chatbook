@@ -133,6 +133,8 @@ class HandoffChannel(StrEnum):
     RESEARCH_CHATBOOK_TARGET = "artifact_chatbook_target"
     RESEARCH_STUDY_DECK_TARGET = "research_study_deck_target"
     RESEARCH_QUIZ_TARGET = "research_quiz_target"
+    RESEARCH_RUN_TARGET = "research_run_target"
+    RESEARCH_WORKSPACE_RETURN = "research_workspace_return"
     ACP_SESSION_TARGET = "acp_session_target"
     AUDIO_CPP_MODEL_LIBRARY_REQUEST = "audio_cpp_model_library_request"
     AUDIO_CPP_MODEL_LIBRARY_RESULT = "audio_cpp_model_library_result"
@@ -827,6 +829,12 @@ class PendingHandoffStore:
         if channel in {HandoffChannel.RESEARCH_STUDY_DECK_TARGET, HandoffChannel.RESEARCH_QUIZ_TARGET}:
             if type(value) is not ResearchStudyOutputTarget:
                 raise TypeError("Research Study handoff requires an exact output target")
+            return value
+        if channel in {HandoffChannel.RESEARCH_RUN_TARGET, HandoffChannel.RESEARCH_WORKSPACE_RETURN}:
+            from ...Research_Workspace.deep_research_context import ResearchWorkspaceRunRef
+
+            if type(value) is not ResearchWorkspaceRunRef:
+                raise TypeError("Research navigation requires an exact workspace run")
             return value
         if channel is HandoffChannel.ACP_SESSION_TARGET:
             return PendingHandoffStore._canonical_target(

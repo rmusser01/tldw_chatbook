@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
+from types import MappingProxyType
 
 from tldw_chatbook.Utils.private_paths import (
     PrivateFileWritePrecondition,
@@ -25,11 +26,12 @@ from .chat_models import (
     validate_chat_id,
 )
 from .contracts import QualifiedWorkspaceRef
+from .deep_research_context import ResearchLaunchContext, ResearchWorkspaceRunRef
 from .egress_consent import validate_egress_consents
 from .layout_state import ResearchPanePreferences
 
 
-OVERLAY_SCHEMA_VERSION = 3
+OVERLAY_SCHEMA_VERSION = 4
 MAX_OVERLAY_FILE_BYTES = 1024 * 1024
 MAX_OVERLAY_RECORDS = 512
 MAX_IDENTITY_CHARS = 256
@@ -41,6 +43,7 @@ MAX_FOLDER_DEPTH = 8
 MAX_SOURCE_ID_CHARS = 1024
 MAX_FOLDER_NAME_CHARS = 120
 MAX_ANNOTATION_TEXT_CHARS = 4000
+MAX_RESEARCH_WORKSPACE_LAUNCHES = 8
 
 _ROOT_FIELDS = frozenset({"schema_version", "records"})
 _V1_RECORD_FIELDS = frozenset(
@@ -64,6 +67,7 @@ _V3_RECORD_FIELDS = _V2_RECORD_FIELDS | frozenset(
         "chat_append_receipts",
     }
 )
+_V4_RECORD_FIELDS = _V3_RECORD_FIELDS | {"deep_research_launches"}
 _CHAT_RECEIPT_FIELDS = frozenset(
     {"turn_id", "conversation_id", "stage", "user_message_id", "assistant_message_id"}
 )
@@ -189,6 +193,9 @@ class ResearchPresentationOverlay:
     chat_conversation_id: str = ""
     chat_egress_consents: tuple[str, ...] = ()
     chat_append_receipts: tuple[ResearchChatAppendReceipt, ...] = ()
+    deep_research_launches: Mapping[str, ResearchLaunchContext] = field(
+        default_factory=dict, repr=False
+    )
 
     def __post_init__(self) -> None:
         try:
@@ -216,6 +223,11 @@ class ResearchPresentationOverlay:
         ):
             raise OverlayValidationError("chat receipt turn IDs must be unique")
         object.__setattr__(self, "chat_conversation_id", conversation_id)
+        object.__setattr__(
+            self,
+            "deep_research_launches",
+            _validate_research_launches(self.ref, self.deep_research_launches),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,6 +321,7 @@ class ResearchPresentationOverlayStore:
         chat_conversation_id: str | None = None,
         chat_egress_consents: tuple[str, ...] | None = None,
         chat_append_receipts: tuple[ResearchChatAppendReceipt, ...] | None = None,
+        deep_research_launches: Mapping[str, ResearchLaunchContext] | None = None,
         timestamp: str | None = None,
     ) -> ResearchPresentationOverlay:
         """Compare the current target revision, then atomically replace the file."""
@@ -381,6 +394,11 @@ class ResearchPresentationOverlayStore:
                 if chat_append_receipts is None
                 else chat_append_receipts
             ),
+            deep_research_launches=(
+                previous.deep_research_launches
+                if deep_research_launches is None
+                else deep_research_launches
+            ),
         )
         _validate_source_overlay(saved.source_folders, saved.source_annotations)
         records = dict(loaded.records)
@@ -411,6 +429,46 @@ class ResearchPresentationOverlayStore:
             raise
         return saved
 
+    def remember_research_launch(
+        self, target: ResearchWorkspaceRunRef, context: ResearchLaunchContext
+    ) -> None:
+        """Retain recent navigation context alongside existing device state."""
+        if target != context.target(target.run_id):
+            raise OverlayValidationError(
+                "The Deep Research launch belongs to another workspace"
+            )
+        for _ in range(3):
+            previous = self.load(target.origin)
+            launches = dict(previous.deep_research_launches) if previous else {}
+            if remembered := launches.get(target.run_id):
+                if remembered != context:
+                    raise OverlayConflictError(
+                        "This run already belongs to another launch"
+                    )
+                return
+            if len(launches) >= MAX_RESEARCH_WORKSPACE_LAUNCHES:
+                oldest = min(
+                    launches,
+                    key=lambda run_id: datetime.fromisoformat(
+                        launches[run_id].created_at
+                    ),
+                )
+                del launches[oldest]
+            launches[target.run_id] = context
+            try:
+                self.save(
+                    target.origin,
+                    previous.preferences if previous else ResearchPanePreferences(),
+                    expected_revision=previous.revision if previous else 0,
+                    deep_research_launches=launches,
+                )
+            except OverlayConflictError:
+                continue
+            return
+        raise OverlayConflictError(
+            "The workspace changed while retaining this Deep Research launch"
+        )
+
     def _read_payload(
         self,
     ) -> tuple[bytes | None, PrivateFileWritePrecondition]:
@@ -440,6 +498,7 @@ class ResearchPresentationOverlayStore:
         if type(schema_version) is not int or schema_version not in {
             1,
             2,
+            3,
             OVERLAY_SCHEMA_VERSION,
         }:
             raise OverlayValidationError("unsupported overlay schema version")
@@ -459,9 +518,12 @@ def _decode_record(raw: object, *, schema_version: int) -> ResearchPresentationO
     _reject_forbidden_keys(raw)
     _require_exact_fields(
         raw,
-        {1: _V1_RECORD_FIELDS, 2: _V2_RECORD_FIELDS, 3: _V3_RECORD_FIELDS}[
-            schema_version
-        ],
+        {
+            1: _V1_RECORD_FIELDS,
+            2: _V2_RECORD_FIELDS,
+            3: _V3_RECORD_FIELDS,
+            4: _V4_RECORD_FIELDS,
+        }[schema_version],
         "record",
     )
 
@@ -511,6 +573,9 @@ def _decode_record(raw: object, *, schema_version: int) -> ResearchPresentationO
         chat_conversation_id=raw.get("chat_conversation_id", ""),
         chat_egress_consents=tuple(fingerprints),
         chat_append_receipts=_decode_chat_receipts(raw.get("chat_append_receipts", [])),
+        deep_research_launches=_decode_research_launches(
+            raw.get("deep_research_launches", {})
+        ),
     )
 
 
@@ -568,7 +633,40 @@ def _encode_record(record: ResearchPresentationOverlay) -> dict[str, object]:
         "chat_conversation_id": record.chat_conversation_id,
         "chat_egress_consents": list(record.chat_egress_consents),
         "chat_append_receipts": [asdict(item) for item in record.chat_append_receipts],
+        "deep_research_launches": {
+            run_id: context.to_payload()
+            for run_id, context in record.deep_research_launches.items()
+        },
     }
+
+
+def _decode_research_launches(value: object) -> Mapping[str, ResearchLaunchContext]:
+    if not isinstance(value, dict) or len(value) > MAX_RESEARCH_WORKSPACE_LAUNCHES:
+        raise OverlayValidationError("Deep Research launches exceed the declared bound")
+    return {
+        run_id: ResearchLaunchContext.from_payload(context)
+        for run_id, context in value.items()
+    }
+
+
+def _validate_research_launches(
+    ref: QualifiedWorkspaceRef, launches: Mapping[str, ResearchLaunchContext]
+) -> Mapping[str, ResearchLaunchContext]:
+    if (
+        not isinstance(launches, Mapping)
+        or len(launches) > MAX_RESEARCH_WORKSPACE_LAUNCHES
+    ):
+        raise OverlayValidationError("Deep Research launches exceed the declared bound")
+    for run_id, context in launches.items():
+        if (
+            validate_chat_id(run_id, "run ID") != run_id
+            or not isinstance(context, ResearchLaunchContext)
+            or context.origin != ref
+        ):
+            raise OverlayValidationError(
+                "Deep Research launch has a different workspace or run"
+            )
+    return MappingProxyType(dict(launches))
 
 
 def _decode_chat_receipts(value: object) -> tuple[ResearchChatAppendReceipt, ...]:

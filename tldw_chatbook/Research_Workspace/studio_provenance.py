@@ -31,6 +31,9 @@ def generation_metadata(
                 "model": request.processing_route.model,
                 "status": "complete",
                 "supersedes_owner_id": supersedes.owner_id if supersedes else None,
+                "research_run_ref": request.research_run_ref.provenance()
+                if request.research_run_ref
+                else None,
             }
         },
         "output",

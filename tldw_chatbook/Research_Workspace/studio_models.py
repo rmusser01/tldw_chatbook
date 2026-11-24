@@ -24,6 +24,7 @@ from .contracts import (
     RetrievalMode,
     _safe_identity,
 )
+from .deep_research_context import ResearchWorkspaceRunRef
 
 
 class ResearchOutputKind(StrEnum):
@@ -131,6 +132,7 @@ class ResearchStudioRequest:
     generation: ResearchGenerationConfig
     processing_route: ProcessingRoute
     context_revision: int
+    research_run_ref: ResearchWorkspaceRunRef | None = None
 
     def __post_init__(self) -> None:
         validate_studio_sources(self.workspace, self.source_snapshot)
@@ -139,6 +141,14 @@ class ResearchStudioRequest:
         )
         kind = ResearchOutputKind(self.output_kind)
         object.__setattr__(self, "output_kind", kind)
+        if self.research_run_ref is not None and (
+            not isinstance(self.research_run_ref, ResearchWorkspaceRunRef)
+            or self.research_run_ref.origin != self.workspace
+            or kind is not ResearchOutputKind.REPORT
+        ):
+            raise ValueError(
+                "A Research run can only draft a Report in its origin workspace"
+            )
         if not isinstance(self.generation, ResearchGenerationConfig):
             raise TypeError("Studio generation options must be validated")
         if (

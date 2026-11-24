@@ -2459,10 +2459,14 @@ class ServiceWiringMixin(
             )
             self.local_research_service = None
         try:
-            self.server_research_service = ServerResearchService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
-            )
+            if (provider := getattr(self, "server_context_provider", None)) is not None:
+                self.server_research_service = ServerResearchService.from_server_context_provider(
+                    provider, policy_enforcer=self.service_policy_enforcer
+                )
+            else:
+                self.server_research_service = ServerResearchService.from_config(
+                    self.app_config, policy_enforcer=self.service_policy_enforcer
+                )
         except ValueError:
             self.server_research_service = ServerResearchService(
                 client=None,

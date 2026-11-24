@@ -259,6 +259,28 @@ class ServerStudioAdapter:
         )
         return str(uuid5(NAMESPACE_URL, "tldw:research-studio:" + identity))
 
+    async def get_imported_report(
+        self, request: ResearchStudioRequest
+    ) -> WorkspaceOutputRef | None:
+        if request.research_run_ref is None:
+            raise ValueError("Choose a verified Research run to import")
+        ref = request.workspace
+        client, service = self._connection(ref)
+        owner_id = self._artifact_id(request)
+        for row in await self._records(ref, client, service):
+            if row.get("id") == owner_id:
+                metadata = self._metadata(row)
+                if (
+                    not metadata
+                    or metadata["research_generation"].get("research_run_ref")
+                    != request.research_run_ref.provenance()
+                ):
+                    raise ValueError(
+                        "The import already belongs to a different Research run"
+                    )
+                return self._reference(ref, row, metadata)
+        return None
+
     async def edit_output(self, output: WorkspaceOutputRef, body: str) -> None:
         if not body.strip() or len(body.encode("utf-8")) > MAX_ANSWER_BYTES:
             raise ValueError("Enter a non-empty output within the size limit")

@@ -120,6 +120,7 @@ class ResearchRunResponse(BaseModel):
     latest_checkpoint_id: str | None = None
     completed_at: str | None = None
     chat_id: str | None = None
+    workspace_launch: dict[str, Any] | None = None
 
 
 class ResearchRunListItemResponse(ResearchRunResponse):

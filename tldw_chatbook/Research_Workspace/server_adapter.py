@@ -352,6 +352,13 @@ class ServerResearchWorkspaceAdapter:
         """Resolve the authenticated client for an exact Copy authority."""
         return self._chat_client(ref)
 
+    async def deep_research_available(self, ref: QualifiedWorkspaceRef) -> bool:
+        from ..tldw_api.workspace_research_runs import WorkspaceResearchRunsClient
+
+        context = self._context_for_ref(ref)
+        client = WorkspaceResearchRunsClient(self._chat_client(ref), ref.workspace_id, ref.principal_id)
+        return await self._server_call(client.supported(), context=context)
+
     def new_copy_workspace(self) -> QualifiedWorkspaceRef:
         """Mint a destination without publishing a workspace to the server."""
         from uuid import uuid4
@@ -525,6 +532,19 @@ class ServerResearchWorkspaceAdapter:
             self._require_studio(output_ref.workspace).owner.resolve_output(output_ref),
             context=context,
         )
+
+    async def get_imported_report(self, request):
+        context = self._context_for_ref(request.workspace)
+        owner = self._require_studio(request.workspace).owner
+        return await self._server_call(owner.get_imported_report(request), context=context)
+
+    async def save_imported_report(self, request, report, *, supersedes=None):
+        if request.research_run_ref is None:
+            raise ValueError("Choose a verified Research run to import")
+        context = self._context_for_ref(request.workspace)
+        require_capability(self._capabilities_for_context(context), "update")
+        owner = self._require_studio(request.workspace).owner
+        return await self._server_call(owner.save(request, report, supersedes=supersedes), context=context)
 
     async def edit_output(self, output_ref, body: str) -> None:
         context = self._context_for_ref(output_ref.workspace)

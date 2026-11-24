@@ -435,6 +435,14 @@ class LocalResearchWorkspaceAdapter:
     async def resolve_output(self, output_ref: WorkspaceOutputRef):
         return await self._require_studio(output_ref.workspace).owner.resolve_output(output_ref)
 
+    async def get_imported_report(self, request: ResearchStudioRequest):
+        return await self._require_studio(request.workspace).owner.get_imported_report(request)
+
+    async def save_imported_report(self, request: ResearchStudioRequest, report, *, supersedes=None):
+        if request.research_run_ref is None:
+            raise ValueError("Choose a verified Research run to import")
+        return await self._require_studio(request.workspace).owner.save(request, report, supersedes=supersedes)
+
     async def generate_output(self, request: ResearchStudioRequest, on_chunk, cancel_event, *, replace_output=None, supersedes=None):
         from .studio_mapping import PRIMARY_OUTPUT_MAPPINGS
 

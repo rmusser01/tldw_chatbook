@@ -261,11 +261,14 @@ class ResearchWorkspaceScreen(BaseAppScreen):
 
     def on_mount(self) -> None:
         """Derive initial layout after every compose-once child is mounted."""
+        from ..Research_Workspace_Modules.deep_research_actions import start_research_return
+
         self._apply_pane_layout(max(1, self.size.width))
         self.query_one(
             "#research-workspace-header", ResearchHeaderRegion
         ).sync_data_source(self.controller.selected_data_source)
-        self._start_catalog_refresh()
+        if not start_research_return(self):
+            self._start_catalog_refresh()
 
     def on_resize(self, event: Resize) -> None:
         """Patch effective visibility and focus from the pure width reducer."""
@@ -1387,6 +1390,22 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             group="research-studio-owner-action",
             exit_on_error=False,
         )
+
+    @on(ResearchStudioRegion.LaunchResearch)
+    def launch_deep_research(self, message: ResearchStudioRegion.LaunchResearch) -> None:
+        from ..Research_Workspace_Modules.deep_research_actions import show_research_launch
+
+        if self.controller.selected_ref is None or self._workspace_action_open:
+            return
+        self._workspace_action_open = True
+
+        async def launch() -> None:
+            try:
+                await show_research_launch(self, message.row)
+            finally:
+                self._workspace_action_open = False
+
+        self.run_worker(launch(), group="research-launch", exit_on_error=False)
 
     async def _perform_studio_owner_action(
         self, message: ResearchStudioRegion.OwnerAction

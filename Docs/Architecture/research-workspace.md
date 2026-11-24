@@ -130,6 +130,20 @@ the Server migration is finalized and Copy reports completion.
 
 The Runs screen creates a run through the scope service; the local engine executes in an exclusive worker group per run, persisting progress/events/artifacts and a budget ledger, honoring pause/cancel **between phases**, and on completion optionally inserting an assistant message via the chat handoff (which never raises — failure degrades to a notification). Outputs land in the research DB and as chat messages — not as Library media or workspace quick notes. The server side declares session CRUD and filtered run lists unsupported; see the gotcha below about run deletion.
 
+Studio can launch Deep Research from the current selected sources or a saved
+text output. The launch retains the origin, selected source versions, normalized
+question, and initiating references. Local Runs stores that context on the
+native run. Server uses `research-workspace-runs.v1`, which commits the origin,
+native run, and first phase intent together. Device overlay v4 retains recent
+launches for navigation. Workspace launches leave Chat completion delivery unset.
+
+The Runs detail can return to the verified Workspace. Chatbook compares the
+native backend, run ID, launch identity, profile and account, and the saved
+bundle before showing the Report preview. The preview writes a draft through
+the same Studio owner after confirmation. Reopening a saved import resolves the
+original owner. **Create new version** saves a separate Report with lineage to
+the original. Older Server versions leave the launch control unavailable.
+
 **Load Bundle** selects the stored report first when one exists. Both that
 read and **Load Artifact** use the scope's keyword-only `mode`, `run_id`, and
 `artifact_name` contract. The scope dispatches Local reads to its executor.

@@ -236,6 +236,10 @@ class ResearchChatRegion(Vertical):
     def _status(self, text: str) -> None:
         self.query_one("#research-chat-status", Static).update(text)
 
+    @property
+    def conversation_id(self) -> str:
+        return self._session
+
     def _stream(self, text: str) -> None:
         stream = self.query_one("#research-chat-stream", Static)
         stream.update(text)

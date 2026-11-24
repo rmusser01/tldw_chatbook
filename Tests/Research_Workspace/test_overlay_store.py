@@ -110,13 +110,14 @@ def test_round_trip_persists_only_presentation_preferences_and_qualified_identit
         "chat_conversation_id",
         "chat_egress_consents",
         "chat_append_receipts",
+        "deep_research_launches",
     }
     serialized = json.dumps(payload).lower()
     for forbidden in ("forced_closed", "source_body", "chat_body", "path", "token"):
         assert forbidden not in serialized
 
 
-@pytest.mark.parametrize("schema_version", [1, 2])
+@pytest.mark.parametrize("schema_version", [1, 2, 3])
 def test_older_overlay_migrates_without_inventing_source_or_chat_state(
     tmp_path,
     schema_version,
@@ -124,8 +125,15 @@ def test_older_overlay_migrates_without_inventing_source_or_chat_state(
     path = tmp_path / "research" / "overlay.json"
     ref = server_ref("workspace-server-1")
     record = raw_record(ref)
-    if schema_version == 2:
+    if schema_version >= 2:
         record.update(source_folders=[], source_annotations=[])
+    if schema_version == 3:
+        record.update(
+            chat_draft="",
+            chat_conversation_id="",
+            chat_egress_consents=[],
+            chat_append_receipts=[],
+        )
     write_payload(path, {"schema_version": schema_version, "records": [record]})
 
     store = ResearchPresentationOverlayStore(path)
@@ -142,13 +150,14 @@ def test_older_overlay_migrates_without_inventing_source_or_chat_state(
         timestamp=LATER,
     )
     migrated = json.loads(path.read_text(encoding="utf-8"))
-    assert migrated["schema_version"] == 3
+    assert migrated["schema_version"] == 4
     assert migrated["records"][0]["source_folders"] == []
     assert migrated["records"][0]["source_annotations"] == []
     assert migrated["records"][0]["chat_draft"] == ""
     assert migrated["records"][0]["chat_conversation_id"] == ""
     assert migrated["records"][0]["chat_egress_consents"] == []
     assert migrated["records"][0]["chat_append_receipts"] == []
+    assert migrated["records"][0]["deep_research_launches"] == {}
 
 
 def test_v2_source_organization_is_qualified_bounded_and_private(tmp_path) -> None:

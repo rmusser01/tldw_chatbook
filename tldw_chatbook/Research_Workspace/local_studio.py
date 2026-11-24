@@ -6,6 +6,7 @@ import asyncio
 import json
 from collections.abc import Mapping
 from dataclasses import replace
+from hashlib import sha256
 
 from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
 from tldw_chatbook.Chatbooks.local_chatbook_service import ChatbookRevisionConflict
@@ -146,6 +147,35 @@ class LocalStudioAdapter:
         return await self._read_owner(
             self._owner(output.workspace, output.output_kind), output.owner_id
         )
+
+    async def get_imported_report(
+        self, request: ResearchStudioRequest
+    ) -> WorkspaceOutputRef | None:
+        if request.research_run_ref is None:
+            raise ValueError("Choose a verified Research run to import")
+        ref = request.workspace
+        rows, count = await self._off_loop(
+            self.registry.list_workspace_output_memberships,
+            ref.workspace_id,
+            limit=1,
+            operation_id=request.operation_id,
+        )
+        if not count:
+            return None
+        link = rows[0]
+        details = link.metadata["research_generation"]
+        owner = self._owner(ref, request.output_kind)
+        if (
+            count != 1
+            or details.get("research_run_ref") != request.research_run_ref.provenance()
+        ):
+            raise StudioOutputConflict(
+                "The import already belongs to a different Research run"
+            )
+        record = await self._read_owner(owner, link.item_id)
+        if record is None:
+            raise StudioOutputConflict("The imported Report is missing from its owner")
+        return self._as_ref(ref, link.item_id, details, owner, record)
 
     async def list_outputs(
         self, ref: QualifiedWorkspaceRef, *, limit=20, offset=0
@@ -365,8 +395,13 @@ class LocalStudioAdapter:
 
     async def _create_owner(self, request, generated, owner):
         if owner.owner_kind is StudioOwnerKind.LOCAL_CHATBOOK and self.chatbooks:
+            options = {}
+            if request.research_run_ref:
+                key = f"research-report:{request.workspace.workspace_id}:{request.operation_id}"
+                options["copy_operation_key"] = sha256(key.encode("utf-8")).hexdigest()
             return await self.chatbooks.create_chatbook(
-                **self._text_payload(request, generated)
+                **self._text_payload(request, generated),
+                **options,
             )
         if owner.owner_kind is StudioOwnerKind.LOCAL_STUDY_DECK and self.study:
             return await self._save_study_items(
