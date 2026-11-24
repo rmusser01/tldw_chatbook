@@ -673,11 +673,12 @@ def chat_call_impl(
                 await _consume_body()
 
     if not is_subagent:
-        # TASK-42472: the run loop re-asks a failed call (in-place retry or
-        # provider fallback) into this same message, so first discard what
-        # the failed call streamed; otherwise the reply reads "The capital of
-        # FrThe capital of France...". The point stays set until this call
-        # returns, so a call that fails anywhere is discarded by the next.
+        # TASK-42472: after a failed call the run loop asks again into this
+        # same message (an in-place retry, a provider fallback or the budget
+        # wrap-up), so first discard what the failed call streamed; otherwise
+        # the reply reads "The capital of FrThe capital of France...". The
+        # point stays set until this call returns, so a call that fails
+        # anywhere is discarded by the next.
         rollback = getattr(self, "_failed_call_rollback", None)
         if rollback is not None:
             _discard_failed_call(self, rollback)

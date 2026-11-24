@@ -781,3 +781,108 @@ async def test_a_retry_after_a_mid_stream_failure_replaces_the_partial_reply(
             # successful retry, and only the last attempt's when they run out.
             reasoning = [block.text for block in getattr(reply.thinking, "blocks", ())]
             assert reasoning == ([] if failures == 1 else [_FAILED_REASONING])
+
+
+class _ScriptedLlamaStream(httpx.AsyncByteStream):
+    """Yield SSE events in order; an exception in the script is raised."""
+
+    def __init__(self, events, after_first=None):
+        self._events, self._after_first = events, after_first
+
+    async def __aiter__(self):
+        for index, event in enumerate(self._events):
+            if isinstance(event, Exception):
+                raise event
+            yield f"data: {json.dumps(event)}\n\n".encode()
+            if index == 0 and self._after_first is not None:
+                self._after_first()
+
+
+def _reasoning(text):
+    return {"choices": [{"index": 0, "delta": {"reasoning_content": text}}]}
+
+
+def _content(text):
+    return {"choices": [{"index": 0, "delta": {"content": text}}]}
+
+
+def test_a_retry_keeps_the_text_and_thinking_held_before_the_failed_call():
+    """TASK-42472: the rollback restores the message as the failed call found it.
+
+    A redirect-cut turn leaves its text (plus a separator) and its reasoning
+    in the message. The next call breaks mid-stream and is retried: the cut
+    turn's text and reasoning must survive; only the failed call's go.
+    """
+    import asyncio
+    import threading
+
+    from tldw_chatbook.Chat.console_agent_bridge import _StreamingModelAdapter
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    cut = threading.Event()
+    calls = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        script = {
+            1: [
+                _reasoning("Cut turn reasoning"),
+                _content("Looking at the JSON parser for the bug first. "),
+                _content("This text arrives after the redirect."),
+            ],
+            2: [
+                _reasoning(" and the failed call's"),
+                _content(_PARTIAL),
+                httpx.RemoteProtocolError("fixture: mid-body"),
+            ],
+        }.get(len(calls), [_content("Fixture reply")])
+        stream = _ScriptedLlamaStream(script, cut.set if len(calls) == 1 else None)
+        return httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, stream=stream
+        )
+
+    loop = asyncio.new_event_loop()
+    threading.Thread(target=loop.run_forever, daemon=True).start()
+    client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    adapter = _StreamingModelAdapter(
+        store=store,
+        provider_gateway=ConsoleProviderGateway(http_client=client),
+        resolution=ConsoleProviderResolution(
+            ready=True,
+            provider="llama_cpp",
+            execution_key="llama_cpp",
+            model="qwen3.7-27b",
+            base_url="http://localhost:8080",
+            streaming=True,
+            local_structured_thinking=True,
+        ),
+        assistant_message_id=assistant.id,
+        should_cancel=lambda: False,
+        loop=loop,
+        native_tools=False,
+    )
+    payload = [
+        {"role": "system", "content": "you are the primary console agent"},
+        {"role": "user", "content": "analyze"},
+    ]
+    try:
+        adapter._primary_stream_abort = cut.is_set
+        adapter.chat_call(messages_payload=payload)
+        held = store.get_message(assistant.id)
+        adapter._primary_stream_abort = lambda: False
+        with pytest.raises(httpx.RemoteProtocolError):
+            adapter.chat_call(messages_payload=payload)
+        adapter.chat_call(messages_payload=payload)
+        final = store.get_message(assistant.id)
+    finally:
+        asyncio.run_coroutine_threadsafe(client.aclose(), loop).result(10)
+        loop.call_soon_threadsafe(loop.stop)
+    assert len(calls) == 3
+    assert held.content.endswith("\n\n") and held.content.strip()
+    assert final.content == held.content + "Fixture reply"
+    assert [block.text for block in final.thinking.blocks] == ["Cut turn reasoning"]

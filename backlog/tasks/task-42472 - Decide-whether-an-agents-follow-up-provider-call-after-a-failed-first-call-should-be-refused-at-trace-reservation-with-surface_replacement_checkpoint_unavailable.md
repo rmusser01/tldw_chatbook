@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-23 06:38
-updated_date: 2026-11-24 05:28
+updated_date: 2026-11-24 05:39
 labels:
 - follow-up
 - console
@@ -103,7 +103,7 @@ Found during round 22 of the follow-up burn-down (2026-11-23), by TASK-42412. Ch
 - *User Guide.* No page documents the agent's in-place model retry (`agent_max_model_retries` appears nowhere under `Docs/User_Guide`), so none changed.
 
 **AC#7: a retry after a mid-stream failure no longer garbles the reply.**
-- *Cause.* The Console streaming adapter (`Chat/console_streaming_request.py`) writes each visible chunk into the assistant message as it arrives (`append_stream_chunk`), and discards streamed prose only when a call succeeds and turns out to be a tool call. When a stream broke mid-reply, the partial stayed. The in-place retry, or a fallback, then streamed into the same message, so the reply read `<partial><retry text>`.
+- *Cause.* The Console streaming adapter (`Chat/console_streaming_request.py`) writes each visible chunk into the assistant message as it arrives (`append_stream_chunk`), and discards streamed prose only when a call succeeds and turns out to be a tool call. When a stream broke mid-reply, the partial stayed. The in-place retry, a fallback or the budget wrap-up then streamed into the same message, so the reply read `<partial><retry text>`.
 - *Where it happens.* For llama.cpp, since c24acf71683aa2f3f6a0a9c459f7194b284a7f3b (`RemoteProtocolError`, `ReadTimeout`). On dev already, for the hosted providers whose broken stream surfaces as a retryable `ChatProviderError(502)`. A temporary probe (deleted) checked 14 providers through the real gateway and `chat_api_call`, with a `requests` transport that broke mid-body:
   - OpenAI, Groq, Mistral, OpenRouter, Moonshot, Fireworks, Together, Hugging Face: content, then 502, so the call is retried.
   - DeepSeek: status `None`. Its hosted engine turns the broken read into `HostedChatProtocolError`, so the call is not retried.
@@ -111,7 +111,7 @@ Found during round 22 of the follow-up burn-down (2026-11-23), by TASK-42412. Ch
   - Cohere: no failure surfaced.
 - *Fix,* where the partial was written.
   - Before each primary (non-subagent) model call, the adapter records a rollback point: the message's text and `ThinkingCapture.checkpoint()`. It clears the point only when the call returns.
-  - If the call raised, the next primary call on that message restores the point first. Only an in-place retry or a fallback follows a failed call in a run.
+  - If the call raised, the next primary call on that message restores the point first. After a failed call, a run asks again only with an in-place retry, a provider fallback, or the budget wrap-up (`_phase_turn_start` calls `active_call_model` when the budget is spent; `Agents/agent_runtime.py`).
   - Restoring means: `reset_stream_content` (clears the content and the store's per-message chunk buffers); re-append the text the message held before the failed call (a prefill, or a redirect-cut turn); and `ThinkingCapture.restore()`, which drops the failed call's reasoning and republishes it through `replace_message_thinking` when it changed. Block ids keep counting, so a discarded block's id is never reused.
   - A message missing from the store arms nothing.
   - A run that ends after the failure keeps the last attempt's partial and its failure row, unchanged from a run that fails without retrying. An earlier attempt's text never reaches the database.
@@ -120,6 +120,18 @@ Found during round 22 of the follow-up burn-down (2026-11-23), by TASK-42412. Ch
   - Red before the fix: retried read `'The caFixture reply'` for both providers; exhausted read `'The caThe caThe ca'` for both. (The stream gate holds back a short tail, so the visible partial is `The ca`.)
   - With the text reset but no thinking rollback: llama.cpp retried kept the failed call's reasoning block (`['Reasoning t...'] == []`), and exhausted repeated it.
   - Green: 4 passed. The saved database row equals the store's message in every case.
+  - Held text (third review). `test_a_retry_keeps_the_text_and_thinking_held_before_the_failed_call` drives the streaming adapter directly through three llama.cpp calls:
+    - a turn cut by a redirect, which leaves its text, a separator and its reasoning in the message;
+    - a call that breaks mid-stream;
+    - the retry.
+
+    The final message is the cut text plus the retry's reply, and its thinking is the cut turn's block alone. Each temporary edit below was reverted, and each is red:
+    - Deleting the re-append of the held text: `assert 'Fixture reply' == 'Looking at t...Fixture reply'`.
+    - Skipping the thinking rollback: `"Cut turn reasoning and the failed call's" != 'Cut turn reasoning'`.
+  - `ThinkingCapture.checkpoint()`/`restore()` unit tests, in `Tests/Chat/test_console_thinking_capture.py`:
+    - A block made after a restore gets a new id. It is red, with a colliding id, if `restore` resets the block sequence.
+    - A restore brings back the shorter text of a block a delta had grown, and the next delta appends to that text.
+    - `restore` after `settle` raises.
 - *Fallback evidence* (temporary probe, deleted). Capture Off; a deepseek stream gives a partial, then 429, three times; then it falls back to groq. Before the fix the reply read `'The capital of FThe capital of FThe capital of Frecovered'`; after, `'recovered'`.
 - *User Guide.* No page documents the agent's in-place retry or fallback, so none changed.
 
