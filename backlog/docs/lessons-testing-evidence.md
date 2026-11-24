@@ -26528,3 +26528,22 @@ to launch/grant/Stop, and enforce the declared receipt schema before aggregating
 Keep a deliberate early-exit control and mutate numerical receipts without
 replaying hardware. A valid recording and a grader resistant to false passes
 are separate pieces of evidence.
+
+## Follow provider work beyond the managed response (TASK-41179, 2026-11-24)
+
+**Incident.** The article preparation selection passed 218 cases, but review
+traced two boundaries its fake response did not exercise: audio.cpp collected
+and copied a response before the article budget saw it, and the legacy host
+could wait for its operation lock after the outbound authorization had passed.
+Source retirement in that wait could still precede a real provider call.
+
+**What to do.** Trace allocation and submission through the actual producer and
+lazy host, including work before a managed response is returned. Put race
+barriers at the real lock/start and commit boundaries. A bounded consumer and
+an admission callback do not establish a bounded or still-authorized producer.
+
+The subsequent real OpenAI smoke also exposed a WAV fixture gap: both streamed
+length fields were `0xffffffff`, although the received mono PCM payload was
+finite and frame-aligned. Finite-header fixtures had hidden that rejection.
+Record numeric header sizes and physical frame bounds, preserve truncated and
+partial-frame negative controls, and verify the uninstrumented provider path.

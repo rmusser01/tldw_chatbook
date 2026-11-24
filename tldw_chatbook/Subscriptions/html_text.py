@@ -246,11 +246,12 @@ class _DisplayTextExtractor(HTMLParser):
     cannot see the destination cannot judge it.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, speech: bool = False) -> None:
         # `convert_charrefs=True` is the default and is what unescapes `&amp;`
         # and friends, exactly once, inside `handle_data`. Doing it ourselves
         # afterwards would double-unescape (`&amp;lt;` -> `<`).
         super().__init__(convert_charrefs=True)
+        self._speech = speech
         self._parts: list[str] = []
         #: Depth inside a `_DROP_CONTENT` element. An int, not a bool: nested
         #: `<svg><style>` must not be re-enabled by the inner element's end tag.
@@ -266,6 +267,8 @@ class _DisplayTextExtractor(HTMLParser):
             self._drop_depth += 1
             return
         if self._drop_depth:
+            return
+        if self._speech and tag in {"a", "img"}:
             return
         if tag == "a":
             href = ""
@@ -288,7 +291,8 @@ class _DisplayTextExtractor(HTMLParser):
             return
         if tag == "li":
             self._parts.append("\n")
-            self._parts.append("- ")
+            if not self._speech:
+                self._parts.append("- ")
             return
         if tag in _BLOCK_TAGS:
             self._parts.append("\n\n" if tag in _PARAGRAPH_TAGS else "\n")

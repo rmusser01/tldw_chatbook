@@ -609,6 +609,80 @@ These choices implement the accepted storage boundary. Provider synthesis,
 transport orchestration and controls remain later deliveries; no new runtime
 dependency, alternate manifest or independent backup owner is introduced.
 
+## Speech preparation and synthesis contract (2026-11-24)
+
+TASK-41179 implements generation on the accepted storage boundary, before the
+transport service or listening UI. Its synchronous conversion runs off-loop,
+reuses the existing HTML and Markdown parsers, and has a speech projection that
+keeps visible labels and code prose while omitting targets, images and scripts.
+The display projection keeps its existing behavior. Bound raw and prepared UTF-8
+text before admission; never apply the briefing prompt's 800-character cap.
+
+Frozen selection uses existing effective TTS admission. Persist stable selected
+profile UUID/revision and a canonical nonsecret selection digest, plus reference
+UUID/canonical-WAV digest and transcript/recipe digests where applicable. Keep
+transcript bodies, paths, credentials, requests and materializations out of the
+snapshot. Reacquire current repository and provider generations at request time;
+they are not durable identity. Resolve the saved UUID even after the default
+changes. Preserve the profile layer's provider/model ownership so clone authority
+is not accidentally replaced by an explicit-provider request.
+Existing reference materialization currently requires POSIX secure file/lock
+primitives. This task does not qualify a new Windows clone path. First-delivery
+Windows generation can use reconstructible named voices; a reference-backed
+request may refuse under that existing platform policy before submission, with
+no fallback. Stable reference identities remain representable, and already
+retained authorized audio still requires no new materialization. Provider unit
+tests on another OS do not qualify article playback there.
+
+Keep existing v4 JSON and fingerprints unchanged for already-valid voices.
+Extend the inert model for native null voice identifiers and the finite safe
+scalar options required by an admitted effective selection, including the
+ElevenLabs speaker-boost boolean. Use provider-specific primitive bounds, never
+an arbitrary settings bag. A null server-default names a mode, not a guaranteed
+voice: resolve a concrete identity when available, or pause an unreconstructible
+pending selection. A typed bound clone may legitimately have no named voice.
+Materialize implicit backend knobs only through their validated nonsecret
+projection. Refuse ambiguous defaults, aliases or loose local references without
+stable authorized identity instead of silently substituting current settings.
+
+Verify retained source-bound audio before consulting provider catalogs, profiles,
+credentials or references. Valid retained audio needs no synthesis permission.
+Pending work revalidates its frozen dependencies before each request and again
+before publication. Windows controlled-output and conversion readiness, text and
+128-chunk limits are checked before the first synthesis submission.
+The last source check must carry authority through the provider-start handoff:
+source deletion and start need one observable ordering. Finishing a database
+read in a worker and checking only profile state after resuming the event loop
+does not provide that ordering. A deletion that wins forbids submission; a start
+that wins must remain observable to the source mutation until handoff completes.
+
+The first preparation delivery refuses new article requests through audio.cpp's
+whole-response producer, whose internal collection and copy cannot enforce the
+remaining article budget. It also refuses Kokoro generation while its implicit
+engine selection and initialization fallback cannot preserve frozen identity,
+and non-unit ElevenLabs speed while the backend does not apply that setting.
+These refusals happen before backend startup or submission; verified retained
+audio remains reusable. Existing TTS consumers keep their existing routes. A
+later route extension must demonstrate bounded production and exact applied
+settings before article synthesis can use it.
+
+Reuse effective native/legacy TTS requests and the existing text splitter. Add
+only the bounded collection/conversion seam needed for PCM16 stereo 48 kHz.
+Account for accumulated output, current encoded/decoded chunks, conversion and
+join copies, the final WAV header and the single 12,000-frame zero tail within
+the existing 64 MiB retained-buffer bound. Reserve before retaining or allocating
+the next segment; an eager cast concatenation followed by a final-size check is
+insufficient. No partial container can become playable.
+
+One retained operation owns request, stream, response close, off-loop conversion
+and finalization. Revocation stops new requests and publication immediately;
+cancelled observers cannot release its physical slot or start a second request
+while work remains. Cancellation and final attachment use the same issued claim
+and mutation fence, rather than only checking a token before dispatching an
+unfenced worker. Retain the original profile/root through cleanup. This task
+never starts playback, creates a second manifest or introduces another provider
+consent/credential system.
+
 ## Alternatives
 
 - A profile-local JSON queue manifest avoids SQL changes but splits atomic state,

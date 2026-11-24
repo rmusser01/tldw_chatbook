@@ -154,8 +154,9 @@ The final whole-task review and one scoped fix re-review are clear. The last
 178-case selection passes; after rebasing both drafts onto dev `6fa2635c14`,
 199 affected checks pass with three platform skips. All 106 reviewed source/test/
 tool blobs and all public numerical receipts remain unchanged by that rebase.
-TASK-41177 is complete in draft PR #3742. TASK-41178 is complete on a
-separate child branch; TASK-41179 and later have not begun.
+TASK-41177 is complete in draft PR #3742. TASK-41178 is complete in draft
+PR #3766. TASK-41179 is in progress on its separate child branch; later tasks
+have not begun.
 
 ### Task 3: Persist listening state and source-owned assets safely (TASK-41178)
 
@@ -211,18 +212,47 @@ was added by Task 3.
 
 ### Task 4: Prepare bounded article speech and frozen-voice audio (TASK-41179)
 
-**Prerequisite:** TASK-41178. **Files:** New `Subscriptions/article_speech.py`, `article_listening_audio.py`; small extraction from `briefing_audio.py` only where reuse requires it; existing HTML and TTS request/admission helpers. Tests: new `Tests/Subscriptions/test_article_speech.py`, `test_article_listening_audio.py`; existing briefing synthesis regressions.
+**Prerequisite:** TASK-41178. **Files:** New `Subscriptions/article_speech.py`, `article_listening_audio.py`; small extraction from `briefing_audio.py` only where reuse requires it; existing HTML and TTS request/admission helpers, plus bounded generation-failure diagnostics in the existing ElevenLabs/Kokoro backends. Tests: new `Tests/Subscriptions/test_article_speech.py`, `test_article_listening_audio.py`; existing briefing synthesis and affected backend regressions.
 
 **Interfaces:**
-- `prepare_article_speech(body: str, *, content_format: str) -> PreparedArticleSpeech` carries normalized text, UTF-8 hash and converter version. Admission limits: 256 KiB UTF-8 input per entry, 2 MiB total snapshot text per queue, 256 entries, 128 TTS chunks per article. Reject whole over-limit candidates; keep unavailable placeholders for ordinary missing bodies.
-- `freeze_listening_voice(resolution: CharacterTTSRequestResolution | VoiceSelection) -> FrozenListeningVoice` retains allowlisted nonsecret settings and dependency identity; `resolve_listening_voice(snapshot: FrozenListeningVoice) -> VoiceSelection` revalidates via existing admission. Never reconstruct authority from a saved reference pathname.
-- `synthesize_article(entry: ListeningEntry, *, generation: int) -> GeneratedArticleAudio` uses the store/assets contract. At most one listening request in flight; enforce existing 64 MiB `MAX_BUFFERED_AUDIO_BYTES` across encoded/decoded/stitching buffers, counting retained copies. No partial artifact is playable.
+- `prepare_article_speech(body: str, *, content_format: str, is_excerpt: bool = False) -> PreparedArticleSpeech` carries normalized text, UTF-8 hash, converter version and the caller's saved-source excerpt classification. Admission limits: 256 KiB UTF-8 input and prepared text per entry, 2 MiB total snapshot text per queue, 256 entries, 128 TTS chunks per article. Reject whole over-limit candidates; keep unavailable placeholders for ordinary missing bodies.
+- Async `freeze_listening_voice` and `resolve_listening_voice` use the existing effective/default-profile service and the store's inert `FrozenVoice`, with explicit service/profile inputs. Retain allowlisted nonsecret settings and stable dependency identity; resolution returns existing ephemeral admission arguments, including typed clone authority. Never reconstruct authority from a saved reference pathname or silently use a changed default.
+- A constructible profile-bound `ArticleListeningAudio` preparation owner obtains the authoritative entry by ID/revision, checks retained audio before provider work, and uses the store's exact issued `AudioReservation` and asset publisher. Its async preparation returns `ArticleAudio`; cancellation revokes the pending operation while physical work remains retained. At most one listening request is in flight. Enforce the existing 64 MiB `MAX_BUFFERED_AUDIO_BYTES` across encoded/decoded/stitching buffers, counting retained copies; return a complete `GeneratedArticleAudio` only after qualified normalization and padding. No partial artifact is playable.
 
-- [ ] **Step 1: Write failing tests.** Cover text/HTML/Markdown including scripts/styles, link labels versus targets, images, malformed markup/control codes, code prose, empty conversion, exact boundary and over-limit input/queue/chunk counts. Assert full long-body coverage without 800-character truncation. Change defaults/profile/reference after enqueue and restart; verify frozen valid voice or explicit pause, no silent substitution. Retained valid audio spends zero provider calls; cancellation/deletion cannot republish or autoplay; aggregate limit stops before retaining the next chunk.
-- [ ] **Step 2: Observe RED.** Run the two new test files with real WAV fixtures and fake provider transport only; expect missing preparation/synthesis behavior.
-- [ ] **Step 3: Implement minimal preparation and orchestration.** Reuse `Subscriptions/html_text.py`, existing Markdown parser, exact/native and legacy TTS admission/chunking/WAV concatenation. Normalize provider audio to PCM16 stereo 48 kHz and append the qualified tail once before publication; bound retained conversion/stitching copies and test mono/other-rate input. Check required optional dependencies and Windows controlled-playback capability before the first request. Record converter version and original item authority; do work off-loop. No speculative prefetch.
-- [ ] **Step 4: Observe GREEN.** Run new tests and `Tests/Subscriptions/test_briefing_audio_synthesis.py`, `Tests/TTS/test_audio_limits.py` plus affected resolver/admission nodes. Verify one configured provider manually with nonprivate synthetic prose; no speech text, reference paths or raw provider errors enter diagnostics. Run Ruff.
-- [ ] **Step 5: Review and commit** `feat: synthesize bounded saved article speech` with request-count and limit evidence.
+**Implementation preflight, 2026-11-24:** Parent #3766's two CI test corrections
+are independently reviewed and published at `8ce8a67efa`. Existing briefing
+synthesis/audio-limit tests pass 29 cases. The dated ADR367 synthesis contract
+clarifies native null voices, stable versus live dependency identity, implicit
+backend knobs, bounded assembly and cancellation. Preserve v4 catalog bytes and
+already-valid JSON/fingerprints. Reuse the HTML parser with speech-specific
+projection defaults and existing effective TTS admission; the cast helpers drop
+clone/option authority and their eager concatenator does not provide this budget.
+No transport/UI implementation is authorized by this task.
+
+**Review ruling, 2026-11-24:** First delivery pauses new article generation for
+audio.cpp whole-response collection, Kokoro's unfrozen engine/fallback, and
+non-unit ElevenLabs speed. Existing retained WAV reuse remains available. These
+routes need actual producer-budget or applied-setting evidence before they can
+be admitted; existing TTS consumers are unchanged (ADR367).
+
+- [x] **Step 1: Write failing tests.** Cover text/HTML/Markdown including scripts/styles, link labels versus targets, images, malformed markup/control codes, code prose, empty conversion, exact boundary and over-limit input/queue/chunk counts. Assert full long-body coverage without 800-character truncation. Change defaults/profile/reference after enqueue and restart; verify frozen valid voice or explicit pause, no silent substitution. Retained valid audio spends zero provider calls; cancellation/deletion cannot republish or autoplay; aggregate limit stops before retaining the next chunk.
+- [x] **Step 2: Observe RED.** Run the two new test files with real WAV fixtures and fake provider transport only; expect missing preparation/synthesis behavior.
+- [x] **Step 3: Implement minimal preparation and orchestration.** Reuse `Subscriptions/html_text.py`, existing Markdown parser, exact/native and legacy TTS admission/chunking/WAV concatenation. Normalize provider audio to PCM16 stereo 48 kHz and append the qualified tail once before publication; bound retained conversion/stitching copies and test mono/other-rate input. Check required optional dependencies and Windows controlled-playback capability before the first request. Record converter version and original item authority; do work off-loop. No speculative prefetch.
+- [x] **Step 4: Observe GREEN.** Run new tests and `Tests/Subscriptions/test_briefing_audio_synthesis.py`, `Tests/TTS/test_audio_limits.py` plus affected resolver/admission nodes. Verify one configured provider manually with nonprivate synthetic prose; no speech text, reference paths or raw provider errors enter diagnostics. Run Ruff.
+- [x] **Step 5: Review and commit** `feat: synthesize bounded saved article speech` with request-count and limit evidence.
+
+**Completed, 2026-11-24:** TASK-41179 is Done with all four criteria checked.
+Independent spec/quality review and scoped fixes approved source `80614fc183`.
+The normal guarded integration run passed 257 cases; after the final streamed-WAV
+fix, all 101 affected speech/assembly/cast/limit cases passed. Seven recovery
+checks passed separately. Changed-code static checks passed with existing legacy
+whole-file exceptions recorded in the task. Five older constructor/manager tests
+stop at configuration admission before generation; parent equivalence was not run.
+The uninstrumented configured OpenAI smoke published and reused the same generation
+and digest with no TTS service on reuse: 103,199 content frames at 48 kHz,
+12,000 tail frames, 460,840 bytes. Synthetic storage was cleaned after workers
+retired; no playback was performed. New article generation is limited to the
+supported streaming routes described above. TASK-41180 owns transport next.
 
 ### Task 5: Own the resumable session and interruption state machine (TASK-41180)
 

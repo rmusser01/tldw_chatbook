@@ -16,6 +16,7 @@ from .article_listening_lease import ListeningBusy, ListeningLease, hold_listeni
 from .article_listening_models import (
     AudioMetadata,
     AudioReservation,
+    DatabaseImage,
     EntryCandidate,
     FrozenVoice,
     ListeningAuthority,
@@ -133,6 +134,46 @@ class ArticleListeningStore:
         with self.db.artifact_read_snapshot() as c:
             return self._load(c)
 
+    def current_entry(
+        self, entry_id: str, *, expected_revision: int, authority: ListeningAuthority
+    ) -> tuple[ListeningEntry, DatabaseImage]:
+        """Return the authoritative entry and the identity of the image that supplied it."""
+        with self.db.artifact_read_snapshot() as c:
+            state = self._checked(c, expected_revision, authority)
+            row = c.execute(
+                "SELECT e.*,a.status FROM listening_entries e LEFT JOIN article_audio a "
+                "ON a.generation=e.artifact WHERE session_id=? AND entry_id=?",
+                (state["id"], _id(entry_id)),
+            ).fetchone()
+            if row is None or row["item_id"] is None:
+                raise ListeningConflict("listening_entry_unavailable")
+            return self._loaded_entry(row), self.db.listening_image
+
+    @staticmethod
+    def _loaded_entry(r):
+        voice = FrozenVoice.from_json(r["voice"]) if r["voice"] is not None else None
+        point = (
+            WavBookmark(r["bookmark_hash"], r["bookmark_rate"], r["bookmark_frame"])
+            if r["bookmark_hash"]
+            else None
+        )
+        availability = (
+            "unavailable" if r["item_id"] is None else r["status"] or "pending"
+        )
+        return ListeningEntry(
+            r["entry_id"],
+            r["item_id"],
+            r["source_id"],
+            r["title"],
+            r["text"],
+            r["converter"],
+            voice,
+            r["artifact"],
+            point,
+            availability,
+            r["unavailable_reason"],
+        )
+
     def _load(self, c):
         s = self._state(c)
         if s["transport"] == "empty":
@@ -144,30 +185,7 @@ class ArticleListeningStore:
             "ON a.generation=e.artifact WHERE session_id=? ORDER BY slot",
             (s["id"],),
         ):
-            voice = (
-                FrozenVoice.from_json(r["voice"]) if r["voice"] is not None else None
-            )
-            point = (
-                WavBookmark(r["bookmark_hash"], r["bookmark_rate"], r["bookmark_frame"])
-                if r["bookmark_hash"]
-                else None
-            )
-            availability = (
-                "unavailable" if r["item_id"] is None else r["status"] or "pending"
-            )
-            entry = ListeningEntry(
-                r["entry_id"],
-                r["item_id"],
-                r["source_id"],
-                r["title"],
-                r["text"],
-                r["converter"],
-                voice,
-                r["artifact"],
-                point,
-                availability,
-                r["unavailable_reason"],
-            )
+            entry = self._loaded_entry(r)
             if r["slot"] == -1:
                 foreground = entry
             else:
@@ -599,13 +617,27 @@ class ArticleListeningStore:
         *,
         expected_revision: int,
         lease: ListeningLease | None = None,
+        replace_missing: bool = False,
+        authorize_commit: Callable[[], None] | None = None,
     ) -> ListeningSession:
         a = self._authority()
         _int(expected_revision)
         with self.db.listening_transaction(lease=lease, profile=a.profile) as c:
             self._checked(c, expected_revision, a)
-            self._attach(c, self._entry(c, entry_id), a, generation, False)
-            return self._load(c)
+            entry = self._entry(c, entry_id)
+            if replace_missing:
+                # Regeneration permission only replaces a physically verified miss.
+                old = c.execute(
+                    "SELECT status FROM article_audio WHERE generation=?",
+                    (entry["artifact"],),
+                ).fetchone()
+                if old is None or old[0] != "missing":
+                    raise ListeningConflict("explicit_regeneration_required")
+            self._attach(c, entry, a, generation, replace_missing)
+            session = self._load(c)
+            if authorize_commit is not None:
+                authorize_commit()
+            return session
 
     def _reservation(self, c, claim):
         self._check_issued(claim)
@@ -641,6 +673,11 @@ class ArticleListeningStore:
             or self.db.listening_image != claim.image
         ):
             raise ListeningConflict("article_audio_reservation_changed")
+
+    def verify_pending_audio(self, claim: AudioReservation) -> None:
+        """Check the minted source and revision immediately before provider work."""
+        with self.db.artifact_read_snapshot() as c:
+            self._reservation(c, claim)
 
     def check_reservation(
         self, claim: AudioReservation, *, lease: ListeningLease
@@ -736,6 +773,7 @@ class ArticleListeningStore:
         *,
         lease: ListeningLease | None = None,
         custody_witness: str | None = None,
+        authorize_commit: Callable[[], None] | None = None,
     ) -> ListeningSession:
         """Commit metadata for the asset owner's validated, published immutable generation."""
         a = self._authority(reservation.authority)
@@ -760,7 +798,10 @@ class ArticleListeningStore:
             if changed != 1:
                 raise ListeningConflict("article_audio_reservation_changed")
             self._attach(c, entry, a, reservation.generation, regenerate)
-            return self._load(c)
+            session = self._load(c)
+            if authorize_commit is not None:
+                authorize_commit()
+            return session
 
     def record_audio_use(self, generation: int, *, lease: ListeningLease) -> None:
         """Refresh retention after a verified user read under the same lease."""
@@ -775,10 +816,17 @@ class ArticleListeningStore:
                 raise ListeningConflict("article_audio_inventory_changed")
 
     def mark_audio_missing(
-        self, generation: int, *, lease: ListeningLease | None = None
-    ) -> None:
+        self,
+        generation: int,
+        *,
+        lease: ListeningLease | None = None,
+        expected_revision: int | None = None,
+    ) -> int | None:
+        """Mark one damaged receipt and return the guarded session's resulting revision."""
         a = self._authority()
         with self.db.listening_transaction(lease=lease, profile=a.profile) as c:
+            if expected_revision is not None:
+                self._checked(c, expected_revision, a)
             self._authority(a)
             changed = c.execute(
                 "UPDATE article_audio SET status='missing' WHERE generation=? AND profile=? AND status='ready'",
@@ -790,6 +838,10 @@ class ArticleListeningStore:
                     "id IN (SELECT session_id FROM listening_entries WHERE artifact=?)",
                     (generation,),
                 )
+
+            if expected_revision is not None:
+                return self._state(c)["revision"]
+            return None
 
     def pending_deletions(self) -> tuple[tuple[int, str], ...]:
         """Expose only committed safe cleanup keys; actual unlink requires a held lease."""

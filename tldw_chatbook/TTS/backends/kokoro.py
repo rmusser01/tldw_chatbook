@@ -1059,17 +1059,18 @@ class KokoroTTSBackend(LocalTTSBackend):
 
         except TTSOperationError:
             raise
-        except Exception as e:
-            logger.opt(exception=True).error(
-                f"KokoroTTSBackend: Error during ONNX generation: {e}"
-            )
-            raise TTSOperationError(
+        except Exception:
+            logger.error("Kokoro ONNX generation failed")
+            failure = TTSOperationError(
                 code="generation_failed",
                 message="Kokoro ONNX generation failed.",
                 retryable=True,
                 operation_id="kokoro_onnx",
                 recovery_action="retry",
-            ) from e
+            )
+        else:
+            return
+        raise failure
 
     def _parse_voice_config(self, voice_str: str) -> Dict[str, Any]:
         """Parse voice string for potential mixing configuration or preset"""
@@ -1511,17 +1512,18 @@ class KokoroTTSBackend(LocalTTSBackend):
 
         except TTSOperationError:
             raise
-        except Exception as e:
-            logger.opt(exception=True).error(
-                f"KokoroTTSBackend: PyTorch generation failed: {e}"
-            )
-            raise TTSOperationError(
+        except Exception:
+            logger.error("Kokoro PyTorch generation failed")
+            failure = TTSOperationError(
                 code="generation_failed",
                 message="Kokoro PyTorch generation failed.",
                 retryable=True,
                 operation_id="kokoro_pytorch",
                 recovery_action="retry",
-            ) from e
+            )
+        else:
+            return
+        raise failure
 
     def _split_text_for_pytorch(self, text: str, max_tokens: int = 150) -> list[str]:
         """Bound work per call while preserving explicit language boundaries.

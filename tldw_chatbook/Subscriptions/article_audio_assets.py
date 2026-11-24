@@ -8,6 +8,7 @@ import json
 import os as stdlib_os
 import sqlite3
 import stat
+from collections.abc import Callable
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -161,6 +162,7 @@ class ArticleAudioAssets:
         profile_data_root: Path,
         reservation: AudioReservation | None = None,
         lease: ListeningLease | None = None,
+        authorize_commit: Callable[[], None] | None = None,
     ):
         if (
             not isinstance(profile_data_root, Path)
@@ -172,6 +174,9 @@ class ArticleAudioAssets:
         self.root = profile_data_root / "article_audio"
         self.reservation = reservation
         self.lease = lease
+        self._commit_options = (
+            {} if authorize_commit is None else {"authorize_commit": authorize_commit}
+        )
 
     @contextmanager
     def _hold(self, keys):
@@ -332,11 +337,15 @@ class ArticleAudioAssets:
                     raise ArticleAudioError("article_audio_name_collision") from None
                 self._check_directory(directory)
                 self.store.complete_audio(
-                    claim, expected, lease=lease, custody_witness=witness
+                    claim,
+                    expected,
+                    lease=lease,
+                    custody_witness=witness,
+                    **self._commit_options,
                 )
                 return self._audio(generation, source_item_id, key, expected)
 
-    def _read(self, directory, row, lease, census=None):
+    def _read(self, directory, row, lease, census=None, *, mark_missing=None):
         g, key = row["generation"], row["file_key"]
         if row["status"] != "ready":
             raise ArticleAudioError("article_audio_missing")
@@ -344,7 +353,7 @@ class ArticleAudioAssets:
         try:
             self._verify(directory, key, m, census)
         except (ValueError, FileNotFoundError) as exc:
-            self.store.mark_audio_missing(g, lease=lease)
+            (mark_missing or self.store.mark_audio_missing)(g, lease=lease)
             code = (
                 "article_audio_missing"
                 if isinstance(exc, FileNotFoundError)
@@ -367,8 +376,28 @@ class ArticleAudioAssets:
             self.store.record_audio_use(generation, lease=lease)
             return audio
 
-    def reuse(self, entry_id: str, *, expected_revision: int) -> ArticleAudio | None:
+    def reuse(
+        self, entry_id: str, *, expected_revision: int, replace_missing: bool = False
+    ) -> ArticleAudio | None:
         """Attach only a verified ready generation with this exact entry identity."""
+        audio, _ = self.reuse_with_revision(
+            entry_id,
+            expected_revision=expected_revision,
+            replace_missing=replace_missing,
+        )
+        return audio
+
+    def reuse_with_revision(
+        self, entry_id: str, *, expected_revision: int, replace_missing: bool = False
+    ) -> tuple[ArticleAudio | None, int]:
+        """Return only revision advances made by this verified candidate scan."""
+
+        def mark_missing(generation, *, lease):
+            nonlocal expected_revision
+            expected_revision = self.store.mark_audio_missing(
+                generation, lease=lease, expected_revision=expected_revision
+            )
+
         for generation in self.store.find_reusable(entry_id):
             rows = self.store.audio_inventory(generation)
             if not rows:
@@ -379,7 +408,9 @@ class ArticleAudioAssets:
                 if not rows or rows[0]["file_key"] != key:
                     raise ListeningConflict("article_audio_inventory_changed")
                 try:
-                    audio = self._read(directory, rows[0], lease)
+                    audio = self._read(
+                        directory, rows[0], lease, mark_missing=mark_missing
+                    )
                 except ArticleAudioError as exc:
                     if str(exc) not in (
                         "article_audio_missing",
@@ -387,14 +418,16 @@ class ArticleAudioAssets:
                     ):
                         raise
                     continue
-                self.store.attach_audio(
+                session = self.store.attach_audio(
                     entry_id,
                     generation,
                     expected_revision=expected_revision,
                     lease=lease,
+                    **({"replace_missing": True} if replace_missing else {}),
+                    **self._commit_options,
                 )
-                return audio
-        return None
+                return audio, session.revision
+        return None, expected_revision
 
     def _clean_names(self, directory, census, row):
         """Confirm absence, or remove one independently proven local object."""

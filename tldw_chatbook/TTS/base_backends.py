@@ -111,6 +111,33 @@ class TTSBackendConnectionError(ValueError):
     """
 
 
+def http_status_failure(status_code: int) -> tuple[str, ValueError]:
+    if status_code == 401:
+        return (
+            "authentication_failed",
+            ValueError(
+                "Authentication failed. Please check your API configuration (HTTP 401)."
+            ),
+        )
+    if status_code == 429:
+        return (
+            "rate_limited",
+            ValueError("Rate limit exceeded. Please try again later (HTTP 429)."),
+        )
+    if status_code >= 500:
+        return (
+            "service_unavailable",
+            ValueError(
+                "TTS service temporarily unavailable. Please try again later "
+                f"(HTTP {status_code})."
+            ),
+        )
+    return (
+        "request_rejected",
+        ValueError(f"TTS request was rejected by the service (HTTP {status_code})."),
+    )
+
+
 class APITTSBackend(TTSBackendBase):
     """Base class for API-based TTS backends (OpenAI, ElevenLabs, etc.)"""
 

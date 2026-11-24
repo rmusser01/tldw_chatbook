@@ -103,15 +103,17 @@ class VoiceDependency:
 class FrozenVoice:
     provider: str
     model: str
-    voice: str
+    voice: str | None
     format: str = "wav"
     speed: float = 1.0
     dependencies: tuple[VoiceDependency, ...] = ()
-    options: tuple[tuple[str, float], ...] = ()
+    options: tuple[tuple[str, float | bool], ...] = ()
 
     def __post_init__(self):
-        for value in (self.provider, self.model, self.voice):
+        for value in (self.provider, self.model):
             _id(value)
+        if self.provider != "audio_cpp" or self.voice is not None:
+            _id(self.voice)
         if self.format not in ("wav", "pcm", "mp3", "flac", "opus", "aac") or (
             type(self.speed) not in (int, float) or not 0.25 <= self.speed <= 4
         ):
@@ -122,13 +124,18 @@ class FrozenVoice:
             or any(type(dep) is not VoiceDependency for dep in self.dependencies)
         ):
             raise ValueError("invalid_voice_dependencies")
-        if type(self.options) is not tuple or len(self.options) > 3:
+        if type(self.options) is not tuple or len(self.options) > 4:
             raise ValueError("invalid_voice_options")
         keys = set()
         for pair in self.options:
             if type(pair) is not tuple or len(pair) != 2:
                 raise ValueError("invalid_voice_options")
             name, value = pair
+            if name == "use_speaker_boost" and self.provider == "elevenlabs":
+                if type(value) is not bool or name in keys:
+                    raise ValueError("invalid_voice_options")
+                keys.add(name)
+                continue
             if (
                 name not in {"stability", "similarity_boost", "style"}
                 or name in keys
