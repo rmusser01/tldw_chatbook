@@ -3562,6 +3562,15 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         )
         with self._preparation_lock:
             current = self._dispatch_recoveries_by_session.get(session_id)
+            if current is not None and current.checkpoint is None and current.kind in {
+                ConsoleDispatchRecoveryKind.REMOTE_ACCEPTED,
+                ConsoleDispatchRecoveryKind.REMOTE_DISPATCH_STARTED,
+            }:
+                # TASK-33621.30: an inert checkpoint-free owner claims nothing and
+                # admits the next send, which commits its own owner; adopt that.
+                self._dispatch_recovery_message_baselines.pop(session_id, None)
+                self._dispatch_recovery_generation_tokens.pop(session_id, None)
+                current = None
             if current is not None and (
                 current.assistant_message_id != recovery.assistant_message_id
                 or current.conversation_id != recovery.conversation_id

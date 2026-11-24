@@ -56,10 +56,12 @@ def _state(*, started: bool = False, in_flight: bool = False, remote: bool = Fal
             kind=(kind.REMOTE_DISPATCH_STARTED if started else kind.REMOTE_ACCEPTED),
             assistant_message_id="assistant-1",
             conversation_id="conversation-1",
+            # TASK-33621.30: a checkpoint-free owner names no device.
             visible_copy=(
-                "Response delivery status is unknown on the source device."
+                "Response delivery status is unknown; it may have reached the provider."
                 if started
-                else "Response accepted on another device; waiting for dispatch."
+                else "Response was accepted but its delivery wasn't confirmed. "
+                "Send a new message to continue."
             ),
             actions=(),
         )
@@ -200,9 +202,11 @@ async def test_inactive_recovery_preserves_children_across_session_change() -> N
         assert region.sync_recovery("second", _state(remote=True))
         await pilot.pause()
         assert region.has_class("-visible")
-        assert "another device" in str(
+        remote_copy = str(
             region.query_one("#console-dispatch-recovery-copy", Static).renderable
         )
+        assert remote_copy == _state(remote=True).visible_copy
+        assert "device" not in remote_copy.lower()
 
         assert region.sync_recovery("third", None)
         await pilot.pause()
