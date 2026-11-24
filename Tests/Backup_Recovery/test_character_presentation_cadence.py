@@ -18,6 +18,9 @@ from Tests.Backup_Recovery.test_participant_lifetimes import (
 from Tests.UI.test_console_character_context import _controller
 from tldw_chatbook.Character_Chat.character_conversation_navigation import (
     CharacterConversationNavigationService,
+    LocalCharacterConversationTarget,
+    ResolvedLocalCharacterKey,
+    UnresolvedConversationKey,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
@@ -607,6 +610,119 @@ async def test_cancelled_character_search_does_not_leave_the_panel_searching(tmp
         assert after["pairs"] >= 1, (
             "the display check read nothing after the cancelled search"
         )
+    finally:
+        release.set()
+        if pending is not None:
+            await asyncio.gather(pending, return_exceptions=True)
+        database.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_character_chat_opening_does_not_leave_the_panel_opening(
+    tmp_path,
+):
+    """TASK-42468: opening a chat turns errors into a Retry but let a
+    cancellation through, so the panel kept OPENING and the display check,
+    which runs only while IDLE, never ran again. It now shows the same Retry
+    as a failed open."""
+    database = CharactersRAGDB(tmp_path / "opening.db", "opening")
+    controller, screen, *_ = _character(database)
+    entered, release = asyncio.Event(), asyncio.Event()
+    pending = None
+
+    async def held_activation(_request, _cancellation):
+        entered.set()
+        await release.wait()
+        raise AssertionError("a cancelled opening resumed")
+
+    try:
+        await controller.refresh()
+        await _display(controller, screen)
+        controller._activate_target = held_activation
+        target = LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey(
+                controller.state.scope_fingerprint.data_authority_id, 1
+            ),
+            "conversation-1",
+        )
+        pending = asyncio.create_task(controller.activate(target, row_key="row-1"))
+        await asyncio.wait_for(entered.wait(), 10)
+        phase_while_blocked = controller.state.phase
+        pending.cancel()
+        result = await asyncio.gather(pending, return_exceptions=True)
+        assert phase_while_blocked is ConsoleCharacterOperationPhase.OPENING
+        assert isinstance(result[0], asyncio.CancelledError)
+        assert (
+            controller.state.phase is ConsoleCharacterOperationPhase.IDLE
+            and not controller.state.operation_row_key
+        ), "a cancelled opening left the panel opening"
+        assert "Retry" in controller.state.error, "a cancelled opening offered no Retry"
+        assert controller._activation_cancellation is None
+        with _actual_calls() as after:
+            await _display(controller, screen)
+        assert after["pairs"] >= 1, "the display check read nothing after the opening"
+    finally:
+        release.set()
+        if pending is not None:
+            await asyncio.gather(pending, return_exceptions=True)
+        database.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["repair", "open_detail"])
+async def test_cancelled_character_repair_does_not_leave_the_panel_repairing(
+    tmp_path, operation
+):
+    """TASK-42468: preparing a repair and opening an unavailable chat's Library
+    detail let a cancellation through their scope read, so the panel kept
+    REPAIRING. Each now shows its own failure with a Retry and navigates
+    nowhere."""
+    database = CharactersRAGDB(tmp_path / "repairing.db", "repairing")
+    controller, screen, *_ = _character(database)
+    entered, release = threading.Event(), threading.Event()
+    blocked = False
+    pending = None
+    navigated = []
+
+    def barrier(_frame, name):
+        nonlocal blocked
+        if name == "pairs_return" and not blocked:
+            blocked = True
+            entered.set()
+            assert release.wait(10)
+
+    try:
+        await controller.refresh()
+        await _display(controller, screen)
+        controller._navigate_repair = navigated.append
+        controller._navigate_inspection = navigated.append
+        key = UnresolvedConversationKey(
+            controller.state.scope_fingerprint.data_authority_id, "conversation-1"
+        )
+        with _actual_calls(barrier=barrier):
+            pending = asyncio.create_task(
+                controller.repair_unavailable(key, row_key="row-1")
+                if operation == "repair"
+                else controller.open_unavailable(key, row_key="row-1")
+            )
+            assert await asyncio.to_thread(entered.wait, 10)
+            phase_while_blocked = controller.state.phase
+            pending.cancel()
+            await asyncio.sleep(0)
+            release.set()
+            result = await asyncio.gather(pending, return_exceptions=True)
+        assert phase_while_blocked is ConsoleCharacterOperationPhase.REPAIRING
+        assert isinstance(result[0], asyncio.CancelledError)
+        assert (
+            controller.state.phase is ConsoleCharacterOperationPhase.IDLE
+            and not controller.state.operation_row_key
+        ), "a cancelled repair left the panel repairing"
+        assert "Retry" in controller.state.error and navigated == [], (
+            "a cancelled repair showed no failure, or navigated as if it succeeded"
+        )
+        with _actual_calls() as after:
+            await _display(controller, screen)
+        assert after["pairs"] >= 1, "the display check read nothing after the repair"
     finally:
         release.set()
         if pending is not None:

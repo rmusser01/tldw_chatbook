@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-23 06:38
-updated_date: 2026-11-23 23:16
+updated_date: 2026-11-24 00:25
 labels:
 - follow-up
 - console
@@ -39,7 +39,12 @@ Found during round 22 of the follow-up burn-down (2026-11-23): TASK-42426's cove
 - [x] #6 A cancelled search leaves the panel idle with a Retry for its query instead of "Searching local character chats…"; a test red at base covers it, and the search's other exits that publish nothing take the same guard
 - [x] #7 Each sibling path that does not stick is recorded in the notes with its evidence
 - [x] #8 The touched test files pass 20 soak runs at `-n 4` under load
+- [x] #9 Opening a character chat (OPENING) that is cancelled, or ends without publishing, while it still owns the panel leaves a state the next check or Retry recovers from; a test red at base, which confirms the phase while the operation is blocked, covers it (or the notes record why the path does not stick)
+- [x] #10 Each repair operation (REPAIRING: preparing a repair, opening the unavailable detail) that is cancelled, or ends without publishing, while it still owns the panel shows its failure with a Retry and never claims success; a test red at base, which confirms the phase while blocked, covers each (or the notes record why the path does not stick)
+- [x] #11 The character file passes 20 soak runs at `-n 4` under load after these changes
 <!-- AC:END -->
+
+AC #9-#11 added 2026-11-23 (round 24, coordinator request): OPENING and REPAIRING are the controller's other loading phases. The IDLE-only display check strands them the same way it stranded REFRESHING and SEARCHING, so they finish this defect class before review.
 
 AC #5-#8 added 2026-11-23 (round 24, coordinator request): the stuck phase is the same defect class as the `[cancelled]` red. 95ca4bf47b's IDLE-only display check also strands a refresh that returns without publishing (owner or scope moved; the code's own comment says "its next check reloads") and a cancelled search, so the fix belongs with this task rather than in a follow-up.
 
@@ -53,6 +58,7 @@ AC #5-#8 added 2026-11-23 (round 24, coordinator request): the stuck phase is th
 5. (AC #5-#8) Write red-at-base tests for a refresh that publishes nothing after its owner or scope moved (the stock route a run's display check takes for a changed open chat, and the original loop) and for a cancelled search.
 6. Replace the refresh's cancellation handler with one guard the operations share, in the controller that owns the phase: on any exit, if the operation still owns the generation and its phase, settle the panel idle (a refresh drops its fingerprint; a search keeps its query and offers Retry).
 7. Record the exits that do not stick with their evidence, soak the touched files 20 times at -n 4, and re-run the round's check list.
+8. (AC #9-#11) For activation and the two repair operations: a test that blocks the operation (activation in its activation step, the repairs in their scope read), confirms the phase, then cancels it, red at base; route each through `_settle_unpublished` with the copy its own failure path already shows, keeping the fingerprint (a moved scope is still found by the next check); soak and re-run the check list.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -99,4 +105,32 @@ AC #5-#8 added 2026-11-23 (round 24, coordinator request): the stuck phase is th
 **Lane.** The riders job's note now gives the file's 51 tests: 125-134 s serially with the step's flags at load 59-79 (the first 47 took 63-72 s at load 14-18). The whole step through `r19-step.sh` (`-p no:xdist --timeout=180`): 805 passed in 1174 s at load 60-100.
 
 **Files (sibling paths).** `tldw_chatbook/UI/Console_Modules/character_context.py` (`_settle_unpublished`, plus `finally` blocks in `refresh()` and `search()`), `Tests/Backup_Recovery/test_character_presentation_cadence.py` (4 tests), `.github/workflows/derived-artifacts.yml` (lane note), `Docs/User_Guide/console/sessions-tabs-workspaces.md` (an interrupted search offers Retry; a moved chat or data profile clears "Refreshing").
+
+**OPENING and REPAIRING (AC #9-#11, added at the coordinator's request).** All three stuck. Each new test blocks the operation, checks the phase while it is blocked, then cancels it, and is red at base on "still OPENING/REPAIRING":
+- **Opening a chat (`activate`).** `test_cancelled_character_chat_opening_does_not_leave_the_panel_opening`. The test blocks `_activate_target`. `activate` turns any `Exception` into a FAILED result and its Retry copy, but a `CancelledError` went past that, so the panel kept OPENING (the row's "opening" state) and the IDLE-only display check never ran again.
+- **Preparing a repair (`repair_unavailable` → `_prepare_unavailable_repair`).** `test_cancelled_character_repair_does_not_leave_the_panel_repairing[repair]`, blocked in its scope read (`pairs_return`). Cancellation sticks. So does the database-unavailable branch when the scope moved meanwhile, which returns without publishing.
+- **Opening the unavailable chat's Library detail (`open_unavailable`).** `[open_detail]`, blocked in the same read. Its `except Exception` publishes a failure, but cancellation got past it.
+
+**Fix: the same guard.** Each operation now wraps everything after `_begin` in `try/finally: _settle_unpublished(generation, phase, error=...)`. The copy for each is the one that operation already shows for a failure. Unless a newer operation owns the panel or this one already published, the guard publishes IDLE with no busy row and that copy:
+- **Opening a chat: "Could not open character chat · Retry"** (the FAILED copy). The fingerprint stays. If the open moved the scope (a cancellation can land after `_activate_target` committed), the next display check finds the new open chat through the ambient or owner key and reloads. If nothing moved, the panel keeps the list it showed before, with Retry, exactly as after a failed open.
+- **Preparing a repair: "Could not refresh Library details · Retry"** (its DB-failure copy).
+- **Opening the detail: "Could not open Library details · Retry"** (its scope-failure copy).
+- Neither repair navigates after a settle: both navigate only after their own successful publish. The test records `_navigate_repair` and `_navigate_inspection` and checks they were never called, so a cancelled repair never claims success.
+- After each settle, the next display check reads again (`pairs >= 1`).
+
+**Red/green.** The three new nodes fail at base and at the previous branch tip (1538958185), each at the stuck assertion. With the guards, the character file passes 54 of 54.
+
+**Other runs with all guards.**
+- The 18 covering files at `-n 4` (load about 55-65): 437 passed, 12 failed. Ten are the base reds listed above. The other two are load flakes:
+  - `test_console_character_section_collapsed_render.py::test_send_with_the_character_section_collapsed_renders_nothing_there` (the child deadline, as above).
+  - `test_console_character_context.py::test_opening_search_result_escape_preserves_query_rows_and_focus`, the focus assertion at line 1582. In that test the activation returns `CANCELLED_PRECOMMIT` and publishes, so the guard is a no-op. Serially it passed 6 of 6 with the guards and 6 of 6 at base. A temporary file write (reverted) recorded zero guard firings over two `-n 4` runs of its file (64 of 64 each).
+- Soak (AC #11): the character file (54 tests), 20 whole-file runs at `-n 4` as two concurrent loops of 10 (load 47-82): 20 of 20 passed, 54 of 54 each.
+- The riders job's note now gives 54 tests: 138-140 s serially with the step's flags at load 37-64. The whole step through `r19-step.sh`: 808 passed in 1026 s at load 37-82.
+
+**Follow-up candidate (not fixed here).** `Tests/UI/test_console_character_section_collapsed_render.py` (a UI census entry) is load-flaky at base: its private-profile child tests miss their deadline under load (`private_profile.py:410`, "still running after …").
+- `test_opening_after_a_collapsed_refresh_shows_its_chats_without_refreshing`: 3 of 3 base runs at `-n 4`, load 54-73.
+- `test_send_with_the_character_section_collapsed_renders_nothing_there`: seen in runs with the guards; the guard fired zero times in those runs.
+
+**Files (OPENING/REPAIRING).** `tldw_chatbook/UI/Console_Modules/character_context.py` (`finally` guards in `activate`, `_prepare_unavailable_repair` and `open_unavailable`; the guard's docstring now names every operation), `Tests/Backup_Recovery/test_character_presentation_cadence.py` (3 tests), `.github/workflows/derived-artifacts.yml` (lane note), `Docs/User_Guide/console/sessions-tabs-workspaces.md` (an interrupted open or repair shows its Retry; a repair opens nothing).
+- Checks on this code: `Tests/CI` at `-n 4` gave 1823 passed, 2 skipped. `Tests/Architecture` serially (the product file is scanned) gave 1492 passed, 5 skipped. `preflight.sh`, `ruff --select F` and `ruff_gate.py` passed.
 <!-- SECTION:NOTES:END -->

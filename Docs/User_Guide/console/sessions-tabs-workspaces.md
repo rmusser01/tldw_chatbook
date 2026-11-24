@@ -125,7 +125,10 @@ single-click selects it. **View all N in Roleplay** opens that character's
 complete saved history. A current card with no saved chats offers **Start in
 Console**, while the overall empty state offers **Open Roleplay**. Chats whose
 card was deleted or cannot be identified are never guessed open: use **Repair
-in Library**, or **View all N in Library**, to resolve them. Turning off
+in Library**, or **View all N in Library**, to resolve them. If opening a chat
+or preparing its Library repair or details is interrupted, the section shows
+the same "Could not …" line with **Retry** as when it fails; an interrupted
+repair opens nothing in Library. Turning off
 `show_character_avatar` hides only the image; these navigation controls remain.
 
 **Details section** (left rail, collapsed by default). Status lines for
