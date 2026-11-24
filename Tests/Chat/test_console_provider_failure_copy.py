@@ -35,6 +35,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+from tldw_chatbook.Chat.provider_failures import console_failure_copy
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from Tests.console_provider_doubles import provider_resolution
 
@@ -175,11 +176,18 @@ async def test_stream_chat_provider_400_reports_one_consistent_status() -> None:
     assert err.status_code == 400
 
     copy = describe_stream_failure(err)
-    # One status, stated once: the gateway's copy already names it, so it is
-    # not wrapped in a second "HTTP 400" (review round 2, V2-F6).
     assert copy.count("400") == 1, copy
-    assert "Status: 400." in copy
     assert "502" not in copy
+    # The re-raised error is the content-free typed projection, and the
+    # gateway's sentence moved to console_copy (818c7c8ea0), so "Status: 400."
+    # is checked where Console shows it. One status, stated once: the
+    # gateway's copy already names it, so it is not wrapped in a second
+    # "HTTP 400" (review round 2, V2-F6).
+    visible = console_failure_copy(err, "Provider stream failed")
+    assert visible == err.console_copy
+    assert visible.count("400") == 1, visible
+    assert "Status: 400." in visible
+    assert "502" not in visible
 
 
 @pytest.mark.asyncio

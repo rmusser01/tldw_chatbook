@@ -18,6 +18,10 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import ConsoleAssistantSettl
 from tldw_chatbook.Chat.console_dispatch_repository import ConsoleDispatchRepository
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
+# The constructor upgrades to the current schema; a literal (77, then 81)
+# went stale at each later bump (TASK-42516).
+CURRENT = CharactersRAGDB._CURRENT_SCHEMA_VERSION
+
 
 @pytest.mark.parametrize("source_version", [73, 74])
 def test_genuine_upgrade_creates_receipts(tmp_path, source_version):
@@ -50,7 +54,7 @@ def test_genuine_upgrade_creates_receipts(tmp_path, source_version):
             )
             .fetchone()
         )
-        assert db._get_db_version(db.get_connection()) == 81
+        assert db._get_db_version(db.get_connection()) == CURRENT
         if source_version == 74:
             assert (
                 db.get_connection()
@@ -169,7 +173,7 @@ def test_v75_failure_rolls_back_ddl_and_reopens_cleanly(tmp_path, monkeypatch):
             is None
         )
     reopened = CharactersRAGDB(path, client_id="retry")
-    assert reopened._get_db_version(reopened.get_connection()) == 81
+    assert reopened._get_db_version(reopened.get_connection()) == CURRENT
     reopened.close()
 
 

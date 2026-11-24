@@ -498,6 +498,9 @@ DREAMS_TRACKING_RIDERS = (
     "Tests/Backup_Recovery/test_group_issues.py",
     "Tests/Backup_Recovery/test_tokenizer_write_admission.py",
     "Tests/Backup_Recovery/test_finite_db_retirement.py",
+    # TASK-42516 (round 25): the native-76 compatibility file, whole (its one
+    # node left console-p0-gate). Sandboxed, before the Workspaces riders.
+    "Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py",
     "Tests/Workspaces/test_console_workspace_create_handler.py",
     "Tests/Workspaces/test_console_workspace_reconcile.py",
     "Tests/Workspaces/test_workspace_create_modal.py",
@@ -520,6 +523,9 @@ DREAMS_TRACKING_RIDERS = (
     "Tests/Packaging/test_first_chat_boot_closure.py",
     "Tests/Wizards/test_env_key_launch_notice_sequencing.py",
     "Tests/Wizards/test_first_run_discovery_base_url.py",
+    # TASK-42514 (round 25): every test is @private_profile_test, so
+    # sandboxed; before Tool_Packs.
+    "Tests/Agents/test_durable_fleet_messages.py",
     "Tests/Tool_Packs",
     # Round 24: bootstrap_profile (its gateway reads [model_catalog]), so after
     # Tool_Packs.
@@ -527,6 +533,17 @@ DREAMS_TRACKING_RIDERS = (
     # TASK-42472 (2026-11-24): the failed-call retry rule. bootstrap_profile
     # (its gateway reads [model_catalog]), so after Tool_Packs.
     "Tests/Chat/test_console_failed_call_retry_ownership.py",
+    # TASK-42515 (round 25): bootstrap_profile (Tests/conftest.py keeps the
+    # whole file on it), so after Tool_Packs.
+    "Tests/Chat/test_console_provider_failure_copy.py",
+    # TASK-42516 (round 25): Tests/conftest.py keeps Tests/DB on the bootstrap
+    # profile, so after Tool_Packs.
+    "Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py",
+    "Tests/DB/test_chachanotes_v75_hook_continuation_receipts_migration.py",
+    # TASK-42516's sweep: same drift, same profile, after Tool_Packs.
+    "Tests/DB/test_chachanotes_v78_fleet_progress_migration.py",
+    "Tests/DB/test_chachanotes_v79_sargable_migration.py",
+    "Tests/DB/test_chachanotes_v54_before_first_cursor.py",
     # TASK-42468: bootstrap_profile, so after Tool_Packs (nothing sandboxed
     # may follow it).
     "Tests/Backup_Recovery/test_character_presentation_cadence.py",

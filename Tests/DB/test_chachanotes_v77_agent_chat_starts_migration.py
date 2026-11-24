@@ -18,6 +18,10 @@ from tldw_chatbook.Chat.console_dispatch_repository import ConsoleDispatchReposi
 from tldw_chatbook.Chat import message_metadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
+# Upgrades end at the current schema: the literal 80 went stale at v81 and
+# each later bump (TASK-42516). Exact catalogs name the current lineage.
+CURRENT = CharactersRAGDB._CURRENT_SCHEMA_VERSION
+
 
 @pytest.mark.parametrize("standalone", [False, True])
 def test_v77_keeps_every_predecessor_checkpoint_column_and_indexes(
@@ -68,8 +72,10 @@ def test_v77_keeps_every_predecessor_checkpoint_column_and_indexes(
             .execute("SELECT * FROM console_dispatch_checkpoints")
             .fetchone()
         )
-        assert reopened._get_db_version(reopened.get_connection()) == 80
+        assert reopened._get_db_version(reopened.get_connection()) == CURRENT
         assert row.pop("agent_chat_start_attempt_id") is None
+        # v86 (ADR-286) added the mix-in column; a predecessor row has none.
+        assert row.pop("mixin_snapshot_schema_version") is None
         assert row == before
         indexes = {
             row[1]
@@ -303,13 +309,119 @@ CREATE INDEX idx_console_dispatch_checkpoints_user_message
 """
 
 
+def _v2_subscriptions(path):
+    """Create the Subscriptions v2 catalog that native-76 and repaired-77 shared with.
+
+    Today's constructor adds idx_subscriptions_source (task-34399) and stamps
+    v3, whose DDL is unchanged (ADR-207), so both are undone (TASK-42516).
+    """
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+
+    SubscriptionsDB(path).close()
+    with closing(sqlite3.connect(path)) as connection:
+        connection.execute("DROP INDEX idx_subscriptions_source")
+        connection.execute("UPDATE schema_version SET version=2")
+        connection.commit()
+
+
+def _seed_native76_machine_owner(db, acceptance):
+    """Write one agent_chat_start owner into a v76 file, as `_insert` did.
+
+    The repository's insert now reads the v86 mix-in column first, so it can
+    no longer write a v76 file (TASK-42516). These are the statements it runs
+    for this acceptance, without that read.
+    """
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+        dump_console_dispatch_reconstructability_json,
+        dump_console_resolved_destination_json,
+        dump_console_turn_library_authority_json,
+    )
+
+    with db.transaction(immediate=True) as cursor:
+        now = db._get_current_utc_timestamp_iso()
+        for message_id, parent, sender, content, metadata, state, reason in (
+            (
+                acceptance.user_message_id,
+                acceptance.parent_message_id,
+                "user",
+                acceptance.user_content,
+                message_metadata.MessageMetadata(
+                    origin="agent_chat_start",
+                    agent_chat_start=acceptance.agent_chat_start,
+                ).to_json(),
+                None,
+                "durable_turn_user_create",
+            ),
+            (
+                acceptance.assistant_message_id,
+                acceptance.user_message_id,
+                "assistant",
+                "",
+                None,
+                "accepted",
+                "durable_turn_assistant_create",
+            ),
+        ):
+            cursor.execute(
+                "INSERT INTO messages (id, conversation_id, parent_message_id, sender, "
+                "content, image_data, image_mime_type, timestamp, ranking, last_modified, "
+                "client_id, version, deleted, role, usage_json, metadata_json, "
+                "provider_continuation_json, assistant_generation_state) "
+                "VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, NULL, ?, ?, 1, 0, ?, NULL, ?, NULL, ?)",
+                (
+                    message_id,
+                    acceptance.conversation_id,
+                    parent,
+                    sender,
+                    content,
+                    now,
+                    now,
+                    db.client_id,
+                    sender,
+                    metadata,
+                    state,
+                ),
+            )
+            db._ensure_initial_semantic_revision(
+                cursor, message_id=message_id, creation_reason=reason
+            )
+        cursor.execute(
+            "UPDATE conversations SET active_leaf_message_id = ?, "
+            "active_leaf_before_message_id = NULL WHERE id = ? AND deleted = 0",
+            (acceptance.assistant_message_id, acceptance.conversation_id),
+        )
+        cursor.execute(
+            "INSERT INTO console_dispatch_checkpoints (assistant_message_id, "
+            "user_message_id, conversation_id, schema_version, preparation_id, "
+            "attempt_id, state, checkpoint_revision, user_message_version, "
+            "assistant_message_version, origin, queue_entry_id, "
+            "agent_chat_start_attempt_id, frozen_authority_json, "
+            "resolved_destination_json, reconstructability_json, created_at, "
+            "updated_at) VALUES (?, ?, ?, 1, ?, ?, 'accepted', 1, 1, 1, ?, ?, ?, ?, "
+            "?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            (
+                acceptance.assistant_message_id,
+                acceptance.user_message_id,
+                acceptance.conversation_id,
+                acceptance.preparation_id,
+                acceptance.attempt_id,
+                acceptance.origin,
+                acceptance.queue_entry_id,
+                acceptance.agent_chat_start_attempt_id,
+                dump_console_turn_library_authority_json(acceptance.frozen_authority),
+                dump_console_resolved_destination_json(acceptance.resolved_destination),
+                dump_console_dispatch_reconstructability_json(
+                    acceptance.reconstructability
+                ),
+            ),
+        )
+        db._advance_semantic_graph_epoch(cursor)
+
+
 def _legacy_native76(path, *, dictionary=False, subscriptions=False):
     """Replay the previously shipped feature SQL over its actual v75 chain."""
     if subscriptions:
-        from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
-
-        subscriptions_db = SubscriptionsDB(path)
-        subscriptions_db.close()
+        _v2_subscriptions(path)
     with chachanotes_db_at_version(path, 75) as db:
         db.get_connection().executescript(_FROZEN_NATIVE76_MIGRATION)
         db.get_connection().execute(
@@ -351,7 +463,7 @@ def _legacy_native76(path, *, dictionary=False, subscriptions=False):
             ),
             handoff_draft_revision=1,
         )
-        _insert(db, ConsoleDispatchRepository(db), acceptance)
+        _seed_native76_machine_owner(db, acceptance)
         rows = tuple(
             tuple(row)
             for row in db.get_connection().execute(
@@ -372,38 +484,39 @@ def test_legacy_native76_upgrade_preserves_exact_receipts(
 ):
     path = tmp_path / "legacy.sqlite"
     before = _legacy_native76(path, dictionary=dictionary, subscriptions=subscriptions)
-    with closing(sqlite3.connect(path)) as connection:
-        catalog = tuple(
-            connection.execute(
-                "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
-            )
-        )
-    from tldw_chatbook.DB.recovery_core_schema import (
-        _browse_order_catalog,
-        _fleet_progress_catalog,
-        _sargable_catalog,
+    from tldw_chatbook.DB.recovery_core_schema import CHACHANOTES_V87_SCHEMAS
+    from tldw_chatbook.DB.recovery_operations import (
+        _SUBSCRIPTIONS_CHILD_SEGMENTS_V87_SCHEMAS,
     )
 
+    # The current lineage lists the two repaired-77 catalogs, then the two
+    # native-76 ones; a shared file pairs each with the Subscriptions catalog
+    # without (even index) and with idx_subscriptions_source (odd).
+    native = 3 if dictionary else 2
     catalog = tuple(
         (sql,)
-        for sql in _browse_order_catalog(
-            _sargable_catalog(_fleet_progress_catalog(tuple(row[0] for row in catalog)))
+        for sql in (
+            _SUBSCRIPTIONS_CHILD_SEGMENTS_V87_SCHEMAS[2 * native]
+            if subscriptions
+            else CHACHANOTES_V87_SCHEMAS[native]
         )
     )
     for _ in range(2):
         db = CharactersRAGDB(path, client_id="reopen-native")
         try:
             connection = db.get_connection()
-            assert db._get_db_version(connection) == 80
-            assert (
-                tuple(
-                    tuple(row)
-                    for row in connection.execute(
-                        "SELECT * FROM console_dispatch_checkpoints"
-                    )
+            assert db._get_db_version(connection) == CURRENT
+            rows = [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT * FROM console_dispatch_checkpoints"
                 )
-                == before[0]
-            )
+            ]
+            # v86 (ADR-286) appended the mix-in column; a native-76 row has none.
+            assert [row.pop("mixin_snapshot_schema_version") for row in rows] == [
+                None
+            ] * len(rows)
+            assert tuple(tuple(row.values()) for row in rows) == before[0]
             assert (
                 tuple(
                     tuple(row)
@@ -463,11 +576,13 @@ def test_v77_constructor_catalog_matches_exact_native76_capture(
 ):
     import hashlib
     from tldw_chatbook.DB.recovery_core_schema import (
-        CHACHANOTES_V80_SCHEMAS,
+        CHACHANOTES_V87_SCHEMAS,
         _CHAT_DICTIONARIES_INITIAL_TRIGGER,
         _CHAT_DICTIONARIES_UPDATED_TRIGGER,
     )
-    from tldw_chatbook.DB.recovery_operations import _SUBSCRIPTIONS_BROWSE_ORDER_SCHEMAS
+    from tldw_chatbook.DB.recovery_operations import (
+        _SUBSCRIPTIONS_CHILD_SEGMENTS_V87_SCHEMAS,
+    )
 
     path = tmp_path / "capture.sqlite"
     if subscriptions:
@@ -487,10 +602,12 @@ def test_v77_constructor_catalog_matches_exact_native76_capture(
                 "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
             )
         )
+        # A fresh shared file pairs the current primary catalog with the
+        # Subscriptions catalog that has idx_subscriptions_source (task-34399).
         expected = (
-            _SUBSCRIPTIONS_BROWSE_ORDER_SCHEMAS[0]
+            _SUBSCRIPTIONS_CHILD_SEGMENTS_V87_SCHEMAS[1]
             if subscriptions
-            else CHACHANOTES_V80_SCHEMAS[0]
+            else CHACHANOTES_V87_SCHEMAS[0]
         )
         if dictionary:
             expected = tuple(
@@ -500,7 +617,7 @@ def test_v77_constructor_catalog_matches_exact_native76_capture(
                 for sql in expected
             )
         assert actual == expected
-        assert db._get_db_version(connection) == 80
+        assert db._get_db_version(connection) == CURRENT
         print(
             json.dumps(
                 {
@@ -583,8 +700,9 @@ def test_legacy_queue_constructor_preserves_predecessor(
             .fetchone()
         )
         assert row.pop("agent_chat_start_attempt_id") is None
+        assert row.pop("mixin_snapshot_schema_version") is None
         assert row == before
-        assert db._get_db_version(db.get_connection()) == 80
+        assert db._get_db_version(db.get_connection()) == CURRENT
     finally:
         db.close_connection()
 
@@ -685,7 +803,7 @@ def test_populated_legacy_queue_paths_are_lossless(tmp_path, dictionary, route):
         _shipped76,
     )
     from tldw_chatbook.DB.recovery_core_schema import (
-        CHACHANOTES_V80_SCHEMAS,
+        CHACHANOTES_V87_SCHEMAS,
         CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
     )
 
@@ -730,6 +848,7 @@ def test_populated_legacy_queue_paths_are_lossless(tmp_path, dictionary, route):
             after, restored_messages, restored_indexes = _checkpoint_state(path)
             for row in after:
                 assert row.pop("agent_chat_start_attempt_id") is None
+                assert row.pop("mixin_snapshot_schema_version") is None
                 assert len(row) == 17
             assert after == before
             assert restored_messages == messages
@@ -774,9 +893,9 @@ def test_populated_legacy_queue_paths_are_lossless(tmp_path, dictionary, route):
             assert catalog == (
                 CHACHANOTES_DICTIONARY_UPDATE_SCHEMA
                 if dictionary
-                else CHACHANOTES_V80_SCHEMAS[0]
+                else CHACHANOTES_V87_SCHEMAS[0]
             )
-            assert db._get_db_version(connection) == 80
+            assert db._get_db_version(connection) == CURRENT
             assert not connection.execute("PRAGMA foreign_key_check").fetchall()
             assert tuple(connection.execute("PRAGMA quick_check").fetchone()) == ("ok",)
             assert connection.execute(
