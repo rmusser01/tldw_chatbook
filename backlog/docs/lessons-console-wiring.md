@@ -11,6 +11,12 @@ bring the incident.
 
 ---
 
+## OpenAI's stream is not a generator: a dispatcher wrapper keyed on `GeneratorType` never sees it (TASK-42529, 2026-11-24)
+
+**Incident.** A streamed OpenAI 429 read "unexpected provider error" because the handler's generator checks the status on its first read, after `chat_api_call` has returned. The first fix wrapped every generator `chat_api_call` returns, to classify an `HTTPError` raised while it is read. Every OpenAI test stayed red: `@_provider_recovery.openai_call` hands back `recovery_review._OpenAIStream`, an `Iterator` class that re-enters the recovery operation on each `next()`. Wrapping it in a generator would also have broken Console Stop: `_OpenAIStream.close()` from another thread only sets a flag while a `next()` is in flight, but `close()` on a running generator raises `ValueError: generator already executing`.
+
+**What to do.** Check the type a handler actually returns through its decorators before fixing at the dispatcher. Classify a lazy failure inside the handler's own generator (here with `Chat_Functions.raise_for_http_error`, the dispatcher's own classifier), and do not wrap a provider stream that has its own close or attribute contract.
+
 ## A cache keyed on the config identity must keep its last value while it re-reads (TASK-39044, 2026-11-06)
 
 **Incident.** On dev, four to six of the seven pause-copy cases failed in each run, and the view-all history cases failed too. The Console's historical fleet read keys its cache on `config.current_config_identity()` among other fields (3e618d7119). After any config write (here a Settings save; in the tests a rail-preference write), the next sync re-keyed the cache, saw no value yet, and returned an empty snapshot until the new read landed. That one empty sync reset `_console_fleet_section_auto_opened` and `_console_fleet_inspector_dismissed`, so the Agents section the user had collapsed auto-opened again and the rail scrolled to it. The tests' own closes and clicks lost to that reopen.

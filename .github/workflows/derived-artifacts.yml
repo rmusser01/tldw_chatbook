@@ -891,6 +891,8 @@ jobs:
       # max 21.3 of its 35 min over 56 runs from 2026-11-20 to 2026-11-22; with
       # both round-21 additions (about 1.7 + 1.4 CI-minutes) the expected max
       # is about 24.5 of 35.
+      # TASK-42529 adds one bootstrap_profile node after the rate-limit file:
+      # OpenAI's streamed 400 now leaves the stream as a typed error.
       - name: Run admission-sensitive suites 3
         run: |
           pytest \
@@ -905,6 +907,7 @@ jobs:
             Tests/Chat/test_console_context_presentation_reads.py \
             Tests/Chat/test_response_rules_transport.py \
             Tests/Chat/test_rate_limit_reads_as_rate_limit.py \
+            Tests/Chat/test_openai_streaming_usage.py::test_400_not_naming_stream_options_is_passed_through_unretried \
             Tests/LLM_Calls/test_openrouter_response_extras.py \
             Tests/Wizards/test_first_run_key_check.py \
             Tests/Wizards/test_first_run_local_streaming.py \

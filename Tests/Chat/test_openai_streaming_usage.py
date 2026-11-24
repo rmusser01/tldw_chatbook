@@ -9,6 +9,7 @@ import pytest
 import requests
 
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+from tldw_chatbook.Provider_Contract import ChatBadRequestError
 from tldw_chatbook.LLM_Calls.LLM_API_Calls import _responses_stream_to_chat_sse
 
 
@@ -260,6 +261,9 @@ def test_responses_completed_event_carries_usage_through():
     assert completed[0]["usage"]["input_tokens_details"]["cached_tokens"] == 1024
 
 
+# The handler reads its config through the participant admission, which the
+# per-test redirect refuses (RecoveryRequired); this fakes the transport only.
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_400_not_naming_stream_options_is_passed_through_unretried(mock_post):
     """The degrade rule is narrow ON PURPOSE: only a 400 that actually names
@@ -282,16 +286,16 @@ def test_400_not_naming_stream_options_is_passed_through_unretried(mock_post):
         model="gpt-4o",
         streaming=True,
     )
-    chunks = list(generator)
+    with pytest.raises(ChatBadRequestError) as raised:
+        list(generator)
 
     assert mock_post.call_count == 1, "a non-stream_options 400 must not retry"
-    # The handler surfaces provider failures as an SSE error payload (its
-    # pre-existing contract) rather than raising out of the generator; the
-    # 400 must still reach the caller, unchanged by the usage opt-in.
-    joined = "".join(chunks)
-    assert "openai_stream_error" in joined
-    assert "400 Client Error" in joined
-    assert "stream_options" not in joined
+    # TASK-42529: the 400 leaves the stream as the dispatcher's typed error,
+    # status and provider text kept, as a non-streamed 400 does (it was an
+    # SSE error line), unchanged by the usage opt-in.
+    assert raised.value.status_code == 400
+    assert "Invalid value for temperature" in str(raised.value)
+    assert "stream_options" not in str(raised.value)
     # The first (and only) request still carried the opt-in.
     assert mock_post.call_args_list[0][1]["json"]["stream_options"] == {
         "include_usage": True

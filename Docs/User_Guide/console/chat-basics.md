@@ -594,11 +594,9 @@ statistics tools.
   may be billed. A cloud provider is not
   asked again: when it refuses a streamed request before any text, the
   System row quotes the provider's own error message where it sent one and
-  adds how to turn streaming off. OpenAI does
-  not do this yet: a streamed request it refuses is sent up to three times
-  and fails with a general provider error ("provider returned HTTP 502")
-  that does not quote OpenAI's message. If that happens, turn streaming off
-  for that chat or model and send again to see OpenAI's own error. With
+  adds how to turn streaming off. A streamed rate limit (429) or server
+  error (5xx) reads the same as one without streaming: its status and the
+  provider's own reason. With
   streaming off, the reply appears all at once when the provider finishes,
   and the label shows the time waited until then.
 - While a run is active a **Stop** button (warning-tinted, "Stop this tab's
