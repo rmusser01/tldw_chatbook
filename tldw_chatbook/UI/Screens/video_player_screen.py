@@ -203,7 +203,7 @@ class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
             )
 
     async def _activate_audible(self, token: int, probe: PlayerProbe) -> None:
-        from tldw_chatbook.TTS.audio_output_admission import acquire_audio_output
+        from tldw_chatbook.UI.audio_output_admission import acquire_audio_output
         from tldw_chatbook.TTS.audio_output_runs import MediaOutputRun
 
         def current() -> bool:

@@ -33,7 +33,7 @@ start is not newly serialized or automatically bounded (TASK-33621.111).
 | Profiles | `TTS/profile_repository.py`, `profile_schema.py`, `profile_service.py`, `profile_types.py` | `TTSProfileRepository` (one serialized connection), `TTSGenerationProfile` (revision-CAS), `TTSProfileVerificationEvidence` |
 | Backends | `TTS/backends/` | openai, elevenlabs, alltalk, kokoro (ONNX/PyTorch), chatterbox (+ isolated subprocess variant), higgs |
 | Playback | `Audio/streaming_sink.py`, `TTS/pcm_stream.py`, `TTS/audio_player.py`, `TTS/playback_capability.py` | `StreamingPcmSink`, `sink_plan()`, `SimpleAudioPlayer`/`AsyncAudioPlayer`, `locally_playable_formats()` |
-| App output admission | `TTS/audio_output_ownership.py`, `audio_output_runs.py`, `audio_output_admission.py`, `app_service_wiring.py` | `AudioOutputOwnership`, exact intent/lease, prepared file/PCM/media runs, `acquire_audio_output()` |
+| App output admission | `TTS/audio_output_ownership.py`, `TTS/audio_output_runs.py`, `UI/audio_output_admission.py`, `app_service_wiring.py` | `AudioOutputOwnership`, exact intent/lease, prepared file/PCM/media runs, `acquire_audio_output()` |
 | Controlled Windows WAV | `TTS/controlled_wav_profile.py`, `controlled_wav_progress.py`, `controlled_wav_playback.py`, `_controlled_wav_windows.py` | retained artifact/bookmark, bounded telemetry, `ControlledWavPlayback`, checked native process birth and retirement |
 | STT catalogue | `Utils/local_stt_providers.py` | `LOCAL_PROVIDER_MODULES` — the single source of truth for local STT providers |
 | Dictation | `Audio/dictation_service.py`, `Chat/console_voice_input.py`, `UI/Console_Modules/dictation.py` | `DictationService` FSM, headless `ConsoleVoiceInputController` (probe/resolve/classify), `ConsoleDictationController` |
@@ -109,7 +109,7 @@ pair through seeks and natural drain; silent video consumes no audio lease.
 
 Windows default-player launches and other OS delegation create an unresolved
 handoff epoch. Launcher exit, idle state, file-retention expiry and leaving a view
-cannot establish external silence. `TTS/audio_output_admission.py` uses the
+cannot establish external silence. `UI/audio_output_admission.py` uses the
 canonical Cancel-focused confirmation before later in-app output, accepting only
 the exact current action and epoch. Consecutive explicit external opens remain
 supported. Accepted external files have a separate TTL and app-exit cleanup

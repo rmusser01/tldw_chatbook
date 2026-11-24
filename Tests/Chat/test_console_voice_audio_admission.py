@@ -8,7 +8,7 @@ import pytest
 
 from Tests.Chat.test_console_voice_process import bootstrap, ready_true
 from tldw_chatbook.Chat import console_voice_process as voice
-from tldw_chatbook.TTS.audio_output_admission import acquire_audio_output
+from tldw_chatbook.UI.audio_output_admission import acquire_audio_output
 from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership, OutputBlocked
 
 

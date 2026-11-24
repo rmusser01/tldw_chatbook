@@ -3988,7 +3988,7 @@ def console_audio_confirmation_owner(screen: Any) -> str | None:
     app = getattr(screen, "app_instance", None)
     if app is None or not vars(app).get("_audio_output_prompt"):
         return None
-    from ...TTS.audio_output_admission import is_audio_confirmation_for
+    from ..audio_output_admission import is_audio_confirmation_for
 
     if len(app.screen_stack) < 2 or app.screen_stack[-2] is not screen:
         return None

@@ -78,7 +78,7 @@ async def _delegate_video(
     app, ticket, path: Path, opener, current, *, preflight=None
 ) -> bool:
     """Retain one committed OS launch through cancellation and late acceptance."""
-    from ...TTS.audio_output_admission import acquire_audio_output
+    from ..audio_output_admission import acquire_audio_output
     from ...TTS.audio_output_runs import PreparedOutputRun
 
     def prepare():

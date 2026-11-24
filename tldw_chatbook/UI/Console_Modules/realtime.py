@@ -1768,7 +1768,7 @@ class ConsoleRealtimeController:
         this exact output. An uncertain close keeps the gate until a late receipt.
         """
         from ...Audio.streaming_sink import pump
-        from ...TTS.audio_output_admission import acquire_audio_output
+        from ..audio_output_admission import acquire_audio_output
 
         ticket = session.audio_intent
 

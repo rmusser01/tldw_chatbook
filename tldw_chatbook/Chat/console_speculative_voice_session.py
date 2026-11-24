@@ -13,6 +13,7 @@ from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_voice_process import ConsoleVoiceProcess
+    from tldw_chatbook.TTS.audio_output_ownership import AudioOutputLease
 
 from tldw_chatbook.Audio.duplex_contracts import (
     AcousticSafetyPath,
@@ -809,6 +810,11 @@ def _consume_task_result(task: asyncio.Task[Any]) -> None:
         task.result()
 
 
+async def _decline_unbound_audio(_run: Any, *, current: Callable[[], bool]) -> None:
+    """Keep a session without an output admission callback from starting audio."""
+    return None
+
+
 def create_console_speculative_voice_session(
     *,
     app_instance: Any,
@@ -821,7 +827,7 @@ def create_console_speculative_voice_session(
     worker: Any = None,
     process_supervisor: Any = None,
     entry_current: Callable[[], bool] | None = None,
-    audio_intent=None,
+    admit_audio: Callable[..., Awaitable[AudioOutputLease | None]] | None = None,
     on_displaced: Callable[[], None] | None = None,
 ) -> ConsoleVoiceProcess:
     """Build one qualified view-local pipeline from existing app services."""
@@ -1072,18 +1078,9 @@ def create_console_speculative_voice_session(
             )
         return True
 
-    from tldw_chatbook.TTS.audio_output_admission import acquire_audio_output
-
-    async def admit_audio(run, *, current):
-        return await acquire_audio_output(
-            app_instance, audio_intent, "Hands-free voice", run, current=current
-        )
-
-    if audio_intent is None:
-        audio_intent = app_instance.audio_output.begin_intent()
     engine = ConsoleVoiceProcess(
         supervisor.device_lease,
-        admit_audio=admit_audio,
+        admit_audio=admit_audio if admit_audio is not None else _decline_unbound_audio,
         on_displaced=on_displaced,
         bootstrap=bootstrap,
         preflight=preflight,

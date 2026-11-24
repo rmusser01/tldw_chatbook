@@ -1,4 +1,4 @@
-"""UI-facing admission and explicit confirmation of external playback."""
+"""Present and confirm app audio requests against the shared output owner."""
 
 from __future__ import annotations
 

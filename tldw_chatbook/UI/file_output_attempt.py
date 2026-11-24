@@ -59,7 +59,7 @@ class FileOutputSurface:
         release: Callable[[], None] | None = None,
     ) -> bool:
         """Transfer artifact custody from preparation to positive retirement."""
-        from ..TTS.audio_output_admission import (
+        from .audio_output_admission import (
             acquire_audio_output,
             retain_retired_handoff_file,
         )
@@ -128,7 +128,7 @@ class FileOutputSurface:
     def confirming(self) -> bool:
         if self.latest is None:
             return False
-        from ..TTS.audio_output_admission import is_audio_confirmation_for
+        from .audio_output_admission import is_audio_confirmation_for
 
         return is_audio_confirmation_for(self.latest.app, self.latest.ticket)
 

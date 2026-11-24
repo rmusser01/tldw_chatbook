@@ -3165,7 +3165,7 @@ class TTSEventHandler:
         """
         if playback_lifecycle is not None and not playback_lifecycle.is_current():
             return "superseded"
-        from tldw_chatbook.TTS.audio_output_admission import acquire_audio_output
+        from tldw_chatbook.UI.audio_output_admission import acquire_audio_output
         from tldw_chatbook.TTS.audio_output_runs import PcmOutputRun
 
         attempt = self._prepare_output(message_id, playback_lifecycle)
@@ -4140,7 +4140,7 @@ class TTSEventHandler:
         self, attempt, presentation, playback_seconds, *, event=None
     ):
         """Observe native launch and transport on this attempt's private file run."""
-        from tldw_chatbook.TTS.audio_output_admission import acquire_audio_output
+        from tldw_chatbook.UI.audio_output_admission import acquire_audio_output
         from tldw_chatbook.TTS.audio_output_runs import FileOutputRun
         from tldw_chatbook.TTS.audio_player import PlaybackState
 

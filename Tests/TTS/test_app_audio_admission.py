@@ -37,7 +37,7 @@ async def test_lazy_owner_is_private_to_each_app_and_closed_at_exit():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("confirm", [False, True])
 async def test_external_confirmation_requires_a_positive_button(confirm):
-    from tldw_chatbook.TTS.audio_output_admission import acquire_audio_output
+    from tldw_chatbook.UI.audio_output_admission import acquire_audio_output
 
     app = AudioApp()
     async with app.run_test() as pilot:
@@ -65,7 +65,7 @@ async def test_external_confirmation_requires_a_positive_button(confirm):
 @pytest.mark.asyncio
 async def test_only_the_current_top_audio_prompt_owns_its_originating_ticket():
     from textual.screen import ModalScreen
-    from tldw_chatbook.TTS.audio_output_admission import (
+    from tldw_chatbook.UI.audio_output_admission import (
         acquire_audio_output,
         is_audio_confirmation_for,
     )
@@ -143,7 +143,7 @@ async def test_quick_exit_reports_negative_native_receipt():
 @pytest.mark.asyncio
 async def test_retired_external_file_releases_once_on_deadline_or_shutdown(monkeypatch):
     from tldw_chatbook.TTS import audio_player
-    from tldw_chatbook.TTS.audio_output_admission import retain_retired_handoff_file
+    from tldw_chatbook.UI.audio_output_admission import retain_retired_handoff_file
     from tldw_chatbook.app_lifecycle import LifecycleMixin
 
     app, other = AudioApp(), AudioApp()
@@ -171,7 +171,8 @@ async def test_retired_external_file_releases_once_on_deadline_or_shutdown(monke
 async def test_console_suspend_recognizes_only_its_exact_audio_prompt(kind):
     from types import SimpleNamespace
     from textual.screen import Screen
-    from tldw_chatbook.TTS.audio_output_admission import acquire_audio_output
+    from textual.widgets import Button
+    from tldw_chatbook.UI.audio_output_admission import acquire_audio_output
     from tldw_chatbook.UI.Console_Modules.wiring import console_audio_confirmation_owner
 
     app = AudioApp()
@@ -208,7 +209,8 @@ async def test_console_suspend_recognizes_only_its_exact_audio_prompt(kind):
         )
         await pilot.pause()
         assert observations[-1] == ("hands_free" if kind == "qualified" else kind)
-        await pilot.click("#confirm-button")
+        app.screen.query_one("#confirm-button", Button).focus()
+        await pilot.press("enter")
         granted = await asyncio.wait_for(task, 1)
         assert granted.authorizes(run.retire)
         await app.push_screen(Screen())
@@ -222,7 +224,7 @@ async def test_mounted_chat_preserves_request_lifetime_only_for_its_own_prompt(r
     from textual.screen import ModalScreen
     from Tests.UI.app_factory import _build_test_app
     from Tests.UI.test_console_fleet_wake_hidden_screen import _mount_chat
-    from tldw_chatbook.TTS.audio_output_admission import acquire_audio_output
+    from tldw_chatbook.UI.audio_output_admission import acquire_audio_output
 
     app = _build_test_app()
     async with app.run_test(size=(140, 44)) as pilot:

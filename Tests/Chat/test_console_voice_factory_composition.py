@@ -26,7 +26,7 @@ from Tests.Chat.test_console_voice_capture import _eligible
 from tldw_chatbook.TTS.audio_output_ownership import AudioOutputOwnership
 
 
-def _factory(monkeypatch, store, owner, gateway):
+def _factory(monkeypatch, store, owner, gateway, *, admit_audio=None):
     from tldw_chatbook.Chat import (
         console_voice_process,
         console_voice_input,
@@ -81,7 +81,52 @@ def _factory(monkeypatch, store, owner, gateway):
         project_preview=lambda _value: None,
         clear_preview=lambda: None,
         entry_current=lambda: True,
+        admit_audio=admit_audio,
     )
+
+
+@pytest.mark.asyncio
+async def test_factory_without_audio_admission_cannot_grant_output(monkeypatch):
+    store, *_ = _winning_case()
+    owner = VoicePromotionOwner(lambda: store, sync_runner=_inline)
+    engine = _factory(monkeypatch, store, owner, SimpleNamespace())
+
+    async def retire():
+        return True
+
+    run = SimpleNamespace(retire=retire)
+    assert await engine.bindings["admit_audio"](run, current=lambda: True) is None
+
+
+@pytest.mark.asyncio
+async def test_factory_uses_only_the_injected_audio_ticket(monkeypatch):
+    from functools import partial
+    from tldw_chatbook.UI.audio_output_admission import acquire_audio_output
+
+    store, *_ = _winning_case()
+    owner = VoicePromotionOwner(lambda: store, sync_runner=_inline)
+    host = AudioOutputOwnership()
+    admission = partial(
+        acquire_audio_output,
+        SimpleNamespace(audio_output=host),
+        host.begin_intent(),
+        "Hands-free voice",
+    )
+    engine = _factory(
+        monkeypatch, store, owner, SimpleNamespace(), admit_audio=admission
+    )
+
+    async def retire():
+        return True
+
+    run = SimpleNamespace(retire=retire)
+    admit = engine.bindings["admit_audio"]
+    assert await admit(run, current=lambda: False) is None
+    lease = await admit(run, current=lambda: True)
+    assert lease.authorizes(retire) and host.owner == "Hands-free voice"
+    host.begin_intent()
+    assert await admit(run, current=lambda: True) is None
+    assert lease.authorizes(retire)
 
 
 @pytest.mark.asyncio

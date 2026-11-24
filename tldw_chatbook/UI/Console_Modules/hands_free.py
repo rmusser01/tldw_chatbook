@@ -118,6 +118,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -966,6 +967,7 @@ class ConsoleHandsFreeController:
         from ...Chat.console_voice_controls import (
             ControlKind,
         )
+        from ..audio_output_admission import acquire_audio_output
 
         try:
             from ...Chat.console_voice_preflight import VoicePreparationError
@@ -1002,7 +1004,12 @@ class ConsoleHandsFreeController:
                     {
                         "worker": runtime.voice_worker,
                         "process_supervisor": runtime.voice_process_supervisor,
-                        "audio_intent": audio_intent,
+                        "admit_audio": partial(
+                            acquire_audio_output,
+                            self.app_instance,
+                            audio_intent,
+                            "Hands-free voice",
+                        ),
                         "on_displaced": lambda: self._close_qualified_console_voice(
                             ControlKind.TEARDOWN, expected_generation=generation
                         ),
