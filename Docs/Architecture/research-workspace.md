@@ -101,6 +101,22 @@ Study also checks the active server profile, account, and workspace before
 consuming the handoff. The Artifacts handoff reuses the Library's canonical
 Chatbook selection.
 
+### More outputs
+
+The action registry projects readiness for the exact workspace, processing
+route, and captured source versions. More outputs groups Study and analysis
+controls without adding a second command for a primary card. Unsupported
+owners show their recovery and the three Planned labels are static text.
+
+Server Mind Map and Timeline save bounded Mermaid and chronological Markdown
+as `mindmap` and `timeline` workspace artifacts. Studio checks source versions
+again after generation and retains the resolved citation references. The same
+review and exact-version export flow applies to both diagrams.
+
+Executive Brief, Evidence-Bound Hypotheses, and Research Proposal Pack use
+cited templates with required sections. Their identity stays in provenance
+while Local Chatbooks and Server `report` artifacts own the content.
+
 ## Copy, export, and sharing
 
 The workspace Actions menu opens Copy for the selected Local or Server

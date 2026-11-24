@@ -152,10 +152,10 @@ persistence.
    inputs, stable workspace tag, columns/max rows/model options, and a durable
    job. Poll/cancel through existing job APIs; after completion create a
    workspace artifact reference containing table UUID/version only.
-4. Slides calls `generate_presentation_from_rag` for the captured workspace
-   query/source scope and selected visual style. Treat returned presentation
-   ID/version as canonical; create a workspace artifact reference and expose
-   existing export/render methods.
+4. Slides uses `generate_presentation_from_media` for one captured, ready Media
+   item and the selected visual style. This matches the WebUI's native route
+   and can prove which source it used. Treat the returned presentation ID and
+   version as canonical. Store a workspace reference and reuse native exports.
 5. Audio Summary first generates a bounded cited summary script through the
    server route, then calls `AudioServicesScopeService(mode="server")` with
    provider/model/voice/speed/format. Activate only if the response yields a

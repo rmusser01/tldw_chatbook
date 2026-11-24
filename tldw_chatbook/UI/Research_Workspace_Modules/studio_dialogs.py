@@ -19,7 +19,9 @@ from ...Research_Workspace.chat_models import ResearchRetrievalSettings
 from ...Research_Workspace.studio_models import (
     ResearchGenerationConfig,
     ResearchOutputKind,
+    StudioOutputKind,
 )
+from ...Research_Workspace.work_product_templates import TEXT_WORK_PRODUCT_TEMPLATES
 from ...Widgets.modal_dismissal import SafeModalDismissMixin
 from .studio_history import StudioHistoryRow
 from .studio_output_card import output_label
@@ -33,7 +35,7 @@ class ResearchStudioOptions(
 
     def __init__(
         self,
-        kind: ResearchOutputKind,
+        kind: StudioOutputKind,
         owner: str,
         route: str,
         source_count: int,
@@ -90,9 +92,12 @@ class ResearchStudioOptions(
                 yield Input(type="number", id="research-studio-threshold")
                 yield Checkbox("Rerank evidence", id="research-studio-rerank")
                 yield Checkbox(
-                    "Include source citations",
+                    "Source citations required"
+                    if self.kind in TEXT_WORK_PRODUCT_TEMPLATES
+                    else "Include source citations",
                     value=True,
                     id="research-studio-citations",
+                    disabled=self.kind in TEXT_WORK_PRODUCT_TEMPLATES,
                 )
                 yield Static("Temperature")
                 yield Input("0.3", type="number", id="research-studio-temperature")

@@ -65,6 +65,16 @@ class ResearchWorkProductKind(StrEnum):
         return 1 if self is self.EXECUTIVE_BRIEF else 2
 
 
+StudioOutputKind = ResearchOutputKind | ResearchWorkProductKind
+
+
+def studio_output_kind(value: str) -> StudioOutputKind:
+    try:
+        return ResearchOutputKind(value)
+    except ValueError:
+        return ResearchWorkProductKind(value)
+
+
 class StudioOwnerKind(StrEnum):
     LOCAL_CHATBOOK = "local_chatbook"
     LOCAL_STUDY_DECK = "local_study_deck"
@@ -137,7 +147,7 @@ def validate_studio_sources(
 
 
 def studio_retrieval(
-    kind: ResearchOutputKind,
+    kind: StudioOutputKind,
     sources: tuple[ResearchSourceVersionRef, ...],
     requested: RetrievalMode,
 ) -> tuple[RetrievalMode | None, tuple[ResearchSourceVersionRef, ...]]:
@@ -153,7 +163,7 @@ def studio_retrieval(
 class ResearchStudioRequest:
     operation_id: str
     workspace: QualifiedWorkspaceRef
-    output_kind: ResearchOutputKind
+    output_kind: StudioOutputKind
     source_snapshot: tuple[ResearchSourceVersionRef, ...]
     generation: ResearchGenerationConfig
     processing_route: ProcessingRoute
@@ -161,12 +171,15 @@ class ResearchStudioRequest:
     research_run_ref: ResearchWorkspaceRunRef | None = None
 
     def __post_init__(self) -> None:
+        from .studio_mapping import STUDIO_OUTPUT_MAPPINGS
+        from .work_product_templates import TEXT_WORK_PRODUCT_TEMPLATES
+
         validate_studio_sources(self.workspace, self.source_snapshot)
         object.__setattr__(
             self, "operation_id", validate_chat_id(self.operation_id, "operation ID")
         )
-        kind = ResearchOutputKind(self.output_kind)
-        if kind not in PRIMARY_RESEARCH_OUTPUT_KINDS:
+        kind = studio_output_kind(self.output_kind)
+        if (self.workspace.data_source, kind) not in STUDIO_OUTPUT_MAPPINGS:
             raise ValueError("Choose an available Studio output owner")
         object.__setattr__(self, "output_kind", kind)
         if self.research_run_ref is not None and (
@@ -179,6 +192,13 @@ class ResearchStudioRequest:
             )
         if not isinstance(self.generation, ResearchGenerationConfig):
             raise TypeError("Studio generation options must be validated")
+        if (
+            kind in TEXT_WORK_PRODUCT_TEMPLATES
+            and not self.generation.retrieval.citations
+        ):
+            raise ValueError(
+                "Work products require citations to their selected sources"
+            )
         if (
             not isinstance(self.processing_route, ProcessingRoute)
             or self.processing_route.data_source is not self.workspace.data_source
@@ -220,7 +240,7 @@ class ResearchStudioRequest:
 @dataclass(frozen=True, slots=True)
 class WorkspaceOutputRef:
     workspace: QualifiedWorkspaceRef
-    output_kind: ResearchOutputKind
+    output_kind: StudioOutputKind
     owner_kind: StudioOwnerKind
     owner_id: str
     owner_version: int | None
@@ -229,18 +249,16 @@ class WorkspaceOutputRef:
     status: ResearchTurnStatus
 
     def __post_init__(self) -> None:
-        from .studio_mapping import PRIMARY_OUTPUT_MAPPINGS
+        from .studio_mapping import STUDIO_OUTPUT_MAPPINGS
 
         validate_studio_sources(self.workspace, self.source_snapshot)
-        object.__setattr__(self, "output_kind", ResearchOutputKind(self.output_kind))
+        object.__setattr__(self, "output_kind", studio_output_kind(self.output_kind))
         owner = StudioOwnerKind(self.owner_kind)
         object.__setattr__(self, "owner_kind", owner)
-        if (
-            owner
-            is not PRIMARY_OUTPUT_MAPPINGS[
-                self.workspace.data_source, self.output_kind
-            ].owner_kind
-        ):
+        mapping = STUDIO_OUTPUT_MAPPINGS.get(
+            (self.workspace.data_source, self.output_kind)
+        )
+        if mapping is None or owner is not mapping.owner_kind:
             raise ValueError(
                 "Output owner does not match this workspace and output kind"
             )

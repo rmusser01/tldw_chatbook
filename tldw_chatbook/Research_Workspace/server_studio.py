@@ -28,15 +28,16 @@ from .contracts import (
     WorkspaceDataSource,
 )
 from .server_study import output_creation_time, study_payload, study_result
-from .studio_generation import StudioGeneratedOutput
-from .studio_mapping import PRIMARY_OUTPUT_MAPPINGS
+from .studio_generation import StudioGeneratedOutput, validate_diagram_text
+from .studio_mapping import SERVER_DIAGRAM_TYPES, STUDIO_OUTPUT_MAPPINGS
 from .studio_models import (
-    ResearchOutputKind,
     ResearchStudioRequest,
     StudioOwnerKind,
     WorkspaceOutputRef,
+    studio_output_kind,
     validate_output_page,
 )
+from .work_product_templates import TEXT_WORK_PRODUCT_TEMPLATES
 from .studio_provenance import (
     citation_references,
     generation_metadata,
@@ -101,6 +102,10 @@ class ServerStudioAdapter:
         return {
             "save_workspace_artifact": text,
             "update_workspace_artifact": change,
+            **{
+                f"generate_{kind.value}": text
+                for kind in (*SERVER_DIAGRAM_TYPES, *TEXT_WORK_PRODUCT_TEMPLATES)
+            },
             **study,
         }
 
@@ -149,8 +154,8 @@ class ServerStudioAdapter:
 
     def _reference(self, ref, row, metadata) -> WorkspaceOutputRef:
         details = metadata["research_generation"]
-        kind = ResearchOutputKind(details["output_kind"])
-        owner = PRIMARY_OUTPUT_MAPPINGS[WorkspaceDataSource.SERVER, kind]
+        kind = studio_output_kind(details["output_kind"])
+        owner = STUDIO_OUTPUT_MAPPINGS[WorkspaceDataSource.SERVER, kind]
         if (
             owner.artifact_type is None
             or row.get("artifact_type") != owner.artifact_type
@@ -206,7 +211,11 @@ class ServerStudioAdapter:
             study_page = await study.page(limit=limit, offset=offset)
             self._check_connection(ref, client)
             study_total = study_page.total if study_page else 0
-            selected = [study_result(ref, row) for row in study_page.items] if study_page else []
+            selected = (
+                [study_result(ref, row) for row in study_page.items]
+                if study_page
+                else []
+            )
         total = len(entries) + study_total
         page = BoundedPageResult(
             tuple(output for output, _ in selected),
@@ -226,14 +235,19 @@ class ServerStudioAdapter:
             if page is None and total is None:
                 return [], 0
             if page is None or (total is not None and page.total != total):
-                raise ValueError("Study output history changed. Reload it before continuing")
+                raise ValueError(
+                    "Study output history changed. Reload it before continuing"
+                )
             total = page.total
             rows.extend(study_result(ref, item) for item in page.items)
         return rows, total
 
     async def resolve_output(self, output: WorkspaceOutputRef):
         client, service = self._connection(output.workspace)
-        if output.owner_kind in {StudioOwnerKind.SERVER_STUDY_DECK, StudioOwnerKind.SERVER_QUIZ}:
+        if output.owner_kind in {
+            StudioOwnerKind.SERVER_STUDY_DECK,
+            StudioOwnerKind.SERVER_QUIZ,
+        }:
             row = await self._study(output.workspace, client).get(
                 output.output_kind.value, output.owner_id
             )
@@ -284,6 +298,8 @@ class ServerStudioAdapter:
     async def edit_output(self, output: WorkspaceOutputRef, body: str) -> None:
         if not body.strip() or len(body.encode("utf-8")) > MAX_ANSWER_BYTES:
             raise ValueError("Enter a non-empty output within the size limit")
+        if output.output_kind in SERVER_DIAGRAM_TYPES:
+            body = validate_diagram_text(output.output_kind, body)
         await self._update_selected(output, content=body, review_state="draft")
 
     async def accept_output(self, output: WorkspaceOutputRef) -> None:
@@ -349,7 +365,7 @@ class ServerStudioAdapter:
     ) -> WorkspaceOutputRef:
         ref = request.workspace
         client, service = self._connection(ref)
-        mapping = PRIMARY_OUTPUT_MAPPINGS[ref.data_source, request.output_kind]
+        mapping = STUDIO_OUTPUT_MAPPINGS[ref.data_source, request.output_kind]
         if generated.status != "complete":
             return WorkspaceOutputRef(
                 ref,
@@ -380,7 +396,9 @@ class ServerStudioAdapter:
             )
         if mapping.owner_kind is not StudioOwnerKind.SERVER_ARTIFACT:
             if replace_output:
-                raise ValueError("Create a new version or edit the item in Server Study")
+                raise ValueError(
+                    "Create a new version or edit the item in Server Study"
+                )
             payload = study_payload(request, generated, supersedes)
             row = await self._study(ref, client).save(payload)
             self._check_connection(ref, client)
@@ -394,6 +412,9 @@ class ServerStudioAdapter:
                 "The generated text is empty or exceeds the output size limit"
             )
         metadata = generation_metadata(request, supersedes)
+        content = generated.text
+        if request.output_kind in SERVER_DIAGRAM_TYPES:
+            content = validate_diagram_text(request.output_kind, content)
         citations = citation_references(
             generated, {citation.marker for citation in generated.citations}
         )
@@ -447,7 +468,7 @@ class ServerStudioAdapter:
                     title=request.generation.title
                     or request.output_kind.value.replace("_", " ").title(),
                     status="complete",
-                    content=generated.text,
+                    content=content,
                     producer_metadata=producer,
                     version=replace_output.owner_version if replace_output else None,
                     **({"review_state": "draft"} if replace_output else {}),
@@ -475,7 +496,7 @@ class ServerStudioAdapter:
                 or row.get("workspace_id") != ref.workspace_id
                 or self._metadata(row) != metadata
                 or row["producer_metadata"].get("research_citations") != citations
-                or row.get("content") != generated.text
+                or row.get("content") != content
             ):
                 raise ValueError(
                     "The Server did not confirm the saved artifact and its provenance"

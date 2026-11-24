@@ -1,4 +1,4 @@
-"""Generate a primary Studio output from captured, bounded source evidence."""
+"""Generate a Studio output from captured, bounded source evidence."""
 
 from __future__ import annotations
 
@@ -23,7 +23,9 @@ from .chat_models import ResearchSourceVersionRef, ResearchTurnStatus
 from .chat_service import collect_answer
 from .contracts import QualifiedWorkspaceRef
 from .egress_consent import ResearchEgressConsentService
+from .studio_mapping import SERVER_DIAGRAM_TYPES
 from .studio_models import ResearchOutputKind, ResearchStudioRequest
+from .work_product_templates import TEXT_WORK_PRODUCT_TEMPLATES
 
 _MAX_EVIDENCE_CHARS = 16_000
 _MAX_EXCERPT_CHARS = 6_000
@@ -34,6 +36,9 @@ _TEXT = Annotated[
     ),
 ]
 _MARKER = Annotated[str, StringConstraints(strict=True, pattern=r"^S[1-9][0-9]{0,2}$")]
+_CITATION_PATTERN = re.compile(r"\[(S[1-9][0-9]{0,2})\]")
+_MIND_MAP_LINE = re.compile(r"( {2,12})([\w .,'’!?/:–—\-\[\]]{1,200})")
+_TIMELINE_ENTRY = re.compile(r"- \[([^\]\r\n]{1,100})\] - (.{1,400})")
 
 _INSTRUCTIONS = {
     ResearchOutputKind.SUMMARY: "Summarize the selected sources in Markdown, covering the main ideas and limits.",
@@ -41,7 +46,42 @@ _INSTRUCTIONS = {
     ResearchOutputKind.COMPARE_SOURCES: "Compare the selected sources in Markdown. Identify agreements, disagreements, and gaps.",
     ResearchOutputKind.FLASHCARDS: 'Return JSON shaped as {"items":[{"front":"question","back":"answer","citations":["S1"]}]}. Keep each card focused on one idea.',
     ResearchOutputKind.QUIZ: 'Return JSON shaped as {"items":[{"question":"question","options":["answer A","answer B"],"correct_index":0,"explanation":"why","citations":["S1"]}]}. Use one correct option and its zero-based index.',
+    ResearchOutputKind.MIND_MAP: "Return a Mermaid mindmap with one root and at least one branch. Start with mindmap, indent the plain-text root by two spaces and each level by two more. Use simple labels with no markup, shapes, or links.",
+    ResearchOutputKind.TIMELINE: "Return only chronological Markdown bullet entries in the form `- [Date or period] - Event description`. Use the best available period for events without a precise date. Cite the evidence for each event when citations are enabled.",
+    **{
+        kind: template.instruction
+        for kind, template in TEXT_WORK_PRODUCT_TEMPLATES.items()
+    },
 }
+
+
+def validate_diagram_text(kind: ResearchOutputKind, text: str) -> str:
+    """Check bounded diagrams before saving code or text to a Server artifact."""
+    body = text.replace("\r\n", "\n").strip()
+    if kind is ResearchOutputKind.MIND_MAP:
+        if body.startswith("```mermaid\n") and body.endswith("\n```"):
+            body = body[len("```mermaid\n") : -len("\n```")]
+    if re.search(r"[<>{}`\x00-\x09\x0b-\x1f\x7f]|\]\(|://|%%", body):
+        raise ValueError("Diagram content includes unsupported markup")
+    lines = body.split("\n")
+    if not 1 <= len(lines) <= 60:
+        raise ValueError("The diagram exceeds the supported line count")
+    if kind is ResearchOutputKind.TIMELINE:
+        if not all(_TIMELINE_ENTRY.fullmatch(line) for line in lines):
+            raise ValueError("Each Timeline entry needs a period and an event")
+        return body
+    if lines[0] != "mindmap" or len(lines) < 3:
+        raise ValueError("A Mind Map needs a root and at least one branch")
+    previous = 0
+    for line in lines[1:]:
+        match = _MIND_MAP_LINE.fullmatch(line)
+        if match is None or not match[2].strip():
+            raise ValueError("Use plain text labels for Mind Map entries")
+        indent = len(match[1])
+        if indent % 2 or indent > previous + 2 or (previous and indent == 2):
+            raise ValueError("Indent each branch below the single Mind Map root")
+        previous = indent
+    return body
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,12 +193,19 @@ class ResearchStudioGenerator:
             return StudioGeneratedOutput(
                 "failed", failure_reason="The provider returned an empty output"
             )
+        kind = request.output_kind
+        if kind in SERVER_DIAGRAM_TYPES or kind in TEXT_WORK_PRODUCT_TEMPLATES:
+            await self._check_sources(request)
         try:
             return self._parse(request, answer.text, evidence)
         except (ValueError, ValidationError):
-            return StudioGeneratedOutput(
-                "failed", failure_reason="The provider returned invalid study items"
-            )
+            if kind in SERVER_DIAGRAM_TYPES:
+                reason = "The provider returned an invalid Mind Map or Timeline"
+            elif kind in TEXT_WORK_PRODUCT_TEMPLATES:
+                reason = "The provider returned an invalid work product"
+            else:
+                reason = "The provider returned invalid study items"
+            return StudioGeneratedOutput("failed", failure_reason=reason)
 
     async def _check_sources(self, request: ResearchStudioRequest) -> None:
         visible = set(await self.current_sources(request.workspace))
@@ -214,6 +261,35 @@ class ResearchStudioGenerator:
     def _parse(request, text: str, evidence) -> StudioGeneratedOutput:
         cards, questions = (), ()
         kind = request.output_kind
+        if kind in SERVER_DIAGRAM_TYPES:
+            text = validate_diagram_text(kind, text)
+            diagram_markers = _CITATION_PATTERN.findall(text)
+            if set(diagram_markers).difference(evidence) or (
+                request.generation.retrieval.citations and not diagram_markers
+            ):
+                raise ValueError(
+                    "Use only citations supplied in the generation request"
+                )
+            if (
+                kind is ResearchOutputKind.TIMELINE
+                and request.generation.retrieval.citations
+                and any(
+                    not _CITATION_PATTERN.search(line) for line in text.splitlines()
+                )
+            ):
+                raise ValueError("Cite each Timeline entry")
+        if template := TEXT_WORK_PRODUCT_TEMPLATES.get(kind):
+            sections = re.split(r"^##[ \t]+([^\n]+)$", text, flags=re.MULTILINE)
+            headings = tuple(heading.strip().casefold() for heading in sections[1::2])
+            if headings != tuple(
+                label.casefold() for label in template.sections
+            ) or any(not body.strip() for body in sections[2::2]):
+                raise ValueError("The work product is missing required sections")
+            product_markers = set(_CITATION_PATTERN.findall(text))
+            if not product_markers or product_markers.difference(evidence):
+                raise ValueError(
+                    "Use only citations supplied in the generation request"
+                )
         if kind in {ResearchOutputKind.FLASHCARDS, ResearchOutputKind.QUIZ}:
             body = text.strip()
             if body.startswith("```json\n") and body.endswith("```"):
@@ -238,7 +314,7 @@ class ResearchStudioGenerator:
         markers = (
             (marker for item in (*cards, *questions) for marker in item.citations)
             if cards or questions
-            else re.findall(r"\[(S[1-9][0-9]{0,2})\]", text)
+            else _CITATION_PATTERN.findall(text)
         )
         citations = (
             tuple(

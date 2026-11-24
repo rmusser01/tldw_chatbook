@@ -6,10 +6,10 @@ from textual.widgets import Button, Static
 
 from ...Research_Workspace.action_registry import RESEARCH_ACTIONS
 from ...Research_Workspace.studio_mapping import StudioAvailability
-from ...Research_Workspace.studio_models import ResearchOutputKind
+from ...Research_Workspace.studio_models import ResearchOutputKind, StudioOutputKind
 
 
-def output_label(kind: ResearchOutputKind) -> str:
+def output_label(kind: StudioOutputKind) -> str:
     return RESEARCH_ACTIONS[kind.value].label
 
 

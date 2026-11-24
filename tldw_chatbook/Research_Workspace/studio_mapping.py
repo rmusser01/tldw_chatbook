@@ -1,4 +1,4 @@
-"""Canonical destinations and readiness for the five primary Studio outputs."""
+"""Canonical destinations and readiness for Research Studio outputs."""
 
 from __future__ import annotations
 
@@ -17,10 +17,12 @@ from .contracts import (
 from .studio_models import (
     PRIMARY_RESEARCH_OUTPUT_KINDS,
     ResearchOutputKind,
+    StudioOutputKind,
     StudioOwnerKind,
     studio_retrieval,
     validate_studio_sources,
 )
+from .work_product_templates import TEXT_WORK_PRODUCT_TEMPLATES
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +142,39 @@ PRIMARY_OUTPUT_MAPPINGS: Mapping[
         (WorkspaceDataSource.SERVER, ResearchOutputKind.COMPARE_SOURCES): replace(
             _SERVER_TEXT, artifact_type="compare_sources"
         ),
+    }
+)
+
+SERVER_DIAGRAM_TYPES = MappingProxyType(
+    {ResearchOutputKind.MIND_MAP: "mindmap", ResearchOutputKind.TIMELINE: "timeline"}
+)
+
+STUDIO_OUTPUT_MAPPINGS: Mapping[
+    tuple[WorkspaceDataSource, StudioOutputKind], StudioOwnerMapping
+] = MappingProxyType(
+    {
+        **PRIMARY_OUTPUT_MAPPINGS,
+        **{
+            (WorkspaceDataSource.SERVER, kind): replace(
+                _SERVER_TEXT,
+                artifact_type=artifact_type,
+                create_capability=f"generate_{kind.value}",
+            )
+            for kind, artifact_type in SERVER_DIAGRAM_TYPES.items()
+        },
+        **{
+            (authority, kind): replace(
+                owner, create_capability=f"generate_{kind.value}"
+            )
+            for authority, owner in (
+                (WorkspaceDataSource.LOCAL, _LOCAL_TEXT),
+                (
+                    WorkspaceDataSource.SERVER,
+                    replace(_SERVER_TEXT, artifact_type="report"),
+                ),
+            )
+            for kind in TEXT_WORK_PRODUCT_TEMPLATES
+        },
     }
 )
 

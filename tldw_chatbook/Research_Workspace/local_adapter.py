@@ -306,9 +306,14 @@ class LocalResearchWorkspaceAdapter:
                 "send_chat_turn": chat_capability,
             }
         )
-        if self._studio is not None:
-            capabilities.update(self._studio.owner.capabilities())
+        capabilities.update(await self.studio_capabilities(ref))
         return capabilities
+
+    async def studio_capabilities(
+        self, ref: QualifiedWorkspaceRef
+    ) -> Mapping[str, ResearchCapability]:
+        self._require_local_ref(ref)
+        return self._studio.owner.capabilities() if self._studio is not None else {}
 
     async def chat_capability(self, ref: QualifiedWorkspaceRef) -> ResearchCapability:
         self._require_local_ref(ref)
@@ -444,10 +449,10 @@ class LocalResearchWorkspaceAdapter:
         return await self._require_studio(request.workspace).owner.save(request, report, supersedes=supersedes)
 
     async def generate_output(self, request: ResearchStudioRequest, on_chunk, cancel_event, *, replace_output=None, supersedes=None):
-        from .studio_mapping import PRIMARY_OUTPUT_MAPPINGS
+        from .studio_mapping import STUDIO_OUTPUT_MAPPINGS
 
         studio = self._require_studio(request.workspace)
-        mapping = PRIMARY_OUTPUT_MAPPINGS[request.workspace.data_source, request.output_kind]
+        mapping = STUDIO_OUTPUT_MAPPINGS[request.workspace.data_source, request.output_kind]
         require_capability(studio.owner.capabilities(), mapping.create_capability)
         return await studio.generate(
             request, on_chunk, cancel_event, replace_output=replace_output, supersedes=supersedes,

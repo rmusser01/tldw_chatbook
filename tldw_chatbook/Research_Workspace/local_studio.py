@@ -18,7 +18,7 @@ from .chat_service import MAX_ANSWER_BYTES
 from .contracts import BoundedPageResult, QualifiedWorkspaceRef, WorkspaceDataSource
 from .contracts import ResearchCapability
 from .studio_generation import StudioGeneratedOutput
-from .studio_mapping import PRIMARY_OUTPUT_MAPPINGS, StudioOwnerMapping
+from .studio_mapping import STUDIO_OUTPUT_MAPPINGS, StudioOwnerMapping
 from .studio_models import (
     ResearchStudioRequest,
     StudioOwnerKind,
@@ -60,7 +60,7 @@ class LocalStudioAdapter:
     def _owner(ref: QualifiedWorkspaceRef, kind) -> StudioOwnerMapping:
         if ref.data_source is not WorkspaceDataSource.LOCAL:
             raise ValueError("This Studio owner requires a Local workspace")
-        return PRIMARY_OUTPUT_MAPPINGS[ref.data_source, kind]
+        return STUDIO_OUTPUT_MAPPINGS[ref.data_source, kind]
 
     def capabilities(self) -> dict[str, ResearchCapability]:
         backends = {
@@ -69,7 +69,7 @@ class LocalStudioAdapter:
             StudioOwnerKind.LOCAL_QUIZ: self.quizzes,
         }
         result = {}
-        for (authority, _kind), mapping in PRIMARY_OUTPUT_MAPPINGS.items():
+        for (authority, _kind), mapping in STUDIO_OUTPUT_MAPPINGS.items():
             if authority is not WorkspaceDataSource.LOCAL:
                 continue
             available = backends[mapping.owner_kind] is not None

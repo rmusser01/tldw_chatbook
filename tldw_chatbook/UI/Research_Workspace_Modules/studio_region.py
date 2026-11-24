@@ -13,12 +13,17 @@ from textual.events import DescendantFocus
 from textual.message import Message
 from textual.widgets import Button, Input, Select, Static
 
+from ...Research_Workspace.action_registry import (
+    ResearchActionContext,
+    ResearchActionProbes,
+    project_research_actions,
+)
 from ...Research_Workspace.contracts import CapabilityUnavailableError
 from ...Research_Workspace.egress_consent import ResearchEgressConsentService
 from ...Research_Workspace.layout_state import ResearchPanePreferences
 from ...Research_Workspace.overlay_store import OverlayConflictError
 from ...Research_Workspace.studio_mapping import (
-    PRIMARY_OUTPUT_MAPPINGS,
+    STUDIO_OUTPUT_MAPPINGS,
     project_studio_availability,
 )
 from ...Research_Workspace.studio_models import (
@@ -28,6 +33,7 @@ from ...Research_Workspace.studio_models import (
 )
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from .chat_region import ResearchChatRegion
+from .more_outputs_dialog import ResearchMoreOutputs
 from .quick_notes_section import ResearchQuickNotesSection
 from .studio_dialogs import ResearchStudioActions, ResearchStudioOptions
 from .studio_history import ResearchStudioHistory, StudioHistoryRow, history_key
@@ -56,6 +62,9 @@ class ResearchStudioRegion(VerticalScroll):
         self.overlay_store = overlay_store
         self.ref = None
         self._availability = {}
+        self._action_probes = None
+        self._probe_capture = None
+        self._probed_fields = None
         self._capabilities = {}
         self._offset = 0
         self._refresh_revision = 0
@@ -100,6 +109,12 @@ class ResearchStudioRegion(VerticalScroll):
         )
         for kind in PRIMARY_RESEARCH_OUTPUT_KINDS:
             yield ResearchStudioOutputCard(kind)
+        yield Button(
+            "More outputs…",
+            id="research-studio-more-outputs",
+            compact=True,
+            disabled=True,
+        )
         yield ResearchStudioHistory()
         yield ResearchQuickNotesSection(id="research-quick-notes-section")
 
@@ -133,6 +148,7 @@ class ResearchStudioRegion(VerticalScroll):
             return
         self.ref = ref
         self._availability = {}
+        self._action_probes = self._probe_capture = self._probed_fields = None
         self._capabilities = {}
         self._deep_research_available = False
         self._retry = self._last_saved = None
@@ -161,6 +177,10 @@ class ResearchStudioRegion(VerticalScroll):
                 and not self._dialog_open,
             ),
             ("check-route", self.ref is not None and not self.is_busy),
+            (
+                "more-outputs",
+                self.ref is not None and not self.is_busy and not self._dialog_open,
+            ),
             ("stop", self.is_busy and not self._cancel.is_set()),
             (
                 "retry",
@@ -193,6 +213,16 @@ class ResearchStudioRegion(VerticalScroll):
         model = self.query_one("#research-studio-model", Input).value.strip()
         return provider, model
 
+    @on(Input.Changed, "#research-studio-provider")
+    @on(Input.Changed, "#research-studio-model")
+    def invalidate_processing_route(self) -> None:
+        if self._probed_fields is None or self._probed_fields == self._route_fields():
+            return
+        self._availability = {}
+        self._action_probes = self._probe_capture = self._probed_fields = None
+        self.query_one("#research-studio-route", Static).update(self._route_label(None))
+        self._sync_controls()
+
     @staticmethod
     def _route_label(route) -> str:
         if route is None:
@@ -219,12 +249,13 @@ class ResearchStudioRegion(VerticalScroll):
 
     async def _refresh(self, *, preferred="") -> None:
         capture = self.controller.capture_request()
+        fields = self._route_fields()
         port = self._port(capture.ref)
         self._refresh_revision += 1
         revision = self._refresh_revision
         if port is None or not hasattr(port, "capture_chat_sources"):
             return
-        capabilities = self.controller.visible_capabilities
+        capabilities = {}
         sources, route = None, None
         try:
             if (
@@ -232,7 +263,7 @@ class ResearchStudioRegion(VerticalScroll):
             ) is not None:
                 capabilities = await studio_capabilities(capture.ref)
             sources = await port.capture_chat_sources(capture.ref)
-            route = await port.resolve_chat_route(capture.ref, *self._route_fields())
+            route = await port.resolve_chat_route(capture.ref, *fields)
         except (CapabilityUnavailableError, ValueError, RuntimeError) as exc:
             if self._current(capture):
                 logger.debug(
@@ -252,13 +283,23 @@ class ResearchStudioRegion(VerticalScroll):
                     "Workspace Research capability unavailable ({})", type(exc).__name__
                 )
                 research_available = False
-        if not self._current(capture) or revision != self._refresh_revision:
+        if (
+            not self._current(capture)
+            or revision != self._refresh_revision
+            or fields != self._route_fields()
+        ):
             return
         self._deep_research_available = research_available
         self._capabilities = capabilities
         self._availability = project_studio_availability(
             capture.ref, sources or (), route, capabilities
         )
+        context = ResearchActionContext(
+            capture.ref, capture.capability_revision, route, sources or ()
+        )
+        self._action_probes = ResearchActionProbes(context, capabilities)
+        self._probe_capture = capture
+        self._probed_fields = fields
         self.query_one("#research-studio-route", Static).update(
             self._route_label(route)
         )
@@ -317,17 +358,55 @@ class ResearchStudioRegion(VerticalScroll):
         if self._deep_research_available and not self.is_busy:
             self.post_message(self.LaunchResearch())
 
+    def _read_action_probes(self, capture):
+        if (
+            self._probe_capture == capture
+            and self._probed_fields == self._route_fields()
+        ):
+            return self._action_probes
+        return None
+
+    @on(Button.Pressed, "#research-studio-more-outputs")
+    def more_outputs(self) -> None:
+        if self.ref is None or self.is_busy or self._dialog_open:
+            return
+        self._dialog_open = True
+        self._sync_controls()
+        self.run_worker(self._choose_extended_output(), exit_on_error=False)
+
+    async def _choose_extended_output(self) -> None:
+        capture = self.controller.capture_request()
+        probes = self._read_action_probes(capture)
+        context = (
+            probes.context
+            if probes
+            else ResearchActionContext(
+                capture.ref, capture.capability_revision, None, ()
+            )
+        )
+        try:
+            kind = await self.app.push_screen_wait(
+                ResearchMoreOutputs(
+                    capture.ref, project_research_actions(context, probes)
+                )
+            )
+        finally:
+            self._dialog_open = False
+            if self.is_mounted:
+                self._sync_controls()
+        if (
+            kind is not None
+            and self._current(capture)
+            and probes == self._read_action_probes(capture)
+        ):
+            self._configure(kind)
+
     @on(Button.Pressed, ".research-studio-create")
     def create(self, event: Button.Pressed) -> None:
         self._configure(event.button.parent.kind)
 
     def _configure(self, kind, *, replace_output=None, supersedes=None) -> None:
-        if (
-            self.is_busy
-            or self._dialog_open
-            or not self._availability.get(kind)
-            or not self._availability[kind].available
-        ):
+        if self.is_busy or self._dialog_open or not self._can_generate(kind):
             return
         self._dialog_open = True
         self._sync_controls()
@@ -337,6 +416,16 @@ class ResearchStudioRegion(VerticalScroll):
             ),
             group="research-studio-generation",
             exit_on_error=False,
+        )
+
+    def _can_generate(self, kind) -> bool:
+        if kind in PRIMARY_RESEARCH_OUTPUT_KINDS:
+            status = self._availability.get(kind)
+            return bool(status and status.available)
+        probes = self._read_action_probes(self.controller.capture_request())
+        return (
+            probes is not None
+            and project_research_actions(probes.context, probes)[kind.value].available
         )
 
     async def _configure_and_generate(
@@ -349,7 +438,16 @@ class ResearchStudioRegion(VerticalScroll):
             route = await port.resolve_chat_route(capture.ref, *self._route_fields())
             if not self._current(capture):
                 return
-            mapping = PRIMARY_OUTPUT_MAPPINGS[capture.ref.data_source, kind]
+            if kind not in PRIMARY_RESEARCH_OUTPUT_KINDS:
+                probes = self._read_action_probes(capture)
+                if probes is None or (route, sources) != (
+                    probes.context.processing_route,
+                    probes.context.source_snapshot,
+                ):
+                    raise ValueError(
+                        "Studio sources or processing changed. Check the route and reopen More outputs."
+                    )
+            mapping = STUDIO_OUTPUT_MAPPINGS[capture.ref.data_source, kind]
             action = (
                 "Replace output"
                 if replace_output
@@ -366,7 +464,11 @@ class ResearchStudioRegion(VerticalScroll):
                     action=action,
                 )
             )
-            if options is None or not self._current(capture):
+            if (
+                options is None
+                or not self._current(capture)
+                or not self._can_generate(kind)
+            ):
                 return
             request = ResearchStudioRequest(
                 uuid4().hex,
@@ -460,7 +562,7 @@ class ResearchStudioRegion(VerticalScroll):
                 self._last_saved = StudioHistoryRow(output, record, False)
                 self._retry = None
                 self._offset = 0
-                owner = PRIMARY_OUTPUT_MAPPINGS[
+                owner = STUDIO_OUTPUT_MAPPINGS[
                     request.workspace.data_source, request.output_kind
                 ].owner_label
                 self._status(f"Saved to {owner} · {route}")
@@ -580,9 +682,7 @@ class ResearchStudioRegion(VerticalScroll):
         output = row.output
         if capture.ref != output.workspace:
             return
-        owner = PRIMARY_OUTPUT_MAPPINGS[
-            output.workspace.data_source, output.output_kind
-        ]
+        owner = STUDIO_OUTPUT_MAPPINGS[output.workspace.data_source, output.output_kind]
         try:
             record = await self._port(output.workspace).resolve_output(output)
         except Exception as exc:
@@ -612,10 +712,7 @@ class ResearchStudioRegion(VerticalScroll):
                     actions["append"] = "Append to Quick Note"
                 if replace_capability and replace_capability.available:
                     actions["edit"] = "Edit output"
-            if (
-                self._availability.get(output.output_kind)
-                and self._availability[output.output_kind].available
-            ):
+            if self._can_generate(output.output_kind):
                 actions["new-version"] = "Regenerate as new version"
                 if replace_capability and replace_capability.available:
                     actions["replace"] = "Regenerate and replace"

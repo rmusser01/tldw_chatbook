@@ -63,7 +63,18 @@ class OutputGenerationProvenance(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     operation_id: _IDENTIFIER
-    output_kind: Literal["summary", "flashcards", "quiz", "report", "compare_sources"]
+    output_kind: Literal[
+        "summary",
+        "flashcards",
+        "quiz",
+        "report",
+        "compare_sources",
+        "mind_map",
+        "timeline",
+        "executive_brief",
+        "evidence_bound_hypotheses",
+        "research_proposal_pack",
+    ]
     source_snapshot: tuple[_OutputSourceVersion, ...] = Field(
         min_length=1, max_length=100
     )

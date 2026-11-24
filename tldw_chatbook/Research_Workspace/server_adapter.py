@@ -570,11 +570,11 @@ class ServerResearchWorkspaceAdapter:
         return await self._server_call(self._require_studio(output_ref.workspace).owner.export_output(output_ref, format), context=context)
 
     async def generate_output(self, request, on_chunk, cancel_event, *, replace_output=None, supersedes=None):
-        from .studio_mapping import PRIMARY_OUTPUT_MAPPINGS
+        from .studio_mapping import STUDIO_OUTPUT_MAPPINGS
 
         context = self._context_for_ref(request.workspace)
         studio = self._require_studio(request.workspace)
-        mapping = PRIMARY_OUTPUT_MAPPINGS[request.workspace.data_source, request.output_kind]
+        mapping = STUDIO_OUTPUT_MAPPINGS[request.workspace.data_source, request.output_kind]
         require_capability(await self.studio_capabilities(request.workspace), mapping.create_capability)
         return await self._server_call(
             studio.generate(request, on_chunk, cancel_event, replace_output=replace_output, supersedes=supersedes),

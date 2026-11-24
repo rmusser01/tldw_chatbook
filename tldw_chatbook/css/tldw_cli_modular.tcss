@@ -19422,12 +19422,13 @@ ResearchChatMessageEditor {
     color: $ds-text-muted;
 }
 
-ResearchStudioOptions, ResearchStudioActions, ResearchStudioEdit {
+ResearchStudioOptions, ResearchStudioActions, ResearchStudioEdit, ResearchMoreOutputs {
     align: center middle;
     background: $background $ds-opacity-dim;
 }
 
-#research-studio-dialog, #research-studio-actions-dialog, #research-studio-edit-dialog {
+#research-studio-dialog, #research-studio-actions-dialog, #research-studio-edit-dialog,
+#research-more-outputs-dialog {
     width: $ds-percent-90;
     max-width: $ds-size-76;
     height: $ds-percent-90;
@@ -19437,7 +19438,7 @@ ResearchStudioOptions, ResearchStudioActions, ResearchStudioEdit {
     background: $panel;
 }
 
-.research-studio-action-scroll, #research-studio-edit-body {
+.research-studio-action-scroll, #research-studio-edit-body, #research-more-output-list {
     height: $ds-height-fill;
     min-height: $ds-size-0;
 }
@@ -19479,7 +19480,8 @@ ResearchCopyProgress, ResearchCopyReceiptView, ResearchSharingDialog {
     max-height: $ds-size-3;
 }
 
-#research-studio-dialog Static, #research-studio-actions-dialog Static {
+#research-studio-dialog Static, #research-studio-actions-dialog Static,
+#research-more-outputs-dialog Static {
     height: auto;
 }
 
@@ -19598,11 +19600,12 @@ ResearchSourcesRegion Button:focus {
     text-style: bold underline;
 }
 
-#research-workspace-shell ResearchSourcesRegion Button:disabled {
+#research-workspace-shell ResearchSourcesRegion Button:disabled,
+#research-more-outputs-dialog .research-more-action:disabled {
     opacity: 100%;
     text-opacity: 100%;
-    background: $surface-darken-1;
-    color: $text-muted;
+    background: $ds-surface-sunken;
+    color: $ds-text-disabled-readable;
     text-style: none;
 }
 
