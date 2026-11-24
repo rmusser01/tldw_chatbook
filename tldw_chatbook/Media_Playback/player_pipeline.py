@@ -29,6 +29,7 @@ import shutil
 import signal
 import subprocess  # nosec B404 # pipelines invoke probed system binaries with fixed argv
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock, RLock
@@ -56,6 +57,11 @@ def playback_tools_available() -> tuple[bool, str]:
         return True, ""
     missing = [tool for tool in ("ffmpeg", "ffplay") if shutil.which(tool) is None]
     return False, f"Missing {', '.join(missing)}. {PLAYBACK_TOOLS_GUIDANCE}"
+
+
+def audio_pipe_supported() -> bool:
+    """Whether ffmpeg can inherit the separate PCM output fd on this host."""
+    return os.name == "posix"
 
 
 @dataclass(frozen=True)
@@ -209,6 +215,7 @@ class PlayerPipeline:
         self._ffmpeg: subprocess.Popen | None = None
         self._ffplay: subprocess.Popen | None = None
         self._current_run: PlayerRun | None = None
+        self._owned_run: PlayerRun | None = None  # includes unpublished partial starts
         self._idle_stats = SyncStats()
         self._lifecycle_lock = RLock()
         #: Bumped by every start(); the frame pump treats a generation change
@@ -217,18 +224,28 @@ class PlayerPipeline:
 
     # -- lifecycle ---------------------------------------------------------
 
-    def start(self, *, offset_seconds: float = 0.0) -> PlayerRun:
+    def start(
+        self,
+        *,
+        offset_seconds: float = 0.0,
+        start_authority: Callable[[], bool] | None = None,
+    ) -> PlayerRun:
         """Start (or restart, for seek) the demux pair at ``offset_seconds``."""
+
+        def check_authority() -> None:
+            if start_authority is not None and not start_authority():
+                raise RuntimeError("Media playback start authority revoked")
+
         with self._lifecycle_lock:
-            self.stop()
             offset = max(0.0, offset_seconds)
-            generation = self._generation + 1
+            if self._probe.has_audio and not audio_pipe_supported():
+                raise RuntimeError("In-app media audio requires POSIX inherited pipes")
+            check_authority()
+            self.stop()  # raises while either prior child is still unconfirmed
             audio_r: int | None = None
             audio_w: int | None = None
-            ffmpeg: subprocess.Popen | None = None
-            ffplay: subprocess.Popen | None = None
-            run: PlayerRun | None = None
-            failure: Exception | None = None
+            self._generation += 1
+            run = PlayerRun(self._generation, None, offset)
             if self._probe.has_audio:
                 audio_r, audio_w = os.pipe()
             seek_args = ["-ss", f"{offset:.3f}"] if offset else []
@@ -282,14 +299,18 @@ class PlayerPipeline:
                     f"pipe:{audio_w}",
                 ]
                 pass_fds = (audio_w,)
+            failure: BaseException | None = None
             try:
-                ffmpeg = self._spawn(
+                check_authority()
+                self._ffmpeg = self._spawn(
                     ffmpeg_cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     pass_fds=pass_fds,
                 )
-                run = PlayerRun(generation, ffmpeg.stdout, offset)
+                self._owned_run = run
+                run.stdout = self._ffmpeg.stdout
+                check_authority()
                 if audio_w is not None:
                     inherited_audio_w = audio_w
                     audio_w = None
@@ -311,13 +332,14 @@ class PlayerPipeline:
                         "-i",
                         "pipe:0",
                     ]
-                    ffplay = self._spawn(
+                    check_authority()
+                    self._ffplay = self._spawn(
                         ffplay_cmd,
                         stdin=audio_r,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                     )
-            except Exception as exc:
+            except BaseException as exc:
                 failure = exc
             for fd in (audio_r, audio_w):
                 if fd is not None:
@@ -326,35 +348,13 @@ class PlayerPipeline:
                     except Exception as exc:
                         if failure is None:
                             failure = exc
-            if failure is not None:
-                if ffplay is not None:
-                    try:
-                        self._stop_process(ffplay)
-                    except Exception:
-                        pass
-                if ffmpeg is not None:
-                    try:
-                        self._stop_process(ffmpeg)
-                    except Exception:
-                        pass
-                if run is not None:
-                    try:
-                        run.close_stdout_once()
-                    except Exception:
-                        pass
-                elif ffmpeg is not None and ffmpeg.stdout is not None:
-                    try:
-                        ffmpeg.stdout.close()
-                    except Exception:
-                        pass
-                self._ffmpeg = None
-                self._ffplay = None
-                self._current_run = None
-                raise failure
-            assert ffmpeg is not None and run is not None
-            self._generation = generation
-            self._ffmpeg = ffmpeg
-            self._ffplay = ffplay
+            try:
+                if failure is not None:
+                    raise failure
+                check_authority()
+            except BaseException:
+                self.stop()  # keep an unconfirmed child even on partial startup
+                raise
             self._current_run = run
             return run
 
@@ -365,18 +365,11 @@ class PlayerPipeline:
             proc.terminate()
             proc.wait(timeout=2)
         except Exception:
-            terminal_failure: Exception | None = None
             try:
                 proc.kill()
-            except Exception as exc:
-                terminal_failure = exc
-            try:
-                proc.wait()
-            except Exception as exc:
-                if terminal_failure is None:
-                    terminal_failure = exc
-            if terminal_failure is not None:
-                raise terminal_failure
+            except Exception:
+                pass  # an exited child can refuse the signal; the wait decides
+            proc.wait(timeout=0.5)
 
     @property
     def current_run(self) -> PlayerRun | None:
@@ -457,12 +450,23 @@ class PlayerPipeline:
 
     # -- control -------------------------------------------------------------
 
-    def seek(self, offset_seconds: float) -> PlayerRun:
+    def seek(
+        self,
+        offset_seconds: float,
+        *,
+        expected_run: PlayerRun | None = None,
+        start_authority: Callable[[], bool] | None = None,
+    ) -> PlayerRun:
         """Restart the demux pair at ``offset_seconds`` (AC3)."""
         duration = self._probe.duration_seconds
         if duration is not None:
             offset_seconds = min(offset_seconds, max(0.0, duration))
-        return self.start(offset_seconds=offset_seconds)
+        with self._lifecycle_lock:
+            if expected_run is not None and self._current_run is not expected_run:
+                raise RuntimeError("Media playback run is no longer current")
+            return self.start(
+                offset_seconds=offset_seconds, start_authority=start_authority
+            )
 
     def pause(self) -> None:
         """Freeze both processes and stop the sync clock (POSIX only)."""
@@ -495,37 +499,27 @@ class PlayerPipeline:
                         except (OSError, ProcessLookupError):
                             pass
 
-    def stop(self) -> None:
-        """Terminate the pair (idempotent)."""
+    def stop(self, *, expected_run: PlayerRun | None = None) -> bool:
+        """Reap this pair, returning False for a stale run. Failure retains custody."""
         with self._lifecycle_lock:
-            ffplay = self._ffplay
-            ffmpeg = self._ffmpeg
-            run = self._current_run
-            self._ffplay = None
-            self._ffmpeg = None
-            self._current_run = None
+            run = self._owned_run
+            if expected_run is not None and run is not expected_run:
+                return False
             if run is not None:
                 run.eof = True
-        failure: Exception | None = None
-        if ffplay is not None:
             try:
-                self._stop_process(ffplay)
-            except Exception as exc:
-                failure = exc
-        if ffmpeg is not None:
-            try:
-                self._stop_process(ffmpeg)
-            except Exception as exc:
-                if failure is None:
-                    failure = exc
-        if run is not None:
-            try:
-                run.close_stdout_once()
-            except Exception as exc:
-                if failure is None:
-                    failure = exc
-        if failure is not None:
-            raise failure
+                if self._ffplay is not None:
+                    self._stop_process(self._ffplay)
+                    self._ffplay = None
+            finally:
+                if self._ffmpeg is not None:
+                    self._stop_process(self._ffmpeg)
+                    self._ffmpeg = None
+                if run is not None:
+                    run.close_stdout_once()
+            self._current_run = None
+            self._owned_run = None
+            return True
 
     @property
     def at_eof(self) -> bool:

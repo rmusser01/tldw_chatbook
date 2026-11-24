@@ -11,6 +11,7 @@ import pytest
 
 from tldw_chatbook.Media_Playback.player_pipeline import (
     PlayerPipeline,
+    audio_pipe_supported,
     playback_tools_available,
     probe_file,
 )
@@ -100,6 +101,9 @@ def test_seek_restarts_at_offset(video_only_clip):
     assert pts == pytest.approx(0.5, abs=1e-6)
 
 
+@pytest.mark.skipif(
+    not audio_pipe_supported(), reason="audio demux requires inherited fds"
+)
 def test_audio_branch_runs_headless(audio_video_clip, monkeypatch):
     # ffplay plays through SDL; the dummy driver needs no audio hardware.
     monkeypatch.setenv("SDL_AUDIODRIVER", "dummy")

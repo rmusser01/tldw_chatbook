@@ -3,11 +3,13 @@
 import os
 import subprocess
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
 
 from tldw_chatbook.Media_Playback import player_pipeline as pp
+from tldw_chatbook.Media_Playback.player_pipeline import audio_pipe_supported
 
 
 _HAS_PROCESS_SUSPEND_SIGNALS = hasattr(pp.signal, "SIGSTOP") and hasattr(
@@ -17,6 +19,12 @@ _requires_process_suspend_signals = pytest.mark.skipif(
     not _HAS_PROCESS_SUSPEND_SIGNALS,
     reason="POSIX process suspend/resume signals are unavailable",
 )
+
+
+@pytest.fixture(autouse=True)
+def _supported_fake_audio_pipe(monkeypatch):
+    # The injected demux fake accepts POSIX inherited fds on every test host.
+    monkeypatch.setattr(pp, "audio_pipe_supported", lambda: True)
 
 
 # -- tools / probe -------------------------------------------------------------
@@ -108,7 +116,7 @@ class _FakeProc:
         if timeout == 2 and self._timeout_once:
             self._timeout_once = False
             raise subprocess.TimeoutExpired(self.cmd, timeout)
-        if timeout is None and self._final_wait_error is not None:
+        if self.killed and self._final_wait_error is not None:
             raise self._final_wait_error
         return 0
 
@@ -745,7 +753,7 @@ def test_stop_force_kill_waits_for_process_after_terminate_timeout():
         "terminate",
         ("wait", 2),
         "kill",
-        ("wait", None),
+        ("wait", 0.5),
     ]
     assert stdout.close_calls == 1
 
@@ -774,12 +782,12 @@ def test_ffplay_timeout_force_kills_and_finally_reaps_before_ffmpeg():
         "terminate",
         ("wait", 2),
         "kill",
-        ("wait", None),
+        ("wait", 0.5),
     ]
     assert ffmpeg.events == ["terminate", ("wait", 2)]
 
 
-def test_ffplay_terminal_cleanup_failure_does_not_skip_ffmpeg_or_stdout():
+def test_ffplay_terminal_cleanup_failure_retains_only_audio_for_retry():
     stdout = _FakeStdout(b"", chunk=1)
     spawn = _SpawnRecorder(
         stdout_factory=lambda: stdout,
@@ -787,7 +795,7 @@ def test_ffplay_terminal_cleanup_failure_does_not_skip_ffmpeg_or_stdout():
         final_wait_error_at=2,
     )
     pipeline = pp.PlayerPipeline("clip.mp4", _probe(), spawn=spawn)
-    pipeline.start()
+    run = pipeline.start()
 
     with pytest.raises(OSError, match="final wait failed"):
         pipeline.stop()
@@ -797,8 +805,15 @@ def test_ffplay_terminal_cleanup_failure_does_not_skip_ffmpeg_or_stdout():
         "terminate",
         ("wait", 2),
         "kill",
-        ("wait", None),
+        ("wait", 0.5),
     ]
+    assert ffmpeg.events == ["terminate", ("wait", 2)]
+    assert stdout.close_calls == 1
+    with pytest.raises(OSError, match="final wait failed"):
+        pipeline.seek(1, expected_run=run)
+    assert len(spawn.calls) == 2
+    ffplay._final_wait_error = None
+    assert pipeline.stop(expected_run=run)
     assert ffmpeg.events == ["terminate", ("wait", 2)]
     assert stdout.close_calls == 1
 
@@ -848,3 +863,115 @@ def test_file_source_has_no_reconnect_flags():
     joined = " ".join(spawn.calls[0].cmd)
     assert "-reconnect" not in joined
     pipeline.stop()
+
+
+def test_partial_spawn_keeps_resistant_demux_and_its_stdout_until_reaped():
+    stdout = _FakeStdout(b"", chunk=1)
+    spawn = _SpawnRecorder(
+        stdout_factory=lambda: stdout, fail_at=2, timeout_at=1, final_wait_error_at=1
+    )
+    pipeline = pp.PlayerPipeline("clip.mp4", _probe(), spawn=spawn)
+    with pytest.raises(OSError):
+        pipeline.start()
+    assert pipeline.current_run is None
+    (demux,) = spawn.calls
+    assert stdout.close_calls == 0
+    for action in (pipeline.start, lambda: pipeline.seek(1)):
+        with pytest.raises(OSError):
+            action()
+        assert spawn.calls == [demux]
+        assert stdout.close_calls == 0
+    assert ("wait", None) not in demux.events
+    demux._final_wait_error = None
+    assert pipeline.stop()
+    assert stdout.close_calls == 1
+
+
+def test_stale_seek_and_stop_leave_replacement_pair_alone():
+    spawn = _SpawnRecorder()
+    pipeline = pp.PlayerPipeline("clip.mp4", _probe(), spawn=spawn)
+    old = pipeline.start()
+    new = pipeline.seek(1, expected_run=old)
+    with pytest.raises(RuntimeError, match="current"):
+        pipeline.seek(0, expected_run=old)
+    assert not pipeline.stop(expected_run=old)
+    assert pipeline.current_run is new
+    assert len(spawn.calls) == 4
+    assert all(not child.terminated for child in spawn.calls[2:])
+    assert pipeline.stop(expected_run=new)
+
+
+@pytest.mark.parametrize("late_tool", ["ffmpeg", "ffplay"])
+def test_revoke_during_spawn_reaps_late_children_without_publishing(late_tool):
+    spawn = _SpawnRecorder()
+    entered, revoked = threading.Event(), threading.Event()
+
+    def delayed(cmd, **kwargs):
+        child = spawn(cmd, **kwargs)
+        if cmd[0] == late_tool:
+            entered.set()
+            assert revoked.wait(3)
+        return child
+
+    pipeline = pp.PlayerPipeline("clip.mp4", _probe(), spawn=delayed)
+    with ThreadPoolExecutor(1) as workers:
+        started = workers.submit(
+            pipeline.start, start_authority=lambda: not revoked.is_set()
+        )
+        try:
+            assert entered.wait(1)
+        finally:
+            revoked.set()
+        with pytest.raises(RuntimeError, match="revoked"):
+            started.result(timeout=3)
+    assert [p.cmd[0] for p in spawn.calls] == (
+        ["ffmpeg"] if late_tool == "ffmpeg" else ["ffmpeg", "ffplay"]
+    )
+    assert all(p.events == ["terminate", ("wait", 2)] for p in spawn.calls)
+    assert pipeline.current_run is None
+
+
+def test_revoked_seek_while_reaping_does_not_restart():
+    spawn = _SpawnRecorder()
+    pipeline = pp.PlayerPipeline("clip.mp4", _probe(), spawn=spawn)
+    old = pipeline.start()
+    entered, revoked = threading.Event(), threading.Event()
+    audio = spawn.calls[1]
+    real_wait = audio.wait
+
+    def held_wait(timeout=None):
+        entered.set()
+        assert revoked.wait(3)
+        return real_wait(timeout)
+
+    audio.wait = held_wait
+    with ThreadPoolExecutor(1) as workers:
+        seek = workers.submit(
+            pipeline.seek,
+            1,
+            expected_run=old,
+            start_authority=lambda: not revoked.is_set(),
+        )
+        try:
+            assert entered.wait(1)
+        finally:
+            revoked.set()
+        with pytest.raises(RuntimeError, match="revoked"):
+            seek.result(timeout=3)
+    assert pipeline.current_run is None
+    assert len(spawn.calls) == 2
+
+
+def test_unsupported_inherited_fd_refuses_before_partial_spawn(monkeypatch):
+    # Restore the real capability predicate from the generic fake-pipe fixture.
+    monkeypatch.setattr(pp, "audio_pipe_supported", audio_pipe_supported)
+    monkeypatch.setattr(pp, "os", SimpleNamespace(name="nt"))
+    assert not pp.audio_pipe_supported()
+    spawn = _SpawnRecorder()
+    pipeline = pp.PlayerPipeline("clip.mp4", _probe(), spawn=spawn)
+    with pytest.raises(RuntimeError, match="audio"):
+        pipeline.start()
+    assert not spawn.calls
+    silent = pp.PlayerPipeline("silent.mp4", _probe(has_audio=False), spawn=spawn)
+    assert silent.start() is silent.current_run
+    assert silent.stop()

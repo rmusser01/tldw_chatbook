@@ -23,13 +23,14 @@ from __future__ import annotations
 
 import os
 import threading
+from collections.abc import Callable
 from pathlib import Path, PureWindowsPath
 
 from loguru import logger
 
 from .audio_player import _ALL_FILE_FORMATS
 
-#: The legacy player `play()` drives with a list argv when it is installed.
+#: The legacy player launched by argv can delegate playback to another instance.
 WMPLAYER_PATH = Path("C:/Program Files/Windows Media Player/wmplayer.exe")
 
 #: The toast for a handed-off clip. Literal text: it is shown with
@@ -85,18 +86,8 @@ def hand_off_refusal(given: PureWindowsPath, resolved: PureWindowsPath) -> str |
     return None
 
 
-def hand_off(file_path: Path) -> bool:
-    """Open `file_path` in the user's default audio app via `os.startfile`.
-
-    The path is resolved first (links followed) and both names are checked by
-    `hand_off_refusal`; a refused or unresolvable path is never opened.
-
-    Args:
-        file_path: The clip to open, passed to `os.startfile` unchanged.
-
-    Returns:
-        True when the default app was asked to open the clip.
-    """
+def can_hand_off(file_path: Path) -> bool:
+    """Check both given and resolved local audio names before delegation."""
     try:
         resolved = file_path.resolve(strict=True)
     except (OSError, RuntimeError):
@@ -110,13 +101,38 @@ def hand_off(file_path: Path) -> bool:
         # a path is logged.
         logger.warning("Windows audio hand-off refused: not a local audio file")
         return False
+    return True
+
+
+def hand_off(
+    file_path: Path,
+    *,
+    start_authority: Callable[[], bool] | None = None,
+    notify: bool = True,
+) -> bool:
+    """Return True when ShellExecute accepts the validated file."""
+    if not can_hand_off(file_path) or (
+        start_authority is not None and not start_authority()
+    ):
+        return False
     try:
         os.startfile(os.fspath(file_path))  # type: ignore[attr-defined]  # nosec B606
     except OSError as exc:
         logger.warning("Windows audio hand-off failed ({})", type(exc).__name__)
         return False
-    _tell_running_app(HAND_OFF_NOTICE)
+    if notify:
+        notify_hand_off()
     return True
+
+
+def notify_hand_off(message: str = HAND_OFF_NOTICE) -> None:
+    """Notify after native delegation without changing its accepted outcome."""
+    try:
+        _tell_running_app(message)
+    except Exception as exc:
+        logger.warning(
+            "Could not display Windows audio hand-off notice ({})", type(exc).__name__
+        )
 
 
 def _tell_running_app(message: str) -> None:
