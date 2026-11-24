@@ -597,9 +597,9 @@ async def test_unstored_reasoning_checkpoint_keeps_the_reply(
 #: leaves nothing to retry or recover, so its row says what happened and that
 #: sending again continues the chat.
 DESTINATION_REFUSED_ROW = (
-    "Agent run failed: This reply's reasoning could not be matched to the "
-    "provider endpoint this message was sent to, so the reply was kept as "
-    "failed, without its reasoning. Send again to continue the chat."
+    "Agent run failed: This reply's reasoning did not match the provider "
+    "endpoint your message was sent to, so the reply was marked as failed and "
+    "will not be sent with your next message. Send again to continue the chat."
 )
 
 
@@ -678,7 +678,7 @@ async def test_destination_refused_reasoning_checkpoint_fails_the_reply(
             DESTINATION_REFUSED_ROW
         )
         screen = " ".join(_frame_rows(h.host))
-        assert "Agent run failed: This reply's reasoning could not be" in screen
+        assert "Agent run failed: This reply's reasoning did not match" in screen
         assert "Send again to continue the chat." in screen
         assert "retry or recover" not in screen
         assert "delivery status is unknown" not in screen

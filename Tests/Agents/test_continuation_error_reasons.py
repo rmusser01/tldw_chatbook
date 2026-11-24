@@ -136,9 +136,9 @@ SHARED_SUMMARY = (
 #: TASK-42526 (owner decision 2026-11-24): a destination-refused first final
 #: leaves nothing to retry or recover, so it says so and points at Send.
 DESTINATION_REFUSED_SUMMARY = (
-    "This reply's reasoning could not be matched to the provider endpoint "
-    "this message was sent to, so the reply was kept as failed, without its "
-    "reasoning. Send again to continue the chat."
+    "This reply's reasoning did not match the provider endpoint your message "
+    "was sent to, so the reply was marked as failed and will not be sent with "
+    "your next message. Send again to continue the chat."
 )
 
 
@@ -719,26 +719,48 @@ def test_acknowledge_failure_after_the_commit_still_fails_closed(
 
 
 @pytest.mark.parametrize(
-    ("store_text", "store_code"),
+    ("store_text", "store_code", "summary"),
     [
-        ("Durable continuation host target is unavailable.", "host_target_unavailable"),
-        ("Durable continuation destination is unavailable.", "destination_unavailable"),
-        ("Provider continuation destination mismatch.", "destination_mismatch"),
-        ("Provider continuation binding cannot be erased.", "binding_erased"),
+        (
+            "Durable continuation host target is unavailable.",
+            "host_target_unavailable",
+            DESTINATION_REFUSED_SUMMARY,
+        ),
+        (
+            "Durable continuation destination is unavailable.",
+            "destination_unavailable",
+            DESTINATION_REFUSED_SUMMARY,
+        ),
+        (
+            "Provider continuation destination mismatch.",
+            "destination_mismatch",
+            DESTINATION_REFUSED_SUMMARY,
+        ),
+        # Unreachable on a real first final (the owner would need a
+        # checkpoint already); the endpoint copy would not be true for them.
+        (
+            "Provider continuation binding cannot be erased.",
+            "binding_erased",
+            SHARED_SUMMARY,
+        ),
         (
             "Managed continuation finalizer is unavailable.",
             "managed_finalizer_unavailable",
+            SHARED_SUMMARY,
         ),
     ],
 )
-def test_destination_binding_refusals_still_fail_closed(store_text, store_code) -> None:
+def test_destination_binding_refusals_still_fail_closed(
+    store_text, store_code, summary
+) -> None:
     """TASK-35582's binding checks guard the destination the user accepted.
 
     They refuse before any write, but a refusal means the checkpoint names a
     different provider, origin or binding than the accepted dispatch, so the
     run must not quietly complete as an ordinary reply (review v5r1 F9).
-    Nothing is left to recover, so the summary says what happened and that
-    sending again continues the chat (TASK-42526).
+    For a host-target or destination refusal nothing is left to recover, so
+    the summary says what happened and that sending again continues the chat
+    (TASK-42526).
     """
 
     def persist(event) -> None:
@@ -747,8 +769,10 @@ def test_destination_binding_refusals_still_fail_closed(store_text, store_code) 
     outcome, traced = _run_with_trace([_first_final_turn()], persist=persist)
 
     assert outcome.status == RUN_ERROR
-    assert store_code in DESTINATION_REFUSALS
-    assert _error_states(outcome, DESTINATION_REFUSED_SUMMARY) == {
+    assert (store_code in DESTINATION_REFUSALS) is (
+        summary == DESTINATION_REFUSED_SUMMARY
+    )
+    assert _error_states(outcome, summary) == {
         "continuation_error": "final_persist_failed",
         "continuation_store_failure": store_code,
     }

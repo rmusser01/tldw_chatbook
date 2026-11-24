@@ -1400,12 +1400,12 @@ configured in **F4 ▸ Providers & Models**.
   different provider destination than the one the send was accepted for (for
   example, a different endpoint). That reply stays on screen but is saved as
   failed, without its reasoning, and the run is marked failed. Its row reads
-  **Agent run failed: This reply's reasoning could not be matched to the
-  provider endpoint this message was sent to, so the reply was kept as failed,
-  without its reasoning. Send again to continue the chat.** There is nothing
-  to retry or recover, so no response-recovery card appears. Send stays
-  available, and your next message goes to the provider without the failed
-  reply in its history.
+  **Agent run failed: This reply's reasoning did not match the provider
+  endpoint your message was sent to, so the reply was marked as failed and will
+  not be sent with your next message. Send again to continue the chat.** There
+  is nothing to retry or recover, so no response-recovery card appears. Send
+  stays available, and your next message goes to the provider without the
+  failed reply in its history.
 - With trace capture on (the default), each turn you send in a saved Kimi chat
   is traced like any other send: its request replays the earlier replies'
   saved reasoning, and **Trace** lists that turn's call with its reply.

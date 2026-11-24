@@ -144,16 +144,19 @@ UNWRITTEN_STORE_FAILURES = frozenset(
     }
 )
 
-#: TASK-35582's host-target, destination and binding refusals (above). On a
-#: tool-free first final they fail the reply closed, before any write and
-#: with no dispatch checkpoint to resume, so nothing is left to recover.
+#: TASK-35582's host-target and destination refusals (above). On a tool-free
+#: first final they fail the reply closed, before any write and with no
+#: dispatch checkpoint to resume, so nothing is left to recover. Its other two
+#: binding refusals cannot occur there: ``binding_erased`` and
+#: ``managed_finalizer_unavailable`` need the owner to hold a checkpoint
+#: already, and ``continuation_event_value`` refuses a first final
+#: (``expected_checkpoint_revision=None``) whose owner holds one, before the
+#: binding check runs.
 DESTINATION_REFUSALS = frozenset(
     {
         "host_target_unavailable",
         "destination_unavailable",
         "destination_mismatch",
-        "binding_erased",
-        "managed_finalizer_unavailable",
     }
 )
 
@@ -164,9 +167,9 @@ _CONTINUATION_ERROR_SUMMARY = (
 #: TASK-42526 (owner decision 2026-11-24): say what happened and what Send
 #: does, not "retry or recover" a run that has no recovery.
 _DESTINATION_REFUSED_SUMMARY = (
-    "This reply's reasoning could not be matched to the provider endpoint "
-    "this message was sent to, so the reply was kept as failed, without its "
-    "reasoning. Send again to continue the chat."
+    "This reply's reasoning did not match the provider endpoint your message "
+    "was sent to, so the reply was marked as failed and will not be sent with "
+    "your next message. Send again to continue the chat."
 )
 
 
