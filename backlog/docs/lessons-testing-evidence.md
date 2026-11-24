@@ -1,5 +1,23 @@
 # Lessons: what counts as evidence a change works
 
+## A network sentinel can block Windows event-loop initialization (TASK-41177 follow-up, 2026-11-24)
+
+**Incident.** A mounted default-factory check failed with `transport_failed`.
+An independent private-child startup failed before its prepare acknowledgement,
+and a stdlib-only probe traced the fixture's `forbidden_network` assertion to
+`ProactorEventLoop._make_self_pipe` and its fallback socketpair. Production
+process, child-entry, I/O and lifetime blobs were unchanged. The fixture also
+assumed POSIX launch flags and watchdog calls on Windows. After initializing
+the standard loop with `asyncio.Runner` before installing the sentinel, both
+the process-start and mounted close/restart checks passed in 26.60 seconds.
+
+**What to do.** Separate interpreter/event-loop bootstrap from guarded application
+work. Keep network and device/model guards installed before application imports
+and execution. Diagnose the child failure independently before changing product
+transport, and make fake launch flags and bounded cleanup match the actual OS.
+The fixture lives in `Tests/Audio/fakes/voice_process_child.py`; this evidence
+uses simulated endpoints and does not qualify audible output or microphones.
+
 ## A double attached to a mounted Console is read by the Console's own tick too, so its flakes looked random (TASK-42469, 2026-11-23)
 
 **Incident.** `Tests/UI/test_console_agent_rail.py`'s full-log tests failed run to run under load, each with a different message: `'Bridge' object has no attribute 'live_snapshot'`, a stubbed `_current_console_rail_state` rejecting `inspector_state`, a recorder holding `[False, False]` where the test expected `[False]`, and `WorkerCancelled` out of `host.workers.wait_for_complete()`. None came from the test's own calls. After mount the Console keeps ticking, and its control-bar sync and tick projection (`_sync_console_rail_and_controls`) read the Agent section's lines, fleet rows and rail state from whatever the test attached, and sync the section the test was counting. One forced `console._sync_console_rail_and_controls()` right after a double was attached reproduced the first three every time; restarting the workspace tray's exclusive alias worker during the wait reproduced the fourth. The forced tick also found seven more tests with the same exposure that had not failed yet.

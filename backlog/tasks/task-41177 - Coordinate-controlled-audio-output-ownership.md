@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-11-15'
-updated_date: '2026-11-24T09:33:00Z'
+updated_date: '2026-11-24T18:16:00Z'
 labels:
   - watchlists
   - tts
@@ -49,26 +49,9 @@ Reason: existing accepted output ownership and Windows-first capability contract
 5. Validate native Windows takeover and cross-surface races, configured adapter playback, shutdown and affected targeted regressions. Update architecture/docs and mark Done only after all task AC and required native evidence pass. No provider, queue, storage or UI feature work belongs to this task.
 <!-- SECTION:PLAN:END -->
 
-## Progress — initial ownership increment
-
-Implemented the isolated stdlib `AudioOutputOwnership` / `AudioOutputLease` in `9a6e4360ec`, with the eager-callback ordering fix in `cd66a8aa10`. Exact lease identity and generation fencing prevent stale release/start authority. Replacement waits for positive retirement; cancellation retains one shielded cleanup task and failed retirement preserves blocked custody. The primitive is disconnected from all production callers.
-
-Eleven event-driven tests pass with asyncio debug enabled, including Textual's eager task factory. Ruff lint/format and the import-closure check pass. Independent spec/quality review found a P1 publication race in the initial version; its RED/GREEN eager-loop regression and scoped re-review confirm it addressed, with no open Critical/Important finding.
-
-The normal pytest bootstrap stopped before collection with `recovery_scope_uncertain`; its cause and baseline behavior were not established. Pure coordinator checks used `--noconftest`, without changing recovery policy or user profile data. Native playback, the controlled adapter, all production producer integration and app-wide takeover evidence remain unverified. Task stays In Progress and every whole-task AC remains open.
-
-Existing ADR367 governs this increment. Living internals are updated in `Docs/Architecture/speech.md`; the eager-publication incident is recorded in `backlog/docs/lessons-testing-evidence.md`. The tested implementation base is `3e08f979ea`; rebase onto current dev and rerun affected targeted checks before production caller integration.
-
-### Continuation authorization and bootstrap remedy
-
-The user authorized the controlled WAV adapter and all production wiring. Both stacked branches are aligned with dev `af4b13ea75`; the audio ADR is now 367 because dev reserved 366 for CI. Existing coordinator code and eager-loop regression were preserved.
-
-The normal pytest bootstrap blocker is diagnosed: the sandbox account cannot perform the native drive-root open, and default TEMP/worktree ancestors grant the sandbox group destructive access. A fresh native-verified private temp subtree under the user home, a process-local TEMP/TMP/TMPDIR plus pytest basetemp, and normal-user execution pass all eleven tests with normal conftest/guards. No recovery marker, existing ACL or product recovery policy was changed. The guarded runner and numerical diagnosis are retained in this plan's workspace for targeted verification.
-
-ADR367's production contract and the Superpowers Task2 continuation specify preparation/pins, worker revocation, native classifier/settling qualification, full caller wiring, external handoff acknowledgement, duplex/media/shutdown policy and remaining acceptance evidence. All whole-task AC remain open.
-
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Implemented Windows controlled retained-WAV playback and serialized app output
 admission under ADR367. The descriptor binds private PCM16 stereo 48 kHz bytes,
 digest, logical/physical frames, 250 ms zero tail and saved frame. Native read
@@ -147,3 +130,24 @@ message-pump guard, mounted confirmation/cover and both controller nodes. Public
 receipts regrade identically. TASK-41177 acceptance is complete; draft PR #3742
 contains this implementation and #3741 its qualification prerequisite. Issue
 #2864 remains open for saved listening state and article/queue/UI implementation.
+
+Follow-up (2026-11-24): moved the app-facing confirmation helper to UI/audio_output_admission.py and injected its admission callback into the existing hands-free factory. Domain code now declines an unbound admission; exact original intent, handoff epoch, ACK, Cancel and stale-screen behavior remain covered. Independent scoped reviews approved the production repair and four Windows fixture corrections. The normal guarded selection passed 32 cases across its initial run and four-parameter gesture rerun; the additional mounted default-factory toggle and independent private-process startup passed in 26.60 seconds, including two consented entries, source/HELLO attestation, distinct child PIDs, Job custody, close and restart. These use simulated device/model endpoints, not audible or microphone qualification. Windows fixture fixes initialize the stdlib event loop before the network sentinel while keeping application imports/work guarded, wait for mounted consent controls, and use platform-correct process flags and bounded owned cleanup. Production playback/launch/classifier/settling parameters and numerical receipts are unchanged. Existing Ruff and dependency deprecations were compared with the base; no full repository sweep was run. ADR367 and Docs/Architecture/speech.md remain the architectural references.
+<!-- SECTION:NOTES:END -->
+
+## Progress — initial ownership increment
+
+Implemented the isolated stdlib `AudioOutputOwnership` / `AudioOutputLease` in `9a6e4360ec`, with the eager-callback ordering fix in `cd66a8aa10`. Exact lease identity and generation fencing prevent stale release/start authority. Replacement waits for positive retirement; cancellation retains one shielded cleanup task and failed retirement preserves blocked custody. The primitive is disconnected from all production callers.
+
+Eleven event-driven tests pass with asyncio debug enabled, including Textual's eager task factory. Ruff lint/format and the import-closure check pass. Independent spec/quality review found a P1 publication race in the initial version; its RED/GREEN eager-loop regression and scoped re-review confirm it addressed, with no open Critical/Important finding.
+
+The normal pytest bootstrap stopped before collection with `recovery_scope_uncertain`; its cause and baseline behavior were not established. Pure coordinator checks used `--noconftest`, without changing recovery policy or user profile data. Native playback, the controlled adapter, all production producer integration and app-wide takeover evidence remain unverified. Task stays In Progress and every whole-task AC remains open.
+
+Existing ADR367 governs this increment. Living internals are updated in `Docs/Architecture/speech.md`; the eager-publication incident is recorded in `backlog/docs/lessons-testing-evidence.md`. The tested implementation base is `3e08f979ea`; rebase onto current dev and rerun affected targeted checks before production caller integration.
+
+### Continuation authorization and bootstrap remedy
+
+The user authorized the controlled WAV adapter and all production wiring. Both stacked branches are aligned with dev `af4b13ea75`; the audio ADR is now 367 because dev reserved 366 for CI. Existing coordinator code and eager-loop regression were preserved.
+
+The normal pytest bootstrap blocker is diagnosed: the sandbox account cannot perform the native drive-root open, and default TEMP/worktree ancestors grant the sandbox group destructive access. A fresh native-verified private temp subtree under the user home, a process-local TEMP/TMP/TMPDIR plus pytest basetemp, and normal-user execution pass all eleven tests with normal conftest/guards. No recovery marker, existing ACL or product recovery policy was changed. The guarded runner and numerical diagnosis are retained in this plan's workspace for targeted verification.
+
+ADR367's production contract and the Superpowers Task2 continuation specify preparation/pins, worker revocation, native classifier/settling qualification, full caller wiring, external handoff acknowledgement, duplex/media/shutdown policy and remaining acceptance evidence. All whole-task AC remain open.
