@@ -276,7 +276,8 @@ jobs:
     needs: [preflight]
     if: needs.preflight.outputs.light == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # TASK-42521: the light tier now also runs the PR's own changed test files.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -287,23 +288,13 @@ jobs:
         with:
           node-version: '24'
       - name: Install smoke dependencies
-        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2 hypothesis
+      # TASK-42521: one pytest process per file, the console-p0-gate install
+      # set and the lanes' plugin/timeout flags (scripts/ci/run_light.py).
       - name: Run CI contracts and selected smoke tests
         env:
           CI_TEST_TARGETS: ${{ needs.preflight.outputs.targets }}
-          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
-        run: |
-          python - <<'PYTEST'
-          import json, os, subprocess, sys
-          targets = json.loads(os.environ['CI_TEST_TARGETS'])
-          if not isinstance(targets, list) or not targets or not all(
-              isinstance(t, str) and t.startswith('Tests/') and '..' not in t.split('/')
-              for t in targets
-          ):
-              raise SystemExit('Refusing missing or invalid test selection')
-          subprocess.run([sys.executable, '-m', 'pytest', '-p', 'asyncio', '-p', 'pytest_timeout',
-                          'Tests/CI', *targets, '--timeout=180', '--tb=short'], check=True)
-          PYTEST
+        run: python scripts/ci/run_light.py
 
   release-qualification:
     name: Release candidate qualification

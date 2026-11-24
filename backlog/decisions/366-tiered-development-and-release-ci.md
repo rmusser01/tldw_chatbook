@@ -1,6 +1,6 @@
 # ADR-366: Tiered development and release CI
 
-Status: Proposed; activation requires live qualification
+Status: Accepted; activated by the owner on 2026-11-23 (`CI_TIERED_ENABLED=true`), selection amended by TASK-42521
 Date: 2026-11-13
 Task: TASK-41564
 Amends: ADR-103
@@ -41,3 +41,31 @@ Weekly-only regression delays attribution across many changes; nightly bounds th
 ## Renumbering provenance
 
 Renumbered from ADR-360 on 2026-11-18 after dev908e9840 brought in the older beautifulsoup4 decision (Date2026-10-11); this policy was drafted on 2026-11-13. The current sweep covered1090refs,393decision trees,1143distinct decision blobs and55worktrees. The highest filename/header claim was365, so366 follows the canonical highest-plus-one rule without backfilling. Policy semantics and the older merged decision remain unchanged. Evidence: /tmp/tldw-light-ci-policy-adr-reservation-sweep.json.
+
+## Amendment: sanity-check selection (2026-11-23, TASK-42521)
+
+**Why.** The owner enabled `CI_TIERED_ENABLED` on 2026-11-23. The intent was rapid dev merges after sanity checks, with the nightly full run on dev and the release run into main as the broad gates. The selection above defeated that intent. It treated any path outside a five-entry map as broad: every test file, `Docs/` page and `backlog/docs` file, and every path whose name contained one of 18 sensitive words. Replayed over the last 60 dev merges at b31e3e9241, only 5 would have run light; under this amendment 23 do. Meanwhile a starved runner pool held each 62-job PR run for hours.
+
+**Decision.** A dev PR runs light unless it changes an input that can break CI itself, or the schema. These keep the broad run:
+- `.github/`, `scripts/ci/` and `packages/`;
+- `pyproject.toml`, `setup.py`, `setup.cfg` and `requirements*.txt`;
+- `conftest.py`, `pytest.ini`, `.pytest.ini` and `tox.ini` at any depth;
+- schema code: any path under `tldw_chatbook/` inside a `DB`, `db` or `migrations` directory, and any changed application module containing uppercase DDL (`CREATE TABLE/INDEX/TRIGGER/VIEW`, `ALTER TABLE`) or `user_version`;
+- any non-`test_*.py` Python file under `Tests/`, such as the profile harness or shared rigs;
+- non-Python data under `Tests/Architecture/` or `Tests/Performance/` (allowlists, budget snapshots);
+- a test module imported, directly or transitively, by more than 8 other test files, or a deleted one that any test imports;
+- the test files no PR lane runs whole (`test_library_shell.py`, `test_response_rules_restore.py`), files only push-to-dev or nightly jobs run, files a PR lane runs with `--deselect`ed nodes, and files whose lane nodes are spread over more than one lane step;
+- more than 20 test files of the PR's own (changed, importing or data-reading), which would not fit the light job's 30-minute cap when run one after another;
+- a deleted file under `tldw_chatbook/`, a type-changed or unmerged path, an empty change range, or the `ci:full` label.
+
+Everything else runs light:
+- preflight, `Tests/CI` and the smoke set;
+- the PR's changed `test_*.py` files under `Tests/`, the test files importing them (one-line and parenthesized imports, transitively), and the test files that name a changed or deleted test data file;
+- the smoke nodes of any touched subsystem;
+- nothing more for docs and backlog changes.
+
+"The PR lanes" are the jobs the required check needs, plus the UI census, never the push or nightly jobs. Census entries are read as whole lines and workflow steps as shell words. A file the PR lanes run only by node id runs exactly those nodes, never whole. As in the full run, a new test in such a file runs only once a lane lists it. A file selected whole is never narrowed to its own smoke nodes, because pytest collapses `f f::node` to `f::node`. `scripts/ci/run_light.py` runs each file in its own pytest process, because bootstrap_profile and sandboxed suites must not share one (TASK-32873). It uses the lanes' plugin autoload and `--timeout=180`, with console-p0-gate's install set. It reports every red file, and warns about a file that collects nothing. The light job's cap is 30 minutes.
+
+Sensitive path names (security, storage, recovery, instructions and the rest) no longer force broad runs on the PR. They rely on review, the PR's own tests, the nightly run and the release run. This supersedes the "absence means broad" and sensitive-name rules above. Adding `ci:full` takes effect on the next push or reopen: the workflow does not run on `labeled`, and re-running jobs reuses the original event's labels. Unset the variable to restore broad dev PR gating.
+
+**Cost accepted.** A regression in an integration the PR's own tests don't reach can land on dev. It is caught the next morning, when the 09:17 UTC nightly runs, or at release, and attributed across one day's merges.
