@@ -86,12 +86,13 @@ def test_concurrent_prepares_accept_exactly_one_generation(tmp_path):
         a, b = pool.map(prepare, range(2))
     assert a.id == b.id
     assert a.goal_id == goal.id and a.ordinal == 1
+
+    def accept(_):
+        with closing(db):  # Keep SQLite cleanup on the opening worker thread.
+            return ledger.accept_goal_iteration(a.id, owner_id="owner")
+
     with ThreadPoolExecutor(2) as pool:
-        accepted = list(
-            pool.map(
-                lambda _: ledger.accept_goal_iteration(a.id, owner_id="owner"), range(2)
-            )
-        )
+        accepted = list(pool.map(accept, range(2)))
     assert sorted(accepted) == [False, True]
     assert ledger.snapshot(goal.chain_id).used["generation"] == 1
     assert ledger.snapshot(goal.chain_id).reserved["generation"] == 0

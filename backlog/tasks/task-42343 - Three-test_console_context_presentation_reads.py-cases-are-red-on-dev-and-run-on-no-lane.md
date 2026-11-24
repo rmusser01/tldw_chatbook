@@ -3,10 +3,10 @@ id: TASK-42343
 title: >-
   Three test_console_context_presentation_reads.py cases are red on dev and run
   on no lane
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-22T16:37:00Z'
-updated_date: '2026-11-24T19:54:19Z'
+updated_date: '2026-11-24T20:57:43Z'
 labels:
   - follow-up
   - tests
@@ -34,7 +34,7 @@ Until these pass, the file cannot guard the context-presentation reads that TASK
 <!-- AC:BEGIN -->
 - [x] #1 The cause of each red node is named, and either the test or the product is fixed (the product only where the test's expectation is right)
 - [x] #2 All three nodes pass through the scratch wrapper at `-n 4` on a branch carrying the fix
-- [ ] #3 The file runs on a PR lane
+- [x] #3 The file runs on a PR lane
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -54,4 +54,6 @@ Reason: Test fixtures and CI coverage only.
 On dev 9fa2bf1b1d the three reported cases failed at four workers. The fixed exact cases passed 3/3, and the full module passed 15/15 at four workers (43.33 seconds) and 15/15 serially (74.12 seconds). The cold/expired check observes the original callback without changing its identity. The compaction test persists memory before capturing the initial revision. Required PR Fast Lane (admission-sensitive 3) now selects the whole module. Hosted execution is pending.
 
 The final Ubuntu 24.04 qualification passed all 15 cases at four workers in 15.37 seconds. Its scheduled PR Fast Lane job was still queued when this evidence was recorded. [Linux job](https://github.com/rmusser01/tldw_chatbook/actions/runs/45475265787/job/138733698816).
+
+The official PR Fast Lane (admission-sensitive 3) job on PR #3763 passed on reviewed commit 0df0b348f6, including this task's test suite. [GitHub Actions job](https://github.com/rmusser01/tldw_chatbook/actions/runs/45480195611/job/138754609078).
 <!-- SECTION:NOTES:END -->

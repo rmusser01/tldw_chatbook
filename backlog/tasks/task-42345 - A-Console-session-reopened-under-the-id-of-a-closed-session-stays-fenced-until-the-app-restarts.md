@@ -53,6 +53,7 @@ The root cause is the id reuse. The latches are deliberate: a close that timed o
 1. Close a goal chat through the runtime, resume it, and check that both automatic dispatch and another close target the new live session. Cover an old producer that outlives the bounded close drain.
 2. Keep the durable goal conversation and ledger chain. Allocate a fresh live session ID after close and bind the next goal attempt to that exact ID. Reject an attempt retry from a different session.
 3. Run the goal dispatch, attempt ledger, and close regressions in the required recovered-suites job.
+4. Close the concurrent ledger test's worker-owned SQLite handles and rerun it with the recovered-suites storage-lease guard.
 
 ADR required: no new ADR
 ADR path: backlog/decisions/227-native-console-goal-runs.md
@@ -67,4 +68,6 @@ Both close variants reproduced the closed-session refusal. The live-session fix 
 The provider send and second close pass locally after an old producer outlives the original close, and the late producer still observes its exact admission fence.
 
 The tightened regression uses one real runtime for close, public Resume, a native automatic iteration, an ordinary provider send, and the second close. Final Ubuntu qualification passed all 39 Goal and ledger cases at four workers. The same test with clean dev 9fa2bf1b1d production code failed in 6.17 seconds because the reopened live ID equaled the closed ID. [Linux job](https://github.com/rmusser01/tldw_chatbook/actions/runs/45475265787/job/138733698986).
+
+The official recovered-suites job passed 2,022 tests and failed teardown because the Goal ledger test's two accept workers retained SQLite leases. Each accept worker now closes the handle it opened. The exact failure reproduced with `--storage-lease-guard` before that change. The complete Goal ledger file then passed all 11 cases with the guard enabled. [Initial PR lane](https://github.com/rmusser01/tldw_chatbook/actions/runs/45480195611/job/138754609306).
 <!-- SECTION:NOTES:END -->
