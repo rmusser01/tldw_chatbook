@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-23 09:42
-updated_date: 2026-11-24 03:22
+updated_date: 2026-11-24 03:58
 labels:
 - follow-up
 - console
@@ -79,6 +79,8 @@ Two waits widened as a result. The workspace and MCP waits now also cover the cr
 - `_request_console_control_bar_sync(delayed=True)` and `replay_whole_console_sync`;
 - a subscription chat with a recording fake status. The accessor call makes no credential read; one poll tick reads `pending`, after which the accessor names `credential read`;
 - a readiness-revision bump, after which the real poll commits the new gate;
+- a gate the poll read but could not commit, through the real path: the settings rebuild lock held by another thread, a new revision, and one poll tick. The poll records the gate and fails to take the lock, so the commit lags while the revision matches;
+- the never-read state, with nothing recorded or committed. This is set by patching both attributes; the real state exists only between mount and the poll's first tick;
 - a probe function decorated with `retry_after_config_rebuild` while `config_read_would_wait()` is true, whose retry then runs;
 - a screen worker, while an app worker is not named.
 
@@ -114,6 +116,11 @@ Other checks:
 - **The accessor read the credential.** On a subscription chat it called `subscription_credential_status(background=True)`, which can start the `claude-credential-readiness` thread outside the poll's own gate. It now reads the gate the poll recorded (see Change). The poll keeps its base code plus that one record line. The pin test asserts that an accessor call makes no credential read; it was red before the change (`assert [True] == []`) and is green after.
 - **A fourth hand-copied check.** `test_console_credential_poll_config.py`'s quiet check now reads the accessor.
 - **`test_request_mcp_approvals_zero_timeout_keeps_round_armed_for_late_decision`** took `started` after `decider.start()`. A main thread descheduled after the start then measured less than the decider's 1.6 s sleep. A forced 0.2 s main-thread delay after the start reproduces it (`assert 1.4006920829415321 >= 1.5`). `started` is now taken before the start, and the same delay passes. Assertions unchanged.
+- **Second review: each poll-pass condition is driven.** The pin test drove only the revision condition. It now also drives the uncommitted gate and the never-read state (see Pin test). Red under mutation:
+  - dropping `seen != committed` gives `assert () == ('credential poll pass',)` at the uncommitted-gate check;
+  - dropping `seen is None` makes the accessor raise `TypeError: 'NoneType' object is not subscriptable` on the real startup state, already inside `_open_production_inspector`'s wait.
+
+  Both are green again once restored. `test_console_rail_reconciliation.py` then ran 20 times at `-n 4`: 20 of 20 green, 55 passed each, load 13-54, with 16 bounded busy loops.
 - **History.** The re-pin of `LIVE_RATCHET_ROW` is folded into the accessor commit, so every commit passes the ratchet tests. Each commit was checked with `test_screen_size_ratchet.py` and the boundary test.
 - **Follow-up candidate, red at base.** `Tests/UI/test_console_trace_capture_recovery_flow.py::test_first_trace_factory_failure_has_actionable_uncaptured_recovery[send|refusal]` fails at line 95, `assert len(turn_tasks) == 1` (`assert 0 == 1`): no turn is accepted. It is red at base b31e3e9241 in a detached base worktree. Over four paired runs of both cases at load 15-24, base failed 6 of 8 and this branch 5 of 8. Nothing on this branch touches it.
 
