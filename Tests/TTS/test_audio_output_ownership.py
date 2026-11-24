@@ -585,3 +585,90 @@ async def test_shutdown_joins_eager_retirement_even_after_callback_releases_leas
         assert await shutdown and held.calls == 1
     finally:
         loop.set_task_factory(previous_factory)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shutdown", [False, True])
+async def test_acquire_keeps_the_explicit_stop_retry_barrier(shutdown: bool) -> None:
+    host = AudioOutputOwnership()
+    retry = HeldRetirement()
+    loop = asyncio.get_running_loop()
+    calls = 0
+
+    async def cleanup() -> bool:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            loop.call_soon(host.stop, old)
+            return False
+        old.release()
+        return await retry.retire()
+
+    old = await host.acquire("old", cleanup)
+    transfer = asyncio.create_task(host.acquire("new", retired))
+    await retry.started.wait()
+    # Let the already-scheduled observer of the first retirement resume.
+    observed = asyncio.Event()
+    loop.call_soon(observed.set)
+    await observed.wait()
+    granted_early = transfer.done()
+    if granted_early:
+        (await transfer).release()
+    closing = host.begin_shutdown() if shutdown else None
+    closed_early = closing is not None and closing.done()
+    retry.confirmation.set_result(True)
+    await retry.finished.wait()
+    assert not granted_early and not closed_early
+    if closing is None:
+        assert (await transfer).is_current()
+    else:
+        assert await closing
+        with pytest.raises(OutputClosed):
+            await transfer
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("acknowledge", [False, True])
+async def test_handoff_at_fallback_entry_supersedes_its_earlier_waiter(
+    acknowledge: bool,
+) -> None:
+    host = AudioOutputOwnership()
+    held = HeldRetirement()
+    launcher = await host.acquire("external", held.retire, external=True)
+    ticket = host.begin_intent()
+    earlier = asyncio.create_task(host.acquire("earlier", retired, intent=ticket))
+    await held.started.wait()
+    launcher.record_handoff()
+    with pytest.raises(OutputHandoffRequired) as fallback:
+        await host.acquire("fallback", retired, intent=ticket)
+    if acknowledge:
+        assert host.acknowledge_handoff(ticket, fallback.value.epoch)
+    held.confirmation.set_result(True)
+    with pytest.raises(OutputSuperseded):
+        await earlier
+    assert host.owner is None
+
+
+@pytest.mark.asyncio
+async def test_lease_authorizes_only_the_exact_registered_callback() -> None:
+    class Run:
+        async def retire(self) -> bool:
+            return True
+
+        async def different(self) -> bool:
+            return True
+
+    host = AudioOutputOwnership()
+    run, foreign = Run(), Run()
+    lease = await host.acquire("same label", run.retire)
+    assert lease.authorizes(run.retire)
+    assert not lease.authorizes(foreign.retire)
+    assert not lease.authorizes(run.different)
+    assert not copy.copy(lease).authorizes(run.retire)
+    lease.revoke()
+    assert not lease.authorizes(run.retire)
+    replacement = await host.acquire("same label", retired)
+    assert replacement.authorizes(retired)
+    assert not replacement.authorizes(run.retire)
+    assert not lease.authorizes(run.retire)
