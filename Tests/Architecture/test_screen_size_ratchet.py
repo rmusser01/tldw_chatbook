@@ -373,7 +373,8 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-21: re-measured after rebasing onto dev fe84affafc (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24563/741 -> 24568/741.
     #: 2026-11-22: re-measured after rebasing onto dev fe8c87e3e2 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24537/741 -> 24568/741.
     #: 2026-11-23: re-measured after rebasing onto dev b31e3e9241 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24544/741 -> 24575/741.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24595, 742),
+    #: 2026-11-24: re-measured after rebasing onto dev 9fa2bf1b1d (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24595/742 -> 24626/742.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24626, 742),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
