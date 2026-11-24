@@ -39,6 +39,12 @@ Startup reconciliation fans out three workers: held-job linking/dispatch, associ
 
 Local saves hold a note-write lock, reconcile receipts first, then write through the notes scope with provenance encoded as base64 keywords. The receipt machine walks `pending → owner_committed → projection_committed` (+ `blocked`), each transition revision-checked and CHECK-floored. Owner proofs (64-hex) live in a **deliberately local-only** ChaChaNotes table with no sync/FTS/export triggers; legacy `research-receipt-proof:` keywords are filtered from visible tags forever. Stale optimistic updates raise a conflict error surfaced as a modal; a dirty editor on owner switch flushes first, with a recovery modal (retry/discard/cancel — cancel keeps the draft and blocks the switch).
 
+On Ctrl+Q, the app's quit walk attempts the same Quick Note save. If there are
+unsaved edits after the attempt, or an editor action is still pending, the
+shared confirmation dialog focuses **Keep editing** and requires explicit
+approval to discard the draft. Edits typed while the save is in flight remain
+in the editor with the saved note's current version.
+
 ## Runs lifecycle
 
 The Runs screen creates a run through the scope service; the local engine executes in an exclusive worker group per run, persisting progress/events/artifacts and a budget ledger, honoring pause/cancel **between phases**, and on completion optionally inserting an assistant message via the chat handoff (which never raises — failure degrades to a notification). Outputs land in the research DB and as chat messages — not as Library media or workspace quick notes. The server side declares session CRUD and filtered run lists unsupported; see the gotcha below about run deletion.

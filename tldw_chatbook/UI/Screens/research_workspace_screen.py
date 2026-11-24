@@ -75,7 +75,11 @@ from ..Research_Workspace_Modules import (
     ResearchNoteSwitchRecoveryModal,
 )
 from ..Research_Workspace_Modules.pane_handle import ResearchSidePane
-from ...Widgets.confirmation_dialog import ConfirmationDialog
+from ...Widgets.confirmation_dialog import (
+    ConfirmationDialog,
+    await_quit_prompt,
+    confirm_quit_discarding_edits,
+)
 from ...Third_Party.textual_fspicker import FileSave
 from ...Utils.path_validation import validate_path_simple
 
@@ -689,7 +693,9 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             else "Choose a note and Load, or create a new one."
         )
 
-    async def _flush_quick_note_before_owner_switch(self) -> bool:
+    async def _flush_quick_note_before_owner_switch(
+        self, *, quitting: bool = False
+    ) -> bool:
         """Save one non-empty dirty editor to its exact captured owner."""
 
         section = self.query_one(ResearchQuickNotesSection)
@@ -709,9 +715,11 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 raise
             except Exception as exc:
                 logger.warning(
-                    "Research Quick Note owner-switch flush failed: {}",
+                    "Research Quick Note flush failed: {}",
                     type(exc).__name__,
                 )
+                if quitting:
+                    return False
                 action = await self._wait_for_quick_note_switch_resolution()
                 if action == "retry":
                     continue
@@ -722,20 +730,42 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 return False
             else:
                 if section.editor_ref == saved.ref == self.controller.selected_ref:
-                    section.sync_note(saved)
-                return True
+                    preserve_draft = False
+                    if quitting:
+                        try:
+                            preserve_draft = section.capture_save_request() != (ref, request)
+                        except (TypeError, ValueError):
+                            preserve_draft = True
+                    section.sync_note(saved, preserve_draft=preserve_draft)
+                return not quitting or not section.has_nonempty_dirty_draft
 
-    async def flush_pending_work(self) -> bool:
-        """Participate in the app's awaited, fail-closed navigation protocol."""
+    async def flush_pending_work(self, *, quitting: bool = False) -> bool:
+        """Flush before navigation or hand recovery over to the quit prompt."""
 
         async with self._quick_note_lock:
-            return await self._flush_quick_note_before_owner_switch()
+            return await self._flush_quick_note_before_owner_switch(quitting=quitting)
+
+    async def confirm_quit(self) -> bool:
+        """Persist the Quick Note draft or ask before discarding it."""
+        if self._quick_note_lock.locked():
+            # A note action can be waiting for an answer in another modal.
+            message = "A Quick Note action is still pending. Quitting may lose changes."
+        elif await self.flush_pending_work(quitting=True):
+            return True
+        else:
+            message = "The Quick Note has unsaved changes. Keep editing to retry the save."
+        return await confirm_quit_discarding_edits(self, message)
 
     async def _wait_for_quick_note_switch_resolution(self) -> str | None:
         """Await the recovery modal through a worker, including app navigation."""
 
         worker = self.run_worker(
-            self.app.push_screen_wait(ResearchNoteSwitchRecoveryModal()),
+            await_quit_prompt(
+                self.app,
+                ResearchNoteSwitchRecoveryModal(),
+                no_answer=None,
+                vanished_notice=None,
+            ),
             group="research-quick-note-switch-recovery",
             exclusive=False,
             exit_on_error=False,

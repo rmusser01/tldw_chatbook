@@ -252,17 +252,25 @@ class ResearchQuickNotesSection(Vertical):
         )
         self._apply_capability_states()
 
-    def sync_note(self, note: ResearchQuickNote) -> None:
+    def sync_note(self, note: ResearchQuickNote, *, preserve_draft: bool = False) -> None:
+        """Apply the canonical note, optionally keeping edits made during its save."""
         self.editor_ref = note.ref
         self._note_id = note.note_id
         self._selected_note_id = note.note_id
         self._version = note.version
-        self._message_ids = note.message_ids
-        self._source_ids = note.source_ids
-        self._set_fields(note.title, note.content, note.tags)
-        self._baseline = self._snapshot()
-        self._undo = None
-        self._sync_editor_state(f"Saved · version {note.version}")
+        if preserve_draft:
+            self._baseline = _EditorSnapshot(
+                note.title, note.content, note.tags, note.message_ids, note.source_ids
+            )
+        else:
+            self._message_ids = note.message_ids
+            self._source_ids = note.source_ids
+            self._set_fields(note.title, note.content, note.tags)
+            self._baseline = self._snapshot()
+            self._undo = None
+        self._sync_editor_state(
+            "Unsaved changes" if self.is_dirty else f"Saved · version {note.version}"
+        )
 
     def new_draft(self) -> None:
         self._reset_editor()
