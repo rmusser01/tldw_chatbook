@@ -63,17 +63,26 @@ Picked up after the light CI tier (TASK-42521) stopped #3688 on this file. Check
 - `test_skill_tool_child_joins_the_original_ordinary_claim`: **a product bug.**
   - A turn the multi-model review classifies as a review composes `CodeReviewToolProvider` after the turn's maximum is captured. That covers any code-review wording, with the `[tools] code_review_enabled` gate on (its default) and one bound local root.
   - The provider's `code_review` source was never in the ordinary tree's `other_maximum`, so `bind_catalog` refused the whole run: "ordinary provider maximum widened". In the app that reads "Agent run failed: unexpected provider error".
-  - **Fix.** With the gate on, `_capture_other_providers` (`Chat/console_ordinary_tree.py`) projects the review tool names the catalog permits. Their availability alone stays bounded, like sub-agents. A call other than `code_review_guide` widens the turn's claim to OPAQUE in `OrdinaryTurn.check_catalog_call` (`Agents/ordinary_tree.py`), as a skill install does (TASK-40715): prepare and read open the bound root, and review checks run processes there. While another turn holds the workspace, the call is refused with the existing `widen_refusal` text, and the turn carries on.
+  - **Fix.** `_capture_other_providers` (`Chat/console_ordinary_tree.py`) projects the review tool names the catalog permits into the turn's maximum. Their availability alone stays bounded, like sub-agents.
+    - The projection does not read the review gate. Reading it would load the review service on every send, which TASK-33620.15.53 keeps off ordinary turns. With the gate off, the service lists nothing anyway.
+    - A `prepare` or `read` call widens the turn's claim to OPAQUE in `OrdinaryTurn.check_catalog_call` (`Agents/ordinary_tree.py`), as a skill install does (TASK-40715). Those calls run git in the bound root, which can read a linked worktree's objects outside it, and every review then spawns reviewers, which widen anyway.
+    - `code_review_guide` (guidance text) and `code_review_release` (always refused with `native_discard_required`) do not widen.
+    - While another turn holds the workspace, the call is refused with the existing `widen_refusal` text, and the turn carries on.
   - **Test change.** The test's script also predated on-demand schema disclosure (2d9504cfd9), so it now calls `load_tools` before the skill.
-- `test_actual_received_turn_with_native_killed_mcp_is_bounded[True]`: **retargeted.**
+- `test_actual_received_turn_with_native_killed_mcp_is_bounded[True]`: **retargeted and renamed** to `..._is_bounded_only_with_witnessed_metadata`.
   - It expected a refusal from hook-review publication ("Hook review source or session changed") after the accepted request's MCP metadata is replaced. The turn never reaches `begin_hook_review` in either variant: instrumented, there were zero calls.
-  - With the replaced (incomplete) metadata the turn runs under an OPAQUE claim. So it can never run bounded, which is the property the test's name states. The node now asserts bounded for `[False]` and opaque for `[True]`.
+  - With the replaced (incomplete) metadata, `original_mcp_capture_matches` fails, so the MCP metadata is not witnessed and the turn runs under an OPAQUE claim. That is the designed response: it can never run bounded. The node now asserts bounded for `[False]` and opaque for `[True]`.
+  - The run does not check that `record.request` is the request it accepted. The only writer is the received path itself (`console_received_dispatch.py`), right before the call, so this is not a reachable regression.
 
-**New coverage.** `test_review_tool_widens_the_claim_or_is_refused_while_another_turn_runs` (`Tests/Chat/test_console_ordinary_tree_widening.py`): after `load_tools`, the guide leaves the claim bounded. Uncontended, prepare widens the claim; contended, prepare is refused with the busy text.
+**New coverage.** `test_review_tool_widens_the_claim_or_is_refused_while_another_turn_runs` (`Tests/Chat/test_console_ordinary_tree_widening.py`):
+- After `load_tools`, the guide and release leave the claim bounded.
+- Uncontended, prepare widens the claim and then runs. The host has no review team, so the service, not the claim, refuses it with `review_team_empty`.
+- Contended, prepare is refused with the busy text.
 
 **Negative controls.**
 - Without the change to `Agents/ordinary_tree.py`, both cases of the new test fail.
 - Without converting `CapacityRefused`, the contended case fails: the model sees the bare `worktree_activity_busy` instead.
+- Without the guide or release exemption, the uncontended case fails at that call.
 - Without the projection, the review turn and the skill-child test are refused before the model, as on dev.
 
 **AC #4, not laned.**
@@ -82,6 +91,9 @@ Picked up after the light CI tier (TASK-42521) stopped #3688 on this file. Check
 - A lane would add about 3.4 min serially to every full-tier run.
 
 **Evidence.**
-- 22 `Tests/Agents/test_code_review_*.py` files, the 2 `Tests/Chat/test_console_code_review_*.py` files, the widening file and two first-send census files, at `-n 4`: 808 passed / 1 failed on this branch and 806 / 1 on a clean dev export, with the same failure (`test_code_review_boundary_ledger.py::test_v24_upgrade_and_reopen_preserve_ordinary_history`).
+- 22 `Tests/Agents/test_code_review_*.py` files, the 2 `Tests/Chat/test_console_code_review_*.py` files, the widening file and two first-send census files, at `-n 4`: 808 passed / 1 failed on this branch at first review, and 806 / 1 on a clean dev export, with the same failure (`test_code_review_boundary_ledger.py::test_v24_upgrade_and_reopen_preserve_ordinary_history`).
+- After the review fixes, the same set plus this file and `Tests/Chat/test_console_first_send_review_imports.py`: 909 passed, with only that failure.
+- Tests/Architecture (serial): 1496 passed, 5 skipped.
+- Local review: 1 Important finding (the gate read loaded the review service on every send) and 4 Minors (a capture/composition gate race, the widening comment and release, the test name, an unasserted prepare result). All fixed.
 - Ruff `--select F` and `Tests/lint/ruff_gate.py` pass. The two ASYNC240 findings in this test file are on dev too.
 <!-- SECTION:NOTES:END -->

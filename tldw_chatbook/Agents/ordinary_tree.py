@@ -609,9 +609,14 @@ class OrdinaryTurn:
             self.check_personal_source()
         if source == "virtual_cli":
             self.check_virtual_call(provider)
-        if source == "code_review" and name != "code_review_guide":
-            # Review prep and reads open the bound root and its checks run
-            # there; like a skill install, the call takes the workspace.
+        if source == "code_review" and name not in {
+            "code_review_guide",  # guidance text only
+            "code_review_release",  # always refused (native_discard_required)
+        }:
+            # Prepare/read run git in the bound root, which can read a linked
+            # worktree's objects outside it; every review then spawns reviewers,
+            # which widen anyway. Widen at the first such call, like a skill
+            # install (TASK-40715), so a busy workspace refuses it up front.
             try:
                 self.widen()
             except CapacityRefused as refused:

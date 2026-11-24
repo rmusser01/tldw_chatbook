@@ -223,8 +223,8 @@ async def test_review_tool_widens_the_claim_or_is_refused_while_another_turn_run
     """TASK-41028: a review turn composes CodeReviewToolProvider after capture.
 
     Its tools are in the turn's maximum, so the run is not refused. The guide
-    has no effect; prepare opens the bound root, so its call widens the claim,
-    or is refused while another turn holds the workspace.
+    has no effect; prepare runs git in the bound root, so its call widens the
+    claim, or is refused while another turn holds the workspace.
     """
     h = ordinary_host
     monkeypatch.setenv("TLDW_AGENTS_AUTOWAKE_ENABLED", "false")
@@ -235,9 +235,19 @@ async def test_review_tool_widens_the_claim_or_is_refused_while_another_turn_run
     script = (
         fence(
             "load_tools",
-            {"ids": ["code_review:code_review_guide", "code_review:code_review_prepare"]},
+            {
+                "ids": [
+                    "code_review:code_review_guide",
+                    "code_review:code_review_release",
+                    "code_review:code_review_prepare",
+                ]
+            },
         ),
         fence("code_review_guide", {"stage": "review"}),
+        # Always refused (native_discard_required): no reason to widen.
+        fence(
+            "code_review_release", {"review_id": "unknown-review", "expected_revision": 0}
+        ),
         fence(
             "code_review_prepare",
             {
@@ -282,16 +292,21 @@ async def test_review_tool_widens_the_claim_or_is_refused_while_another_turn_run
         held.release.set()
         if blocking is not None:
             await blocking
-    assert len(acting_payloads) == 4, "the review turn did not carry on"
-    assert opaque[:3] == [False, False, False], "availability alone widened"
+    assert len(acting_payloads) == 5, "the review turn did not carry on"
+    assert opaque[:4] == [False] * 4, "availability, guide or release widened"
     if contended:
-        assert opaque[3] is False
+        assert opaque[4] is False
         assert (
             "code_review_prepare is unavailable while other workspace activity "
-            "is running" in str(acting_payloads[3])
+            "is running" in str(acting_payloads[4])
         )
     else:
-        assert opaque[3] is True, "code_review_prepare ran without widening"
+        assert opaque[4] is True, "code_review_prepare ran without widening"
+        # Prepare itself ran under the widened claim: this host has no review
+        # team, so the service (not the claim) refuses it.
+        prepared = _last_user(acting_payloads[4])
+        assert "review_team_empty" in prepared, prepared
+        assert "unavailable" not in prepared, prepared
 
 
 class _ScriptSkills:

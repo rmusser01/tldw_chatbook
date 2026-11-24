@@ -1314,7 +1314,7 @@ async def native_ordinary_host(snapshot_case, tmp_path_factory, monkeypatch):
 
 
 @pytest.mark.parametrize("replace_metadata", [False, True])
-async def test_actual_received_turn_with_native_killed_mcp_is_bounded(
+async def test_actual_received_turn_with_native_killed_mcp_is_bounded_only_with_witnessed_metadata(
     snapshot_case, native_ordinary_host, monkeypatch, replace_metadata
 ):
     from dataclasses import replace
