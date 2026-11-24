@@ -25,7 +25,6 @@ handler = streaming_fixture.handler
     ("state", "expected"),
     [
         (PlaybackState.ERROR, False),
-        (PlaybackState.IDLE, False),
         (PlaybackState.PAUSED, False),
         (PlaybackState.FINISHED, True),
         (PlaybackState.PLAYING, True),
@@ -50,6 +49,45 @@ async def test_file_poll_accepts_only_finished_playing_or_handed_off(
         await drain_handler_playback(handler)
     assert handler.app.audio_output.owner is None
     await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
+async def test_idle_after_launch_retains_the_artifact_until_checked_retirement(
+    handler, monkeypatch, tmp_path
+):
+    artifact = tmp_path / "unconfirmed.wav"
+    artifact.write_bytes(b"RIFF synthetic fixture")
+    player = ConsoleFilePlayer(PlaybackState.IDLE)
+    monkeypatch.setattr(audio_output_runs, "SimpleAudioPlayer", lambda: player)
+    await handler._cache_audio_file("unknown", artifact, None)
+    attempt = handler._prepare_output("unknown", None, path=artifact)
+    host = handler.app.audio_output
+    try:
+        assert await handler._play_file_output(attempt, None, 0) is False
+        assert player.paths == [artifact]
+        assert player.stops == [player.token]
+        assert host.blocked and host.owner == "Console speech"
+        assert not attempt.run.retirement_confirmed
+        assert handler._speech_outputs == [attempt]
+        assert handler._audio_files == {"unknown": artifact}
+        assert artifact.exists()
+
+        # Supply exact native evidence for disposal after the unconfirmed IDLE.
+        player.retired_token = player.token
+        outcomes = []
+        await handler.handle_tts_playback(
+            tts_events.TTSPlaybackEvent(
+                action="stop", message_id="unknown", outcome_callback=outcomes.append
+            )
+        )
+        assert outcomes == [True]
+        assert player.stops == [player.token, player.token]
+        assert host.owner is None and not host.blocked
+        await wait_for_condition(lambda: "unknown" not in handler._audio_files)
+        assert not artifact.exists()
+    finally:
+        player.retired_token = player.token
+        await handler.cleanup_tts_resources()
 
 
 @pytest.mark.asyncio
@@ -145,7 +183,16 @@ def _hand_off_lifecycle(states):
 
 @pytest.fixture
 def external_player(monkeypatch):
-    player = ConsoleFilePlayer(PlaybackState.HANDED_OFF)
+    class ExternalPlayer(ConsoleFilePlayer):
+        accepted_at = None
+
+        def play_prepared(self, plan, **kwargs):
+            accepted = super().play_prepared(plan, **kwargs)
+            if accepted:
+                self.accepted_at = time.monotonic()
+            return accepted
+
+    player = ExternalPlayer(PlaybackState.HANDED_OFF)
     monkeypatch.setattr(audio_output_runs, "SimpleAudioPlayer", lambda: player)
     monkeypatch.setattr(audio_player, "HAND_OFF_RETENTION_SECONDS", 0.4)
     monkeypatch.setattr(tts_events, "_LEGACY_PLAYBACK_POLL_MAX_SECONDS", 0.25)
@@ -175,7 +222,6 @@ async def test_stop_after_hand_off_is_refused_and_preserves_file(
     states, outcomes = [], []
     lifecycle = _hand_off_lifecycle(states) if owned else None
     try:
-        dispatched_at = time.monotonic()
         message_id = await _play(handler, artifact, lifecycle, drain=False)
         host = handler.app.audio_output
         await wait_for_condition(
@@ -209,8 +255,10 @@ async def test_stop_after_hand_off_is_refused_and_preserves_file(
         assert artifact.exists()
         await wait_for_condition(lambda: not handler._audio_files)
         assert not artifact.exists()
-        assert time.monotonic() - dispatched_at >= 0.4
+        assert external_player.accepted_at is not None
+        assert time.monotonic() - external_player.accepted_at >= 0.4
         assert handler._audio_file_owners == {}
+        assert host.handoff_epoch is epoch
     finally:
         await handler.cleanup_tts_resources()
 
