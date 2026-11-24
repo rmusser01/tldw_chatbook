@@ -6,8 +6,62 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from threading import Event
+from weakref import WeakSet
 
 _Retire = Callable[[], Awaitable[bool]]
+
+
+class OutputSuperseded(RuntimeError):
+    """A newer action superseded this request or its intent was cancelled."""
+
+
+class OutputClosed(RuntimeError):
+    """The app has closed audio admission for shutdown."""
+
+
+class OutputBlocked(RuntimeError):
+    """The retained owner could not confirm physical retirement."""
+
+    def __init__(self, owner: str) -> None:
+        self.owner = owner
+        super().__init__(f"Audio output retirement is blocked for {owner}")
+
+
+class OutputHandoffRequired(RuntimeError):
+    """External playback needs user acknowledgement for this exact epoch."""
+
+    def __init__(self, epoch: object) -> None:
+        self.epoch = epoch
+        super().__init__("Confirm external playback has stopped before starting audio")
+
+
+@dataclass(frozen=True, eq=False)
+class AudioOutputIntent:
+    """One loop-issued user action, reserved before preparing its audio."""
+
+    serial: int
+    _host: AudioOutputOwnership
+
+    def is_current(self) -> bool:
+        """Return whether this exact intent is eligible for admission."""
+        return self._host._intent is self
+
+    def cancel(self) -> None:
+        """Discard only this action, preserving the active output."""
+        self._host._tentative.discard(self)
+        if self.is_current():
+            self._host._intent = None
+
+    def promote(self) -> bool:
+        """Make an audible probe eligible if no newer audible action intervened."""
+        if self not in self._host._tentative:
+            return self.is_current()
+        self._host._tentative.remove(self)
+        if self._host.closing or self.serial <= self._host._eligible_serial:
+            return False
+        self._host._intent = self
+        self._host._eligible_serial = self.serial
+        return True
 
 
 @dataclass(frozen=True, eq=False)
@@ -44,6 +98,11 @@ class AudioOutputLease:
             self._host._slot = None
             self._host._blocked = False
 
+    def record_handoff(self) -> None:
+        """Record OS acceptance on the loop while this exact launch is in custody."""
+        if self._host._owns(self):
+            self._host._handoff_epoch = object()
+
 
 class AudioOutputOwnership:
     """Coordinate output starts and exact-owner retirement on the app's event loop."""
@@ -52,7 +111,49 @@ class AudioOutputOwnership:
         self._slot: tuple[AudioOutputLease, _Retire] | None = None
         self._generation = 0
         self._blocked = False
-        self._retirement: asyncio.Task[None] | None = None
+        self._retirement: asyncio.Task[bool] | None = None
+        self._shutdown: asyncio.Future[bool] | None = None
+        self._handoff_epoch: object | None = None
+        self._intent: AudioOutputIntent | None = None
+        self._serial = 0
+        self._eligible_serial = 0
+        self._tentative: WeakSet[AudioOutputIntent] = WeakSet()
+
+    @property
+    def closing(self) -> bool:
+        """Return whether shutdown has fenced all future output."""
+        return self._shutdown is not None
+
+    @property
+    def handoff_epoch(self) -> object | None:
+        """Return the opaque identity of the latest unresolved external playback."""
+        return self._handoff_epoch
+
+    def begin_intent(self, *, tentative: bool = False) -> AudioOutputIntent:
+        """Reserve action order before async preparation, without stopping audio."""
+        if self.closing:
+            raise OutputClosed("Audio output admission has closed")
+        self._serial += 1
+        ticket = AudioOutputIntent(self._serial, self)
+        if tentative:
+            self._tentative.add(ticket)
+        else:
+            self._intent = ticket
+            self._eligible_serial = ticket.serial
+        return ticket
+
+    def acknowledge_handoff(self, ticket: AudioOutputIntent, epoch: object) -> bool:
+        """Accept a positive user response for the exact pending action and epoch."""
+        if (
+            self.closing
+            or self._intent is None
+            or self._intent is not ticket
+            or self._handoff_epoch is None
+            or self._handoff_epoch is not epoch
+        ):
+            return False
+        self._handoff_epoch = None
+        return True
 
     @property
     def owner(self) -> str | None:
@@ -69,8 +170,8 @@ class AudioOutputOwnership:
 
     async def _retire_owned(
         self, lease: AudioOutputLease, retire: _Retire, published: asyncio.Event
-    ) -> None:
-        # An eager task can enter here before create_task returns to acquire.
+    ) -> bool:
+        # An eager task can enter here before create_task returns to the host.
         await published.wait()
         try:
             confirmed = await retire()
@@ -80,39 +181,92 @@ class AudioOutputOwnership:
             lease.release()
         elif self._owns(lease):
             self._blocked = True
+        return not self._owns(lease)
 
-    async def acquire(self, owner: str, retire: _Retire) -> AudioOutputLease:
+    def _start_retirement(
+        self, slot: tuple[AudioOutputLease, _Retire]
+    ) -> asyncio.Task[bool]:
+        slot[0].revoke()
+        if self._retirement is None or self._retirement.done():
+            published = asyncio.Event()
+            self._retirement = asyncio.create_task(self._retire_owned(*slot, published))
+            published.set()
+        return self._retirement
+
+    @staticmethod
+    def _resolved(confirmed: bool) -> asyncio.Future[bool]:
+        result = asyncio.get_running_loop().create_future()
+        result.set_result(confirmed)
+        return result
+
+    def stop(self, lease: AudioOutputLease) -> asyncio.Future[bool]:
+        """Fence the exact held output now and observe its checked retirement."""
+        if self._slot is None or self._slot[0] is not lease:
+            return self._resolved(False)
+        return asyncio.shield(self._start_retirement(self._slot))
+
+    def begin_shutdown(self) -> asyncio.Future[bool]:
+        """Fence admission now and share one cancellation-safe retirement result."""
+        if self._shutdown is None:
+            self._intent = None
+            self._tentative.clear()
+            if self._slot is not None:
+                self._shutdown = self._start_retirement(self._slot)
+            elif self._retirement is not None and not self._retirement.done():
+                self._shutdown = self._retirement
+            else:
+                self._shutdown = self._resolved(True)
+        return asyncio.shield(self._shutdown)
+
+    def _check_admission(
+        self, ticket: AudioOutputIntent, external: bool, generation: int
+    ) -> None:
+        if self.closing:
+            raise OutputClosed("Audio output admission has closed")
+        if self._intent is not ticket or self._generation != generation:
+            raise OutputSuperseded("Audio output request was superseded")
+        if self._blocked and self._slot is not None:
+            raise OutputBlocked(self._slot[0]._owner)
+        if not external and self._handoff_epoch is not None:
+            raise OutputHandoffRequired(self._handoff_epoch)
+
+    async def acquire(
+        self,
+        owner: str,
+        retire: _Retire,
+        *,
+        intent: AudioOutputIntent | None = None,
+        external: bool = False,
+    ) -> AudioOutputLease:
         """Revoke earlier starts and wait for the previous output to retire.
 
         Args:
             owner: Diagnostic label for this start.
             retire: Callback that retires this start's exact resource and returns
                 True after confirming it stopped. Move blocking work off-loop.
+            intent: Action reserved before preparation. If omitted, reserve one now.
+            external: This action explicitly delegates playback to the OS.
 
         Returns:
             The lease authorizing the newest start on the app's event loop.
 
         Raises:
-            RuntimeError: Retirement failed or a newer request superseded this one.
+            OutputSuperseded: The ticket or this acquisition has been superseded.
+            OutputClosed: The app began shutdown.
+            OutputBlocked: An owner's retirement is unconfirmed.
+            OutputHandoffRequired: External playback needs user acknowledgement.
             asyncio.CancelledError: The caller cancelled its request.
         """
+        ticket = self.begin_intent() if intent is None else intent
+        self._check_admission(ticket, external, self._generation)
         self._generation += 1
         generation = self._generation
         if self._slot is not None:
-            self._slot[0].revoke()
-        if self._retirement is None and self._slot is not None:
-            published = asyncio.Event()
-            self._retirement = asyncio.create_task(
-                self._retire_owned(*self._slot, published)
-            )
-            published.set()
+            self._start_retirement(self._slot)
         if self._retirement is not None:
             # The coordinator retains this work even if every waiting start leaves.
             await asyncio.shield(self._retirement)
-            if generation != self._generation:
-                raise RuntimeError("Audio output request was superseded")
-            if self._blocked:
-                raise RuntimeError("Audio output retirement is blocked")
+            self._check_admission(ticket, external, generation)
         self._retirement = None
         lease = AudioOutputLease(generation, self, owner)
         self._slot = lease, retire
