@@ -231,8 +231,8 @@ def stub_characters(monkeypatch):
     patch_character_paging(monkeypatch)
 
 
-class PersonaBuddyWorkbenchApp(PersonasTestApp):
-    """Workbench harness using the real app-to-screen Buddy reconciliation."""
+class PersonaBuddyWorkbenchApp(StyledPersonasTestApp):
+    """Buddy reconciliation with the production control widths."""
 
     reconcile_persona_buddy_view = TldwCli.reconcile_persona_buddy_view
     _start_persona_buddy_overlay = TldwCli._start_persona_buddy_overlay
@@ -15602,9 +15602,11 @@ async def test_workbench_highlight_never_retargets_buddy(
         mock_app_instance.reconcile_persona_buddy_view.assert_not_awaited()
 
 
+@pytest.mark.parametrize("close_cell", (0, 1, 2), ids=("left", "center", "right"))
 async def test_floating_buddy_close_refreshes_active_personas_inspector(
     mock_app_instance,
     stub_characters,
+    close_cell,
 ) -> None:
     records = {"p-1": {**PROFILE, "version": 2, "is_active": True, "deleted": False}}
     controller = _configure_persona_buddy(
@@ -15638,7 +15640,9 @@ async def test_floating_buddy_close_refreshes_active_personas_inspector(
         assert screen.query_one("#personas-buddy-close", Button).disabled is False
         assert screen.query_one("#personas-buddy-show", Button).disabled is True
 
-        await pilot.click("#persona-buddy-close")
+        floating_close = screen.query_one("#persona-buddy-close", Button)
+        assert floating_close.region.width == 3
+        await pilot.click("#persona-buddy-close", offset=(close_cell, 0))
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
