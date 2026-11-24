@@ -1,8 +1,12 @@
 """Installed recovery declaration for profile-owned subscriptions audio."""
 
+from __future__ import annotations
+
+from collections.abc import Sequence
 from dataclasses import replace
 import re
 import stat
+from typing import TYPE_CHECKING
 
 from tldw_chatbook.Backup_Recovery.models import (
     DISCOVERY_CONTEXT_KEY,
@@ -19,6 +23,9 @@ from tldw_chatbook.Backup_Recovery.recovery_files import (
 )
 from tldw_chatbook.Backup_Recovery.native_files import pinned_directory
 from tldw_chatbook.Utils.platform_files import os
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Backup_Recovery.archive_models import ArchiveManifest
 
 
 _OWNER = "subscriptions.assets"
@@ -52,6 +59,151 @@ def article_member(item: StorageItem | None) -> bool:
         and set(item.dependencies)
         == {root, f"profile:{parts[1]}:config", f"profile:{parts[1]}:db.subscriptions"}
     )
+
+
+def partition_article_members(items: Sequence[StorageItem]) -> tuple[StorageItem, ...]:
+    """Project the live physical census onto the selected DBs' verified ready rows."""
+    by_id = {row.logical_id: row for row in items}
+    aliases = {}
+    claims = {}
+    groups = {}
+    for row in items:
+        if row.shared_group:
+            aliases.setdefault(row.shared_group, set()).add(row.logical_id)
+        if row.owner == "db.subscriptions" and row.status == "included":
+            claims[row.logical_id] = set(row.dependencies)
+        if article_member(row):
+            groups.setdefault(row.shared_group or row.logical_id, []).append(row)
+    omitted = set()
+    projected = {}
+    for rows in groups.values():
+        owners = []
+        parents = set()
+        observed = {row.metadata.root_id for row in rows}
+        consistent = len(observed) == len(rows) and aliases.get(
+            rows[0].shared_group, {rows[0].logical_id}
+        ) == {row.logical_id for row in rows}
+        for row in rows:
+            profile = row.logical_id.split(":")[1]
+            root = by_id.get(row.metadata.root_id)
+            config_id = f"profile:{profile}:config"
+            dependencies = claims.get(f"profile:{profile}:db.subscriptions", ())
+            if (
+                root is None
+                or root.status != "included_directory"
+                or root.owner != _OWNER
+                or root.path != row.path.parent
+                or root.dependencies != (config_id,)
+                or aliases.get(root.shared_group, {root.logical_id}) != observed
+            ):
+                consistent = False
+                break
+            parents.add(
+                (root.shared_group or root.logical_id, root.path, row.path.name)
+            )
+            if config_id in dependencies and row.logical_id in dependencies:
+                owners.append(row)
+        if consistent and len(owners) == 1 and len(parents) == 1:
+            (owner,) = owners
+            projected[owner.logical_id] = replace(owner, shared_group=None)
+            omitted.update(row.logical_id for row in rows if row != owner)
+        else:
+            for row in rows:
+                projected[row.logical_id] = replace(row, status="unsupported")
+    return tuple(
+        projected.get(row.logical_id, row)
+        for row in items
+        if row.logical_id not in omitted
+    )
+
+
+def _partition_member_names(root, rows, producers):
+    """Check a declared partition's complete DB edges before accepting any union."""
+    key = root.logical_id
+    profile = key.split(":")[1]
+    config_id = f"profile:{profile}:config"
+    db_id = f"profile:{profile}:db.subscriptions"
+    database = producers.get(db_id)
+    config = producers.get(config_id)
+    if (
+        root.synthetic
+        or root.root_id != key
+        or root.parent_id is not None
+        or root.relative_path
+        or producers[key].status != "included_directory"
+        or producers[key].dependencies != (config_id,)
+        or config is None
+        or config.owner_id != "config"
+        or config.status != "included"
+        or database is None
+        or database.owner_id != "db.subscriptions"
+        or database.status != "included"
+        or config_id not in database.dependencies
+        or {k for k in database.dependencies if k.startswith(key + "-")}
+        != {row.logical_id for row in rows}
+    ):
+        raise ValueError("unverified_article_root_group")
+    names = set()
+    for row in rows:
+        item = producers.get(row.logical_id)
+        name = row.relative_path
+        if (
+            item is None
+            or item.owner_id != _OWNER
+            or item.status != "included"
+            or item.shared_group
+            or getattr(row, "owner_id", None) != _OWNER
+            or row.parent_id != key
+            or not _ARTICLE_KEY.fullmatch(name)
+            or row.logical_id != article_id(profile, name)
+            or set(item.dependencies) != {key, db_id, config_id}
+            or name in names
+        ):
+            raise ValueError("unverified_article_root_group")
+        names.add(name)
+    return names
+
+
+def shared_article_roots(doc: ArchiveManifest) -> dict[str, str]:
+    """Recognize disjoint, DB-selected article partitions of one declared directory."""
+    producers = {row.logical_id: row for row in doc.producer_inventory}
+    groups = {}
+    for directory in doc.directories:
+        key = directory.logical_id
+        parts = key.split(":")
+        declaration = producers.get(key)
+        if (
+            len(parts) == 4
+            and key == article_id(parts[1])
+            and declaration
+            and declaration.owner_id == _OWNER
+            and declaration.shared_group
+        ):
+            groups.setdefault(declaration.shared_group, []).append(directory)
+    if not groups:
+        return {}
+    members = {}
+    for row in (*doc.directories, *doc.files):
+        if row.logical_id != row.root_id:
+            members.setdefault(row.root_id, []).append(row)
+    group_ids = {}
+    for row in producers.values():
+        if row.shared_group in groups:
+            group_ids.setdefault(row.shared_group, set()).add(row.logical_id)
+    aliases = {}
+    for group, roots in groups.items():
+        if len(roots) < 2 or {r.logical_id for r in roots} != group_ids[group]:
+            raise ValueError("unverified_article_root_group")
+        names = set()
+        for root in roots:
+            partition = _partition_member_names(
+                root, members.get(root.logical_id, ()), producers
+            )
+            if root.metadata != roots[0].metadata or not names.isdisjoint(partition):
+                raise ValueError("unverified_article_root_group")
+            names.update(partition)
+        aliases.update((r.logical_id, roots[0].logical_id) for r in roots)
+    return aliases
 
 
 class _BriefingAudio(_RawDeclaration):

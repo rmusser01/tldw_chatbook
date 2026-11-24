@@ -363,7 +363,9 @@ class ArticleAudioAssets:
             rows = self.store.audio_inventory(generation)
             if not rows or rows[0]["file_key"] != key:
                 raise ListeningConflict("article_audio_inventory_changed")
-            return self._read(directory, rows[0], lease)
+            audio = self._read(directory, rows[0], lease)
+            self.store.record_audio_use(generation, lease=lease)
+            return audio
 
     def reuse(self, entry_id: str, *, expected_revision: int) -> ArticleAudio | None:
         """Attach only a verified ready generation with this exact entry identity."""

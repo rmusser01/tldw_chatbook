@@ -9,7 +9,6 @@ import pytest
 from Tests.DB.test_chachanotes_v77_agent_chat_starts_migration import (
     _legacy_native76,
     _seed_legacy_queue_owner,
-    _assert_legacy_queue_quarantine,
 )
 from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
 from tldw_chatbook.Backup_Recovery import sqlite_validation as validation

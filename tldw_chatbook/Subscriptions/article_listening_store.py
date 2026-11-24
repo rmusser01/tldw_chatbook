@@ -762,6 +762,18 @@ class ArticleListeningStore:
             self._attach(c, entry, a, reservation.generation, regenerate)
             return self._load(c)
 
+    def record_audio_use(self, generation: int, *, lease: ListeningLease) -> None:
+        """Refresh retention after a verified user read under the same lease."""
+        authority = self._authority()
+        with self.db.listening_transaction(lease=lease, profile=authority.profile) as c:
+            self._authority(authority)
+            if not c.execute(
+                "UPDATE article_audio SET last_used=unixepoch() "
+                "WHERE generation=? AND profile=? AND status='ready'",
+                (_int(generation, 1), authority.profile),
+            ).rowcount:
+                raise ListeningConflict("article_audio_inventory_changed")
+
     def mark_audio_missing(
         self, generation: int, *, lease: ListeningLease | None = None
     ) -> None:

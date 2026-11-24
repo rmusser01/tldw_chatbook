@@ -878,6 +878,27 @@ def test_recovery_accepts_bounded_queue_from_larger_saved_selection(records, leg
     assert validate_candidate(owner, records.db_path, Event(), migrate=False) == ()
 
 
+def test_legacy_brief_keeps_order_and_unavailable_oversized_citation(records):
+    _, binding, store, voice = setup_store(records)
+    huge = "9" * 5000
+    with records.transaction() as c:
+        c.execute(
+            "UPDATE briefing_items SET provenance_version=1,cited=0,citation_position=NULL"
+        )
+        c.execute(
+            "UPDATE briefings SET body_markdown=? WHERE id=1",
+            (f"[item 2] [item {huge}] [item 1] [item {huge}] [item {'8' * 5000}]",),
+        )
+    candidate = prepare(store, binding[0], voice, brief=True)
+    saved = store.replace_session(candidate, expected_revision=None)
+    assert [(e.item_id, e.unavailable_reason) for e in saved.queue] == [
+        (2, None),
+        (None, "missing_item"),
+        (1, None),
+        (None, "missing_item"),
+    ]
+
+
 @pytest.mark.parametrize("field", ["kind", "format"])
 def test_format_discriminators_are_bounded_before_sqlite_row_delivery(records, field):
     _, binding, store, voice = setup_store(records)

@@ -1406,8 +1406,6 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
         item = super().discover(config)[0]
         if item.status != "included":
             return (item,)
-        if self.validate(item.path):
-            return (replace(item, status="unsupported"),)
         root = user_data_dir(config) / "briefing_audio"
         try:
             with closing(
@@ -1415,6 +1413,7 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
                     "recovery.operations.subscriptions", item.path, read_only=True
                 )
             ) as connection:
+                connection.execute("BEGIN")
                 if self._validate_catalog(connection):
                     return (replace(item, status="unsupported"),)
                 profile = discovery_context(config).profile_id
@@ -1429,15 +1428,15 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
                     article_id(profile, row[0])
                     for row in self._article_rows(connection, profile)
                 }
-                if files - ready:
-                    return (replace(item, status="unsupported"),)
                 paths = tuple(
                     row[0]
                     for row in connection.execute(
                         "SELECT file_path FROM briefing_audio WHERE status='complete'"
                     )
                 )
-            dependencies = [*item.dependencies, *sorted(files)]
+            # The asset census joins these selector-specific claims after all
+            # selected databases have reported their members of the physical tree.
+            dependencies = [*item.dependencies, *sorted(files & ready)]
             for value in paths:
                 if (
                     not isinstance(value, str)
@@ -1543,7 +1542,10 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
             )
             if stamp not in _subscriptions_chachanotes_stamps(actual):
                 return ("unsupported_schema_version",)
-        if connection.execute("SELECT version FROM schema_version").fetchone()[0] == 4:
+        if (
+            connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+            == 4
+        ):
             from .subscriptions_schema import listening_issues
 
             return listening_issues(connection)
@@ -1987,14 +1989,10 @@ _SUBSCRIPTIONS_SCHEMA = tuple((3, schema) for version, schema in _SUBSCRIPTIONS_
 
 from .subscriptions_schema import (
     listening_catalog,
-    migration as _subscriptions_migration,
+    listening_objects,
 )
 
-_LISTENING_OBJECTS = tuple(
-    sql.removesuffix(";")
-    for sql in _subscriptions_migration(3)
-    if sql.startswith("CREATE ")
-)
+_LISTENING_OBJECTS = listening_objects()
 _SUBSCRIPTIONS_V4_PREDECESSORS = {
     listening_catalog(schema, _LISTENING_OBJECTS): schema
     for version, schema in _SUBSCRIPTIONS_SCHEMA

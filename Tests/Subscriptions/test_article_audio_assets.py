@@ -80,14 +80,14 @@ def listening(records, tmp_path):  # noqa: F811
     return store, session, root
 
 
-def publish(store, session, root, entry, *, regenerate=False):
+def publish(store, session, root, entry, *, regenerate=False, frames=8):
     a = api()
     claim = store.reserve_audio(
         entry.entry_id, expected_revision=session.revision, regenerate=regenerate
     )
     owner = a.ArticleAudioAssets(store, profile_data_root=root, reservation=claim)
-    data = wav()
-    candidate = a.GeneratedArticleAudio(data, metadata(data).sha256, 8)
+    data = wav(frames)
+    candidate = a.GeneratedArticleAudio(data, metadata(data, frames).sha256, frames)
     return owner.publish(
         candidate, source_item_id=entry.item_id, generation=claim.generation
     )
@@ -325,6 +325,30 @@ def test_retention_uses_last_use_then_generation_and_excludes_references(
     store.clear(expected_revision=store.load_session().revision)
     assert owner.prune(1000000 + 7 * 86400).removed == 1
     assert not third.wav.path.exists()
+
+
+@native_effects
+def test_user_read_refreshes_retention_but_integrity_scan_preserves_age(
+    listening, monkeypatch
+):
+    store, session, root = listening
+    a = api()
+    owner = a.ArticleAudioAssets(store, profile_data_root=root)
+    first = publish(store, session, root, session.foreground)
+    second = publish(
+        store, store.load_session(), root, session.foreground, regenerate=True
+    )
+    with store.db.transaction() as c:
+        now = c.execute("SELECT unixepoch()").fetchone()[0]
+        c.execute("UPDATE article_audio SET last_used=? + generation", (now - 86400,))
+    aged = {r["generation"]: r["last_used"] for r in store.audio_inventory()}
+    assert owner.reconcile().missing == 0
+    assert {r["generation"]: r["last_used"] for r in store.audio_inventory()} == aged
+    assert owner.read_verified(first.generation) == first
+    store.clear(expected_revision=store.load_session().revision)
+    monkeypatch.setattr(a, "MAX_UNREFERENCED_BYTES", first.byte_size)
+    assert owner.prune(now).removed == 1
+    assert first.wav.path.is_file() and not second.wav.path.exists()
 
 
 @native_effects

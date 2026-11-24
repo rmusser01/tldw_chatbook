@@ -924,13 +924,17 @@ def _seed_schema_version(path, versions) -> None:
 
 def test_schema_version_current_plus_stale_row_normalizes_to_current(tmp_path):
     path = tmp_path / "current-plus-stale.db"
-    _seed_schema_version(path, [1, _CURRENT_SCHEMA_VERSION])
+    with closing(SubscriptionsDB(path)) as current, current.transaction() as conn:
+        conn.execute("INSERT INTO schema_version VALUES (1)")
 
     db = SubscriptionsDB(path)
     try:
         assert [
             row[0] for row in db.conn.execute("SELECT version FROM schema_version")
         ] == [_CURRENT_SCHEMA_VERSION]
+        from Tests.Subscriptions.test_article_listening_store import setup_store
+
+        assert setup_store(db)[2].load_session() is None
     finally:
         db.close()
 
@@ -939,6 +943,21 @@ def test_schema_version_current_plus_stale_row_normalizes_to_current(tmp_path):
         assert [
             row[0] for row in conn.execute("SELECT version FROM schema_version")
         ] == [_CURRENT_SCHEMA_VERSION]
+
+
+@pytest.mark.parametrize("absent", ["all", "index", "trigger"])
+def test_current_stamp_requires_installed_listening_catalog(tmp_path, absent):
+    path = tmp_path / "partial.db"
+    if absent == "all":
+        _seed_schema_version(path, [1, _CURRENT_SCHEMA_VERSION])
+    else:
+        with closing(SubscriptionsDB(path)) as db, db.transaction() as conn:
+            if absent == "index":
+                conn.execute("DROP INDEX idx_article_audio_lru")
+            else:
+                conn.execute("DROP TRIGGER listening_item_delete")
+    with pytest.raises(SubscriptionError, match="listening schema"):
+        SubscriptionsDB(path)
 
 
 def test_schema_version_unknown_future_version_raises_actionable_error(tmp_path):

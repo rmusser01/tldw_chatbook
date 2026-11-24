@@ -65,7 +65,7 @@ from tldw_chatbook.Backup_Recovery.participants import (
     listening_mutation_context,
 )
 
-from .subscriptions_schema import migration, statements
+from .subscriptions_schema import catalog_key, listening_objects, migration, statements
 from .private_sqlite import connect_private_sqlite
 from .base_db import BaseDB
 from .sql_validation import get_safe_order_by_clause, validate_identifier
@@ -638,7 +638,7 @@ class SubscriptionsDB(BaseDB):
         super().__init__(db_path, client_id, initialize_schema=not read_only)
         if read_only:
             try:
-                self.conn
+                _ = self.conn
             except Exception:
                 self.close()
                 raise SubscriptionsDBUnavailableError() from None
@@ -795,6 +795,17 @@ class SubscriptionsDB(BaseDB):
                         f"Unsupported subscriptions schema version {versions} in "
                         f"{self.db_path_str}; this build supports {_CURRENT_SCHEMA_VERSION}"
                     )
+                if max(versions) == _CURRENT_SCHEMA_VERSION:
+                    expected = listening_objects()
+                    names = tuple(catalog_key(sql)[1] for sql in expected)
+                    marks = ",".join("?" for _ in names)
+                    actual = conn.execute(
+                        f"SELECT sql FROM sqlite_schema WHERE name IN ({marks})", names
+                    )
+                    if {row[0] for row in actual} != set(expected):
+                        raise SubscriptionError(
+                            "Incomplete subscriptions listening schema"
+                        )
                 if max(versions) == 1:
                     self._migrate_from_v1_to_v2()
                 if max(versions) < 3:

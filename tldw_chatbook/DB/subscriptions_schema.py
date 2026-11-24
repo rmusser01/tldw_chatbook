@@ -1,5 +1,6 @@
 """Installed subscription migrations and exact ordered catalog additions."""
 
+from functools import cache
 from itertools import islice
 from pathlib import Path
 import re
@@ -35,6 +36,14 @@ def catalog_key(sql: str) -> tuple[str, str]:
     if not match:
         raise ValueError("invalid_installed_schema")
     return match[1], match[2]
+
+
+@cache
+def listening_objects() -> tuple[str, ...]:
+    """Exact catalog SQL installed by the v3 to v4 migration."""
+    return tuple(
+        sql.removesuffix(";") for sql in migration(3) if sql.startswith("CREATE ")
+    )
 
 
 def listening_catalog(
@@ -89,7 +98,7 @@ def listening_brief_items(cursor, brief_id: int) -> tuple[int | None, ...]:
     if len(ids) > MAX_ENTRIES:
         raise ValueError("listening_brief_limit")
     # Oversize citation integers cannot name a SQLite row and remain placeholders.
-    selected = tuple(i for i in ids if 0 < i < 2**63)
+    selected = tuple(i for i in ids if i is not None and i > 0)
     by_id = {}
     if selected:
         marks = ",".join("?" for _ in selected)
@@ -301,6 +310,8 @@ def listening_issues(connection) -> tuple[str, ...]:
                 ):
                     return invalid
                 continue
+            _int(r["created_at"])
+            _int(r["last_used"])
             _id(r["converter"])
             _int(r["item_id"], 1)
             for name in ("speech_hash", "voice_hash", "dependency_hash"):
