@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from tldw_chatbook.Utils.platform_files import fcntl, os
 
-from . import bootstrap
+from . import bootstrap, native_files
 from .native_files import create_private_directory, flush_directory, pinned_directory
 from .native_platform import flush_file
 from .qualification import _qualified_identity, native_identity, qualified_for
@@ -266,18 +266,23 @@ class Admission:
                 flush_directory(parent)
 
     @staticmethod
-    def _open(parent: int, name: str, flags: int) -> int:
+    def _open(parent: int, name: str, flags: int, *, _custody=None) -> int:
         fd = os.open(name, flags | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
-        info = os.fstat(fd)
-        if (
-            not stat.S_ISREG(info.st_mode)
-            or info.st_nlink != 1
-            or info.st_uid != os.geteuid()
-            or info.st_mode & 0o077
-        ):
-            os.close(fd)
-            raise AdmissionError("control_file_unsafe")
-        return fd
+        if _custody is not None:
+            _custody.fds.append(fd)
+        try:
+            info = os.fstat(fd)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_nlink != 1
+                or info.st_uid != os.geteuid()
+                or info.st_mode & 0o077
+            ):
+                raise AdmissionError("control_file_unsafe")
+            return fd
+        except BaseException:
+            _close_registration(fd, _custody)
+            raise
 
     @contextmanager
     def _lock(
@@ -290,9 +295,8 @@ class Admission:
         *,
         _custody=None,
     ) -> Iterator[int]:
-        fd = self._open(parent, name, os.O_RDWR)
-        if _custody is not None:
-            _custody.fds.append(fd)
+        custody_options = {} if _custody is None else {"_custody": _custody}
+        fd = self._open(parent, name, os.O_RDWR, **custody_options)
         try:
             if deadline is None and cancel is None:
                 # An intentionally retained, uncancellable waiter can sleep in
@@ -331,12 +335,11 @@ class Admission:
     def _read_intent(
         self, parent: int, *, _read_budget=None, _custody=None
     ) -> _WriteIntent | None:
+        custody_options = {} if _custody is None else {"_custody": _custody}
         try:
-            fd = self._open(parent, _INTENT_NAME, os.O_RDONLY)
+            fd = self._open(parent, _INTENT_NAME, os.O_RDONLY, **custody_options)
         except FileNotFoundError:
             return None
-        if _custody is not None:
-            _custody.fds.append(fd)
         try:
             if _read_budget is not None:
                 _read_budget.reserve(64 + _INTENT_LIMIT + 1)
@@ -372,14 +375,13 @@ class Admission:
             _close_registration(fd, _custody)
 
     def _read(self, parent: int, *, _read_budget=None, _custody=None) -> _Registry:
+        custody_options = {} if _custody is None else {"_custody": _custody}
         if (
-            self._read_intent(parent, _read_budget=_read_budget, _custody=_custody)
+            self._read_intent(parent, _read_budget=_read_budget, **custody_options)
             is not None
         ):
             raise AdmissionError("registry_publication_recovery_required")
-        fd = self._open(parent, "registry.json", os.O_RDONLY)
-        if _custody is not None:
-            _custody.fds.append(fd)
+        fd = self._open(parent, "registry.json", os.O_RDONLY, **custody_options)
         try:
             if _read_budget is not None:
                 _read_budget.reserve(64 + _REGISTRY_LIMIT + 1)
@@ -853,9 +855,12 @@ class Admission:
         cancel: threading.Event | None,
         incompatible: bool = False,
         recovery_journal=None,
+        *,
+        _custody=None,
     ) -> Iterator[None]:
+        custody_options = {} if _custody is None else {"_custody": _custody}
         names = self._names(namespaces)
-        with self._nonnested(), self._directory() as parent, ExitStack() as leases:
+        with self._nonnested(), self._directory(**custody_options) as parent, ExitStack() as leases:
             # Gate acquisition never waits under registry lock: established owners
             # can retire without consulting either registry or gate.
             while True:
@@ -864,9 +869,10 @@ class Admission:
                 blocked_request = None
                 try:
                     with self._lock(
-                        parent, "registry.lock", fcntl.LOCK_SH, deadline, cancel
+                        parent, "registry.lock", fcntl.LOCK_SH, deadline, cancel,
+                        **custody_options
                     ):
-                        registry = self._read(parent)
+                        registry = self._read(parent, **custody_options)
                         if not maintenance and not any(
                             entry.pending for entry in registry.entries.values()
                         ):
@@ -882,9 +888,12 @@ class Admission:
                             with ExitStack() as requested:
                                 for name in names:
                                     fd = self._open(
-                                        parent, self._key(name, "gate"), os.O_RDWR
+                                        parent, self._key(name, "gate"), os.O_RDWR, **custody_options
                                     )
-                                    requested.callback(os.close, fd)
+                                    if _custody is None:
+                                        requested.callback(os.close, fd)
+                                    else:
+                                        requested.callback(_close_registration, fd, _custody)
                                     self._observe_gate(parent, name, fd)
                                     try:
                                         fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
@@ -892,12 +901,28 @@ class Admission:
                                         blocked_request = name
                                         raise
                                     self._observe_gate(parent, name, fd)
-                        group = self._groups(registry, names, recovery_journal)
+                        stock_group_reader = (
+                            _custody is not None
+                            and _custody.entry_reader_verified
+                            and _pause_metadata_current(self, admission_entry=True)
+                        )
+                        try:
+                            group = self._groups(
+                                registry, names, recovery_journal, **custody_options
+                            )
+                        except BaseException as error:
+                            if _custody is not None and _custody.entry_error is None:
+                                _custody.entry_error = error
+                                _custody.entry_reader_verified = stock_group_reader
+                            raise
                         if any(registry.entries[n].pending for n in group):
                             raise AdmissionError("remap_recovery_required")
                         for name in group:
-                            fd = self._open(parent, self._key(name, "gate"), os.O_RDWR)
-                            trial.callback(os.close, fd)
+                            fd = self._open(parent, self._key(name, "gate"), os.O_RDWR, **custody_options)
+                            if _custody is None:
+                                trial.callback(os.close, fd)
+                            else:
+                                trial.callback(_close_registration, fd, _custody)
                             self._observe_gate(parent, name, fd)
                             fcntl.flock(
                                 fd,
@@ -916,6 +941,7 @@ class Admission:
                                         fcntl.LOCK_SH,
                                         deadline,
                                         cancel,
+                                        **custody_options,
                                     )
                                 )
                     break
@@ -934,6 +960,7 @@ class Admission:
                             fcntl.LOCK_SH,
                             deadline,
                             cancel,
+                            **custody_options,
                         ) as fd:
                             self._observe_gate(parent, blocked_request, fd)
                 except BaseException:
@@ -943,9 +970,12 @@ class Admission:
                 if maintenance:
                     for name in group:
                         fd = self._open(
-                            parent, self._key(name, "incompatible"), os.O_RDWR
+                            parent, self._key(name, "incompatible"), os.O_RDWR, **custody_options
                         )
-                        leases.callback(os.close, fd)
+                        if _custody is None:
+                            leases.callback(os.close, fd)
+                        else:
+                            leases.callback(_close_registration, fd, _custody)
                         try:
                             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                         except BlockingIOError:
@@ -958,17 +988,20 @@ class Admission:
                                 fcntl.LOCK_EX,
                                 deadline,
                                 cancel,
+                                **custody_options,
                             )
                         )
                     # The final scope is immutable during exclusive capture, but
                     # the registry was not held while waiting for retirement.
                     leases.enter_context(
                         self._lock(
-                            parent, "registry.lock", fcntl.LOCK_SH, deadline, cancel
+                            parent, "registry.lock", fcntl.LOCK_SH, deadline, cancel,
+                            **custody_options
                         )
                     )
-                    current = self._read(parent)
-                    if self._groups(current, names, recovery_journal) != group or any(
+                    current = self._read(parent, **custody_options)
+                    current_group = self._groups(current, names, recovery_journal, **custody_options)
+                    if current_group != group or any(
                         current.entries[n].pending for n in group
                     ):
                         raise AdmissionError("admission_scope_changed")
@@ -1243,8 +1276,8 @@ _ORDINARY_PAUSE_REQUEST_BINDING = (
 )
 
 
-def _pause_metadata_current(authority):
-    """Decline optional metadata reuse when its original readers changed."""
+def _pause_metadata_current(authority, *, admission_entry=False):
+    """Check native readers, and optionally the failed-entry admission path."""
     if any(owner.get(name) is not value for owner, name, value in _PAUSE_METADATA_BINDINGS):
         return False
     for cls, lookup, dictionary in _PAUSE_METADATA_CLASSES:
@@ -1254,16 +1287,24 @@ def _pause_metadata_current(authority):
     if type(authority) is not _PAUSE_METADATA_BINDINGS[0][2]:
         return False
     values = vars(authority)
-    if type(values) is not dict or any(
-        name in values for name in ("_read", "_read_intent", "_groups", "_tokens", "_open")
-    ):
+    names = _PAUSE_METADATA_METHODS
+    if admission_entry:
+        names += _ADMISSION_ENTRY_METHODS
+    if type(values) is not dict or any(name in values for name in names):
         return False
     for module, namespace, filename, spec, origin in _PAUSE_METADATA_MODULES:
         if (sys.modules.get(namespace["__name__"]) is not module
                 or vars(module) is not namespace or namespace.get("__file__") != filename
                 or namespace.get("__spec__") is not spec or getattr(spec, "origin", None) != origin):
             return False
-    for owner, name, descriptor, original, code, namespace, defaults, keywords, items, closure, values in _PAUSE_METADATA_READERS:
+    readers = _PAUSE_METADATA_READERS
+    if admission_entry:
+        readers += _ADMISSION_ENTRY_READERS
+    return _metadata_readers_current(readers)
+
+
+def _metadata_readers_current(readers):
+    for owner, name, descriptor, original, code, namespace, defaults, keywords, items, closure, values in readers:
         if (owner.get(name) is not descriptor or original.__code__ is not code
                 or original.__globals__ is not namespace or original.__defaults__ is not defaults
                 or original.__kwdefaults__ is not keywords or original.__closure__ is not closure
@@ -1286,30 +1327,43 @@ _PAUSE_METADATA_CLASSES = tuple(
     (cls, vars(cls).get("__getattribute__"), vars(cls).get("__dict__"))
     for cls in (Admission,)
 )
-_PAUSE_METADATA_READERS = tuple(
-    (row_owner, row_name, descriptor, function, function.__code__, function.__globals__,
-     function.__defaults__, function.__kwdefaults__, tuple((function.__kwdefaults__ or {}).items()),
-     function.__closure__, tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()))
-    for owner, names in (
-        (vars(Admission), ("_read", "_read_intent", "_groups", "_tokens", "_open")),
-        (globals(), ("pinned_directory", "_pause_metadata_current")),
-        (vars(bootstrap), (
-            "_records", "_control_records", "_registry", "_registry_read_lock",
-            "pinned_directory", "_read", "_strings", "_paths", "_key",
-            "_activation_witness", "_validate_ancestry_record",
-            "_open_verified_parent", "_native_close",
-            "effective_roots", "identity_view", "inode_token", "inode_token_for",
-        )),
+def _bind_metadata_readers(sources):
+    return tuple(
+        (row_owner, row_name, descriptor, function, function.__code__, function.__globals__,
+         function.__defaults__, function.__kwdefaults__, tuple((function.__kwdefaults__ or {}).items()),
+         function.__closure__, tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()))
+        for owner, names in sources
+        for name in names
+        for original in (owner[name],)
+        for callback in (original.__func__ if type(original) is staticmethod else original,)
+        for row_owner, row_name, descriptor, function in (
+            (owner, name, original, callback),
+            *(((vars(callback), "__wrapped__", callback.__wrapped__, callback.__wrapped__),)
+              if hasattr(callback, "__wrapped__") else ()),
+        )
     )
-    for name in names
-    for original in (owner[name],)
-    for callback in (original.__func__ if type(original) is staticmethod else original,)
-    for row_owner, row_name, descriptor, function in (
-        (owner, name, original, callback),
-        *(((vars(callback), "__wrapped__", callback.__wrapped__, callback.__wrapped__),)
-          if hasattr(callback, "__wrapped__") else ()),
-    )
+
+
+_PAUSE_METADATA_METHODS = ("_read", "_read_intent", "_groups", "_tokens", "_open")
+_ADMISSION_ENTRY_METHODS = (
+    "_admit", "_directory", "_lock", "_nonnested", "_observe_gate", "_names", "_key", "_check",
 )
+_PAUSE_METADATA_READERS = _bind_metadata_readers((
+    (vars(Admission), _PAUSE_METADATA_METHODS),
+    (globals(), ("pinned_directory", "_pause_metadata_current")),
+    (vars(bootstrap), (
+        "_records", "_control_records", "_registry", "_registry_read_lock",
+        "pinned_directory", "_read", "_strings", "_paths", "_key",
+        "_activation_witness", "_validate_ancestry_record",
+        "_open_verified_parent", "_native_close",
+        "effective_roots", "identity_view", "inode_token", "inode_token_for",
+    )),
+))
+_ADMISSION_ENTRY_READERS = _bind_metadata_readers((
+    (vars(Admission), _ADMISSION_ENTRY_METHODS),
+    (globals(), ("_close_registration",)),
+    (vars(native_files), ("_close_owned",)),
+))
 _PAUSE_METADATA_MODULES = tuple(
     (module, vars(module), module.__file__, module.__spec__, getattr(module.__spec__, "origin", None))
     for name in dict.fromkeys(row[5]["__name__"] for row in _PAUSE_METADATA_READERS)

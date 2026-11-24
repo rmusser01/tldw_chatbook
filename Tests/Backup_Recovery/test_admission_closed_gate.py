@@ -14,7 +14,7 @@ def test_uncancellable_busy_gate_wait_uses_native_blocking_lock(
     from tldw_chatbook.Backup_Recovery import admission as module
 
     root = tmp_path / "source"
-    root.write_bytes(b"original")
+    root.mkdir(mode=0o700)
     authority = Admission(tmp_path / "control")
     authority.register("source", (root,))
     waiting = Admission(authority.control_root)
@@ -62,7 +62,7 @@ def test_uncancellable_busy_gate_wait_uses_native_blocking_lock(
             assert not done.wait(0.2), "waiter entered through a held gate"
             assert len(attempts) == observed, "blocked native wait kept polling"
             if remove_root:
-                root.unlink()
+                root.rmdir()
         assert done.wait(5), "native wait did not resume after gate release"
     finally:
         child.join(timeout=5)
@@ -79,7 +79,7 @@ def test_normal_waits_at_closed_requested_gate_before_scanning_roots(
     tmp_path, monkeypatch, remove_root
 ):
     root = tmp_path / "source"
-    root.write_bytes(b"original")
+    root.mkdir(mode=0o700)
     authority = Admission(tmp_path / "control")
     authority.register("source", (root,))
     waiting = Admission(authority.control_root)
@@ -118,7 +118,7 @@ def test_normal_waits_at_closed_requested_gate_before_scanning_roots(
             assert not scanned.wait(0.2), "closed gate triggered a target-root scan"
             assert not entered.is_set()
             if remove_root:
-                root.unlink()
+                root.rmdir()
         assert completed.wait(5), "normal admission did not resume"
         assert scanned.is_set(), "resumed admission omitted fresh alias validation"
     finally:

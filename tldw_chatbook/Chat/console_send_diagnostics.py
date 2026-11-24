@@ -123,6 +123,7 @@ _TRACE_FAILURE_CATEGORIES = frozenset(
         "max_seconds",
         "message_id",
         "min_freelist_ratio",
+        "mobile_budget_pair_changed",
         "model_name",
         "native_request_boundary_unavailable",
         "native_surface_reference_invalid",

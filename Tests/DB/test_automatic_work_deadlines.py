@@ -279,14 +279,13 @@ def test_other_pauses_keep_the_clock_running(db, clock, reason):
 
 def test_an_ask_hold_survives_a_restart(db, clock, monkeypatch):
     from tldw_chatbook.DB import automatic_work
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     chain_id = _started(db)
     clock[:] = [1004.0, 4.0]
     db.automatic_work.pause(chain_id, "compaction_ask")
     db.close()
     monkeypatch.setattr(automatic_work, "_CLOCK_OWNER_ID", "replacement-process")
-    reopened = AgentRunsDB(db.db_path_str)
+    reopened = owned_agent_runs_db(db.db_path_str)
     try:
         reopened.automatic_work = automatic_work.AutomaticWorkLedger(
             reopened, wall_clock=lambda: clock[0], monotonic_clock=lambda: clock[1]

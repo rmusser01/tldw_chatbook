@@ -23,6 +23,7 @@ SELECTION = {
         "Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant",
         "Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_import_preparation_disables_only_qualified_selected_payload",
         "Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_historical_restore_migrates_only_disposable_copy[76]",
+        "Tests/Personal_Context/test_public_imports.py",
     ],
     "admission-sensitive": [
         "Tests/Chat/test_response_rules_trace_admission.py",

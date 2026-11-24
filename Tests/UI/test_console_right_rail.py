@@ -711,6 +711,11 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
 
 @pytest.mark.asyncio
 async def test_real_inspector_producer_variants_are_strictly_owned(monkeypatch):
+    from tldw_chatbook.Widgets.Console.console_background_effect import (
+        ConsoleTranscriptSurface,
+        active_console_transcript,
+    )
+
     ownership = importlib.import_module(
         "tldw_chatbook.Widgets.Console.console_inspector_ownership"
     )
@@ -718,14 +723,41 @@ async def test_real_inspector_producer_variants_are_strictly_owned(monkeypatch):
     async with make_console_pilot() as pilot:
         screen = pilot.app.screen
         store = screen._ensure_console_chat_store()
+        initial = store.ensure_session()
+        store.append_message(
+            initial.id,
+            role=ConsoleMessageRole.USER,
+            content="retained viewport fixture",
+        )
+        await screen._sync_native_console_chat_ui()
+        await pilot.pause()
+        surface = screen.query_one(ConsoleTranscriptSurface)
+        retained = surface.transcript
+        target = store.create_session(title="Inspector target", activate=False)
         message = store.append_message(
-            store.active_session_id,
+            target.id,
             role=ConsoleMessageRole.USER,
             content="selected producer message",
         )
+        await screen._session._activate_native_console_session(target.id)
         await screen._sync_native_console_chat_ui()
-        transcript = screen.query_one("#console-native-transcript")
+        await pilot.pause()
+        active = active_console_transcript(screen)
+        assert active is not None and active is surface.transcript
+        assert active is not retained and active.is_attached and active.display
+        assert retained.is_attached and not retained.display
+        assert screen.query_one("#console-native-transcript") is retained
+        assert active.display_message(message.id) is not None
+        assert retained.display_message(message.id) is None
+        assert (
+            store.session_id_for_message(message.id)
+            == store.active_session_id
+            == target.id
+        )
+        transcript = active_console_transcript(screen)
+        assert transcript is active
         transcript.select_message(message.id)
+        assert transcript.selected_message_id == message.id
         screen._retrieval._active_dictionaries_summary = {
             "dictionaries": [{"name": "Producer dictionary", "source": "conversation"}]
         }

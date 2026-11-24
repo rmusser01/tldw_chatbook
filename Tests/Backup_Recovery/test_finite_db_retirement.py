@@ -158,10 +158,8 @@ async def test_app_retention_retires_its_constructed_database(tmp_path, local_ro
 
     owner = owned_agent_runs_db(tmp_path / "agent_runs.db")
     monkeypatch.setattr(change_retention, "prune_change_history", prune)
-    # The pass prunes an existing runs DB only (TASK-34100.16.1).
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-
-    AgentRunsDB(tmp_path / "agent_runs.db").close()
+    # The owned seed also satisfies the existing-file gate (TASK-34100.16.1).
+    assert (tmp_path / "agent_runs.db").is_file()
     result = await asyncio.to_thread(
         change_retention.run_retention_for_app,
         tmp_path / "chachanotes.db",

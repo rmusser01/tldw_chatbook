@@ -122,12 +122,17 @@ def test_actual_worker_transaction_drains_after_commit_and_native_close(
 
     def work():
         try:
-            with repository.transaction() as conn:
-                connections.append(conn)
-                conn.execute("CREATE TABLE phase2_worker (value TEXT)")
-                conn.execute("INSERT INTO phase2_worker VALUES ('committed')")
-                entered.set()
-                assert finish.wait(3)
+            try:
+                with repository.transaction() as conn:
+                    connections.append(conn)
+                    conn.execute("CREATE TABLE phase2_worker (value TEXT)")
+                    conn.execute("INSERT INTO phase2_worker VALUES ('committed')")
+                    entered.set()
+                    assert finish.wait(3)
+            finally:
+                if repository_type is EventStateRepository:
+                    # The finite worker owns terminal close of its held cache.
+                    repository.close()
             with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
                 conn.execute("SELECT 1")
         except BaseException as error:
@@ -139,9 +144,17 @@ def test_actual_worker_transaction_drains_after_commit_and_native_close(
     pause = storage._begin_local_pause()
     try:
         assert not pause.drain(time.monotonic() + 0.03)
-        # The coordinator cannot use or close this actual thread-affine handle.
-        with pytest.raises(sqlite3.ProgrammingError, match="same thread"):
-            connections[0].execute("SELECT 1")
+        if repository_type is EventStateRepository:
+            # EventState permits cross-thread idle close. It must refuse a new
+            # borrower and leave the active transaction available to its owner.
+            with pytest.raises(bootstrap.RecoveryRequired, match="storage_locally_paused"):
+                with repository.connection():
+                    pytest.fail("the paused coordinator obtained a repository handle")
+            repository.close()
+        else:
+            # SyncState's file-backed transaction stays thread-affine.
+            with pytest.raises(sqlite3.ProgrammingError, match="same thread"):
+                connections[0].execute("SELECT 1")
         finish.set()
         thread.join(3)
         assert not thread.is_alive() and not errors

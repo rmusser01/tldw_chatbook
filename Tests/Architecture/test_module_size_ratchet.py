@@ -193,7 +193,7 @@ _BUDGETS: dict[str, int] = {
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
     # PR3345: explicit owner source-count waiver; exact measurements, no runtime changes.
     "tldw_chatbook/app_served.py": 150,
-    "tldw_chatbook/Backup_Recovery/storage_admission.py": 4111,
+    "tldw_chatbook/Backup_Recovery/storage_admission.py": 4239,
     # TASK-37173 report readers crossed the inventory threshold. Pin exact sizes.
     "tldw_chatbook/DB/AgentRuns_DB.py": 4053,
     "tldw_chatbook/Chat/console_trace_repository.py": 4046,
@@ -1797,7 +1797,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-23, PR #3517's port onto dev b31e3e9241 (round 24; owner decision
     # 2026-10-04, expand limits): dev measures 3,499 (no row), plus this branch's
     # +766, exact: 4,265.
-    "tldw_chatbook/Chat/console_session_settings.py": 4265,
+    "tldw_chatbook/Chat/console_session_settings.py": 4272,
 }
 
 #: Same tolerance as the Library controller ratchet: loose enough that

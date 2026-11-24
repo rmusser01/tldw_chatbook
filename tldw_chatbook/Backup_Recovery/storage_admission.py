@@ -10,20 +10,30 @@ from __future__ import annotations
 import asyncio
 import atexit
 import copy
+import os as _native_os
 import sqlite3
 import stat
+import sys
 import threading
 import time
 from collections import OrderedDict
 from collections.abc import Iterable
 from contextlib import contextmanager
 from pathlib import Path
+from types import BuiltinFunctionType
 from weakref import WeakKeyDictionary
 
 from tldw_chatbook.Utils.platform_files import os
 
 from . import bootstrap, control_records
-from .admission import Admission, AdmissionCancelled, _local
+from .admission import (
+    Admission,
+    AdmissionCancelled,
+    _bind_metadata_readers,
+    _local,
+    _metadata_readers_current,
+    _pause_metadata_current,
+)
 from .control_records import UNBOUND_NAMESPACE, admission_authority
 from .limits import _RAW_RECOVERY_LIMITS, ArchiveLimits, _read_limits
 from .profile_paths import (
@@ -35,6 +45,27 @@ from .profile_paths import (
     lexical_path,
 )
 from .qualification import qualified_for
+
+
+def _bind_descriptor_closer(platform, expected):
+    native_module = sys.modules[_native_os.name]
+
+    def current():
+        closer = platform.close
+        # A Python callback or another builtin cannot certify retirement.
+        if (
+            closer is not expected
+            or type(closer) is not BuiltinFunctionType
+            or closer.__name__ != "close"
+            or closer.__self__ is not native_module
+        ):
+            raise OSError("capture_native_closer_changed")
+        return closer
+
+    return current
+
+
+_descriptor_closer = _bind_descriptor_closer(os, _native_os.close)
 
 _lock = threading.RLock()
 _holds: dict[tuple[int, str], "_Hold"] = {}
@@ -559,6 +590,7 @@ class _Hold:
         self.ready = threading.Event()
         self.stop = threading.Event()
         self.error: BaseException | None = None
+        self.entry_custody = None
         # PERF-07/08 (ADR-126 amendment 2026-09-29): process-local admission
         # evidence, discarded with this hold. Guarded by _lock.
         self.evidence: dict[str, _Evidence] = {}
@@ -578,10 +610,25 @@ class _Hold:
         try:
             # A last pending token may cancel before native admission succeeds.
             # Waiting happens on this thread, never under the coordinator lock.
-            with authority._admit(self.names, False, None, self.stop):
+            custody_options = {}
+            # Windows stat may retain its own metadata handles outside FD custody.
+            if _native_os.name == "posix":
+                custody = _CaptureFileDescriptors(None, _verify_closed=True)
+                if _capture_entry_source_current(authority, custody):
+                    custody.admission_owner = self
+                    custody.entry_reader_verified = True
+                    self.entry_custody = custody
+                    custody_options["_custody"] = custody
+            with authority._admit(self.names, False, None, self.stop, **custody_options):
                 self.ready.set()
                 self.stop.wait()
         except BaseException as error:
+            custody = self.entry_custody
+            primary = custody.entry_error if custody is not None else None
+            if primary is not None and primary is not error:
+                error = BaseExceptionGroup(
+                    "storage_admission_entry_cleanup_failed", [primary, error]
+                )
             self.error = error
             self.ready.set()
 
@@ -679,6 +726,20 @@ class StorageLease:
                     retired.error, AdmissionCancelled
                 ):
                     _retiring_holds.discard(retired)
+                else:
+                    custody = retired.entry_custody
+                    if (
+                        type(custody) is _CaptureFileDescriptors
+                        and custody.admission_owner is retired
+                        and custody.entry_error is retired.error
+                        and custody.entry_reader_verified
+                        and vars(custody).get("_verify_closed") is True
+                        and not custody.close_failed
+                        and not custody.fds
+                        and not custody.directory_iterators
+                        and _capture_entry_source_current(retired.authority, custody)
+                    ):
+                        _retiring_holds.discard(retired)
                 _changed.notify_all()
 
     def __enter__(self) -> "StorageLease":
@@ -3667,7 +3728,7 @@ def _acquire_capture_storage(path: Path, *, owner_id: str, read_only: bool):
 class _CaptureFileDescriptors:
     """Operation-private FDs with conservative unresolved-close quarantine."""
 
-    def __init__(self, scope):
+    def __init__(self, scope, *, _verify_closed=False):
         budget = getattr(scope, "read_budget", None)
         if budget is not None:
             budget.reserve(512)
@@ -3675,23 +3736,37 @@ class _CaptureFileDescriptors:
         self.fds = []
         self.directory_iterators = []
         self.close_failed = False
+        if _verify_closed:
+            self._verify_closed = True
+            self.admission_owner = None
+            self.entry_error = None
+            self.entry_reader_verified = False
         if scope is not None:
             scope.resources.append(self)
 
-    def close_descriptor(self, fd: int) -> None:
+    def close_descriptor(self, fd: int, *, _closer=_descriptor_closer) -> None:
         """Retire once, including parent traversal; ambiguity retains exclusion."""
         if self.close_failed:
             raise bootstrap.RecoveryRequired("capture_resources_not_retired")
+        strict = vars(self).get("_verify_closed") is True
         try:
-            os.close(fd)
-        except BaseException:
+            if strict:
+                _closer()(fd)
+            else:
+                os.close(fd)
+        except BaseException as error:
             # Never retry an FD number after an ambiguous native outcome,
             # including attempts by traversal's exception cleanup.
             self.close_failed = True
+            if strict:
+                raise bootstrap.RecoveryRequired("capture_resources_not_retired") from error
             raise bootstrap.RecoveryRequired("capture_resources_not_retired") from None
 
     def close_directory_iterator(self, iterator) -> None:
         """Retain an actual native iterator after any ambiguous close outcome."""
+        if vars(self).get("_verify_closed") is True:
+            self.close_failed = True
+            raise bootstrap.RecoveryRequired("capture_resources_not_retired")
         if self.close_failed or not any(
             item is iterator for item in self.directory_iterators
         ):
@@ -3717,6 +3792,25 @@ class _CaptureFileDescriptors:
             self.fds.pop()
         if self.scope is not None and self in self.scope.resources:
             self.scope.resources.remove(self)
+
+
+_CAPTURE_ENTRY_METHODS = ("close_descriptor", "close_directory_iterator")
+_CAPTURE_ENTRY_READERS = _bind_metadata_readers((
+    (vars(_CaptureFileDescriptors), _CAPTURE_ENTRY_METHODS),
+))
+
+
+def _capture_entry_source_current(authority, custody, *, _closer=_descriptor_closer):
+    """Prove the admission and descriptor cleanup path for a failed entry."""
+    try:
+        _closer()
+    except OSError:
+        return False
+    return (
+        not any(name in vars(custody) for name in _CAPTURE_ENTRY_METHODS)
+        and _metadata_readers_current(_CAPTURE_ENTRY_READERS)
+        and _pause_metadata_current(authority, admission_entry=True)
+    )
 
 
 def _check_capture_file_identity(

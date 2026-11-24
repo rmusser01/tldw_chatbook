@@ -243,6 +243,13 @@ def _assert_bootstrap_import_inventory(tree):
                 "_binding",
                 "ImportFrom",
                 1,
+                "effective_roots",
+                (("deleted_file_roots", None),),
+            ): 1,
+            (
+                "_binding",
+                "ImportFrom",
+                1,
                 "mobile_preview_budget",
                 (("read_options", None),),
             ): 1,

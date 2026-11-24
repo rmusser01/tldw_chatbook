@@ -1876,3 +1876,32 @@ a close method's silent refusal is not retirement. Failed owners refuse new
 search/replacement work, while explicit cleanup may still close them. Native
 pause and coverage validation remain independent and mandatory. No pool census,
 empty dictionary or async cancellation grants storage capture authority.
+
+
+## PR3345 failed group-entry retirement clarification
+
+The original folder-root refusal followed by an ordinary Goal test reproduced a
+later three-second drain failure with one errored retiring hold (qualification
+1257). An error alone does not prove that native resources remain open or closed.
+
+For the ordinary hold's exact first group-entry refusal, retain invocation-owned
+existing descriptor custody through directory traversal, registry readers, gate
+probes and leases, including partially validated opens. Record the original group
+exception before unwinding. The additional negative-return retirement requires
+the same exception, the actual hold's empty successful custody and the existing
+successful thread join. The original success/cancellation paths stay unchanged.
+
+This custody mode calls only the same locally bound, verified genuine stdlib C
+close builtin. Its successful return certifies that descriptor's retirement;
+nonstock closers, native exceptions, partial accounting and interrupted joins
+retain the hold and unproven resources. Keep primary and cleanup errors distinct.
+Do not retry ambiguous descriptor numbers, clear registries or infer closure from
+a finished thread. No new admission authority, permission, deadline or capacity is
+granted. Other capture callers retain their existing default behavior.
+
+Verification includes the unchanged original refusal/drain pair, native
+transaction retirement, cancellation and interrupted-join controls, and isolated
+post-entry real close-error and nonstock-closer refusals. A source refusal alone is
+not an observed physical close failure. The task's source plan and final notes
+bind the exact implementation and evidence; local qualification does not claim
+hosted Windows or final-head acceptance.

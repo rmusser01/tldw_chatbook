@@ -1352,6 +1352,7 @@ jobs:
             Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_import_preparation_disables_only_qualified_selected_payload \
             "Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_historical_restore_migrates_only_disposable_copy[76]" \
             Tests/Backup_Recovery/test_registered_root_removed.py \
+            Tests/Personal_Context/test_public_imports.py \
             Tests/Chat/test_console_trace_action_calls.py \
             --timeout=180 \
             --tb=short
