@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-12 19:36
-updated_date: '2026-11-15 02:25'
+updated_date: '2026-11-24 20:07'
 labels:
 - follow-up
 - tests
@@ -69,3 +69,5 @@ Found in round 13 of the 2026-10-23 burn-down (census stream fix round). Checked
 - **Files.** `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/CI/test_derived_artifacts_workflow.py`, `backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md`.
 
 **2026-11-15 (round-14 closeout).** Both criteria wait on CI, not on code: AC#1's job time needs the first CI run of `backup-owner-suites-dev`, and AC#2 needs that first dev push after this stack merges to be green. Neither can be met before the merge. The Actor Pack later-rollback tests TASK-40305 left unlaned (`test_created_persona_subtree_rollback.py`) run whole in this job. The 8 deselected nodes are TASK-41116; the drain and builtin time-limit flakes in this job's files are TASK-41117; the persona reopen-child lock flake is TASK-41115.
+
+**2026-11-24 (TASK-42516).** The description's "5 by single nodes only" is out of date for `test_chachanotes_native76_compatibility`. Its whole file now runs in dreams-tracking, and the one node that ran in console-p0-gate's sandboxed step (`test_shipped76_staged_failure_rolls_back_checkpoint_rebuild`) moved there with it, so no node runs twice. Status and criteria are unchanged.

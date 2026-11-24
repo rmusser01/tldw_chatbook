@@ -1567,6 +1567,12 @@ jobs:
     # (bootstrap profile by directory, so after Tool_Packs; no config read
     # under the recorder): v78 fleet progress 17 tests 19.4 s, v79 sargable
     # 13 tests 13.1 s, v54 cursor 7 tests 3.5 s, serially at load 8.
+    # Budget (2026-11-24, TASK-42516): measured whole, this step went from 26
+    # targets in 711.1 s to 34 in 821.9 s locally (1.16x), projecting the job's
+    # 7.0-10.3 min CI runs to about 8.1-11.9 of its 20. The measured ratio
+    # replaces the usual "+X at 2.6x": this job runs faster in CI than locally
+    # (about 11.9 min at load 8), so 2.6x on the per-file additions above would
+    # project a misleading ~17.8 min.
     name: Dreams tracking tests and unlaned riders
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}

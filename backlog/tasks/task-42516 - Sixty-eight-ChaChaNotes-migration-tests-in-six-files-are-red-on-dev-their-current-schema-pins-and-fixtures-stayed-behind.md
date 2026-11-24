@@ -1,11 +1,11 @@
 ---
 id: TASK-42516
-title: "Twenty-six v75 and v77 ChaChaNotes migration tests are red on dev: their current-schema pins and fixtures stayed behind"
+title: "Sixty-eight ChaChaNotes migration tests in six files are red on dev: their current-schema pins and fixtures stayed behind"
 status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-24 17:58
-updated_date: 2026-11-24 19:47
+updated_date: 2026-11-24 20:07
 labels:
 - follow-up
 - tests
@@ -16,8 +16,13 @@ priority: medium
 references:
 - Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py
 - Tests/DB/test_chachanotes_v75_hook_continuation_receipts_migration.py
+- Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py
+- Tests/DB/test_chachanotes_v78_fleet_progress_migration.py
+- Tests/DB/test_chachanotes_v79_sargable_migration.py
+- Tests/DB/test_chachanotes_v54_before_first_cursor.py
 - .github/workflows/derived-artifacts.yml
 - Tests/CI/test_ci_queue_pressure_contract.py
+- Tests/CI/test_response_rules_critical_gate.py
 dependencies: []
 ---
 

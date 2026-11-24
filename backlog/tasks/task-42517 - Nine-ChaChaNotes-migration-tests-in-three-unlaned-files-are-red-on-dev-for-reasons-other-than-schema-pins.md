@@ -4,7 +4,7 @@ title: "Nine ChaChaNotes migration tests in three unlaned files are red on dev f
 status: To Do
 assignee: []
 created_date: 2026-11-24 19:23
-updated_date: 2026-11-24 19:23
+updated_date: 2026-11-24 20:07
 labels:
 - follow-up
 - tests
@@ -35,6 +35,9 @@ TASK-42516's sweep (2026-11-24) ran every `Tests/DB/test_chachanotes_v*.py` file
 - **An unchanged-catalog check that spans the whole upgrade.** `test_genuine_v70_upgrades_without_rewriting_semantic_rows` (:135) asserts that the canvas schema is unchanged after an upgrade to the current schema. v82 (ADR-239, 01b17108c7) replaced `idx_canvas_revisions_canvas_sequence` and added `uq_canvas_revisions_single_root` on purpose.
 - **A historical fixture runs today's code.** `test_genuine_v71_preserves_archived_rows_columns_indexes_and_triggers` (:168) fails with `CharactersRAGDBError: Failed to change conversation archive state`, after `no such column: archived_at`. Today's archive code runs against a v71 file, but that column came with v85.
 - **Query-plan census drift.** `test_every_completed_pair_reconciliation_locator_uses_indexed_search` (:377): 8 locators now plan as `SCAN`, the first being `console_hook_continuation_receipts.assistant_message_id`.
+  - **It is also an index plan pin, so those pins are not enforced today.** The test is the v72 file's only plan check. Its 12 locator→index pairs are exactly the 12 rows in `scripts/index_plan_pin_census.tsv` that are plan-pinned to this file (rows 27–38, on dev 9fa2bf1b1d and on this branch). One example is `idx_console_dispatch_checkpoints_user_message`; another is `idx_console_trace_response_links_semantic_revision_exact`.
+    - While the test is red, no passing plan check stands behind those 12 rows. `scripts/check_index_plan_pins.py` still accepts them, because it checks statically that the file names each index next to `EXPLAIN QUERY PLAN` and a `sqlite_stat1` absence check; it never runs the test.
+    - Fixing the test restores those plan pins.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
