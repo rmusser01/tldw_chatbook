@@ -1539,6 +1539,7 @@ def test_fresh_process_incident_shape_leaks_only_without_package_import(
         key: value for key, value in os.environ.items() if not key.startswith("LOGURU_")
     }
     child_env["LEAK_SENTINEL"] = SENTINEL_API_KEY
+    child_env["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
     child_env["PYTHONPATH"] = str(project_root) + (
         os.pathsep + child_env["PYTHONPATH"] if child_env.get("PYTHONPATH") else ""
     )
@@ -1604,6 +1605,7 @@ def test_package_import_preserves_host_configured_loguru_sinks(
     child_env = {
         key: value for key, value in os.environ.items() if not key.startswith("LOGURU_")
     }
+    child_env["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
     child_env["PYTHONPATH"] = str(project_root) + (
         os.pathsep + child_env["PYTHONPATH"] if child_env.get("PYTHONPATH") else ""
     )

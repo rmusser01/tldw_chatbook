@@ -45,6 +45,7 @@ def _docs_files_visited(
         PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
         PYTHONPATH=str(tmp_path),
         DOCS_RECORD=str(record),
+        PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
     )
     run = subprocess.run(
         [

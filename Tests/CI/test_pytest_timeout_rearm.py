@@ -46,7 +46,11 @@ def test_teardown_after_a_failed_call_is_still_timed_out(tmp_path):
         for name, value in os.environ.items()
         if name != "PYTEST_ADDOPTS" and not name.startswith("PYTEST_XDIST")
     }
-    environment.update(PYTEST_DISABLE_PLUGIN_AUTOLOAD="1", PYTHONPATH=str(PROJECT_ROOT))
+    environment.update(
+        PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        PYTHONPATH=str(PROJECT_ROOT),
+        PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
+    )
     started = time.monotonic()
     run = subprocess.run(
         [

@@ -1106,6 +1106,7 @@ def _isolated_environment(scratch: Path) -> dict[str, str]:
             "TMP": str(native_temp),
             "TEMP": str(native_temp),
             "TLDW_CONFIG_PATH": str(config),
+            "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
             "TASK598_TESTED_COMMIT": current_run_identity()["tested_commit"],
         }
     )

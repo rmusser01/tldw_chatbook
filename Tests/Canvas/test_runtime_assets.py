@@ -648,7 +648,11 @@ def test_verify_command_checks_committed_assets_without_network(
     completed = subprocess.run(
         [sys.executable, str(VENDOR_SCRIPT), "--verify", "--output-dir", str(STATIC)],
         cwd=ROOT,
-        env={"PATH": str(tmp_path), "PYTHONPATH": str(ROOT)},
+        env={
+            "PATH": str(tmp_path),
+            "PYTHONPATH": str(ROOT),
+            "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
+        },
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
@@ -689,7 +693,11 @@ def test_pinned_archive_regeneration_is_reproducible_and_instantiable(
                 node,
             ],
             cwd=ROOT,
-            env={"PATH": str(Path(node).parent), "PYTHONPATH": str(ROOT)},
+            env={
+                "PATH": str(Path(node).parent),
+                "PYTHONPATH": str(ROOT),
+                "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
+            },
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,

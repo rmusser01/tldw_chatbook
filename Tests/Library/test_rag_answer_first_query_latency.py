@@ -158,13 +158,17 @@ def _run(script: str, *args: str, timeout: float) -> dict:
         capture_output=True,
         text=True,
         timeout=timeout,
-        env={
-            k: v
-            for k, v in os.environ.items()
-            # Let the child resolve its own profile from the scratch config the
-            # script sets; the suite's isolation vars would otherwise win.
-            if k not in {"TLDW_CONFIG_PATH", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "HOME"}
-        },
+        env=dict(
+            {
+                k: v
+                for k, v in os.environ.items()
+                # Let the child resolve its own profile from the scratch config the
+                # script sets; the suite's isolation vars would otherwise win.
+                if k
+                not in {"TLDW_CONFIG_PATH", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "HOME"}
+            },
+            PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
+        ),
     )
     for line in proc.stdout.splitlines():
         if line.startswith("RESULT "):

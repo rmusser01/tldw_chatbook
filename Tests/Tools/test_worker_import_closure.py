@@ -55,6 +55,8 @@ def _probe_environment() -> dict[str, str]:
         if not name.startswith(("PYTHON", "TIKTOKEN_CACHE_DIR", "DATA_GYM_CACHE_DIR"))
     }
     environment.setdefault("PATH", os.defpath)
+    # Dropping PYTHON* also drops the conftest's keyring pin (TASK-42520).
+    environment["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
     return environment
 
 
