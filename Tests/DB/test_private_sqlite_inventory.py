@@ -573,7 +573,7 @@ def _assert_detached_normalization_source(source: str, module: str) -> None:
         "detached_layout": {
             "_normalize_sqlite": "eff395f259323b2638e538ee166142c727c6256368c53e8d9230fe99c0496d61",
             "_owner_items": "47bfb9165f74f3cddc9408fa63b50a3b3ddf671f6ed5685c821985cb2c31f7d2",
-            "produce_detached_archive": "c38cfb543fc8e62f7b319e98860c5e7ca284b352696ecd0ce65594fb4e5d980a",
+            "produce_detached_archive": "13b2fa24977beb8ba1388b807d9ce7b576fa75c01523cd4b5fc1624edb3dd454",
         },
         "sqlite_validation": {
             "normalize_detached_candidate": "0958fde34420ac25689ef1b9162c3dc1e3e3401ad71b2b3a4de924c8a0d3093b",
