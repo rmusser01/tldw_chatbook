@@ -97,6 +97,31 @@ preserves unavailable queue positions and retains safe generation cleanup keys.
 Membership removal preserves source items; brief deletion preserves an unrelated
 foreground. Audio generations and bookmarks identify immutable retained bytes.
 
+`Subscriptions/article_audio_assets.py` binds an explicit profile data directory
+and stores flat UUID WAV keys under `article_audio`, including when the DB lives
+elsewhere. Its inert model validator checks the complete digest, PCM16 stereo
+48 kHz shape and 12,000 zero-tail frames, with a 64 MiB file cap, 65,536-byte
+header allowance and 1,024 parser-read budget. Reuse verifies the physical file
+and repeats source identity and revision checks before attachment.
+
+Publication and deletion use a qualified Windows NTFS regular-file handle through
+the actual native effect. Named ancestor pins protect the parent namespace.
+The nullable `custody_witness` binds the issuing DB image, generation, key, native
+root/leaf creation identities and measured bytes. It survives source scrubbing
+and retries; a filename or copied receipt alone grants no cleanup authority.
+Rejected live stages use a distinct stage-only cleanup receipt after committed
+invalidation. Directory barriers precede forgetting deletion records, including
+retries where the name is already absent. Unsupported effect platforms refuse
+elective pruning before changing reusable metadata; file validation stays portable.
+
+Every retained entry role protects its generation. Eligible unreferenced audio
+uses seven-day/512 MiB LRU retention. A missing or corrupt artifact keeps its old
+bookmark identity; explicit regeneration binds a new generation at zero. Unknown,
+unsealed or foreign objects remain preserved with uncertainty reported, including
+restored bytes whose local custody has not been established. Physical cleanup
+runs through an explicitly bound asset owner after DB invalidation, without
+inferring a data directory from a deletion row.
+
 The storage and recovery contract is
 [ADR-367](../../backlog/decisions/367-watchlist-article-listening-and-controlled-playback.md).
 Preparation, transport orchestration and listening controls build on this boundary
