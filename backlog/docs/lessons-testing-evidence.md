@@ -26541,3 +26541,9 @@ Source retirement in that wait could still precede a real provider call.
 lazy host, including work before a managed response is returned. Put race
 barriers at the real lock/start and commit boundaries. A bounded consumer and
 an admission callback do not establish a bounded or still-authorized producer.
+
+The subsequent real OpenAI smoke also exposed a WAV fixture gap: both streamed
+length fields were `0xffffffff`, although the received mono PCM payload was
+finite and frame-aligned. Finite-header fixtures had hidden that rejection.
+Record numeric header sizes and physical frame bounds, preserve truncated and
+partial-frame negative controls, and verify the uninstrumented provider path.

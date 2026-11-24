@@ -1270,3 +1270,92 @@ async def test_legacy_provider_start_holds_source_custody(
         await asyncio.gather(task, return_exceptions=True)
         await owner.settle()
         await svc.wait_closed()
+
+
+def wav_lengths(wav, *, riff_size, data_size, extra=b""):
+    # The synthetic writer emits fmt followed by data. The optional ancillary
+    # chunk moves data beyond the common 44-byte header.
+    return (
+        wav[:4]
+        + riff_size.to_bytes(4, "little")
+        + wav[8:36]
+        + extra
+        + wav[36:40]
+        + data_size.to_bytes(4, "little")
+        + wav[44:]
+    )
+
+
+async def fragmented_wav(wav):
+    yield wav[:5]
+    yield wav[5:42]
+    for pos in range(42, len(wav), 8192):
+        yield wav[pos : pos + 8192]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("extra", [b"", b"JUNK\x02\x00\x00\x00\x00\x00"])
+async def test_streaming_wav_unknown_lengths_match_finite_wav(extra):
+    wav = mono(52200, 24000)
+    finite = wav_lengths(
+        wav, riff_size=len(wav) - 8 + len(extra), data_size=104400, extra=extra
+    )
+    streamed = wav_lengths(wav, riff_size=0xFFFFFFFF, data_size=0xFFFFFFFF, extra=extra)
+    assert len(streamed) == 104444 + len(extra)
+    results = []
+    finite_data = wav_lengths(wav, riff_size=0xFFFFFFFF, data_size=104400, extra=extra)
+    for body in (finite, streamed, finite_data):
+        assembly = api().ArticleWavAssembly()
+        await assembly.append(fragmented_wav(body), audio_format="wav")
+        results.append(assembly.finish())
+    baseline, result, known_data = results
+    assert result.wav_bytes == baseline.wav_bytes == known_data.wav_bytes
+    assert result.sha256 == baseline.sha256 == sha256(result.wav_bytes).hexdigest()
+    with wave.open(BytesIO(result.wav_bytes), "rb") as reader:
+        assert (
+            reader.getnchannels(),
+            reader.getsampwidth(),
+            reader.getframerate(),
+        ) == (2, 2, 48000)
+        assert result.content_frames == 104399
+        assert reader.getnframes() == result.content_frames + 12000
+        reader.setpos(result.content_frames)
+        assert reader.readframes(12001) == bytes(48000)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "riff,data,payload_bytes",
+    [
+        (0xFFFFFFFF, 0xFFFFFFFF, 0),
+        (0xFFFFFFFF, 0xFFFFFFFF, 7),
+        (0xFFFFFFFF, 8, 6),
+        (44, 0xFFFFFFFF, 8),
+        (44, 8, 6),
+        (44, 10, 8),
+        (44, 9, 8),
+    ],
+)
+async def test_streaming_wav_rejects_invalid_lengths(riff, data, payload_bytes):
+    wav = wav_lengths(mono(4), riff_size=riff, data_size=data)[: 44 + payload_bytes]
+    with pytest.raises(ValueError, match="invalid_article_audio"):
+        await api().ArticleWavAssembly().append(fragmented_wav(wav), audio_format="wav")
+
+
+@pytest.mark.asyncio
+async def test_streaming_wav_charges_retained_pcm_before_reading_more(monkeypatch):
+    wav = mono(1000, 24000)
+    # This allowance admits one conversion with no earlier PCM retained.
+    assembly = api().ArticleWavAssembly(limit=52088)
+    await assembly.append(fragmented_wav(wav), audio_format="wav")
+    retained = assembly.size
+    assert retained > 0
+    streamed = wav_lengths(wav, riff_size=0xFFFFFFFF, data_size=0xFFFFFFFF)
+
+    def unexpected_read(*args):
+        pytest.fail("read decoded PCM before reserving aggregate conversion space")
+
+    monkeypatch.setattr(wave.Wave_read, "readframes", unexpected_read)
+    with pytest.raises(ValueError, match="article_audio_limit"):
+        await assembly.append(fragmented_wav(streamed), audio_format="wav")
+    assert assembly.size == retained

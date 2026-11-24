@@ -369,11 +369,27 @@ class ArticleWavAssembly:
         encoded.seek(0)
         if fmt == "wav":
             with wave.open(encoded, "rb") as reader:
-                channels, width, rate, frames, compression, _ = reader.getparams()
+                channels, width, rate, _, compression, _ = reader.getparams()
                 if compression != "NONE":
                     raise ArticleSpeechError("invalid_article_audio")
+                # wave locates data past any ancillary chunks. Its reported
+                # frame count rounds down, so use the actual chunk byte count.
+                payload_start = encoded.tell()
+                encoded.seek(payload_start - 4)
+                data_size = int.from_bytes(encoded.read(4), "little")
+                available = nbytes - payload_start
+                if data_size == 0xFFFFFFFF:
+                    encoded.seek(4)
+                    if encoded.read(4) == b"\xff" * 4:
+                        # A streaming writer can leave both RIFF sizes unknown.
+                        # append has already consumed the full, bounded response.
+                        data_size = available
+                encoded.seek(payload_start)
+                frames, partial = divmod(data_size, channels * width)
+                if data_size > available or partial:
+                    raise ArticleSpeechError("invalid_article_audio")
                 self._conversion_budget(nbytes, frames, width, rate, channels)
-                raw = reader.readframes(frames + 1)
+                raw = reader.readframes(frames)
         elif fmt == "pcm":
             channels, width, rate, frames = 1, 2, 24000, nbytes // 2
             self._conversion_budget(nbytes, frames, width, rate, channels)
