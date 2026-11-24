@@ -27,15 +27,15 @@ Found at TASK-34100.16.1's rebase onto dev a6df4d8d48 (2026-11-19). Filed from i
 
 **Cause (traced on the port tree with a probe that wrapped `_Repository.discover`).**
 1. Review discovers under `_preview_reads`. `_Repository.discover` opens the file through `connect_private_sqlite("recovery.personal_context.repository", read_only=True)`, validation reports a schema issue, and the row is `unsupported`.
-2. Create runs the same discovery again under the maintenance session (`MaintenanceSession._discover_capture_inventory`, `session._discovery_reads()`). `_capture_names` holds only `included` rows, so the repository file is not in the held roots, and the open is refused with `RecoveryRequired("capture_source_outside_scope")` (`storage_admission._acquire_capture_storage`).
-3. `_Repository.validate` catches only `OSError`, `ValueError` and `sqlite3.Error`, so the refusal escapes. The profile's whole discovery fails (`config_discovery_failure`, `dependency_unavailable`; every profile row is gone). The maintained digest differs from the reviewed one, and `storage_admission.py:2477` raises `scope_changed`.
+2. Create runs the same discovery again under the maintenance session (`MaintenanceSession._discover_capture_inventory`, `session._discovery_reads()`). `_capture_names` holds no `unsupported` row, so the repository file is not in the held roots, and the open is refused with `RecoveryRequired("capture_source_outside_scope")` (`storage_admission._acquire_capture_storage`).
+3. `_Repository.validate` catches only `OSError`, `ValueError` and `sqlite3.Error`, so the refusal escapes. The profile's whole discovery fails (`config_discovery_failure`, `dependency_unavailable`; every profile row is gone). The maintained digest differs from the reviewed one, and `MaintenanceSession._discover_capture_inventory` raises `ValueError("scope_changed")`.
 
 A real repository is not affected: it is `included`, `_capture_names` holds it, and Create succeeds (verified with a real `PersonalContextRepository`, in its own `delete` mode and forced to WAL, in TASK-34100.16.1.1's notes). Untested but likely affected: any other repository row that is present but not `included`, such as `unavailable` while a first link is in progress (TASK-40134 decision 7).
 
 **Reproductions.**
 - Dev a6df4d8d48, 2026-11-19 (TASK-34100.16.1's rebase notes): `test_local_sqlite_wal_lifecycle_does_not_void_a_reviewed_scope[personal_context.repository]` ended in `scope_changed` on pure dev, with or without WAL activity.
 - Port of TASK-34100.16.1 onto dev b31e3e9241, 2026-11-23:
-  - that case, restored temporarily: `ValueError: scope_changed` at `storage_admission.py:2477`;
+  - that case, restored temporarily: `ValueError: scope_changed`, raised by `MaintenanceSession._discover_capture_inventory`;
   - a probe with a foreign file (`CREATE TABLE t (x)`) in `delete` and in WAL mode, with no held connection: two Reviews give the same digest, and Create ends in `scope_changed` both times;
   - the traced probe above: Review's two discoveries show one `unsupported` repository row and the same digest; the maintained discovery shows `config_discovery_failure` and no profile rows.
 <!-- SECTION:DESCRIPTION:END -->
