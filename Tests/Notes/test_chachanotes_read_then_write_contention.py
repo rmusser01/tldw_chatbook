@@ -1291,10 +1291,10 @@ def test_a_lock_held_past_the_busy_timeout_is_busy_not_a_version_conflict(
     assert not landed()
 
 
-def _inventory_runner(tmp_path: Path):
+def _inventory_runner(tmp_path: Path, **seed):
     """``test_notes_organization_legacy_inventory.py``'s seeded enrollment."""
     path = tmp_path / "inventory-scan.sqlite"
-    inventory._seed_inventory_db(path)
+    inventory._seed_inventory_db(path, **seed)
     own = CharactersRAGDB(path, client_id="inventory-tests")
     _CLEANUPS.append(own.close_connection)
     runner = inventory._inventory_types()(
@@ -1391,3 +1391,80 @@ def test_a_change_between_the_scan_and_the_step_is_seen_by_the_step(
         "inventory_source_changed",
     ), result
     assert steps[-1] == "renamed 1", steps
+
+
+def _commit_after_each_outside_scan(
+    monkeypatch: pytest.MonkeyPatch, path: Path, *, limit: int = 1_000
+) -> list[int]:
+    """Commit a write to a non-source table after every outside scan.
+
+    Every step then finds the database changed since its scan. ``limit``
+    turns a step that never progresses into a failure instead of a hang.
+    """
+    with sqlite3.connect(path) as setup:
+        setup.execute("CREATE TABLE IF NOT EXISTS inventory_probe (n INTEGER)")
+    inventory_type = inventory._inventory_types()
+    real_scan = inventory_type._scan_outside_the_write_lock
+    outside: list[int] = []
+
+    def scan_then_commit(self) -> None:
+        real_scan(self)
+        outside.append(1)
+        if len(outside) > limit:
+            raise AssertionError(f"no progress after {limit} outside scans")
+        with sqlite3.connect(path) as writer:
+            writer.execute("INSERT INTO inventory_probe (n) VALUES (1)")
+
+    monkeypatch.setattr(
+        inventory_type, "_scan_outside_the_write_lock", scan_then_commit
+    )
+    return outside
+
+
+def test_steady_writes_fall_back_to_one_scan_under_the_lock_per_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another connection commits after every outside scan, so no scan is
+    ever current under the write lock. Each step tries the outside scan
+    ``_OUTSIDE_SCAN_ATTEMPTS`` times and then scans under the lock once, so
+    enrollment still completes, with at most a third of the scans under the
+    lock."""
+    path, runner = _inventory_runner(tmp_path)
+    _commit_after_each_outside_scan(monkeypatch, path)
+    scans = _record_scans(monkeypatch, path)
+
+    result = runner.run()
+
+    assert result.status == "complete", result
+    assert True in scans, scans
+    assert scans.count(True) * 3 <= len(scans), scans
+
+
+@pytest.mark.parametrize("seed", [{}, {"local_state": "pulling"}], ids=["step", "held"])
+def test_a_scan_connection_closed_before_the_step_is_dropped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, seed: dict
+) -> None:
+    """Review of TASK-34000.84: ``quiesce_connections`` (trace compaction,
+    the mobile service) or ``close_idle_connections`` (quit) can close this
+    thread's connection between the outside scan and the step's ``BEGIN
+    IMMEDIATE``, which then reopens one. The scan taken on the closed
+    connection is dropped, never re-keyed through it (that raised
+    ``sqlite3.ProgrammingError``), on a stale step and on a held one."""
+    path, runner = _inventory_runner(tmp_path, **seed)
+    inventory_type = inventory._inventory_types()
+    real_scan = inventory_type._scan_outside_the_write_lock
+    closed: list[int] = []
+
+    def scan_then_close(self) -> None:
+        real_scan(self)
+        if not closed:
+            closed.append(1)
+            self.repository.db.close_connection()
+
+    monkeypatch.setattr(inventory_type, "_scan_outside_the_write_lock", scan_then_close)
+
+    result = runner.run()
+
+    assert closed == [1]
+    expected = "held" if seed else "complete"
+    assert result.status == expected, result

@@ -220,9 +220,13 @@ class LegacyNotesOrganizationInventory:
                                     last_inventory_key=next_token,
                                 )
                                 committed = (next_phase, None)
-            self._keep_scan_after_own_commit(merged)
+                # Read before the commit: a quiesce may close this connection
+                # right after it, and a commit leaves ``total_changes`` as is.
+                step_connection = cursor.connection
+                step_changes = step_connection.total_changes
             if stale:
                 continue
+            self._keep_scan_after_own_commit(step_connection, step_changes, merged)
             if outcome is not None:
                 return outcome
             if committed is None:  # pragma: no cover - every branch above terminates
@@ -339,24 +343,30 @@ class LegacyNotesOrganizationInventory:
         self._scanned = (key, self._snapshot(cursor))
         return self._scanned[1]
 
-    def _keep_scan_after_own_commit(self, merged: bool) -> None:
+    def _keep_scan_after_own_commit(
+        self, connection: object, changes: int, merged: bool
+    ) -> None:
         """Re-key the scan past this step's own writes, or drop it.
 
-        A step's intent and checkpoint writes do not change the scan (each
-        step re-checks the digest against the baseline), so only
-        ``total_changes`` moves; this connection's own commit leaves
-        ``data_version`` as it was. A step that applied a merge drops the scan.
+        ``_snapshot`` does not read the tables a step writes
+        (``notes_organization_sync_intents`` and
+        ``notes_organization_sync_checkpoints``), so the step's own writes
+        leave the scan valid and only ``total_changes`` moves; this
+        connection's own commit leaves ``data_version`` as it was. The scan
+        is dropped instead after a merge (which rewrites a resource's sync ID
+        and its folder suppressions, both scanned), or when it was taken on
+        another connection than the step's: a
+        quiesce or idle close between the scan and the step makes the step
+        reopen one. ``changes`` is the step connection's ``total_changes``,
+        read before its commit.
         """
         if self._scanned is None:
             return
-        if merged:
+        (scan_connection, version, _), snapshot = self._scanned
+        if merged or scan_connection is not connection:
             self._scanned = None
             return
-        (connection, version, _), snapshot = self._scanned
-        self._scanned = (
-            (connection, version, connection.total_changes),
-            snapshot,
-        )
+        self._scanned = ((connection, version, changes), snapshot)
 
     def _snapshot(self, cursor: sqlite3.Cursor) -> _Snapshot:
         resource_scan = self._scan_resources(cursor)
