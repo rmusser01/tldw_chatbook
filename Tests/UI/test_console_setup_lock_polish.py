@@ -20,7 +20,7 @@ from textual.app import App, ComposeResult
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
-from Tests.UI.app_factory import _build_test_app
+from Tests.UI.app_factory import _build_test_app, run_on_host
 from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_SETUP_CARD_SUBTITLE,
     ConsoleSetupCardState,
@@ -92,6 +92,7 @@ class ConsoleHarness(ConsolidatedCSSApp):
         self.app_instance = app_instance
 
     async def on_mount(self) -> None:
+        run_on_host(self.app_instance, self)
         await self.push_screen(ChatScreen(self.app_instance))
 
 

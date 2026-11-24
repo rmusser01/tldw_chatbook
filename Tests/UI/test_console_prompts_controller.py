@@ -54,7 +54,7 @@ from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsolePromptsModa
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsResult
 from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleStatusChips
 from Tests.console_provider_doubles import with_destination
-from Tests.UI.app_factory import attach_chachanotes_db, persist_seeded_config
+from Tests.UI.app_factory import attach_chachanotes_db, persist_seeded_config, run_on_host
 
 
 class ConsoleHarness(ConsolidatedCSSApp):
@@ -63,6 +63,7 @@ class ConsoleHarness(ConsolidatedCSSApp):
         self.app_instance = app_instance
 
     async def on_mount(self) -> None:
+        run_on_host(self.app_instance, self)
         await self.push_screen(ChatScreen(self.app_instance))
 
 

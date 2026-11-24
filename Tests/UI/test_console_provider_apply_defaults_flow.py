@@ -28,6 +28,7 @@ from Tests.UI.app_factory import (
     _build_test_app,
     attach_chachanotes_db,
     persist_seeded_config,
+    run_on_host,
 )
 from Tests.UI.background_signals import (
     await_background_task,
@@ -117,6 +118,7 @@ class _ConsoleFlowHarness(ConsolidatedCSSApp):
         self.app_instance = app_instance
 
     async def on_mount(self) -> None:
+        run_on_host(self.app_instance, self)
         await self.push_screen(ChatScreen(self.app_instance))
 
 

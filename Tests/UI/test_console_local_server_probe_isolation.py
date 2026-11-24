@@ -28,7 +28,7 @@ import pytest
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 from Tests import network_guard
-from Tests.UI.app_factory import _build_test_app
+from Tests.UI.app_factory import _build_test_app, run_on_host
 from tldw_chatbook.Chat.local_server_discovery import (
     DEFAULT_LLAMACPP_DISCOVERY_URL,
     DEFAULT_OLLAMA_DISCOVERY_URL,
@@ -49,6 +49,7 @@ class ConsoleHarness(ConsolidatedCSSApp):
         self.app_instance = app_instance
 
     async def on_mount(self) -> None:
+        run_on_host(self.app_instance, self)
         await self.push_screen(ChatScreen(self.app_instance))
 
 

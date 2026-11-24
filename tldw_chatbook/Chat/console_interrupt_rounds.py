@@ -1293,20 +1293,17 @@ class InterruptRoundHost(InitialHookReviewMixin):
                 is_head = self.park_round_payload(kind, round_id, payload)
         try:
             app = self.read_controller_app()
-            # TASK-41637: a never-started or exited App cannot show a card, so with
-            # no answerable view nobody can answer: fail closed. The view
-            # condition exists because Console harnesses re-point controller.app
-            # at a never-run TldwCli beside a live view. Such a round whose check runs
-            # before the view's attach reconciliation, or under a modal, still fails
-            # closed, so harness tests arm on an answerable view (TASK-42481) and open
-            # a modal only after its card or park notice (TASK-42424). A host without
+            # TASK-41637: a never-started or exited App can neither show a card nor
+            # deliver an answer, so nobody can answer: fail closed. A covered or
+            # unreconciled view does not matter; Console harnesses mark
+            # controller.app running and route its call_from_thread through their
+            # host (run_on_host, TASK-41948). A host without
             # is_running (mobile context) is live. An exit mid-wait is runtime
             # disposal's to settle.
             try:
                 app_gone = not app.is_running
             except AttributeError:
                 app_gone = False
-            app_gone = app_gone and self.read_controller__approval_view_is_detached()()
             park_toast = self.read_controller_park_pending_approval()
             if hard_expired() or app_gone:
                 pass

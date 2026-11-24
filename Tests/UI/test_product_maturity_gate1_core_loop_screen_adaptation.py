@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.UI.app_factory import run_on_host
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
@@ -99,6 +100,7 @@ class ConsoleHarness(ConsolidatedCSSApp):
     async def on_mount(self) -> None:
         # This harness bypasses startup and directly mounts the ready Console.
         self.app_instance._ui_ready = True
+        run_on_host(self.app_instance, self)
         await self.push_screen(ChatScreen(self.app_instance))
 
     async def _shutdown(self) -> None:

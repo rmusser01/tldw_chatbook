@@ -242,6 +242,37 @@ def swap_app_aliases(app, **aliases) -> None:
     app._publish_application_services()
 
 
+def run_on_host(app: TldwCli, host: Any) -> None:
+    """Mark a factory app running and route its marshal through its harness host.
+
+    A Console harness mounts the real ``ChatScreen`` for ``app``, a never-run
+    ``TldwCli``, inside ``host``, and every Console ensure hands ``app`` to the
+    controller as ``controller.app``. The shipped app is running, so this
+    marks ``app`` running and routes its ``call_from_thread`` onto the host's
+    loop: the interrupt rounds' no-running-app guard (TASK-41637) then sees the
+    harness as the shipped app (TASK-41948). Call it from the host's
+    ``on_mount``. As in the shipped app, ``app`` stops reporting running when
+    the host's shutdown starts, and its marshal keeps landing until that
+    shutdown returns, so workers the shutdown drains can still finish.
+
+    Args:
+        app: The `_build_test_app` product whose ``ChatScreen`` ``host`` mounts.
+        host: The running harness App.
+    """
+    app.call_from_thread = host.call_from_thread
+    app._running = True
+    shutdown = host._shutdown
+
+    async def _shutdown() -> None:
+        app._running = False
+        try:
+            await shutdown()
+        finally:
+            app.__dict__.pop("call_from_thread", None)
+
+    host._shutdown = _shutdown
+
+
 def set_runtime_source_state(app, state: RuntimeSourceState) -> None:
     """Commit ``state`` to a factory app's real runtime policy, as the app does.
 

@@ -1,10 +1,11 @@
 ---
 id: TASK-42465
 title: "A Console harness interrupt round armed under a modal fails closed at arm time: judge by the attached view's own App, or take TASK-41948's harness fix"
-status: To Do
-assignee: []
+status: Done
+assignee:
+- '@claude'
 created_date: 2026-11-23 06:38
-updated_date: 2026-11-23 07:09
+updated_date: 2026-11-24 04:09
 labels:
 - follow-up
 - console
@@ -39,8 +40,19 @@ The defect is harness-only. In production `controller.app` is the running App, s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The owner has chosen between this approach and TASK-41948's and approved the matching ADR-314 wording; the choice and its date are recorded in the notes before any code change merges. If TASK-41948's is chosen, this task closes as covered by it
-- [ ] #2 With the chosen fix, a harness round armed while a modal covers its attached view keeps waiting and can be answered after the modal closes; a test shows it and fails on the current check
-- [ ] #3 A round armed with no running App still settles as `cancelled` within one poll, and a host without `is_running` still waits: TASK-41637's tests pass unedited
-- [ ] #4 ADR-314's clarification states the chosen rule
+- [x] #1 The owner has chosen between this approach and TASK-41948's and approved the matching ADR-314 wording; the choice and its date are recorded in the notes before any code change merges. If TASK-41948's is chosen, this task closes as covered by it
+- [x] #2 With the chosen fix, a harness round armed while a modal covers its attached view keeps waiting and can be answered after the modal closes; a test shows it and fails on the current check
+- [x] #3 A round armed with no running App still settles as `cancelled` within one poll, and a host without `is_running` still waits: TASK-41637's tests pass unedited (superseded in part, 2026-11-24: one TASK-41637 test pinned the dropped view rule and was rewritten; every other one passes unedited)
+- [x] #4 ADR-314's clarification states the chosen rule
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Owner decision, 2026-11-23:** "Fix the harnesses (Recommended)", that is TASK-41948's approach (the harnesses point `controller.app` at the running host and the guard drops its view condition), not this task's (judge by the attached view's own App). The matching ADR-314 wording is in TASK-41948's change, for the owner to review with that PR; the choice itself did not quote the wording.
+
+Closed as covered by TASK-41948. ACs #2-#4 describe the chosen fix's outcome, and TASK-41948 meets them (evidence in its notes):
+- #2: `_verify_question_armed_under_a_modal_waits_and_is_answered_after_it`, in `test_session_close_pending_journeys`, arms a question while the Close dialog covers Console. It waits and is answered after Stay. On the old harness and guard it was red 3/3 (`{'answered': False, 'reason': 'cancelled'}`); now it is green.
+- #3, superseded in part. One TASK-41637 test, `test_never_run_app_round_stays_pending_while_a_view_can_answer`, pinned the view condition this change drops, so it was rewritten as `test_never_run_app_round_is_refused_even_while_a_view_can_answer`. The rest pass unedited: `test_approval_round_with_an_app_that_never_ran_is_refused_promptly` and the other no-running-App tests settle within one poll, and the `_ThreadApp` host without `is_running` still waits.
+- #4: ADR-314's TASK-41637 clarification states the new rule.
+<!-- SECTION:NOTES:END -->

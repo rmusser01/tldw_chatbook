@@ -12,7 +12,7 @@ from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.containers import Vertical
 from textual.widgets import Static
 
-from Tests.UI.app_factory import persist_seeded_config
+from Tests.UI.app_factory import persist_seeded_config, run_on_host
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_console_internals_decomposition import (
     _build_bound_mcp_test_app,
@@ -65,6 +65,7 @@ class ConsoleHarness(ConsolidatedCSSApp):
         self.app_instance = app_instance
 
     async def on_mount(self) -> None:
+        run_on_host(self.app_instance, self)
         await self.push_screen(ChatScreen(self.app_instance))
 
 
@@ -102,6 +103,7 @@ class ConsoleFooterHarness(ConsolidatedCSSApp):
         yield AppFooterStatus(id="app-footer-status")
 
     async def on_mount(self) -> None:
+        run_on_host(self.app_instance, self)
         await self.push_screen(ChatScreen(self.app_instance))
 
 

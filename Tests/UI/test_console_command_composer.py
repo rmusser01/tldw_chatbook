@@ -26,7 +26,7 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from Tests.UI.app_factory import attach_chachanotes_db
+from Tests.UI.app_factory import attach_chachanotes_db, run_on_host
 from Tests.UI.pump_probe import console_attach_ended, until
 from tldw_chatbook.Chat.console_command_grammar import default_console_registry
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
@@ -138,6 +138,7 @@ class _StagedPromptConsoleHarness(ConsolidatedCSSApp):
         self.app_instance = app_instance
 
     async def on_mount(self) -> None:
+        run_on_host(self.app_instance, self)
         console = ChatScreen(self.app_instance)
         console._session._ensure_active_console_session_settings()
         self.app_instance.pending_handoffs.stage(

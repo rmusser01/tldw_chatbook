@@ -569,10 +569,6 @@ async def test_console_chat_fork_complete_provider_free_journey(
             )
             assert transcript.selected_message_id == user_boundary.id
 
-            # ConsoleHarness mounts the production screen under the harness app;
-            # the production controller therefore marshals through that live
-            # Textual owner here, just as it marshals through TldwCli in-process.
-            controller.app = host
             controller.mcp_approval_timeout_seconds = lambda: 30.0
             approval_task = asyncio.create_task(
                 asyncio.to_thread(

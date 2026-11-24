@@ -24,7 +24,7 @@ pytestmark = pytest.mark.bootstrap_profile
 from textual.widgets import Input
 
 from Tests.private_profile import private_profile_test
-from Tests.UI.app_factory import _build_test_app, attach_chachanotes_db
+from Tests.UI.app_factory import _build_test_app, attach_chachanotes_db, run_on_host
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import _wait_for_selector
 from tldw_chatbook.Chat.console_session_settings import (
@@ -64,6 +64,7 @@ class _Harness(ConsolidatedCSSApp):
         self.app_instance = app_instance
 
     async def on_mount(self) -> None:
+        run_on_host(self.app_instance, self)
         await self.push_screen(ChatScreen(self.app_instance))
 
 

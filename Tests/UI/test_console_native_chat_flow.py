@@ -22,7 +22,7 @@ from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
 from Tests.fixtures.required_doubles import exploding_double
 from Tests.private_profile import private_profile_test
-from Tests.UI.app_factory import attach_chachanotes_db
+from Tests.UI.app_factory import attach_chachanotes_db, run_on_host
 from Tests.UI.background_signals import wait_for_background_signal, wait_for_signal
 from Tests.UI.console_controller_stubs import stub_image_controller
 from Tests.UI.app_factory import _build_test_app as _build_production_app
@@ -3932,6 +3932,7 @@ class RestoredConsoleHarness(ConsolidatedCSSApp):
 
     async def on_mount(self) -> None:
         """Restore and mount a Console ChatScreen for lifecycle regression tests."""
+        run_on_host(self.app_instance, self)
         screen = ChatScreen(self.app_instance)
         screen.restore_state(self.restored_state)
         await self.push_screen(screen)

@@ -39,6 +39,7 @@ from textual.screen import Screen
 from textual.widgets import Button, Static
 
 import tldw_chatbook
+from Tests.UI.app_factory import run_on_host
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_console_composer_reason_restyles import ComposerHarness
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
@@ -594,6 +595,7 @@ class _SwitchHarness(ConsolidatedCSSApp):
 
     async def on_mount(self) -> None:
         self.app_instance._ui_ready = True
+        run_on_host(self.app_instance, self)
         self.stylesheet.add_source(_PROBE_CSS, read_from=(__file__, "_PROBE_CSS"))
         self.install_screen(ChatScreen(self.app_instance), "console")
         self.install_screen(_AwayScreen(), "away")

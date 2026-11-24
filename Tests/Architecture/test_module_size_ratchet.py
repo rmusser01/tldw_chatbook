@@ -334,7 +334,10 @@ _BUDGETS: dict[str, int] = {
     # TASK-41637, 2026-11-18: +9, a round armed with no running app and no
     # answerable view fails closed instead of waiting forever (dev's row +
     # growth: 6298 -> 6307).
-    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
+    # 2026-11-24, round-24 stack: dev measures 6,304 and TASK-41948 (the Console
+    # harnesses run their apps on the host) is a net -3; the row goes down to
+    # the measurement, 6,307 -> 6,301.
+    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6301,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
     # 2026-10-31 PR3295 R1: user-waived cap; exact remembered-prompt-delta measurement.
     "tldw_chatbook/Chat/console_context_compaction.py": 4217,

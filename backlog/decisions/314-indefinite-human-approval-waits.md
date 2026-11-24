@@ -108,23 +108,29 @@ cancellation contract without adding a provider dispatch authority boundary.
 
 "Indefinite" assumes someone can still answer. A round can settle without a
 user answer when it arms with no running App (constructed but never started,
-or already exited) and no answerable Console view. Such a round can show no
-card and receive no decision, so `InterruptRoundHost.run_round` settles it as
-`cancelled` within one poll: it fails closed and is recorded as unresolved,
-never as a user Deny. Two kinds of host keep waiting as above:
-- a host without an `is_running` attribute (the mobile `HeadlessAppContext`);
-- any round while an answerable view exists. The view condition is not a claim
-  that a non-running App can render a card: it accommodates test harnesses that
-  re-point `controller.app` at a never-run `TldwCli` beside a live view.
-  A harness round whose arm-time check runs before the view's attach
-  reconciliation, or while a modal (such as the Close dialog) covers that view,
-  still fails closed (TASK-42481, TASK-42424; test guidance is in
-  `backlog/docs/lessons-testing-evidence.md`).
+or already exited). Such a round can show no card and receive no decision, so
+`InterruptRoundHost.run_round` settles it as `cancelled` within one poll: it
+fails closed and is recorded as unresolved, never as a user Deny. The Console
+view does not enter into it: a running App's round waits as above while a
+modal covers the view or before the view's attach reconciliation, and a
+never-run App's round fails closed even beside an answerable view. A host
+without an `is_running` attribute (the mobile `HeadlessAppContext`) keeps
+waiting as above.
 
 Liveness is read once, at arm time. An App that exits mid-wait is settled by
-runtime disposal (the visit and shutdown fences). A per-poll read would also
-cancel live rounds in test harnesses that re-point `controller.app` at a
-never-run App on every Console ensure.
+runtime disposal (the visit and shutdown fences).
+
+Amended 2026-11-23 (TASK-41948; owner decision the same day, "Fix the
+harnesses", over TASK-42465's alternative of reading the view's own App). The
+rule first also kept a never-run App's round live while an answerable view
+existed, because Console test harnesses mounted the real view for a never-run
+`TldwCli` inside a separate running host, and every Console ensure hands that
+`TldwCli` to the controller as `controller.app`. Rounds those harnesses armed
+before the attach reconciliation, or under a modal, failed closed (TASK-42481,
+TASK-42424). The harnesses now mark that `TldwCli` running and route its
+`call_from_thread` through their host (`Tests/UI/app_factory.py::run_on_host`),
+as in the shipped app, where `controller.app` is the running App, so the view
+condition was dropped.
 
 ## Renumbering provenance
 

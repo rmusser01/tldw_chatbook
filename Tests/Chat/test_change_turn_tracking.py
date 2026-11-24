@@ -20,6 +20,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.UI.app_factory import run_on_host
 from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
 from Tests.Chat.test_console_agent_bridge import _FakeBuiltinGateForRegistry
 from tldw_chatbook.Agents.agent_models import ToolCall
@@ -2341,6 +2342,7 @@ async def test_the_opener_pushes_the_screen_and_selects_the_turn(
             self.app_instance = app_instance
 
         async def on_mount(self) -> None:
+            run_on_host(self.app_instance, self)
             await self.push_screen(ChatScreen(self.app_instance))
 
     app = _build_test_app()
@@ -2427,6 +2429,7 @@ async def test_the_summary_rows_own_review_action_opens_the_screen(
             self.app_instance = app_instance
 
         async def on_mount(self) -> None:
+            run_on_host(self.app_instance, self)
             await self.push_screen(ChatScreen(self.app_instance))
 
     app = _build_test_app()

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.UI.app_factory import run_on_host
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import _build_test_app
 
@@ -131,6 +132,7 @@ class FocusConsoleHarness(ConsolidatedCSSApp):
         self.app_instance = app_instance
 
     async def on_mount(self) -> None:
+        run_on_host(self.app_instance, self)
         await self.push_screen(ChatScreen(self.app_instance))
 
 

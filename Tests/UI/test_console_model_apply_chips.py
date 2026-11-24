@@ -22,7 +22,7 @@ pytestmark = pytest.mark.bootstrap_profile
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Static
 
-from Tests.UI.app_factory import _build_test_app
+from Tests.UI.app_factory import _build_test_app, run_on_host
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
@@ -52,6 +52,7 @@ class _ConsoleHarness(ConsolidatedCSSApp):
         self.app_instance = app_instance
 
     async def on_mount(self) -> None:
+        run_on_host(self.app_instance, self)
         await self.push_screen(ChatScreen(self.app_instance))
 
 

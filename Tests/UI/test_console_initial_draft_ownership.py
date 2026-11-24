@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from textual.events import Key, Mount
 
+from Tests.UI.app_factory import run_on_host
 from Tests.UI.consolidated_css import APP_STYLESHEETS
 from Tests.UI.test_console_session_tab_close import ProductionConsoleHarness
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -28,6 +29,7 @@ class DeferredInitialConsole(ProductionConsoleHarness):
         # This specialized mount replaces the base harness's normal Console.
         event.prevent_default()
         self.app_instance._ui_ready = True
+        run_on_host(self.app_instance, self)
         screen = ChatScreen(self.app_instance)
         store = screen._ensure_console_chat_store()
         session = store.ensure_session(title="Initial draft")

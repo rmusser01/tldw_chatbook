@@ -4,6 +4,7 @@ from textual.app import App
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.app_factory import run_on_host
 
 from Tests.UI.test_destination_shells import _build_test_app
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
@@ -23,6 +24,7 @@ class ChatScreenHarness(ConsolidatedCSSApp):
         self.app_instance = app_instance
 
     async def on_mount(self) -> None:
+        run_on_host(self.app_instance, self)
         await self.push_screen(ChatScreen(self.app_instance))
 
 
