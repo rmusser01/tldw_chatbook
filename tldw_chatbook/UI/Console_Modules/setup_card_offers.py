@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from tldw_chatbook.Chat.console_onboarding_state import (
-    CONSOLE_SETUP_ENV_KEY_WORKBENCH_ACTION_PREFIX,
     ConsoleSetupCardState,
     build_console_detected_server_action,
     build_console_env_key_actions,
@@ -51,11 +50,6 @@ def sync_setup_card_offers(
         except Exception as exc:
             logger.debug("Env-key card offers skipped ({})", type(exc).__name__)
     modal.sync_env_key_actions(actions)
-
-
-def is_env_key_offer(action_id: str) -> bool:
-    """Whether a workbench action id is a card env-key offer."""
-    return action_id.startswith(CONSOLE_SETUP_ENV_KEY_WORKBENCH_ACTION_PREFIX)
 
 
 async def apply_env_key_offer(screen: ChatScreen, action_id: str) -> bool:
@@ -129,13 +123,13 @@ def dismiss_env_key_notice(app: object) -> None:
 
     Review round 2 (F10): after 'Use Anthropic' the 20 s toast still said
     'new chats use OpenAI, which has no key'. The app owns that toast, so it
-    removes it (``EnvKeyNoticeMixin.dismiss_env_key_notice``); an app without
-    the notice mixin has no such toast.
+    removes it (``EnvKeyNoticeMixin.dismiss_env_key_notice``, a no-op for an
+    app that shows no such toast). Loaded here, at a commit, never at boot
+    (ADR-097): ``TldwCli`` holds the notice's bodies only once one is shown.
 
     Args:
         app: The running app (``TldwCli``).
     """
     from tldw_chatbook.app_env_key_notice import EnvKeyNoticeMixin
 
-    if isinstance(app, EnvKeyNoticeMixin):
-        app.dismiss_env_key_notice()
+    EnvKeyNoticeMixin.dismiss_env_key_notice(app)

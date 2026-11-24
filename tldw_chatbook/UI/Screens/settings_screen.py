@@ -166,7 +166,6 @@ from ...Chat.console_session_settings import (
     settings_provider_catalog,
     verdict_readiness_words,
 )
-from ..Settings_Modules import provider_test_rows as test_rows  # TASK-34100.2
 from ...ACP_Interop.runtime_session import ACPRuntimeSessionState
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...Sync_Interop.sync_promotion_state import (
@@ -544,6 +543,13 @@ def guardian_setting(key: str, default: Any = None) -> Any:
 #: The Hooks panel's widget id; the screen queries it by this selector.
 _HOOKS_PANEL_ID = "settings-hooks-panel"
 _HOOKS_PANEL_SELECTOR = f"#{_HOOKS_PANEL_ID}"
+
+
+def _test_rows():
+    """TASK-34100.2's Test-row facts, loaded at first use: off the pre-import pass (ADR-097)."""
+    from ..Settings_Modules import provider_test_rows
+
+    return provider_test_rows
 
 
 def _hooks_settings_panel_class() -> type["HooksSettingsPanel"]:
@@ -17228,7 +17234,7 @@ class SettingsScreen(BaseAppScreen):
             env_var_invalid: The Env var being typed is no variable's name.
             evidence: Stored evidence, or a settled probe, for this draft.
             checking: A model-listing probe is in flight.
-            max_tokens, max_tokens_from_model_default, rejection_reason: ``test_rows``.
+            max_tokens, max_tokens_from_model_default, rejection_reason: ``provider_test_rows``.
 
         Returns:
             The rows as (label, text) pairs in display order.
@@ -17288,7 +17294,7 @@ class SettingsScreen(BaseAppScreen):
             key = f"missing — enter one in the API key field or set {name}"
         else:
             key = "missing — enter one in the API key field"
-        key += test_rows.key_verdict(  # TASK-34100.2: the key's last verdict
+        key += _test_rows().key_verdict(  # TASK-34100.2: the key's last verdict
             readiness, evidence=evidence, listing=listing,
             listed=_listed_models_copy(model_ids), rejection_reason=rejection_reason,
         )
@@ -17326,7 +17332,7 @@ class SettingsScreen(BaseAppScreen):
                     else " · listed by the server"
                 )
 
-        capacity, model_blocked = test_rows.model_capacity(  # TASK-34100.2 AC#2
+        capacity, model_blocked = _test_rows().model_capacity(  # TASK-34100.2 AC#2
             readiness.provider_key, model, max_tokens,
             from_model_default=max_tokens_from_model_default,
         )
@@ -17424,7 +17430,7 @@ class SettingsScreen(BaseAppScreen):
                 return f"key accepted ({listed}) · generation not tested"
             return f"{listed}; key not checked · generation not tested"
         if listing == "unreachable" and category == "unauthorized" and reason:
-            return test_rows.rejected_key_copy(display_name, reason)
+            return _test_rows().rejected_key_copy(display_name, reason)
         if listing == "unreachable" and category == "unauthorized":
             return (
                 f"{display_name} rejected the API key ("
@@ -17488,7 +17494,7 @@ class SettingsScreen(BaseAppScreen):
         # the family slot's ("provider default", "not required"). The rows are
         # plain text (the widget sets markup=False), so they take the plain name.
         entry = self._provider_registry_entry(provider)
-        extras = test_rows.test_row_extras(self, provider, model, evidence)
+        extras = _test_rows().test_row_extras(self, provider, model, evidence)
         rows = self._provider_test_rows(
             readiness,
             display_name=(
@@ -17799,7 +17805,7 @@ class SettingsScreen(BaseAppScreen):
             key_sent=bool(api_key),
             model=str(self._provider_current_draft_values().get("model") or "").strip(),
         )
-        test_rows.remember_key_rejection(self, provider, api_key, result, probe)  # F3
+        _test_rows().remember_key_rejection(self, provider, api_key, result, probe)  # F3
         if probe is not None:
             return probe
         kind = getattr(getattr(result, "error", None), "kind", "")

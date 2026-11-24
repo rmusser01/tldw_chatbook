@@ -193,7 +193,6 @@ from ..Console_Modules.wiring import (
     environment_scope_stamp,
     console_view_hooks as _console_view_hooks,
 )
-from ..Console_Modules import setup_card_offers
 from ..Console_Modules import raw_cli as raw_cli_ui
 from ..Console_Modules import composer_run_controls as run_controls
 from ..Console_Modules import wiring
@@ -403,6 +402,7 @@ from ...Chat.console_display_state import (
     console_staged_source_count,
 )
 from ...Chat.console_onboarding_state import (
+    CONSOLE_SETUP_ENV_KEY_WORKBENCH_ACTION_PREFIX,
     ConsoleSetupCardState,
     build_console_setup_card_state,
     coerce_console_first_send_completed,
@@ -4618,7 +4618,8 @@ class ChatScreen(BaseAppScreen):
         elif action_id == CONSOLE_SETUP_MODAL_LOOK_AGAIN_WORKBENCH_ACTION:
             self._console_local_discovery_started = False  # TASK-34100.6
             self._maybe_start_console_local_discovery()
-        elif setup_card_offers.is_env_key_offer(action_id):  # TASK-34100.2 AC#12
+        elif action_id.startswith(CONSOLE_SETUP_ENV_KEY_WORKBENCH_ACTION_PREFIX):
+            from ..Console_Modules import setup_card_offers  # AC#12; ADR-097: first use
             await setup_card_offers.apply_env_key_offer(self, action_id)
         elif action_id == CONSOLE_SETUP_MODAL_NOTES_WORKBENCH_ACTION:
             # task-32140: the "Get started" card's needs-no-provider action
@@ -13971,7 +13972,9 @@ class ChatScreen(BaseAppScreen):
                 self._pending_console_launch_context
             ),
         )
-        setup_card_offers.sync_setup_card_offers(self, modal, card_state)
+        if card_state.mode == "card" or modal.detected_server_action or modal.env_key_actions:
+            from ..Console_Modules import setup_card_offers  # ADR-097: a card's first use
+            setup_card_offers.sync_setup_card_offers(self, modal, card_state)
         blocking = modal.is_blocking
         self._apply_console_setup_block(blocking)
         if blocking:

@@ -1,24 +1,25 @@
-"""TldwCli's env-key first-launch notice: ``EnvKeyNoticeMixin``.
+"""TldwCli's env-key first-launch notice bodies: ``EnvKeyNoticeMixin``.
 
 TASK-21147 (UAT E-1) said once, at launch, that exported provider keys
 skipped the setup wizard. TASK-34100.2 (AC#7, AC#11) made that notice honest
 and ordered it: its copy comes from the shared readiness verdict
 (``build_env_key_first_launch_notice``), and it is held until the model-list
 consent question is answered, so it never appears on top of that modal or
-expires behind it. Moved out of ``app.py`` whole (TASK-34100.2 pass 2) so the
-app module stays inside its size ratchet; new app-level glue belongs in a
-mixin like this one, not in ``app.py``.
+expires behind it. Moved out of ``app.py`` (TASK-34100.2 pass 2) so the app
+module stays inside its size ratchet.
 
-Every method is called class-qualified by tests with a stub ``self``
-(``TldwCli._show_pending_env_key_notice(fake)``), so none of them uses
-``super()``.
+Not a ``TldwCli`` base (PR #3517's round-24 port, ADR-097): ``app.py`` keeps
+the mount-time scheduling and the consent wrapper, its show and record stubs
+import this module only once a notice is held or shown, and the Get started
+card imports it when an offer commits, so a normal launch never loads it.
+Every method is called class-qualified
+(``EnvKeyNoticeMixin._show_pending_env_key_notice(app)``), so none of them
+uses ``super()``.
 """
 
 from __future__ import annotations
 
 from loguru import logger
-
-from tldw_chatbook.app_feature_glue import FeatureGlueMixin
 
 
 class EnvKeyNoticeMixin:
@@ -57,30 +58,6 @@ class EnvKeyNoticeMixin:
                 unnotify(notification)
         except Exception:  # noqa: BLE001 - a stale toast never fails the commit
             logger.debug("env_key_notice_dismiss_failed")
-
-    def _schedule_catalog_refresh_then_env_key_notice(self) -> bool:
-        """AC#11: schedule the catalog pass, then show the held env-key notice
-        unless that pass opened the consent question. One call at mount, so
-        the order cannot be swapped there (review round 2, R2-5).
-
-        Returns:
-            Whether the model-list consent question is still open (its answer
-            then flushes the notice, ``_handle_model_catalog_consent``).
-        """
-        self._schedule_startup_model_catalog_refresh()
-        consent_pending = getattr(
-            self, "_startup_model_catalog_consent_required", False
-        )
-        if self.is_headless or not consent_pending:  # headless: no modal to wait on
-            self._show_pending_env_key_notice()
-        return consent_pending
-
-    async def _handle_model_catalog_consent(self, allowed: bool | None) -> None:
-        """AC#11: the consent decision comes first, then the env-key notice."""
-        try:
-            await FeatureGlueMixin._handle_model_catalog_consent(self, allowed)
-        finally:
-            EnvKeyNoticeMixin._show_pending_env_key_notice(self)
 
     def _persist_env_key_notice_flag(self) -> None:
         """Record the one-time env-key notice (TASK-21147, UAT E-1)."""

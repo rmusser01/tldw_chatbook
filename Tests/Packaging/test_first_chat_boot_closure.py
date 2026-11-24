@@ -29,6 +29,15 @@ file pins, because each was deferred rather than paid for with a raise:
    ``sys.modules`` can no longer tell this edge apart. The readiness case
    therefore counts the ledger's endpoint interpretations instead.
 
+PR #3517's round-24 port (owner decision 2026-11-23, "lazy-load, no raises")
+deferred three more of the PR's new modules instead of raising ADR-097's
+limits, and the last three cases pin each deferral and its first use:
+``app_env_key_notice`` (no longer a ``TldwCli`` base; loaded once a notice
+is held), ``UI.Console_Modules.setup_card_offers`` (the Get started card's
+offers; loaded when a blocking card syncs or an offer is clicked) and
+``UI.Settings_Modules.provider_test_rows`` (Settings' Test-row facts; was the
+one module that took the screen pre-import pass to 559 against 558).
+
 Behaviour at first use is covered where it lives:
 ``Tests/Chat/test_rate_limit_reads_as_rate_limit.py`` (the handlers' retry and
 429 reason) and ``Tests/Chat/test_first_chat_readiness.py`` (a window answers
@@ -231,3 +240,127 @@ def test_readiness_with_no_recorded_window_never_interprets_the_endpoint(
         f"stdout={result.stdout[-2000:]}\nstderr={result.stderr[-4000:]}"
     )
     assert "FIRST_CHAT_READINESS_CLOSURE_OK" in result.stdout
+
+
+_ENV_KEY_NOTICE_SNIPPET = """
+import sys
+from types import SimpleNamespace
+
+from tldw_chatbook.app import TldwCli
+
+MOD = "tldw_chatbook.app_env_key_notice"
+assert MOD not in sys.modules, "importing the app loaded " + MOD
+
+from tldw_chatbook.Chat.console_onboarding_state import EnvKeyFirstLaunchNotice
+
+events = []
+app = SimpleNamespace(
+    notify=lambda message, **kwargs: events.append(message),
+    _persist_env_key_notice_flag=lambda: events.append("flag-saved"),
+    _pending_env_key_notice=None,
+)
+# A launch without exported keys holds no notice: the flush shows nothing.
+TldwCli._show_pending_env_key_notice(app)
+assert MOD not in sys.modules, "an empty notice flush loaded " + MOD
+assert events == [], events
+
+# First use: a held notice loads the bodies, is shown once, then recorded.
+app._pending_env_key_notice = EnvKeyFirstLaunchNotice(
+    title="Provider key found", message="Found ANTHROPIC_API_KEY", ready=False
+)
+TldwCli._show_pending_env_key_notice(app)
+assert MOD in sys.modules
+assert events == ["Found ANTHROPIC_API_KEY", "flag-saved"], events
+assert app._pending_env_key_notice is None
+assert app._env_key_notice_message == "Found ANTHROPIC_API_KEY"
+print("ENV_KEY_NOTICE_FIRST_USE_OK")
+"""
+
+
+_SETUP_CARD_OFFERS_SNIPPET = """
+import asyncio
+import sys
+from types import SimpleNamespace
+
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
+
+MOD = "tldw_chatbook.UI.Console_Modules.setup_card_offers"
+assert MOD not in sys.modules, "importing the Console screen loaded " + MOD
+
+# First use: an env-key offer click loads the module and reaches its commit,
+# which looks for the card (this stub screen has none, so nothing commits).
+asked = []
+
+
+def query_one(selector, *args):
+    asked.append(selector)
+    raise LookupError(selector)
+
+
+receiver = SimpleNamespace(query_one=query_one)
+asyncio.run(
+    ChatScreen.on_console_workbench_action_requested(
+        receiver, WorkbenchActionRequested("use-env-key:anthropic")
+    )
+)
+assert MOD in sys.modules
+assert asked == ["#console-setup-modal"], asked
+print("SETUP_CARD_OFFERS_FIRST_USE_OK")
+"""
+
+
+_PROVIDER_TEST_ROWS_SNIPPET = """
+import sys
+
+from tldw_chatbook.UI.Screens import settings_screen
+
+MOD = "tldw_chatbook.UI.Settings_Modules.provider_test_rows"
+assert MOD not in sys.modules, "importing the Settings screen loaded " + MOD
+
+# First use: the Test rows' getter loads the module the rows read.
+rows = settings_screen._test_rows()
+assert MOD in sys.modules
+assert rows is sys.modules[MOD]
+assert callable(rows.key_verdict) and callable(rows.model_capacity)
+print("PROVIDER_TEST_ROWS_FIRST_USE_OK")
+"""
+
+
+def test_the_env_key_notice_loads_only_once_a_notice_is_held(tmp_path: Path) -> None:
+    """The app import leaves the env-key notice unloaded until one is held.
+
+    Args:
+        tmp_path: pytest fixture; isolated dir for the subprocess's HOME/XDG.
+    """
+    result = _run_isolated_python(tmp_path, _ENV_KEY_NOTICE_SNIPPET)
+    assert result.returncode == 0, (
+        f"stdout={result.stdout[-2000:]}\nstderr={result.stderr[-4000:]}"
+    )
+    assert "ENV_KEY_NOTICE_FIRST_USE_OK" in result.stdout
+
+
+def test_the_setup_card_offers_load_at_first_use(tmp_path: Path) -> None:
+    """The Console screen import leaves the card's offers module unloaded.
+
+    Args:
+        tmp_path: pytest fixture; isolated dir for the subprocess's HOME/XDG.
+    """
+    result = _run_isolated_python(tmp_path, _SETUP_CARD_OFFERS_SNIPPET)
+    assert result.returncode == 0, (
+        f"stdout={result.stdout[-2000:]}\nstderr={result.stderr[-4000:]}"
+    )
+    assert "SETUP_CARD_OFFERS_FIRST_USE_OK" in result.stdout
+
+
+def test_the_settings_test_rows_load_at_first_use(tmp_path: Path) -> None:
+    """The Settings screen import leaves the Test-row facts module unloaded.
+
+    Args:
+        tmp_path: pytest fixture; isolated dir for the subprocess's HOME/XDG.
+    """
+    result = _run_isolated_python(tmp_path, _PROVIDER_TEST_ROWS_SNIPPET)
+    assert result.returncode == 0, (
+        f"stdout={result.stdout[-2000:]}\nstderr={result.stderr[-4000:]}"
+    )
+    assert "PROVIDER_TEST_ROWS_FIRST_USE_OK" in result.stdout

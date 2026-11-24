@@ -406,7 +406,6 @@ from tldw_chatbook.app_feature_glue import (
     FeatureGlueMixin,
     setup_owns_startup_networking,  # noqa: F401 -- re-export
 )
-from tldw_chatbook.app_env_key_notice import EnvKeyNoticeMixin
 
 if TYPE_CHECKING:
     from tldw_chatbook.Terminal.backend import TerminalBackend
@@ -461,6 +460,13 @@ def _speech():
     from tldw_chatbook import app_speech
 
     return app_speech
+
+
+def _env_key_notice():
+    """Import ``app_env_key_notice`` once a notice is held (never at boot; ADR-097)."""
+    from tldw_chatbook import app_env_key_notice
+
+    return app_env_key_notice
 
 
 DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
@@ -814,7 +820,6 @@ class TldwCli(
     ServiceWiringMixin,
     LifecycleMixin,
     NavigationMixin,
-    EnvKeyNoticeMixin,  # before FeatureGlueMixin: wraps its consent handler
     FeatureGlueMixin,
     ThemeVariableDefaultsMixin,  # TASK-33003.6 ruling 15: guard-name fallback
     App[None],
@@ -3782,6 +3787,35 @@ class TldwCli(
             severity="warning",
             timeout=10,
         )
+
+    # TASK-34100.2's env-key launch notice (AC#7, AC#11): the bodies live in
+    # ``app_env_key_notice``, imported only once a notice is held or shown, so
+    # a normal launch never loads it (ADR-097; round-24 port, no boot raise).
+    def _schedule_catalog_refresh_then_env_key_notice(self) -> bool:
+        """AC#11 (R2-5): schedule the catalog pass, then show the held notice
+        unless it opened the consent question, whose answer flushes it.
+        Returns whether that question is still open."""
+        self._schedule_startup_model_catalog_refresh()
+        consent_pending = getattr(self, "_startup_model_catalog_consent_required", False)
+        if self.is_headless or not consent_pending:  # headless: no modal to wait on
+            self._show_pending_env_key_notice()
+        return consent_pending
+
+    async def _handle_model_catalog_consent(self, allowed: bool | None) -> None:
+        """AC#11: the consent decision comes first, then the env-key notice."""
+        try:
+            await FeatureGlueMixin._handle_model_catalog_consent(self, allowed)
+        finally:
+            TldwCli._show_pending_env_key_notice(self)
+
+    def _show_pending_env_key_notice(self) -> None:
+        """Show the held env-key notice once, then record it (TASK-34100.2)."""
+        if getattr(self, "_pending_env_key_notice", None) is not None:
+            _env_key_notice().EnvKeyNoticeMixin._show_pending_env_key_notice(self)
+
+    def _persist_env_key_notice_flag(self) -> None:
+        """Record the one-time env-key notice (TASK-21147, UAT E-1)."""
+        _env_key_notice().EnvKeyNoticeMixin._persist_env_key_notice_flag(self)
 
     def _push_first_run_wizard(self) -> None:
         from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import FirstRunSetupWizard
