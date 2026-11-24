@@ -239,7 +239,8 @@ def test_subprocess_death_releases_same_lock_and_revocation_pins_borrower(record
     import sys
     from concurrent.futures import ThreadPoolExecutor
     from pathlib import Path
-    from threading import Event
+    from queue import Queue
+    from threading import Event, Thread
 
     m, binding, store, _voice = setup_store(records)
     child_code = """
@@ -264,8 +265,9 @@ with hold_listening(Path(sys.argv[1]),profile=sys.argv[2]) as lease:
         text=True,
     )
     try:
-        with ThreadPoolExecutor() as pool:
-            assert pool.submit(child.stdout.readline).result(20).strip() == "held"
+        result = Queue()
+        Thread(target=lambda: result.put(child.stdout.readline()), daemon=True).start()
+        assert result.get(timeout=20).strip() == "held"
         with pytest.raises(m.ListeningBusy):
             with store.mutation_lease():
                 pass
