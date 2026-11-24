@@ -540,6 +540,10 @@ DREAMS_TRACKING_RIDERS = (
     # profile, so after Tool_Packs.
     "Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py",
     "Tests/DB/test_chachanotes_v75_hook_continuation_receipts_migration.py",
+    # TASK-42516's sweep: same drift, same profile, after Tool_Packs.
+    "Tests/DB/test_chachanotes_v78_fleet_progress_migration.py",
+    "Tests/DB/test_chachanotes_v79_sargable_migration.py",
+    "Tests/DB/test_chachanotes_v54_before_first_cursor.py",
     # TASK-42468: bootstrap_profile, so after Tool_Packs (nothing sandboxed
     # may follow it).
     "Tests/Backup_Recovery/test_character_presentation_cadence.py",

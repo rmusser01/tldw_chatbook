@@ -1563,6 +1563,10 @@ jobs:
     # before Tool_Packs, and with the Backup_Recovery files ahead of the
     # Workspaces riders. 46 tests, 52.9 s serially with this step's flags at
     # load 20-28.
+    # TASK-42516's sweep then adds three more Tests/DB files of the same drift
+    # (bootstrap profile by directory, so after Tool_Packs; no config read
+    # under the recorder): v78 fleet progress 17 tests 19.4 s, v79 sargable
+    # 13 tests 13.1 s, v54 cursor 7 tests 3.5 s, serially at load 8.
     name: Dreams tracking tests and unlaned riders
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -1623,6 +1627,9 @@ jobs:
             Tests/Chat/test_console_provider_failure_copy.py \
             Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py \
             Tests/DB/test_chachanotes_v75_hook_continuation_receipts_migration.py \
+            Tests/DB/test_chachanotes_v78_fleet_progress_migration.py \
+            Tests/DB/test_chachanotes_v79_sargable_migration.py \
+            Tests/DB/test_chachanotes_v54_before_first_cursor.py \
             Tests/Backup_Recovery/test_character_presentation_cadence.py \
             --timeout=180 \
             --tb=short

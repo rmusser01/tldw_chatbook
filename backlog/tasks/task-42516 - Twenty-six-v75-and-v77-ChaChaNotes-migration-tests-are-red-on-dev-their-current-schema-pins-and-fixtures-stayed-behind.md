@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-24 17:58
-updated_date: 2026-11-24 19:04
+updated_date: 2026-11-24 19:47
 labels:
 - follow-up
 - tests
@@ -35,6 +35,8 @@ The files guard the v75 hook-receipt and v77 agent-chat-start migrations: exact 
 - [x] #2 Every node passes on dev; pins of the current schema follow it, checks of a historical step stay literal, and no assertion is dropped
 - [x] #3 Both files run in a PR lane step, timed with that step's flags, with their config reads checked, and none of their nodes runs in a second step
 - [x] #4 `Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py`, which shares the native-76 fixture, passes on dev by the same rule (ADR-207's Subscriptions v2→v3 step reflected in its shared-stamp test) and runs whole in one PR lane step, with no node in two steps
+- [x] #5 `Tests/DB/test_chachanotes_v78_fleet_progress_migration.py` and `Tests/DB/test_chachanotes_v79_sargable_migration.py`, and every other red of this same family found by a sweep of `Tests/DB/test_chachanotes_v*.py` and the importers of the native-76 and v77 test files on dev 9fa2bf1b1d, pass by the same rule and run in a PR lane, with their config reads checked
+- [x] #6 Every red the sweep finds for another reason is listed with its cause class and filed for follow-up, unfixed (TASK-42517)
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -120,4 +122,42 @@ The files guard the v75 hook-receipt and v77 agent-chat-start migrations: exact 
   - `Tests/DB/test_chachanotes_v78_fleet_progress_migration.py` (8: `test_current_fleet_catalog_accepts_only_its_complete_matching_stamp[80-*]`, `test_fleet_upgrade_preserves_native_receipts_and_predecessor_rows[*]`);
   - `Tests/DB/test_chachanotes_v79_sargable_migration.py` (4: `test_current_sargable_catalog_accepts_only_its_stamp[80-*]`, `test_recovery_migration_through_v79_normalizes_and_validates[*]`).
 
-**Files.** `Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py`, `Tests/DB/test_chachanotes_v75_hook_continuation_receipts_migration.py`, `Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/CI/test_response_rules_critical_gate.py`.
+**Sweep of the same family (AC #5, #6, round 25 part 4).**
+- **Scope:** dev 9fa2bf1b1d (base copies of every test file this branch changes), `-n 4`, the 21 `Tests/DB/test_chachanotes_v*.py` files plus the two importers of the native-76 and v77 test files (`Tests/Backup_Recovery/test_restore_plan.py` and the compatibility file). Result: 77 failed, 342 passed. `test_restore_plan.py` had none; `Tests/ChaChaNotesDB/test_sargable_timestamps.py` is excluded (TASK-41042, TASK-41954).
+- **Same family, fixed here:** v75 3, v77 23, compatibility 28 (all above), plus:
+  - **v78 `test_fleet_upgrade_preserves_native_receipts_and_predecessor_rows[recovery76|recovery77|constructor77-False|True]` ×6** (`after == before` at :47).
+    - Cause: the rows carry the v86 mix-in column (7970fbcada). Behind it, the landed-stamp pin `(80,)` (set by 09357e6215, #3043) has been stale since v81 (d24c4c04b2, landed via a7bde4e5e5, #3010).
+    - Fix: the column is popped and asserted `None`; the pin is now `(CURRENT,)`.
+  - **v78 `test_current_fleet_catalog_accepts_only_its_complete_matching_stamp[80-False|True]` ×2** (`('unsupported_schema_version',) == ()` at :109).
+    - Cause: since v81 the fresh current catalog stamped 80 is correctly refused.
+    - Fix: the stamp list keeps 80 and gains `CURRENT`, and the expectation reads `() if stamp == CURRENT`. The 80 nodes keep their ids and now assert the refusal; the new `[87-…]` nodes assert acceptance.
+  - **v79 `test_recovery_migration_through_v79_normalizes_and_validates[False|True]` ×2** (`(87,) == (80,)` at :48).
+    - Cause: the pin came from 6352503461 (landed via #3043) and has been stale since v81.
+    - Fix: `(CURRENT,)`.
+  - **v79 `test_current_sargable_catalog_accepts_only_its_stamp[80-False|True]` ×2.** The same cause and fix as v78.
+  - **v54 `test_v54_adds_local_before_message_cursor` and `test_v54_reenters_when_column_exists_but_stamp_is_v53`** (`87 == 54` at :23 and :40).
+    - Cause: these pinned the then-current v54. The file was added by 251ea46e1191bcc5b8e0817d1d9bd6347388a157 (#2183, on dev 2026-08-28), and v55 (18384c80d1e2ff1a9b5748ac6bba3aea737cf6a5, #2204) landed the next day, so the file has been red on dev for three months.
+    - Fix: both checks now compare the upgraded version with `CharactersRAGDB._CURRENT_SCHEMA_VERSION`; the chained `== 54` was the stale pin itself.
+- **Other causes, left unfixed and filed as TASK-42517:**
+  - v47 FTS backfill, 5:
+    - 2 where the historical fixture runs today's write code (`no such table: console_trace_graph_epoch`);
+    - 2 where the interleave hook never fires;
+    - 1 source-text pin on `add_message` taking the write lock up front, possibly a real gap.
+  - v56 query plans, 1: a newer index wins.
+  - v72 voice trace provenance, 3:
+    - 1 unchanged-canvas-catalog check across the full upgrade (v82, ADR-239);
+    - 1 where the historical fixture runs today's archive code (v85 `archived_at`);
+    - 1 query-plan census of reconciliation locators (8 `SCAN`s).
+- **Red/green:** v78, v79 and v54 had 14 red on dev; now 37 pass.
+- **Config reads:** sandboxed, with the conftest `Tests/DB` rule and the v78/v79 `bootstrap_profile` marks temporarily removed, all 37 passed and the `RecoveryRequired` recorder logged nothing. All three keep the bootstrap profile through the directory rule.
+- **Lane:** dreams-tracking, after `Tests/Tool_Packs` and after the v75 file, and in `DREAMS_TRACKING_RIDERS`. Serial times with the step's flags at load about 8:
+  - v78: 17 tests, 19.4 s;
+  - v79: 13 tests, 13.1 s;
+  - v54: 7 tests, 3.5 s.
+- **Riders budget:**
+  - **Before this task's riders:** dev's 26 targets ran 1352 passed and 6 skipped in 711.1 s, serially with the step's flags, at load 7.6→8.5.
+  - **After:** 34 targets, 1525 passed and 6 skipped in 821.9 s (827 s wall), at load 11.3→7.4. That is 1.16x.
+  - **Projection:** recent CI runs took 7–10.3 min of the 20, so the projection is about 8.1–11.9 min, under the 14-min line. The DB files stay in dreams-tracking.
+- **Checks (part 4):** the three files plus the queue-pressure contract, 10 runs at `-n 4`: 10/10 green, 193 passed each, 1-min load 6.9–15.6 with an 8-process CPU burner; the Dreams step result is the after-run above (`r25-step4`, 34 targets, 0 failed); `Tests/CI` at `-n 4` 1946 passed, 2 skipped; preflight passed; `ruff check tldw_chatbook --select F` clean; `Tests/lint/ruff_gate.py` passed.
+
+**Files.** `Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py`, `Tests/DB/test_chachanotes_v75_hook_continuation_receipts_migration.py`, `Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py`, `Tests/DB/test_chachanotes_v78_fleet_progress_migration.py`, `Tests/DB/test_chachanotes_v79_sargable_migration.py`, `Tests/DB/test_chachanotes_v54_before_first_cursor.py`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/CI/test_response_rules_critical_gate.py`.
