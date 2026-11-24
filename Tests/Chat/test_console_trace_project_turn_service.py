@@ -16,6 +16,9 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     ProviderArtifactTraceProvenance,
     TraceProvenanceSource,
 )
+from tldw_chatbook.Chat.console_trace_redaction import (
+    BUILTIN_PII_RULESET_REVISION_ID,
+)
 from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
@@ -51,6 +54,7 @@ def test_project_turn_witness_rejects_invalid_context_counts(count):
         "missing_tag",
         "wrong_role",
         "wrong_policy",
+        "readable_credential_version",
         "wrong_source",
         "wrong_count",
         "wrong_anchor",
@@ -69,6 +73,15 @@ def test_project_turn_preparation_validates_current_context_and_prior_anchor(
         origin = repository.get_call(cursor, witness.origin_call_id)
         policy = repository.get_policy(cursor, origin.policy_id)
     if scenario == "wrong_policy":
+        # PII settings must match exactly. A different credential version no
+        # longer disagrees (TASK-39123, owner decision 2026-11-06), so it is
+        # the accepted case below, not this one (TASK-42513).
+        policy = replace(
+            _policy(),
+            pii_redaction_enabled=True,
+            pii_ruleset_revision_id=BUILTIN_PII_RULESET_REVISION_ID,
+        )
+    if scenario == "readable_credential_version":
         policy = replace(_policy(), credential_filter_version="credentials-v2")
     context = {
         "role": "assistant" if scenario == "wrong_role" else "user",
@@ -113,7 +126,7 @@ def test_project_turn_preparation_validates_current_context_and_prior_anchor(
     admission = replace(admission, descriptors=descriptors, completed_tool_turn=witness)
     with db.transaction() as cursor:
         before = _compound_storage_snapshot(cursor)
-        if scenario in {"valid", "disabled"}:
+        if scenario in {"valid", "disabled", "readable_credential_version"}:
             boundary = service.prepare_surface_provenance(
                 cursor,
                 admission.projection_checkpoint,

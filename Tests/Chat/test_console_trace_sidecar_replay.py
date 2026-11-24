@@ -2,11 +2,13 @@
 
 import asyncio
 import sqlite3
+import warnings
 from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 
+from Tests.Chat.conftest import _PENDING_DISPATCH_REFUSAL
 from Tests.Chat.test_console_first_send_atomicity import _controller
 from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
@@ -31,6 +33,13 @@ from tldw_chatbook.Chat.thinking_blocks import (
     ThinkingEnvelope,
     parse_thinking_blocks_json,
 )
+
+# Every send passes `hook_admission_reason`, which reads `[hooks]` in-process
+# (`read_hooks_config_snapshot`); under the per-test config sandbox that read
+# raises RecoveryRequired(raw_source_selection_changed) and the send is
+# refused as "Hooks unavailable" (TASK-42513). The sidecar redaction and
+# proprietary settlement files reuse this harness and carry the same mark.
+pytestmark = pytest.mark.bootstrap_profile
 
 
 @pytest.fixture
@@ -180,14 +189,26 @@ async def replay_harness(tmp_path, monkeypatch, request):
 
     monkeypatch.setattr(gateway, "prepare_chat_request", record_preparation)
     controller.provider_gateway = gateway
-    controller._chat_dictionary_applier = lambda _conversation, text: text.replace(
-        "alias", "expanded"
+    # The applier also takes the turn's frozen prompt-transform inputs
+    # (`_apply_chat_dictionaries`); a two-argument double raised, the send
+    # swallowed it and dispatched the untransformed text (TASK-42513).
+    controller._chat_dictionary_applier = (
+        lambda _conversation, text, _frozen_inputs=None: text.replace(
+            "alias", "expanded"
+        )
     )
     try:
         yield harness
     finally:
         try:
             await controller.shutdown()
+        except ValueError as error:
+            # A refused capture leaves its accepted dispatch pending on
+            # purpose, and shutdown then refuses to delete the paused turn
+            # with exactly this text: the product's refusal (TASK-42155).
+            if str(error) != _PENDING_DISPATCH_REFUSAL:
+                raise
+            warnings.warn(f"Console controller shutdown refused: {error}", stacklevel=1)
         finally:
             try:
                 await gateway.aclose()

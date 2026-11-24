@@ -15,6 +15,10 @@ from tldw_chatbook.Chat.thinking_blocks import ProprietaryThinkingBlock
 from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatTurn
 from tldw_chatbook.LLM_Calls.moonshot import MoonshotResponse
 
+# The replay harness's sends read `[hooks]` in-process; see the module mark
+# in test_console_trace_sidecar_replay.py (TASK-42513).
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("replay_harness", [False, True], indirect=True)
