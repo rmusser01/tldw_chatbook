@@ -11,7 +11,7 @@
 **Spec:** [approved design](../specs/2026-11-15-watchlist-article-listening-design.md)
 
 ADR required: yes
-ADR path: [backlog/decisions/366-watchlist-article-listening-and-controlled-playback.md](../../../backlog/decisions/366-watchlist-article-listening-and-controlled-playback.md)
+ADR path: [backlog/decisions/367-watchlist-article-listening-and-controlled-playback.md](../../../backlog/decisions/367-watchlist-article-listening-and-controlled-playback.md)
 Reason: durable domain state, audio identity/lifecycle, output ownership and backup contracts cross module boundaries.
 
 ## Global Constraints
@@ -94,13 +94,13 @@ Commands below use `python` as shorthand for that verified interpreter. Check su
 - [x] Extend the qualification tool with fixed 250 ms zero-PCM padding and one-to-three bounded rounds. Preserve original content bytes and frame count separately from the padded file; leave the unpadded control available.
 - [x] Red-green test exact padding, short near-EOF measurement controls, fresh frame bookmarks and same-artifact Stop/resume orchestration. Existing 250 ms seek and 20 ms final-content oracles remain unchanged.
 - [x] Run three rounds of the minimal padded matrix: 120/500 ms clips, nonzero seek, 140/60 ms remaining near EOF, and playing Stop followed by the captured-bookmark resume of the identical WAV. The target is 21 launches and 18 natural completions; the final attempt launched 20 players and correctly skipped one dependent resume. Keep failures and unmatched cases; do not retry to manufacture passes.
-- [x] Independently review code and numerical evidence, update ADR366 with the exact Windows scope and logical-content/padded-file contract, and record the result in the qualification report. The wrapper-based result was unqualified; the corrected packet-based 21-case rerun passes for the recorded Windows profile. Task1 and the cross-platform feature gate remain open until their remaining evidence exists.
+- [x] Independently review code and numerical evidence, update ADR367 with the exact Windows scope and logical-content/padded-file contract, and record the result in the qualification report. The wrapper-based result was unqualified; the corrected packet-based 21-case rerun passes for the recorded Windows profile. Task1 and the cross-platform feature gate remain open until their remaining evidence exists.
 
 #### Authorized listener and native Linux follow-up, 2026-11-23
 
 - [x] Repeat the seven Windows cases for a listener. Record the user's audible-playback, clean-Stop and finished-Resume confirmation separately from numerical loopback measurements; keep the missed first attempt and its one unqualified baseline.
 - [x] Inspect the supplied native Linux host's actual ffplay build and default hardware sink/monitor relationship. Capture no microphone and change no system audio configuration.
-- [x] Isolate qualification-only dependencies and files in a private temporary directory on that host. Diagnose and test Linux route/timing assumptions before treating its capture as qualified. Amend ADR366 for any changed measurement contract and retain the existing numeric thresholds.
+- [x] Isolate qualification-only dependencies and files in a private temporary directory on that host. Diagnose and test Linux route/timing assumptions before treating its capture as qualified. Amend ADR367 for any changed measurement contract and retain the existing numeric thresholds.
 - [x] Run the same 21 planned cases and the separate startup-Stop control, preserving unknown native measurement fields. The matrix has 18 launched players and three prerequisite-skipped resumes; all 18 matrix captures retained matched but unattributed source evidence. Record exact scope, preserve initial unqualified controls and clean up owned remote resources after collecting receipts. Native Linux and macOS cannot inherit Windows or listener passes.
 
 #### Authorized Windows-first review follow-up, 2026-11-23
