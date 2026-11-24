@@ -716,9 +716,10 @@ MINIMUM_SAFETY_MARGIN_TOKENS = 512
 #: take more than its input share (``estimated_window_reply_cap``), and never
 #: caps it below this fraction of the window.
 ESTIMATED_WINDOW_RESERVATION_DIVISOR = 4
-#: The smallest *estimated* window that leaves any input (pass 3 review round
-#: 1, R1-6): at or below 682 tokens the 512-token safety margin plus the
-#: quarter-window reservation fill it whatever the configured reply. AC#1's
+#: The smallest *estimated* window that leaves input for every configured
+#: reply (pass 3 review round 1, R1-6): at or below 682 tokens the 512-token
+#: safety margin plus a reply at the quarter-window cap fill it (a smaller
+#: reply may still leave some). AC#1's
 #: "never pre-blocked" holds above this floor; every window the resolver
 #: estimates (``token_counter.PROVIDER_CONTEXT_WINDOWS``, the 32,000-token
 #: application fallback) is far above it -- a test pins both.

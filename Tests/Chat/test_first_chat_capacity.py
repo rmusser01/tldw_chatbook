@@ -355,14 +355,18 @@ def test_the_request_builder_reexports_the_one_capacity_rule() -> None:
 
 
 # Pass 3 review round 1 (R1-6): AC#1's "no model is pre-blocked" holds above a
-# floor. At or below 682 estimated tokens the 512-token safety margin plus the
-# quarter-window reservation fill the window; the rule states that floor, and
-# every window the resolver can ESTIMATE is far above it.
-from hypothesis import given, settings  # noqa: E402
+# floor. At or below 682 estimated tokens the 512-token safety margin plus a
+# reply that reaches the quarter-window cap fill the window; the rule states
+# that floor, and every window the resolver can ESTIMATE is far above it.
+# Below the floor a smaller reply can still leave input (window 514 with a
+# 1-token reply leaves 1), so the converse holds only for a capped reply:
+# Hypothesis found that example in PR #3517's round-24 soak (run 11 of 20).
+from hypothesis import example, given, settings  # noqa: E402
 from hypothesis import strategies as st  # noqa: E402
 
 
 @settings(max_examples=300, deadline=None)
+@example(window=514, requested=1)  # falsified the old iff (round-24 soak, run 11 of 20)
 @given(
     window=st.integers(min_value=1, max_value=50_000_000),
     requested=st.integers(min_value=1, max_value=50_000_000),
@@ -372,6 +376,7 @@ def test_an_estimated_window_at_or_above_the_floor_always_leaves_input(
 ) -> None:
     from tldw_chatbook.Chat.console_history_budget import (
         ESTIMATED_WINDOW_INPUT_FLOOR_TOKENS,
+        estimated_window_reply_cap,
     )
 
     capacity = resolve_request_capacity(
@@ -380,9 +385,11 @@ def test_an_estimated_window_at_or_above_the_floor_always_leaves_input(
         requested_response_tokens=requested,
     )
 
-    assert (capacity.effective_input_ceiling_tokens > 0) is (
-        window >= ESTIMATED_WINDOW_INPUT_FLOOR_TOKENS
-    )
+    leaves_input = capacity.effective_input_ceiling_tokens > 0
+    if window >= ESTIMATED_WINDOW_INPUT_FLOOR_TOKENS:
+        assert leaves_input  # AC#1: never pre-blocked at or above the floor
+    elif requested >= estimated_window_reply_cap(window):
+        assert not leaves_input  # below it, a capped reply fills the window
 
 
 def test_every_window_the_resolver_estimates_is_above_the_floor() -> None:
