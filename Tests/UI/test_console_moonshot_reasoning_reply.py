@@ -83,19 +83,27 @@ def _reasoning(call: int) -> str:
     return f"{REASONING} #{call} that never reaches the transcript"
 
 
-# The models Moonshot's /v1/models listed on 2026-11-13 (live, review v5r1).
-MOONSHOT_MODELS = (
-    "kimi-k2.6",
-    "kimi-k2.7-code",
-    "kimi-k2.7-code-highspeed",
-    "kimi-k3",
-    "kimi-k3.1-pro",
-    "kimi-k3.1-pro-highspeed",
-)
+# The models Moonshot's /v1/models listed on 2026-11-13 (live, review v5r1),
+# then a streaming Kimi row and an OpenAI control. A literal list, so the UI
+# census resolver can read each case id: the census gates these cases one by
+# one (2026-11-23, round 24 port).
 SMOKE_MATRIX = [
-    pytest.param("moonshot", model, False, id=f"moonshot-{model}")
-    for model in MOONSHOT_MODELS
-] + [
+    pytest.param("moonshot", "kimi-k2.6", False, id="moonshot-kimi-k2.6"),
+    pytest.param("moonshot", "kimi-k2.7-code", False, id="moonshot-kimi-k2.7-code"),
+    pytest.param(
+        "moonshot",
+        "kimi-k2.7-code-highspeed",
+        False,
+        id="moonshot-kimi-k2.7-code-highspeed",
+    ),
+    pytest.param("moonshot", "kimi-k3", False, id="moonshot-kimi-k3"),
+    pytest.param("moonshot", "kimi-k3.1-pro", False, id="moonshot-kimi-k3.1-pro"),
+    pytest.param(
+        "moonshot",
+        "kimi-k3.1-pro-highspeed",
+        False,
+        id="moonshot-kimi-k3.1-pro-highspeed",
+    ),
     pytest.param("moonshot", "kimi-k3", True, id="moonshot-kimi-k3-streaming"),
     pytest.param("openai", "gpt-4.1", False, id="openai-gpt-4.1"),
 ]

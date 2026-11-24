@@ -53,6 +53,16 @@ _SWEEP = "Tests/UI/test_console_row_menu_action_sweep.py::"
 _MENU = "Tests/UI/test_console_conversation_action_menu.py::"
 _KEEP = "Tests/UI/test_app_keep_alive_dead_screen.py::"
 _KIMI = "Tests/UI/test_console_moonshot_reasoning_reply.py::"
+_KIMI_CASES = (
+    "moonshot-kimi-k2.6",
+    "moonshot-kimi-k2.7-code",
+    "moonshot-kimi-k2.7-code-highspeed",
+    "moonshot-kimi-k3",
+    "moonshot-kimi-k3.1-pro",
+    "moonshot-kimi-k3.1-pro-highspeed",
+    "moonshot-kimi-k3-streaming",
+    "openai-gpt-4.1",
+)
 
 #: P0 task -> the gated regression tests (a file, or one test's node id).
 P0_REGRESSION_TESTS: dict[str, tuple[str, ...]] = {
@@ -183,12 +193,19 @@ P0_REGRESSION_TESTS: dict[str, tuple[str, ...]] = {
         "Tests/Chat/test_continuation_unwritten_store_failures.py",
         "Tests/UI/test_console_activity_sync_race.py",
         "Tests/UI/test_console_trace_retry_refusal.py",
-        # The Kimi pilot file is about 17 min serially, so by test function.
-        _KIMI + "test_saved_chat_replies_like_a_temporary_chat",
+        # The Kimi pilot file is about 17 min serially: three functions whole,
+        # the two smoke-matrix functions one case per census entry.
         _KIMI + "test_unstored_reasoning_checkpoint_keeps_the_reply",
         _KIMI + "test_destination_refused_reasoning_checkpoint_fails_the_reply",
-        _KIMI + "test_saved_chat_five_turns_with_trace_capture_on",
         _KIMI + "test_continue_and_regenerate_keep_one_row_per_reply",
+        *(
+            f"{_KIMI}{function}[{case}]"
+            for function in (
+                "test_saved_chat_replies_like_a_temporary_chat",
+                "test_saved_chat_five_turns_with_trace_capture_on",
+            )
+            for case in _KIMI_CASES
+        ),
     ),
 }
 

@@ -1302,12 +1302,12 @@ MINIMUM_FILES = 2683
 MINIMUM_FILES = 2721
 # 2026-11-23, TASK-34100.3 (round 24 port): the Moonshot P0 gap-02 pilots, on
 # no lane before, at the tail: the activity-sync race and the refused trace
-# retry as whole files, and the saved-Kimi reasoning reply by its five test
-# functions (the whole file is about 17 min serially, more than one shard's
-# budget; its Kimi model cases are built by a comprehension the resolver
-# cannot read, so it is split by function, not by case). Times are in the
-# task's notes. The floor is the measured entry count.
-MINIMUM_FILES = 2728
+# retry as whole files, and the saved-Kimi reasoning reply (about 17 min
+# serially, more than one shard's budget) split up: three test functions
+# whole, then the 16 cases of its two smoke-matrix functions one per entry
+# (the matrix is a literal list so this resolver reads each id). Times are
+# in the task's notes. The floor is the measured entry count.
+MINIMUM_FILES = 2742
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 
