@@ -6919,8 +6919,8 @@ class ConsoleChatController:
         """
         # TASK-26004: the global emergency stop refuses EVERY new send
         # first (AC#1), reporting plainly with the clear hint (AC#5) and
-        # fail-safe to stopped on an unreadable state (AC#4). In-flight runs
-        # are untouched -- this only gates STARTING new work.
+        # fail-safe to stopped on an unreadable state (AC#4). This gates new
+        # sends; the agent loop holds a running run's tool calls (33620.1.12).
         from tldw_chatbook.emergency_stop import (
             default_emergency_stop_path,
             emergency_stop_state,

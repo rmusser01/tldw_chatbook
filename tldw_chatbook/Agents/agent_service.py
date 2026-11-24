@@ -3523,7 +3523,7 @@ class AgentService:
         # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
         from tldw_chatbook import emergency_stop
 
-        from .tool_refusals import emergency_stop_tool_refusal
+        from . import tool_refusals
 
         try:
             path = self._emergency_stop_path
@@ -3538,10 +3538,10 @@ class AgentService:
                 "holding the call",
                 type(exc).__name__,
             )
-            return emergency_stop_tool_refusal("stop state unavailable")
+            return tool_refusals.emergency_stop_unavailable_tool_refusal()
         if not state.active:
             return None
-        return emergency_stop_tool_refusal(state.reason)
+        return tool_refusals.emergency_stop_tool_refusal(state.reason)
 
     def _primary_redirect_pending(self, run_id: str) -> bool:
         """True between redirect_primary and the drain that consumes it."""

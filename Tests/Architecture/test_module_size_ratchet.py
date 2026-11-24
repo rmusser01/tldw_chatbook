@@ -1485,9 +1485,11 @@ _BUDGETS: dict[str, int] = {
     # 3,961, so the row stays 4,069 (dev's 3,961 + the branch's 108).
     # 2026-11-23, TASK-33620.1.12 (owner decision: the emergency stop holds an
     # in-flight run's tool calls; owner rule: raise by the change's own
-    # lines): 4069 -> 4120 (+51), exact measurement. The loop's stop probe,
-    # its batch hold before review and its per-call hold at dispatch.
-    "tldw_chatbook/Agents/agent_runtime.py": 4120,
+    # lines): 4069 -> 4172 (+103), exact measurement. The loop's stop probe,
+    # its batch hold before review, its per-call hold at dispatch, the
+    # held-turn breaker that ends a run the stop keeps holding, and the goal
+    # runs' emergency-stop termination reason.
+    "tldw_chatbook/Agents/agent_runtime.py": 4172,
     # 2026-11-20, TASK-42014 (owner rule: raise by the change's own lines):
     # 6108 -> 6110 (+2) -- the credential buttons carry the class their
     # press handler selects, so a press a recompose forwards still runs it.

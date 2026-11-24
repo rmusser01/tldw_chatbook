@@ -73,9 +73,15 @@ from tldw_chatbook.emergency_stop import (
 
 from Tests.Agents.conftest import pin_max_live_subagents
 
-pytestmark = pytest.mark.bootstrap_profile
+# The real default stop path: these tests prove the production lookup, so they
+# opt out of Tests/conftest.py's per-test redirect.
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.real_emergency_stop_path]
 
 STOP_PREFIX = "tool call blocked: the emergency stop is active"
+UNAVAILABLE = (
+    "tool call blocked: the emergency stop's state couldn't be read, so tools "
+    "are held."
+)
 ASK = EffectiveToolState(state="ask", origin="global_default")
 
 
@@ -640,13 +646,19 @@ def _calculator_run(db, invoked):
 
 @pytest.mark.parametrize(
     ("damage", "reason"),
-    [("directory", "stop state unreadable"), ("corrupt", "stop state corrupt")],
+    [
+        ("directory", "stop state unreadable"),
+        ("corrupt", "stop state corrupt"),
+        ("non_utf8", "stop state unreadable"),
+    ],
 )
 def test_an_unreadable_stop_file_holds_tool_calls(db, stop_path, damage, reason):
     """Doubt holds, exactly as the send and scheduler gates hold on it."""
     stop_path.parent.mkdir(parents=True, exist_ok=True)
     if damage == "directory":
         stop_path.mkdir()
+    elif damage == "non_utf8":
+        stop_path.write_bytes(b'{"active": \xff\xfe}')
     else:
         stop_path.write_text("{ not json", encoding="utf-8")
     invoked: list[str] = []
@@ -662,6 +674,7 @@ def test_an_unreadable_stop_file_holds_tool_calls(db, stop_path, damage, reason)
     assert result.result.startswith(f"{STOP_PREFIX} ({reason}).")
 
 
+@pytest.mark.emergency_stop_unavailable
 def test_a_stop_path_that_cannot_be_resolved_holds_tool_calls(db, monkeypatch):
     import tldw_chatbook.emergency_stop as emergency_stop
 
@@ -679,7 +692,9 @@ def test_a_stop_path_that_cannot_be_resolved_holds_tool_calls(db, monkeypatch):
     assert invoked == [], "a tool ran while the stop's location was unknown"
     [result] = _results(outcome)
     assert result.tool_outcome == "blocked"
-    assert result.result.startswith(f"{STOP_PREFIX} (stop state unavailable).")
+    # /emergency-stop clear cannot help when the lookup fails: say what did.
+    assert result.result.startswith(UNAVAILABLE)
+    assert "/emergency-stop clear" not in result.result
 
 
 # --- clear --------------------------------------------------------------------------
@@ -708,6 +723,7 @@ def test_tools_run_again_once_the_stop_is_cleared(db, stop_path):
 # --- the pure loop ------------------------------------------------------------------
 
 
+@pytest.mark.emergency_stop_unavailable
 def test_a_raising_stop_probe_holds_the_call_in_the_pure_loop():
     """The loop never lets a broken probe open the gate (fail safe)."""
     from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
@@ -742,7 +758,7 @@ def test_a_raising_stop_probe_holds_the_call_in_the_pure_loop():
     assert invoked == []
     [result] = _results(outcome)
     assert result.tool_outcome == "blocked"
-    assert result.result.startswith(f"{STOP_PREFIX} (stop state unavailable).")
+    assert result.result.startswith(UNAVAILABLE)
 
 
 def test_the_refusal_names_the_shipped_clear_command():
@@ -754,3 +770,154 @@ def test_the_refusal_names_the_shipped_clear_command():
     long_reason = "x" * 500 + "\n[b]tail"
     refusal = emergency_stop_tool_refusal(long_reason)
     assert "\n" not in refusal and len(refusal) < 320
+
+
+# --- the run ends once the stop has held two turns in a row ---------------------------
+
+
+CALC_SCHEMA = ToolSchema(
+    id="builtin:calculator",
+    name="calculator",
+    description="math",
+    parameters={"type": "object"},
+)
+
+
+def _loop(turns, held, invoked):
+    """A pure loop whose stop probe answers from ``held`` (one bool per ask)."""
+    from tldw_chatbook.Agents.agent_runtime import LoopDeps
+
+    script = list(turns)
+    model_calls: list[int] = []
+
+    def call_model(_messages, _schemas):
+        model_calls.append(1)
+        return script.pop(0)
+
+    def probe():
+        return f"{STOP_PREFIX} (scripted)." if held.pop(0) else None
+
+    deps = LoopDeps(
+        call_model=call_model,
+        invoke_tool=lambda call: invoked.append(call) or ToolResult(ok=True, content="4"),
+        spawn=lambda task: ToolResult(ok=True, content="unused"),
+        find_tools=lambda _query: [],
+        load_schemas=lambda *_args: None,
+        should_cancel=lambda: False,
+        clock=lambda: 0.0,
+        emergency_stop_refusal=probe,
+    )
+    return deps, model_calls
+
+
+def _calls(n):
+    return [ModelTurn(text=_fence("calculator", {"expression": f"{i}+1"})) for i in range(n)]
+
+
+def test_the_run_ends_after_the_stop_holds_two_tool_turns_in_a_row():
+    """A model that keeps asking during a stop stops costing model calls.
+
+    A held result resets the tool-failure streak, so before this a model that
+    varied its arguments kept calling the model for the run's whole budget
+    (the review's probe: 21 model calls, 0 tools run).
+    """
+    from tldw_chatbook.Agents.agent_models import RUN_STUCK, RunTerminationReason
+    from tldw_chatbook.Agents.agent_runtime import run_agent_loop
+
+    invoked: list[ToolCall] = []
+    # One ask per batch (before review); held calls are not asked again.
+    deps, model_calls = _loop(_calls(10), [True] * 10, invoked)
+
+    outcome = run_agent_loop(
+        _config("calculator"), [{"role": "user", "content": "go"}], [CALC_SCHEMA], deps
+    )
+
+    assert invoked == []
+    assert len(model_calls) == 2, "the run kept calling the model during the stop"
+    assert outcome.status == RUN_STUCK
+    assert outcome.termination_reason is RunTerminationReason.EMERGENCY_STOP
+    assert outcome.steps[-1].summary.startswith(
+        "Agent stopped: the emergency stop held its tool calls 2 turns in a row"
+    )
+
+
+def test_one_held_turn_leaves_the_model_its_reply():
+    """The first held turn is the model's chance to wind down in text."""
+    from tldw_chatbook.Agents.agent_runtime import run_agent_loop
+
+    invoked: list[ToolCall] = []
+    deps, model_calls = _loop(_calls(1) + [ModelTurn(text="Held; stopping.")], [True], invoked)
+
+    outcome = run_agent_loop(
+        _config("calculator"), [{"role": "user", "content": "go"}], [CALC_SCHEMA], deps
+    )
+
+    assert outcome.status == RUN_DONE and outcome.final_text == "Held; stopping."
+    assert len(model_calls) == 2 and invoked == []
+
+
+def test_a_turn_that_runs_a_tool_resets_the_held_count():
+    """Held, ran (the stop was cleared), held: not two held turns in a row."""
+    from tldw_chatbook.Agents.agent_runtime import run_agent_loop
+
+    invoked: list[ToolCall] = []
+    # Turn 1 held (batch ask). Turn 2 clear: batch ask + dispatch ask. Turn 3 held.
+    deps, model_calls = _loop(
+        _calls(3) + [ModelTurn(text="Done.")], [True, False, False, True], invoked
+    )
+
+    outcome = run_agent_loop(
+        _config("calculator"), [{"role": "user", "content": "go"}], [CALC_SCHEMA], deps
+    )
+
+    assert outcome.status == RUN_DONE and len(model_calls) == 4
+    assert len(invoked) == 1
+
+
+def test_a_goal_run_held_by_the_stop_ends_with_the_emergency_stop_reason(monkeypatch):
+    """Goal runs end on any refusal; a stop hold is not a permission refusal."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents import automatic_work_runtime
+    from tldw_chatbook.Agents.agent_models import RUN_STUCK, RunTerminationReason
+    from tldw_chatbook.Agents.agent_runtime import run_agent_loop
+
+    goal = SimpleNamespace(
+        goal=SimpleNamespace(
+            permits_call=lambda _name: True,
+            observe_tool_result=lambda _name, _args, content: content,
+        ),
+        workflow=None,
+        check=lambda: None,
+    )
+    monkeypatch.setattr(automatic_work_runtime, "current_automatic_work", lambda: goal)
+    invoked: list[ToolCall] = []
+    deps, _model_calls = _loop(_calls(2), [True] * 4, invoked)
+
+    outcome = run_agent_loop(
+        _config("calculator"), [{"role": "user", "content": "go"}], [CALC_SCHEMA], deps
+    )
+
+    assert invoked == []
+    assert outcome.status == RUN_STUCK
+    assert outcome.termination_reason is RunTerminationReason.EMERGENCY_STOP
+
+
+def test_the_service_run_ends_after_two_held_turns(db, stop_path):
+    """The same through AgentService and the real stop file."""
+    from tldw_chatbook.Agents.agent_models import RUN_STUCK, RunTerminationReason
+
+    invoked: list[str] = []
+    service, registry, chat = _calculator_run(db, invoked)
+    chat.replies[:] = [_fence("calculator", {"expression": f"{i}*2"}) for i in range(6)]
+    set_emergency_stop(stop_path, reason="model keeps asking")
+
+    _run_id, outcome = _run(
+        service, _config("calculator"), _plan(registry.load_schema("builtin:calculator"))
+    )
+
+    assert invoked == []
+    assert len(chat.calls) == 2
+    assert outcome.status == RUN_STUCK
+    assert outcome.termination_reason is RunTerminationReason.EMERGENCY_STOP
+    chat.replies.clear()  # The rest were never asked for, which is the point.

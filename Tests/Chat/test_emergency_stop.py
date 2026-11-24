@@ -52,6 +52,20 @@ def test_corrupt_file_fails_SAFE_to_stopped(tmp_path: Path):
     assert emergency_stop_state(path).active is True
 
 
+def test_a_non_utf8_file_fails_SAFE_to_stopped(tmp_path: Path):
+    """TASK-33620.1.12: undecodable bytes read as unreadable, never raise.
+
+    ``read_text`` raises ``UnicodeDecodeError`` (a ``ValueError``, not an
+    ``OSError``), which used to escape the read and the send gate with it.
+    """
+    path = tmp_path / "estop.json"
+    path.write_bytes(b'{"active": \xff\xfe}')
+    state = read_emergency_stop(path)
+    assert state.active is True
+    assert state.reason == "stop state unreadable"
+    assert is_emergency_stopped(path) is True
+
+
 def test_unreadable_path_fails_SAFE_to_stopped(tmp_path: Path):
     """A path that raises on read (a directory) is also treated as stopped."""
     d = tmp_path / "dir"

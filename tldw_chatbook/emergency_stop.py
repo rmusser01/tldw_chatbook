@@ -36,9 +36,11 @@ class EmergencyStopState:
     def visible_copy(self) -> str:
         """User-facing copy naming the stop and how to clear it (AC#5)."""
         why = f" ({self.reason})" if self.reason else ""
+        # TASK-33620.1.12: a running run's tool calls are held too.
         return (
-            f"Emergency stop is active{why}: new runs and scheduled "
-            f"dispatches are held. Run {EMERGENCY_STOP_CLEAR_COMMAND} to resume."
+            f"Emergency stop is active{why}: new runs, agent tool calls and "
+            f"scheduled dispatches are held. Run {EMERGENCY_STOP_CLEAR_COMMAND} "
+            "to resume."
         )
 
 
@@ -48,7 +50,9 @@ def read_emergency_stop(path: Path) -> EmergencyStopState:
         text = Path(path).read_text(encoding="utf-8")
     except FileNotFoundError:
         return EmergencyStopState(active=False)
-    except OSError as exc:
+    # TASK-33620.1.12: a file that is not UTF-8 is unreadable too; it used to
+    # raise out of the send gate and the Console's still_held check.
+    except (OSError, UnicodeDecodeError) as exc:
         logger.warning(
             f"emergency-stop read failed ({exc!r}); failing SAFE to stopped"
         )

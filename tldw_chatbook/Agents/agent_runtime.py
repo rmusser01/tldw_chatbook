@@ -1208,6 +1208,9 @@ class LoopState:
     )
     last_failed_tool: str = ""
     consecutive_tool_failures: int = 0
+    #: TASK-33620.1.12: consecutive tool turns whose every call the emergency
+    #: stop held (``_phase_emergency_stop_breaker``).
+    consecutive_stop_held_turns: int = 0
     context_trace_reserved: bool = False
     # --- This turn. ---
     turn: ModelTurn | None = None
@@ -1223,6 +1226,8 @@ class LoopState:
     review_calls: list[ToolCall] = field(default_factory=list)
     guard_refusals: dict[str, str] = field(default_factory=dict)
     verdicts: dict[str, ToolReviewValue] = field(default_factory=dict)
+    #: This batch's calls the emergency stop held, keyed by ``id(call)``.
+    stop_held: set[int] = field(default_factory=set)
 
 
 def _dispatch_spawn(call: ToolCall, state: LoopState) -> Any:
@@ -1727,6 +1732,7 @@ def run_agent_loop(
             _phase_before_dispatch,
             _phase_dispatch,
             _phase_denial_breaker,
+            _phase_emergency_stop_breaker,
         ):
             result = phase(state)
             if result is NEXT_TURN:
@@ -1898,9 +1904,9 @@ def _emergency_stop_refusal(state: LoopState) -> str | None:
         return None
     if isinstance(refusal, str) and refusal:
         return refusal
-    from .tool_refusals import emergency_stop_tool_refusal
+    from . import tool_refusals
 
-    return emergency_stop_tool_refusal("stop state unavailable")
+    return tool_refusals.emergency_stop_unavailable_tool_refusal()
 
 
 def _account_denial(
@@ -3137,6 +3143,7 @@ def _phase_prepare(state: LoopState) -> RunOutcome | object | None:
     # approval card is raised for a call that could never run.
     # `_dispatch_call` asks again before each call executes.
     held = _emergency_stop_refusal(state)
+    state.stop_held = {id(call) for call in calls} if held is not None else set()
     for call in calls:
         if held is not None:
             scope_refusals[id(call)] = held
@@ -3637,6 +3644,7 @@ def _dispatch_call(state: LoopState, call: ToolCall) -> RunOutcome | None:
         held = _emergency_stop_refusal(state)
         if held is not None:
             verdict = held
+            state.stop_held.add(id(call))
     if state.continuation_checkpoint is not None and verdict != "proceed":
         return _settle_continuation_refusal(
             state, call, verdict, review_decision, automatic
@@ -3741,7 +3749,11 @@ def _settle_continuation_refusal(
         return _loop_outcome(
             state,
             RUN_STUCK,
-            termination_reason=RunTerminationReason.PERMISSION_REFUSED,
+            termination_reason=(
+                RunTerminationReason.EMERGENCY_STOP
+                if id(call) in state.stop_held
+                else RunTerminationReason.PERMISSION_REFUSED
+            ),
         )
     return None
 
@@ -4058,6 +4070,9 @@ def _settle_call(
         reason = record_result.termination_reason
         if record_result.dispatch_state == "uncertain":
             reason = RunTerminationReason.UNKNOWN_EFFECT
+        elif id(call) in state.stop_held:
+            # TASK-33620.1.12: the user's stop, not a permission refusal.
+            reason = RunTerminationReason.EMERGENCY_STOP
         elif verdict != "proceed" or record_result.outcome == "blocked":
             reason = RunTerminationReason.PERMISSION_REFUSED
         if reason is not None:
@@ -4093,6 +4108,43 @@ def _settle_call(
     if _reader_cycle_stuck(state, call, result if verdict == "proceed" else None):
         return _loop_outcome(state, RUN_STUCK)
     return None
+
+
+#: TASK-33620.1.12: consecutive tool turns the emergency stop may hold before
+#: the run ends. The first held turn hands the refusal to the model: its one
+#: chance to wind down in text. A second turn of held calls shows it will keep
+#: asking, and every further turn would spend a model call that can run
+#: nothing (a held result resets the tool-failure streak, so nothing else
+#: stops it short of the run's turn budget).
+EMERGENCY_STOP_HELD_TURN_LIMIT = 2
+
+
+def _phase_emergency_stop_breaker(state: LoopState) -> RunOutcome | None:
+    """After the batch: end the run once the stop has held K turns in a row.
+
+    A turn counts when the stop held every one of its calls; a turn in which
+    any call ran, or was refused for another reason, resets the count. Like
+    the denial breaker, it acts at the completed-batch boundary (ADR-154), so
+    the batch's settled replies stay in the retained history.
+    """
+    held = state.stop_held
+    if held and all(id(call) in held for call in state.calls):
+        state.consecutive_stop_held_turns += 1
+    else:
+        state.consecutive_stop_held_turns = 0
+    if state.consecutive_stop_held_turns < EMERGENCY_STOP_HELD_TURN_LIMIT:
+        return None
+    state.coherent_len = len(state.messages)
+    summary = (
+        "Agent stopped: the emergency stop held its tool calls "
+        f"{state.consecutive_stop_held_turns} turns in a row, so the run ended "
+        "without running them. Send again once the stop is cleared."
+    )
+    state.add(STEP_ERROR, summary=summary)
+    _emit_record(state.deps, "error", content=summary, status=RUN_STUCK)
+    return _loop_outcome(
+        state, RUN_STUCK, termination_reason=RunTerminationReason.EMERGENCY_STOP
+    )
 
 
 def _phase_denial_breaker(state: LoopState) -> RunOutcome | None:

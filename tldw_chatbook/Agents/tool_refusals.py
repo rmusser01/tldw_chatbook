@@ -56,8 +56,33 @@ def emergency_stop_tool_refusal(reason: str = "") -> str:
     )
 
 
+#: The fail-safe's refusal when the stop's state could not be read at all (its
+#: location could not be resolved, or the check itself failed). Running
+#: /emergency-stop clear cannot help there, so it says what happened instead.
+TOOL_EMERGENCY_STOP_UNAVAILABLE_REFUSAL = (
+    "tool call blocked: the emergency stop's state couldn't be read, so tools "
+    "are held. Chatbook could not reach its data folder (a backup or restore "
+    "may be running, or the folder's permissions changed); stop this run and "
+    "send again once Chatbook is ready."
+)
+
+
+def emergency_stop_unavailable_tool_refusal() -> str:
+    """The fail-safe's refusal when the stop's state could not be read.
+
+    A function (not just the constant) so the test suite can see every run
+    that hit it: a silent hold there once passed tests for the wrong reason.
+
+    Returns:
+        ``TOOL_EMERGENCY_STOP_UNAVAILABLE_REFUSAL``.
+    """
+    return TOOL_EMERGENCY_STOP_UNAVAILABLE_REFUSAL
+
+
 __all__ = [
     "TOOL_EMERGENCY_STOP_REFUSAL",
+    "TOOL_EMERGENCY_STOP_UNAVAILABLE_REFUSAL",
     "TOOL_KILL_SWITCH_REFUSAL",
     "emergency_stop_tool_refusal",
+    "emergency_stop_unavailable_tool_refusal",
 ]
