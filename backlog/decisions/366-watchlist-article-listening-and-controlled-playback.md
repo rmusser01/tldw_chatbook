@@ -185,11 +185,80 @@ all source spans had zero alignment drift and no later discontinuities or
 timestamp errors. All 21 players and capture workers retired.
 
 The 250 ms profile therefore passes for this Windows build, executable,
-PCM16 stereo 48 kHz and default-render route. It remains unqualified on
-macOS/Linux, other output routes and acoustic/listener output. The portable
+PCM16 stereo 48 kHz and default-render route. A separate seven-case repeat
+passed endpoint checks and the user confirmed audible playback, clean Stop
+and finished Resume. This is human listener confirmation, not an instrumented
+acoustic recording. It remains unqualified on macOS/Linux and other output
+routes. The portable
 feature gate remains open and dependent application implementation stays
 gated. The [evidence report](../../Docs/Testing/watchlist-article-audio-qualification.md)
 links the numerical controls and all three packet matrices.
+
+## Native Linux measurement boundary, 2026-11-23
+
+The supplied host has a real ALSA hardware output, PipeWire 1.4.2's PulseAudio
+compatibility server and ffplay 7.1.5. The Windows-style sink-ID/loopback-ID
+equality check rejects its valid monitor. Resolve the sink's native
+monitor-source relationship and verify the exact capture route; never fall
+back to a microphone or fuzzy device match. Keep capture dependencies and
+generated files in a private temporary environment, with no system audio
+configuration or application dependency change.
+
+Use native Pulse fragments and read indexes for Linux measurement. Validate
+negotiated stereo float32/48 kHz, index continuity, exact route, finite PCM,
+peek/drop custody and actual buffer geometry. Carry the verified monitor's
+native index through attachment and subsequent reads. Verify the owned
+player's sink-input route as well as the recording stream's route; a moved
+or unavailable player route invalidates its transport grades. Independently
+matched monitor PCM may remain as explicitly unattributed diagnostics, with
+no passing transport claim or failing tail/bookmark verdict derived from an
+uncertain route. This is a
+read-only check of the controlled player, with no routing-policy change.
+Reject holes, corrupt indexes, route changes and missing capture coverage.
+Require an observed trailing quiet boundary before grading a content end;
+a capture ending inside active audio is unqualified. Select live matching
+windows by a bounded frame span, independent of native fragment splitting.
+Drain independently of analysis.
+These indexes establish captured stream-frame continuity, not WASAPI device
+timestamps. Original waveform seek/tail/drift and bookmark thresholds remain
+unchanged. [Pulse fragment contract](https://freedesktop.org/software/pulseaudio/doxygen/stream_8h.html).
+
+The native startup control observed a new owned input with `PA_INVALID_INDEX`
+before it was assigned to the expected sink. This is an unassigned creation
+state, not an observed move to another sink. Coalesced asynchronous changes
+still leave initial routing coverage unqualified. A consumer read index is
+not a production boundary for buffered PCM and cannot turn that unknown
+history into a qualified route. Retain the detected source positions,
+correlations and sample-domain end-boundary evidence separately, without
+relaxing any acceptance criterion. A fuller PipeWire graph observer is a
+possible future qualification instrument, not an application dependency
+introduced by this follow-up.
+
+Retain signed latency and completed timing-update brackets as diagnostics.
+Monitor latency can be negative. PipeWire's timing reply does not expose the
+age of its last process snapshot, so a short control round trip or configured
+graph-buffer limit does not establish a wall-clock uncertainty bound. Keep
+absolute telemetry and post-stop timing unqualified without that evidence.
+Do not reuse the Windows 5 ms timestamp check or fabricate precise timestamps
+from cumulative frame counts. Preserve skipped dependent resumes when their
+Stop prerequisites are unqualified. The Linux aggregate cannot pass until
+all required fields have qualified evidence. Preserve failure precedence:
+a measured applicable failure remains a failure, while missing timing
+evidence is unqualified.
+[Pulse timing contract](https://freedesktop.org/software/pulseaudio/doxygen/streams.html),
+[PipeWire 1.4.2 timing implementation](https://github.com/PipeWire/pipewire/blob/1.4.2/src/modules/module-protocol-pulse/pulse-server.c#L2042-L2081).
+
+The native three-round Linux run produced 21 planned rows, 18 launched
+players and three prerequisite-skipped resumes. All 18 valid captures
+retained matched, explicitly unattributed source observations with quiet end
+boundaries and zero waveform drift. Every player/capture retired. Complete
+initial routing coverage and absolute timing remain unqualified, so this
+does not qualify the Linux playback profile. Separate controls cover natural,
+playing-Stop and 20 ms startup-Stop process behavior. The user has no connected
+Linux output and no available macOS host; neither inherits the Windows
+listener pass. All receipts were retained before removing the isolated
+remote environment. Task 41176 and dependent application implementation
+remain gated. See the updated [evidence report](../../Docs/Testing/watchlist-article-audio-qualification.md).
 
 ## Alternatives
 
@@ -223,4 +292,5 @@ The first packet-based attempts rejected the active background mix under the
 existing baseline limit. After the user muted that session, all 21 Windows
 cases passed with unchanged thresholds. This qualifies the recorded Windows
 profile only. Dependent feature implementation remains gated while other
-platforms and listener/physical output await qualification.
+platforms await qualification. Windows now has explicit human listener
+confirmation; no instrumented acoustic measurement was performed.

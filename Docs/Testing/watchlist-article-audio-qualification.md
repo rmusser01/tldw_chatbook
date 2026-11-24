@@ -1,7 +1,7 @@
 # Watchlist article audio: controlled-playback qualification
 
 Date: 2026-11-23
-Status: Windows packet-based 21-case matrix passed; portable/listener gate remains open
+Status: Windows endpoint/listener passed; Linux matrix unqualified; portable gate open
 Task: [TASK-41176](../../backlog/tasks/task-41176%20-%20Qualify-ffplay-controlled-WAV-playback.md)
 ADR: [366](../../backlog/decisions/366-watchlist-article-listening-and-controlled-playback.md)
 Plan: [Task 1](../superpowers/plans/2026-11-15-watchlist-article-listening.md)
@@ -19,7 +19,7 @@ Only synthetic marker output is measured. Captured samples remain bounded in
 memory and are discarded; retained receipts contain numerical measurements only,
 without endpoint names or raw player output.
 
-## Environment
+## Windows environment
 
 - Host: Windows; native default output, stereo 48 kHz; device unmuted at preflight.
 - ffplay: `7.1-essentials_build-www.gyan.dev`, direct executable rather than Chocolatey shim.
@@ -82,8 +82,8 @@ separately. All 21 players and capture workers were reaped. The
 retains the per-case measurements and retirement evidence.
 
 The fixed 250 ms profile passes for this Windows build, PCM16 stereo 48 kHz,
-ffplay executable and default-render route. Native macOS/Linux, other output
-routes and acoustic/listener verification remain unqualified. The portable
+ffplay executable and default-render route. Native macOS/Linux and other output
+routes remain unqualified. The Windows listener check below passed. The portable
 feature gate remains open and dependent implementation remains gated. No application
 playback behavior or runtime dependency changed.
 
@@ -104,6 +104,105 @@ started resources retired. They provide no qualified seek, tail or Resume
 result. Muting that active session produced the passing matrix above; no
 baseline rejection was converted into a pass. Previous wrapper-based
 matrices and the reproduced capture mechanisms remain below.
+
+## Windows listener confirmation, 2026-11-23
+
+The user listened to a repeated seven-case sequence on the tested Windows
+output: nonzero seek, 120/500 ms clips, 140/60 ms remaining near EOF, playing
+Stop, and saved-position Resume. The user confirmed: "Yes—audible, clean Stop,
+final clip finished". This is a human audible-playback observation, separate
+from the numerical tail/position measurements and from instrumented acoustic
+measurement. No microphone or captured acoustic recording was used.
+
+The [observed second sequence](evidence/watchlist-article-audio/windows-listener-round-2.json)
+passed all seven Windows endpoint cases and reaped every player/capture.
+The [listener receipt](evidence/watchlist-article-audio/windows-listener-confirmation.json)
+records the explicit response. The user missed the
+[first sequence](evidence/watchlist-article-audio/windows-listener-round-1.json),
+which also retained one unqualified baseline observation; it is not counted
+as a listener pass. These listener checks do not qualify Linux or macOS.
+
+## Native Linux result, 2026-11-23
+
+**The Linux aggregate remains unqualified.** The same three-round plan
+produced 21 rows and 18 player launches. All 18 retained source observations
+matched the marker and had an observed quiet end boundary with zero waveform
+drift. These are explicitly **unattributed monitor measurements**, not
+transport passes. The fifteen natural observations had maximum source-start
+delta 2.438 ms and source-end delta 2.417 ms. Minimum edge correlation was
+0.9999945. Every prelaunch baseline had zero RMS. All 18 process/reaping
+checks passed; three dependent resumes were skipped because their Stop
+prerequisites were unqualified. No criterion was relaxed.
+
+| Linux case | Observed marker matches | Qualified transport result |
+| --- | --- | --- |
+| Fixed 0.8 s seek | 3/3 | Unqualified |
+| 120 ms clip | 3/3 | Unqualified |
+| 500 ms clip | 3/3 | Unqualified |
+| Near EOF, 140 ms remaining | 3/3 | Unqualified |
+| Near EOF, 60 ms remaining | 3/3 | Unqualified |
+| Playing Stop | 3/3 | Unqualified |
+| Saved Resume | Not launched | Three prerequisite skips |
+
+Pulse's asynchronous startup events do not establish a complete initial
+player-route history, and its signed latency replies do not bound the age
+of the process snapshot. Endpoint/seek/tail grades therefore stay
+unqualified, and absolute telemetry/post-Stop timing stays unqualified with
+`pulse_snapshot_age_unqualified`. The maximum measured **process** Stop
+latency was 7.245 ms; this is independent of sound stopping. The user
+reported no connected Linux output, so no Linux listener confirmation is
+claimed. No macOS host is available.
+
+The [complete Linux matrix](evidence/watchlist-article-audio/linux-pulse-fragment-21.json)
+preserves every unknown and skipped row. The
+[final native controls](evidence/watchlist-article-audio/linux-native-controls.json)
+cover 500 ms natural playback, playing Stop and a separate 20 ms
+launch-relative startup Stop. Natural/playing controls retained matched,
+unattributed source observations; startup cancellation had no matched
+marker. Every control player and capture worker retired.
+
+### Linux environment and measurement investigation
+
+The supplied host runs Debian 13, Python 3.13.5, ffplay 7.1.5 and PipeWire
+1.4.2 with PulseAudio compatibility. Its default output is a real ALSA
+digital-stereo hardware route with an exact monitor. No system audio settings
+were changed. Qualification-only NumPy/SciPy/CFFI/SoundCard packages were
+installed in a private temporary environment; no system package or app
+environment changed.
+
+The existing sink-ID/monitor-ID equality check failed on this host with
+`IndexError`. Native sink introspection identified the monitor correctly.
+A bounded monitor-only probe captured ten contiguous 4,800-frame fragments,
+48,000 frames total, with exact read-index/drop advancement, no holes or
+corrupt indexes, zero RMS and the verified route throughout. Actual fragment
+size was 38,400 bytes and stream capacity 4,194,304 bytes. No player was
+launched in this preflight.
+
+Signed latency estimates ranged from 110.691 to 141.349 ms. The longest
+completed timing update took 3.135 ms. These estimates do not establish the
+age of PipeWire's underlying process snapshot or a bound on acquisition-time
+uncertainty. The [numerical preflight](evidence/watchlist-article-audio/linux-native-preflight.json)
+therefore records native frame custody separately from unqualified native
+playback and wall-clock timing. The matrix used the native fragment capture
+path described in ADR366, source revision `ee3cc6ffee`.
+
+The installed client libpulse is 17.0.0. A separate silent-player identity
+control matched the actual child PID to the expected hardware sink in 40
+observations. The first grader controls incorrectly labeled an unassigned
+`PA_INVALID_INDEX` startup as a move. A private native event trace and
+parallel sink-input snapshots identified the construction transition; no
+linked wrong sink was observed. Those
+[initial controls](evidence/watchlist-article-audio/linux-initial-route-controls.json)
+remain preserved. The corrected grader classifies uncertain initial history
+as unavailable and retains detected source data only as unattributed
+diagnostics. A consumer read index does not certify when buffered audio was
+produced, so it was not used as a construction-time fence.
+
+All numerical receipts were downloaded and their hashes verified before
+removing the private Linux environment. No system audio configuration or
+application environment changed. The
+[verification receipt](evidence/watchlist-article-audio/listener-linux-verification.json)
+records tests, review, the earlier Windows CLI timeouts and cleanup.
 
 ## Capture timeline investigation
 
@@ -388,7 +487,8 @@ eligibility, and packet quality before saved Resume. Independent code review
 found no actionable Important/Critical issue. Native preflight passed the
 500 ms natural clip and playing Stop before the full contaminated-baseline
 matrices were recorded. The subsequent quiet-endpoint matrix passed all 21
-Windows cases; portable and listener qualification remain open.
+Windows cases; portable qualification remains open. A subsequent Windows
+listener check passed as recorded above.
 
 The wrapper-based padding runner passed **38 targeted tests**, Ruff check and format.
 Independent review confirmed both capture-diagnostic and partial-evidence/cleanup
