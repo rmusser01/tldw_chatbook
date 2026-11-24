@@ -116,6 +116,9 @@ _BUDGETS: dict[str, int] = {
     # owner decision 2026-10-04 (expand limits): TASK-34100.2 rebased
     # 2026-11-19 onto dev a6df4d8d48 (dev row 2,884): the row is the
     # exact measured size, 2,915 (+31 over dev's row).
+    # 2026-11-23, PR #3517's port onto dev b31e3e9241 (round 24; owner decision
+    # 2026-10-04, expand limits): dev measures 2,884, plus this branch's
+    # +31, exact: 2,915.
     "tldw_chatbook/Chat/console_display_state.py": 2915,
     "tldw_chatbook/Widgets/Console/console_selection.py": 379,
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
@@ -774,6 +777,9 @@ _BUDGETS: dict[str, int] = {
     # owner decision 2026-10-04 (expand limits): TASK-34100.2 rebased
     # 2026-11-19 onto dev a6df4d8d48 (dev row 2,405): the row is the
     # exact measured size, 2,414 (+9 over dev's row).
+    # 2026-11-23, PR #3517's port onto dev b31e3e9241 (round 24; owner decision
+    # 2026-10-04, expand limits): dev measures 2,404, plus this branch's
+    # +10, exact: 2,414.
     "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2414,
     # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
     # (two constants it had copied are imported; one number spelling, C6).
@@ -854,6 +860,9 @@ _BUDGETS: dict[str, int] = {
     # owner decision 2026-10-04 (expand limits): TASK-34100.2 rebased
     # 2026-11-19 onto dev a6df4d8d48 (dev row 6,194): the row is the
     # exact measured size, 6,195 (+1 over dev's row).
+    # 2026-11-23, PR #3517's port onto dev b31e3e9241 (round 24; owner decision
+    # 2026-10-04, expand limits): dev measures 6,194, plus this branch's
+    # +1, exact: 6,195.
     "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6195,  # 2026-11-06: +3, a schemeless loopback draft endpoint restores (TASK-39042 review C1, owner waiver)
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # TASK-41630, 2026-11-18 (owner rule: a fix raises the row by its own
@@ -1083,7 +1092,12 @@ _BUDGETS: dict[str, int] = {
     # owner decision 2026-10-04 (expand limits): TASK-34100.2 scoped review
     # 2026-11-19, +2 (PRE_MARKER_TEMPLATE_SAMPLES' comment notes MLX-LM's
     # identity is its host/port since dev's TASK-41145; 9,018 -> 9,020).
-    "tldw_chatbook/config.py": 9080,
+    # 2026-11-23, PR #3517's port onto dev b31e3e9241 (round 24; owner decision
+    # 2026-10-04, expand limits): dev measures 8,932, plus this branch's
+    # +183, exact: 9,115.
+    # Round-24 stack: over #3519's +145 and #3430's +3 (9,080), plus this
+    # branch's +183, exact: 9,263.
+    "tldw_chatbook/config.py": 9263,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
@@ -1097,6 +1111,9 @@ _BUDGETS: dict[str, int] = {
     # owner decision 2026-10-04 (expand limits): TASK-34100.2 rebased
     # 2026-11-19 onto dev a6df4d8d48 (dev row 10,110): the row is the
     # exact measured size, 10,170 (+60 over dev's row).
+    # 2026-11-23, PR #3517's port onto dev b31e3e9241 (round 24; owner decision
+    # 2026-10-04, expand limits): dev measures 10,110, plus this branch's
+    # +60, exact: 10,170.
     "tldw_chatbook/Chat/console_agent_bridge.py": 10170,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
@@ -1205,6 +1222,9 @@ _BUDGETS: dict[str, int] = {
     # owner decision 2026-10-04 (expand limits): TASK-34100.2 rebased
     # 2026-11-19 onto dev a6df4d8d48 (dev row 8,376): the row is the
     # exact measured size, 8,429 (+53 over dev's row).
+    # 2026-11-23, PR #3517's port onto dev b31e3e9241 (round 24; owner decision
+    # 2026-10-04, expand limits): dev measures 8,376, plus this branch's
+    # +53, exact: 8,429.
     "tldw_chatbook/Chat/console_provider_gateway.py": 8429,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
@@ -1243,6 +1263,9 @@ _BUDGETS: dict[str, int] = {
     # owner decision 2026-10-04 (expand limits): TASK-34100.2 rebased
     # 2026-11-19 onto dev a6df4d8d48 (dev row 7,213): the row is the
     # exact measured size, 7,243 (+30 over dev's row).
+    # 2026-11-23, PR #3517's port onto dev b31e3e9241 (round 24; owner decision
+    # 2026-10-04, expand limits): dev measures 7,208, plus this branch's
+    # +35, exact: 7,243.
     "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7243,
     # TASK-33628.1 moves tab-close loss projection/copy into shared loss_inventory.
     # PR3303, 2026-10-31: explicit user size waiver; exact integrated measurement.
@@ -1429,7 +1452,10 @@ _BUDGETS: dict[str, int] = {
     # owner decision 2026-10-04 (expand limits): TASK-34100.2 rebased
     # 2026-11-19 onto dev a6df4d8d48 (dev row 5,202): the row is the
     # exact measured size, 5,235 (+33 over dev's row).
-    "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5235,
+    # 2026-11-23, PR #3517's port onto dev b31e3e9241 (round 24; owner decision
+    # 2026-10-04, expand limits): dev measures 5,199, plus this branch's
+    # +33, exact: 5,232.
+    "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5232,
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
     "tldw_chatbook/Personal_Context/repository.py": 4997,
     # owner decision 2026-11-06 (expand limits, never contort code): TASK-39040
@@ -1535,6 +1561,9 @@ _BUDGETS: dict[str, int] = {
     # owner decision 2026-10-04 (expand limits): TASK-34100.2 rebased
     # 2026-11-19 onto dev a6df4d8d48 (dev measures 3,499, no row): the
     # row is the exact measured size, 4,265.
+    # 2026-11-23, PR #3517's port onto dev b31e3e9241 (round 24; owner decision
+    # 2026-10-04, expand limits): dev measures 3,499 (no row), plus this branch's
+    # +766, exact: 4,265.
     "tldw_chatbook/Chat/console_session_settings.py": 4265,
 }
 
