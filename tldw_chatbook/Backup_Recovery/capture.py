@@ -486,15 +486,21 @@ def _capture_under_maintenance(
             validate_groups(current.items, candidates, stage, cancel, limits, budget)
             for item, path in staged:
                 adapter = adapters[item.owner]
-                if (
+                if item.owner == "db.subscriptions":
+                    dependency_issues = adapter.validate_dependencies(
+                        item, path, candidates, staged=True
+                    )
+                elif (
                     item.owner == "recovered.media"
                     and _item_validator(adapter, item) is adapter
                 ):
                     dependency_issues = adapter.validate_dependencies(
                         item, path, candidates
                     )
-                    if dependency_issues:
-                        raise CaptureReviewRequired(dependency_issues)
+                else:
+                    continue
+                if dependency_issues:
+                    raise CaptureReviewRequired(dependency_issues)
             representation = final_inventory
             representation_report = ()
             if selections.temporary_media:

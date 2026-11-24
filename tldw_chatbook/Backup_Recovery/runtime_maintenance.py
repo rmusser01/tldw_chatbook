@@ -218,6 +218,8 @@ class RuntimeMaintenance:
             raise RecoveryRequired("runtime_maintenance_wrong_task")
 
     def _owner_snapshot(self):
+        from ..Subscriptions import article_listening_lease
+
         app = self.app
         runtime = app.console_runtime
         service = app.tts_service
@@ -247,6 +249,7 @@ class RuntimeMaintenance:
                 runtime,
                 None if runtime is None else runtime.chat_controller,
                 app.console_image_edit_operations,
+                article_listening_lease.listening_producer,
                 app.scheduler_loop,
                 getattr(app, "db_status_manager", None),
                 app.evaluation_orchestrator,
@@ -289,6 +292,8 @@ class RuntimeMaintenance:
 
     async def settle_producers(self, deadline):
         """Settle upstream work before closing the services it still needs."""
+        from ..Subscriptions import article_listening_lease
+
         self._check()
         if self.closed or self._settled:
             raise RecoveryRequired("runtime_maintenance_already_started")
@@ -318,6 +323,14 @@ class RuntimeMaintenance:
             [_app_hook(app, "_speech_initialization")], self.closed, deadline
         )
         self._owners = self._owner_snapshot()
+        listening = _bind(
+            article_listening_lease.listening_producer,
+            "Subscriptions.article_listening_lease",
+            "ListeningProducer",
+        )
+        if listening is None:
+            raise RecoveryRequired("runtime_owner_unqualified")
+        await _settle_stage([listening], self.closed, deadline)
         self.screens = tuple(app.screen_stack)
         producers, views = _console_hooks(app, self.screens)
         producers.extend(

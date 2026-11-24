@@ -3,6 +3,7 @@
 from dataclasses import dataclass, replace
 import hashlib
 import json
+import re
 
 from pydantic import ConfigDict, JsonValue, RootModel
 from pathlib import Path
@@ -149,3 +150,64 @@ class _RawDeclaration:
         issues = self.validate(candidate)
         if issues:
             raise ValueError(issues[0])
+
+
+_ARTICLE_KEY = re.compile(r"[0-9a-f]{32}\.wav")
+_STAGE = re.compile(r"\.[0-9a-f]{32}\.wav\.stage")
+
+
+def article_id(profile: str, key: str = "") -> str:
+    """Path-independent identity of a profile's flat article tree or final WAV."""
+    if key and not _ARTICLE_KEY.fullmatch(key):
+        raise ValueError("invalid_article_audio_key")
+    return f"profile:{profile}:subscriptions.assets:article_audio" + (
+        "-" + key if key else ""
+    )
+
+
+def article_tree(config: Mapping[str, object], root: Path) -> tuple[StorageItem, ...]:
+    """Inventory only the flat, profile-owned article root and its private stages."""
+    context = discovery_context(config)
+    entries = _RawDeclaration("subscriptions.assets")._tree(
+        config, root, prune=lambda _: True
+    )
+    root_id = article_id(context.profile_id)
+    config_id = storage_logical_id(context, "config")
+    database_id = storage_logical_id(context, "db.subscriptions")
+    result = []
+    for item in entries:
+        relative = item.path.relative_to(root).as_posix()
+        status = item.status
+        if relative == ".":
+            key, parent, dependencies = root_id, None, (config_id,)
+            if status == "included":
+                status = "unsupported"
+        else:
+            parent = root_id
+            dependencies = (root_id, config_id)
+            # Unsupported or transient objects have distinct nonplayable IDs.
+            key = root_id + "-excluded-" + hashlib.sha256(relative.encode()).hexdigest()
+            if _ARTICLE_KEY.fullmatch(relative):
+                key = article_id(context.profile_id, relative)
+                dependencies += (database_id,)
+            elif _STAGE.fullmatch(relative) and status == "included":
+                status = "intentionally_excluded"
+            else:
+                status = "unsupported"
+            if status == "included_directory":
+                status = "unsupported"
+        meta = item.metadata
+        if meta and meta.mode & 0o077:
+            status = "unsupported"
+        result.append(
+            replace(
+                item,
+                logical_id=key,
+                status=status,
+                dependencies=dependencies,
+                metadata=replace(meta, root_id=root_id, parent_id=parent)
+                if meta
+                else None,
+            )
+        )
+    return tuple(result)

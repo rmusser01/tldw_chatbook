@@ -177,6 +177,28 @@ def selected_archive_ids(
     return frozenset(selected)
 
 
+def _reviewed_config_data(path):
+    """Read the same private selector before and after its retained-config proof."""
+    import tomllib
+
+    from .archive_reader import _regular
+    from .destinations import _config_tables
+    from .restore_plan import _retained_config_observation, retained_config_observation
+
+    observation = retained_config_observation(path)
+    with _regular(path) as stream:
+        raw = stream.read(16 * 1024**2 + 1)
+    if len(raw) > 16 * 1024**2:
+        raise ValueError("retained_config_limit")
+    try:
+        data = _config_tables(tomllib.loads(raw.decode("utf-8")))
+    except (ValueError, UnicodeError, RecursionError):
+        raise ValueError("retained_config_invalid") from None
+    if _retained_config_observation(path) != observation:
+        raise ValueError("retained_config_changed")
+    return data
+
+
 def selected_absent_target_ids(doc, scope, target, restore, retained_configs):
     """Map explicit archived owner absence to independently discovered local data.
 
@@ -256,9 +278,7 @@ def selected_absent_target_ids(doc, scope, target, restore, retained_configs):
             or parts[1] not in profiles
             or item.status not in {"included", "included_directory", "unused"}
             or (
-                item.metadata is None
-                and item.status != "unused"
-                and not primary_sqlite
+                item.metadata is None and item.status != "unused" and not primary_sqlite
             )
             or group_for_owner(item.owner) not in scope.effective_groups
             or f"profile:{parts[1]}:config" not in item.dependencies
@@ -289,32 +309,15 @@ def selected_absent_target_ids(doc, scope, target, restore, retained_configs):
                     # Its installed locator must agree with the private selector
                     # belonging to this exact, independently matched profile.
                     if parts[1] not in current_configs:
-                        import tomllib
-
-                        from .archive_reader import _regular
-                        from .destinations import _config_tables
-                        from .restore_plan import (
-                            _retained_config_observation,
-                            retained_config_observation,
+                        current_configs[parts[1]] = _reviewed_config_data(
+                            current_config_paths[parts[1]]
                         )
-
-                        config_path = current_config_paths[parts[1]]
-                        observation = retained_config_observation(config_path)
-                        with _regular(config_path) as stream:
-                            raw = stream.read(16 * 1024**2 + 1)
-                        if len(raw) > 16 * 1024**2:
-                            raise ValueError("retained_config_limit")
-                        try:
-                            data = tomllib.loads(raw.decode("utf-8"))
-                            _config_tables(data)
-                        except (ValueError, UnicodeError, RecursionError):
-                            raise ValueError("retained_config_invalid") from None
-                        if _retained_config_observation(config_path) != observation:
-                            raise ValueError("retained_config_changed")
-                        current_configs[parts[1]] = data
-                    if database_path(
-                        current_configs[parts[1]], sqlite_settings[item.owner]
-                    ) != item.path:
+                    if (
+                        database_path(
+                            current_configs[parts[1]], sqlite_settings[item.owner]
+                        )
+                        != item.path
+                    ):
                         raise ValueError("selected_absence_locator_changed")
                 if item.status != "unused":
                     absent.add(item.logical_id)
@@ -332,6 +335,21 @@ def selected_absent_target_ids(doc, scope, target, restore, retained_configs):
                 and (current_profile, declaration.owner_id) in active_owners
                 and (current_profile, declaration.logical_id) not in matched
             ):
+                if declaration.owner_id == "subscriptions.assets":
+                    from tldw_chatbook.Subscriptions.recovery import _BriefingAudio
+                    from .models import DiscoveryContext
+
+                    owner = installed.get(declaration.owner_id)
+                    config_path = current_config_paths[current_profile]
+                    if type(owner) is _BriefingAudio and owner.briefing_already_absent(
+                        source_profile,
+                        declaration,
+                        doc.producer_inventory,
+                        DiscoveryContext(config_path, current_profile),
+                        _reviewed_config_data(config_path),
+                        target.items,
+                    ):
+                        continue
                 raise ValueError("selected_absence_mapping_required")
     absent_paths = {item.path for item in target.items if item.logical_id in absent}
     if any(

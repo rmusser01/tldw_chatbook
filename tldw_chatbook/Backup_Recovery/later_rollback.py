@@ -633,6 +633,7 @@ def _preserved_snapshot_members(source, archive, target):
 # reaction trees, which a restore creates in a profile that never had them.
 _CREATED_TREE_ROOT_OWNERS = frozenset(
     {
+        "subscriptions.assets",
         "persona.visual_identity_builtin",
         "eval.definitions",
         "persona.actor_packs",
@@ -688,6 +689,7 @@ _CREATED_FILE_OWNERS = frozenset(
 # owner must have (TASK-41521). The proof models exactly these declarations,
 # so a substituted adapter is refused. Module paths are under tldw_chatbook.
 _CREATED_OWNER_CLASSES = {
+    "subscriptions.assets": ("Subscriptions.recovery", "_BriefingAudio"),
     "persona.visual_identity_builtin": ("Persona_Visual.recovery", "_Assets"),
     "persona.assets": ("Persona_Visual.recovery", "_Assets"),
     "persona.actor_packs": ("Persona_Visual.recovery", "_Assets"),
@@ -764,10 +766,15 @@ def _stage_read_sources(plan):
     """Read preserved persona safety trees and reviewed created-tree (and
     created-file) retirements."""
     from .storage_admission import _config_leaf
+    from tldw_chatbook.Subscriptions.recovery import article_member
 
     sources = {item.logical_id: item for item in _builtin_sources(plan)}
     retired = dict(plan.retire)
+    selector_sources = []
     for item in plan.target.items:
+        if article_member(item) and retired.get(item.logical_id) == item.path:
+            sources[item.logical_id] = item
+            selector_sources.append(item)
         if (
             item.owner in _CREATED_FILE_OWNERS
             # A fixed config leaf's retirement is proven as a config file
@@ -783,20 +790,7 @@ def _stage_read_sources(plan):
             and retired.get(item.logical_id) == item.path
         ):
             sources[item.logical_id] = item
-            # The created-file proof re-reads its owner's discovery through
-            # the profile's config (TASK-41521).
-            parts = item.logical_id.split(":")
-            config_key = f"profile:{parts[1]}:config" if len(parts) > 2 else None
-            configs = [
-                row
-                for row in plan.target.items
-                if row.logical_id == config_key
-                and row.owner == "config"
-                and row.status == "included"
-            ]
-            if len(configs) != 1:
-                raise ValueError("local_snapshot_created_scope_unverified")
-            sources[config_key] = configs[0]
+            selector_sources.append(item)
     roots = {
         item.logical_id: item
         for item in plan.target.items
@@ -807,6 +801,25 @@ def _stage_read_sources(plan):
         and item.metadata.root_id == item.logical_id
         and retired.get(item.logical_id) == item.path
     }
+    selector_sources.extend(
+        root for root in roots.values() if root.owner == "subscriptions.assets"
+    )
+    for item in selector_sources:
+        # Reobserve these exact destinations using the same profile selector as preview.
+        parts = item.logical_id.split(":")
+        config_key = f"profile:{parts[1]}:config" if len(parts) > 2 else None
+        configs = [
+            row
+            for row in plan.target.items
+            if row.logical_id == config_key
+            and row.owner == "config"
+            and row.status == "included"
+        ]
+        if len(configs) != 1 or (
+            item.owner == "subscriptions.assets" and config_key not in item.dependencies
+        ):
+            raise ValueError("local_snapshot_created_scope_unverified")
+        sources[config_key] = configs[0]
     for item in plan.target.items:
         root = roots.get(item.metadata.root_id) if item.metadata else None
         if (
@@ -1554,6 +1567,57 @@ def _created_persona_subtree(
     return matching[0].logical_id, tuple(proved)
 
 
+def _article_member_parent(
+    item,
+    artifact,
+    saved,
+    original_items,
+    prior_root,
+    local_root_id,
+    target_items,
+    observed,
+):
+    """Prove the one retained article root overlapping this committed file retirement."""
+    parent = item.path.parent
+    for root, root_id in (
+        (saved.get(item.metadata.root_id), item.metadata.root_id),
+        (prior_root, local_root_id),
+    ):
+        if (
+            root is None
+            or root.owner != item.owner
+            or root.logical_id != root_id
+            or root.path != parent
+            or root.status != "included_directory"
+            or root.metadata is None
+            or root.metadata.kind != "directory"
+            or root.metadata.parent_id is not None
+            or root.metadata.root_id != root_id
+            or root.metadata.relative_path != ""
+        ):
+            raise ValueError("local_snapshot_created_scope_unverified")
+    current = [
+        row
+        for row in target_items
+        if row.path is not None and (row.path == parent or parent in row.path.parents)
+    ]
+    parents = [row for row in artifact.parents if Path(row.path) == parent]
+    if (
+        len(parents) != 1
+        or len(current) != len(observed)
+        or set(current) != set(observed)
+        or any(row.status not in {"included", "included_directory"} for row in observed)
+        or any(row.path == item.path for row in original_items)
+    ):
+        raise ValueError("local_snapshot_created_scope_unverified")
+    previous = parents[0]
+    with pinned_directory(parent) as directory:
+        checked = os.fstat(directory)
+        if (checked.st_dev, checked.st_ino) != (previous.device, previous.inode):
+            raise ValueError("local_snapshot_created_root_changed")
+    return local_root_id, parent, previous.device, previous.inode
+
+
 def _created_destination_target(
     journal, original, prepared, rows, target, *, session=None, config_files=()
 ):
@@ -1561,6 +1625,7 @@ def _created_destination_target(
     (and nested Persona packs, and single files such as the persona store)
     created by this copy."""
     from pydantic import TypeAdapter
+    from tldw_chatbook.Subscriptions.recovery import article_member
 
     from .activation import ActivationStore, _private
     from .generation_witnesses import _witnesses
@@ -1587,6 +1652,10 @@ def _created_destination_target(
         and (
             row.logical_id not in originals
             or originals[row.logical_id].path != Path(row.target)
+            or (
+                originals[row.logical_id].owner == "subscriptions.assets"
+                and originals[row.logical_id].status == "unused"
+            )
         )
     ]
     if not artifacts or rows[-1].event != "committed":
@@ -1611,7 +1680,10 @@ def _created_destination_target(
         )
         # An archived single file sits directly under its synthetic archive
         # root; a file in a declared tree is not one (TASK-41521).
-        created_file = (
+        new_article_member = (
+            article_member(item) and item.metadata.root_id not in synthetic_roots
+        )
+        created_file = new_article_member or (
             item is not None
             and item.owner in _CREATED_FILE_OWNERS
             and item.status == "included"
@@ -1649,8 +1721,10 @@ def _created_destination_target(
             or active_persona
             and (row.path == item.path or item.path in row.path.parents)
         ]
-        if any(row.owner != item.owner for row in members) or not any(
-            row.status == "included" for row in members
+        subscriptions_tree = item.owner == "subscriptions.assets"
+        if any(row.owner != item.owner for row in members) or (
+            not subscriptions_tree
+            and not any(row.status == "included" for row in members)
         ):
             raise ValueError("local_snapshot_created_members_changed")
         pending = [row.logical_id for row in members]
@@ -1775,7 +1849,62 @@ def _created_destination_target(
                     raise ValueError("local_snapshot_created_scope_unverified")
                 continue
             context = DiscoveryContext(config.path, config.logical_id.split(":", 2)[1])
-            if created_file and item.owner in _RAW_RECOVERY_LIMITS:
+            if subscriptions_tree:
+                from .profile_paths import user_data_dir
+                from .journal import observe_artifact
+                from .recovery_files import article_id, article_tree
+
+                data = tomllib.loads(
+                    _read_recovery_file(
+                        "config", config.path, max_bytes=16 * 1024**2
+                    ).decode("utf-8")
+                )
+                data[DISCOVERY_CONTEXT_KEY] = context
+                source_profile = item.logical_id.split(":")[1]
+                article = new_article_member or item.logical_id == article_id(
+                    source_profile
+                )
+                expected = user_data_dir(data) / (
+                    "article_audio" if article else "briefing_audio"
+                )
+                expected_item = (
+                    expected / item.metadata.relative_path
+                    if new_article_member
+                    else expected
+                )
+                if item.path != expected_item or item.logical_id in synthetic_roots:
+                    raise ValueError("local_snapshot_created_scope_unverified")
+                observed = observe_artifact(item.path)
+                if (observed["sha256"], observed["size"]) != (
+                    artifact.candidate.sha256,
+                    artifact.candidate.size,
+                ):
+                    raise ValueError("local_snapshot_created_members_changed")
+                entries = (
+                    article_tree(data, expected)
+                    if article
+                    else owner._tree(data, item.path)
+                )
+                if new_article_member:
+                    local_root_id = article_id(context.profile_id)
+                    active_ancestors[artifact.logical_id] = (
+                        _article_member_parent(
+                            item,
+                            artifact,
+                            saved,
+                            original.target.items,
+                            originals.get(local_root_id),
+                            local_root_id,
+                            target.items,
+                            entries,
+                        ),
+                    )
+                    entries = tuple(
+                        row
+                        for row in entries
+                        if row.path == item.path and article_member(row)
+                    )
+            elif created_file and item.owner in _RAW_RECOVERY_LIMITS:
                 # Re-read through the owner's own discovery, keyed by path, so a
                 # file keeps its installed logical ID (a sibling's suffix, a
                 # path-keyed history copy) and its live status (TASK-41521).
@@ -2107,6 +2236,7 @@ def _known_absences(plan, original, prepared, created=None, *, active_ancestors=
     """Expose exact locally recorded absent targets as reviewed retirements."""
     from .projection_publication import dependent_retirements
     from .restore_plan import _fingerprint, _paths
+    from tldw_chatbook.Subscriptions.recovery import article_member
 
     original_items = {item.logical_id: item for item in original.target.items}
     current = {item.logical_id: item for item in plan.target.items}
@@ -2197,7 +2327,7 @@ def _known_absences(plan, original, prepared, created=None, *, active_ancestors=
             row = current.get(key)
             if (
                 created_key is None
-                or item.owner not in _NESTED_CREATED_OWNERS
+                or (item.owner not in _NESTED_CREATED_OWNERS and not article_member(item))
                 or row is None
                 or row.owner != item.owner
                 or row.path != ancestor

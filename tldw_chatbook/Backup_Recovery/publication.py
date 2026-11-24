@@ -2652,6 +2652,16 @@ def _validate_installed_copies(
                     source_items=tuple(items.values()),
                     synthetic=synthetic,
                 )
+            elif item.owner == "db.subscriptions":
+                from .staging import _subscriptions_selector
+
+                issues = validator(
+                    item,
+                    candidates[key],
+                    MappingProxyType(candidates),
+                    topology=MappingProxyType(topology),
+                    selector=_subscriptions_selector(item, plan),
+                )
             elif callable(validator):
                 issues = validator(
                     item,

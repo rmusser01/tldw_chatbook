@@ -298,7 +298,6 @@ def produce_detached_archive(
         raise ValueError("detached_definition_limit")
     config = tomllib.loads(raw.decode("utf-8"))
     old_data = old_root / "Data"
-    old_data / "home" / ".local" / "share" / "tldw_cli"
     base = source / "home" / ".local" / "share" / "tldw_cli"
     mapping = {}
     for location in CONFIG_LOCATION_KEYS:
@@ -347,7 +346,7 @@ def produce_detached_archive(
 
     config[DISCOVERY_CONTEXT_KEY] = context
     items, original_paths, versions = _owner_items(
-        source, selected, root, config, context, owners, normal, cancel
+        source, selected, root, config, context, owners, normal, cancel, old_data=old_data
     )
     # A required user-selected store never becomes an empty default on import.
     config_id = storage_logical_id(context, "config")
@@ -565,7 +564,7 @@ def _pet_members(source: Path, selected: Path) -> tuple[tuple[Path, ...], tuple[
     return roaming, own[1:]
 
 
-def _owner_items(source, selected, root, config, context, owners, normal, cancel):
+def _owner_items(source, selected, root, config, context, owners, normal, cancel, *, old_data):
     """Resolve installed owners from confined fixed paths, never saved authority."""
     from tldw_chatbook.DB.recovery_core import core_adapters
     from tldw_chatbook.DB.recovery_operations import (
@@ -580,6 +579,21 @@ def _owner_items(source, selected, root, config, context, owners, normal, cancel
     from .storage_admission import _preview_reads
 
     items, original, versions = [], set(), {}
+    # Observe the acquired DB sibling lock before config selectors are replaced
+    # with operation-private normalized SQLite paths.
+    with _preview_reads():
+        audio = owners["subscriptions.assets"].discover(config)
+    for entry in audio:
+        if (
+            entry.path is None
+            or not entry.path.is_relative_to(source)
+            or entry.status in {"unsupported", "unavailable", "missing_required"}
+        ):
+            raise ValueError("detached_owner_unavailable:subscriptions.assets")
+        original.add(entry.path)
+        if entry.status == "unused" and entry.path == root / "briefing_audio":
+            entry = replace(entry, logical_id=storage_logical_id(context, entry.owner))
+        items.append(entry)
 
     def add(owner_id, path, *, tree=False, suffix="", exclude=False):
         owner = owners[owner_id]
@@ -740,12 +754,49 @@ def _owner_items(source, selected, root, config, context, owners, normal, cancel
         )
     # Core owns the alias/dependency policy; its queries use normalized images.
     with _preview_reads():
+        subscription = next(item for item in items if item.owner == "db.subscriptions")
+        if subscription.status == "included":
+            from .recovery_files import _tree_member_id
+            from tldw_chatbook.Subscriptions.article_listening_models import (
+                listening_profile_key,
+            )
+
+            historical_selector = old_data / selected.relative_to(source)
+            if _mapped(str(historical_selector), old_data, source) != selected:
+                raise ValueError("detached_selector_unsupported")
+            old_context = DiscoveryContext(
+                historical_selector, listening_profile_key(historical_selector)
+            )
+            old_config = storage_logical_id(old_context, "config")
+            moves = {old_config: selected}
+            old_briefing = old_data / root.relative_to(source) / "briefing_audio"
+            for entry in audio:
+                if (
+                    entry.status == "included"
+                    and entry.path.parent == root / "briefing_audio"
+                ):
+                    key = _tree_member_id(
+                        old_context,
+                        entry.owner,
+                        old_briefing,
+                        old_briefing / entry.path.name,
+                    )
+                    moves[key] = entry.path
+            previous = replace(
+                subscription,
+                logical_id=storage_logical_id(old_context, subscription.owner),
+                dependencies=tuple(moves),
+            )
+            owner = owners[subscription.owner]
+            owner.relocate_restore(previous, subscription.path, moves)
+            owner.rebind_listening_profile(previous, subscription.path, moves)
         for owner_id in (
             "db.chachanotes.primary",
             "db.media.primary",
             "db.prompts.primary",
             "db.library_collections",
             "db.library_ingest_jobs",
+            "db.subscriptions",
         ):
             if not any(
                 item.owner == owner_id and item.status == "included" for item in items
@@ -887,7 +938,6 @@ def _owner_items(source, selected, root, config, context, owners, normal, cancel
             add(owner_id, root / (owner.leaf + suffix), suffix=suffix.lstrip("."))
     for owner_id, leaf in (
         ("workspaces.change_tracking", "change_review"),
-        ("subscriptions.assets", "briefing_audio"),
         ("agents.history", "tool_sandbox"),
     ):
         if owner_id == "agents.history" and (root / leaf).exists():
@@ -1062,6 +1112,10 @@ def _declared_layout(source, selected, root, config, observation=None):
         root / ".generated_videos.capacity.lock",
     }
     known.update(_restored_cache_paths(config, root))
+    from .profile_paths import database_path
+
+    database = database_path(config, "subscriptions_db_path")
+    known.add(database.with_name(database.name + ".article-listening.lock"))
     known.update(path for paths in _pet_members(source, selected) for path in paths)
     known.update(
         Path(str(root / "tldw_chatbook_notes_sync_state.db") + suffix)
@@ -1155,6 +1209,7 @@ def _declared_layout(source, selected, root, config, observation=None):
             "change_review",
             "project_index",
             "briefing_audio",
+            "article_audio",
             "tool_sandbox",
             "rag_profiles",
             "chromadb",

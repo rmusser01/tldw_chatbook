@@ -91,21 +91,22 @@ def _config_targets(data, profile, config_target, doc, plan, owners, *, derive=F
     databases = {owner: key for owner, key, _, _ in DATABASE_PATHS}
     derived = {}
     records = list(doc.files)
-    if derive:
-        from types import SimpleNamespace
+    from types import SimpleNamespace
 
-        producer = {row.logical_id: row for row in doc.producer_inventory}
-        occupied = {row.root_id for row in doc.files}
-        records.extend(
-            SimpleNamespace(
-                **row.model_dump(), owner_id=producer[row.logical_id].owner_id
-            )
-            for row in doc.directories
-            if row.parent_id is None
-            and not row.synthetic
+    producer = {row.logical_id: row for row in doc.producer_inventory}
+    occupied = {row.root_id for row in doc.files}
+    records.extend(
+        SimpleNamespace(**row.model_dump(), owner_id=producer[row.logical_id].owner_id)
+        for row in doc.directories
+        if row.logical_id in producer
+        and not row.synthetic
+        and (
+            producer[row.logical_id].owner_id == "subscriptions.assets"
+            or derive
+            and row.parent_id is None
             and row.root_id not in occupied
-            and row.logical_id in producer
         )
+    )
     for payload in records:
         if (
             not payload.logical_id.startswith(f"profile:{profile}:")
@@ -181,7 +182,14 @@ def _config_targets(data, profile, config_target, doc, plan, owners, *, derive=F
         elif type(owner) is _Assets:
             expected = owner._root(configured)
         elif type(owner) is _BriefingAudio:
-            expected = user_data_dir(configured) / "briefing_audio"
+            expected = owner.restore_root(
+                profile, payload, directories, producer, configured
+            )
+            if not derive and (
+                roots.get(payload.root_id) != expected
+                or selected[payload.logical_id] != expected / payload.relative_path
+            ):
+                raise ValueError("owner_relocation_unverified:subscriptions.assets")
         elif type(owner) is _ConfiguredPets:
             expected = owner._restore_path(
                 profile, payload, directories[payload.root_id], config_target
@@ -418,6 +426,31 @@ def _retained_config_validation(plan, doc, work, session, cancel, *, installed=F
     return items, candidates
 
 
+def _subscriptions_selector(item, plan):
+    """Take the reviewed selector, including retained Settings, before reading private copies."""
+    if plan is None or plan.local_snapshot is not None:
+        return None
+    key = item.logical_id.rsplit(":", 1)[0] + ":config"
+    selector = dict(plan.restore).get(key)
+    if selector is None:
+        selector = next(
+            (
+                row.config_path
+                for row in plan.retained_configs
+                if row.archive_config_id == key
+            ),
+            None,
+        )
+    if (
+        key not in item.dependencies
+        or not isinstance(selector, Path)
+        or not selector.is_absolute()
+        or ".." in selector.parts
+    ):
+        raise ValueError("listening_profile_mapping_required")
+    return selector
+
+
 def _validate_dependencies(
     doc, items, owners, candidate_paths, topology, plan=None, manifest_digest=None
 ):
@@ -463,6 +496,14 @@ def _validate_dependencies(
                     else {},
                     source_items=tuple(items.values()),
                     synthetic=synthetic,
+                )
+            elif item.owner == "db.subscriptions":
+                issues = restore_check(
+                    item,
+                    candidate_paths[key],
+                    MappingProxyType(candidate_paths),
+                    topology=topology,
+                    selector=_subscriptions_selector(item, plan),
                 )
             elif callable(restore_check):
                 issues = restore_check(
@@ -906,6 +947,11 @@ def stage_restore(
                     )
                 elif callable(relocate):
                     relocate(item, candidate, relocation_mapping)
+                    if (
+                        payload.owner_id == "db.subscriptions"
+                        and plan.local_snapshot is None
+                    ):
+                        owner.rebind_listening_profile(item, candidate, relocation_mapping)
                 else:
                     owner.relocate(candidate, relocation_mapping)
                 if (
