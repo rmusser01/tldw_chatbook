@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from threading import Event
+from types import MethodType
 from weakref import WeakSet
 
 _Retire = Callable[[], Awaitable[bool]]
@@ -85,10 +86,20 @@ class AudioOutputLease:
 
     def is_current(self) -> bool:
         """Return whether this exact lease can still start or publish output."""
-        return (
-            not self.revoked
-            and self._host._owns(self)
-            and self._host._generation == self.generation
+        return not self.revoked and self._host._owns(self)
+
+    def authorizes(self, retire_callback: _Retire) -> bool:
+        """Check on the owner loop whether this lease may start this exact run."""
+        slot = self._host._slot
+        if slot is None or slot[0] is not self or self.revoked:
+            return False
+        registered = slot[1]
+        # A fresh attribute lookup creates a new Python bound method object.
+        return registered is retire_callback or (
+            isinstance(registered, MethodType)
+            and isinstance(retire_callback, MethodType)
+            and registered.__self__ is retire_callback.__self__
+            and registered.__func__ is retire_callback.__func__
         )
 
     def release(self) -> None:
@@ -218,13 +229,17 @@ class AudioOutputOwnership:
                 self._shutdown = self._resolved(True)
         return asyncio.shield(self._shutdown)
 
-    def _check_admission(
-        self, ticket: AudioOutputIntent, external: bool, generation: int
+    def _check_request(
+        self, ticket: AudioOutputIntent, generation: int | None = None
     ) -> None:
         if self.closing:
             raise OutputClosed("Audio output admission has closed")
-        if self._intent is not ticket or self._generation != generation:
+        if self._intent is not ticket or (
+            generation is not None and self._generation != generation
+        ):
             raise OutputSuperseded("Audio output request was superseded")
+
+    def _check_output(self, external: bool) -> None:
         if self._blocked and self._slot is not None:
             raise OutputBlocked(self._slot[0]._owner)
         if not external and self._handoff_epoch is not None:
@@ -258,16 +273,19 @@ class AudioOutputOwnership:
             asyncio.CancelledError: The caller cancelled its request.
         """
         ticket = self.begin_intent() if intent is None else intent
-        self._check_admission(ticket, external, self._generation)
+        self._check_request(ticket)
         self._generation += 1
         generation = self._generation
+        self._check_output(external)
         if self._slot is not None:
             self._start_retirement(self._slot)
-        if self._retirement is not None:
-            # The coordinator retains this work even if every waiting start leaves.
-            await asyncio.shield(self._retirement)
-            self._check_admission(ticket, external, generation)
-        self._retirement = None
+        while (observed := self._retirement) is not None:
+            # An explicit Stop may have published a retry before this waiter resumes.
+            await asyncio.shield(observed)
+            self._check_request(ticket, generation)
+            if self._retirement is observed:
+                self._retirement = None
+        self._check_output(external)
         lease = AudioOutputLease(generation, self, owner)
         self._slot = lease, retire
         return lease
