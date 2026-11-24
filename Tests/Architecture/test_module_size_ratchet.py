@@ -180,7 +180,10 @@ _BUDGETS: dict[str, int] = {
     # 5,711 plus 24, exact measurement 5,735.
     # 2026-11-23, TASK-34100.13 port (round 24): -5, the launch splash decision
     # is Widgets.splash_screen.splash_options; 5,735 -> 5,730, exact measurement.
-    "tldw_chatbook/app.py": 5739,
+    # 2026-11-24, round-24 stack: TASK-34100.2's port, stacked on #3430, takes
+    # a net 10 lines out of app.py; the row goes down to the measurement,
+    # 5,739 -> 5,729.
+    "tldw_chatbook/app.py": 5729,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
@@ -972,7 +975,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-27, review v3r1 G6-BV3-03: Model keeps the rendered failure
     # category beside its rendered probe failure, so a 403 still marks
     # Provider '!' after Model hides -> 975.
-    "tldw_chatbook/UI/Wizards/first_run_model_step.py": 975,
+    # 2026-11-24, round-24 stack: TASK-34100.2's port is a net -1 here; the
+    # row goes down to the measurement, 975 -> 974.
+    "tldw_chatbook/UI/Wizards/first_run_model_step.py": 974,
     "tldw_chatbook/UI/Screens/llm_screen.py": 5143,
     "tldw_chatbook/UI/Screens/change_review_screen.py": 4138,
     # TASK-36942.1 (architecture review 2026-10-25, F16): every module of
