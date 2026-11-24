@@ -1295,8 +1295,9 @@ class InterruptRoundHost(InitialHookReviewMixin):
             app = self.read_controller_app()
             # TASK-41637: a never-started or exited App can neither show a card nor
             # deliver an answer, so nobody can answer: fail closed. A covered or
-            # unreconciled view does not matter; Console harnesses run
-            # controller.app on their host (TASK-41948). A host without
+            # unreconciled view does not matter; Console harnesses mark
+            # controller.app running and route its call_from_thread through their
+            # host (run_on_host, TASK-41948). A host without
             # is_running (mobile context) is live. An exit mid-wait is runtime
             # disposal's to settle.
             try:

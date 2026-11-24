@@ -251,8 +251,9 @@ def run_on_host(app: TldwCli, host: Any) -> None:
     makes ``app`` report the host's running state and marshal onto the host's
     loop: the interrupt rounds' no-running-app guard (TASK-41637) then sees the
     harness as the shipped app (TASK-41948). Call it from the host's
-    ``on_mount``; when the host shuts down, ``app`` stops running first, as
-    the shipped app does.
+    ``on_mount``. As in the shipped app, ``app`` stops reporting running when
+    the host's shutdown starts, and its marshal keeps landing until that
+    shutdown returns, so workers the shutdown drains can still finish.
 
     Args:
         app: The `_build_test_app` product whose ``ChatScreen`` ``host`` mounts.
@@ -264,8 +265,10 @@ def run_on_host(app: TldwCli, host: Any) -> None:
 
     async def _shutdown() -> None:
         app._running = False
-        app.__dict__.pop("call_from_thread", None)
-        await shutdown()
+        try:
+            await shutdown()
+        finally:
+            app.__dict__.pop("call_from_thread", None)
 
     host._shutdown = _shutdown
 

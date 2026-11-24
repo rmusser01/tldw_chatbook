@@ -942,7 +942,8 @@ async def test_running_app_round_stays_pending_while_no_view_can_answer():
 
     TASK-42424: a round armed while the Close dialog covers the view must not
     fail closed, or closing one tab would settle the viewed tab's decision.
-    Only a never-run or exited App reads "no answerable view" as nobody left.
+    Only a never-run or exited App means nobody is left to answer (TASK-41948:
+    the view is not read).
     """
     from textual.app import App
 

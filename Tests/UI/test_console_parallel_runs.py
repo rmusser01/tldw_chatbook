@@ -665,8 +665,8 @@ async def test_needs_approval_tab_marker_click_routes_to_review_action(request) 
             card = console.query_one("#chat-approval-card")
             assert card.display
             # `host` (the `ConsoleHarness` App under `run_test`) holds live
-            # focus -- `app` is the plain, never-run `TldwCli` instance handed
-            # to `ChatScreen` only for `app_instance` config/service lookups.
+            # focus -- `app` is the never-run `TldwCli` handed to `ChatScreen`
+            # as `app_instance`; it only borrows the host's marshal.
             assert isinstance(host.focused, Select)
             assert "approval-row-decision" in host.focused.classes
         finally:
@@ -717,14 +717,13 @@ async def test_park_toast_survives_a_viewed_run_completion_re_invocation(
             is None
         )
         controller = console._ensure_console_chat_controller()
-        controller.app = host
         store = controller.store
         viewed = store.active_session_id
         background = controller.new_session().id
         store.switch_session(viewed)  # keep viewing A
 
         notifications: list[str] = []
-        controller.app.notify = lambda message, **kwargs: notifications.append(
+        app.notify = lambda message, **kwargs: notifications.append(
             str(message)
         )
 
@@ -752,7 +751,17 @@ async def test_park_toast_survives_a_viewed_run_completion_re_invocation(
         try:
             await pilot.pause(0.3)
 
-            approval_toasts = [n for n in notifications if "needs approval" in n]
+            # A retained approval round announces itself through the
+            # controller's app-owned notice ("... needs approval to use a
+            # tool ..."); that is the announcement counted here. The legacy
+            # screen seam re-invoked below toasts separately ("Agent in ...
+            # needs approval.") and dedupes only rounds it toasted itself, so
+            # it adds one toast of its own. Until TASK-41948 removed this
+            # test's `controller.app = host` re-point, that toast went to an
+            # object nobody recorded.
+            approval_toasts = [
+                n for n in notifications if "needs approval to use a tool" in n
+            ]
             assert len(approval_toasts) == 1
             round_id = controller._head_round_payload(
                 controller._parked_approval_payloads, background
@@ -785,7 +794,9 @@ async def test_park_toast_survives_a_viewed_run_completion_re_invocation(
             console._park_console_approval(background)
             await pilot.pause(0.1)
 
-            approval_toasts_after = [n for n in notifications if "needs approval" in n]
+            approval_toasts_after = [
+                n for n in notifications if "needs approval to use a tool" in n
+            ]
             assert len(approval_toasts_after) == 1, (
                 f"expected exactly 1 park toast total across the re-invocation, "
                 f"got {approval_toasts_after}"
@@ -1709,16 +1720,6 @@ async def test_mounted_round_survives_switch_away_and_switch_back(request) -> No
             is None
         )
         controller = console._ensure_console_chat_controller()
-        # `_ensure_console_chat_controller` wires `controller.app =
-        # self.app_instance` -- the wrapped `TldwCli` instance, which
-        # `ConsoleHarness` never itself `run_test()`s (only `host`, this
-        # test's actual running App, is). Re-point at `host` so
-        # `call_from_thread` genuinely marshals onto the running event
-        # loop -- mounting/mutating REAL Textual widgets (as
-        # `ChatApprovalCard.set_batch` does) from a foreign OS thread
-        # without that marshal raises `RuntimeError: no running event
-        # loop` (verified empirically while writing this test).
-        controller.app = host
         store = controller.store
         session_a = store.active_session_id
         session_b = controller.new_session().id
@@ -1808,9 +1809,6 @@ async def test_new_session_clears_a_mounted_card_from_the_session_being_left(
             is None
         )
         controller = console._ensure_console_chat_controller()
-        # See the sibling test above for why this must be `host` (the
-        # actually-running App), not `app_instance`.
-        controller.app = host
         controller.mcp_approval_timeout_seconds = lambda: 30.0
         session_a = controller.store.active_session_id
 
@@ -1893,11 +1891,6 @@ async def test_background_skill_install_confirm_parks_badges_toasts_and_mounts_o
             is None
         )
         controller = console._ensure_console_chat_controller()
-        # See `test_mounted_round_survives_switch_away_and_switch_back` for
-        # why this must be `host` (the actually-running App), not
-        # `app_instance`: `call_from_thread` needs a real running loop to
-        # marshal the worker thread's widget mutations onto.
-        controller.app = host
         controller.skill_install_confirm_timeout_seconds = lambda: 30.0
         store = controller.store
         viewed = store.active_session_id
@@ -1905,7 +1898,7 @@ async def test_background_skill_install_confirm_parks_badges_toasts_and_mounts_o
         store.switch_session(viewed)  # keep viewing the first session
 
         notifications: list[str] = []
-        controller.app.notify = lambda message, **kwargs: notifications.append(
+        app.notify = lambda message, **kwargs: notifications.append(
             str(message)
         )
 
@@ -2005,7 +1998,6 @@ async def test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on
             is None
         )
         controller = console._ensure_console_chat_controller()
-        controller.app = host
         controller.skill_script_confirm_timeout_seconds = lambda: 30.0
         store = controller.store
         viewed = store.active_session_id
@@ -2013,7 +2005,7 @@ async def test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on
         store.switch_session(viewed)  # keep viewing the first session
 
         notifications: list[str] = []
-        controller.app.notify = lambda message, **kwargs: notifications.append(
+        app.notify = lambda message, **kwargs: notifications.append(
             str(message)
         )
 
@@ -2114,7 +2106,6 @@ async def test_skill_install_park_toast_survives_a_re_invocation_for_the_same_ro
             is None
         )
         controller = console._ensure_console_chat_controller()
-        controller.app = host
         controller.skill_install_confirm_timeout_seconds = lambda: 30.0
         store = controller.store
         viewed = store.active_session_id
@@ -2122,7 +2113,7 @@ async def test_skill_install_park_toast_survives_a_re_invocation_for_the_same_ro
         store.switch_session(viewed)
 
         notifications: list[str] = []
-        controller.app.notify = lambda message, **kwargs: notifications.append(
+        app.notify = lambda message, **kwargs: notifications.append(
             str(message)
         )
 
@@ -2207,7 +2198,6 @@ async def test_skill_script_park_toast_survives_a_re_invocation_for_the_same_rou
             is None
         )
         controller = console._ensure_console_chat_controller()
-        controller.app = host
         controller.skill_script_confirm_timeout_seconds = lambda: 30.0
         store = controller.store
         viewed = store.active_session_id
@@ -2215,7 +2205,7 @@ async def test_skill_script_park_toast_survives_a_re_invocation_for_the_same_rou
         store.switch_session(viewed)
 
         notifications: list[str] = []
-        controller.app.notify = lambda message, **kwargs: notifications.append(
+        app.notify = lambda message, **kwargs: notifications.append(
             str(message)
         )
 

@@ -371,3 +371,51 @@ async def test_factory_console_skill_discovery_reads_off_the_ui_loop():
         sys.monitoring.free_tool_id(tool)
     assert threads, "Console never read its skills"
     assert main not in threads, "the factory app read skills on the UI loop"
+
+
+@pytest.mark.asyncio
+async def test_run_on_host_keeps_the_marshal_until_the_host_shutdown_returns():
+    """TASK-41948: a view worker drained in the host's shutdown still lands.
+
+    The shipped app reports `is_running` False from the start of `_shutdown`,
+    but its `call_from_thread` keeps landing until `_shutdown` returns; the
+    Console runtime drain (`LifecycleMixin._shutdown_console_runtime`) relies
+    on that. A harness host drains its captured view workers the same way.
+    """
+    import threading
+
+    from textual.app import App
+    from textual.worker import WorkerFailed
+
+    from Tests.UI.app_factory import _build_test_app, run_on_host
+
+    app = _build_test_app()
+    release = threading.Event()
+    seen_running: list[bool] = []
+    landed: list[str] = []
+
+    def view_worker() -> None:
+        assert release.wait(10), "the host never drained this worker"
+        seen_running.append(app.is_running)
+        app.call_from_thread(landed.append, "result")
+
+    class DrainingHost(App):
+        async def on_mount(self) -> None:
+            run_on_host(app, self)
+
+        async def _shutdown(self) -> None:
+            release.set()
+            try:
+                await self.drained.wait()
+            except WorkerFailed:
+                pass
+            await super()._shutdown()
+
+    host = DrainingHost()
+    async with host.run_test():
+        assert app.is_running
+        host.drained = host.run_worker(view_worker, thread=True, exit_on_error=False)
+    assert landed == ["result"], "the drained worker's result never landed"
+    assert seen_running == [False]
+    assert not app.is_running
+    assert "call_from_thread" not in vars(app)

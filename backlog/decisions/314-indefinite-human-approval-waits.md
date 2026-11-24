@@ -127,8 +127,9 @@ existed, because Console test harnesses mounted the real view for a never-run
 `TldwCli` inside a separate running host, and every Console ensure hands that
 `TldwCli` to the controller as `controller.app`. Rounds those harnesses armed
 before the attach reconciliation, or under a modal, failed closed (TASK-42481,
-TASK-42424). The harnesses now run that `TldwCli` on their host
-(`Tests/UI/app_factory.py::run_on_host`), as the shipped app runs, so the view
+TASK-42424). The harnesses now mark that `TldwCli` running and route its
+`call_from_thread` through their host (`Tests/UI/app_factory.py::run_on_host`),
+as in the shipped app, where `controller.app` is the running App, so the view
 condition was dropped.
 
 ## Renumbering provenance
