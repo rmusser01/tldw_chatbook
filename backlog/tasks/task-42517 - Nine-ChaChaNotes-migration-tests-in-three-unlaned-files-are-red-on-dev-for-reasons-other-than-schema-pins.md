@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-24 19:23
-updated_date: 2026-11-24 23:44
+updated_date: 2026-11-25 00:33
 labels:
 - follow-up
 - tests
@@ -47,6 +47,7 @@ TASK-42516's sweep (2026-11-24) ran every `Tests/DB/test_chachanotes_v*.py` file
 - [x] #2 Product drift is fixed in the product with a test that is red before and green after; test drift is fixed in the test, every other assertion kept
 - [x] #3 `test_hot_message_writers_reserve_the_write_lock_up_front` is settled by behaviour, not source text: the hot writer is shown to take the write lock before its first read, or the gap is fixed
 - [x] #4 The three files run in a PR lane step, timed with that step's flags, with their config reads checked, and none of their nodes runs in a second step
+- [x] #5 Review-round scope: `console_prompt_mixin_attempts.result_revision_id` is classified in the voice-promotion locator inventory and has v88's ninth index; `Tests/ChaChaNotesDB/test_index_census.py` pins every live index again; the portrait migration tests check the current backup catalog through the recovery policy; and those files, `Tests/Backup_Recovery/test_prompt_mixin_restore.py` and `Tests/Backup_Recovery/test_child_segments_sandbox.py` run in a PR lane step with their config reads checked
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -98,4 +99,4 @@ Files: Tests/DB/test_chachanotes_v{47_messages_fts_backfill,56_console_trace_que
 - **Lanes.** architecture-guards gets, in the sandboxed block, the v88 and v87 sandbox gate files and `test_prompt_mixin_restore.py`; and, after the trigger census, the index census and both portrait files. All 41 tests read no config (recorder) and take ~7.4 s serially. The voice inventory node went to dreams-tracking before Tool_Packs (0.8 s), because architecture-guards admits no file that another PR step lists, and the file's P0 node is in console-p0-gate.
 - **Steps re-run (2026-11-24).** architecture-guards: 948 passed, 1 skipped, in 460.9 s at load 7-11. Dreams riders (43 targets): 1653 passed, 6 skipped, in 963.7 s at load 9-11; the projection stays about 10-14 of 20 min, since the added node takes 0.8 s. Soak of the touched files: 10/10 runs green at `-n 4`, 438 passed each, load 10-12. `Tests/Architecture` serially: the review's one new red (the chat_persistence_service size ratchet) is fixed with a one-line row and +1 on the budget.
 - **Filed.** TASK-42545: `test_existing_owned_directory_metadata_uses_verified_node_rollback` is a rollback-helper owner mismatch in Backup_Recovery, outside this family. TASK-42546: SQLite 3.40 refuses ChaChaNotes candidate validation; this needs an owner decision.
-
+- 2026-11-25: AC #5 was added after the review round, to cover the scope that round added (the mix-in result-revision locator and its ninth v88 index, the index census repairs, the portrait catalog pins, and the new lanes for those files and the two restore-sandbox files).
