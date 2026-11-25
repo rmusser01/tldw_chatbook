@@ -173,6 +173,7 @@ class ArticleAudioAssets:
         self.store = store
         self.root = profile_data_root / "article_audio"
         self.reservation = reservation
+        self.attached_session = None
         self.lease = lease
         self._commit_options = (
             {} if authorize_commit is None else {"authorize_commit": authorize_commit}
@@ -190,7 +191,7 @@ class ArticleAudioAssets:
         guard = (
             self.store.mutation_lease(related_paths=paths)
             if self.lease is None
-            else self.lease.borrow(
+            else self.lease.admit_assets(
                 self.store.database,
                 profile=self.store._authority().profile,
                 related_paths=paths,
@@ -336,7 +337,7 @@ class ArticleAudioAssets:
                     held.delete()
                     raise ArticleAudioError("article_audio_name_collision") from None
                 self._check_directory(directory)
-                self.store.complete_audio(
+                self.attached_session = self.store.complete_audio(
                     claim,
                     expected,
                     lease=lease,
@@ -426,6 +427,7 @@ class ArticleAudioAssets:
                     **({"replace_missing": True} if replace_missing else {}),
                     **self._commit_options,
                 )
+                self.attached_session = session
                 return audio, session.revision
         return None, expected_revision
 

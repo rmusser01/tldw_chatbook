@@ -2569,6 +2569,9 @@ class ServiceWiringMixin(
         # where a concurrent second `_initialize_schema` was measured
         # poisoning a live connection's schema view.
         self.subscriptions_db = subscriptions_db
+        from tldw_chatbook.app_article_listening import build_article_listening_service
+
+        self.article_listening_service = build_article_listening_service(self, subscriptions_db)
         # task-19561, Qodo review of PR #1972: the startup reconcile sweep runs
         # as a deferred startup task, i.e. AFTER `on_mount` has already started
         # the scheduler worker -- and the scheduler ticks immediately, so a due
@@ -2591,7 +2594,8 @@ class ServiceWiringMixin(
             subscriptions_db
         )
         self.local_watchlists_service = LocalWatchlistsService(
-            db_factory=lambda: subscriptions_db
+            db_factory=lambda: subscriptions_db,
+            delete_source=self.article_listening_service.delete_source,
         )
         try:
             self.server_watchlists_service = ServerWatchlistsService.from_config(

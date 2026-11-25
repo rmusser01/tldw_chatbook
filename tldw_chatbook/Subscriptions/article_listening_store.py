@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from uuid import uuid4
-from weakref import WeakValueDictionary
+from weakref import WeakKeyDictionary, WeakValueDictionary
 
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.DB.subscriptions_schema import listening_brief_items
@@ -62,6 +62,15 @@ __all__ = [
 ]
 
 
+@dataclass(frozen=True, eq=False, slots=True)
+class _TerminalOwner:
+    lease: ListeningLease
+    authority: ListeningAuthority
+    image: DatabaseImage
+    incarnation: str
+    entry_id: str
+
+
 class ArticleListeningStore:
     """Store snapshots and issue source- and revision-bound audio reservations."""
 
@@ -76,6 +85,9 @@ class ArticleListeningStore:
         self._current = current_authority
         self._profile = self._authority().profile
         self._issued_audio = WeakValueDictionary()
+        self._issuing_holders = WeakKeyDictionary()
+        self._terminal_owner = None
+        self._terminal_generation = None
 
     def _authority(self, expected=None):
         current = self._current()
@@ -96,8 +108,52 @@ class ArticleListeningStore:
             memory=self.db.is_memory_db,
         )
 
+    def session_lease(self, root: Path):
+        """Own this DB and admit future finite article operations under the captured root."""
+        return hold_listening(
+            self.database,
+            profile=self._authority().profile,
+            memory=self.db.is_memory_db,
+            session_asset_root=root / "article_audio",
+        )
+
+    def adopt_session(self, session: ListeningSession, *, lease, replay=False):
+        """Adopt a fresh local intent and optionally reset the entire queue in one commit."""
+        a = self._authority()
+        with self.db.listening_transaction(lease=lease, profile=a.profile) as c:
+            s = self._checked(c, session.revision, a, new_intent=True)
+            if (s["incarnation"], s["playback_generation"]) != (
+                session.incarnation,
+                session.playback_generation,
+            ):
+                raise ListeningConflict("listening_generation_changed")
+            if replay and session.transport != "completed":
+                raise ListeningConflict("listening_replay_unavailable")
+            if replay:
+                c.execute(
+                    "UPDATE listening_entries SET bookmark_frame=0 WHERE session_id=? "
+                    "AND bookmark_hash IS NOT NULL",
+                    (s["id"],),
+                )
+            c.execute(
+                "UPDATE listening_session SET policy_epoch=?, revision=revision+1,"
+                "playback_generation=playback_generation+1,transport='paused',cursor=?,"
+                "updated_at=unixepoch() WHERE id=?",
+                (
+                    a.policy_epoch,
+                    0 if replay and session.queue else session.cursor,
+                    s["id"],
+                ),
+            )
+            updated = self._load(c)
+            self._authority(a)
+            return updated
+
     def _state(self, c):
-        profile = self._authority().profile
+        return self._profile_state(c, self._authority().profile)
+
+    @staticmethod
+    def _profile_state(c, profile):
         row = c.execute(
             "SELECT * FROM listening_session WHERE profile=?", (profile,)
         ).fetchone()
@@ -110,6 +166,85 @@ class ArticleListeningStore:
                 "transport": "empty",
             }
         return row
+
+    def open_playback(self, session, entry_id, *, lease):
+        """Issue terminal-only authority for this exact current entry and physical holder."""
+        with lease.borrow(self.database, profile=self._profile):
+            entry, image = self.current_entry(
+                entry_id,
+                expected_revision=session.revision,
+                authority=session.authority,
+            )
+            owner = _TerminalOwner(
+                lease, session.authority, image, session.incarnation, entry_id
+            )
+            self._terminal_owner = owner
+            self._terminal_generation = session.playback_generation
+            return entry, owner
+
+    def finish_playback(self, owner):
+        if self._terminal_owner is owner:
+            self._terminal_owner = None
+            self._terminal_generation = None
+
+    def pause_held(self, session, bookmark, *, owner):
+        """Terminal-only CAS on the original, physically held session after policy revocation."""
+        if (
+            owner is not self._terminal_owner
+            or type(owner) is not _TerminalOwner
+            or (
+                session.authority != owner.authority
+                or session.incarnation != owner.incarnation
+                or session.playback_generation != self._terminal_generation
+            )
+        ):
+            raise ListeningConflict("listening_authority_changed")
+        with self.db.listening_transaction(
+            lease=owner.lease, profile=self._profile
+        ) as c:
+            state = self._profile_state(c, self._profile)
+            if self.db.listening_image != owner.image or (
+                state["incarnation"],
+                state["revision"],
+                state["playback_generation"],
+                state["policy_epoch"],
+            ) != (
+                session.incarnation,
+                session.revision,
+                session.playback_generation,
+                session.authority.policy_epoch,
+            ):
+                raise ListeningConflict("listening_generation_changed")
+            if bookmark is not None:
+                current = session.foreground or session.queue[session.cursor]
+                if (
+                    current.entry_id != owner.entry_id
+                    or current.bookmark is None
+                    or (bookmark.sha256, bookmark.sample_rate)
+                    != (current.bookmark.sha256, current.bookmark.sample_rate)
+                ):
+                    raise ListeningConflict("invalid_listening_bookmark")
+                changed = c.execute(
+                    "UPDATE listening_entries SET bookmark_frame=? WHERE session_id=? "
+                    "AND entry_id=? AND bookmark_hash=? AND bookmark_rate=? AND artifact IN "
+                    "(SELECT generation FROM article_audio WHERE status='ready' AND content_frames>=?)",
+                    (
+                        _int(bookmark.frame),
+                        state["id"],
+                        owner.entry_id,
+                        bookmark.sha256,
+                        bookmark.sample_rate,
+                        bookmark.frame,
+                    ),
+                ).rowcount
+                if changed != 1:
+                    raise ListeningConflict("invalid_listening_bookmark")
+            c.execute(
+                "UPDATE listening_session SET revision=revision+1,playback_generation=playback_generation+1,"
+                "transport='paused', updated_at=unixepoch() WHERE id=?",
+                (state["id"],),
+            )
+            return self._load(c, state=self._profile_state(c, self._profile))
 
     def _checked(self, c, revision, authority, *, new_intent=False):
         self._authority(authority)
@@ -141,8 +276,9 @@ class ArticleListeningStore:
         with self.db.artifact_read_snapshot() as c:
             state = self._checked(c, expected_revision, authority)
             row = c.execute(
-                "SELECT e.*,a.status FROM listening_entries e LEFT JOIN article_audio a "
-                "ON a.generation=e.artifact WHERE session_id=? AND entry_id=?",
+                "SELECT e.*,a.status,s.type AS source_type FROM listening_entries e LEFT JOIN article_audio a "
+                "ON a.generation=e.artifact LEFT JOIN subscriptions s ON s.id=e.source_id "
+                "WHERE session_id=? AND entry_id=?",
                 (state["id"], _id(entry_id)),
             ).fetchone()
             if row is None or row["item_id"] is None:
@@ -172,17 +308,21 @@ class ArticleListeningStore:
             point,
             availability,
             r["unavailable_reason"],
+            r["source_type"] in ("rss", "atom", "json_feed", "podcast")
+            if r["source_type"]
+            else None,
         )
 
-    def _load(self, c):
-        s = self._state(c)
+    def _load(self, c, *, state=None):
+        s = self._state(c) if state is None else state
         if s["transport"] == "empty":
             return None
         entries = []
         foreground = None
         for r in c.execute(
-            "SELECT e.*,a.status FROM listening_entries e LEFT JOIN article_audio a "
-            "ON a.generation=e.artifact WHERE session_id=? ORDER BY slot",
+            "SELECT e.*,a.status,s.type AS source_type FROM listening_entries e LEFT JOIN article_audio a "
+            "ON a.generation=e.artifact LEFT JOIN subscriptions s ON s.id=e.source_id "
+            "WHERE session_id=? ORDER BY slot",
             (s["id"],),
         ):
             entry = self._loaded_entry(r)
@@ -408,7 +548,9 @@ class ArticleListeningStore:
                     session_id,
                 ),
             )
-            return self._load(c)
+            updated = self._load(c)
+            self._authority(a)
+            return updated
 
     def clear(
         self, *, expected_revision: int, lease: ListeningLease | None = None
@@ -431,9 +573,16 @@ class ArticleListeningStore:
         *,
         expected_revision: int,
         lease: ListeningLease | None = None,
+        playback_owner: _TerminalOwner | None = None,
     ) -> ListeningSession:
         a = self._authority(update.authority)
         _int(expected_revision)
+        if playback_owner is not None and (
+            self._terminal_owner is not playback_owner
+            or lease is not playback_owner.lease
+            or self._terminal_generation != update.playback_generation
+        ):
+            raise ListeningConflict("listening_generation_changed")
         with self.db.listening_transaction(lease=lease, profile=a.profile) as c:
             s = self._checked(c, expected_revision, a)
             if (s["incarnation"], s["playback_generation"]) != (
@@ -492,7 +641,11 @@ class ArticleListeningStore:
                 "updated_at=unixepoch(),playback_generation=playback_generation+1 WHERE id=?",
                 (update.cursor, int(update.resume_queue), update.transport, s["id"]),
             )
-            return self._load(c)
+            session = self._load(c)
+            self._authority(a)
+        if playback_owner is not None:
+            self._terminal_generation = session.playback_generation
+        return session
 
     def _entry(self, c, entry_id):
         row = c.execute(
@@ -578,6 +731,8 @@ class ArticleListeningStore:
                 self.db.listening_image,
             )
             self._issued_audio[generation] = claim
+            if lease is not None:
+                self._issuing_holders[claim] = lease
             return claim
 
     @staticmethod
@@ -692,10 +847,19 @@ class ArticleListeningStore:
         self, claim: AudioReservation, *, lease: ListeningLease | None = None
     ) -> None:
         """Revoke only this captured pending generation and retain its safe cleanup key."""
-        a = self._authority(claim.authority)
-        if claim.database != self.database:
+        self._authority(claim.authority)
+        self._cancel_audio(claim, lease)
+
+    def cancel_held_audio(self, claim: AudioReservation, lease: ListeningLease) -> None:
+        """Retire only the original holder's exact minted claim after policy changes."""
+        if lease is None or self._issuing_holders.get(claim) is not lease:
             raise ListeningConflict("article_audio_reservation_changed")
-        with self.db.listening_transaction(lease=lease, profile=a.profile) as c:
+        self._cancel_audio(claim, lease)
+
+    def _cancel_audio(self, claim, lease):
+        if claim.database != self.database or claim.authority.profile != self._profile:
+            raise ListeningConflict("article_audio_reservation_changed")
+        with self.db.listening_transaction(lease=lease, profile=self._profile) as c:
             self._check_issued(claim)
             changed = c.execute(
                 "UPDATE article_audio SET item_id=NULL,speech_hash=NULL,converter=NULL,"
@@ -705,7 +869,7 @@ class ArticleListeningStore:
                 "AND target_entry=? AND target_revision=?",
                 (
                     claim.generation,
-                    a.profile,
+                    self._profile,
                     claim.file_key,
                     claim.item_id,
                     claim.entry_id,

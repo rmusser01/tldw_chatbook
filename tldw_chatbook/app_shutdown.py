@@ -3,41 +3,12 @@
 from __future__ import annotations
 
 
-def begin_audio_shutdown(app):
-    """Close future audio admission synchronously, including an unused lazy host."""
-    app._audio_output_closed = True
-    owner = vars(app).get("_audio_output")
-    observation = owner.begin_shutdown() if owner is not None else None
-    for release in tuple(vars(app).get("_retired_handoff_files", ())):
-        try:
-            release()
-        except Exception as error:
-            from loguru import logger
-
-            logger.warning(
-                "Retired audio file cleanup failed type={}", type(error).__name__
-            )
-    return observation
-
-
-async def observe_audio_shutdown(app, budget_seconds: float) -> bool:
-    """Observe checked local retirement within the caller's shutdown budget."""
-    import asyncio
-    from loguru import logger
-
-    observation = begin_audio_shutdown(app)
-    if observation is None:
-        return True
-    owner = app._audio_output
-    try:
-        confirmed = await asyncio.wait_for(observation, budget_seconds)
-    except TimeoutError:
-        confirmed = False
-    if owner.handoff_epoch is not None:
-        logger.info("Audio was handed to an external player")
-    if not confirmed:
-        logger.warning("Audio retirement unconfirmed for owner {}", owner.owner)
-    return confirmed
+from .app_audio_shutdown import (
+    begin_audio_shutdown as begin_audio_shutdown,
+    close_listening_before_dependencies,
+    close_unmount_tts,
+    observe_audio_shutdown,
+)
 
 
 async def _drain_app_unmount_services(
@@ -46,7 +17,8 @@ async def _drain_app_unmount_services(
     """Drain the app's service phase before its remaining unmount cleanup."""
     from tldw_chatbook import app_lifecycle as _owner
 
-    service_cleanup_primary: BaseException | None = primary_error
+    listening_error = await close_listening_before_dependencies(self)
+    service_cleanup_primary = primary_error or listening_error
     try:
         deferred_tasks = [
             task
@@ -230,27 +202,7 @@ async def _drain_app_unmount_services(
     except BaseException as error:
         service_cleanup_primary = error
     finally:
-        try:
-            await self._close_owned_tts_resources()
-            self.loguru_logger.info("TTS resources cleaned up properly")
-        except BaseException as cleanup_error:
-            if service_cleanup_primary is not None:
-                service_cleanup_primary.add_note(
-                    "TTS cleanup also failed while preserving the primary "
-                    "shutdown error"
-                )
-                self.loguru_logger.warning(
-                    "TTS owner cleanup failed while preserving shutdown "
-                    f"type={type(cleanup_error).__name__} "
-                    "code=operation_failed"
-                )
-            elif isinstance(cleanup_error, Exception):
-                self.loguru_logger.warning(
-                    "TTS owner cleanup phase=unmount failed "
-                    f"type={type(cleanup_error).__name__} "
-                    "code=operation_failed"
-                )
-            else:
-                raise
+        if listening_error is None:
+            await close_unmount_tts(self, service_cleanup_primary)
     if service_cleanup_primary is not None:
         raise service_cleanup_primary

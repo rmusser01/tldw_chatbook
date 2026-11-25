@@ -50,7 +50,7 @@ Reason: durable domain state, audio identity/lifecycle, output ownership and bac
 | Durable listening | `DB/Subscriptions_DB.py`, next `DB/migrations/subscriptions_vN_to_vNplus1_article_listening.sql`, new `Subscriptions/article_listening_store.py` and `article_audio_assets.py`; SQL, private profile lock, assets/publication/deletion |
 | Preparation | new `Subscriptions/article_speech.py` and `article_listening_audio.py`; bounded text conversion, frozen voices and source-bound synthesis/cache |
 | Runtime | new `Subscriptions/article_listening_service.py`, `app_service_wiring.py`, `app_services.py`, `app_shutdown.py`; transport state machine, checkpoints, runtime authority and lifecycle |
-| Projection | `UI/Watchlists_Modules/content_pane.py`, `artifacts_pane.py`, new `listening_transport.py`, `UI/Screens/watchlists_collections_screen.py`, `app_command_providers.py`, `css/screens/screen_feature_watchlists.tcss` |
+| Projection | `UI/Watchlists_Modules/content_pane.py`, `artifacts_pane.py`, new `listening_transport.py`, `UI/Screens/watchlists_collections_screen.py`, `app_command_providers.py`, source `css/features/_watchlists.tcss` and generated `css/screen_feature_watchlists.tcss` |
 | Recovery | `Subscriptions/recovery.py`, `Backup_Recovery/profile_paths.py`, `detached_layout.py`, `staging.py`, `runtime_maintenance.py`, `storage_admission.py`, `DB/recovery_core.py`, `DB/recovery_operations.py`, `backlog/docs/backup-recovery-owner-inventory.md` |
 
 Paths in this map are relative to `tldw_chatbook/` except qualification, migrations under that package, tests, and documentation. Confirm existing file names against the implementation base before edits; a path correction is not permission to change a subsystem's ownership.
@@ -155,8 +155,8 @@ The final whole-task review and one scoped fix re-review are clear. The last
 199 affected checks pass with three platform skips. All 106 reviewed source/test/
 tool blobs and all public numerical receipts remain unchanged by that rebase.
 TASK-41177 is complete in draft PR #3742. TASK-41178 is complete in draft
-PR #3766. TASK-41179 is in progress on its separate child branch; later tasks
-have not begun.
+PR #3766. TASK-41179 is complete in draft PR #3767. TASK-41180 is in progress
+on its separate child branch; subsequent implementation remains gated on review.
 
 ### Task 3: Persist listening state and source-owned assets safely (TASK-41178)
 
@@ -256,18 +256,50 @@ supported streaming routes described above. TASK-41180 owns transport next.
 
 ### Task 5: Own the resumable session and interruption state machine (TASK-41180)
 
-**Prerequisite:** TASK-41179. **Files:** `Subscriptions/article_listening_service.py`, `app.py`, runtime-policy/profile hooks and source/session deletion coordination. Tests: new `Tests/Subscriptions/test_article_listening_service.py` plus focused app lifecycle tests.
+**Prerequisite:** TASK-41179. **Files:** `Subscriptions/article_listening_service.py`, `app_service_wiring.py`, `app_services.py`, `app_shutdown.py`, runtime-policy/profile hooks and source/session deletion coordination. Narrow store/audio borrowed-custody, controlled-run terminal hooks, Windows child containment and private lock-companion recovery changes implement the preflight contract below. Tests: new `Tests/Subscriptions/test_article_listening_service.py` plus affected lifecycle, output/native and recovery cases.
 
 **Interfaces:**
-- `ArticleListeningService.play_brief(briefing_id: int, *, replace: bool = False)`, `listen(item_id: str, *, runtime_backend: str)`, `pause()`, `resume()`, `stop()`, `skip()`, `clear()`, `play_again()`, `close()` are async intents; `snapshot() -> ListeningSnapshot` is an immutable UI projection.
-- Compose store/assets, one synthesis owner and the existing output owner. Consume all pages of saved `briefing_items` citation order through validated local authority; `get_briefing_provenance_for_agent` defaults to 50 entries and its `cited_has_more` must not truncate the queue. Use existing legacy citation extraction plus membership validation only when provenance is absent.
+- `ArticleListeningService.play_brief(briefing_id: int, *, runtime_backend: str, replace: bool = False)`, `listen(item_id: str, *, runtime_backend: str)`, `pause()`, `resume()`, `stop()`, `skip()`, `clear()`, `play_again()`, `close()` are async intents; `snapshot() -> ListeningSnapshot` is an immutable UI projection. Delayed commands may carry an expected revision. Explicit Retry/regenerate and a read-only candidate preview support the approved controls without granting authority from a projection.
+- Compose store/assets, one synthesis owner and the existing output owner. The current store's `prepare_brief` already resolves the full bounded saved selection in citation order, including validated legacy membership. Reuse it directly; the agent provenance API's default 50-entry page must not truncate listening. Verify more than 50 cited items in the service tests.
 - `ListeningSnapshot` includes transport phase, current/suspended title, excerpt flag, queue position/count, known timing, preparation progress, unavailable/error code, revision and action availability. It contains no provider secrets/reference payloads and grants no mutation authority.
 
-- [ ] **Step 1: Write failing state-machine tests.** Queue order/dedup/unavailable skipping, including more than 50 cited items; a playing versus paused queue interrupted twice; independent offsets when same item shares WAV; repeated Listen; foreground completion/Skip versus Stop/failure; exact-EOF Resume and Stop inside padding with no accidental automatic queue return; startup during each role; completed/all-unavailable behavior; failed replacement; one-second coalescing and atomic terminal checkpoint; profile/runtime away/back races, lock holder versus second instance, cancelled native inference finishing late, deletion and stale callbacks.
-- [ ] **Step 2: Observe RED.** Run the new service file with real SQLite/files and a deterministic controlled output seam; failures must identify state transitions, not depend on wall-clock sleep.
-- [ ] **Step 3: Implement service/lifecycle.** Wire one app-scoped service through `ServiceWiringMixin._wire_watchlists_and_notifications_services` and `app_services.py`; checkpoint/drain before TTS/DB teardown in `app_shutdown.py::_drain_app_unmount_services`. Use private profile ownership, revision/generation-checked commands, off-loop checkpoint writes and actual player observations. Keep the old cleanup owner until native work returns; block another listening synthesis in that interval. On startup publish paused state without synthesis; on runtime change retire permission to publish/start.
-- [ ] **Step 4: Observe GREEN.** Run service and affected lifecycle tests; kill a private native probe between durable checkpoints and confirm manual restoration from the same retained WAV. Verify no automatic read mark or server/local ID crossover. Run Ruff and changed architecture checks.
-- [ ] **Step 5: Review and commit** `feat: coordinate resumable article listening sessions`.
+**Implementation preflight, 2026-11-24:** Existing checkpoints advance both revision
+and durable playback generation. Track the live run separately and serialize its
+successful writes; never adopt an unrelated writer's revision. Fresh manual local
+Resume may CAS-adopt an old process epoch without resetting bookmarks. Startup
+remains paused and provider-free. A bounded atomic Play-again operation resets all
+queue entries, not just the two active bookmarks. Treat exact EOF and Stop during
+padding as manual states, not automatic foreground completion.
+
+Hold the existing exclusive listening lease across the session, borrowing that
+exact native custody for storage, synthesis, controlled output and coordinated
+destruction. Admit each new finite asset path through ordinary storage checks;
+do not enlarge an immutable lease or grant a directory wildcard. Old-authority
+terminal checkpoint/cleanup must be narrowly bound to its original image, profile,
+incarnation and generation. Runtime/profile retirement synchronously revokes new
+work before draining it. Drain the concrete app service before TTS/storage and
+register it before static producers in maintenance. Existing output retirement
+must checkpoint before releasing its own slot.
+
+Windows child creation also needs crash containment: assign a private noninherited
+kill-on-close job at suspended birth, seal a bounded versioned PID/creation-time
+predecessor receipt in the existing private lock companion, then resume the thread.
+Before a future grant, verify exact death and the existing 250 ms settle interval;
+availability of the DB lock alone is insufficient. Native admission/readiness must
+pass before new synthesis. Malformed or uncertain custody refuses; valid device-local
+receipts remain excluded from backup and never become imported session state.
+Test both post-checkpoint crash and suspended-start death, plus startup-Stop.
+
+Saved-body metadata does not establish publisher truncation. Project factual
+stored-feed provenance and an unknown excerpt classification where necessary;
+never infer full text or hide classification in a title/converter fingerprint.
+These rulings implement ADR367 without a new schema or runtime dependency.
+
+- [x] **Step 1: Write failing state-machine tests.** Queue order/dedup/unavailable skipping, including more than 50 cited items; a playing versus paused queue interrupted twice; independent offsets when same item shares WAV; repeated Listen; foreground completion/Skip versus Stop/failure; exact-EOF Resume and Stop inside padding with no accidental automatic queue return; startup during each role; completed/all-unavailable behavior; failed replacement; one-second coalescing and atomic terminal checkpoint; profile/runtime away/back races, lock holder versus second instance, cancelled native inference finishing late, deletion and stale callbacks.
+- [x] **Step 2: Observe RED.** Run the new service file with real SQLite/files and a deterministic controlled output seam; failures must identify state transitions, not depend on wall-clock sleep.
+- [x] **Step 3: Implement service/lifecycle.** Wire one app-scoped service through `ServiceWiringMixin._wire_watchlists_and_notifications_services` and `app_services.py`; checkpoint/drain before TTS/DB teardown in `app_shutdown.py::_drain_app_unmount_services`. Use private profile ownership, revision/generation-checked commands, off-loop checkpoint writes and actual player observations. Keep the old cleanup owner until native work returns; block another listening synthesis in that interval. On startup publish paused state without synthesis; on runtime change retire permission to publish/start.
+- [x] **Step 4: Observe GREEN.** Run service and affected lifecycle tests; kill a private native probe between durable checkpoints and confirm manual restoration from the same retained WAV. Verify no automatic read mark or server/local ID crossover. Run Ruff and changed architecture checks.
+- [x] **Step 5: Review and commit** `feat: coordinate resumable article listening sessions`.
 
 ### Task 6: Expose reader, brief and global transport controls (TASK-41181)
 
@@ -298,4 +330,4 @@ supported streaming routes described above. TASK-41180 owns transport next.
 
 The seven deliveries cover all ten design acceptance outcomes. The five Review Focus cases each have an owning test step above. Store, preparation, output and service signatures match their consumers. Tasks are ordered so a storage/voice/UI implementation cannot bypass qualification. SQL names and schema number are intentionally selected against the implementation base, while their ownership and rollback contracts are fixed here.
 
-Gate status: [native evidence](../../Testing/watchlist-article-audio-qualification.md) records the passing 21-case Windows matrix, explicit Windows listener confirmation and passing current-profile three-round startup-Stop supplement. The Windows-first release gate passes; the two earlier supplemental attempts remain preserved and all nine players/captures retired. Linux route/timing/listener evidence and native macOS evidence remain unqualified; they are unsupported for this first delivery and the portable gate remains open. Tasks 1 and 2 are Done under their revised Windows-first AC. Task 3 is In Progress for persistence/assets/recovery; Tasks 4-7 have not started.
+Gate status: [native evidence](../../Testing/watchlist-article-audio-qualification.md) records the passing 21-case Windows matrix, explicit Windows listener confirmation and passing current-profile three-round startup-Stop supplement. The Windows-first release gate passes; the two earlier supplemental attempts remain preserved and all nine players/captures retired. Linux route/timing/listener evidence and native macOS evidence remain unqualified; they are unsupported for this first delivery and the portable gate remains open. Tasks 1 and 2 are Done under their revised Windows-first AC. Tasks 3 and 4 are Done with their recorded storage and synthesis evidence. Task 5 is Done after independent review and two scoped fix rounds. Tasks 6 and 7 remain To Do.

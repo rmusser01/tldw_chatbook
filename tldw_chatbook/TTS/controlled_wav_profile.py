@@ -16,6 +16,7 @@ from tldw_chatbook.Utils.windows_files import WindowsReadPin
 
 RATE = 48000
 PADDING_FRAMES = 12000
+POST_REAP_SETTLE_S = 0.250
 PADDING_POLICY = "pcm16-stereo-48k-zero-tail-250ms-v1"
 QUALIFIED_SHA256 = "f6536c4caf9bac0fee1e8ffaafa5b13b6ad3e386a9a9f0b6613360e8c6d59919"
 _ROUTE_KEYS = ("SDL_AUDIODRIVER", "SDL_AUDIO_DEVICE_NAME", "AUDIODEV")
@@ -23,6 +24,20 @@ _ROUTE_KEYS = ("SDL_AUDIODRIVER", "SDL_AUDIO_DEVICE_NAME", "AUDIODEV")
 
 class ControlledWavError(ValueError):
     """Bounded diagnostic code safe to show without source paths or stderr."""
+
+
+def wait_for_predecessor(previous: tuple[int, int]) -> None:
+    """Observe the exact local process and wait for its qualified device tail."""
+    import time
+    from tldw_chatbook.Utils.windows_job import predecessor_retired
+
+    try:
+        confirmed = os.name == "nt" and predecessor_retired(*previous)
+    except (OSError, RuntimeError):
+        confirmed = False
+    if not confirmed:
+        raise ControlledWavError("previous_player_unconfirmed")
+    time.sleep(POST_REAP_SETTLE_S)
 
 
 @dataclass(frozen=True)
@@ -96,17 +111,30 @@ def _pin_executable(explicit: Path | None) -> tuple[Path, WindowsReadPin]:
     raise ControlledWavError("qualified_ffplay_unavailable")
 
 
-async def controlled_wav_readiness(*, executable: Path | None = None) -> str | None:
+async def controlled_wav_readiness(*, executable: Path | None = None, custody=None) -> str | None:
     """Return a bounded refusal code or None for the exact supported backend."""
 
     def check():
         try:
-            _, pin = _pin_executable(executable)
-            return None if pin.close() else "pin_retirement_unconfirmed"
+            path, pin = _pin_executable(executable)
+            try:
+                if custody is not None:
+                    custody.recover_predecessor()
+                    from ._controlled_wav_windows import check_contained_version
+
+                    check_contained_version(path)
+            finally:
+                if not pin.close():
+                    raise ControlledWavError("pin_retirement_unconfirmed")
+            return None
         except ControlledWavError as error:
             return str(error)
-        except (OSError, ValueError):
-            return "qualified_ffplay_unavailable"
+        except (OSError, ValueError, RuntimeError):
+            return (
+                "player_containment_unavailable"
+                if custody is not None
+                else "qualified_ffplay_unavailable"
+            )
 
     return await asyncio.to_thread(check)
 

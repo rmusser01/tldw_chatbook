@@ -709,6 +709,10 @@ def recheck_targets(plan: RestorePlan) -> None:
         raise ValueError("target_changed") from None
     if actual != plan.target_fingerprint:
         raise ValueError("target_changed")
+    if plan.mode == "replace" and type(plan.target) is Inventory:
+        from tldw_chatbook.Subscriptions.recovery import recheck_listening_destinations
+        recheck_listening_destinations(plan.target, (*plan.restore, *plan.retire))
+
 
 
 def plan_restore(

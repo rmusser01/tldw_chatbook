@@ -293,3 +293,40 @@ async def test_unrelated_cover_retires_mounted_handsfree_stream(request):
                 await asyncio.sleep(0.01)
         assert lease.revoked and stream.close.called and app.audio_output.owner is None
         assert console._hands_free._console_hands_free is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["durable", "unmount"])
+@private_profile_test
+async def test_listener_refusal_preserves_dependencies_and_drains_independent_owners(
+    request, monkeypatch, scope
+):
+    from unittest.mock import AsyncMock, Mock
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook import app_shutdown
+    from tldw_chatbook.Utils import egress
+
+    app = TldwCli()
+    problem = RuntimeError("player_retirement_unconfirmed")
+    monkeypatch.setattr(
+        app.article_listening_service, "close", AsyncMock(side_effect=problem)
+    )
+    if scope == "durable":
+        unrelated = AsyncMock()
+        monkeypatch.setattr(app, "_shutdown_workflow_session", unrelated)
+        dependent = Mock()
+        monkeypatch.setattr(egress, "close_pooled_default_sessions", dependent)
+        operation = app._shutdown_app_owned_lifecycles()
+    else:
+        unrelated = AsyncMock()
+        monkeypatch.setattr(
+            app, "_close_server_context_provider_cached_client", unrelated
+        )
+        dependent = AsyncMock()
+        monkeypatch.setattr(app, "_close_owned_tts_resources", dependent)
+        operation = app_shutdown._drain_app_unmount_services(app, None)
+    with pytest.raises(RuntimeError) as failure:
+        await operation
+    assert failure.value is problem
+    unrelated.assert_awaited()
+    dependent.assert_not_called()

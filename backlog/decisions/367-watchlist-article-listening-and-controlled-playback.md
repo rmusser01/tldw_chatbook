@@ -683,6 +683,91 @@ unfenced worker. Retain the original profile/root through cleanup. This task
 never starts playback, creates a second manifest or introduces another provider
 consent/credential system.
 
+## Session ownership and crash recovery contract (2026-11-24)
+
+TASK-41180 composes the accepted store, synthesis and controlled-output owners.
+Both item and brief admission require an explicit local backend and current local
+permission before reading bodies. The store already resolves the whole bounded
+cited selection, including legacy membership; an agent-facing 50-row page is not
+the queue source. Delayed intents and callbacks carry owner/session/run identity.
+Successful owned writes advance their expected revision; unrelated writes do not
+become permission to mutate a newer session. Manual restoration can adopt a fresh
+local policy epoch by CAS while preserving durable roles, offsets and artifacts.
+
+The service holds the existing exclusive native listening lease. Its storage,
+synthesis, playback and destructive paths borrow the exact holder. Additional
+finite asset paths obtain ordinary checked storage admission per operation;
+immutable lease scopes are not widened. Old-profile physical cleanup and terminal
+checkpoint capability is limited to the original image/profile/incarnation/run,
+and grants no new admission, publication or playback. Intake revocation precedes
+runtime/profile transitions; physical retirement precedes dependency teardown.
+The output run retains its exact registered retire callback, with a narrow
+checkpoint barrier before confirmed retirement releases the slot.
+
+Native app death requires an additional boundary. The current Windows launcher
+can leave ffplay alive after the app-owned file lock closes. Create the qualified
+child suspended with a private, noninherited kill-on-close job supplied in the
+creation attribute list. Do not assign it only after runnable birth. Before
+resuming its first thread, flush a fixed-width, versioned, integrity-checked
+predecessor record into the existing pinned private DB-lock companion. It names
+only a bounded PID and native process-creation FILETIME, not article/session data.
+
+While holding the native DB lease, a future owner must query that exact process
+with observation-only rights. A matching live process, denied query, malformed
+record or uncertain result refuses the grant. Exact signaled death, positive
+absence or proved PID reuse can discharge the predecessor after the same qualified
+250 ms post-exit interval. Clear only the matching record under its exact holder.
+Never signal an arbitrary recorded PID, infer silence from job-close or app exit,
+inherit the job/lock handle into ffplay, replace the stable locked inode, or
+clear uncertain custody to force playback. Short writes, failed flush/start and
+cleanup failures remain closed until physical retirement is established.
+
+This is native retirement metadata in the existing companion, not a second queue
+manifest. Recovery recognizes only legacy-empty or strictly valid bounded records
+as intentionally excluded; malformed contents remain unsupported. Backup, detached
+import and restore do not transport a device-local predecessor or erase a live
+destination's record. Namespace-exclusive replacement observes the exact original
+installed destination companion during target rechecks, without reopening an
+ordinary lease. It refuses live or uncertain custody and observes exact death
+plus the same settle interval without changing those bytes. Source/archive
+discovery remains inert and never queries a transported PID.
+Creation/containment readiness and the predecessor gate must
+pass before a new provider request. Native evidence must kill a private app after
+a checkpoint and before suspended-child release, retain the original child handle,
+and prove death plus settling before the next grant and manual retained-WAV Resume.
+
+This reuses Windows [creation attributes](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute),
+[job lifetime](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
+and [creation-time job assignment](https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812).
+An inherited file handle is not inherited [LockFileEx authority](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-lockfileex).
+Normal source custody and pinned file identity still apply.
+
+The UI projection is immutable and grants no authority. It may expose factual
+stored-feed provenance, known observed timing and bounded error/action state;
+publisher excerpt/full-text classification remains unknown without evidence.
+Titles stay out of diagnostic representations. Explicit Retry distinguishes fresh
+generation from regeneration of missing audio. Exact-EOF Resume starts no player;
+Stop in padding cannot masquerade as successful foreground return. Play again
+resets all saved entry bookmarks atomically, preserving reusable artifacts.
+
+Cancellation before admission selection revokes that tentative request and
+preserves the installed session. Once selected, a mutation retains its owned
+serialized operation through physical retirement, SQLite completion and state
+publication even if its observer detaches. Destructive source operations recheck
+their original live authority at the mutation boundary; old-owner terminal
+checkpoint authority cannot authorize deletion. Read-only brief guidance
+distinguishes Resume, Play again and replacement without changing failure state
+or requiring a new default voice for retained playback.
+
+A preparation refusal with unconfirmed pin retirement carries its exact retained
+attempt back to the service. An exception cannot discard that custody before a
+run is returned. The service and its original holder stay blocked; this adds no
+native handle retry or permission to start output. During shutdown, failed
+listening retirement preserves its dependent TTS, pooled-session and database
+barriers while independent owners still drain. Both lifecycle paths report the
+original bounded failure after independent cleanup, rather than aborting all
+cleanup at the first failed listening await.
+
 ## Alternatives
 
 - A profile-local JSON queue manifest avoids SQL changes but splits atomic state,

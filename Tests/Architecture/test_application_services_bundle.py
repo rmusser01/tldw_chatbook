@@ -85,6 +85,7 @@ ALIASES: tuple[tuple[str, str], ...] = (
     ("manual_sync_control_service", "sync.manual_sync_control_service"),
     ("sync_state_repository", "sync.sync_state_repository"),
     ("sync_restore_service", "sync.sync_restore_service"),
+    ("article_listening_service", "watchlists.listening"),
     ("local_watchlists_service", "watchlists.local"),
     ("server_watchlists_service", "watchlists.server"),
     ("watchlist_scope_service", "watchlists.scope"),

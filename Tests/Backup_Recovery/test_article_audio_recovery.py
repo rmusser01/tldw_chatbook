@@ -4,12 +4,13 @@ from dataclasses import replace
 from tldw_chatbook.Subscriptions.article_listening_store import ArticleListeningStore
 from pathlib import Path
 import shutil
+import sys
 from threading import Event
 
 import pytest
 import toml
 
-from Tests.Subscriptions.test_article_listening_store import prepare, setup_store
+from Tests.Subscriptions.test_article_listening_store import prepare, records as _records_fixture, setup_store
 from tldw_chatbook.Backup_Recovery.models import DISCOVERY_CONTEXT_KEY, DiscoveryContext
 from tldw_chatbook.Backup_Recovery.native_files import (
     create_private_directory,
@@ -19,7 +20,7 @@ from tldw_chatbook.Backup_Recovery.storage_admission import _preview_reads
 from tldw_chatbook.DB.recovery_operations import recovery_adapters as database_adapters
 from tldw_chatbook.Subscriptions.recovery import recovery_adapters as asset_adapters
 
-pytest_plugins = ["Tests.Subscriptions.test_article_listening_store"]
+records = _records_fixture
 
 
 def owners(records):
@@ -40,7 +41,13 @@ def owners(records):
     return adapter, asset_adapters()[0], config, root, m, binding, store, voice
 
 
-def test_capture_classifies_absence_and_exact_private_stages(records):
+def test_capture_classifies_absence_and_exact_private_stages(records, monkeypatch):
+    from tldw_chatbook.Utils import windows_job
+
+    def unexpected_observation(*args):
+        pytest.fail("Archive discovery queried a native process")
+
+    monkeypatch.setattr(windows_job, "predecessor_retired", unexpected_observation)
     _, assets, config, root, _, _, _, _ = owners(records)
     briefing = root / "briefing_audio"
     article = root / "article_audio"
@@ -65,7 +72,17 @@ def test_capture_classifies_absence_and_exact_private_stages(records):
     from tldw_chatbook.Utils.platform_files import os
 
     with create_private_file(lock) as handle:
-        os.write(handle, b"unexpected content")
+        from tldw_chatbook.Subscriptions.article_playback_receipt import (
+            encode_predecessor,
+        )
+
+        os.write(handle, encode_predecessor(42, 987654321))
+    assert (
+        next(row.status for row in assets.discover(config) if row.path == lock)
+        == "intentionally_excluded"
+    )
+    with lock.open("r+b") as handle:
+        handle.write(b"ALP2")
     assert (
         next(row.status for row in assets.discover(config) if row.path == lock)
         == "unsupported"
@@ -1655,3 +1672,72 @@ def test_detached_packaging_preserves_predecessor_catalog(tmp_path, version):
         assert copied.execute("SELECT name FROM subscriptions").fetchone() == (
             "archived",
         )
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="qualified Windows predecessor")
+def test_replacement_rechecks_installed_live_companion_before_destination_mutation(
+    records, monkeypatch
+):
+    import subprocess
+    import time
+    import _winapi
+    from tldw_chatbook.Backup_Recovery.models import Inventory
+    from tldw_chatbook.Backup_Recovery.restore_plan import (
+        RestorePlan,
+        _fingerprint,
+        _paths,
+        recheck_targets,
+    )
+    from tldw_chatbook.TTS._controlled_wav_windows import _creation_time
+    from tldw_chatbook.Utils import windows_job
+
+    adapter, assets, config, root, _, _, store, _ = owners(records)
+    child = subprocess.Popen(
+        [sys.executable, "-B", "-c", "import sys; sys.stdin.read()"],
+        stdin=subprocess.PIPE,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    try:
+        with store.session_lease(root) as owner:
+            owner.seal_predecessor(child.pid, _creation_time(int(child._handle)))
+        companion = records.db_path.with_name(
+            records.db_path.name + ".article-listening.lock"
+        )
+        original = companion.read_bytes(), records.db_path.read_bytes()
+        db_item = adapter.discover(config)[0]
+        inventory = Inventory((db_item, *assets.discover(config)), True, "", ())
+        plan = RestorePlan(
+            "digest",
+            "replace",
+            ((db_item.logical_id, records.db_path),),
+            (),
+            (),
+            "",
+            target=inventory,
+        )
+        plan = replace(plan, target_fingerprint=_fingerprint(_paths(plan), inventory))
+        with pytest.raises(ValueError, match="previous_player_unconfirmed"):
+            recheck_targets(plan)
+        assert (companion.read_bytes(), records.db_path.read_bytes()) == original
+        child.stdin.close()
+        assert child.wait(10) == 0
+        assert (
+            _winapi.WaitForSingleObject(int(child._handle), 0) == _winapi.WAIT_OBJECT_0
+        )
+
+        def uncertain(*args):
+            raise PermissionError
+
+        with monkeypatch.context() as patch:
+            patch.setattr(windows_job, "predecessor_retired", uncertain)
+            with pytest.raises(ValueError, match="previous_player_unconfirmed"):
+                recheck_targets(plan)
+        assert (companion.read_bytes(), records.db_path.read_bytes()) == original
+        observed = time.monotonic()
+        recheck_targets(plan)
+        assert time.monotonic() - observed >= 0.25
+        assert (companion.read_bytes(), records.db_path.read_bytes()) == original
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait(10)
