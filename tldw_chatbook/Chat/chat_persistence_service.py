@@ -224,10 +224,7 @@ _VOICE_PROMOTION_FORBIDDEN_REVISION_LOCATORS = frozenset(
         ("console_trace_response_links", "semantic_revision_id"),
         ("console_trace_revision_bindings", "revision_id"),
         ("console_trace_surface_nodes", "semantic_revision_id"),
-        # v86 (7970fbcada): a mix-in attempt is sealed onto its own assistant
-        # message's revision, so a row naming a promoted revision is a typed
-        # sidecar of that message (TASK-42517).
-        ("console_prompt_mixin_attempts", "result_revision_id"),
+        ("console_prompt_mixin_attempts", "result_revision_id"),  # TASK-42517
     }
 )
 # These locators are core parent/conversation pointers or conversation-level
