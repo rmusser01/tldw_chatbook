@@ -234,6 +234,13 @@ def unpark_round_payload(
             _retire_presentation(payload)
 
 
+def _app_cannot_answer(app: Any) -> bool:
+    """ADR-314: a never-started or exited App shows no card and takes no answer
+    (TASK-41637; the view does not matter, TASK-41948). A host without
+    ``is_running`` is live. Read at arm time; disposal settles a later exit."""
+    return not getattr(app, "is_running", True)
+
+
 @dataclass
 class _DecisionClock:
     """Volatile answerable-time budget; never included in a card payload."""
@@ -1292,17 +1299,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
                 is_head = self.park_round_payload(kind, round_id, payload)
         try:
             app = self.read_controller_app()
-            # TASK-41637: a never-started or exited App can neither show a card nor
-            # deliver an answer, so nobody can answer: fail closed. A covered or
-            # unreconciled view does not matter; Console harnesses mark
-            # controller.app running and route its call_from_thread through their
-            # host (run_on_host, TASK-41948). A host without
-            # is_running (mobile context) is live. An exit mid-wait is runtime
-            # disposal's to settle.
-            try:
-                app_gone = not app.is_running
-            except AttributeError:
-                app_gone = False
+            app_gone = _app_cannot_answer(app)
             park_toast = self.read_controller_park_pending_approval()
             if hard_expired() or app_gone:
                 pass
@@ -3501,7 +3498,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
 
         Returns:
             ``{"allow": bool, "remember": bool}``. Every non-Allow path
-            (deny, cancel, stop, timeout, no wired UI) returns
+            (deny, cancel, stop, timeout, no wired UI or running App) returns
             ``allow=False``.
         """
         from tldw_chatbook.Agents.agent_models import AGENT_KIND_PRIMARY
@@ -3692,8 +3689,9 @@ class InterruptRoundHost(InitialHookReviewMixin):
                 request_id,
                 card_payload,
             )
+        app_gone = _app_cannot_answer(self.read_controller_app())  # TASK-41947
         try:
-            if is_parked:
+            if is_parked and not app_gone:
                 if (
                     self.read_controller_app() is not None
                     and self.read_controller_park_pending_approval() is not None
@@ -3701,13 +3699,13 @@ class InterruptRoundHost(InitialHookReviewMixin):
                     self.read_controller_app().call_from_thread(
                         self.read_controller_park_pending_approval(), session_id
                     )
-            elif is_head:
+            elif is_head and not app_gone:
                 self.read_controller__marshal_pending_chat_create()(card_payload)
             # ADR-314: mark the owning run as waiting on a human decision
             # (see the sibling bridges' identical wrap for the why).
             with use_human_input_wait(str(chat_create_round_state.get("run_id") or "")):
                 while not event.wait(self.read_global__MCP_APPROVAL_POLL_SECONDS()):
-                    if self.read_controller__is_session_cancelled()(
+                    if app_gone or self.read_controller__is_session_cancelled()(
                         session_id,
                         cancel_event=round_cancel_event,
                         visit_event=visit_cancel_event,
@@ -3785,7 +3783,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
                     if session_id is not None
                     else (self.read_controller_store().active_session_id or "")
                 )
-                if target_session == (
+                if not app_gone and target_session == (
                     self.read_controller_store().active_session_id or ""
                 ):
                     self.read_controller__marshal_pending_chat_create()(
