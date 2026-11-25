@@ -170,15 +170,16 @@ _EXPECTED_BOUNDARY_ANCHORS = (
     # redesign spec's rail ordering.
     ("console-environment-section", "Environment"),
     ("console-tasks-section", "Tasks"),
-    # task-10: the Agent rail's fleet mini-section, moved here from the
-    # left rail's Agent section -- directly below Tasks, ahead of Sources.
-    ("console-agent-section-subagents", "Agents"),
     ("console-staged-context-tray", "Sources — next send"),
     # TASK-24611: the Library search controls, moved out of the live-work
     # readiness card to sit beside the empty state that names them. It is a
     # real n/p boundary, so it belongs in this inventory.
     ("console-library-search-region", "Library search"),
     ("console-retrieval-scope-row", "Scope"),
+    # task-10: the Agent rail's fleet mini-section, moved here from the
+    # left rail's Agent section. TASK-41959 (owner ruling 2026-11-25): below
+    # the Sources tray's group, ahead of the run inspector.
+    ("console-agent-section-subagents", "Agents"),
     ("console-inspector-run-heading", "Run"),
     ("console-inspector-source-readiness-heading", "Source Readiness"),
     ("console-inspector-tools-heading", "Tools"),
@@ -255,8 +256,9 @@ def _mounted_boundary_ids(rail) -> tuple[str, ...]:
     # omitted from the DOM), so they always occupy these two slots.
     #
     # task-10: the Agent rail's fleet mini-section moved here from the left
-    # rail's Agent section, directly below Tasks -- same unconditional-
-    # mount/hide-when-empty pattern.
+    # rail's Agent section -- same unconditional-mount/hide-when-empty
+    # pattern. TASK-41959 (owner ruling 2026-11-25) put it after the Scope
+    # row, so the Sources tray follows Tasks directly.
     #
     # TASK-24611: the Library search region sits directly beneath the Sources
     # tray, because the tray's empty state ("Stage sources from Library.") is
@@ -266,10 +268,10 @@ def _mounted_boundary_ids(rail) -> tuple[str, ...]:
     assert direct_children[:7] == (
         "console-environment-section",
         "console-tasks-section",
-        "console-agent-section-subagents",
         "console-staged-context-tray",
         "console-library-search-region",
         "console-retrieval-scope-row",
+        "console-agent-section-subagents",
         "console-run-inspector",
     )
     assert len(direct_children) == 8
@@ -305,8 +307,8 @@ def _mounted_boundary_ids(rail) -> tuple[str, ...]:
         # task-9: five pre-run boundaries, not three -- Environment and
         # Tasks were prepended ahead of the Sources tray/Library
         # search/Scope trio (TASK-24611 added the middle one, "three ...
-        # not two", to that trio). task-10 then prepended the Agent
-        # fleet mini-section after Tasks, making six.
+        # not two", to that trio). task-10 then added the Agent fleet
+        # mini-section, making six; TASK-41959 put it after Scope.
         *direct_children[:6],
         *inspector_boundaries,
         run_wrapper_children[-1],
@@ -322,10 +324,10 @@ def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners(
         "Next send authority",
         "Environment",
         "Tasks",
-        "Agents",
         "Sources — next send",
         "Library search",
         "Scope",
+        "Agents",
         "Run",
         "Source Readiness",
         "Tools",
@@ -347,10 +349,10 @@ def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners(
         "console-send-authority-summary": "Next send authority",
         "console-environment-section": "Environment",
         "console-tasks-section": "Tasks",
-        "console-agent-section-subagents": "Agents",
         "console-staged-context-tray": "Sources — next send",
         "console-library-search-region": "Library search",
         "console-retrieval-scope-row": "Scope",
+        "console-agent-section-subagents": "Agents",
         "console-settings-summary": "Session Settings",
         "console-pending-launch-card": "Live Work",
         "console-live-work-source-readiness": "Live Work",

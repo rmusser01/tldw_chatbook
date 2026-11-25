@@ -2913,14 +2913,14 @@ async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom
         assert bounded.viewport.parent is bounded
         # Ancestry evidence: the framed tray is a DIRECT child of the rail
         # body (no frame wrapper), composed right after the task-9
-        # Environment, Tasks and Fleet sections.
+        # Environment and Tasks sections (TASK-41959 moved the Fleet section
+        # below the tray's group).
         assert tray.parent is rail_body
         assert tray.has_class("console-frame-quiet")
         children = list(rail_body.children)
         assert [child.id for child in children[: children.index(tray)]] == [
             "console-environment-section",
             "console-tasks-section",
-            "console-agent-section-subagents",
         ]
 
         # Readiness -> pending-launch swap mounts after the run inspector.

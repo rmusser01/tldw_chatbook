@@ -34,11 +34,11 @@ Where this page's controls live:
   to its heading and the **Run** line so the body below keeps room for a
   whole section — see [Sessions, tabs & workspaces](sessions-tabs-workspaces.md)),
   then the scrolling body: the
-  **Environment**, **Tasks**, and **Agents** sections (see [The Environment
+  **Environment** and **Tasks** sections (see [The Environment
   panel](#the-environment-panel-environment-tasks-agents) below), the
   "Sources — next send" tray, the Library search controls, the
-  retrieval-scope row, the "Prefill" rows when one is armed, the
-  run/readiness groups, the "Selected turn" block, "Chat settings", the
+  retrieval-scope row, the **Agents** section, the "Prefill" rows when one
+  is armed, the run/readiness groups, the "Selected turn" block, "Chat settings", the
   "Live work sources" card, and the "Chat Dictionaries" / "World Books"
   blocks at the bottom. Press **Alt+I**
   to open the rail and put the caret on the send summary; press it again to
@@ -392,8 +392,11 @@ remain compact rows; they do not expand into separate 20-line sections.
 
 The top of the Inspect rail answers the questions you would otherwise flip
 to a terminal or GitHub for: *what has changed, is CI green, which task is
-this, what are my sub-agents doing?* Three collapsible sections sit above
-the "Sources — next send" tray:
+this, what are my sub-agents doing?* Three collapsible sections answer
+them. **Environment** and **Tasks** sit above the "Sources — next send"
+tray. **Agents** sits below the tray, its Library search controls and the
+Scope row, just above the run groups, so the sources you act on before
+sending stay at the top:
 
 **Environment** — the git working tree behind the conversation. It reports
 on the **active workspace's change-review root** (the same tree its **Review in

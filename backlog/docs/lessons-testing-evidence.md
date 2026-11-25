@@ -44,6 +44,12 @@
 
 **What to do.** When a change lets a new call write or own trace surface rows, rerun its journeys with the provider failing that call (all of the run's retries), then send one more message, on each path; compare with base. Count the failure path as part of the matrix, not an extra.
 
+## A Console test that reads the Inspector at 118-128 columns is reading a closed rail (TASK-41959, 2026-11-25)
+
+**Incident.** Two workbench-contract tests at 120x40 looked like product regressions. One read `'Blocked' in ''`. In the other, Review approval stayed disabled with an approval pending. TASK-41308 had already hit the same thing in the ready-inspector sibling (`'Run recipe' in ''`). These tests were written while the Inspector still opened itself at 118-128 columns. Since d5e1a26ab3 (TASK-23197) that auto-open is declined while the Context rail is open, and in these harnesses it is open. A closed rail also holds its rebuild until it opens (TASK-37000). So the staged approval counted 1 while the button stayed disabled. Patching out the TASK-23197 guard turned the blocked test green unchanged.
+
+**What to do.** Before calling an empty or stale Inspector read a regression, check `#console-right-rail`'s `display`. To assert Inspector content, open the rail first (`_open_console_inspector` in `Tests/UI/test_console_internals_decomposition.py`). Then wait on the state you assert, not on a fixed pause.
+
 ## Under the light tier, a red shared with dev still fails your PR: it inherits the reds of every test file it edits and of every file that imports one (TASK-33621.197, 2026-11-24)
 
 **Incident.** The merge queue evicted PR #3708 (TASK-33621.21) on its second failure of the required check (run 45362116936). Apart from one size-ratchet row, all 13 reds failed on dev 9fa2bf1b1d alone under the same test ids. The light tier (TASK-42521, 2026-11-23) runs a dev PR's changed test files whole, plus every test file that imports one of them. #3708 edited `test_console_voice_input.py` and `test_console_dictation_firstrun.py`, which no PR lane had ever run. It also edited `test_console_voice_capture.py`, and `test_console_voice_factory_composition.py` imports one helper from it, so that file's 8 reds came along. Those reds dated from 2026-09-10 (a `retain()` stub that went stale) and 2026-11-01 (tests pressing again before the preparation lock freed). The PR's own "branch vs dev by test id" comparison had listed the factory reds as shared and not counted them against it.

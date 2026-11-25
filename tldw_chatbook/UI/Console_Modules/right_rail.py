@@ -8,9 +8,10 @@ Context tray, retrieval-Scope row, run inspector, and live-work card. task-9
 prepended two more scrollable-body sections ahead of the tray: Environment
 (``#console-environment-section``) and Tasks (``#console-tasks-section``).
 task-10 then moved the Agent rail's fleet mini-section
-(``#console-agent-section-subagents``) here from the left rail, directly
-below Tasks -- the left rail's Agent section keeps its status/steps/
-drilldown controls; only the sub-agent list moved.
+(``#console-agent-section-subagents``) here from the left rail; TASK-41959
+placed it after the Scope row, ahead of the run inspector -- the left rail's
+Agent section keeps its status/steps/drilldown controls; only the sub-agent
+list moved.
 
 **Naming**: shell ids use the ``console-inspector-rail-*`` family
 (``console-inspector-rail-collapse``, ``console-inspector-rail-body``) plus
@@ -1730,36 +1731,6 @@ class ConsoleInspectorRail(Vertical):
             )
             yield tasks_section
 
-            # task-10: the Agent rail's fleet mini-section, moved here from
-            # the left rail's Agent section (it stays ordinary content --
-            # its own `ConsoleInspectorSection` header/body handle its own
-            # collapse; no bounded viewport wraps it). Same unconditional-
-            # mount-hide-when-empty pattern as Environment/Tasks above; the
-            # widget id, section id, and default-collapsed `open=False`
-            # are all unchanged from the left rail so the sync path
-            # (`ChatScreen._sync_console_agent_section`) and existing tests
-            # keep querying by the same id without change.
-            fleet_section = ConsoleInspectorSection(
-                title="Agents",
-                section_id=CONSOLE_AGENT_FLEET_SECTION_ID,
-                rows=self._agent_fleet_section_state.rows,
-                summary=self._agent_fleet_section_state.summary,
-                notice=self._agent_fleet_section_state.notice,
-                max_visible_rows=4,
-                scroll_on_expand=True,
-                view_all_label="View all runs",
-                collapsible=True,
-                open=False,
-                id="console-agent-section-subagents",
-            )
-            fleet_section.styles.display = (
-                "block"
-                if self._agent_fleet_section_state.rows
-                or self._agent_fleet_section_state.summary
-                else "none"
-            )
-            yield fleet_section
-
             # Context (staged sources) section -- moved here from the left
             # rail (task-400). Pinned to the TOP of the Inspector body so it
             # is visible without scrolling and reads above the run
@@ -1810,6 +1781,41 @@ class ConsoleInspectorRail(Vertical):
             retrieval_scope_row.styles.min_width = 0
             retrieval_scope_row.add_class("h-auto")
             yield frame_console_region(retrieval_scope_row, variant="quiet")
+
+            # task-10: the Agent rail's fleet mini-section, moved here from
+            # the left rail's Agent section (it stays ordinary content --
+            # its own `ConsoleInspectorSection` header/body handle its own
+            # collapse; no bounded viewport wraps it). Same unconditional-
+            # mount-hide-when-empty pattern as Environment/Tasks above; the
+            # widget id, section id, and default-collapsed `open=False`
+            # are all unchanged from the left rail so the sync path
+            # (`ChatScreen._sync_console_agent_section`) and existing tests
+            # keep querying by the same id without change.
+            #
+            # TASK-41959 (owner ruling, 2026-11-25): it sits below the
+            # Sources tray, its Library search and the Scope row, not
+            # directly below Tasks. The tray is what the user acts on
+            # before sending; this section is status.
+            fleet_section = ConsoleInspectorSection(
+                title="Agents",
+                section_id=CONSOLE_AGENT_FLEET_SECTION_ID,
+                rows=self._agent_fleet_section_state.rows,
+                summary=self._agent_fleet_section_state.summary,
+                notice=self._agent_fleet_section_state.notice,
+                max_visible_rows=4,
+                scroll_on_expand=True,
+                view_all_label="View all runs",
+                collapsible=True,
+                open=False,
+                id="console-agent-section-subagents",
+            )
+            fleet_section.styles.display = (
+                "block"
+                if self._agent_fleet_section_state.rows
+                or self._agent_fleet_section_state.summary
+                else "none"
+            )
+            yield fleet_section
 
             with Vertical(id="console-run-inspector"):
                 yield ConsoleRunInspector(
