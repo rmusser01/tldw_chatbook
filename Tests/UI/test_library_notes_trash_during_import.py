@@ -34,7 +34,11 @@ from types import SimpleNamespace
 import pytest
 
 from Tests.UI.app_factory import _build_test_app
-from Tests.UI.library_notes_bulk_support import click_settled, notes_settled
+from Tests.UI.library_notes_bulk_support import (
+    click_settled,
+    notes_settled,
+    until_settled,
+)
 from Tests.UI.library_quit_guard_support import _NotesProfile
 from Tests.UI.test_library_notes_import_escape_keeps_running import (
     _Gate,
@@ -179,7 +183,9 @@ async def test_next_in_the_trash_during_an_import_reads_the_page_and_x_says_why(
             assert controller.snapshot.phase is NoteImportPhase.IMPORTING
 
             # The open is a read: the running import does not swallow it.
-            await pilot.click("#library-notes-trash-open")
+            await click_settled(
+                host, pilot, screen, "#library-notes-trash-open", "the Trash opener"
+            )
             await _until(
                 pilot,
                 lambda: screen._notes_state.view == "trash"
@@ -195,7 +201,7 @@ async def test_next_in_the_trash_during_an_import_reads_the_page_and_x_says_why(
             # Next reads page 2 at once and lands on the pager -- on Previous,
             # since Next is disabled on the last page (Task 8a's landing rule):
             # no silent press.
-            await pilot.click("#library-notes-trash-next")
+            await click_settled(host, pilot, screen, "#library-notes-trash-next", "Next")
             await _until(
                 pilot,
                 lambda: _pager(screen) == f"21–25 of {DELETED} · Page 2 of 2"
@@ -211,6 +217,14 @@ async def test_next_in_the_trash_during_an_import_reads_the_page_and_x_says_why(
             assert controller.snapshot.phase is NoteImportPhase.IMPORTING
 
             # x on a row (focused by a title click) says why, writes nothing.
+            # The rows are looked up on a settled screen: a read landing
+            # between the lookup and the click rebuilds them.
+            await until_settled(
+                pilot,
+                screen,
+                lambda: len(screen.query(".library-notes-trash-row")) > 1,
+                "two Trash rows on a settled screen",
+            )
             rows = list(screen.query(".library-notes-trash-row"))
             await pilot.click(rows[1].query_one(".library-notes-trash-row-copy"))
             await _until(
@@ -260,18 +274,28 @@ async def test_next_in_the_trash_during_an_import_reads_the_page_and_x_says_why(
                     and not screen.query("#library-notes-trash-notice")
                 )
 
-            for _ in range(2):
-                await _until(
-                    pilot,
-                    on_page_2_and_settled,
-                    lambda: (
-                        "the Trash to hold page 2 after the import settled: "
-                        f"view={screen._notes_state.view!r} "
-                        f"trash={screen._notes_state.trash!r} "
-                        f"pager={_pager(screen)!r}"
-                    ),
+            def holding_page_2() -> str:
+                return (
+                    "the Trash to hold page 2 after the import settled: "
+                    f"view={screen._notes_state.view!r} "
+                    f"trash={screen._notes_state.trash!r} "
+                    f"pager={_pager(screen)!r}"
                 )
+
+            for _ in range(2):
+                await until_settled(pilot, screen, on_page_2_and_settled, holding_page_2)
                 await pilot.pause(0.3)
+            # Read on a settled screen, with no await before the assert: the
+            # pager is read as composed, and a late Notes read (the settle's
+            # own tree reload) re-composes the canvas, so mid-recompose the
+            # pager is not in the DOM and reads "" while the Trash still holds
+            # page 2 (PR #3423 CI run 45199546821 and a local census run:
+            # ``assert False``; forced late reload: 2 runs in 3).
+            await _until(
+                pilot,
+                lambda: notes_settled(screen) and on_page_2_and_settled(),
+                holding_page_2,
+            )
             assert on_page_2_and_settled()
             assert screen._notes_controller._library_notes_trash_page == 2
             assert seed.deleted() == before
