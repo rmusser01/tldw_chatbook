@@ -48,7 +48,7 @@ def report_resume_failures(
         no redaction of its own.
     """
 
-    for operation_id, outcome in zip(operation_ids, outcomes):
+    for operation_id, outcome in zip(operation_ids, outcomes, strict=False):
         if isinstance(outcome, BaseException):
             logger.warning(
                 "Research source {} resume failed for {}: {}",
@@ -143,6 +143,7 @@ def normalize_server_readiness(
         retry_eligible=retry_eligible,
         next_action=_server_recovery_action(lifecycle),
         detail=_safe_detail(status.get("status_reason")),
+        catalog_item_version=status.get("catalog_item_version"),
     )
 
 

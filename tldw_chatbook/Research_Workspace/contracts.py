@@ -322,6 +322,7 @@ class SourceReadiness:
     retry_eligible: bool = False
     next_action: str = "Refresh status"
     detail: str = ""
+    catalog_item_version: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -341,6 +342,10 @@ class SourceReadiness:
                 "catalog_item_id",
                 catalog_item_id,
             )
+        if self.catalog_item_version is not None and (
+            self.catalog_item_id is None or type(self.catalog_item_version) is not int or self.catalog_item_version < 1
+        ):
+            raise ValueError("Media revisions must identify an available catalog item")
         try:
             state = SourceReadinessState(self.state)
         except (TypeError, ValueError):

@@ -104,6 +104,7 @@ class ResearchSourceVersionRef:
     ) -> ResearchSourceVersionRef:
         """Join the attached source's version to its current readiness."""
         modes = []
+        catalog_version = source.catalog_item_version
         if readiness is not None:
             if (readiness.ref, readiness.source_id) != (source.ref, source.source_id):
                 raise ValueError(
@@ -119,6 +120,8 @@ class ResearchSourceVersionRef:
                     SourceReadinessState.STALE,
                 }
             ):
+                if readiness.catalog_item_version is not None:
+                    catalog_version = readiness.catalog_item_version
                 if readiness.fts_ready:
                     modes.append(RetrievalMode.FTS)
                 if readiness.vector_ready:
@@ -130,7 +133,7 @@ class ResearchSourceVersionRef:
             source.source_id,
             source.catalog_item_id,
             source.source_type,
-            source.catalog_item_version,
+            catalog_version,
             source.version,
             tuple(modes),
         )

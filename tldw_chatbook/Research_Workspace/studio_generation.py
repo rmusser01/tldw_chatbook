@@ -131,6 +131,7 @@ class StudioGeneratedOutput:
     questions: tuple[GeneratedQuizQuestion, ...] = field(default=(), repr=False)
     citations: tuple[StudioCitation, ...] = ()
     failure_reason: str = ""
+    native_owner: tuple[str, int] | None = None
 
 
 class ResearchStudioGenerator:

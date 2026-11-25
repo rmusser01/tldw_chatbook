@@ -57,9 +57,15 @@ class ResearchStudioService:
         self._active[key] = cancel_event
         try:
             if attempt.generated is None:
-                generated = await self.generator.generate(
-                    request, on_chunk=on_chunk, cancel_event=cancel_event
+                native_generator = getattr(self.owner, "generate_native", None)
+                generated = (
+                    await native_generator(request, cancel_event=cancel_event)
+                    if native_generator is not None else None
                 )
+                if generated is None:
+                    generated = await self.generator.generate(
+                        request, on_chunk=on_chunk, cancel_event=cancel_event
+                    )
                 if generated.status == "failed":
                     raise ValueError(generated.failure_reason)
                 if generated.status == "complete":

@@ -17,6 +17,7 @@ from .contracts import (
 from .studio_models import (
     PRIMARY_RESEARCH_OUTPUT_KINDS,
     ResearchOutputKind,
+    ResearchWorkProductKind,
     StudioOutputKind,
     StudioOwnerKind,
     studio_retrieval,
@@ -149,11 +150,33 @@ SERVER_DIAGRAM_TYPES = MappingProxyType(
     {ResearchOutputKind.MIND_MAP: "mindmap", ResearchOutputKind.TIMELINE: "timeline"}
 )
 
+SERVER_TABLE_KINDS = (
+    ResearchOutputKind.DATA_TABLE,
+    ResearchWorkProductKind.LITERATURE_MATRIX,
+    ResearchWorkProductKind.CORPUS_GAP_FINDER,
+)
+
 STUDIO_OUTPUT_MAPPINGS: Mapping[
     tuple[WorkspaceDataSource, StudioOutputKind], StudioOwnerMapping
 ] = MappingProxyType(
     {
         **PRIMARY_OUTPUT_MAPPINGS,
+        **{
+            (WorkspaceDataSource.SERVER, kind): StudioOwnerMapping(
+                StudioOwnerKind.SERVER_DATA_TABLE,
+                "Server Data Tables",
+                "uuid",
+                "version",
+                "workspace_id",
+                f"generate_{kind.value}",
+                None,
+                None,
+                "research_workspace",
+                "research_workspace_artifact_target",
+                artifact_type="data_table",
+            )
+            for kind in SERVER_TABLE_KINDS
+        },
         **{
             (WorkspaceDataSource.SERVER, kind): replace(
                 _SERVER_TEXT,

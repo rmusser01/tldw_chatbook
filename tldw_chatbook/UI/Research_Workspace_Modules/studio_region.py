@@ -270,6 +270,11 @@ class ResearchStudioRegion(VerticalScroll):
                     "Research Studio readiness failed (error_type={})",
                     type(exc).__name__,
                 )
+        if route is not None and (native_probe := getattr(port, "native_studio_capabilities", None)):
+            try:
+                capabilities.update(await native_probe(capture.ref, route, sources or ()))
+            except Exception as exc:
+                logger.debug("Studio native capability unavailable ({})", type(exc).__name__)
         research_available = (
             self.overlay_store is not None
             and getattr(self.app, "research_scope_service", None) is not None
@@ -735,6 +740,10 @@ class ResearchStudioRegion(VerticalScroll):
                         actions["export"] = "Export accepted Markdown"
                     elif record.get("review_state") in {"draft", "reviewing"}:
                         actions["accept"] = "Accept reviewed version"
+            if output.owner_kind is StudioOwnerKind.SERVER_DATA_TABLE and hasattr(
+                self._port(output.workspace), "export_output"
+            ):
+                actions.update({f"export-{fmt.lower()}": f"Download {fmt}" for fmt in ("CSV", "JSON", "XLSX")})
             limits = (
                 "Undo requires a restorable version from the owner."
                 if "delete" in actions

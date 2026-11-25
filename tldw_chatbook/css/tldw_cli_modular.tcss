@@ -19453,6 +19453,11 @@ ResearchStudioOptions, ResearchStudioActions, ResearchStudioEdit, ResearchMoreOu
     min-height: $ds-size-0;
 }
 
+#research-studio-native-table {
+    height: auto;
+    max-height: $ds-size-12;
+}
+
 ResearchWorkspaceActions, ResearchCopyTargetDialog, ResearchCopyPreview,
 ResearchCopyProgress, ResearchCopyReceiptView, ResearchSharingDialog,
 ResearchWorkspaceName, ResearchWorkspacePicker, ResearchWorkspaceTemplates,

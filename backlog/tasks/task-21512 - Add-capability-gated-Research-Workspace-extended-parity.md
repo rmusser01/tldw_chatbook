@@ -46,11 +46,18 @@ Complete the audited Research Workspace control namespace with honest capability
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: no new ADR
+ADR required: yes for the approved companion Server Data Tables contract
 
 ADR path: `backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md`
 
-Reason: ADR-322 and the approved design already classify the audited controls and define their owners. This phase activates only existing real contracts and must raise a new ADR if it introduces a new generator, canonical owner, or server contract.
+Reason: ADR-322 and the approved design already classify the audited controls and define their owners. The approved Data Tables slice uses the companion tldw_server ADR-099 (Docs/ADR/099-research-workspace-data-tables.md) for exact native Data Tables admission. The existing Chatbook ownership decision remains ADR-322.
 
 Follow `Docs/superpowers/plans/2026-08-23-research-workspace-extended-parity.md` task-by-task with test-first checkpoints and one scoped commit per completed plan task.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+- Data Table, Literature Matrix, and Corpus Gap Finder now use the exact Server route and captured Media revisions under companion Server ADR-099. Their Studio entries reference the native table UUID and published version and reopen native data for preview and export. Local keeps these actions unavailable. The Server feature currently requires server-managed credentials and usage quotas disabled.
+- The focused Server suite passed 175 tests with PostgreSQL required. In Chatbook, 106 targeted Studio, geometry, and token tests passed, followed by 116 owner, schema, and keyboard checks with overlapping coverage. A localhost run with a stubbed model adapter recovered one successful launch after dropping its response and reopened and exported all three kinds through Data Tables.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

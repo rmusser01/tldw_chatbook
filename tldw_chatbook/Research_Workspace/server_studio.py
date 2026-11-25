@@ -13,6 +13,7 @@ from tldw_chatbook.Notes.server_notes_workspace_service import (
 )
 from tldw_chatbook.Workspaces.output_membership import output_membership_metadata
 from tldw_chatbook.tldw_api.exceptions import APIResponseError
+from tldw_chatbook.tldw_api.workspace_data_tables_client import WorkspaceDataTablesClient, canonical_table_uuid
 from tldw_chatbook.tldw_api.workspace_artifact_exports import (
     export_accepted_workspace_markdown,
 )
@@ -29,7 +30,7 @@ from .contracts import (
 )
 from .server_study import output_creation_time, study_payload, study_result
 from .studio_generation import StudioGeneratedOutput, validate_diagram_text
-from .studio_mapping import SERVER_DIAGRAM_TYPES, STUDIO_OUTPUT_MAPPINGS
+from .studio_mapping import SERVER_DIAGRAM_TYPES, STUDIO_OUTPUT_MAPPINGS, SERVER_TABLE_KINDS
 from .studio_models import (
     ResearchStudioRequest,
     StudioOwnerKind,
@@ -38,6 +39,7 @@ from .studio_models import (
     validate_output_page,
 )
 from .work_product_templates import TEXT_WORK_PRODUCT_TEMPLATES
+from .server_data_tables import generate_native_table, table_sources
 from .studio_provenance import (
     citation_references,
     generation_metadata,
@@ -119,6 +121,50 @@ class ServerStudioAdapter:
         self._check_connection(ref, client)
         return result is not None
 
+    @staticmethod
+    def _tables(ref, client) -> WorkspaceDataTablesClient:
+        return WorkspaceDataTablesClient(client, ref.workspace_id, ref.principal_id)
+
+    async def native_capabilities(self, ref, route, sources, revision) -> dict[str, ResearchCapability]:
+        if route is None or route.data_source is not ref.data_source:
+            return {}
+        client, _ = self._connection(ref)
+        reply = await self._tables(ref, client).capability(route.provider, route.model)
+        self._check_connection(ref, client)
+        message = "Choose an explicit Server provider and model with Data Tables access."
+        reason = "server_data_tables_unavailable"
+        if reply and reply.reason == "metered_workspace_table_route_unavailable":
+            message = "Native Workspace Data Tables requires a Server route with usage quotas disabled."
+        elif reply and reply.reason == "server_provider_credentials_required":
+            message = "The selected provider needs a Server-managed credential for Data Tables."
+        elif reply and reply.reason == "workspace_table_jobs_unavailable":
+            message = "The native Data Tables queue is unavailable."
+        available = bool(reply and reply.available)
+        if available:
+            try:
+                table_sources(sources, maximum=reply.max_sources)
+            except ValueError as exc:
+                available, reason, message = False, "studio_source_owner_unavailable", str(exc)
+        capability = ResearchCapability(
+            available, "available" if available else reason,
+            "Server Data Tables is ready." if available else message, StudioOwnerKind.SERVER_DATA_TABLE,
+            "" if available else "Check the selected route and refresh the versions of the selected Server Media.",
+            revision,
+        )
+        return {
+            "get_data_table": capability,
+            **{f"generate_{kind.value}": capability for kind in SERVER_TABLE_KINDS},
+        }
+
+    async def generate_native(self, request, *, cancel_event) -> StudioGeneratedOutput | None:
+        if request.output_kind not in SERVER_TABLE_KINDS:
+            return None
+        ref = request.workspace
+        client, _ = self._connection(ref)
+        result = await generate_native_table(self._tables(ref, client), request, cancel_event)
+        self._check_connection(ref, client)
+        return result
+
     def _connection(self, ref: QualifiedWorkspaceRef):
         if ref.data_source is not WorkspaceDataSource.SERVER:
             raise ValueError("This Studio owner requires a Server workspace")
@@ -169,6 +215,15 @@ class ServerStudioAdapter:
             or row["version"] < 1
         ):
             raise ValueError("The Server artifact has no completed revision")
+        if owner.owner_kind is StudioOwnerKind.SERVER_DATA_TABLE:
+            native = row["producer_metadata"].get("research_native_owner")
+            if not isinstance(native, Mapping) or native.get("owner_kind") != owner.owner_kind.value:
+                raise ValueError("The workspace link has no native Data Table")
+            owner_id = canonical_table_uuid(native.get("owner_id"))
+            version = native.get("owner_version")
+            if type(version) is not int or version < 1:
+                raise ValueError("The workspace link has no native Data Table revision")
+            return output_reference(ref, owner_id, owner.owner_kind, version, details)
         return output_reference(
             ref,
             validate_chat_id(row.get("id"), "artifact ID"),
@@ -253,6 +308,18 @@ class ServerStudioAdapter:
             )
             self._check_connection(output.workspace, client)
             return study_result(output.workspace, row)[1] if row else None
+        if output.owner_kind is StudioOwnerKind.SERVER_DATA_TABLE:
+            links = await self._records(output.workspace, client, service)
+            if not any(
+                row.get("artifact_type") == "data_table" and (metadata := self._metadata(row))
+                and self._reference(output.workspace, row, metadata) == output for row in links
+            ):
+                return None
+            detail = await self._tables(output.workspace, client).detail(output.owner_id, rows_limit=12)
+            self._check_connection(output.workspace, client)
+            if not detail or detail.table.version != output.owner_version or detail.table.status != "ready":
+                return None
+            return {"title": detail.table.name, **detail.model_dump(mode="json")}
         for row in await self._records(output.workspace, client, service):
             if row.get("id") == output.owner_id and (metadata := self._metadata(row)):
                 selected = self._reference(output.workspace, row, metadata)
@@ -334,6 +401,18 @@ class ServerStudioAdapter:
                 raise ValueError("The Server did not confirm the updated revision")
 
     async def export_output(self, output: WorkspaceOutputRef, format: str) -> bytes:
+        if output.owner_kind is StudioOwnerKind.SERVER_DATA_TABLE:
+            ref = output.workspace
+            client, _ = self._connection(ref)
+            if not await self.resolve_output(output):
+                raise ValueError("Open the current native Data Table revision before exporting")
+            tables = self._tables(ref, client)
+            data = await tables.export(output.owner_id, format)
+            detail = await tables.detail(output.owner_id)
+            self._check_connection(ref, client)
+            if not detail or detail.table.version != output.owner_version:
+                raise ValueError("The native Data Table changed while exporting")
+            return data
         if format != "markdown":
             raise ValueError("Choose Markdown for this workspace artifact")
         ref = output.workspace
@@ -394,6 +473,10 @@ class ServerStudioAdapter:
             raise ValueError(
                 "The selected output belongs to a different workspace or output kind"
             )
+        if mapping.owner_kind is StudioOwnerKind.SERVER_DATA_TABLE:
+            if replace_output:
+                raise ValueError("Regenerate the native Data Table as a new version")
+            return await self._save_native_table(ref, client, service, request, generated, supersedes)
         if mapping.owner_kind is not StudioOwnerKind.SERVER_ARTIFACT:
             if replace_output:
                 raise ValueError(
@@ -502,3 +585,56 @@ class ServerStudioAdapter:
                     "The Server did not confirm the saved artifact and its provenance"
                 )
             return self._reference(ref, row, metadata)
+
+    async def _save_native_table(self, ref, client, service, request, generated, supersedes):
+        if generated.native_owner is None:
+            raise ValueError("The native Data Table generation has no completed owner")
+        table_id, version = generated.native_owner
+        table_id = canonical_table_uuid(table_id)
+        artifact_id = self._artifact_id(request)
+        metadata = generation_metadata(request, supersedes)
+        producer = {
+            **metadata,
+            "research_native_owner": {
+                "owner_kind": StudioOwnerKind.SERVER_DATA_TABLE.value,
+                "owner_id": table_id,
+                "owner_version": version,
+            },
+        }
+
+        def validated(row):
+            if (
+                row.get("id") != artifact_id or row.get("workspace_id") != ref.workspace_id
+                or row.get("producer_metadata") != producer or row.get("content")
+            ):
+                raise ValueError("The Server did not confirm the native Data Table workspace link")
+            return self._reference(ref, row, metadata)
+
+        async with self._mutations:
+            rows = await self._records(ref, client, service)
+            for row in rows:
+                if row.get("id") == artifact_id:
+                    return validated(row)
+            if supersedes and not any(
+                row.get("artifact_type") == "data_table" and (saved := self._metadata(row))
+                and self._reference(ref, row, saved) == supersedes for row in rows
+            ):
+                raise ValueError("The previous Workspace Data Table reference changed")
+            detail = await self._tables(ref, client).detail(table_id)
+            self._check_connection(ref, client)
+            if not detail or detail.table.version != version or detail.table.status != "ready":
+                raise ValueError("The native Data Table changed before linking")
+            try:
+                row = await service.save_workspace_artifact(
+                    workspace_id=ref.workspace_id, artifact_id=artifact_id, artifact_type="data_table",
+                    title=detail.table.name, status="complete", producer_metadata=producer,
+                )
+            except APIResponseError as exc:
+                if exc.status_code != 409:
+                    raise
+                rows = await self._records(ref, client, service)
+                row = next((candidate for candidate in rows if candidate.get("id") == artifact_id), None)
+                if row is None:
+                    raise
+            self._check_connection(ref, client)
+            return validated(row)

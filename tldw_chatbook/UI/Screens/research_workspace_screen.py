@@ -1596,20 +1596,23 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                             else "Missing output link removed."
                         )
                         studio.refresh_studio()
-            elif action == "export":
+            elif action == "export" or action in {"export-csv", "export-json", "export-xlsx"}:
+                format = "markdown" if action == "export" else action.removeprefix("export-")
+                suffix = "md" if format == "markdown" else format
+                format_label = "Markdown" if format == "markdown" else format.upper()
                 picked = await self.app.push_screen_wait(
                     FileSave(
                         location=str(Path.home()),
-                        title="Download Studio output as Markdown",
-                        default_file=f"{output.output_kind.value}.md",
+                        title=f"Download Studio output as {format_label}",
+                        default_file=f"{output.output_kind.value}.{suffix}",
                     )
                 )
                 if picked is not None and current():
-                    data = await port.export_output(output, "markdown")
+                    data = await port.export_output(output, format)
                     if current():
                         target = validate_path_simple(picked, require_exists=False)
                         await asyncio.to_thread(Path(target).write_bytes, data)
-                        studio._status("Markdown downloaded.")
+                        studio._status(f"{format_label} downloaded.")
             elif action == "edit":
                 from ..Research_Workspace_Modules.studio_dialogs import (
                     ResearchStudioEdit,

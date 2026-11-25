@@ -211,3 +211,62 @@ async def test_server_export_requires_an_accepted_exact_version_and_edit_reopens
     with pytest.raises(ValueError, match="accept"):
         await owner.export_output(edited, "markdown")
     assert len(server.exports) == 1
+
+
+async def test_native_workspace_data_tables_confirm_and_recover_the_canonical_owner():
+    import asyncio
+    from uuid import UUID
+
+    from tldw_chatbook.Research_Workspace.studio_service import ResearchStudioService
+
+    native_id = str(UUID(int=44))
+    source = replace(SOURCE, ref=SERVER, catalog_item_id="17", catalog_item_version=3, association_version=2)
+    route = replace(ROUTE, data_source="server", processor="server-chat", endpoint_class="server")
+
+    class TablesServer(_ArtifactServer):
+        def __init__(self):
+            super().__init__()
+            self.launches = []
+            self.detail = {"uuid": native_id, "name": "Native table", "prompt": "Extract", "version": 4,
+                           "status": "ready", "row_count": 1, "workspace_tag": f"workspace:{SERVER.workspace_id}"}
+
+        async def _request(self, method, path, *, json_data=None, params=None, headers=None):
+            if path.endswith("/research-data-tables"):
+                if method == "GET":
+                    assert params == {"provider": route.provider, "model": route.model}
+                    return {**params, "contract": "research-workspace-data-tables.v1",
+                            "available": True, "max_sources": 20}
+                self.launches.append(json_data)
+                assert json_data["sources"][0]["catalog_item_version"] == 3
+                assert json_data["sources"][0]["catalog_item_id"] == 17
+                return {"job_id": 54, "job_uuid": str(UUID(int=54)), "status": "completed",
+                        "table": self.detail, "publication_status": "ready", "published_version": 4}
+            if path.endswith(f"/data-tables/{native_id}"):
+                return {"table": self.detail, "columns": [], "rows": [], "sources": [],
+                        "rows_limit": 12, "rows_offset": 0}
+            return await super()._request(method, path, json_data=json_data, params=params, headers=headers)
+
+    server = TablesServer()
+    adapter = ServerStudioAdapter(lambda ref: server)
+    caps = await adapter.native_capabilities(SERVER, route, (source,), "r1")
+    assert caps["generate_data_table"].available
+    req = replace(
+        server_request(), output_kind="data_table", source_snapshot=(source,), processing_route=route,
+    )
+    studio = ResearchStudioService(None, adapter)
+
+    def lost_after_write():
+        raise RuntimeError("lost link response")
+
+    server.after_write = lost_after_write
+    with pytest.raises(RuntimeError, match="lost link"):
+        await studio.generate(req, lambda _: None, asyncio.Event())
+    saved = await studio.retry(req.workspace, req.operation_id)
+    assert len(server.launches) == len(server.writes) == 1
+    assert saved.owner_id == native_id and saved.owner_version == 4
+    [link] = server.saved.values()
+    assert not link["content"]
+    assert link["producer_metadata"]["research_native_owner"]["owner_id"] == native_id
+    assert (await adapter.resolve_output(saved))["table"]["uuid"] == native_id
+    server.detail["version"] += 1
+    assert await adapter.resolve_output(saved) is None

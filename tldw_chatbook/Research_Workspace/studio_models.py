@@ -82,6 +82,7 @@ class StudioOwnerKind(StrEnum):
     SERVER_ARTIFACT = "server_artifact"
     SERVER_STUDY_DECK = "server_study_deck"
     SERVER_QUIZ = "server_quiz"
+    SERVER_DATA_TABLE = "server_data_table"
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +97,9 @@ class ResearchGenerationConfig:
     retrieval: ResearchRetrievalSettings = field(
         default_factory=lambda: ResearchRetrievalSettings(history_limit=0)
     )
+
+    table_columns: tuple[str, ...] = ()
+    table_max_rows: int | None = None
 
     def __post_init__(self) -> None:
         title = _safe_identity(self.title, "output title")
@@ -120,11 +124,33 @@ class ResearchGenerationConfig:
             raise ValueError("Top P must be greater than 0 and at most 1")
         if not isinstance(self.retrieval, ResearchRetrievalSettings):
             raise TypeError("Studio retrieval options must be validated")
+        if (
+            not isinstance(self.table_columns, tuple) or len(self.table_columns) > 24
+            or any(
+                not isinstance(name, str) or not 1 <= len(name.strip()) <= 80
+                or any(ord(char) < 32 for char in name)
+                for name in self.table_columns
+            )
+        ):
+            raise ValueError("Enter up to 24 column names of 80 characters each")
+        columns = tuple(name.strip() for name in self.table_columns)
+        if len({name.casefold() for name in columns}) != len(columns):
+            raise ValueError("Column names must be distinct")
+        object.__setattr__(self, "table_columns", columns)
+        if self.table_max_rows is not None and (
+            type(self.table_max_rows) is not int or not 1 <= self.table_max_rows <= 2000
+        ):
+            raise ValueError("Choose a maximum of 1 to 2,000 table rows")
+
 
     @property
     def fingerprint(self) -> str:
         """Identify generation options without persisting user-supplied labels."""
-        return sha256(json.dumps(asdict(self), sort_keys=True).encode()).hexdigest()
+        options = asdict(self)
+        for key in ("table_columns", "table_max_rows"):
+            if not options[key]:
+                del options[key]
+        return sha256(json.dumps(options, sort_keys=True).encode()).hexdigest()
 
 
 def validate_studio_sources(

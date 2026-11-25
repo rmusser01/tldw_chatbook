@@ -5,10 +5,12 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
+from rich.text import Text
 from textual.widgets import (
     Button,
     Checkbox,
     Collapsible,
+    DataTable,
     Input,
     Select,
     Static,
@@ -16,9 +18,11 @@ from textual.widgets import (
 )
 
 from ...Research_Workspace.chat_models import ResearchRetrievalSettings
+from ...Research_Workspace.studio_mapping import SERVER_TABLE_KINDS
 from ...Research_Workspace.studio_models import (
     ResearchGenerationConfig,
     ResearchOutputKind,
+    StudioOwnerKind,
     StudioOutputKind,
 )
 from ...Research_Workspace.work_product_templates import TEXT_WORK_PRODUCT_TEMPLATES
@@ -62,49 +66,58 @@ class ResearchStudioOptions(
             )
             yield Static("Title")
             yield Input(placeholder=output_label(self.kind), id="research-studio-title")
-            yield Static("Retrieval focus (optional for FTS)")
-            yield Input(id="research-studio-focus")
-            if self.is_study:
-                yield Static("Study items")
-                yield Input("8", type="integer", id="research-studio-items")
-            yield Static("Detail")
-            yield Select(
-                [
-                    ("Brief", "brief"),
-                    ("Standard", "standard"),
-                    ("Detailed", "detailed"),
-                ],
-                value="standard",
-                allow_blank=False,
-                id="research-studio-detail",
-            )
-            with Collapsible(title="Advanced options"):
-                yield Static("Retrieval method")
+            if self.kind in SERVER_TABLE_KINDS:
+                yield Static("Table focus (optional)")
+                yield Input(placeholder="What should the table extract?", id="research-studio-focus")
+                if self.kind is ResearchOutputKind.DATA_TABLE:
+                    yield Static("Column names (optional)")
+                    yield Input(placeholder="Comma-separated column names", id="research-studio-columns")
+                yield Static("Maximum rows (optional)")
+                yield Input(placeholder="Maximum rows", type="integer", id="research-studio-max-rows")
+            else:
+                yield Static("Retrieval focus (optional for FTS)")
+                yield Input(id="research-studio-focus")
+                if self.is_study:
+                    yield Static("Study items")
+                    yield Input("8", type="integer", id="research-studio-items")
+                yield Static("Detail")
                 yield Select(
-                    [("FTS", "fts"), ("Vector", "semantic"), ("Hybrid", "hybrid")],
-                    value="fts",
+                    [
+                        ("Brief", "brief"),
+                        ("Standard", "standard"),
+                        ("Detailed", "detailed"),
+                    ],
+                    value="standard",
                     allow_blank=False,
-                    id="research-studio-retrieval",
+                    id="research-studio-detail",
                 )
-                yield Static("Top K")
-                yield Input("8", type="integer", id="research-studio-top-k")
-                yield Static("Score threshold (optional)")
-                yield Input(type="number", id="research-studio-threshold")
-                yield Checkbox("Rerank evidence", id="research-studio-rerank")
-                yield Checkbox(
-                    "Source citations required"
-                    if self.kind in TEXT_WORK_PRODUCT_TEMPLATES
-                    else "Include source citations",
-                    value=True,
-                    id="research-studio-citations",
-                    disabled=self.kind in TEXT_WORK_PRODUCT_TEMPLATES,
-                )
-                yield Static("Temperature")
-                yield Input("0.3", type="number", id="research-studio-temperature")
-                yield Static("Top P")
-                yield Input("1.0", type="number", id="research-studio-top-p")
-                yield Static("Max output tokens")
-                yield Input("4096", type="integer", id="research-studio-tokens")
+                with Collapsible(title="Advanced options"):
+                    yield Static("Retrieval method")
+                    yield Select(
+                        [("FTS", "fts"), ("Vector", "semantic"), ("Hybrid", "hybrid")],
+                        value="fts",
+                        allow_blank=False,
+                        id="research-studio-retrieval",
+                    )
+                    yield Static("Top K")
+                    yield Input("8", type="integer", id="research-studio-top-k")
+                    yield Static("Score threshold (optional)")
+                    yield Input(type="number", id="research-studio-threshold")
+                    yield Checkbox("Rerank evidence", id="research-studio-rerank")
+                    yield Checkbox(
+                        "Source citations required"
+                        if self.kind in TEXT_WORK_PRODUCT_TEMPLATES
+                        else "Include source citations",
+                        value=True,
+                        id="research-studio-citations",
+                        disabled=self.kind in TEXT_WORK_PRODUCT_TEMPLATES,
+                    )
+                    yield Static("Temperature")
+                    yield Input("0.3", type="number", id="research-studio-temperature")
+                    yield Static("Top P")
+                    yield Input("1.0", type="number", id="research-studio-top-p")
+                    yield Static("Max output tokens")
+                    yield Input("4096", type="integer", id="research-studio-tokens")
             yield Static("", id="research-studio-options-status", markup=False)
             yield Button(
                 self.action_label,
@@ -120,25 +133,34 @@ class ResearchStudioOptions(
     @on(Button.Pressed, "#research-studio-generate")
     def submit(self) -> None:
         try:
-            threshold = self._input("threshold")
-            retrieval = ResearchRetrievalSettings(
-                mode=self.query_one("#research-studio-retrieval", Select).value,
-                top_k=int(self._input("top-k")),
-                threshold=float(threshold) if threshold else None,
-                rerank=self.query_one("#research-studio-rerank", Checkbox).value,
-                citations=self.query_one("#research-studio-citations", Checkbox).value,
-                history_limit=0,
-            )
-            options = ResearchGenerationConfig(
-                title=self._input("title"),
-                focus=self._input("focus"),
-                detail=self.query_one("#research-studio-detail", Select).value,
-                item_count=int(self._input("items")) if self.is_study else 8,
-                temperature=float(self._input("temperature")),
-                top_p=float(self._input("top-p")),
-                max_tokens=int(self._input("tokens")),
-                retrieval=retrieval,
-            )
+            if self.kind in SERVER_TABLE_KINDS:
+                columns = self._input("columns") if self.kind is ResearchOutputKind.DATA_TABLE else ""
+                rows = self._input("max-rows")
+                options = ResearchGenerationConfig(
+                    title=self._input("title"), focus=self._input("focus"),
+                    table_columns=tuple(columns.split(",")) if columns.strip() else (),
+                    table_max_rows=int(rows) if rows else None,
+                )
+            else:
+                threshold = self._input("threshold")
+                retrieval = ResearchRetrievalSettings(
+                    mode=self.query_one("#research-studio-retrieval", Select).value,
+                    top_k=int(self._input("top-k")),
+                    threshold=float(threshold) if threshold else None,
+                    rerank=self.query_one("#research-studio-rerank", Checkbox).value,
+                    citations=self.query_one("#research-studio-citations", Checkbox).value,
+                    history_limit=0,
+                )
+                options = ResearchGenerationConfig(
+                    title=self._input("title"),
+                    focus=self._input("focus"),
+                    detail=self.query_one("#research-studio-detail", Select).value,
+                    item_count=int(self._input("items")) if self.is_study else 8,
+                    temperature=float(self._input("temperature")),
+                    top_p=float(self._input("top-p")),
+                    max_tokens=int(self._input("tokens")),
+                    retrieval=retrieval,
+                )
         except ValueError as exc:
             self.query_one("#research-studio-options-status", Static).update(str(exc))
             return
@@ -171,6 +193,21 @@ class ResearchStudioActions(SafeModalDismissMixin, ModalScreen[str | None]):
                 yield Static(self.owner, markup=False)
                 if self.row.sources_changed:
                     yield Static("Sources changed since generation")
+                if self.row.output.owner_kind is StudioOwnerKind.SERVER_DATA_TABLE and self.row.record:
+                    record = self.row.record
+                    preview = DataTable(id="research-studio-native-table", cursor_type="row")
+                    columns = record.get("columns", ())
+                    for column in columns:
+                        preview.add_column(Text(str(column["name"])[:80]), key=column["column_id"])
+                    for row in record.get("rows", ()):
+                        values = row["data"]
+                        cells = (
+                            [values.get(column["column_id"], "") for column in columns]
+                            if isinstance(values, dict) else values
+                        )
+                        preview.add_row(*(Text(str(cell)[:120]) for cell in cells[:len(columns)]))
+                    yield Static(f"Showing {preview.row_count} of {record['table']['row_count']} rows")
+                    yield preview
                 if self.row.content:
                     yield Static(self.row.content, markup=False)
                 if self.limits:

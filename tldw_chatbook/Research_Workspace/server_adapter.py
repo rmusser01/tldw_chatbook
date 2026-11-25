@@ -486,6 +486,17 @@ class ServerResearchWorkspaceAdapter:
             chat, writable=writable, study_supported=study_supported
         )
 
+    async def native_studio_capabilities(self, ref, route, sources):
+        context = self._context_for_ref(ref)
+        if not self._capabilities_for_context(context)["update"].available:
+            return {}
+        return await self._server_call(
+            self._require_studio(ref).owner.native_capabilities(
+                ref, route, sources, self._capability_revision(context)
+            ),
+            context=context,
+        )
+
     async def _studio_approvals(self, ref: QualifiedWorkspaceRef) -> tuple[str, ...]:
         self._context_for_ref(ref)
         return ()
@@ -570,12 +581,21 @@ class ServerResearchWorkspaceAdapter:
         return await self._server_call(self._require_studio(output_ref.workspace).owner.export_output(output_ref, format), context=context)
 
     async def generate_output(self, request, on_chunk, cancel_event, *, replace_output=None, supersedes=None):
-        from .studio_mapping import STUDIO_OUTPUT_MAPPINGS
+        from .studio_mapping import SERVER_TABLE_KINDS, STUDIO_OUTPUT_MAPPINGS
 
         context = self._context_for_ref(request.workspace)
         studio = self._require_studio(request.workspace)
         mapping = STUDIO_OUTPUT_MAPPINGS[request.workspace.data_source, request.output_kind]
-        require_capability(await self.studio_capabilities(request.workspace), mapping.create_capability)
+        caps = await self.studio_capabilities(request.workspace)
+        if request.output_kind in SERVER_TABLE_KINDS:
+            require_capability(caps, "save_workspace_artifact")
+            route = await self.resolve_chat_route(
+                request.workspace, request.processing_route.provider, request.processing_route.model
+            )
+            if route != request.processing_route:
+                raise ValueError("The selected Server route changed before generating the Data Table")
+            caps.update(await self.native_studio_capabilities(request.workspace, route, request.source_snapshot))
+        require_capability(caps, mapping.create_capability)
         return await self._server_call(
             studio.generate(request, on_chunk, cancel_event, replace_output=replace_output, supersedes=supersedes),
             context=context,

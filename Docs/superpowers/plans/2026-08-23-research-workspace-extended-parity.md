@@ -53,15 +53,14 @@ workspace registry/overlay, pending handoffs, pytest.
 
 ## ADR check
 
-ADR required: no new ADR
+ADR required: yes for the companion Server Data Tables admission
 
 ADR path:
 `backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md`
 
-Reason: ADR-322 and the approved design already classify these controls and
-their owner boundaries. If implementation would require a new generator,
-canonical owner, service contract, or persistence boundary not listed below,
-stop and create a new ADR before proceeding.
+Reason: ADR-322 governs Chatbook ownership and the companion Server ADR-099
+(`Docs/ADR/099-research-workspace-data-tables.md` in tldw_server) defines the
+approved exact-route admission and native job replay contract.
 
 ## Extended owner truth table
 
@@ -148,10 +147,11 @@ persistence.
 2. Mind Map and Timeline reuse TASK-21510's immutable generation context and
    server grounded route, validate bounded Mermaid/text result, and persist the
    full content as a server workspace artifact of the exact type.
-3. Data Table calls `TLDWAPIClient.generate_data_table` with qualified source
-   inputs, stable workspace tag, columns/max rows/model options, and a durable
-   job. Poll/cancel through existing job APIs; after completion create a
-   workspace artifact reference containing table UUID/version only.
+3. Data Table, Literature Matrix, and Corpus Gap Finder await the companion
+   Server ADR-099 contract first. Probe the chosen provider/model, pass selected
+   Workspace and Media versions, recover the exact native job on retry, and
+   store a Workspace reference to the published native table UUID and version.
+   Inspect, poll, cancel, and export through native Data Tables.
 4. Slides uses `generate_presentation_from_media` for one captured, ready Media
    item and the selected visual style. This matches the WebUI's native route
    and can prove which source it used. Treat the returned presentation ID and
