@@ -60,6 +60,23 @@ def test_confirmed_receipt_is_idempotent_and_scoped_on_restart(setup_copy):
         reopened.close()
 
 
+def test_copy_history_uses_both_scope_indexes_without_statistics(setup_copy):
+    _, db, store, _, manifest, confirmation = setup_copy
+    store.create_from_manifest(manifest, confirmation)
+    statements = []
+    with db.connection() as connection:
+        assert connection.execute("SELECT name FROM sqlite_master WHERE name = 'sqlite_stat1'").fetchone() is None
+        connection.set_trace_callback(statements.append)
+        try:
+            assert len(store.list_history(LOCAL)) == 1
+        finally:
+            connection.set_trace_callback(None)
+        select = next(statement for statement in statements if statement.startswith("SELECT transfer_id FROM research_copy_operations"))
+        details = "\n".join(row[3] for row in connection.execute("EXPLAIN QUERY PLAN " + select))
+        assert "idx_research_copy_source" in details
+        assert "idx_research_copy_destination" in details
+
+
 def test_copy_lease_expiry_fences_the_previous_worker(setup_copy):
     _, _, store, tick, manifest, confirmation = setup_copy
     created = store.create_from_manifest(manifest, confirmation)

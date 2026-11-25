@@ -151,7 +151,7 @@ ResearchScreen #research-window.window {
 
 #research-authority-recovery {
     width: $ds-width-full;
-    height: $ds-size-1;
+    height: auto;
     min-height: $ds-size-1;
     padding: $ds-space-0 $ds-space-1;
     background: $warning 15%;
@@ -497,10 +497,11 @@ ResearchPaneHandle .research-pane-handle-button {
 
 ResearchPaneHandle .research-pane-handle-button:focus {
     border: none;
-    outline: heavy $accent;
+    /* An outline would replace the first and last cells of the arrow. */
+    outline: none;
     background: $primary;
     color: $text;
-    text-style: bold;
+    text-style: bold underline;
 }
 
 #research-workspace-grid.layout-medium #research-sources-pane,
@@ -523,7 +524,7 @@ ResearchPaneHandle .research-pane-handle-button:focus {
 
 #research-workspace-status {
     width: $ds-width-full;
-    height: $ds-size-1;
+    height: auto;
     min-height: $ds-size-1;
     padding: $ds-space-0 $ds-space-1;
     background: $panel;
@@ -589,6 +590,8 @@ ResearchSourcesRegion Button:focus {
 }
 
 #research-workspace-shell ResearchSourcesRegion Button:disabled,
+#research-workspace-actions-dialog Button:disabled,
+#research-help-dialog Button:disabled,
 #research-more-outputs-dialog .research-more-action:disabled {
     opacity: 100%;
     text-opacity: 100%;

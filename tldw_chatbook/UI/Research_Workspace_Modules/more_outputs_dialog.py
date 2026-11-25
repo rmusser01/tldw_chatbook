@@ -39,7 +39,7 @@ class ResearchMoreOutputs(
         with Vertical(id="research-more-outputs-dialog"):
             yield Static("More outputs", classes="research-pane-title")
             yield Static(f"{self.workspace.data_source.value.title()} workspace")
-            with VerticalScroll(id="research-more-output-list"):
+            with VerticalScroll(id="research-more-output-list", name="Studio output choices"):
                 yield from self._groups()
             yield Button("Close", id="research-more-close", compact=True)
 

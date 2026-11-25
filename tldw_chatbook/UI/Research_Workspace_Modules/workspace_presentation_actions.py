@@ -83,6 +83,7 @@ async def run_workspace_presentation_action(screen, action, authority, current) 
     if store is None:
         raise ValueError("Device workspace presentation storage is unavailable.")
     ref = screen.controller.selected_ref
+    header = screen.query_one(ResearchHeaderRegion) if action == "banner" else None
     if action in {"recent", "pinned"}:
         loaded = await asyncio.to_thread(store.load_all)
         if not current():
@@ -143,8 +144,8 @@ async def run_workspace_presentation_action(screen, action, authority, current) 
             saved = await asyncio.to_thread(
                 store.set_workspace_presentation, ref, banner=value
             )
-            if current():
-                screen.query_one(ResearchHeaderRegion).sync_banner(
+            if current() and header is not None and header.is_attached:
+                header.sync_banner(
                     saved.workspace_presentation.banner
                 )
         return

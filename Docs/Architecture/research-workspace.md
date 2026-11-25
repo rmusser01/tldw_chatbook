@@ -117,6 +117,31 @@ Executive Brief, Evidence-Bound Hypotheses, and Research Proposal Pack use
 cited templates with required sections. Their identity stays in provenance
 while Local Chatbooks and Server `report` artifacts own the content.
 
+Server Data Tables owns Data Table, Literature Matrix, and Corpus Gap Finder.
+The selected provider and model must pass the native Workspace admission.
+That endpoint checks selected Media revisions and lets a retry recover the
+same table reservation and Jobs receipt. The deployment currently needs
+server-managed credentials and disabled usage quotas on this route. Studio
+opens the published revision and exports CSV, JSON, or XLSX through Data Tables.
+
+Server Slides uses the native structured Slides route and visual-style catalog
+for one versioned Media item. Studio checks the source before and after
+generation and exports the native Markdown, JSON, and Reveal.js ZIP. If a
+launch response is lost, Studio asks the user to check Server Slides because
+the generation endpoint has no replay receipt.
+
+Audio Summary uses a cited script and the exact selected speech provider,
+model, and voice. Local saves in TTS history and links the history ID. Server
+saves through the Speech job owner and links its output artifact. Preview
+voice synthesizes a fixed sample through the selected authority. Stop waiting
+detaches Studio from a Server speech job and retry reconnects to a known job.
+
+Native table, presentation, and speech content is reopened through a saved
+Workspace reference. Studio deletes supported Server Slides and Speech items
+through their owners, then uses a version-checked update to retire the
+Workspace reference. If the reference update fails, the missing-link action
+can retry it. Data Tables deletion remains with its native Server owner.
+
 ## Workspace menu and search
 
 Workspace creation, rename, archive, and restore call the selected owner.
@@ -142,7 +167,12 @@ the same workspace and entry records.
 
 Research Help is available from the header and the global F1 binding. Its
 status view reads the selected workspace's intake and Copy receipts and the
-mounted Chat and Studio state. Links open the existing owner destinations.
+mounted Chat and Studio state. It includes recent Runs when the native run
+confirms its Workspace origin. Open in Console selects the exact Local
+workspace, and Create agent task opens a blank Console chat there. Other
+links open the existing owner destinations, including Settings for Local
+workspace management. Server menu entries describe recovery when duplication,
+version-checked deletion, or workspace bundles are unavailable.
 
 ## Copy, export, and sharing
 

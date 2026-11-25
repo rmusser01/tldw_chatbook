@@ -207,6 +207,8 @@ async def run_workspace_lifecycle(
             f"The {authority.value.title()} workspace catalog is unavailable."
         )
     workspace = screen.controller.visible_workspace
+    notes = screen.query_one(ResearchQuickNotesSection) if action == "templates" else None
+    studio = screen.query_one(ResearchStudioRegion) if action == "templates" else None
     if action == "archived":
         rows = tuple(
             row
@@ -315,14 +317,14 @@ async def run_workspace_lifecycle(
             await screen.remember_workspace_visit(saved.ref)
         if (
             template
-            and screen.is_mounted
+            and notes is not None and notes.is_attached
+            and studio is not None and studio.is_attached
             and screen.controller.selected_ref == saved.ref
         ):
             screen.select_pane_mode(ResearchPaneModeStrip.Selected("studio"))
-            notes = screen.query_one(ResearchQuickNotesSection)
             notes.new_draft(
                 ResearchNoteSaveRequest(
                     template.note_title, template.note, tags=("template",)
                 )
             )
-            screen.query_one(ResearchStudioRegion).jump_to_quick_notes()
+            studio.jump_to_quick_notes()

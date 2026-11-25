@@ -1,6 +1,5 @@
 """Launch a native run and review its verified Report in Research Workspace."""
 
-from datetime import UTC, datetime
 from uuid import uuid4
 
 from loguru import logger
@@ -24,6 +23,7 @@ from ...Research_Workspace.deep_research_context import (
     ResearchLaunchContext,
     ResearchLaunchOutputRef,
 )
+from ...Utils.timestamps import utc_now_iso
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.modal_dismissal import SafeModalDismissMixin
 from ...tldw_api.exceptions import APIConnectionError
@@ -215,7 +215,7 @@ async def show_research_launch(screen, row=None) -> None:
             uuid4().hex,
             sources,
             query,
-            datetime.now(UTC).isoformat(),
+            utc_now_iso(),
             initiating_output=output,
             local_conversation_id=conversation if local else "",
             server_chat_id=conversation if not local else "",

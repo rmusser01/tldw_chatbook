@@ -14,6 +14,7 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.css.query import NoMatches
 from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Select, Static
@@ -301,7 +302,7 @@ class ResearchSharingDialog(
         self._require_current()
         return result
 
-    async def _confirm(self, title: str, message: str, label: str) -> bool:
+    async def _confirm_research_workspace_sharing(self, title: str, message: str, label: str) -> bool:
         self._require_current()
         result = await self.app.push_screen_wait(
             ConfirmationDialog(
@@ -367,7 +368,7 @@ class ResearchSharingDialog(
             target = (
                 "team" if draft.scope_type is ShareScopeType.TEAM else "organization"
             )
-            if not await self._confirm(
+            if not await self._confirm_research_workspace_sharing(
                 "Grant workspace access?",
                 f"{self.ref.workspace_id} · {target} {draft.scope_id} · {permission}. {clone} {_DEVICE_DISCLOSURE}",
                 "Grant access",
@@ -393,7 +394,7 @@ class ResearchSharingDialog(
             else "Anyone with the token can use it."
         )
         limits = f"Expires {draft.expires_at or 'on revocation'} · {draft.max_uses or 'unlimited'} uses."
-        if not await self._confirm(
+        if not await self._confirm_research_workspace_sharing(
             "Create workspace share link?",
             f"{self.ref.workspace_id} · {permission}. {clone} {protection} {limits} {_DEVICE_DISCLOSURE}",
             "Create link",
@@ -411,17 +412,21 @@ class ResearchSharingDialog(
         result = await self._call(
             "create_link", **request.model_dump(mode="json", exclude_none=True)
         )
-        self.query_one("#research-link-password", Input).value = ""
+        try:
+            password = self.query_one("#research-link-password", Input)
+            copy_link = self.query_one("#research-link-copy", Button)
+            link_result = self.query_one("#research-link-result", Static)
+        except NoMatches:
+            return
+        password.value = ""
         raw_token = str(result.get("raw_token") or "")
         self._generated_link = (
             f"{self.server_base_url}/share/{raw_token}"
             if self.server_base_url and raw_token
             else raw_token
         )
-        self.query_one(
-            "#research-link-copy", Button
-        ).disabled = not self._generated_link
-        self.query_one("#research-link-result", Static).update(
+        copy_link.disabled = not self._generated_link
+        link_result.update(
             self._generated_link or "Link created. Refresh active links to manage it."
         )
         self._status("Share link created. Copy the link to save it.")
@@ -495,20 +500,20 @@ class ResearchSharingDialog(
             f"· {_PERMISSIONS[level]}. "
             + ("Cloning allowed." if clone else "Cloning disabled.")
         )
-        if await self._confirm("Update workspace access?", details, "Update access"):
+        if await self._confirm_research_workspace_sharing("Update workspace access?", details, "Update access"):
             await self._call(
                 "update_share", selected, access_level=level.value, allow_clone=clone
             )
             await self._list_access()
             self._status("Workspace access updated.")
 
-    async def _revoke(self, *, link: bool) -> None:
+    async def _revoke_workspace_sharing(self, *, link: bool) -> None:
         selector = "#research-link-existing" if link else "#research-share-existing"
         selected = self._selected_id(
             selector, self._links if link else self._workspace_shares
         )
         noun = "link" if link else "share"
-        if not await self._confirm(
+        if not await self._confirm_research_workspace_sharing(
             f"Revoke selected {noun}?",
             f"{self.ref.workspace_id} · {noun} {selected}",
             "Revoke",
@@ -573,7 +578,7 @@ class ResearchSharingDialog(
             pending = stored is not None and not stored.operation_id
             if not item.get("allow_clone") and not pending:
                 raise ValueError("The owner disabled cloning for this workspace.")
-            if not await self._confirm("Clone shared workspace?", str(name), "Clone"):
+            if not await self._confirm_research_workspace_sharing("Clone shared workspace?", str(name), "Clone"):
                 return
             if self.clone_receipts is not None:
                 stored = await asyncio.to_thread(self.clone_receipts.prepare, selected)
@@ -656,6 +661,7 @@ class ResearchSharingDialog(
 
     async def _public_action(self, action: str) -> None:
         token = self._token()
+        password_field = self.query_one("#research-import-password", Input)
         if action == "preview":
             reply = await self._call("inspect_public_link", token)
             if reply.get("resource_type") != "workspace":
@@ -699,7 +705,7 @@ class ResearchSharingDialog(
             and (token, sha256(password.encode()).digest()) != self._verified
         ):
             raise ValueError("Verify the current link password.")
-        if not await self._confirm(
+        if not await self._confirm_research_workspace_sharing(
             "Import this workspace link?",
             str(preview.get("resource_name") or "Shared workspace"),
             "Import",
@@ -710,7 +716,7 @@ class ResearchSharingDialog(
             raise ValueError("The Server returned a different resource type.")
         self._public_preview = None
         self._verified = None
-        self.query_one("#research-import-password", Input).value = ""
+        password_field.value = ""
         self._sync_import_controls()
         self._status(f"Server granted access to workspace {result.get('resource_id')}.")
 
@@ -742,7 +748,7 @@ class ResearchSharingDialog(
             method, args = actions[button]
             action = method(*args)
         elif button in {"research-share-revoke", "research-link-revoke"}:
-            action = self._revoke(link=button == "research-link-revoke")
+            action = self._revoke_workspace_sharing(link=button == "research-link-revoke")
         elif button and button.startswith("research-received-"):
             action = self._received_action(button.removeprefix("research-received-"))
         elif button and button.startswith("research-import-"):

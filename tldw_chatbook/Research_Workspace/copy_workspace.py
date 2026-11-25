@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime
 
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 from tldw_chatbook.Workspaces.models import WorkspaceTransferPolicy
 
 from .contracts import (
@@ -225,6 +225,6 @@ class ResearchWorkspaceCopy:
             tuple(projected),
             available=available,
             versioned_replacements=replacements,
-            created_at=datetime.now(UTC).isoformat(),
+            created_at=utc_now_iso(),
             target_name=target_name,
         )

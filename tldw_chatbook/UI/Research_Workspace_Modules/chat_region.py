@@ -389,13 +389,15 @@ class ResearchChatRegion(Vertical):
     async def _load_transcript(
         self, ref, generation: int, conversation_id: str, *, overlay=None
     ) -> None:
+        if not self._current(ref, generation):
+            return
+        transcript = self.query_one(ListView)
         if not conversation_id:
             rows = ()
         else:
             rows = await self._port(ref).load_chat_messages(ref, conversation_id)
         if not self._current(ref, generation) or conversation_id != self._session:
             return
-        transcript = self.query_one(ListView)
         await transcript.clear()
         if rows:
             await transcript.extend(ResearchChatMessage(row) for row in rows)
@@ -624,9 +626,12 @@ class ResearchChatRegion(Vertical):
         if not question.strip():
             self._status("Write a question before sending.")
             return
+        route_status = self.query_one("#research-chat-route", Static)
         if previous is None:
             mode = ResearchChatMode(self.query_one("#research-chat-mode", Select).value)
             settings = self._retrieval_options()
+            provider = self.query_one("#research-chat-provider", Input).value.strip()
+            model = self.query_one("#research-chat-model", Input).value.strip()
             sources = (
                 ()
                 if mode is ResearchChatMode.GENERAL
@@ -636,11 +641,7 @@ class ResearchChatRegion(Vertical):
                 source.ready_modes for source in sources
             ):
                 raise ValueError("Grounded requires a selected ready source")
-            route = await port.resolve_chat_route(
-                ref,
-                self.query_one("#research-chat-provider", Input).value.strip(),
-                self.query_one("#research-chat-model", Input).value.strip(),
-            )
+            route = await port.resolve_chat_route(ref, provider, model)
             if self._cancel.is_set() or not self.controller.is_current_request(capture):
                 return
             if not self._session:
@@ -659,7 +660,9 @@ class ResearchChatRegion(Vertical):
         else:
             request = previous
             route = request.processing_route
-        self.query_one("#research-chat-route", Static).update(
+        if not self._current(ref, generation) or not self.controller.is_current_request(capture):
+            return
+        route_status.update(
             f"Processing: {route.endpoint_class.replace('_', ' ') or route.processor} · "
             + f"{route.provider or 'server default'} / {route.model}"
         )

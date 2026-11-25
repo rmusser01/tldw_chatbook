@@ -306,6 +306,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             or self.controller.selected_data_source is not hit.workspace.data_source
         ):
             return
+        studio = self.query_one(ResearchStudioRegion) if hit.kind in {"note", "output"} else None
         if hit.workspace != self.controller.selected_ref:
             state = await self.controller.refresh_workspace_catalog()
             if not self.is_attached or not self.controller.is_current_catalog_state(state):
@@ -326,14 +327,14 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             await self._refresh_source_workbench()
             if self.is_attached and self.controller.is_current_request(capture):
                 await self._show_source_inspector(hit.item_id, load_preview=False)
-        elif hit.kind == "note":
+        elif hit.kind == "note" and studio is not None:
             self.select_pane_mode(ResearchPaneModeStrip.Selected("studio"))
             await self._load_quick_note_after_flush(hit.workspace, hit.item_id)
-            if self.is_attached and self.controller.is_current_request(capture):
-                self.query_one(ResearchStudioRegion).jump_to_quick_notes()
-        elif hit.kind == "output" and hit.output is not None:
+            if studio.is_attached and self.controller.is_current_request(capture):
+                studio.jump_to_quick_notes()
+        elif hit.kind == "output" and hit.output is not None and studio is not None:
             self.select_pane_mode(ResearchPaneModeStrip.Selected("studio"))
-            await self.query_one(ResearchStudioRegion).open_output_reference(hit.output)
+            await studio.open_output_reference(hit.output)
 
     @on(ResearchPaneHandle.Toggled)
     def toggle_side_pane(self, message: ResearchPaneHandle.Toggled) -> None:
@@ -609,13 +610,14 @@ class ResearchWorkspaceScreen(BaseAppScreen):
     async def _show_workspace_actions(self) -> None:
         from ..Research_Workspace_Modules.workspace_transfer_actions import show_workspace_actions
 
+        button = self.query_one("#research-workspace-actions", Button)
         try:
             capture = self.controller.capture_request() if self.controller.selected_ref else None
             await show_workspace_actions(self, capture)
         finally:
             self._workspace_action_open = False
-            if self.is_mounted:
-                self.query_one("#research-workspace-actions", Button).disabled = False
+            if button.is_attached:
+                button.disabled = False
 
     @on(ResearchWorkspaceMenu.HelpRequested)
     def action_show_workbench_help(self) -> None:
@@ -629,12 +631,13 @@ class ResearchWorkspaceScreen(BaseAppScreen):
     async def _show_research_help(self, bindings) -> None:
         from ..Research_Workspace_Modules.help_menu import show_research_help
 
+        button = self.query_one("#research-workspace-help", Button)
         try:
             await show_research_help(self, bindings)
         finally:
             self._workspace_action_open = False
-            if self.is_mounted:
-                self.query_one("#research-workspace-help", Button).disabled = False
+            if button.is_attached:
+                button.disabled = False
 
     async def _open_research_sharing(self, ref: QualifiedWorkspaceRef, *, draft=None) -> None:
         from ...Sharing_Interop.clone_receipts import SharingCloneReceipts
@@ -676,7 +679,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         *,
         preferred_ref: QualifiedWorkspaceRef | None = None,
     ) -> None:
-        if not self.controller.is_current_catalog_state(state):
+        if not self.is_attached or not self.controller.is_current_catalog_state(state):
             return
         intended_ref = preferred_ref or self.controller.selected_ref
         target_ref = None
@@ -692,6 +695,11 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         section = self.query_one(ResearchQuickNotesSection)
         chat = self.query_one(ResearchChatRegion)
         studio = self.query_one(ResearchStudioRegion)
+        header = self.query_one("#research-workspace-header", ResearchHeaderRegion)
+        selection = self.query_one("#research-workspace-selection", Static)
+        menu = self.query_one(ResearchWorkspaceMenu)
+        status = self.query_one("#research-workspace-status", Static)
+        sources = self.query_one(ResearchSourcesRegion)
         if target_ref != studio.ref and not studio.allow_leave():
             return
         if target_ref != chat.ref and not await chat.flush_pending_chat():
@@ -706,13 +714,12 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 return
         if target_ref != studio.ref and not studio.allow_leave():
             return
-        header = self.query_one("#research-workspace-header", ResearchHeaderRegion)
+        if not self.is_attached or not self.controller.is_current_catalog_state(state):
+            return
         header.sync_catalog_state(state)
         if target_ref is None or target_ref != self._overlay_ref:
             header.sync_banner(None)
-        selection = self.query_one("#research-workspace-selection", Static)
-        self.query_one(ResearchWorkspaceMenu).sync_choices(state.workspaces, target_ref)
-        status = self.query_one("#research-workspace-status", Static)
+        menu.sync_choices(state.workspaces, target_ref)
         if state.recovery is not None:
             chat.set_workspace(None)
             studio.set_workspace(None)
@@ -721,18 +728,15 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             )
             status.update(
                 f"Foundation ready · {state.data_source.value.title()} selected · "
-                "Recovery required · No operation active"
+                "Recovery required"
             )
             self._set_overlay_ref(None)
-            self.query_one(
-                "#research-sources-pane", ResearchSourcesRegion
-            ).clear_workspace(
+            sources.clear_workspace(
                 authority=state.data_source.value.title(),
                 reason=state.recovery.user_message,
             )
-            notes = self.query_one(ResearchQuickNotesSection)
-            notes.sync_workspace(None)
-            notes.show_recovery(state.recovery.user_message)
+            section.sync_workspace(None)
+            section.show_recovery(state.recovery.user_message)
             return
         if not state.workspaces:
             self.controller.clear_workspace_selection()
@@ -746,14 +750,11 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 "0 workspaces"
             )
             self._set_overlay_ref(None)
-            self.query_one(
-                "#research-sources-pane", ResearchSourcesRegion
-            ).clear_workspace(
+            sources.clear_workspace(
                 authority=state.data_source.value.title(),
             )
-            notes = self.query_one(ResearchQuickNotesSection)
-            notes.sync_workspace(None)
-            notes.show_recovery("Create a Research workspace to use Quick Notes.")
+            section.sync_workspace(None)
+            section.show_recovery("Create a Research workspace to use Quick Notes.")
             return
 
         workspace = next(
@@ -787,7 +788,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         overlay_generation = self._overlay_generation
         overlay_capture = self.controller.capture_request()
         self._set_overlay_ref(workspace.ref)
-        self.query_one(ResearchQuickNotesSection).sync_workspace(workspace.ref)
+        section.sync_workspace(workspace.ref)
         self._start_sources_refresh()
         self._start_quick_notes_refresh()
         if self.overlay_store is None:
@@ -1420,6 +1421,8 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             return
         capture = self.controller.capture_request()
         region = self.query_one("#research-sources-pane", ResearchSourcesRegion)
+        chat = self.query_one(ResearchChatRegion)
+        studio = self.query_one(ResearchStudioRegion)
 
         def current() -> bool:
             return (
@@ -1486,10 +1489,8 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             focused_folder_id=self._focused_folder_id,
             receipts_incomplete=len(operations) == 20,
         )
-        self.query_one(ResearchChatRegion).sync_sources(
-            page, self.controller.visible_readiness
-        )
-        self.query_one(ResearchStudioRegion).refresh_studio()
+        chat.sync_sources(page, self.controller.visible_readiness)
+        studio.refresh_studio()
 
     @on(ResearchStudioRegion.OwnerAction)
     def studio_output_action(self, message: ResearchStudioRegion.OwnerAction) -> None:
@@ -1742,12 +1743,14 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         )
 
         section = self.query_one(ResearchQuickNotesSection)
+        title_field = section.query_one("#research-quick-note-title", Input)
+        body = section.query_one("#research-quick-note-body", TextArea)
         if (
             message.ref != section.editor_ref
             or not await self._flush_quick_note_before_owner_switch()
         ):
             return
-        if message.ref != section.editor_ref:
+        if not section.is_attached or message.ref != section.editor_ref:
             return
         row = message.row
         title = (
@@ -1779,10 +1782,8 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         )
         self._apply_pane_layout(max(1, self.size.width), relocate_hidden_focus=True)
         section.new_draft()
-        section.query_one("#research-quick-note-title", Input).value = title
-        section.query_one("#research-quick-note-body", TextArea).load_text(
-            str(row.get("content") or "")
-        )
+        title_field.value = title
+        body.load_text(str(row.get("content") or ""))
         section.set_message_provenance((str(row["id"]),))
         section.set_source_provenance(source_ids)
 
