@@ -22,7 +22,7 @@ from ...Research_Workspace.contracts import CapabilityUnavailableError
 from ...Research_Workspace.egress_consent import ResearchEgressConsentService
 from ...Research_Workspace.layout_state import ResearchPanePreferences
 from ...Research_Workspace.overlay_store import OverlayConflictError
-from ...Research_Workspace.server_slides import SlidesSubmissionUnconfirmed
+from ...Research_Workspace.studio_generation import NativeSubmissionUnconfirmed
 from ...Research_Workspace.studio_mapping import (
     STUDIO_OUTPUT_MAPPINGS,
     project_studio_availability,
@@ -171,6 +171,11 @@ class ResearchStudioRegion(VerticalScroll):
                 self._availability.get(card.kind),
                 busy=self.is_busy or self._dialog_open,
             )
+        request = self._retry[0] if self._retry else None
+        self.query_one("#research-studio-stop", Button).label = (
+            "Stop waiting" if request and request.output_kind is ResearchOutputKind.AUDIO_SUMMARY
+            and request.workspace.data_source.value == "server" else "Stop"
+        )
         for key, enabled in (
             (
                 "deep-research",
@@ -467,6 +472,13 @@ class ResearchStudioRegion(VerticalScroll):
                 if kind is ResearchOutputKind.SLIDES
                 else ()
             )
+            speech_choices = (
+                await port.studio_speech_choices(capture.ref)
+                if kind is ResearchOutputKind.AUDIO_SUMMARY
+                else ()
+            )
+            if kind is ResearchOutputKind.AUDIO_SUMMARY and not speech_choices:
+                raise ValueError("The selected authority has no available speech voice. Refresh its provider catalog.")
             if not self._current(capture):
                 return
             options = await self.app.push_screen_wait(
@@ -477,6 +489,7 @@ class ResearchStudioRegion(VerticalScroll):
                     len(sources),
                     action=action,
                     slide_styles=styles,
+                    speech_choices=speech_choices,
                 )
             )
             if (
@@ -583,7 +596,12 @@ class ResearchStudioRegion(VerticalScroll):
                 self._status(f"Saved to {owner} · {route}")
                 self.refresh_studio(preferred=history_key(output))
             else:
-                self._status(f"{label} generation stopped. Retry is available.")
+                self._status(
+                    "Stopped waiting for Server Speech. Retry reconnects to the same job if queued."
+                    if request.output_kind is ResearchOutputKind.AUDIO_SUMMARY
+                    and request.workspace.data_source.value == "server"
+                    else f"{label} generation stopped. Retry is available."
+                )
         except Exception as exc:
             if self._current(capture):
                 self._show_error(exc)
@@ -600,7 +618,7 @@ class ResearchStudioRegion(VerticalScroll):
             self._status(
                 f"{exc.capability.user_message} {exc.capability.recovery_action}".strip()
             )
-        elif isinstance(exc, SlidesSubmissionUnconfirmed):
+        elif isinstance(exc, NativeSubmissionUnconfirmed):
             self._retry = None
             self._status(str(exc))
         elif isinstance(exc, ValueError):
@@ -765,6 +783,10 @@ class ResearchStudioRegion(VerticalScroll):
                     "export-markdown": "Download Markdown",
                     "export-json": "Download JSON",
                 })
+            if output.owner_kind in {StudioOwnerKind.SERVER_AUDIO, StudioOwnerKind.LOCAL_AUDIO} and hasattr(
+                self._port(output.workspace), "export_output"
+            ):
+                actions["export-audio"] = f"Download {record['format'].upper()} audio"
             limits = (
                 "Undo requires a restorable version from the owner."
                 if "delete" in actions

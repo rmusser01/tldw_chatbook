@@ -41,6 +41,7 @@ _MIND_MAP_LINE = re.compile(r"( {2,12})([\w .,'’!?/:–—\-\[\]]{1,200})")
 _TIMELINE_ENTRY = re.compile(r"- \[([^\]\r\n]{1,100})\] - (.{1,400})")
 
 _INSTRUCTIONS = {
+    ResearchOutputKind.AUDIO_SUMMARY: "Write a spoken research summary in plain prose. Use at most 4,000 characters, cite the selected evidence, and state material limits.",
     ResearchOutputKind.SUMMARY: "Summarize the selected sources in Markdown, covering the main ideas and limits.",
     ResearchOutputKind.REPORT: "Write a Markdown report with findings, evidence, and limitations.",
     ResearchOutputKind.COMPARE_SOURCES: "Compare the selected sources in Markdown. Identify agreements, disagreements, and gaps.",
@@ -134,6 +135,10 @@ class StudioGeneratedOutput:
     native_owner: tuple[str, int] | None = None
 
 
+class NativeSubmissionUnconfirmed(ValueError):
+    """A native output may have been admitted without a confirmed receipt."""
+
+
 class ResearchStudioGenerator:
     def __init__(
         self,
@@ -195,13 +200,15 @@ class ResearchStudioGenerator:
                 "failed", failure_reason="The provider returned an empty output"
             )
         kind = request.output_kind
-        if kind in SERVER_DIAGRAM_TYPES or kind in TEXT_WORK_PRODUCT_TEMPLATES:
+        if kind in SERVER_DIAGRAM_TYPES or kind in TEXT_WORK_PRODUCT_TEMPLATES or kind is ResearchOutputKind.AUDIO_SUMMARY:
             await self._check_sources(request)
         try:
             return self._parse(request, answer.text, evidence)
         except (ValueError, ValidationError):
             if kind in SERVER_DIAGRAM_TYPES:
                 reason = "The provider returned an invalid Mind Map or Timeline"
+            elif kind is ResearchOutputKind.AUDIO_SUMMARY:
+                reason = "The provider returned an invalid or uncited Audio Summary script"
             elif kind in TEXT_WORK_PRODUCT_TEMPLATES:
                 reason = "The provider returned an invalid work product"
             else:
@@ -238,6 +245,8 @@ class ResearchStudioGenerator:
             ResearchOutputKind.QUIZ,
         }:
             instruction += f" Create at most {request.generation.item_count} items."
+        elif request.output_kind is ResearchOutputKind.AUDIO_SUMMARY:
+            instruction += f" The speech route accepts at most {request.generation.speech.max_characters} characters."
         per_source = min(_MAX_EXCERPT_CHARS, _MAX_EVIDENCE_CHARS // len(evidence))
         excerpts = [
             {
@@ -262,6 +271,10 @@ class ResearchStudioGenerator:
     def _parse(request, text: str, evidence) -> StudioGeneratedOutput:
         cards, questions = (), ()
         kind = request.output_kind
+        if kind is ResearchOutputKind.AUDIO_SUMMARY:
+            markers = set(_CITATION_PATTERN.findall(text))
+            if not markers or markers.difference(evidence) or len(text) > 5000:
+                raise ValueError("The spoken summary must use cited evidence and fit the speech limit")
         if kind in SERVER_DIAGRAM_TYPES:
             text = validate_diagram_text(kind, text)
             diagram_markers = _CITATION_PATTERN.findall(text)

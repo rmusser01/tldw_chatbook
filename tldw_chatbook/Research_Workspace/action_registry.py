@@ -149,11 +149,11 @@ _LOCAL_AUDIO = ResearchActionOwner(
     "Select a Local TTS provider and voice with writable history.",
 )
 _SERVER_AUDIO = ResearchActionOwner(
-    "Server TTS history",
+    "Server Speech outputs",
     (
         "generate_grounded_artifact",
         "create_audio_speech_job",
-        "get_tts_history_entry",
+        "list_audio_speech_job_artifacts",
         "save_workspace_artifact",
     ),
     "tts",

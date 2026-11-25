@@ -73,6 +73,7 @@ class OutputGenerationProvenance(BaseModel):
         "timeline",
         "data_table",
         "slides",
+        "audio_summary",
         "literature_matrix",
         "corpus_gap_finder",
         "executive_brief",

@@ -72,6 +72,13 @@ class ResearchStudioService:
                     attempt.generated = generated
             else:
                 generated = attempt.generated
+            if generated.status == "complete" and generated.native_owner is None and not cancel_event.is_set():
+                prepare = getattr(self.owner, "prepare_output", None)
+                prepared = await prepare(request, generated, cancel_event=cancel_event) if prepare else None
+                if prepared is not None:
+                    generated = prepared
+                    if prepared.status == "complete":
+                        attempt.generated = prepared
             if cancel_event.is_set():
                 generated = StudioGeneratedOutput("cancelled")
             result = await self.owner.save(

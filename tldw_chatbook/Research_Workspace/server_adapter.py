@@ -501,6 +501,10 @@ class ServerResearchWorkspaceAdapter:
         context = self._context_for_ref(ref)
         return await self._server_call(self._require_studio(ref).owner.slide_styles(ref), context=context)
 
+    async def studio_speech_choices(self, ref):
+        context = self._context_for_ref(ref)
+        return await self._server_call(self._require_studio(ref).owner.speech_choices(ref), context=context)
+
     async def _studio_approvals(self, ref: QualifiedWorkspaceRef) -> tuple[str, ...]:
         self._context_for_ref(ref)
         return ()

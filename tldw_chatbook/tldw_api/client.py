@@ -5410,7 +5410,9 @@ class TLDWAPIClient(ChatCompletionClientMixin):
         response = await self._request(
             "POST",
             "/api/v1/audio/speech/jobs",
-            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            json_data=request_data.model_dump(
+                exclude_none=True, exclude_unset=request_data.backend is not None, mode="json"
+            ),
         )
         return AudioSpeechJobCreateResponse.model_validate(response)
 

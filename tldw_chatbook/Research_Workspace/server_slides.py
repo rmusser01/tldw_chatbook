@@ -14,7 +14,7 @@ from tldw_chatbook.tldw_api.exceptions import (
 from tldw_chatbook.tldw_api.slides_schemas import GenerateFromMediaRequest
 
 from .source_readiness import versioned_media_sources
-from .studio_generation import StudioGeneratedOutput
+from .studio_generation import NativeSubmissionUnconfirmed, StudioGeneratedOutput
 
 SLIDES_UNCONFIRMED = (
     "Studio could not confirm whether Server Slides saved the presentation. "
@@ -22,7 +22,7 @@ SLIDES_UNCONFIRMED = (
 )
 
 
-class SlidesSubmissionUnconfirmed(ValueError):
+class SlidesSubmissionUnconfirmed(NativeSubmissionUnconfirmed):
     """The structured Slides API could have committed without returning a receipt."""
 
 

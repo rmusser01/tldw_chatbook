@@ -24,6 +24,7 @@ from ...Research_Workspace.studio_models import (
     ResearchOutputKind,
     StudioOwnerKind,
     StudioOutputKind,
+    StudioSpeechChoice,
 )
 from ...Research_Workspace.work_product_templates import TEXT_WORK_PRODUCT_TEMPLATES
 from ...Widgets.modal_dismissal import SafeModalDismissMixin
@@ -46,6 +47,7 @@ class ResearchStudioOptions(
         *,
         action: str = "Generate",
         slide_styles: tuple[tuple[str, tuple[str, str]], ...] = (),
+        speech_choices: tuple[StudioSpeechChoice, ...] = (),
     ) -> None:
         super().__init__()
         self.kind = kind
@@ -54,6 +56,7 @@ class ResearchStudioOptions(
         self.source_count = source_count
         self.action_label = action
         self.slide_styles = slide_styles
+        self.speech_choices = speech_choices
 
     @property
     def is_study(self) -> bool:
@@ -81,6 +84,22 @@ class ResearchStudioOptions(
                 yield Select(
                     [("Server default", "default"), *((Text(name), i) for i, (name, _) in enumerate(self.slide_styles))],
                     value="default", allow_blank=False, id="research-studio-visual-style",
+                )
+            elif self.kind is ResearchOutputKind.AUDIO_SUMMARY:
+                yield Static("Summary focus (optional)")
+                yield Input(placeholder="What should the summary cover?", id="research-studio-focus")
+                yield Static("Speech provider, model, voice and format")
+                yield Select(
+                    [
+                        (Text(f"{route.provider} · {route.model} · {route.voice} · {route.format.upper()}"), i)
+                        for i, route in enumerate(self.speech_choices)
+                    ],
+                    value=0, allow_blank=False, id="research-studio-speech",
+                )
+                yield Static("Speech speed")
+                yield Input(
+                    "1.0", type="number", id="research-studio-speech-speed",
+                    disabled=not self.speech_choices[0].supports_speed,
                 )
             else:
                 yield Static("Retrieval focus (optional for FTS)")
@@ -138,6 +157,14 @@ class ResearchStudioOptions(
     def _input(self, name: str) -> str:
         return self.query_one(f"#research-studio-{name}", Input).value
 
+    @on(Select.Changed, "#research-studio-speech")
+    def speech_changed(self, event: Select.Changed) -> None:
+        if type(event.value) is int:
+            speed = self.query_one("#research-studio-speech-speed", Input)
+            speed.disabled = not self.speech_choices[event.value].supports_speed
+            if speed.disabled:
+                speed.value = "1.0"
+
     @on(Button.Pressed, "#research-studio-generate")
     def submit(self) -> None:
         try:
@@ -154,6 +181,12 @@ class ResearchStudioOptions(
                 options = ResearchGenerationConfig(
                     title=self._input("title"),
                     slides_visual_style=self.slide_styles[selected][1] if type(selected) is int else None,
+                )
+            elif self.kind is ResearchOutputKind.AUDIO_SUMMARY:
+                choice = self.query_one("#research-studio-speech", Select).value
+                options = ResearchGenerationConfig(
+                    title=self._input("title"), focus=self._input("focus"),
+                    speech=self.speech_choices[choice], speech_speed=float(self._input("speech-speed")),
                 )
             else:
                 threshold = self._input("threshold")
@@ -230,6 +263,8 @@ class ResearchStudioActions(SafeModalDismissMixin, ModalScreen[str | None]):
                             f"{slide.get('title') or f'Slide {index}'}\n{slide.get('content', '')[:700]}",
                             markup=False,
                         )
+                if self.row.output.owner_kind in {StudioOwnerKind.SERVER_AUDIO, StudioOwnerKind.LOCAL_AUDIO} and self.row.record:
+                    yield Static(f"Saved audio · {self.row.record['format'].upper()}")
                 if self.row.content:
                     yield Static(self.row.content, markup=False)
                 if self.limits:

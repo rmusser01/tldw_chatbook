@@ -84,6 +84,32 @@ class StudioOwnerKind(StrEnum):
     SERVER_QUIZ = "server_quiz"
     SERVER_DATA_TABLE = "server_data_table"
     SERVER_SLIDES = "server_slides"
+    SERVER_AUDIO = "server_audio"
+    LOCAL_AUDIO = "local_audio"
+
+
+STUDIO_SPEECH_FORMATS = frozenset({"aac", "flac", "mp3", "ogg", "opus", "wav"})
+
+
+@dataclass(frozen=True, slots=True)
+class StudioSpeechChoice:
+    provider: str
+    model: str
+    voice: str
+    format: str
+    supports_speed: bool = False
+    max_characters: int = 5000
+
+    def __post_init__(self) -> None:
+        for label in (self.provider, self.model, self.voice):
+            if not isinstance(label, str) or not 1 <= len(label) <= 256 or any(
+                ord(char) < 32 for char in label
+            ):
+                raise ValueError("Choose a bounded speech provider, model, and voice")
+        if self.format not in STUDIO_SPEECH_FORMATS or type(self.supports_speed) is not bool:
+            raise ValueError("Choose a supported speech format")
+        if type(self.max_characters) is not int or not 1 <= self.max_characters <= 5000:
+            raise ValueError("The speech input limit is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +128,8 @@ class ResearchGenerationConfig:
     table_columns: tuple[str, ...] = ()
     table_max_rows: int | None = None
     slides_visual_style: tuple[str, str] | None = None
+    speech: StudioSpeechChoice | None = None
+    speech_speed: float = 1.0
 
     def __post_init__(self) -> None:
         title = _safe_identity(self.title, "output title")
@@ -153,13 +181,23 @@ class ResearchGenerationConfig:
         ):
             raise ValueError("Choose a Server Slides visual style")
 
+        if self.speech is not None and not isinstance(self.speech, StudioSpeechChoice):
+            raise ValueError("Choose an available speech route")
+        if (
+            type(self.speech_speed) not in {float, int} or not 0.25 <= self.speech_speed <= 4
+            or (self.speech_speed != 1 and (self.speech is None or not self.speech.supports_speed))
+        ):
+            raise ValueError("Choose a speed supported by this speech model")
+
     @property
     def fingerprint(self) -> str:
         """Identify generation options without persisting user-supplied labels."""
         options = asdict(self)
-        for key in ("table_columns", "table_max_rows", "slides_visual_style"):
+        for key in ("table_columns", "table_max_rows", "slides_visual_style", "speech"):
             if not options[key]:
                 del options[key]
+        if self.speech is None:
+            del options["speech_speed"]
         return sha256(json.dumps(options, sort_keys=True).encode()).hexdigest()
 
 
@@ -228,6 +266,10 @@ class ResearchStudioRequest:
             )
         if not isinstance(self.generation, ResearchGenerationConfig):
             raise TypeError("Studio generation options must be validated")
+        if kind is ResearchOutputKind.AUDIO_SUMMARY and (
+            self.generation.speech is None or not self.generation.retrieval.citations
+        ):
+            raise ValueError("Audio Summary requires a speech route and source citations")
         if (
             kind in TEXT_WORK_PRODUCT_TEMPLATES
             and not self.generation.retrieval.citations

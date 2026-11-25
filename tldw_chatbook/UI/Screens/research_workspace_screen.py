@@ -1596,8 +1596,12 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                             else "Missing output link removed."
                         )
                         studio.refresh_studio()
-            elif action in {"export", "export-csv", "export-json", "export-xlsx", "export-revealjs", "export-markdown"}:
-                format = "markdown" if action == "export" else action.removeprefix("export-")
+            elif action in {
+                "export", "export-csv", "export-json", "export-xlsx", "export-revealjs", "export-markdown", "export-audio",
+            }:
+                format = row.record["format"] if action == "export-audio" else {
+                    "export": "markdown",
+                }.get(action, action.removeprefix("export-"))
                 suffix = {"markdown": "md", "revealjs": "zip"}.get(format, format)
                 format_label = {"markdown": "Markdown", "revealjs": "Reveal.js ZIP"}.get(format, format.upper())
                 picked = await self.app.push_screen_wait(

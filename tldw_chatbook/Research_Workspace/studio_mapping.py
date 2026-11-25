@@ -156,7 +156,9 @@ SERVER_TABLE_KINDS = (
     ResearchWorkProductKind.CORPUS_GAP_FINDER,
 )
 
-SERVER_NATIVE_OWNERS = frozenset({StudioOwnerKind.SERVER_DATA_TABLE, StudioOwnerKind.SERVER_SLIDES})
+SERVER_NATIVE_OWNERS = frozenset({
+    StudioOwnerKind.SERVER_DATA_TABLE, StudioOwnerKind.SERVER_SLIDES, StudioOwnerKind.SERVER_AUDIO,
+})
 
 STUDIO_OUTPUT_MAPPINGS: Mapping[
     tuple[WorkspaceDataSource, StudioOutputKind], StudioOwnerMapping
@@ -167,6 +169,11 @@ STUDIO_OUTPUT_MAPPINGS: Mapping[
             StudioOwnerKind.SERVER_SLIDES, "Server Slides", "id", "version", "workspace_id",
             "generate_presentation_from_media", None, None,
             "research_workspace", "research_workspace_artifact_target", artifact_type="slides",
+        ),
+        (WorkspaceDataSource.SERVER, ResearchOutputKind.AUDIO_SUMMARY): StudioOwnerMapping(
+            StudioOwnerKind.SERVER_AUDIO, "Server Speech outputs", "output_id", "version", "workspace_id",
+            "create_audio_speech_job", None, None,
+            "research_workspace", "research_workspace_artifact_target", artifact_type="audio_overview",
         ),
         **{
             (WorkspaceDataSource.SERVER, kind): StudioOwnerMapping(

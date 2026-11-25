@@ -28,6 +28,8 @@ class OpenAISpeechRequest(BaseModel):
     stream: bool = True
     target_sample_rate: int | None = Field(default=None, ge=1)
     return_download_link: bool = False
+    backend: str | None = None
+    allow_fallback: bool | None = None
     lang_code: str | None = None
     normalization_options: NormalizationOptions | None = Field(
         default_factory=NormalizationOptions
@@ -56,6 +58,7 @@ class TTSProvidersResponse(BaseModel):
     providers: dict[str, Any]
     voices: dict[str, Any]
     timestamp: str | None = None
+    supports_explicit_backend: bool = False
 
 
 class TTSVoicesResponse(RootModel[dict[str, Any]]):

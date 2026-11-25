@@ -11,6 +11,8 @@ from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 from tldw_chatbook.Notes.server_notes_workspace_service import (
     ServerNotesWorkspaceService,
 )
+from tldw_chatbook.Audio_Services_Interop.audio_services_scope_service import AudioServicesScopeService
+from tldw_chatbook.Audio_Services_Interop.server_audio_services_service import ServerAudioServicesService
 from tldw_chatbook.Workspaces.output_membership import output_membership_metadata
 from tldw_chatbook.tldw_api.exceptions import APIResponseError
 from tldw_chatbook.tldw_api.workspace_data_tables_client import WorkspaceDataTablesClient, canonical_table_uuid
@@ -34,6 +36,7 @@ from .server_slides import (
     generate_native_slides,
     slides_available,
 )
+from .server_studio_audio import ServerStudioAudio, native_speech_ids, speech_artifact_path
 from .server_study import output_creation_time, study_payload, study_result
 from .studio_generation import StudioGeneratedOutput, validate_diagram_text
 from .studio_mapping import (
@@ -66,6 +69,7 @@ class ServerStudioAdapter:
         self.policy_enforcer = policy_enforcer
         self._mutations = asyncio.Lock()
         self._unconfirmed_slides = {}
+        self._speech_jobs = {}
 
     @staticmethod
     def capabilities(
@@ -117,6 +121,7 @@ class ServerStudioAdapter:
         }
         return {
             "save_workspace_artifact": text,
+            "generate_grounded_artifact": text,
             "update_workspace_artifact": change,
             **{
                 f"generate_{kind.value}": text
@@ -145,6 +150,7 @@ class ServerStudioAdapter:
         client, _ = self._connection(ref)
         reply = await self._tables(ref, client).capability(route.provider, route.model)
         slide_ready = await slides_available(client, route, sources)
+        speech_ready = bool(sources and await self.speech_choices(ref))
         self._check_connection(ref, client)
         slides = ResearchCapability(
             slide_ready,
@@ -154,6 +160,14 @@ class ServerStudioAdapter:
             else "Slides needs exactly one ready, versioned Server Media item and an available model.",
             StudioOwnerKind.SERVER_SLIDES,
             "" if slide_ready else "Check Server Slides and the selected provider, model, and source.",
+            revision,
+        )
+        speech = ResearchCapability(
+            speech_ready, "available" if speech_ready else "server_speech_unavailable",
+            "Server Speech outputs are ready." if speech_ready else
+            "Server Audio Summary needs an available speech model, voice, and saved job output.",
+            StudioOwnerKind.SERVER_AUDIO,
+            "" if speech_ready else "Check Speech provider health, voice catalog, and job permissions on the selected Server.",
             revision,
         )
         message = "Choose an explicit Server provider and model with Data Tables access."
@@ -180,6 +194,8 @@ class ServerStudioAdapter:
             "get_data_table": capability,
             "generate_presentation_from_media": slides,
             "get_presentation": slides,
+            "create_audio_speech_job": speech,
+            "list_audio_speech_job_artifacts": speech,
             **{f"generate_{kind.value}": capability for kind in SERVER_TABLE_KINDS},
         }
 
@@ -213,6 +229,27 @@ class ServerStudioAdapter:
             for style in styles.styles
             if style.scope in {"builtin", "user"}
         )
+
+    def _audio(self, client):
+        native = ServerAudioServicesService(client, policy_enforcer=self.policy_enforcer)
+        scope = AudioServicesScopeService(server_service=native, policy_enforcer=self.policy_enforcer)
+        return ServerStudioAudio(scope, jobs=self._speech_jobs)
+
+    async def speech_choices(self, ref):
+        client, _ = self._connection(ref)
+        if not callable(getattr(client, "list_tts_providers", None)):
+            return ()
+        choices = await self._audio(client).choices()
+        self._check_connection(ref, client)
+        return choices
+
+    async def prepare_output(self, request, generated, *, cancel_event):
+        if request.output_kind is not ResearchOutputKind.AUDIO_SUMMARY:
+            return None
+        client, _ = self._connection(request.workspace)
+        result = await self._audio(client).prepare(request, generated, cancel_event)
+        self._check_connection(request.workspace, client)
+        return result
 
     def _connection(self, ref: QualifiedWorkspaceRef):
         if ref.data_source is not WorkspaceDataSource.SERVER:
@@ -268,7 +305,7 @@ class ServerStudioAdapter:
             native = row["producer_metadata"].get("research_native_owner")
             if not isinstance(native, Mapping) or native.get("owner_kind") != owner.owner_kind.value:
                 raise ValueError("The workspace link has no native Server output")
-            owner_id = canonical_table_uuid(native.get("owner_id"))
+            owner_id = self._native_owner_id(owner.owner_kind, native.get("owner_id"))
             version = native.get("owner_version")
             if type(version) is not int or version < 1:
                 raise ValueError("The workspace link has no native Server output revision")
@@ -360,9 +397,11 @@ class ServerStudioAdapter:
         if output.owner_kind in SERVER_NATIVE_OWNERS:
             links = await self._records(output.workspace, client, service)
             mapping = STUDIO_OUTPUT_MAPPINGS[output.workspace.data_source, output.output_kind]
-            if not self._matching_native_link(output, links, mapping.artifact_type):
+            link = self._matching_native_link(output, links, mapping.artifact_type)
+            if link is None:
                 return None
-            return await self._native_detail(output, client, preview=True)
+            native = await self._native_detail(output, client, preview=True)
+            return {**native, "title": link["title"]} if native else None
         for row in await self._records(output.workspace, client, service):
             if row.get("id") == output.owner_id and (metadata := self._metadata(row)):
                 selected = self._reference(output.workspace, row, metadata)
@@ -377,8 +416,19 @@ class ServerStudioAdapter:
             and self._reference(output.workspace, row, metadata) == output
         ), None)
 
+    @staticmethod
+    def _native_owner_id(kind, value):
+        if kind is StudioOwnerKind.SERVER_AUDIO:
+            native_speech_ids(value)
+            return value
+        return canonical_table_uuid(value)
+
     async def _native_detail(self, output, client, *, preview=False):
         ref = output.workspace
+        if output.owner_kind is StudioOwnerKind.SERVER_AUDIO:
+            audio = await self._audio(client).detail(ref, output.owner_id)
+            self._check_connection(ref, client)
+            return audio if output.owner_version == 1 else None
         if output.owner_kind is StudioOwnerKind.SERVER_DATA_TABLE:
             detail = await self._tables(ref, client).detail(output.owner_id, rows_limit=12 if preview else 1)
             self._check_connection(ref, client)
@@ -494,6 +544,14 @@ class ServerStudioAdapter:
             if not await self._native_detail(output, client):
                 raise ValueError("The native presentation changed while exporting")
             return response.content
+        if output.owner_kind is StudioOwnerKind.SERVER_AUDIO:
+            detail = await self.resolve_output(output)
+            if not detail or format != detail.get("format"):
+                raise ValueError("Open the saved native audio artifact before downloading")
+            client, _ = self._connection(output.workspace)
+            data = await client._request_bytes("GET", speech_artifact_path(detail["output_id"]))
+            self._check_connection(output.workspace, client)
+            return data
         if format != "markdown":
             raise ValueError("Choose Markdown for this workspace artifact")
         ref = output.workspace
@@ -671,7 +729,7 @@ class ServerStudioAdapter:
         if generated.native_owner is None:
             raise ValueError("The native generation has no completed owner")
         native_id, version = generated.native_owner
-        native_id = canonical_table_uuid(native_id)
+        native_id = self._native_owner_id(mapping.owner_kind, native_id)
         artifact_id = self._artifact_id(request)
         metadata = generation_metadata(request, supersedes)
         output = output_reference(ref, native_id, mapping.owner_kind, version, metadata["research_generation"])
@@ -683,6 +741,10 @@ class ServerStudioAdapter:
                 "owner_version": version,
             },
         }
+        if generated.citations:
+            producer["research_citations"] = citation_references(
+                generated, {citation.marker for citation in generated.citations}
+            )
 
         def validated(row):
             if (
@@ -705,7 +767,12 @@ class ServerStudioAdapter:
             try:
                 row = await service.save_workspace_artifact(
                     workspace_id=ref.workspace_id, artifact_id=artifact_id, artifact_type=mapping.artifact_type,
-                    title=detail["title"], status="complete", producer_metadata=producer,
+                    title=(
+                        request.generation.title or "Audio Summary"
+                        if mapping.owner_kind is StudioOwnerKind.SERVER_AUDIO
+                        else detail["title"]
+                    ),
+                    status="complete", producer_metadata=producer,
                 )
             except APIResponseError as exc:
                 if exc.status_code != 409:
