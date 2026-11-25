@@ -1640,9 +1640,13 @@ tool calls 2 turns in a row …") instead of spending more model calls that
 can run nothing. No approval card is raised during the stop, and a card you
 approve after the stop lands is refused instead of run. A call that was
 already executing when the stop landed finishes and keeps its own result.
-Hook actions (command and MCP hooks) don't run during the stop either; each
-is recorded as skipped because of the emergency stop, and a PreToolUse gate
-that can't run still blocks its tool rather than letting it through.
+Hooks don't run during the stop either: your run hooks (`[[hooks.hook]]`,
+see [Run hooks](console/agent-runs-and-tools.md#run-hooks--your-own-commands-at-session-lifecycle-points))
+and command and MCP hook handlers alike. Each is skipped because of the
+emergency stop and the log says so (the event, never the command). A
+PreToolUse guard that can't run still blocks its tool, and a send that was
+already on its way when the stop landed is refused with the stop's message
+before its UserPromptSubmit hooks run.
 `/research` is refused while the stop is active, and a research run that is
 already going stops at its next step ("Stopped by the emergency stop"),
 keeping what it had saved. The stop is durable (it survives a restart) and
