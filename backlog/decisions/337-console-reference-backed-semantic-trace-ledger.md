@@ -852,6 +852,50 @@ falls back to a hosted provider, the next captured send to llama.cpp was
 refused, as any captured switch from a hosted provider to llama.cpp already
 was. (Granted by the next amendment.)
 
+### Amendment recorded 2026-11-25 (owner-approved): a new turn's first call may put the leading system slot back (TASK-42525)
+
+The owner approved this on 2026-11-25 ("Allow it, do it now"): "A new turn's
+first call may put the leading system-prompt slot back when the recorded call
+had no system slot and the new request starts with a system prompt; it is the
+mirror of the removal you approved." It covers the send that went back to
+llama.cpp after a llama.cpp run fell back to a hosted provider, and a captured
+manual switch from a hosted provider to llama.cpp. Both were refused
+(`unsupported_surface_change`): llama.cpp sends the system prompt as the first
+message, and the surface had no slot for it.
+
+1. **Which call.** Only a new turn's first call, on the AGENT_FIRST or FRESH
+   route. Never a retry, a fallback chain's call or a tool-loop call; those
+   keep their refusals.
+2. **Which shape.** The surface has no active rendered-system row: it never
+   had one (the turn's earlier calls went to a provider that takes the system
+   prompt outside the message list), or a fallback's removal marker removed
+   it. The request's first row is a rendered-system row and no other row is
+   one. Every other row is planned by the existing rules, unchanged, as if the
+   slot were already in place: retained rows must match, and an append, a
+   completed-turn replacement or project context follows its own rules.
+   Nothing else is relaxed.
+3. **Recording.** Before its other writes, the call appends one
+   rendered-system node directly after the surface tail, holding the
+   request's system row as a first call's slot does. The surface projection
+   places a rendered-system node first, so the slot leads again; at most one
+   is ever active. The call's header carries the row as every later slot
+   call's header does (`rendered_system_row`), so the reader rebuilds the
+   request exactly. Nothing is removed; earlier calls, heads and bytes stay as
+   they were.
+4. **Recheck.** The planner proves the shape in the reservation transaction.
+   The dispatch-binding transaction checks it again before writing: the call
+   is still its turn's first and the surface still has no slot. From then on
+   the slot is an ordinary leading slot, which the run's tool-loop calls and
+   the next send match under the existing rules.
+
+Still refused: a slot put back by any other call; a system row anywhere but
+first; a request with two system rows; a second slot over a surface that
+already has one (a different system prompt in an existing slot is the
+existing header-owned rule, unchanged); and a change to any other row that
+the existing rules refuse. Out of scope: a captured manual switch from
+llama.cpp to a hosted provider with project instructions, which needs a slot
+removed outside a fallback (a follow-up).
+
 ## Current-owner integration amendment (2026-10-13)
 
 Canonical message/revision identity and predecessor ancestry remain reachable independently of archived payload. The existing admitted checkpoint roots and graph-epoch invalidation remain authoritative before reservation; metadata roots cannot retain deleted payload through another call sharing a policy. Retry capture compares canonical JSON bytes (including boolean/integer/float identity), and frozen arrays thaw only when forming PersistRequest fields.

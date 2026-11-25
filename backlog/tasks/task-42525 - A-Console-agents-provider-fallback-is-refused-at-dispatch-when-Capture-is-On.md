@@ -1,7 +1,7 @@
 ---
 id: TASK-42525
 title: "A Console agent's provider fallback is refused at dispatch when Capture is On"
-status: Done
+status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-23 23:00
@@ -52,6 +52,8 @@ Also decide what happens to the call the refusal leaves in `reserved`.
 **Owner decision (2026-11-24, recorded as "2 ok", approving the recommendation):** under Capture On, a provider fallback starts a **new trace chain** (option 1). The failed-call retry rule stays as strict as it is. Recorded in ADR-337 as the owner-approved amendment "a provider fallback starts a new chain (TASK-42525)".
 
 **Second owner decision (2026-11-24, via AskUserQuestion: "Allow it, do it now (Recommended)"):** a fallback chain's first call may record one bounded rewrite of the recorded history. It may remove the leading system-prompt slot plus the run's own tool rows. Each removed row must pass the same run-ownership checks the next-send witness uses, within the 256-row limit. This closes AC#1 for the two shapes the first design left refused: a native/text tool-call re-encoding after tool activity, and llama.cpp falling back to a hosted provider. Recorded in ADR-337 as the owner-approved amendment "a fallback chain's first call may rewrite the run's tail (TASK-42525)".
+
+**Third owner decision (2026-11-25, via AskUserQuestion: "Allow it, do it now (Recommended)"):** "A new turn's first call may put the leading system-prompt slot back when the recorded call had no system slot and the new request starts with a system prompt; it is the mirror of the removal you approved, recorded as a third ADR-337 amendment." Scope: only a new turn's first call (AGENT_FIRST or FRESH), never a retry, a fallback or a tool-loop call; only the leading slot, of kind rendered_system; only when the recorded surface has no leading system row (none at all, or removed by a fallback's marker) and the request's first row is a system prompt; every other row meets the existing rules unchanged; rechecked at dispatch binding and at the next send. A captured manual llama.cpp -> groq switch with AGENTS.md stays out of scope (a follow-up). Recorded in ADR-337 as the owner-approved amendment "a new turn's first call may put the leading system slot back (TASK-42525)".
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -61,6 +63,9 @@ Also decide what happens to the call the refusal leaves in `reserved`.
 - [x] #3 A retry after a failed call that changes the provider, model or endpoint without being a fallback is still refused; the existing `changed_*` cases are still refused
 - [x] #4 No call is left in `reserved` after a refused or completed fallback
 - [x] #5 A test drives a Capture-On agent run through a fallback; it is red before the change and green after
+- [ ] #6 With Capture On, after a llama.cpp run falls back to a hosted provider, the next message sent back to llama.cpp is sent and traced, with and without tool activity and with and without project instructions
+- [ ] #7 With Capture On, a manual switch from a hosted provider to llama.cpp is sent and traced, with and without project instructions
+- [ ] #8 Putting the system slot back on any call but a new turn's first, anywhere but first, as a second system row, over a slot the surface already has, or together with a change the existing rules refuse, is still refused before anything is reserved
 <!-- AC:END -->
 
 ## Implementation Plan
