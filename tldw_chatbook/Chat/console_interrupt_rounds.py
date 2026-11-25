@@ -235,10 +235,12 @@ def unpark_round_payload(
 
 
 def _app_cannot_answer(app: Any) -> bool:
-    """ADR-314: a never-started or exited App shows no card and takes no answer
-    (TASK-41637; the view does not matter, TASK-41948). A host without
-    ``is_running`` is live. Read at arm time; disposal settles a later exit."""
-    return not getattr(app, "is_running", True)
+    """ADR-314: a never-run or exited App shows no card and takes no answer (TASK-41637,
+    TASK-41948); a host without ``is_running`` is live. Disposal settles later exits."""
+    try:
+        return not app.is_running
+    except AttributeError:
+        return False
 
 
 @dataclass
@@ -3588,6 +3590,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
         if (
             self.read_controller_app() is None
             or self.read_controller_set_pending_chat_create() is None
+            or _app_cannot_answer(self.read_controller_app())  # TASK-41947
         ):
             if record is not None:
                 payload["_creation_token"].close()
@@ -3689,9 +3692,8 @@ class InterruptRoundHost(InitialHookReviewMixin):
                 request_id,
                 card_payload,
             )
-        app_gone = _app_cannot_answer(self.read_controller_app())  # TASK-41947
         try:
-            if is_parked and not app_gone:
+            if is_parked:
                 if (
                     self.read_controller_app() is not None
                     and self.read_controller_park_pending_approval() is not None
@@ -3699,13 +3701,13 @@ class InterruptRoundHost(InitialHookReviewMixin):
                     self.read_controller_app().call_from_thread(
                         self.read_controller_park_pending_approval(), session_id
                     )
-            elif is_head and not app_gone:
+            elif is_head:
                 self.read_controller__marshal_pending_chat_create()(card_payload)
             # ADR-314: mark the owning run as waiting on a human decision
             # (see the sibling bridges' identical wrap for the why).
             with use_human_input_wait(str(chat_create_round_state.get("run_id") or "")):
                 while not event.wait(self.read_global__MCP_APPROVAL_POLL_SECONDS()):
-                    if app_gone or self.read_controller__is_session_cancelled()(
+                    if self.read_controller__is_session_cancelled()(
                         session_id,
                         cancel_event=round_cancel_event,
                         visit_event=visit_cancel_event,
@@ -3783,7 +3785,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
                     if session_id is not None
                     else (self.read_controller_store().active_session_id or "")
                 )
-                if not app_gone and target_session == (
+                if target_session == (
                     self.read_controller_store().active_session_id or ""
                 ):
                     self.read_controller__marshal_pending_chat_create()(

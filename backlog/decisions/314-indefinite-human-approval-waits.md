@@ -133,9 +133,15 @@ as in the shipped app, where `controller.app` is the running App, so the view
 condition was dropped.
 
 Amended 2026-11-25 (TASK-41947): agent chat-create confirmations
-(`request_chat_create_confirm`) wait in their own loop outside `run_round` and
-follow the same rule. With no running App they show no card and settle as
-refused within one poll.
+(`request_chat_create_confirm`) wait in their own loop outside `run_round`.
+With no running App, a confirmation that needs a round is now refused before
+one is armed: no card, park toast, badge or wait, and the call returns
+`{"allow": False, "remember": False}` (a remembered session grant needs no
+round and still applies). Unlike `run_round`, the chat-create bridge has no unresolved outcome.
+Its tool closure (`build_chat_create_tool_closures`) reports every non-Allow
+result, including timeout and cancellation, to the model as "The user
+declined. Do not retry this turn." and counts it as a denial, so this refusal
+reads the same way.
 
 ## Renumbering provenance
 
