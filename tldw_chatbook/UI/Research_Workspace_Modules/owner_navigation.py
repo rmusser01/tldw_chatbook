@@ -4,6 +4,7 @@ from ...Research_Workspace.owner_links import (
     RESEARCH_OWNER_LINKS,
     can_open_workspace_in_console,
 )
+from ..Console_Modules.research_workspace_handoff import queue_workspace_handoff
 from ..Navigation.main_navigation import NavigateToScreen
 
 
@@ -29,9 +30,10 @@ def navigate_to_research_owner(screen, action, ref) -> None:
         target = app.screen
 
         def open_context():
-            opener = getattr(target, "open_research_workspace_context", None)
-            if app.screen is target and callable(opener):
-                opener(ref, create_chat=action == "agent-task")
+            from ..Screens.chat_screen import ChatScreen
+
+            if app.screen is target and isinstance(target, ChatScreen):
+                queue_workspace_handoff(target, ref, create_chat=action == "agent-task")
 
         app.call_after_refresh(open_context)
 

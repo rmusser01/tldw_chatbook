@@ -147,6 +147,7 @@ from ..Console_Modules.review_selection import (
     run_console_turn_undo,
     prepare_console_turn_undo,
 )
+from ..Console_Modules.research_workspace_handoff import consume_workspace_handoff
 from ..Console_Modules.dispatch_recovery import ConsoleDispatchRecoveryRegion
 from ..Console_Modules.left_rail import (
     CONSOLE_DISCARD_DEFAULT_RETRY_ID,
@@ -6613,35 +6614,6 @@ class ChatScreen(BaseAppScreen):
             exclusive=True,
             group="console-row-action-menu-open",
         )
-
-    def open_research_workspace_context(self, ref: object, *, create_chat: bool = False) -> None:
-        """Accept a qualified Local Research workspace after Console navigation."""
-        from ...Research_Workspace.contracts import QualifiedWorkspaceRef, WorkspaceDataSource
-
-        if not isinstance(ref, QualifiedWorkspaceRef) or ref.data_source is not WorkspaceDataSource.LOCAL:
-            return
-        self._pending_research_console_workspace = (ref.workspace_id, create_chat)
-        self._consume_research_console_workspace()
-
-    def _consume_research_console_workspace(self) -> None:
-        pending = self._pending_research_console_workspace
-        if pending is None or not self._console_attach_reconciled or not self._is_active_console_screen():
-            return
-        self._pending_research_console_workspace = None
-        workspace_id, create_chat = pending
-        registry = getattr(self.app_instance, "workspace_registry_service", None)
-        record = registry.get_workspace(workspace_id) if registry is not None else None
-        if record is None or record.archived:
-            self.app_instance.notify("Choose an active Local workspace in Research.", severity="warning")
-            return
-        if create_chat:
-            self.run_worker(
-                self._create_console_chat_in_workspace(workspace_id),
-                exclusive=True,
-                group="console-workspace-new-chat",
-            )
-        elif not record.active:
-            self._workspace.activate_workspace_id(workspace_id)
 
     async def _create_console_chat_in_workspace(self, workspace_id: str) -> None:
         """Activate a workspace, then create the new chat inside it.
@@ -15423,7 +15395,7 @@ class ChatScreen(BaseAppScreen):
                 self._console_attach_reconciled = True
                 self._console_attach_reconcile_retry_count = 0
                 self._console_attach_reconcile_retry_exhausted = False
-                self.call_after_refresh(self._consume_research_console_workspace)
+                self.call_after_refresh(consume_workspace_handoff, self)
         except Exception as exc:  # noqa: BLE001 -- a repaint never kills the app
             if not _console_screen_is_torn_down(self):
                 failure = exc
