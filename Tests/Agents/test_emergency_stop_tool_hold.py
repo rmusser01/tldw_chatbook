@@ -27,6 +27,7 @@ removes the stop after each test whatever happened.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import threading
 from pathlib import Path
@@ -872,6 +873,48 @@ def test_a_turn_that_runs_a_tool_resets_the_held_count():
 
     assert outcome.status == RUN_DONE and len(model_calls) == 4
     assert len(invoked) == 1
+
+
+def test_a_turn_where_one_call_runs_resets_the_held_count():
+    """Held, partly held (one call ran, one was held), held: not two in a row.
+
+    Only a turn whose EVERY call the stop held counts; a turn in which any
+    call ran is progress and resets the count.
+    """
+    from tldw_chatbook.Agents.agent_models import RunBudget
+    from tldw_chatbook.Agents.agent_runtime import run_agent_loop
+
+    def two_calls(i):
+        return ModelTurn(
+            text="",
+            tool_calls=(
+                ToolCall("calculator", {"expression": f"{i}+1"}, f"a{i}"),
+                ToolCall("calculator", {"expression": f"{i}+2"}, f"b{i}"),
+            ),
+        )
+
+    invoked: list[ToolCall] = []
+    # Turn 1: the batch ask holds both. Turn 2: the batch ask is clear, the
+    # first call's dispatch ask is clear (it runs), the second's holds.
+    # Turn 3: the batch ask holds both. Then the model answers in text.
+    deps, model_calls = _loop(
+        [two_calls(1), two_calls(2), two_calls(3), ModelTurn(text="Done.")],
+        [True, False, False, True, True],
+        invoked,
+    )
+
+    # Six tool calls: the default step budget (8) would end the run first.
+    config = dataclasses.replace(
+        _config("calculator", native=True), budget=RunBudget(max_steps=20)
+    )
+    outcome = run_agent_loop(
+        config, [{"role": "user", "content": "go"}], [CALC_SCHEMA], deps
+    )
+
+    assert outcome.status == RUN_DONE, (
+        f"a partly held turn counted as held ({outcome.termination_reason})"
+    )
+    assert len(model_calls) == 4 and len(invoked) == 1
 
 
 def test_a_goal_run_held_by_the_stop_ends_with_the_emergency_stop_reason(monkeypatch):
