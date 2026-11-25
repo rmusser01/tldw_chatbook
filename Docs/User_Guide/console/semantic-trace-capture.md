@@ -252,8 +252,12 @@ transcript:
   exception: when the run's earlier tool calls must be rewritten for the
   fallback provider's tool-call format (for example, tool calls a model wrote
   as text, sent on to a provider that takes them natively), capture cannot
-  record the rewrite yet. The run stops with "Trace capture could not start"
-  before the fallback provider is asked.
+  record the rewrite yet. A fallback from a llama.cpp server to a hosted
+  provider stops the same way, even before any tool call: llama.cpp is sent
+  the system prompt as its first message and a hosted provider is not, and
+  capture cannot record that change inside a run yet. In both cases the run
+  stops with "Trace capture could not start" before the fallback provider is
+  asked.
 - Edit & resend and Regenerate send their reply with capture off, so that reply
   has no trace call of its own. Your next send in the chat is captured as usual.
   It records the edited branch as one bounded replacement of the earlier trace

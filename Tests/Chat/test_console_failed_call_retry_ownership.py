@@ -2175,3 +2175,64 @@ async def test_a_fallback_to_a_text_tool_provider_brings_its_own_instructions(
             ("agent_first", "error", _DS, 0, 0),
             ("tool_loop", "complete", "huggingface", 1, 0),
         ]
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("project", [True, False], ids=["project", "no_project"])
+async def test_a_captured_llamacpp_run_cannot_yet_fall_back_to_a_hosted_provider(
+    tmp_path, monkeypatch, project
+):
+    """TASK-42525's other limit, on TASK-42472's path.
+
+    llama.cpp HTTP failures are transient, so a llama.cpp run reaches its
+    fallback once the in-place retries are spent. llama.cpp's request carries
+    its system prompt as the first message, a hosted provider's does not, so
+    groq's request does not continue the run's trace surface even before any
+    tool call (`unsupported_surface_change`). The run stops before groq is
+    asked, with nothing reserved.
+    """
+    import functools
+
+    from Tests.Chat.test_console_project_instruction_traces import _project_console
+    from tldw_chatbook.Chat import (
+        Chat_Functions,
+        console_agent_bridge,
+        provider_readiness,
+    )
+
+    async with _project_console(
+        tmp_path,
+        monkeypatch,
+        source_name="AGENTS.md" if project else "NOTES.md",
+        first_failure=_llama_script(*["busy"] * 3),
+        failures=3,
+    ) as app:
+        llama, groq = app.gateway.resolve_for_send, []
+
+        async def resolve(selection):
+            return _GROQ if selection.provider == _GQ else await llama(selection)
+
+        @functools.wraps(Chat_Functions.chat_api_call)
+        def handler(*_args, **kwargs):
+            groq.append(kwargs["api_endpoint"])
+            return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+        monkeypatch.setattr(app.gateway, "resolve_for_send", resolve)
+        monkeypatch.setattr(app.gateway, "_chat_api_call_fn", handler)
+        monkeypatch.setattr(
+            console_agent_bridge, "console_fallback_providers", lambda: (_GQ,)
+        )
+        monkeypatch.setattr(
+            provider_readiness, "configured_provider_is_ready", lambda _p: True
+        )
+        result = await app.controller.submit_draft("Hello", session_id=app.session.id)
+
+        assert app.controller.run_state.status.value == "blocked"
+        assert app.reservation_errors == ["unsupported_surface_change"]
+        assert groq == []
+        turn_id = app.store.get_message(result.user_message_id).persisted_message_id
+        assert _chain_calls(app, turn_id) == [
+            ("agent_first", "error", "llama_cpp", 0, 0),
+            ("tool_loop", "error", "llama_cpp", 0, 1),
+            ("tool_loop", "error", "llama_cpp", 0, 2),
+        ]

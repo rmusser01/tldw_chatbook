@@ -781,6 +781,9 @@ Still refused:
 - A fallback whose history projection rewrites rows already on the surface
   (native and fenced tool protocols, after tool activity). It needs a
   replacement, which this amendment does not grant.
+- A fallback between providers that place the system prompt differently
+  (llama.cpp sends it as the first message, a hosted provider does not). The
+  new call does not continue the surface even before any tool call.
 - A spawned child's preset fallback.
 
 ## Current-owner integration amendment (2026-10-13)
