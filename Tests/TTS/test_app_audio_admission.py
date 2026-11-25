@@ -294,6 +294,7 @@ async def test_unrelated_cover_retires_mounted_handsfree_stream(request):
         assert lease.revoked and stream.close.called and app.audio_output.owner is None
         assert console._hands_free._console_hands_free is None
 
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("scope", ["durable", "unmount"])
 @private_profile_test
