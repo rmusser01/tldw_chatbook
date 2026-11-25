@@ -398,8 +398,8 @@ def validate_fallback_rewrite(
         if descriptors or witness.descriptors:
             raise _refuse()
         return
-    start = int(getattr(plan, "start_sequence"))
-    end = int(getattr(plan, "end_sequence"))
+    start = int(plan.start_sequence)  # type: ignore[attr-defined]
+    end = int(plan.end_sequence)  # type: ignore[attr-defined]
     removed = tuple(entry for entry in entries if start <= entry[0] <= end)
     if (
         getattr(plan, "chain", ())
