@@ -54,6 +54,10 @@ from tldw_chatbook.UI.Screens.research_workspace_screen import (
 )
 
 
+# The mounted screen's shared footer reads the process-bound config.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 class _RecordingOperationStore:
     def __init__(self, trace: list[tuple[object, ...]]) -> None:
         self.trace = trace
@@ -102,8 +106,8 @@ class _MountedScreenApp(App[None]):
 
 
 @pytest.mark.asyncio
-@pytest.mark.bootstrap_profile
-async def test_source_refresh_ignores_results_after_pane_detaches(monkeypatch) -> None:
+@pytest.mark.parametrize("detach", ["pane", "recovery"])
+async def test_source_refresh_ignores_results_after_pane_detaches(monkeypatch, detach) -> None:
     ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
     started = asyncio.Event()
     release = asyncio.Event()
@@ -129,7 +133,9 @@ async def test_source_refresh_ignores_results_after_pane_detaches(monkeypatch) -
             worker for worker in screen.workers
             if worker.group == "research-workspace-sources"
         )
-        await screen.query_one(ResearchSourcesRegion).remove()
+        region = screen.query_one(ResearchSourcesRegion)
+        target = region if detach == "pane" else region.query_one("#research-source-recovery")
+        await target.remove()
         release.set()
         await asyncio.wait_for(worker.wait(), 3)
 

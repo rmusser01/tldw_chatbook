@@ -38,6 +38,12 @@ class OpenAISpeechRequest(BaseModel):
     reference_duration_min: float | None = Field(default=None, ge=3.0, le=60.0)
     extra_params: dict[str, Any] | None = None
 
+    def job_payload(self) -> dict[str, Any]:
+        """Keep legacy defaults and send only set fields for an explicit backend."""
+        return self.model_dump(
+            exclude_none=True, exclude_unset=self.backend is not None, mode="json"
+        )
+
 
 class TTSHealthResponse(BaseModel):
     model_config = ConfigDict(extra="allow")

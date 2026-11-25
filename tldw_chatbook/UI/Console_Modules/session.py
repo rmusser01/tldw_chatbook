@@ -3987,16 +3987,13 @@ class ConsoleSessionController:
         # to the new tab instead of clobbering it.
         self._capture_console_draft_switch_snapshot()
         self._refresh_console_library_policy_defaults()
-        # Task 9 (workspace assistant defaults): a plain new tab in an
-        # explicit workspace starts as the workspace default persona's
-        # session. Settings/default-persona selection lives in the helper
-        # below so published-default provenance is testable without a live
-        # screen.
-        target_workspace_id = workspace_id
-        if target_workspace_id is None:
-            target_workspace_id = (
-                self._ensure_console_chat_store().workspace_context.active_workspace_id
-            )
+        # A new tab uses the target workspace's default assistant. Explicit
+        # handoffs can select it while the active Console view repaints.
+        target_workspace_id = (
+            self._ensure_console_chat_store().workspace_context.active_workspace_id
+            if workspace_id is None
+            else workspace_id
+        )
         settings, assistant_kwargs = self._new_session_startup_settings(
             target_workspace_id
         )

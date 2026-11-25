@@ -243,6 +243,8 @@ async def test_audio_routes_wire_speech_jobs_history_and_transcription(
     assert binary.await_args.kwargs["json_data"]["model"] == "kokoro"
     assert binary.await_args.kwargs["json_data"]["stream"] is False
     assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/audio/speech/jobs")
+    legacy_job = mocked.await_args_list[4].kwargs["json_data"]
+    assert legacy_job["response_format"] == "mp3" and legacy_job["normalization_options"]["normalize"]
     assert mocked.await_args_list[5].args[:2] == (
         "GET",
         "/api/v1/audio/speech/jobs/12/artifacts",
@@ -297,6 +299,21 @@ async def test_audio_routes_wire_speech_jobs_history_and_transcription(
     assert isinstance(transcription, AudioTranscriptionResponse)
     assert isinstance(translation, AudioTranscriptionResponse)
     assert translation.text == "Translated"
+
+
+@pytest.mark.asyncio
+async def test_explicit_speech_backend_receives_only_requested_job_fields(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    post = AsyncMock(return_value={"job_id": 12, "status": "queued"})
+    monkeypatch.setattr(client, "_request", post)
+    payload = {
+        "model": "reader", "input": "A sample", "voice": "voice-a",
+        "backend": "gateway:speech", "stream": False, "allow_fallback": False,
+    }
+
+    await client.create_audio_speech_job(OpenAISpeechRequest(**payload))
+
+    post.assert_awaited_once_with("POST", "/api/v1/audio/speech/jobs", json_data=payload)
 
 
 @pytest.mark.asyncio

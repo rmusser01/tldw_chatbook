@@ -17,6 +17,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.events import Resize
 from textual.widgets import Button, Input, Static, TextArea
 
@@ -1420,20 +1421,26 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         if self.controller.selected_ref is None:
             return
         capture = self.controller.capture_request()
-        region = self.query_one("#research-sources-pane", ResearchSourcesRegion)
-        chat = self.query_one(ResearchChatRegion)
-        studio = self.query_one(ResearchStudioRegion)
+        try:
+            region = self.query_one("#research-sources-pane", ResearchSourcesRegion)
+            recovery = region.query_one("#research-source-recovery", Static)
+            chat = self.query_one(ResearchChatRegion)
+            studio = self.query_one(ResearchStudioRegion)
+        except NoMatches:
+            return
 
         def current() -> bool:
             return (
                 region.is_attached
+                and recovery.is_attached
                 and self.app.is_running
+                and self in self.app.screen_stack
                 and self.controller.is_current_request(capture)
             )
 
-        region.query_one("#research-source-recovery", Static).update(
-            f"Loading {capture.ref.data_source.value.title()} sources..."
-        )
+        if not current():
+            return
+        recovery.update(f"Loading {capture.ref.data_source.value.title()} sources...")
         try:
             operations = await self._recent_operations(capture.ref)
         except (OSError, ValueError, RuntimeError):

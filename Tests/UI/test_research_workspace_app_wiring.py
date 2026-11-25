@@ -36,6 +36,8 @@ pytestmark = pytest.mark.bootstrap_profile
 
 
 class _LocalWorkspaceService:
+    db: WorkspaceDB
+
     def __init__(self, workspace_id: str = "local-research") -> None:
         self.workspace_id = workspace_id
         self.list_calls = 0
@@ -49,6 +51,16 @@ class _LocalWorkspaceService:
                 archived=False,
             )
         ]
+
+
+@pytest.fixture(autouse=True)
+def _copy_receipt_database(monkeypatch):
+    db = WorkspaceDB(":memory:")
+    monkeypatch.setattr(_LocalWorkspaceService, "db", db, raising=False)
+    try:
+        yield
+    finally:
+        db.close()
 
 
 class _ServerWorkspaceService:
@@ -858,7 +870,7 @@ async def test_queued_overlay_save_recaptures_owner_after_authority_switch(
         for _ in range(100):
             await pilot.pause(0.02)
             server_saved = store.load(server_ref)
-            if server_saved is not None:
+            if server_saved is not None and screen._overlay_revision == 1:
                 break
 
         local_saved = store.load(local_ref)
