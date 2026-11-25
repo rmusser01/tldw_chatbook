@@ -822,6 +822,75 @@ async def test_reader_open_publishes_while_listening_eligibility_is_pending(
 
 
 @pytest.mark.asyncio
+async def test_reader_rehydration_rechecks_listening_for_the_same_row(monkeypatch):
+    async with _watchlists(monkeypatch) as state:
+        screen, pilot = state.screen, state.pilot
+        screen.active_section = "items"
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _until(lambda: len(pane.items) >= 3)
+        first, other = state.ids[-1], state.ids[1]
+        first_id, other_id = (f"local:watchlist_item:{key}" for key in (first, other))
+        entered_other = asyncio.Event()
+        entered_reopen = asyncio.Event()
+        release_reopen = asyncio.Event()
+        checked_bodies = []
+        prepare_issue = screen._listening.prepare_reader_issue
+        first_fetch = True
+
+        async def load_body(*, runtime_backend, item_id):
+            nonlocal first_fetch
+            if item_id == other_id:
+                entered_other.set()
+                await asyncio.Future()
+            assert item_id == first_id
+            if first_fetch:
+                first_fetch = False
+                return None
+            entered_reopen.set()
+            await release_reopen.wait()
+            return "Fresh saved prose"
+
+        async def eligibility(item):
+            checked_bodies.append(item.get("content"))
+            return await prepare_issue(item)
+
+        monkeypatch.setattr(screen._controller, "get_item_content", load_body)
+        monkeypatch.setattr(screen._listening, "prepare_reader_issue", eligibility)
+        try:
+            pane.select_item_by_id(first_id)
+            await _until(lambda: state.db.get_item_status(first) == "reviewed")
+            await _until(lambda: bool(screen.query("#watchlists-listen-note")))
+            note = screen.query_one("#watchlists-listen-note", Static)
+            await _until(lambda: "No saved body to read." in _text(note))
+            published = screen._selected_content_item
+            assert published["id"] == first_id
+            assert not _enabled(screen, "#watchlists-listen")
+
+            pane.select_item_by_id(other_id)
+            await _until(entered_other.is_set)
+            pane.select_item_by_id(first_id)
+            await _until(entered_reopen.is_set)
+            screen._listening.refresh()
+            await _until(lambda: "No saved body to read." in _text(note))
+            assert screen._selected_content_item is published
+
+            release_reopen.set()
+            await _until(lambda: published.get("content") == "Fresh saved prose")
+            assert screen._selected_content_item is published
+            await pilot.pause()
+            try:
+                await _until(lambda: _enabled(screen, "#watchlists-listen"))
+            except TimeoutError:
+                pytest.fail(
+                    f"Listen must recheck a published body, checked {checked_bodies!r}"
+                )
+            assert checked_bodies == [None, "Fresh saved prose"]
+            assert state.service.calls == []
+        finally:
+            release_reopen.set()
+
+
+@pytest.mark.asyncio
 async def test_manual_fixture_joins_complete_tts_shutdown(monkeypatch, tmp_path):
     from contextlib import nullcontext
 

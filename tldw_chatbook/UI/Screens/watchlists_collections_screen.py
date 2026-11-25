@@ -12297,6 +12297,7 @@ class WatchlistsCollectionsScreen(WatchlistsListeningMixin, BaseAppScreen):
             except NoMatches:
                 pass
             self._mark_item_read_on_open(item)
+            self._listening.reader_published()
 
     def _reader_position_text(self) -> str:
         """The reader footer's "N of M" (TASK-3072 plan task 9).

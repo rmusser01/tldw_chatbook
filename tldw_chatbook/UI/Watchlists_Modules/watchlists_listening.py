@@ -98,7 +98,8 @@ class WatchlistsListening:
         self._preview_ticket: object | None = None
         self._context = 0
         self._confirming = False
-        self._reader_key: tuple[int, int] | None = None
+        self._reader_publication = object()
+        self._reader_check_started = False
         self._reader_availability = _CHECKING_ARTICLE
         self.citation_issues: tuple[int, dict[int, str]] = (0, {})
 
@@ -108,6 +109,12 @@ class WatchlistsListening:
         self._preview = None
         self._preview_issue = ""
         self._preview_ticket = None
+
+    def reader_published(self) -> None:
+        """Retire eligibility when Reader publishes a body, even on the same row."""
+        self._reader_publication = object()
+        self._reader_check_started = False
+        self._reader_availability = _CHECKING_ARTICLE
 
     def _active(self) -> bool:
         return self.screen.is_attached and self.screen.app.screen is self.screen
@@ -134,33 +141,24 @@ class WatchlistsListening:
             return issue
         if self.screen._selected_content_item is None:
             return listening_reason("missing_item")
-        if self._reader_key != self._reader_selection():
-            return _CHECKING_ARTICLE
         return self._reader_availability
 
-    def _reader_selection(self) -> tuple[int, int]:
-        return id(
-            self.screen._selected_content_item
-        ), self.screen._item_detail_generation
-
     def _check_reader_availability(self, item: dict) -> None:
-        key = self._reader_selection()
-        if self._reader_key == key:
+        if self._reader_check_started:
             return
-        self._reader_key = key
-        self._reader_availability = _CHECKING_ARTICLE
+        self._reader_check_started = True
         self.screen.run_worker(
-            self._read_reader_availability(item, key),
+            self._read_reader_availability(item, self._reader_publication),
             exclusive=True,
             group="wl-listening-reader-availability",
         )
 
-    async def _read_reader_availability(self, item: dict, key: tuple[int, int]) -> None:
+    async def _read_reader_availability(self, item: dict, publication: object) -> None:
         issue = await self.prepare_reader_issue(item)
         if (
             self.screen.is_attached
             and self.screen._selected_content_item is item
-            and self._reader_selection() == key
+            and self._reader_publication is publication
         ):
             self._reader_availability = issue
             self.refresh()
@@ -202,6 +200,7 @@ class WatchlistsListening:
         ):
             return
         generation = self.screen._item_detail_generation
+        publication = self._reader_publication
         self._listen(
             service,
             item_id,
@@ -209,6 +208,7 @@ class WatchlistsListening:
                 self.screen.active_section == "items"
                 and self.screen._selected_content_item is item
                 and self.screen._item_detail_generation == generation
+                and self._reader_publication is publication
             ),
         )
 
