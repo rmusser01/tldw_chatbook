@@ -750,6 +750,24 @@ generation from regeneration of missing audio. Exact-EOF Resume starts no player
 Stop in padding cannot masquerade as successful foreground return. Play again
 resets all saved entry bookmarks atomically, preserving reusable artifacts.
 
+Cancellation before admission selection revokes that tentative request and
+preserves the installed session. Once selected, a mutation retains its owned
+serialized operation through physical retirement, SQLite completion and state
+publication even if its observer detaches. Destructive source operations recheck
+their original live authority at the mutation boundary; old-owner terminal
+checkpoint authority cannot authorize deletion. Read-only brief guidance
+distinguishes Resume, Play again and replacement without changing failure state
+or requiring a new default voice for retained playback.
+
+A preparation refusal with unconfirmed pin retirement carries its exact retained
+attempt back to the service. An exception cannot discard that custody before a
+run is returned. The service and its original holder stay blocked; this adds no
+native handle retry or permission to start output. During shutdown, failed
+listening retirement preserves its dependent TTS, pooled-session and database
+barriers while independent owners still drain. Both lifecycle paths report the
+original bounded failure after independent cleanup, rather than aborting all
+cleanup at the first failed listening await.
+
 ## Alternatives
 
 - A profile-local JSON queue manifest avoids SQL changes but splits atomic state,

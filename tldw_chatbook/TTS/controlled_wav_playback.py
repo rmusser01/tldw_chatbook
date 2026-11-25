@@ -77,6 +77,14 @@ class PlaybackCompletion:
     evidence: PlaybackEvidence
 
 
+class ControlledPreparationUnconfirmed(ControlledWavError):
+    """Preparation refused while the original run still owns uncertain resources."""
+
+    def __init__(self, reason: str, run: ControlledWavPlayback):
+        super().__init__(reason)
+        self.run = run
+
+
 class ControlledWavPlayback:
     """Prepare once, then start under a lease or retire the prepared pins."""
 
@@ -125,6 +133,8 @@ class ControlledWavPlayback:
             run._interrupt()
             raise
         if refusal:
+            if not await asyncio.shield(run._retired):
+                raise ControlledPreparationUnconfirmed(refusal, run)
             raise ControlledWavError(refusal)
         return run
 
@@ -402,6 +412,8 @@ class ControlledWavPlayback:
             kind, reason = self._watch(child, reader)
         except ControlledWavError as error:
             reason = str(error)
+            if reason == "pin_retirement_unconfirmed":
+                clean = False
         except Exception:
             # Native exception objects can contain private paths or player argv.
             pass

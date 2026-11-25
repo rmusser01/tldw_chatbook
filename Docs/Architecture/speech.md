@@ -303,6 +303,14 @@ After parent death, a successor checks the exact process identity with query and
 
 An unstarted run can already own pinned files. When output admission is refused or becomes stale, the service keeps that run, the profile holder and any exact returned output grant until the runner confirms retirement. Stop also waits for an outstanding preparation to return its pins. A later Stop can confirm settlement before an explicit Retry.
 
+If validation or exact-EOF preparation cannot confirm final pin closure,
+`ControlledPreparationUnconfirmed` carries the original runner. A service-owned
+readiness check can likewise report an ambiguous pin close before synthesis.
+The listening service retains the attempt and profile holder in either case.
+An ambiguous native handle is never retried by its numeric value. Shutdown
+continues draining independent owners while preserving the affected speech,
+network-pool and database lifetimes.
+
 ## Governing decisions
 
 ADR-023 (TTS adapter registry + audio.cpp runtime boundary), ADR-294 (character TTS profile ownership), ADR-304 (global and studio settings ownership), ADR-306 (Speech Lab current result/auto-play), ADR-308 (audio.cpp generated model setup), ADR-051 (private TTS clone references), ADR-012 (provider credentials), ADR-025 (shared STT artifacts). Note duplicate ADR numbers exist — cite by filename. User guides: `Docs/User_Guide/console/voice-and-hands-free.md`, `Docs/User_Guide/console/attachments-images-voice.md`, `Docs/Features/Speech-Services-Guide.md`.

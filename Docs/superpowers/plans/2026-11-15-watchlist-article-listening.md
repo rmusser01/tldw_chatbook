@@ -50,7 +50,7 @@ Reason: durable domain state, audio identity/lifecycle, output ownership and bac
 | Durable listening | `DB/Subscriptions_DB.py`, next `DB/migrations/subscriptions_vN_to_vNplus1_article_listening.sql`, new `Subscriptions/article_listening_store.py` and `article_audio_assets.py`; SQL, private profile lock, assets/publication/deletion |
 | Preparation | new `Subscriptions/article_speech.py` and `article_listening_audio.py`; bounded text conversion, frozen voices and source-bound synthesis/cache |
 | Runtime | new `Subscriptions/article_listening_service.py`, `app_service_wiring.py`, `app_services.py`, `app_shutdown.py`; transport state machine, checkpoints, runtime authority and lifecycle |
-| Projection | `UI/Watchlists_Modules/content_pane.py`, `artifacts_pane.py`, new `listening_transport.py`, `UI/Screens/watchlists_collections_screen.py`, `app_command_providers.py`, `css/screens/screen_feature_watchlists.tcss` |
+| Projection | `UI/Watchlists_Modules/content_pane.py`, `artifacts_pane.py`, new `listening_transport.py`, `UI/Screens/watchlists_collections_screen.py`, `app_command_providers.py`, source `css/features/_watchlists.tcss` and generated `css/screen_feature_watchlists.tcss` |
 | Recovery | `Subscriptions/recovery.py`, `Backup_Recovery/profile_paths.py`, `detached_layout.py`, `staging.py`, `runtime_maintenance.py`, `storage_admission.py`, `DB/recovery_core.py`, `DB/recovery_operations.py`, `backlog/docs/backup-recovery-owner-inventory.md` |
 
 Paths in this map are relative to `tldw_chatbook/` except qualification, migrations under that package, tests, and documentation. Confirm existing file names against the implementation base before edits; a path correction is not permission to change a subsystem's ownership.
@@ -155,8 +155,8 @@ The final whole-task review and one scoped fix re-review are clear. The last
 199 affected checks pass with three platform skips. All 106 reviewed source/test/
 tool blobs and all public numerical receipts remain unchanged by that rebase.
 TASK-41177 is complete in draft PR #3742. TASK-41178 is complete in draft
-PR #3766. TASK-41179 is in progress on its separate child branch; later tasks
-have not begun.
+PR #3766. TASK-41179 is complete in draft PR #3767. TASK-41180 is in progress
+on its separate child branch; subsequent implementation remains gated on review.
 
 ### Task 3: Persist listening state and source-owned assets safely (TASK-41178)
 

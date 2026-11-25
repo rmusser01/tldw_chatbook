@@ -79,6 +79,19 @@ Reader j/k and next-unread navigation use the article list selection intent whil
 
 `Subscriptions/article_listening_service.py` coordinates the retained synthesis owner and the registered output retirement callback. The terminal transaction runs before successful output transfer. Runtime changes and maintenance close intake synchronously, then drain speech, output and checkpoint work before releasing the original holder. Source deletion uses that same holder to coordinate the durable queue and derived audio.
 
+The public brief preview reports playable counts, unavailable reasons and an
+`action`. A new brief offers `play`, a different installed session requires
+`replace`, and a matching completed brief offers `play_again`. An unfinished
+match offers `resume` or `resume_foreground`; the latter resumes the current
+article and preserves the saved queue-return choice. The live transport's phase
+and actions determine whether Resume is available now. Installed guidance uses
+the saved selection and remains readable when the current default voice is unavailable.
+
+Cancellation withdraws an unselected content request's own tentative output
+intent. A selected command owns its physical and SQLite work through publication
+even if its caller leaves. The destructive transaction checks the original
+authority generation inside its outer SQLite write transaction.
+
 `Subscriptions/article_listening_store.py` owns the immutable listening records
 in SubscriptionsDB v4. Each explicit config selector has one session and an empty
 revision/incarnation witness. Queue and foreground bookmarks commit together;

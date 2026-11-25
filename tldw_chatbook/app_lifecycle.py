@@ -36,6 +36,7 @@ from tldw_chatbook.app_keep_alive import (
 from tldw_chatbook.app_service_wiring import TldwCli  # class proxy (see its docstring)
 from tldw_chatbook.app_shutdown import (
     _drain_app_unmount_services,
+    close_listening_before_dependencies,
     begin_audio_shutdown,
     observe_audio_shutdown,
 )
@@ -718,9 +719,7 @@ class LifecycleMixin:
         """Drain durable app-owned work before Textual closes screen state."""
         from .Workspaces.project_index.runtime import close_project_index_service
 
-        listening = vars(self).get("article_listening_service")
-        if listening is not None:
-            await listening.close()
+        listening_error = await close_listening_before_dependencies(self)
         await close_project_index_service(self)
         actor_recovery_cancellation = await self._shutdown_actor_pack_recovery()
         await self._shutdown_workflow_session()
@@ -800,13 +799,14 @@ class LifecycleMixin:
 
         pool_error = None
         try:
-            close_pooled_default_sessions()
+            if listening_error is None:
+                close_pooled_default_sessions()
         except Exception as exc:  # noqa: BLE001 - preserve retained owner failures.
             pool_error = exc
         errors = [
             error
             for error in (
-                recovery_cancellation,
+                recovery_cancellation, listening_error,
                 lab_error,
                 workflow_error,
                 console_error,

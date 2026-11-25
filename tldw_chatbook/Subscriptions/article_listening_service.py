@@ -7,12 +7,27 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 import re
 from threading import Event
+from typing import TYPE_CHECKING, Literal
+from functools import wraps
 import time
 from uuid import uuid4
 
 from .article_listening_lease import ListeningBusy
 from .article_listening_models import ListeningCheckpoint, ListeningConflict
 from .article_listening_store import ArticleListeningStore
+
+if TYPE_CHECKING:
+    from tldw_chatbook.TTS.audio_output_ownership import (
+        AudioOutputIntent,
+        AudioOutputLease,
+    )
+    from tldw_chatbook.TTS.controlled_wav_playback import ControlledWavPlayback
+    from .article_listening_models import (
+        ListeningAuthority,
+        ListeningCandidate,
+        ListeningEntry,
+    )
+    from .article_listening_store import _TerminalOwner
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,24 +69,57 @@ class ListeningSnapshot:
 class BriefListeningPreview:
     playable_count: int
     unavailable_reasons: tuple[str, ...]
+    action: Literal["play", "resume", "resume_foreground", "play_again", "replace"]
+
+
+@dataclass(slots=True)
+class _Admission:
+    ticket: AudioOutputIntent | None = None
+    cancelled: bool = False
+    selected: bool = False
+
+    def withdraw(self):
+        if not self.selected:
+            self.cancelled = True
+            if self.ticket is not None:
+                self.ticket.cancel()
+
+
+def _serialized_command(method):
+    """Transfer a selected command to its owner while allowing its observer to leave."""
+
+    @wraps(method)
+    async def command(self, *args, **kwargs):
+        await self._command.acquire()
+
+        async def perform():
+            try:
+                return await method(self, *args, **kwargs)
+            finally:
+                self._command.release()
+
+        return await asyncio.shield(self._retain(perform()))
+
+    return command
 
 
 @dataclass(eq=False, repr=False)
 class _Attempt:
-    entry: object
-    authority: object
-    terminal_owner: object
-    ticket: object
+    entry: ListeningEntry
+    authority: ListeningAuthority
+    terminal_owner: _TerminalOwner
+    ticket: AudioOutputIntent
     epoch: int
-    run: object = None
-    lease: object = None
-    task: object = None
+    run: ControlledWavPlayback | None = None
+    lease: AudioOutputLease | None = None
+    task: asyncio.Task | None = None
     transition: str | None = None
-    candidate: object = None
+    candidate: ListeningCandidate | None = None
     ended: bool = False
     advance: bool = False
     revoked: bool = False
     preparing_output: bool = False
+    ambiguous_readiness_pin: bool = False
     next_checkpoint: float = 0
     rejection: str | None = None
 
@@ -437,6 +485,19 @@ class ArticleListeningService:
             if delayed_retirement:
                 self._active = None
 
+    async def _advance_queue(self, s, marks=()):
+        after = len(s.queue) if s.cursor is None else s.cursor + 1
+        next_slot = next(
+            (i for i in range(after, len(s.queue)) if s.queue[i].item_id is not None),
+            None,
+        )
+        await self._checkpoint(
+            cursor=s.cursor if next_slot is None else next_slot,
+            transport="completed" if next_slot is None else "paused",
+            bookmarks=marks,
+        )
+        return next_slot is not None
+
     async def _apply_terminal(self, attempt, result, s, current, point):
         from tldw_chatbook.TTS.controlled_wav_playback import CompletionKind
 
@@ -478,20 +539,7 @@ class ArticleListeningService:
                 )
                 attempt.advance = s.resume_queue
             else:
-                next_slot = next(
-                    (
-                        i
-                        for i in range((s.cursor or 0) + 1, len(s.queue))
-                        if s.queue[i].item_id is not None
-                    ),
-                    None,
-                )
-                await self._checkpoint(
-                    cursor=s.cursor if next_slot is None else next_slot,
-                    transport="completed" if next_slot is None else "paused",
-                    bookmarks=marks,
-                )
-                attempt.advance = next_slot is not None
+                attempt.advance = await self._advance_queue(s, marks)
         else:
             self._session = await asyncio.to_thread(
                 self.store.pause_held, s, point, owner=attempt.terminal_owner
@@ -533,6 +581,8 @@ class ArticleListeningService:
             # A selected SQLite commit must publish its result, and an in-flight
             # output preparation must hand back its pins before this owner leaves.
             await asyncio.shield(attempt.task)
+        if attempt.ambiguous_readiness_pin:
+            raise ListeningBusy("pin_retirement_unconfirmed")
         if attempt.run and not attempt.ended:
             if not await self._retire_output(attempt):
                 raise ListeningBusy("player_retirement_unconfirmed")
@@ -570,13 +620,27 @@ class ArticleListeningService:
         self._chunk_progress = (None, None)
         attempt.task = self._retain(self._play(attempt, s, regenerate))
 
+    async def _check_output_readiness(self):
+        from tldw_chatbook.TTS.controlled_wav_profile import controlled_wav_readiness
+
+        a = self._active
+        if a is None or not self._eligible(a):
+            return "article_audio_retired"
+        a.preparing_output = True
+        try:
+            reason = await controlled_wav_readiness(custody=self._holder)
+            a.ambiguous_readiness_pin = reason == "pin_retirement_unconfirmed"
+            return reason
+        finally:
+            a.preparing_output = False
+
     async def _play(self, a, s, regenerate):
         from tldw_chatbook.TTS.controlled_wav_playback import (
             CompletionKind,
+            ControlledPreparationUnconfirmed,
             ControlledWavPlayback,
         )
         from .article_listening_audio import ArticleListeningAudio
-        from tldw_chatbook.TTS.controlled_wav_profile import controlled_wav_readiness
 
         try:
             if not self._eligible(a):
@@ -586,7 +650,7 @@ class ArticleListeningService:
                     self.store,
                     self.root,
                     tts_service=None,
-                    readiness=lambda: controlled_wav_readiness(custody=self._holder),
+                    readiness=self._check_output_readiness,
                     lease=self._holder,
                     speech_services=self._speech_services,
                 )
@@ -665,6 +729,13 @@ class ArticleListeningService:
         except Exception as error:
             if self._active is a:
                 self._error = _reason(error)
+                if isinstance(error, ControlledPreparationUnconfirmed):
+                    a.run = error.run
+                if a.ambiguous_readiness_pin or isinstance(
+                    error, ControlledPreparationUnconfirmed
+                ):
+                    self._phase = "retiring"
+                    return
                 if self._error in (
                     "article_audio_missing",
                     "article_audio_corrupt",
@@ -751,10 +822,8 @@ class ArticleListeningService:
             self._error = "local_listening_authority_required"
             return
         local_id = int(item_id.rsplit(":", 1)[-1])
-        await asyncio.shield(
-            self._retain(
-                self._admit(local_id, brief=False, expected_revision=expected_revision)
-            )
+        await self._request_admission(
+            local_id, brief=False, expected_revision=expected_revision
         )
 
     async def play_brief(
@@ -772,16 +841,20 @@ class ArticleListeningService:
         ):
             self._error = "local_listening_authority_required"
             return
-        await asyncio.shield(
-            self._retain(
-                self._admit(
-                    briefing_id,
-                    brief=True,
-                    replace_session=replace,
-                    expected_revision=expected_revision,
-                )
-            )
+        await self._request_admission(
+            briefing_id,
+            brief=True,
+            replace_session=replace,
+            expected_revision=expected_revision,
         )
+
+    async def _request_admission(self, ident, **options):
+        request = _Admission()
+        try:
+            await asyncio.shield(self._retain(self._admit(request, ident, **options)))
+        except asyncio.CancelledError:
+            request.withdraw()
+            raise
 
     async def _prepare_candidate(self, ident, brief, authority, voice):
         from .article_speech import CONVERTER, prepare_saved_text
@@ -818,11 +891,30 @@ class ArticleListeningService:
         ):
             raise ListeningConflict("local_listening_authority_required")
         authority = self._authorize()
+        revision = self._revision()
         if callable(self.store):
             self.store = self.store()
         from .article_speech import CONVERTER, prepare_saved_text
 
-        voice = await self._freeze_voice()
+        installed = self._session or await asyncio.to_thread(self.store.load_session)
+        if installed and installed.brief_id == briefing_id:
+            if self._authorize() != authority or not self._accept(
+                revision, session_wide=True
+            ):
+                raise ListeningConflict("listening_authority_changed")
+            if installed.transport == "completed":
+                action = "play_again"
+            elif installed.foreground:
+                action = "resume_foreground"
+            else:
+                action = "resume"
+            reasons = tuple(
+                e.unavailable_reason for e in installed.queue if e.unavailable_reason
+            )
+            return BriefListeningPreview(
+                len(installed.queue) - len(reasons), reasons, action
+            )
+        voice = installed.voice if installed else await self._freeze_voice()
         candidate = await asyncio.to_thread(
             self.store.prepare_brief,
             briefing_id,
@@ -831,14 +923,23 @@ class ArticleListeningService:
             converter=CONVERTER,
             prepare_text=prepare_saved_text,
         )
-        if not self._accept(None) or self._authorize() != authority:
+        if (
+            not self._accept(revision, session_wide=True)
+            or self._authorize() != authority
+        ):
             raise ListeningConflict("listening_authority_changed")
         reasons = tuple(
             e.unavailable_reason for e in candidate.queue if e.unavailable_reason
         )
-        return BriefListeningPreview(len(candidate.queue) - len(reasons), reasons)
+        return BriefListeningPreview(
+            len(candidate.queue) - len(reasons),
+            reasons,
+            "replace" if installed else "play",
+        )
 
-    async def _admit(self, ident, *, brief, expected_revision, replace_session=False):
+    async def _admit(
+        self, request, ident, *, brief, expected_revision, replace_session=False
+    ):
         if not self._accept(expected_revision):
             return
         ticket = None
@@ -846,7 +947,7 @@ class ArticleListeningService:
         try:
             authority = self._authorize()
             async with self._command:
-                if not self._accept(expected_revision):
+                if request.cancelled or not self._accept(expected_revision):
                     return
                 if callable(self.store):
                     self.store = self.store()
@@ -854,15 +955,13 @@ class ArticleListeningService:
                 s = self._session
                 if s is None:
                     s = self._session = await asyncio.to_thread(self.store.load_session)
+                if request.cancelled:
+                    if s is None:
+                        await self._release_holder()
+                    return
                 if brief and s and s.brief_id == ident:
-                    self._error = (
-                        "listening_play_again_required"
-                        if s.transport == "completed"
-                        else "listening_resume_available"
-                    )
                     return
                 if brief and s and not replace_session:
-                    self._error = "listening_replacement_required"
                     return
                 if (
                     not brief
@@ -874,11 +973,12 @@ class ArticleListeningService:
                 self._admission += 1
                 epoch = self._epoch, self._admission
                 owner = self._output() if callable(self._output) else self._output
-                ticket = owner.begin_intent(tentative=True)
+                ticket = request.ticket = owner.begin_intent(tentative=True)
             # The previous owner can play, pause or stop while this request is prepared.
             voice = await self._freeze_voice()
             if (
-                epoch != (self._epoch, self._admission)
+                request.cancelled
+                or epoch != (self._epoch, self._admission)
                 or self._authorize() != authority
             ):
                 return
@@ -904,6 +1004,7 @@ class ArticleListeningService:
                         or not ticket.promote()
                     ):
                         return
+                    request.selected = True
                     if self._active:
                         self._active.revoked = True
                 if (
@@ -943,7 +1044,8 @@ class ArticleListeningService:
                     await self._launch(ticket=ticket)
                     ticket = None
         except Exception as error:
-            self._error = _reason(error)
+            if not request.cancelled and (epoch is None or epoch[1] == self._admission):
+                self._error = _reason(error)
         finally:
             if ticket is not None:
                 ticket.cancel()
@@ -970,91 +1072,82 @@ class ArticleListeningService:
     ) -> None:
         await self._resume(True, False, expected_revision)
 
+    @_serialized_command
     async def _resume(self, replay, regenerate, revision):
-        async with self._command:
-            if not self._accept(revision) or self._active or not self._session:
+        if not self._accept(revision) or self._active or not self._session:
+            return
+        try:
+            authority = self._authorize()
+            await self._take_holder()
+            if self._session.transport == "completed" and not replay:
                 return
-            try:
-                authority = self._authorize()
-                await self._take_holder()
-                if self._session.transport == "completed" and not replay:
-                    return
-                if (
-                    self._adopt_on_resume
-                    or self._session.authority != authority
-                    or replay
-                ):
-                    self._session = await asyncio.to_thread(
-                        self.store.adopt_session,
-                        self._session,
-                        lease=self._holder,
-                        replay=replay,
-                    )
-                    self._adopt_on_resume = False
-                self._epoch += 1
-                await self._launch(regenerate=regenerate)
-            except Exception as error:
-                self._error = _reason(error)
+            if self._adopt_on_resume or self._session.authority != authority or replay:
+                self._session = await asyncio.to_thread(
+                    self.store.adopt_session,
+                    self._session,
+                    lease=self._holder,
+                    replay=replay,
+                )
+                self._adopt_on_resume = False
+            self._epoch += 1
+            await self._launch(regenerate=regenerate)
+        except Exception as error:
+            self._error = _reason(error)
 
     async def pause(
         self, *, expected_revision: ListeningRevision | None = None
     ) -> None:
         await self.stop(expected_revision=expected_revision)
 
+    @_serialized_command
     async def stop(self, *, expected_revision: ListeningRevision | None = None) -> None:
-        async with self._command:
-            if self._accept(expected_revision, session_wide=True):
-                self._epoch += 1
-                await self._halt()
-
-    async def skip(self, *, expected_revision: ListeningRevision | None = None) -> None:
-        async with self._command:
-            if not self._accept(expected_revision) or not self._session:
-                return
+        if self._accept(expected_revision, session_wide=True):
             self._epoch += 1
-            self._authorize()
-            await self._take_holder()
-            if self._active:
-                a = self._active
-                await self._halt("skip")
-                if a.advance:
-                    await self._launch()
-            else:
-                s = self._session
-                if s.foreground and s.queue:
-                    await self._checkpoint(cursor=s.cursor, foreground="remove")
-                    if s.resume_queue:
-                        await self._launch()
-                elif s.queue and s.cursor + 1 < len(s.queue):
-                    await self._checkpoint(cursor=s.cursor + 1)
-                    await self._launch()
-                else:
-                    await self._checkpoint(cursor=s.cursor, transport="completed")
-                    self._phase = "completed"
+            await self._halt()
 
+    @_serialized_command
+    async def skip(self, *, expected_revision: ListeningRevision | None = None) -> None:
+        if not self._accept(expected_revision) or not self._session:
+            return
+        self._epoch += 1
+        self._authorize()
+        await self._take_holder()
+        if self._active:
+            a = self._active
+            await self._halt("skip")
+            if a.advance:
+                await self._launch()
+        else:
+            s = self._session
+            if s.foreground and s.queue:
+                await self._checkpoint(cursor=s.cursor, foreground="remove")
+                if s.resume_queue:
+                    await self._launch()
+            elif await self._advance_queue(s):
+                await self._launch()
+            else:
+                self._phase = "completed"
+
+    @_serialized_command
     async def clear(
         self, *, expected_revision: ListeningRevision | None = None
     ) -> None:
-        async with self._command:
-            if (
-                not self._accept(expected_revision, session_wide=True)
-                or not self._session
-            ):
-                return
-            self._epoch += 1
-            self._authorize()
-            await self._take_holder()
-            await self._halt()
-            await asyncio.to_thread(
-                self.store.clear,
-                expected_revision=self._session.revision,
-                lease=self._holder,
-            )
-            self._session, self._phase, self._error = None, "empty", None
-            if self._audio:
-                await self._audio.settle()
-                self._audio = None
-            await self._release_holder()
+        if not self._accept(expected_revision, session_wide=True) or not self._session:
+            return
+        self._epoch += 1
+        self._authorize()
+        await self._take_holder()
+        await self._halt()
+        await asyncio.to_thread(
+            self.store.clear,
+            expected_revision=self._session.revision,
+            lease=self._holder,
+        )
+        self._session, self._phase, self._error = None, "empty", None
+        if self._audio:
+            await self._audio.settle()
+            self._audio = None
+        await self._release_holder()
 
     async def close(self) -> None:
         """Close listening intake for this app instance."""
@@ -1156,67 +1249,77 @@ class ArticleListeningService:
     async def delete_watchlist(self, watchlist_id, bundle):
         return await self._delete("watchlist", watchlist_id, bundle, database=bundle.db)
 
+    @_serialized_command
     async def _delete(self, kind, ident, bundle=None, *, database=None):
-        async with self._command:
-            if not self._accept(None):
-                raise ListeningBusy("listening_busy")
-            self._authorize()
-            if callable(self.store):
-                self.store = self.store()
-            if database is not None and database is not self.store.db:
-                raise ListeningConflict("listening_database_changed")
-            await self._take_holder()
-            db = self.store.db
-            if self._session is None:
-                self._session = await asyncio.to_thread(self.store.load_session)
-            s = self._session
-            entries = (
-                (*s.queue, *((s.foreground,) if s.foreground else ())) if s else ()
-            )
-            affected = any(
-                (kind == "source" and e.source_id == ident)
-                or (kind == "item" and e.item_id == ident)
-                for e in entries
-            )
-            if s and s.brief_id is not None:
-                if kind == "brief":
-                    affected = s.brief_id == ident
-                elif kind == "watchlist":
+        if not self._accept(None):
+            raise ListeningBusy("listening_busy")
+        authority = self._authorize()
+        if callable(self.store):
+            self.store = self.store()
+        if database is not None and database is not self.store.db:
+            raise ListeningConflict("listening_database_changed")
+        await self._take_holder()
+        db = self.store.db
+        if self._session is None:
+            self._session = await asyncio.to_thread(self.store.load_session)
+        s = self._session
+        entries = (*s.queue, *((s.foreground,) if s.foreground else ())) if s else ()
+        affected = any(
+            (kind == "source" and e.source_id == ident)
+            or (kind == "item" and e.item_id == ident)
+            for e in entries
+        )
+        if s and s.brief_id is not None:
+            if kind == "brief":
+                affected = s.brief_id == ident
+            elif kind == "watchlist":
 
-                    def owns_brief():
-                        with db.artifact_read_snapshot() as c:
-                            return (
-                                c.execute(
-                                    "SELECT 1 FROM briefings WHERE id=? AND watchlist_id=?",
-                                    (s.brief_id, ident),
-                                ).fetchone()
-                                is not None
-                            )
+                def owns_brief():
+                    with db.artifact_read_snapshot() as c:
+                        return (
+                            c.execute(
+                                "SELECT 1 FROM briefings WHERE id=? AND watchlist_id=?",
+                                (s.brief_id, ident),
+                            ).fetchone()
+                            is not None
+                        )
 
-                    affected = await asyncio.to_thread(owns_brief)
-            if affected:
-                await self._halt()
-                if self._audio:
-                    await self._audio.settle()
-            method = (
-                bundle.delete
-                if bundle
-                else {
-                    "source": db.delete_subscription,
-                    "item": db.delete_article,
-                    "brief": db.delete_brief,
-                }[kind]
+                affected = await asyncio.to_thread(owns_brief)
+        if affected:
+            await self._halt()
+            if self._audio:
+                await self._audio.settle()
+        method = (
+            bundle.delete
+            if bundle
+            else {
+                "source": db.delete_subscription,
+                "item": db.delete_article,
+                "brief": db.delete_brief,
+            }[kind]
+        )
+
+        def remove():
+            # Acquire the SQLite write lock before selecting a destructive
+            # action. An epoch change before publication rolls it back.
+            with db.destructive_transaction(lease=self._holder):
+                if self._authorize() != authority:
+                    raise ListeningConflict("listening_authority_changed")
+                result = method(ident, lease=self._holder)
+                if self._authorize() != authority:
+                    raise ListeningConflict("listening_authority_changed")
+                return result
+
+        result = await asyncio.to_thread(remove)
+        if affected:
+            self._session = await asyncio.to_thread(self.store.load_session)
+            self._phase = self._session.transport if self._session else "empty"
+            from .article_audio_assets import ArticleAudioAssets
+
+            assets = ArticleAudioAssets(
+                self.store, profile_data_root=self.root, lease=self._holder
             )
-            result = await asyncio.to_thread(method, ident, lease=self._holder)
-            if affected:
-                self._session = await asyncio.to_thread(self.store.load_session)
-                self._phase = self._session.transport if self._session else "empty"
-                from .article_audio_assets import ArticleAudioAssets
-
-                assets = ArticleAudioAssets(
-                    self.store, profile_data_root=self.root, lease=self._holder
-                )
-                await asyncio.to_thread(assets.reconcile)
-            if self._session is None:
-                await self._release_holder()
-            return result
+            await asyncio.to_thread(assets.reconcile)
+        if self._session is None:
+            await self._release_holder()
+        return result

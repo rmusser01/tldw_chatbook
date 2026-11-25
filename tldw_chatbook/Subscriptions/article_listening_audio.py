@@ -705,6 +705,7 @@ class ArticleListeningAudio:
             chunks = await asyncio.to_thread(article_chunks, entry.text)
             if not audio_stitch.PYDUB_AVAILABLE:
                 raise ArticleSpeechError("article_conversion_unavailable")
+            check()
             if reason := await self.readiness():
                 raise ArticleSpeechError(reason)
             check()

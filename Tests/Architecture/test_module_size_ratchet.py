@@ -104,7 +104,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/app_idle_warmup.py": 25,
     # TASK-32695: existing owners receive pure moves; retain their measured ceilings.
     "tldw_chatbook/Utils/app_shutdown.py": 554,
-    "tldw_chatbook/app_shutdown.py": 225,
+    "tldw_chatbook/app_shutdown.py": 208,
     # 2026-10-31: re-measured after rebasing onto dev 4d6764b132 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 2873 -> 2899.
     # PR3301, 2026-10-31: user size waiver; exact integrated measurement.
     # 2026-11-17, TASK-41308 (owner rule: raise by the change's own lines):

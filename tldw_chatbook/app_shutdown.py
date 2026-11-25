@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 
-from .app_audio_shutdown import begin_audio_shutdown as begin_audio_shutdown, observe_audio_shutdown
+from .app_audio_shutdown import (
+    begin_audio_shutdown as begin_audio_shutdown,
+    close_listening_before_dependencies,
+    close_unmount_tts,
+    observe_audio_shutdown,
+)
 
 
 async def _drain_app_unmount_services(
@@ -12,10 +17,8 @@ async def _drain_app_unmount_services(
     """Drain the app's service phase before its remaining unmount cleanup."""
     from tldw_chatbook import app_lifecycle as _owner
 
-    service_cleanup_primary: BaseException | None = primary_error
-    listening = vars(self).get("article_listening_service")
-    if listening is not None:
-        await listening.close()
+    listening_error = await close_listening_before_dependencies(self)
+    service_cleanup_primary = primary_error or listening_error
     try:
         deferred_tasks = [
             task
@@ -199,27 +202,7 @@ async def _drain_app_unmount_services(
     except BaseException as error:
         service_cleanup_primary = error
     finally:
-        try:
-            await self._close_owned_tts_resources()
-            self.loguru_logger.info("TTS resources cleaned up properly")
-        except BaseException as cleanup_error:
-            if service_cleanup_primary is not None:
-                service_cleanup_primary.add_note(
-                    "TTS cleanup also failed while preserving the primary "
-                    "shutdown error"
-                )
-                self.loguru_logger.warning(
-                    "TTS owner cleanup failed while preserving shutdown "
-                    f"type={type(cleanup_error).__name__} "
-                    "code=operation_failed"
-                )
-            elif isinstance(cleanup_error, Exception):
-                self.loguru_logger.warning(
-                    "TTS owner cleanup phase=unmount failed "
-                    f"type={type(cleanup_error).__name__} "
-                    "code=operation_failed"
-                )
-            else:
-                raise
+        if listening_error is None:
+            await close_unmount_tts(self, service_cleanup_primary)
     if service_cleanup_primary is not None:
         raise service_cleanup_primary

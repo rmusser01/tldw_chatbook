@@ -39,3 +39,38 @@ async def observe_audio_shutdown(app, budget_seconds: float) -> bool:
     if not confirmed:
         logger.warning("Audio retirement unconfirmed for owner {}", owner.owner)
     return confirmed
+
+
+async def close_listening_before_dependencies(app):
+    """Return the retained listener failure so independent owners still drain."""
+    listener = vars(app).get("article_listening_service")
+    if listener is not None:
+        try:
+            await listener.close()
+        except Exception as error:
+            return error
+    return None
+
+
+async def close_unmount_tts(self, service_cleanup_primary):
+    try:
+        await self._close_owned_tts_resources()
+        self.loguru_logger.info("TTS resources cleaned up properly")
+    except BaseException as cleanup_error:
+        if service_cleanup_primary is not None:
+            service_cleanup_primary.add_note(
+                "TTS cleanup also failed while preserving the primary " "shutdown error"
+            )
+            self.loguru_logger.warning(
+                "TTS owner cleanup failed while preserving shutdown "
+                f"type={type(cleanup_error).__name__} "
+                "code=operation_failed"
+            )
+        elif isinstance(cleanup_error, Exception):
+            self.loguru_logger.warning(
+                "TTS owner cleanup phase=unmount failed "
+                f"type={type(cleanup_error).__name__} "
+                "code=operation_failed"
+            )
+        else:
+            raise

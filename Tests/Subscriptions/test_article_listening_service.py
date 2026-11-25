@@ -194,6 +194,13 @@ async def test_pending_article_uses_legacy_tts_admission_and_long_asset_holder(
         prepare_output=output.prepare,
         acquire_output=output.acquire,
     )
+
+    async def reported_error(expected):
+        async with asyncio.timeout(4):
+            while service.snapshot().phase == "preparing":
+                await asyncio.sleep(0.01)
+        assert service.snapshot().error == expected
+
     try:
         await service.restore()
         await service.listen("local:watchlist_item:1", runtime_backend="local")
@@ -201,8 +208,7 @@ async def test_pending_article_uses_legacy_tts_admission_and_long_asset_holder(
             await asyncio.wait_for(entered.wait(), 12)
             await asyncio.wait_for(service.stop(), 2)
             await service.resume()
-            await asyncio.wait_for(service._active.task, 3)
-            assert service.snapshot().error == "article_audio_busy"
+            await reported_error("article_audio_busy")
             assert requests == [1]
             finish.set()
             await service._audio.settle()
@@ -217,8 +223,7 @@ async def test_pending_article_uses_legacy_tts_admission_and_long_asset_holder(
         if not late:
             player.wav.path.unlink()
             await service.resume()
-            await asyncio.wait_for(service._active.task, 4)
-            assert service.snapshot().error == "article_audio_missing"
+            await reported_error("article_audio_missing")
             assert "regenerate" in service.snapshot().actions
             assert requests == [1]
             await service.retry(regenerate=True)
@@ -836,3 +841,483 @@ def test_fresh_destructive_delete_and_prune_refuse_a_live_predecessor(
         if child.poll() is None:
             child.kill()
             child.wait(10)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["stop", "clear"])
+async def test_selected_command_outlives_cancelled_observer(
+    records, tmp_path, monkeypatch, command
+):
+    from threading import Event
+
+    async with saved_service(records, tmp_path / "root") as (service, store, _, output):
+        entered, finish = asyncio.Event(), Event()
+        loop = asyncio.get_running_loop()
+        if command == "stop":
+            await service.resume()
+            run = await started(output)
+            run.bookmark = replace(run.bookmark, frame=93)
+            original = run.before_release
+
+            async def delayed(result):
+                entered.set()
+                await asyncio.to_thread(finish.wait, 5)
+                await original(result)
+
+            run.before_release = delayed
+        else:
+            original = store.clear
+
+            def delayed(*args, **kwargs):
+                loop.call_soon_threadsafe(entered.set)
+                assert finish.wait(5)
+                return original(*args, **kwargs)
+
+            monkeypatch.setattr(store, "clear", delayed)
+        task = asyncio.create_task(getattr(service, command)())
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        finally:
+            finish.set()
+        if command == "stop":
+            await service.resume()
+            next_run = await asyncio.wait_for(output.started.get(), 3)
+            assert next_run.bookmark.frame == 93
+        else:
+            await service.stop()
+            assert service.snapshot().phase == "empty" and store.load_session() is None
+
+
+@pytest.mark.asyncio
+async def test_cancelled_tentative_replacement_preserves_old_and_newer_intents(
+    records, tmp_path
+):
+    with records.transaction() as c:
+        c.execute(
+            "INSERT INTO briefings(id,watchlist_id,status,body_markdown) VALUES(2,1,'complete','[item 1]')"
+        )
+        c.execute(
+            "INSERT INTO briefing_items(briefing_id,item_id,live_item_id,source_id,cited,citation_position,provenance_version) VALUES(2,1,1,1,1,0,2)"
+        )
+    async with saved_service(records, tmp_path / "root") as (service, store, _, output):
+        initial = store.load_session()
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def delayed():
+            entered.set()
+            await release.wait()
+            return initial.voice
+
+        service._freeze_voice = delayed
+        task = asyncio.create_task(
+            service.play_brief(2, runtime_backend="local", replace=True)
+        )
+        await asyncio.wait_for(entered.wait(), 5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        release.set()
+        await asyncio.gather(*tuple(service._tasks))
+        assert store.load_session() == initial and output.started.empty()
+        await service.resume()
+        await started(output)
+
+
+@pytest.mark.asyncio
+async def test_delete_cannot_reauthorize_after_away_and_back_during_retirement(
+    records, tmp_path
+):
+    from tldw_chatbook.Subscriptions.article_listening_models import ListeningConflict
+
+    async with saved_service(records, tmp_path / "root") as (
+        service,
+        store,
+        binding,
+        output,
+    ):
+        await service.resume()
+        run = await started(output)
+        run.bookmark = replace(run.bookmark, frame=77)
+        before = run.before_release
+        authorize = service._authorize
+
+        async def switch(result):
+            run.before_release = before
+
+            def server():
+                raise ListeningConflict("local_listening_authority_required")
+
+            service._authorize = server
+            service.policy_changed()
+            binding[0] = replace(binding[0], policy_epoch=binding[0].policy_epoch + 2)
+            service._authorize = authorize
+            service.policy_changed()
+            await before(result)
+
+        run.before_release = switch
+        with pytest.raises(ListeningConflict):
+            await service.delete_source(1)
+        await service._retiring_task
+        assert store.load_session().queue[0].bookmark.frame == 77
+        assert records.get_item_status(2) == "new"
+
+
+@pytest.mark.asyncio
+async def test_paused_skip_completes_suffix_and_restored_brief_guidance(
+    records, tmp_path
+):
+    with records.transaction() as c:
+        c.execute("UPDATE subscription_items SET content='' WHERE id=1")
+        c.execute(
+            "INSERT INTO briefings(id,watchlist_id,status,body_markdown) VALUES(2,1,'complete','[item 2]')"
+        )
+    root = tmp_path / "root"
+    _, binding, store, voice = setup_store(records)
+    from tldw_chatbook.Subscriptions.article_speech import CONVERTER, prepare_saved_text
+
+    cand = store.prepare_brief(
+        1,
+        authority=binding[0],
+        voice=voice,
+        converter=CONVERTER,
+        prepare_text=prepare_saved_text,
+    )
+    saved = store.replace_session(cand, expected_revision=None)
+    assert saved.queue[-1].unavailable_reason
+    create_private_directory(root)
+    publish(store, saved, root, saved.queue[0], frames=480)
+
+    async def unavailable():
+        raise ValueError("listening_voice_unavailable")
+
+    def instance():
+        return service_type()(
+            store, root, freeze_voice=unavailable, authorize=lambda: binding[0]
+        )
+
+    service = instance()
+    try:
+        await service.restore()
+        await service.skip()
+        assert service.snapshot().phase == "completed"
+        assert (
+            store.load_session().queue[-1].unavailable_reason
+            == saved.queue[-1].unavailable_reason
+        )
+    finally:
+        await service.close()
+    service = instance()
+    try:
+        await service.restore()
+        assert service.snapshot().phase == "completed"
+        assert (
+            await service.preview_brief(1, runtime_backend="local")
+        ).action == "play_again"
+        assert (
+            await service.preview_brief(2, runtime_backend="local")
+        ).action == "replace"
+        await service.play_brief(1, runtime_backend="local")
+        assert service.snapshot().error is None
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_restored_brief_guidance_preserves_resume_and_foreground(
+    records, tmp_path
+):
+    async with saved_service(records, tmp_path / "root") as (service, store, _, output):
+
+        async def unavailable():
+            raise ValueError("listening_voice_unavailable")
+
+        freeze = service._freeze_voice
+        service._freeze_voice = unavailable
+        assert (
+            await service.preview_brief(1, runtime_backend="local")
+        ).action == "resume"
+        await service.play_brief(1, runtime_backend="local")
+        assert (
+            service.snapshot().error is None and "resume" in service.snapshot().actions
+        )
+        service._freeze_voice = freeze
+        await service.listen("local:watchlist_item:1", runtime_backend="local")
+        await started(output)
+        await service.stop()
+        await service.close()
+        restored = service_type()(
+            store, service.root, freeze_voice=unavailable, authorize=service._authorize
+        )
+        try:
+            await restored.restore()
+            assert (
+                await restored.preview_brief(1, runtime_backend="local")
+            ).action == "resume_foreground"
+            assert (
+                restored.snapshot().current_title
+                and restored.snapshot().suspended_title
+            )
+        finally:
+            await restored.close()
+
+
+def _probe_uncertain_preparation(channel, db_path, root, failure):
+    """The synthetic ambiguous owner lives until the parent terminates this process."""
+    from contextlib import closing
+    from unittest.mock import patch
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+    from tldw_chatbook.Subscriptions.article_listening_lease import ListeningBusy
+    from tldw_chatbook.TTS import controlled_wav_profile as profile
+    from tldw_chatbook.TTS import _controlled_wav_windows as windows
+
+    class UncertainPin:
+        def close(self):
+            return False
+
+    async def probe():
+        with closing(SubscriptionsDB(db_path)) as db:
+            _, binding, store, _ = setup_store(db)
+            output = Output()
+            service = service_type()(
+                store,
+                root,
+                freeze_voice=AsyncMock(),
+                authorize=lambda: binding[0],
+                output=output.owner,
+                acquire_output=output.acquire,
+                speech_services=AsyncMock(side_effect=AssertionError),
+            )
+            validation = (
+                profile.ControlledWavError("invalid_retained_wave")
+                if failure == "validation"
+                else None
+            )
+            with (
+                patch.object(
+                    profile,
+                    "_pin_executable",
+                    return_value=(root / "synthetic.exe", UncertainPin()),
+                ),
+                patch.object(profile, "WindowsReadPin", UncertainPin),
+                patch.object(profile, "_validate", side_effect=validation),
+                patch.object(windows, "check_contained_version"),
+            ):
+                await service.restore()
+                await service.resume()
+                await asyncio.wait_for(service._active.task, 7)
+                blocked = service.snapshot().phase == "retiring"
+                for operation in (service.clear, service.stop):
+                    try:
+                        await operation()
+                    except ListeningBusy:
+                        pass
+                    else:
+                        blocked = False
+                await service.retry()
+                try:
+                    db.delete_article(1)
+                except ListeningBusy:
+                    pass
+                else:
+                    blocked = False
+                channel.send(
+                    (
+                        "checked",
+                        blocked
+                        and output.started.empty()
+                        and store.load_session() is not None,
+                    )
+                )
+                await asyncio.Event().wait()
+
+    try:
+        asyncio.run(probe())
+    except BaseException as exc:
+        channel.send(("error", type(exc).__name__))
+
+
+@pytest.mark.skipif(os.name != "nt", reason="qualified Windows preparation boundary")
+@pytest.mark.parametrize("failure", ["validation", "eof", "readiness"])
+def test_actual_preparation_refusal_retains_private_owner(records, tmp_path, failure):
+    import multiprocessing
+    from tldw_chatbook.Subscriptions.article_listening_models import ListeningCheckpoint
+
+    _, binding, store, voice = setup_store(records)
+    from tldw_chatbook.Subscriptions.article_speech import CONVERTER, prepare_saved_text
+
+    candidate = store.prepare_brief(
+        1,
+        authority=binding[0],
+        voice=voice,
+        converter=CONVERTER,
+        prepare_text=prepare_saved_text,
+    )
+    session = store.replace_session(candidate, expected_revision=None)
+    root = tmp_path / "private"
+    create_private_directory(root)
+    if failure != "readiness":
+        publish(store, session, root, session.queue[0], frames=480)
+        if failure == "eof":
+            s = store.load_session()
+            point = replace(s.queue[0].bookmark, frame=480)
+            store.checkpoint(
+                ListeningCheckpoint(
+                    s.authority,
+                    s.incarnation,
+                    s.playback_generation,
+                    0,
+                    False,
+                    "paused",
+                    ((s.queue[0].entry_id, point),),
+                ),
+                expected_revision=s.revision,
+            )
+    context = multiprocessing.get_context("spawn")
+    receive, send = context.Pipe(duplex=False)
+    child = context.Process(
+        target=_probe_uncertain_preparation, args=(send, records.db_path, root, failure)
+    )
+    child.start()
+    send.close()
+    try:
+        assert receive.poll(24)
+        assert receive.recv() == ("checked", True)
+    finally:
+        if child.is_alive():
+            child.terminate()
+        child.join(8)
+        receive.close()
+        assert not child.is_alive()
+        child.close()
+
+
+@pytest.mark.asyncio
+async def test_abandoned_old_admission_cannot_report_failure_on_newer_selection(
+    records, tmp_path
+):
+    with records.transaction() as c:
+        for brief in (2, 3):
+            c.execute(
+                "INSERT INTO briefings(id,watchlist_id,status,body_markdown) VALUES(?,1,'complete','[item 1]')",
+                (brief,),
+            )
+            c.execute(
+                "INSERT INTO briefing_items(briefing_id,item_id,live_item_id,source_id,cited,citation_position,provenance_version) VALUES(?,1,1,1,1,0,2)",
+                (brief,),
+            )
+    async with saved_service(records, tmp_path / "root") as (service, store, _, output):
+        voice = store.load_session().voice
+        entered, newer_entered, finish, newer_finish = (
+            asyncio.Event() for _ in range(4)
+        )
+
+        async def delayed():
+            if not entered.is_set():
+                entered.set()
+                await finish.wait()
+                raise ValueError("listening_voice_unavailable")
+            newer_entered.set()
+            await newer_finish.wait()
+            return voice
+
+        service._freeze_voice = delayed
+        first = asyncio.create_task(
+            service.play_brief(2, runtime_backend="local", replace=True)
+        )
+        await asyncio.wait_for(entered.wait(), 5)
+        (original_admission,) = tuple(service._tasks)
+        second = asyncio.create_task(
+            service.play_brief(3, runtime_backend="local", replace=True)
+        )
+        await asyncio.wait_for(newer_entered.wait(), 5)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        newer_finish.set()
+        await second
+        await started(output)
+        finish.set()
+        await asyncio.wait_for(asyncio.shield(original_admission), 5)
+        assert store.load_session().brief_id == 3
+        assert (
+            service.snapshot().error is None and service.snapshot().phase == "playing"
+        )
+
+
+@pytest.mark.asyncio
+async def test_cancellation_after_selection_publishes_replacement_and_serializes_stop(
+    records, tmp_path, monkeypatch
+):
+    from threading import Event
+
+    with records.transaction() as c:
+        c.execute(
+            "INSERT INTO briefings(id,watchlist_id,status,body_markdown) VALUES(2,1,'complete','[item 2]')"
+        )
+        c.execute(
+            "INSERT INTO briefing_items(briefing_id,item_id,live_item_id,source_id,cited,citation_position,provenance_version) VALUES(2,2,2,1,1,0,2)"
+        )
+    async with saved_service(records, tmp_path / "root") as (service, store, _, output):
+        entered, finish = asyncio.Event(), Event()
+        loop = asyncio.get_running_loop()
+        original = store.replace_session
+
+        def checked(*args, **kwargs):
+            loop.call_soon_threadsafe(entered.set)
+            assert finish.wait(5)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(store, "replace_session", checked)
+        task = asyncio.create_task(
+            service.play_brief(2, runtime_backend="local", replace=True)
+        )
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            stopping = asyncio.create_task(service.stop())
+            await asyncio.sleep(0)
+            assert not stopping.done()
+        finally:
+            finish.set()
+        await stopping
+        assert store.load_session().brief_id == 2
+        assert service.snapshot().phase == "paused"
+        await service.resume()
+        await started(output)
+
+
+@pytest.mark.asyncio
+async def test_delete_observes_original_authority_inside_sqlite_commit(
+    records, tmp_path, monkeypatch
+):
+    from threading import Event
+    from tldw_chatbook.Subscriptions.article_listening_models import ListeningConflict
+
+    async with saved_service(records, tmp_path / "root") as (service, _, binding, _):
+        entered, finish = asyncio.Event(), Event()
+        loop = asyncio.get_running_loop()
+        original = records.delete_article
+
+        def selected(*args, **kwargs):
+            result = original(*args, **kwargs)
+            loop.call_soon_threadsafe(entered.set)
+            assert finish.wait(5)
+            return result
+
+        monkeypatch.setattr(records, "delete_article", selected)
+        deletion = asyncio.create_task(service.delete_article(1))
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            binding[0] = replace(binding[0], policy_epoch=binding[0].policy_epoch + 2)
+            service.policy_changed()
+        finally:
+            finish.set()
+        with pytest.raises(ListeningConflict, match="listening_authority_changed"):
+            await deletion
+        await service._retiring_task
+        assert records.get_item_status(1) == "new"
