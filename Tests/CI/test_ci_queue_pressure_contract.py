@@ -536,6 +536,9 @@ DREAMS_TRACKING_RIDERS = (
     # Tool_Packs; the GC file's one console-p0-gate node folded in here.
     "Tests/Chat/test_console_trace_graph_gc.py",
     "Tests/Chat/test_console_trace_project_turn_service.py",
+    # TASK-42517 review: the locator inventory node (sandboxed, no config
+    # read); its file's P0 node runs in console-p0-gate.
+    "Tests/Chat/test_console_voice_pair_persistence.py::test_voice_promotion_locator_inventory_covers_owned_message_revision_tables",
     "Tests/Tool_Packs",
     # Round 24: bootstrap_profile (its gateway reads [model_catalog]), so after
     # Tool_Packs.
@@ -633,6 +636,11 @@ ARCHITECTURE_GUARD_TARGETS = (
     # TASK-42009: the SQLite validation file (sandboxed, ~55 s serially), on
     # no lane before, so its RAG nodes went red on dev unseen.
     "Tests/Backup_Recovery/test_sqlite_validation.py",
+    # Round 26 (TASK-42517 review): sandboxed files that back schema v88,
+    # on no lane before.
+    "Tests/Backup_Recovery/test_locator_indexes_sandbox.py",
+    "Tests/Backup_Recovery/test_child_segments_sandbox.py",
+    "Tests/Backup_Recovery/test_prompt_mixin_restore.py",
     # TASK-42025: the loguru/stdlib logging-style scans and the network guard
     # (DNS refusal included), on no PR lane before (~6 s and ~1 s serially).
     "Tests/test_stdlib_logging_format_style.py",
@@ -654,6 +662,11 @@ ARCHITECTURE_GUARD_TARGETS = (
     # the ChaChaNotesDB directory by name, so they follow the sandboxed block.
     "Tests/ChaChaNotesDB/test_historical_bootstrap.py",
     "Tests/ChaChaNotesDB/test_trigger_census.py",
+    # Round 26 (TASK-42517 review): the index census and the portrait
+    # migrations, ChaChaNotesDB bootstrap profile by directory, red unseen.
+    "Tests/ChaChaNotesDB/test_index_census.py",
+    "Tests/ChaChaNotesDB/test_portrait_performance_migration.py",
+    "Tests/ChaChaNotesDB/test_portrait_regions_migration.py",
     # TASK-42026: the Media DB diagnostics privacy file (Tests/DB keeps the
     # bootstrap profile, so after the sandboxed block; ~1 s serially).
     "Tests/DB/test_client_media_debug_logging.py",

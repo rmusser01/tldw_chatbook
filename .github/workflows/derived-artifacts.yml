@@ -1599,8 +1599,15 @@ jobs:
     # 13.7 s (23), v56 1.7 s (24), v72 3.2 s (6): 81 s for 127 tests. The whole
     # step, 42 targets, 1084.2 s locally at load 9-20 (821.9 s for 34 at load
     # 8 before). On Linux (python 3.12, CI's install line, load ~1) the eight
-    # took 110 s serially and the whole step 669 s on Ubuntu 24.04, so about
-    # +1.8 min on a job that ran about 9 of its 20 (TASK-42513/42517 notes).
+    # took 110 s serially and the whole step 669 s (11.2 min before setup) on
+    # Ubuntu 24.04. Budget: +1.8 min on TASK-42516's projected 8.1-11.9 min
+    # puts the job at about 10-14 of its 20 min; add nothing more here
+    # without re-measuring (the TASK-42517 review's files went to
+    # architecture-guards instead, except one 0.8 s node: the voice-promotion
+    # locator inventory, sandboxed, here because architecture-guards admits
+    # no file another PR step lists and the file's P0 node is in
+    # console-p0-gate). Re-measured whole with it: 43 targets, 963.7 s
+    # locally at load 9-11.
     name: Dreams tracking tests and unlaned riders
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -1657,6 +1664,7 @@ jobs:
             Tests/Agents/test_durable_fleet_messages.py \
             Tests/Chat/test_console_trace_graph_gc.py \
             Tests/Chat/test_console_trace_project_turn_service.py \
+            "Tests/Chat/test_console_voice_pair_persistence.py::test_voice_promotion_locator_inventory_covers_owned_message_revision_tables" \
             Tests/Tool_Packs \
             Tests/Chat/test_console_trace_retry_recovery_proof.py \
             Tests/Chat/test_console_failed_call_retry_ownership.py \
@@ -1703,6 +1711,15 @@ jobs:
     # HOME-move census and script pins (21 tests in the file, ~9 s at load
     # 15-20, the census ~4 s), then the profilers' keyring-pin nodes (4 tests,
     # about 1 s together; not the whole files).
+    # Round 26 (TASK-42517 review, 2026-11-24): files red or unlaned that back
+    # schema v88, all reading no config in-process (RecoveryRequired
+    # recorder). After the SQLite validation file, sandboxed: the v87->v88 and
+    # v86->v87 restore-sandbox gates (16 and 9 tests, 0.7 s and 0.5 s), the
+    # real v81/v85/v87 restore migrations (4 tests, 4.9 s). After the trigger
+    # census, on the ChaChaNotesDB bootstrap profile: the index census (8
+    # tests, 1.3 s) and the two portrait migration files (2 tests each, 1.3 s
+    # each). Serially with this step's flags at load 5-6: 41 tests, ~7.4 s.
+    # The whole step with them: 948 passed in 460.9 s locally at load 7-11.
     name: Architecture guard contracts
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -1764,6 +1781,9 @@ jobs:
             Tests/Architecture/test_console_wave6_inventory.py \
             Tests/Backup_Recovery/test_restore_plan_excluded_directories.py \
             Tests/Backup_Recovery/test_sqlite_validation.py \
+            Tests/Backup_Recovery/test_locator_indexes_sandbox.py \
+            Tests/Backup_Recovery/test_child_segments_sandbox.py \
+            Tests/Backup_Recovery/test_prompt_mixin_restore.py \
             Tests/test_stdlib_logging_format_style.py \
             Tests/test_network_guard.py \
             Tests/test_keyring_isolation.py \
@@ -1774,6 +1794,9 @@ jobs:
             Tests/Architecture/test_timer_path_static_update_inventory.py \
             Tests/ChaChaNotesDB/test_historical_bootstrap.py \
             Tests/ChaChaNotesDB/test_trigger_census.py \
+            Tests/ChaChaNotesDB/test_index_census.py \
+            Tests/ChaChaNotesDB/test_portrait_performance_migration.py \
+            Tests/ChaChaNotesDB/test_portrait_regions_migration.py \
             Tests/DB/test_client_media_debug_logging.py \
             Tests/Architecture/test_persistent_terminal_privacy_boundary.py \
             --timeout=180 \

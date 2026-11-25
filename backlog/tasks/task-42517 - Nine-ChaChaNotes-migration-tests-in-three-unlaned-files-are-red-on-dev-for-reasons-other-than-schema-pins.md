@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-24 19:23
-updated_date: 2026-11-24 23:08
+updated_date: 2026-11-24 23:44
 labels:
 - follow-up
 - tests
@@ -78,3 +78,24 @@ Pre-existing reds left alone (same at base): `Tests/ChaChaNotesDB/test_index_cen
 Lane (AC#4): the three files run in dreams-tracking's riders step after `Tests/Tool_Packs`, with the other Tests/DB files (bootstrap profile by directory). A `RecoveryRequired.__init__` recorder counted 0 constructions. No other step lists them. Timings, serially with the step's flags at load 14-19: v47 13.7 s (23 tests), v56 1.7 s (24), v72 3.2 s (6). The step totals and the Linux run are in TASK-42513's notes; on Linux all 53 pass. Soak: 20/20 green at `-n 4` (with TASK-42513's files).
 
 Files: Tests/DB/test_chachanotes_v{47_messages_fts_backfill,56_console_trace_query_plans,72_voice_trace_provenance_migration,87_console_trace_child_segments,77_agent_chat_starts_migration}.py, Tests/ChaChaNotesDB/test_index_census.py, Tests/Backup_Recovery/test_{core_owners,prompt_mixin_restore,chachanotes_native76_compatibility}.py, Tests/Architecture/test_module_size_ratchet.py (+7, dated), scripts/index_plan_pin_census.tsv, tldw_chatbook/DB/{ChaChaNotes_DB,recovery_core,recovery_core_schema,recovery_operations}.py, tldw_chatbook/DB/migrations/chachanotes_v87_to_v88_message_locator_indexes.sql, tldw_chatbook/Backup_Recovery/sqlite_validation.py, Docs/Architecture/database-layer.md, the workflow and Tests/CI pins.
+
+**Review round (2026-11-24)**
+- **Restore-sandbox gate (I1).** `Tests/Backup_Recovery/test_locator_indexes_sandbox.py` pins the v87->v88 gate. Each listed (name, table) pair is OK inside the step and DENY outside it. A listed name on `messages` or on a sibling locator table, an unlisted name, the `temp` database, a trigger-sourced statement and `DROP INDEX` are all DENY. Each DENY went red under a matching temporary loosening:
+  - name-only check: other-table and sibling-table went red;
+  - table-only check: sibling-table and unlisted went red;
+  - no `source is None`: trigger went red;
+  - `DROP INDEX` admitted: drop went red.
+
+  Dropping `database == "main"` from the gate alone stays green, because `authorize` refuses every non-main database before the gate. Removing that upstream line as well turned temp red.
+- **Minors.**
+  - `CHACHANOTES_V88_ADDITIONS` are literal declarations again, and the gate's name -> table map is derived from them, so `check_index_plan_pins.py`'s "no f-string DDL" docstring stays true.
+  - The catalog and sandbox comments now say the gate checks name -> table, and that the columns are fixed by the installed .sql plus the exact catalog check.
+  - The Dreams job comment states the projection: 8.1-11.9 + 1.8, about 10-14 of 20 min; 669 s on Ubuntu is 11.2 min before setup.
+  - The superseded index's census row names TASK-42544, with the recommendation to drop it.
+- **Voice-promotion inventory red (product drift, 7970fbcada).** v86's `console_prompt_mixin_attempts.result_revision_id` was never classified. An attempt is sealed only onto its own assistant message's revision (`mixin_result_seal_ownership`), so the column is a typed sidecar of that message. It is now a forbidden revision locator and has v88's ninth index (`idx_console_mixin_attempt_result_revision`), which also serves trace GC's `ON DELETE SET NULL`. Red at base; green with the classification and the v72 plan pin.
+- **Index census (4 reds; overlaps TASK-32515, noted there).** It now pins the v81/v85/v86 indexes it lacked and ADR-239's non-unique canvas sequence index with `uq_canvas_revisions_single_root`. The UNIQUE-decisions docstring is updated.
+- **Portrait migration tests (red since v86).** They now read the current backup catalog from the recovery policy (`(CURRENT, catalog) in policy.schema_sql`), not from a pinned V85 tuple.
+- **Lanes.** architecture-guards gets, in the sandboxed block, the v88 and v87 sandbox gate files and `test_prompt_mixin_restore.py`; and, after the trigger census, the index census and both portrait files. All 41 tests read no config (recorder) and take ~7.4 s serially. The voice inventory node went to dreams-tracking before Tool_Packs (0.8 s), because architecture-guards admits no file that another PR step lists, and the file's P0 node is in console-p0-gate.
+- **Steps re-run (2026-11-24).** architecture-guards: 948 passed, 1 skipped, in 460.9 s at load 7-11. Dreams riders (43 targets): 1653 passed, 6 skipped, in 963.7 s at load 9-11; the projection stays about 10-14 of 20 min, since the added node takes 0.8 s. Soak of the touched files: 10/10 runs green at `-n 4`, 438 passed each, load 10-12. `Tests/Architecture` serially: the review's one new red (the chat_persistence_service size ratchet) is fixed with a one-line row and +1 on the budget.
+- **Filed.** TASK-42545: `test_existing_owned_directory_metadata_uses_verified_node_rollback` is a rollback-helper owner mismatch in Backup_Recovery, outside this family. TASK-42546: SQLite 3.40 refuses ChaChaNotes candidate validation; this needs an owner decision.
+

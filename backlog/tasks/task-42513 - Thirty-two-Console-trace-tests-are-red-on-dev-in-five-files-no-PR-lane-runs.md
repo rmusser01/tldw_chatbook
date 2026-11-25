@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-24 14:29'
-updated_date: '2026-11-24 23:08'
+updated_date: '2026-11-24 23:44'
 labels:
   - console
   - trace-capture
@@ -71,3 +71,5 @@ Lane (AC#3): the five files run in dreams-tracking's riders step. `graph_gc` and
 Red/green: base 75bac413f5 `-n 4` gives the 32 red (plus the two TASK-32032 nodes). With a throwaway bootstrap_profile plugin, base gives 4 alias failures and 4 teardown errors. The branch gives 74 passed (`-n 4`, and serially under the recorder). Linux (AC#4: python:3.12-bookworm container, CI's install line, serial, lane flags): base fails all 32 (the 30 with "Hooks unavailable"); the branch passes all 74 in the five files. The whole riders step on Ubuntu 24.04 (Python 3.12.3, SQLite 3.45.1, the version CI's ubuntu-latest has) also passed all 127 new tests. Soak: the five files with TASK-42517's three, plus the v87 and restore files, 20 runs at `-n 4` and load 14-22, gave 20/20 green with 143 passed each.
 
 Files: Tests/Chat/test_console_trace_{sidecar_replay,sidecar_redaction,proprietary_settlement,graph_gc,project_turn_service}.py, .github/workflows/derived-artifacts.yml, Tests/CI/test_{derived_artifacts_workflow,response_rules_critical_gate,ci_queue_pressure_contract}.py.
+
+Review round (2026-11-24): the per-test `bootstrap_profile` mark on `test_replay_harness_retires_held_worker_native_connection` is gone, because the module mark covers it. The Dreams job comment now states the projected range (about 10-14 of its 20 min).
