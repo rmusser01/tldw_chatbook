@@ -1640,7 +1640,12 @@ tool calls 2 turns in a row …") instead of spending more model calls that
 can run nothing. No approval card is raised during the stop, and a card you
 approve after the stop lands is refused instead of run. A call that was
 already executing when the stop landed finishes and keeps its own result.
-The stop is durable (it survives a restart) and
+Hook actions (command and MCP hooks) don't run during the stop either; each
+is recorded as skipped because of the emergency stop, and a PreToolUse gate
+that can't run still blocks its tool rather than letting it through.
+`/research` is refused while the stop is active, and a research run that is
+already going stops at its next step ("Stopped by the emergency stop"),
+keeping what it had saved. The stop is durable (it survives a restart) and
 fail-safe: if its state can't be read, the app treats it as stopped rather
 than proceeding. When even the stop's location can't be reached (for example
 while a backup or restore holds the data folder), each tool call says "the
@@ -1654,7 +1659,8 @@ is on", and an empty chat says the stop is active. A send you try anyway is
 refused with a notice that names `/emergency-stop clear`. A stop still
 active from an earlier session is announced once when the Console opens.
 Choose **Clear** on the status strip, or run `/emergency-stop clear`, to
-resume at once (sends, schedules and tool calls); no restart is needed. If the stop can't be saved (for
+resume at once (sends, schedules, tool calls, hooks and research); no
+restart is needed. If the stop can't be saved (for
 example, the data folder is read-only), the Console says so and keeps
 showing the stop's real state. A stop cleared from another copy of the app
 is noticed the next time you send, and that send goes through. To end just

@@ -50,10 +50,10 @@ CLEAR_ARGUMENTS = frozenset({"clear", "off", "resume"})
 #: What every Console surface says while the stop holds new work.
 HELD_COPY = EmergencyStopState(active=True).visible_copy()
 
-#: TASK-33620.1.12: an in-flight run's tool calls are held too.
+#: TASK-33620.1.12: tool calls, hook actions and /research are held too.
 ACTIVATED_NOTICE = (
-    "Emergency stop ACTIVE — new runs, agent tool calls and scheduled "
-    "dispatches are held. Run /emergency-stop clear to resume."
+    "Emergency stop ACTIVE — new runs, tool calls, hook actions, research and "
+    "scheduled dispatches are held. Run /emergency-stop clear to resume."
 )
 CLEARED_NOTICE = "Emergency stop cleared — new work may start."
 

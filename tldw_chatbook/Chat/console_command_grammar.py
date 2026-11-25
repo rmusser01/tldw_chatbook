@@ -81,7 +81,7 @@ REDIRECT_COMMAND_ARGUMENT_HINT = "<correction for the running turn>"
 REDIRECT_COMMAND_HANDLER_ID = "redirect"
 
 #: TASK-26004: the global emergency stop. Holds NEW agent runs and scheduled
-#: dispatches, and (TASK-33620.1.12) every tool call of a run already going.
+#: dispatches, and (TASK-33620.1.12) tool calls, hook actions and /research.
 #: `/emergency-stop clear` resumes.
 EMERGENCY_STOP_COMMAND_NAME = "emergency-stop"
 EMERGENCY_STOP_COMMAND_ARGUMENT_HINT = "[clear | <reason>]"
