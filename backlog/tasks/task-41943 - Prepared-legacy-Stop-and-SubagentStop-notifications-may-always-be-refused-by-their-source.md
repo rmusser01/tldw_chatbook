@@ -1,9 +1,10 @@
 ---
 id: TASK-41943
 title: "Prepared legacy Stop and SubagentStop notifications may always be refused by their source check"
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-19 07:30'
+updated_date: '2026-11-25 14:32'
 labels:
 - follow-up
 - agents
@@ -27,6 +28,49 @@ Found during the TASK-41630..41655 follow-up burn-down (2026-11-18/19). Checked 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A test drives a real legacy Stop (and SubagentStop) notification through capture and the notify-worker check and shows whether it is refused
-- [ ] #2 If it is refused, capture and check observe the same service and a genuinely changed source is still refused (red first)
+- [x] #1 A test drives a real legacy Stop (and SubagentStop) notification through capture and the notify-worker check and shows whether it is refused
+- [x] #2 If it is refused, capture and check observe the same service and a genuinely changed source is still refused (red first)
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no (corrects which sources the existing ADR-285/148 legacy-hook custody observes; no new contract)
+
+1. Drive real legacy Stop and SubagentStop notifications through `prepare_notification` (under `worker_guard(bridge)` and the agent service's admission, as the Console does) and `notify(_prepared=...)` with a file-backed AgentRuns database, and record where they are refused.
+2. If refused: make `_EventSource` capture and check the same observation (the service-less legacy sources), so the capturing thread's admission and the notify worker's lack of one no longer differ.
+3. Tests in a new `Tests/Agents/test_legacy_prepared_notification_source.py`: both notifications run their hook; a workspace database installed between prepare and delivery is still refused; red on dev, plus a negative control that drops the check.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Finding: refused, twice over.** With the Console's agent bridge over a file-backed AgentRuns database, every prepared legacy Stop and SubagentStop notification was refused on dev 2959b48314. It never reached the suspected notify-worker check: `prepare_notification` already logged "future notification omitted (RuntimeError)" and returned None, so the Console never called `notify` at all.
+- `_EventSource` captured `captured_sources(None)`, which under `worker_guard(bridge)` or the agent service's `execution(...)` is the caller's admitted set (`db.agent_runs` at the AgentRuns file, the ChaChaNotes path, ...).
+- `capture()` then entered `execution(sources=captured)`. That also observes the service-less family sources, so it adds `("db.agent_runs", <config selector>)`.
+- `admit`'s check compared the grown admitted set with the capture and refused.
+- A probe that fixed only that nested admission (`resolve=` the captured tuple) moved the refusal to the suspected site. On the notify worker, which holds no admission, the check observed `_sources(None)` and refused: "notification omitted (exception_type=RuntimeError)" for both events.
+- A legacy PreToolUse hook fired under the same admission (agent runs' `guard_tool_calls` via `wrap_review`) failed closed the same way: "hooks engine error; failing closed".
+
+**Fix** (`Agents/legacy_hook_ownership.py`). Legacy hooks are external processes and use only the service-less agent recovery sources, so `_EventSource` now captures `selected_sources(None)`, and `check()` compares a fresh `selected_sources(None)` with it as sets. Capture and every check observe the same service, whichever admission the capturing thread holds and on any thread: the capture thread, the notify worker, the target pool and the launch check. A source that really changes between capture and check still refuses. Before, a check made inside the capture's own admission compared the admitted tuple with itself and could not see such a change. The TASK-41639 order-free comparison is kept (`set(...)`).
+
+**Tests** (new `Tests/Agents/test_legacy_prepared_notification_source.py`, real engine, hook process and `ConsoleAgentBridge` over a file AgentRuns DB, built on `test_native_legacy_hooks.native_hooks`):
+- `test_prepared_legacy_notification_runs_its_hook[Stop|SubagentStop]` prepares Stop the way `hold_legacy_stop` does (`worker_guard(bridge)`) and SubagentStop inside `execution(bridge)`, delivers it with `notify(_prepared=...)`, and waits for the hook's marker file.
+- `test_prepared_notification_refuses_a_source_changed_after_capture` installs another `WorkspaceDB` registry between prepare and delivery. The notify future fails with "native hook source changed", capacity drains and no hook runs.
+- `test_pre_tool_use_under_an_agent_admission_runs_its_hook`: not blocked, and the marker exists.
+
+**Evidence.** Red on dev: all 4 failed. Three refused at prepare (custody None). PreToolUse returned "hooks engine error; failing closed". Negative control A (capture fix kept, `check()` ignoring sources): only the changed-source test failed, because the hook ran. Negative control B (dev code with only `capture()`'s nested admission fixed): both notification tests failed at the notify worker, as described above. New file: 4 passed serially and at `-n 4`.
+
+**Regression runs** (`-n 4`, load 30-55 on 18 CPUs). `test_native_legacy_hooks.py`, `test_run_hooks.py`, `test_hook_permissions.py`, `test_native_legacy_hook_handoff.py`, `test_console_agent_storage_sources.py`, `test_console_run_hooks_regressions.py`, `test_console_viewless_hooks.py`, `test_console_send_hook_read_sharing.py`, `test_console_local_review_hook.py`, `test_owned_hook_acceptance.py`:
+- 470 passed, 5 failed, against 466 passed and the same 5 failed on dev (the 4 new tests account for the difference);
+- the shared reds are 4 in `test_native_legacy_hook_handoff.py` (already reported in TASK-41639) and `test_console_run_hooks_regressions.py::test_hook_refusal_preserves_pending_attachment`.
+
+A wider set (`test_console_prompt_mixin_admission.py`, `test_native_plugin_hook_preparation.py`, `test_console_fleet_wake.py`, `test_native_change_review_ownership.py`, `test_native_v2_mcp_events.py`, `test_fleet_send_to_agent.py`, `test_hooks_v2_lifecycle.py`):
+- 233 passed, 31 failed, 14 errors;
+- the same 31 nodes fail on dev source (31 failed, 13 errors). Most of `test_fleet_send_to_agent.py`, including `test_subagent_stop_fires_on_child_settle[*]`, dies in a config read with `RecoveryRequired: raw_source_selection_changed`;
+- the one extra teardown error (`test_session_end_nested_workers_consume_original_holds_after_capacity_close`, a pytest-timeout after the failure) did not recur: that node passed alone on this branch.
+
+**Not checked.** `Agents/hooks_v2/native_commands.py` captures `_guard.captured_sources(None)` the same way and admits on a `worker_guard()` worker. Whether a v2 event begun under an agent admission is refused the same way was not tested.
+
+Files: `tldw_chatbook/Agents/legacy_hook_ownership.py`, `Tests/Agents/test_legacy_prepared_notification_source.py`, `Docs/Architecture/console-run-hooks.md` (one paragraph).
+<!-- SECTION:NOTES:END -->

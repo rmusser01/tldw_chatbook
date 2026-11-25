@@ -8,7 +8,7 @@ from threading import Condition, Lock, RLock
 
 from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
 
-from .activation import _guard, execution, sources_changed
+from .activation import execution, selected_sources
 from .execution_capacity import CapacityRefused, WorkOrigin, current_execution_owner
 
 from .run_hooks import _prompt_handoff
@@ -115,7 +115,9 @@ class _EventSource:
         self.persistence = getattr(self.store, "persistence", None)
         self.database = getattr(self.persistence, "db", None)
         self.targets = ()
-        self.sources = _guard.captured_sources(None)
+        # Legacy hooks observe the service-less sources wherever they fire: an
+        # agent admission held by the caller is not theirs (TASK-41943).
+        self.sources = selected_sources(None)
         from .run_context import current_agent_sources
 
         self.agent_sources = current_agent_sources(self.controller)
@@ -202,7 +204,11 @@ class _EventSource:
         )
 
     def check(self):
-        if not self.current_memory() or sources_changed(self.sources):
+        # Observe afresh, as at capture: the checking thread may hold another
+        # admission (the caller's agent service) or none (the notify worker).
+        if not self.current_memory() or (
+            set(selected_sources(None)) != set(self.sources)
+        ):
             raise RuntimeError("native hook source changed")
 
     def admit(self, targets):
