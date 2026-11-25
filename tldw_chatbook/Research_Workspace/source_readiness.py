@@ -101,6 +101,37 @@ def _server_recovery_action(lifecycle: str) -> str:
     return "Refresh status"
 
 
+def versioned_media_sources(sources, *, maximum: int) -> list[dict]:
+    if not 1 <= len(sources) <= maximum:
+        raise ValueError(f"Select between 1 and {maximum} ready Server Media sources")
+    captured = []
+    for source in sources:
+        media_id = source.catalog_item_id
+        if (
+            not media_id.isascii()
+            or not media_id.isdecimal()
+            or len(media_id) > 19
+            or not 0 < int(media_id) < 2**63
+            or not source.association_version
+            or not source.catalog_item_version
+            or RetrievalMode.FTS not in source.ready_modes
+        ):
+            raise ValueError(
+                "Select Server Media with ready text and refresh its source versions"
+            )
+        captured.append(
+            {
+                "source_id": source.source_id,
+                "catalog_item_id": int(media_id),
+                "association_version": source.association_version,
+                "catalog_item_version": source.catalog_item_version,
+            }
+        )
+    if len({row["catalog_item_id"] for row in captured}) != len(captured):
+        raise ValueError("Select distinct Media items")
+    return captured
+
+
 def normalize_server_readiness(
     *, ref: QualifiedWorkspaceRef, status: Mapping[str, Any]
 ) -> SourceReadiness:

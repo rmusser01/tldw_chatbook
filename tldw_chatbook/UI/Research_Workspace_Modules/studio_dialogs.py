@@ -45,6 +45,7 @@ class ResearchStudioOptions(
         source_count: int,
         *,
         action: str = "Generate",
+        slide_styles: tuple[tuple[str, tuple[str, str]], ...] = (),
     ) -> None:
         super().__init__()
         self.kind = kind
@@ -52,6 +53,7 @@ class ResearchStudioOptions(
         self.route = route
         self.source_count = source_count
         self.action_label = action
+        self.slide_styles = slide_styles
 
     @property
     def is_study(self) -> bool:
@@ -74,6 +76,12 @@ class ResearchStudioOptions(
                     yield Input(placeholder="Comma-separated column names", id="research-studio-columns")
                 yield Static("Maximum rows (optional)")
                 yield Input(placeholder="Maximum rows", type="integer", id="research-studio-max-rows")
+            elif self.kind is ResearchOutputKind.SLIDES:
+                yield Static("Visual style")
+                yield Select(
+                    [("Server default", "default"), *((Text(name), i) for i, (name, _) in enumerate(self.slide_styles))],
+                    value="default", allow_blank=False, id="research-studio-visual-style",
+                )
             else:
                 yield Static("Retrieval focus (optional for FTS)")
                 yield Input(id="research-studio-focus")
@@ -140,6 +148,12 @@ class ResearchStudioOptions(
                     title=self._input("title"), focus=self._input("focus"),
                     table_columns=tuple(columns.split(",")) if columns.strip() else (),
                     table_max_rows=int(rows) if rows else None,
+                )
+            elif self.kind is ResearchOutputKind.SLIDES:
+                selected = self.query_one("#research-studio-visual-style", Select).value
+                options = ResearchGenerationConfig(
+                    title=self._input("title"),
+                    slides_visual_style=self.slide_styles[selected][1] if type(selected) is int else None,
                 )
             else:
                 threshold = self._input("threshold")
@@ -208,6 +222,14 @@ class ResearchStudioActions(SafeModalDismissMixin, ModalScreen[str | None]):
                         preview.add_row(*(Text(str(cell)[:120]) for cell in cells[:len(columns)]))
                     yield Static(f"Showing {preview.row_count} of {record['table']['row_count']} rows")
                     yield preview
+                if self.row.output.owner_kind is StudioOwnerKind.SERVER_SLIDES and self.row.record:
+                    slides = self.row.record["slides"]
+                    yield Static(f"Showing {min(5, len(slides))} of {len(slides)} slides")
+                    for index, slide in enumerate(slides[:5], 1):
+                        yield Static(
+                            f"{slide.get('title') or f'Slide {index}'}\n{slide.get('content', '')[:700]}",
+                            markup=False,
+                        )
                 if self.row.content:
                     yield Static(self.row.content, markup=False)
                 if self.limits:

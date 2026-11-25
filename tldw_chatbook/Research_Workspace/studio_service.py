@@ -102,6 +102,10 @@ class ResearchStudioService:
         event.set()
         return True
 
+    def has_attempt(self, request: ResearchStudioRequest) -> bool:
+        attempt = self._attempts.get((request.workspace, request.operation_id))
+        return attempt is not None and attempt.request == request
+
     async def retry(
         self, ref: QualifiedWorkspaceRef, operation_id: str
     ) -> WorkspaceOutputRef:

@@ -72,6 +72,7 @@ class OutputGenerationProvenance(BaseModel):
         "mind_map",
         "timeline",
         "data_table",
+        "slides",
         "literature_matrix",
         "corpus_gap_finder",
         "executive_brief",

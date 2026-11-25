@@ -156,11 +156,18 @@ SERVER_TABLE_KINDS = (
     ResearchWorkProductKind.CORPUS_GAP_FINDER,
 )
 
+SERVER_NATIVE_OWNERS = frozenset({StudioOwnerKind.SERVER_DATA_TABLE, StudioOwnerKind.SERVER_SLIDES})
+
 STUDIO_OUTPUT_MAPPINGS: Mapping[
     tuple[WorkspaceDataSource, StudioOutputKind], StudioOwnerMapping
 ] = MappingProxyType(
     {
         **PRIMARY_OUTPUT_MAPPINGS,
+        (WorkspaceDataSource.SERVER, ResearchOutputKind.SLIDES): StudioOwnerMapping(
+            StudioOwnerKind.SERVER_SLIDES, "Server Slides", "id", "version", "workspace_id",
+            "generate_presentation_from_media", None, None,
+            "research_workspace", "research_workspace_artifact_target", artifact_type="slides",
+        ),
         **{
             (WorkspaceDataSource.SERVER, kind): StudioOwnerMapping(
                 StudioOwnerKind.SERVER_DATA_TABLE,

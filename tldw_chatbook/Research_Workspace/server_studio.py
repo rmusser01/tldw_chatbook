@@ -28,10 +28,22 @@ from .contracts import (
     ResearchCapability,
     WorkspaceDataSource,
 )
+from .server_slides import (
+    SLIDES_UNCONFIRMED,
+    SlidesSubmissionUnconfirmed,
+    generate_native_slides,
+    slides_available,
+)
 from .server_study import output_creation_time, study_payload, study_result
 from .studio_generation import StudioGeneratedOutput, validate_diagram_text
-from .studio_mapping import SERVER_DIAGRAM_TYPES, STUDIO_OUTPUT_MAPPINGS, SERVER_TABLE_KINDS
+from .studio_mapping import (
+    SERVER_DIAGRAM_TYPES,
+    SERVER_NATIVE_OWNERS,
+    SERVER_TABLE_KINDS,
+    STUDIO_OUTPUT_MAPPINGS,
+)
 from .studio_models import (
+    ResearchOutputKind,
     ResearchStudioRequest,
     StudioOwnerKind,
     WorkspaceOutputRef,
@@ -39,7 +51,8 @@ from .studio_models import (
     validate_output_page,
 )
 from .work_product_templates import TEXT_WORK_PRODUCT_TEMPLATES
-from .server_data_tables import generate_native_table, table_sources
+from .server_data_tables import generate_native_table
+from .source_readiness import versioned_media_sources
 from .studio_provenance import (
     citation_references,
     generation_metadata,
@@ -52,6 +65,7 @@ class ServerStudioAdapter:
         self.client_for = client_for
         self.policy_enforcer = policy_enforcer
         self._mutations = asyncio.Lock()
+        self._unconfirmed_slides = {}
 
     @staticmethod
     def capabilities(
@@ -130,7 +144,18 @@ class ServerStudioAdapter:
             return {}
         client, _ = self._connection(ref)
         reply = await self._tables(ref, client).capability(route.provider, route.model)
+        slide_ready = await slides_available(client, route, sources)
         self._check_connection(ref, client)
+        slides = ResearchCapability(
+            slide_ready,
+            "available" if slide_ready else "server_slides_unavailable",
+            "Server Slides is ready."
+            if slide_ready
+            else "Slides needs exactly one ready, versioned Server Media item and an available model.",
+            StudioOwnerKind.SERVER_SLIDES,
+            "" if slide_ready else "Check Server Slides and the selected provider, model, and source.",
+            revision,
+        )
         message = "Choose an explicit Server provider and model with Data Tables access."
         reason = "server_data_tables_unavailable"
         if reply and reply.reason == "metered_workspace_table_route_unavailable":
@@ -142,7 +167,7 @@ class ServerStudioAdapter:
         available = bool(reply and reply.available)
         if available:
             try:
-                table_sources(sources, maximum=reply.max_sources)
+                versioned_media_sources(sources, maximum=reply.max_sources)
             except ValueError as exc:
                 available, reason, message = False, "studio_source_owner_unavailable", str(exc)
         capability = ResearchCapability(
@@ -153,17 +178,41 @@ class ServerStudioAdapter:
         )
         return {
             "get_data_table": capability,
+            "generate_presentation_from_media": slides,
+            "get_presentation": slides,
             **{f"generate_{kind.value}": capability for kind in SERVER_TABLE_KINDS},
         }
 
     async def generate_native(self, request, *, cancel_event) -> StudioGeneratedOutput | None:
-        if request.output_kind not in SERVER_TABLE_KINDS:
+        if request.output_kind not in (*SERVER_TABLE_KINDS, ResearchOutputKind.SLIDES):
             return None
         ref = request.workspace
         client, _ = self._connection(ref)
-        result = await generate_native_table(self._tables(ref, client), request, cancel_event)
+        if request.output_kind in SERVER_TABLE_KINDS:
+            result = await generate_native_table(self._tables(ref, client), request, cancel_event)
+        else:
+            key = (ref, request.operation_id)
+            if key in self._unconfirmed_slides:
+                raise SlidesSubmissionUnconfirmed(SLIDES_UNCONFIRMED)
+            try:
+                result = await generate_native_slides(client, request, cancel_event)
+            except SlidesSubmissionUnconfirmed:
+                self._unconfirmed_slides[key] = None
+                for stale in tuple(self._unconfirmed_slides)[:-32]:
+                    del self._unconfirmed_slides[stale]
+                raise
         self._check_connection(ref, client)
         return result
+
+    async def slide_styles(self, ref: QualifiedWorkspaceRef) -> tuple[tuple[str, tuple[str, str]], ...]:
+        client, _ = self._connection(ref)
+        styles = await client.list_visual_styles(limit=100)
+        self._check_connection(ref, client)
+        return tuple(
+            (style.name, (style.id, style.scope))
+            for style in styles.styles
+            if style.scope in {"builtin", "user"}
+        )
 
     def _connection(self, ref: QualifiedWorkspaceRef):
         if ref.data_source is not WorkspaceDataSource.SERVER:
@@ -215,14 +264,14 @@ class ServerStudioAdapter:
             or row["version"] < 1
         ):
             raise ValueError("The Server artifact has no completed revision")
-        if owner.owner_kind is StudioOwnerKind.SERVER_DATA_TABLE:
+        if owner.owner_kind in SERVER_NATIVE_OWNERS:
             native = row["producer_metadata"].get("research_native_owner")
             if not isinstance(native, Mapping) or native.get("owner_kind") != owner.owner_kind.value:
-                raise ValueError("The workspace link has no native Data Table")
+                raise ValueError("The workspace link has no native Server output")
             owner_id = canonical_table_uuid(native.get("owner_id"))
             version = native.get("owner_version")
             if type(version) is not int or version < 1:
-                raise ValueError("The workspace link has no native Data Table revision")
+                raise ValueError("The workspace link has no native Server output revision")
             return output_reference(ref, owner_id, owner.owner_kind, version, details)
         return output_reference(
             ref,
@@ -308,24 +357,48 @@ class ServerStudioAdapter:
             )
             self._check_connection(output.workspace, client)
             return study_result(output.workspace, row)[1] if row else None
-        if output.owner_kind is StudioOwnerKind.SERVER_DATA_TABLE:
+        if output.owner_kind in SERVER_NATIVE_OWNERS:
             links = await self._records(output.workspace, client, service)
-            if not any(
-                row.get("artifact_type") == "data_table" and (metadata := self._metadata(row))
-                and self._reference(output.workspace, row, metadata) == output for row in links
-            ):
+            mapping = STUDIO_OUTPUT_MAPPINGS[output.workspace.data_source, output.output_kind]
+            if not self._matching_native_link(output, links, mapping.artifact_type):
                 return None
-            detail = await self._tables(output.workspace, client).detail(output.owner_id, rows_limit=12)
-            self._check_connection(output.workspace, client)
-            if not detail or detail.table.version != output.owner_version or detail.table.status != "ready":
-                return None
-            return {"title": detail.table.name, **detail.model_dump(mode="json")}
+            return await self._native_detail(output, client, preview=True)
         for row in await self._records(output.workspace, client, service):
             if row.get("id") == output.owner_id and (metadata := self._metadata(row)):
                 selected = self._reference(output.workspace, row, metadata)
                 if selected.output_kind is output.output_kind:
                     return row
         return None
+
+    def _matching_native_link(self, output, rows, artifact_type):
+        return next((
+            row for row in rows if row.get("artifact_type") == artifact_type
+            and (metadata := self._metadata(row))
+            and self._reference(output.workspace, row, metadata) == output
+        ), None)
+
+    async def _native_detail(self, output, client, *, preview=False):
+        ref = output.workspace
+        if output.owner_kind is StudioOwnerKind.SERVER_DATA_TABLE:
+            detail = await self._tables(ref, client).detail(output.owner_id, rows_limit=12 if preview else 1)
+            self._check_connection(ref, client)
+            if not detail or detail.table.version != output.owner_version or detail.table.status != "ready":
+                return None
+            return {"title": detail.table.name, **detail.model_dump(mode="json")}
+        try:
+            presentation = await client.get_presentation(output.owner_id)
+        except APIResponseError as exc:
+            if exc.status_code == 404:
+                return None
+            raise
+        self._check_connection(ref, client)
+        if (
+            presentation.id != output.owner_id or presentation.deleted or presentation.version != output.owner_version
+            or presentation.source_type != "media" or len(output.source_snapshot) != 1
+            or str(presentation.source_ref) != output.source_snapshot[0].catalog_item_id
+        ):
+            return None
+        return presentation.model_dump(mode="json")
 
     @staticmethod
     def _artifact_id(request):
@@ -413,6 +486,14 @@ class ServerStudioAdapter:
             if not detail or detail.table.version != output.owner_version:
                 raise ValueError("The native Data Table changed while exporting")
             return data
+        if output.owner_kind is StudioOwnerKind.SERVER_SLIDES:
+            if format not in {"revealjs", "markdown", "json", "pdf"} or not await self.resolve_output(output):
+                raise ValueError("Open the current native Slides revision and choose an available export")
+            client, _ = self._connection(output.workspace)
+            response = await client.export_presentation(output.owner_id, format=format)
+            if not await self._native_detail(output, client):
+                raise ValueError("The native presentation changed while exporting")
+            return response.content
         if format != "markdown":
             raise ValueError("Choose Markdown for this workspace artifact")
         ref = output.workspace
@@ -473,10 +554,10 @@ class ServerStudioAdapter:
             raise ValueError(
                 "The selected output belongs to a different workspace or output kind"
             )
-        if mapping.owner_kind is StudioOwnerKind.SERVER_DATA_TABLE:
+        if mapping.owner_kind in SERVER_NATIVE_OWNERS:
             if replace_output:
-                raise ValueError("Regenerate the native Data Table as a new version")
-            return await self._save_native_table(ref, client, service, request, generated, supersedes)
+                raise ValueError("Regenerate the native output as a new version")
+            return await self._save_native_output(ref, client, service, request, generated, mapping, supersedes)
         if mapping.owner_kind is not StudioOwnerKind.SERVER_ARTIFACT:
             if replace_output:
                 raise ValueError(
@@ -586,18 +667,19 @@ class ServerStudioAdapter:
                 )
             return self._reference(ref, row, metadata)
 
-    async def _save_native_table(self, ref, client, service, request, generated, supersedes):
+    async def _save_native_output(self, ref, client, service, request, generated, mapping, supersedes):
         if generated.native_owner is None:
-            raise ValueError("The native Data Table generation has no completed owner")
-        table_id, version = generated.native_owner
-        table_id = canonical_table_uuid(table_id)
+            raise ValueError("The native generation has no completed owner")
+        native_id, version = generated.native_owner
+        native_id = canonical_table_uuid(native_id)
         artifact_id = self._artifact_id(request)
         metadata = generation_metadata(request, supersedes)
+        output = output_reference(ref, native_id, mapping.owner_kind, version, metadata["research_generation"])
         producer = {
             **metadata,
             "research_native_owner": {
-                "owner_kind": StudioOwnerKind.SERVER_DATA_TABLE.value,
-                "owner_id": table_id,
+                "owner_kind": mapping.owner_kind.value,
+                "owner_id": native_id,
                 "owner_version": version,
             },
         }
@@ -607,7 +689,7 @@ class ServerStudioAdapter:
                 row.get("id") != artifact_id or row.get("workspace_id") != ref.workspace_id
                 or row.get("producer_metadata") != producer or row.get("content")
             ):
-                raise ValueError("The Server did not confirm the native Data Table workspace link")
+                raise ValueError("The Server did not confirm the native workspace link")
             return self._reference(ref, row, metadata)
 
         async with self._mutations:
@@ -615,19 +697,15 @@ class ServerStudioAdapter:
             for row in rows:
                 if row.get("id") == artifact_id:
                     return validated(row)
-            if supersedes and not any(
-                row.get("artifact_type") == "data_table" and (saved := self._metadata(row))
-                and self._reference(ref, row, saved) == supersedes for row in rows
-            ):
-                raise ValueError("The previous Workspace Data Table reference changed")
-            detail = await self._tables(ref, client).detail(table_id)
-            self._check_connection(ref, client)
-            if not detail or detail.table.version != version or detail.table.status != "ready":
-                raise ValueError("The native Data Table changed before linking")
+            if supersedes and not self._matching_native_link(supersedes, rows, mapping.artifact_type):
+                raise ValueError("The previous Workspace output reference changed")
+            detail = await self._native_detail(output, client)
+            if not detail:
+                raise ValueError("The native output changed before linking")
             try:
                 row = await service.save_workspace_artifact(
-                    workspace_id=ref.workspace_id, artifact_id=artifact_id, artifact_type="data_table",
-                    title=detail.table.name, status="complete", producer_metadata=producer,
+                    workspace_id=ref.workspace_id, artifact_id=artifact_id, artifact_type=mapping.artifact_type,
+                    title=detail["title"], status="complete", producer_metadata=producer,
                 )
             except APIResponseError as exc:
                 if exc.status_code != 409:

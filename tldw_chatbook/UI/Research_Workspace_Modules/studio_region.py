@@ -22,12 +22,14 @@ from ...Research_Workspace.contracts import CapabilityUnavailableError
 from ...Research_Workspace.egress_consent import ResearchEgressConsentService
 from ...Research_Workspace.layout_state import ResearchPanePreferences
 from ...Research_Workspace.overlay_store import OverlayConflictError
+from ...Research_Workspace.server_slides import SlidesSubmissionUnconfirmed
 from ...Research_Workspace.studio_mapping import (
     STUDIO_OUTPUT_MAPPINGS,
     project_studio_availability,
 )
 from ...Research_Workspace.studio_models import (
     PRIMARY_RESEARCH_OUTPUT_KINDS,
+    ResearchOutputKind,
     ResearchStudioRequest,
     StudioOwnerKind,
 )
@@ -460,6 +462,13 @@ class ResearchStudioRegion(VerticalScroll):
                 if supersedes
                 else "Generate"
             )
+            styles = (
+                await port.studio_slide_styles(capture.ref)
+                if kind is ResearchOutputKind.SLIDES
+                else ()
+            )
+            if not self._current(capture):
+                return
             options = await self.app.push_screen_wait(
                 ResearchStudioOptions(
                     kind,
@@ -467,6 +476,7 @@ class ResearchStudioRegion(VerticalScroll):
                     self._route_label(route),
                     len(sources),
                     action=action,
+                    slide_styles=styles,
                 )
             )
             if (
@@ -590,6 +600,9 @@ class ResearchStudioRegion(VerticalScroll):
             self._status(
                 f"{exc.capability.user_message} {exc.capability.recovery_action}".strip()
             )
+        elif isinstance(exc, SlidesSubmissionUnconfirmed):
+            self._retry = None
+            self._status(str(exc))
         elif isinstance(exc, ValueError):
             self._status(str(exc))
         else:
@@ -744,6 +757,14 @@ class ResearchStudioRegion(VerticalScroll):
                 self._port(output.workspace), "export_output"
             ):
                 actions.update({f"export-{fmt.lower()}": f"Download {fmt}" for fmt in ("CSV", "JSON", "XLSX")})
+            if output.owner_kind is StudioOwnerKind.SERVER_SLIDES and hasattr(
+                self._port(output.workspace), "export_output"
+            ):
+                actions.update({
+                    "export-revealjs": "Download Reveal.js ZIP",
+                    "export-markdown": "Download Markdown",
+                    "export-json": "Download JSON",
+                })
             limits = (
                 "Undo requires a restorable version from the owner."
                 if "delete" in actions

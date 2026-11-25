@@ -270,3 +270,85 @@ async def test_native_workspace_data_tables_confirm_and_recover_the_canonical_ow
     assert (await adapter.resolve_output(saved))["table"]["uuid"] == native_id
     server.detail["version"] += 1
     assert await adapter.resolve_output(saved) is None
+
+
+async def test_native_slides_save_one_version_and_do_not_repeat_an_unconfirmed_launch():
+    import asyncio
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from uuid import UUID
+
+    from tldw_chatbook.Research_Workspace.studio_models import ResearchGenerationConfig
+    from tldw_chatbook.Research_Workspace.studio_service import ResearchStudioService
+    from tldw_chatbook.tldw_api.exceptions import APIConnectionError
+    from tldw_chatbook.tldw_api.slides_schemas import PresentationResponse
+
+    native_id = str(UUID(int=67))
+    source = replace(SOURCE, ref=SERVER, catalog_item_id="42", catalog_item_version=3, association_version=2)
+    route = replace(ROUTE, data_source="server", processor="server-chat", endpoint_class="server")
+
+    class SlidesServer(_ArtifactServer):
+        def __init__(self):
+            super().__init__()
+            self.launches = []
+            self.drop = True
+            self.native = PresentationResponse(
+                id=native_id, title="Native Slides", source_type="media", source_ref="42",
+                deleted=False, version=1, client_id="1", created_at=datetime.now(timezone.utc),
+                last_modified=datetime.now(timezone.utc), slides=[{"order": 0, "layout": "title"}],
+                visual_style_id="style-a", visual_style_scope="builtin",
+            )
+
+        async def get_presentation(self, owner_id):
+            assert owner_id == native_id
+            return self.native
+
+        async def generate_presentation_from_media(self, payload):
+            self.launches.append(payload)
+            if self.drop:
+                raise APIConnectionError("lost response")
+            return self.native
+
+        async def list_workspace_sources(self, workspace_id):
+            return [{"id": source.source_id, "media_id": 42, "version": 2, "selected": True}]
+
+        async def get_workspace_source_status(self, workspace_id):
+            return {"sources": [{"id": source.source_id, "media_id": 42, "catalog_item_version": 3}]}
+
+        async def get_slides_health(self):
+            return SimpleNamespace(status="ok")
+
+        async def get_llm_provider(self, provider):
+            return SimpleNamespace(name=provider, is_configured=True, availability="enabled", models=[route.model])
+
+        async def _request(self, method, path, *, json_data=None, params=None, headers=None):
+            if path.endswith("/research-data-tables"):
+                raise APIResponseError(404, "Not Found")
+            if path.endswith("/slides/capabilities"):
+                return {"schema_version": 1, "generation_modes": {
+                    "structured_slides": {"enabled": True, "transport": "existing_source_endpoints"},
+                }}
+            return await super()._request(method, path, json_data=json_data, params=params, headers=headers)
+
+    server = SlidesServer()
+    owner = ServerStudioAdapter(lambda ref: server)
+    caps = await owner.native_capabilities(SERVER, route, (source,), "r1")
+    assert caps["generate_presentation_from_media"].available
+    req = replace(
+        server_request(), output_kind="slides", source_snapshot=(source,), processing_route=route,
+        generation=ResearchGenerationConfig(slides_visual_style=("style-a", "builtin")),
+    )
+    studio = ResearchStudioService(None, owner)
+    with pytest.raises(ValueError, match="could not confirm whether"):
+        await studio.generate(req, lambda _: None, asyncio.Event())
+    with pytest.raises(ValueError, match="could not confirm whether"):
+        await studio.retry(req.workspace, req.operation_id)
+    assert len(server.launches) == 1
+    assert not server.saved
+
+    server.drop = False
+    registered = await studio.generate(replace(req, operation_id="regenerated"), lambda _: None, asyncio.Event())
+    assert (registered.owner_id, registered.owner_version) == (native_id, 1)
+    assert (server.launches[-1].media_id, server.launches[-1].visual_style_id) == (42, "style-a")
+    assert (await owner.resolve_output(registered))["slides"]
+    assert not next(iter(server.saved.values()))["content"]

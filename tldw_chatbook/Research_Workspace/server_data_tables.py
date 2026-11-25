@@ -8,7 +8,7 @@ from tldw_chatbook.tldw_api.workspace_data_tables_client import (
     WorkspaceDataTablesClient,
 )
 
-from .contracts import RetrievalMode
+from .source_readiness import versioned_media_sources
 from .studio_generation import StudioGeneratedOutput
 from .studio_models import ResearchOutputKind, ResearchWorkProductKind
 
@@ -21,57 +21,27 @@ _TABLE_TASKS = {
     ResearchWorkProductKind.LITERATURE_MATRIX: (
         "Build a literature matrix with one row per study. Compare methods and findings and preserve limitations.",
         (
-            "Study",
-            "Research question",
+            "Source",
             "Method",
+            "Sample",
             "Findings",
             "Limitations",
-            "Source reference",
+            "Contradictions",
         ),
     ),
     ResearchWorkProductKind.CORPUS_GAP_FINDER: (
         "Identify gaps in the selected corpus. Distinguish missing coverage from contradictory evidence "
         "and propose a concrete next research step for each gap.",
         (
-            "Coverage area",
-            "Evidence present",
-            "Gap or conflict",
-            "Next step",
-            "Source reference",
+            "Gap",
+            "Type",
+            "Evidence",
+            "Sources",
+            "Importance",
+            "Follow-up",
         ),
     ),
 }
-
-
-def table_sources(sources, *, maximum=MAX_TABLE_SOURCES) -> list[dict]:
-    if not 1 <= len(sources) <= maximum:
-        raise ValueError(f"Select between 1 and {maximum} ready Server Media sources")
-    captured = []
-    for source in sources:
-        media_id = source.catalog_item_id
-        if (
-            not media_id.isascii()
-            or not media_id.isdecimal()
-            or len(media_id) > 19
-            or not 0 < int(media_id) < 2**63
-            or not source.association_version
-            or not source.catalog_item_version
-            or RetrievalMode.FTS not in source.ready_modes
-        ):
-            raise ValueError(
-                "Select Server Media with ready text and refresh its source versions"
-            )
-        captured.append(
-            {
-                "source_id": source.source_id,
-                "catalog_item_id": int(media_id),
-                "association_version": source.association_version,
-                "catalog_item_version": source.catalog_item_version,
-            }
-        )
-    if len({row["catalog_item_id"] for row in captured}) != len(captured):
-        raise ValueError("Select distinct Media items")
-    return captured
 
 
 async def generate_native_table(
@@ -84,7 +54,7 @@ async def generate_native_table(
     options, route = request.generation, request.processing_route
     task, default_columns = _TABLE_TASKS[request.output_kind]
     if default_columns:
-        task += " In the source reference column cite the source number and title for each material finding."
+        task += " In the source column cite the source number and title for each material finding."
     if options.focus:
         task += f" Focus on {options.focus}."
     payload = {
@@ -93,7 +63,9 @@ async def generate_native_table(
         "model": route.model,
         "name": options.title or request.output_kind.value.replace("_", " ").title(),
         "prompt": task,
-        "sources": table_sources(request.source_snapshot),
+        "sources": versioned_media_sources(
+            request.source_snapshot, maximum=MAX_TABLE_SOURCES
+        ),
         "column_hints": [
             {"name": name} for name in options.table_columns or default_columns
         ],

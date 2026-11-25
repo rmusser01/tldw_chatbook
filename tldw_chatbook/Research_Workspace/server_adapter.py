@@ -497,6 +497,10 @@ class ServerResearchWorkspaceAdapter:
             context=context,
         )
 
+    async def studio_slide_styles(self, ref):
+        context = self._context_for_ref(ref)
+        return await self._server_call(self._require_studio(ref).owner.slide_styles(ref), context=context)
+
     async def _studio_approvals(self, ref: QualifiedWorkspaceRef) -> tuple[str, ...]:
         self._context_for_ref(ref)
         return ()
@@ -581,19 +585,25 @@ class ServerResearchWorkspaceAdapter:
         return await self._server_call(self._require_studio(output_ref.workspace).owner.export_output(output_ref, format), context=context)
 
     async def generate_output(self, request, on_chunk, cancel_event, *, replace_output=None, supersedes=None):
-        from .studio_mapping import SERVER_TABLE_KINDS, STUDIO_OUTPUT_MAPPINGS
+        from .studio_mapping import SERVER_NATIVE_OWNERS, STUDIO_OUTPUT_MAPPINGS
 
         context = self._context_for_ref(request.workspace)
         studio = self._require_studio(request.workspace)
         mapping = STUDIO_OUTPUT_MAPPINGS[request.workspace.data_source, request.output_kind]
+        if mapping.owner_kind in SERVER_NATIVE_OWNERS and studio.has_attempt(request):
+            require_capability(self._capabilities_for_context(context), "update")
+            return await self._server_call(
+                studio.generate(request, on_chunk, cancel_event, replace_output=replace_output, supersedes=supersedes),
+                context=context,
+            )
         caps = await self.studio_capabilities(request.workspace)
-        if request.output_kind in SERVER_TABLE_KINDS:
+        if mapping.owner_kind in SERVER_NATIVE_OWNERS:
             require_capability(caps, "save_workspace_artifact")
             route = await self.resolve_chat_route(
                 request.workspace, request.processing_route.provider, request.processing_route.model
             )
             if route != request.processing_route:
-                raise ValueError("The selected Server route changed before generating the Data Table")
+                raise ValueError("The selected Server route changed before generation")
             caps.update(await self.native_studio_capabilities(request.workspace, route, request.source_snapshot))
         require_capability(caps, mapping.create_capability)
         return await self._server_call(

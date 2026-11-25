@@ -83,6 +83,7 @@ class StudioOwnerKind(StrEnum):
     SERVER_STUDY_DECK = "server_study_deck"
     SERVER_QUIZ = "server_quiz"
     SERVER_DATA_TABLE = "server_data_table"
+    SERVER_SLIDES = "server_slides"
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +101,7 @@ class ResearchGenerationConfig:
 
     table_columns: tuple[str, ...] = ()
     table_max_rows: int | None = None
+    slides_visual_style: tuple[str, str] | None = None
 
     def __post_init__(self) -> None:
         title = _safe_identity(self.title, "output title")
@@ -143,11 +145,19 @@ class ResearchGenerationConfig:
             raise ValueError("Choose a maximum of 1 to 2,000 table rows")
 
 
+        if self.slides_visual_style is not None and (
+            not isinstance(self.slides_visual_style, tuple)
+            or len(self.slides_visual_style) != 2
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", self.slides_visual_style[0])
+            or self.slides_visual_style[1] not in {"builtin", "user"}
+        ):
+            raise ValueError("Choose a Server Slides visual style")
+
     @property
     def fingerprint(self) -> str:
         """Identify generation options without persisting user-supplied labels."""
         options = asdict(self)
-        for key in ("table_columns", "table_max_rows"):
+        for key in ("table_columns", "table_max_rows", "slides_visual_style"):
             if not options[key]:
                 del options[key]
         return sha256(json.dumps(options, sort_keys=True).encode()).hexdigest()
