@@ -1367,10 +1367,10 @@ def validate_completed_tool_turn(
         )
         if prior.rounds != complete.rounds:
             raise ValueError("completed_replay_prior_attachment")
-    # TASK-42525: rows a fallback chain's first call of this run rewrote are
-    # dead inside the range. They are rechecked with the rest below, which
-    # vouches for that call's own rows.
+    # TASK-42525: rows a fallback chain's first call of this run rewrote, and
+    # its removal marker, are dead inside the range.
     from tldw_chatbook.Chat.console_trace_fallback_rewrite import (
+        earned_tool_rows,
         rewritten_sequences,
     )
 
@@ -1411,7 +1411,8 @@ def validate_completed_tool_turn(
     # establish that ownership. The output is bounded by the removed span.
     rows = cursor.execute(
         """SELECT n.sequence, c.owner_id, c.segment_id, c.turn_id, c.run_id,
-                      c.policy_id, c.route_identity, c.call_sequence, e.event_type
+                      c.policy_id, c.route_identity, c.call_sequence, e.event_type,
+                      n.component_kind
                  FROM console_trace_surface_nodes n
                  LEFT JOIN console_trace_surface_replacements r ON r.replacement_node_id = n.node_id
                       AND r.segment_id = n.segment_id
@@ -1427,11 +1428,28 @@ def validate_completed_tool_turn(
         (segment_id, plan.start_sequence, plan.end_sequence),
     ).fetchall()
     # TASK-42525: a fallback chain's first call (the only tool-loop call at
-    # sequence 0) may have rewritten the run's tool rows; its rows stand on
-    # the rows they replaced, which are in this range and checked below.
+    # sequence 0) may have rewritten the run's tool rows. Its rows stand on the
+    # rows they replaced, rechecked here wherever they are (its marker holds
+    # nothing).
     rewritten = {
         row[0] for row in rows if (row[6], row[7]) == ("tool_loop", 0)
     }
+    rewritten_rows = tuple(
+        row[0]
+        for row in rows
+        if row[0] in rewritten and row[9] != trace.SURFACE_REMOVAL_COMPONENT
+    )
+    if rewritten_rows and not earned_tool_rows(
+        self,
+        cursor,
+        segment_id=segment_id,
+        owner_id=owner_id,
+        turn_id=terminal.turn_id,
+        policy_id=terminal.policy_id,
+        runs=runs,
+        sequences=rewritten_rows,
+    ):
+        raise ValueError("completed_tool_turn_lineage")
     if tuple(row[0] for row in rows) != tuple(
         sorted({sequence for sequence, _ in suffix} | replay_continuations | rewritten_dead)
     ) or any(

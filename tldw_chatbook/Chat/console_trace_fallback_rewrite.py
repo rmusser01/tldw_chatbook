@@ -181,7 +181,7 @@ def rewritten_sequences(
     start: int,
     end: int,
 ) -> set[int]:
-    """Sequences in ``[start, end]`` that a run's fallback rewrite replaced.
+    """Sequences in ``[start, end]`` that a run's fallback rewrite left dead.
 
     Args:
         cursor: Cursor for the caller-owned transaction.
@@ -191,13 +191,15 @@ def rewritten_sequences(
         end: Last sequence of the range.
 
     Returns:
-        Every sequence a tool-row replacement by a fallback chain's first call
-        of one of ``runs`` covers inside the range.
+        Every sequence inside the range that a fallback chain's first call of
+        one of ``runs`` replaced, plus that call's removal marker: a node no
+        projection shows, which takes the place of nothing.
     """
     from tldw_chatbook.Chat.console_trace_service import SURFACE_REMOVAL_COMPONENT
 
     rows = cursor.execute(
-        """SELECT r.start_sequence, r.end_sequence, c.run_id
+        """SELECT r.start_sequence, r.end_sequence, n.sequence,
+                  n.component_kind = ?, c.run_id
              FROM console_trace_surface_replacements r
              JOIN console_trace_surface_nodes n ON n.node_id = r.replacement_node_id
              JOIN console_trace_events e ON e.segment_id = r.segment_id
@@ -207,18 +209,61 @@ def rewritten_sequences(
                   SELECT b.call_id FROM console_trace_events b
                    WHERE b.segment_id = e.segment_id AND b.event_type = 'call_boundary'
                      AND b.sequence < e.sequence ORDER BY b.sequence DESC LIMIT 1)
-            WHERE r.segment_id = ? AND n.component_kind != ?
+            WHERE r.segment_id = ?
               AND c.route_identity = 'tool_loop' AND c.call_sequence = 0
-              AND r.end_sequence >= ? AND r.start_sequence <= ?
+              AND (n.component_kind = ? AND n.sequence BETWEEN ? AND ?
+                   OR n.component_kind != ?
+                   AND r.end_sequence >= ? AND r.start_sequence <= ?)
             LIMIT 257""",
-        (segment_id, SURFACE_REMOVAL_COMPONENT, start, end),
+        (
+            SURFACE_REMOVAL_COMPONENT,
+            segment_id,
+            SURFACE_REMOVAL_COMPONENT,
+            start,
+            end,
+            SURFACE_REMOVAL_COMPONENT,
+            start,
+            end,
+        ),
     ).fetchall()
-    return {
-        sequence
-        for low, high, run_id in rows
-        if run_id in runs
-        for sequence in range(max(low, start), min(high, end) + 1)
-    }
+    dead: set[int] = set()
+    for low, high, marker, is_marker, run_id in rows:
+        if run_id in runs:
+            dead.update(
+                (marker,) if is_marker else range(max(low, start), min(high, end) + 1)
+            )
+    return dead
+
+
+def extend_over_rewrites(
+    repository: object,
+    cursor: sqlite3.Cursor,
+    *,
+    segment_id: str,
+    terminal_call_id: str,
+    start: int,
+    floor: int,
+) -> int:
+    """Lower a completed-turn range's ``start`` over the run's dead rows.
+
+    A fallback rewrite leaves the rows it replaced, and its removal marker,
+    dead below the run's live rows. The range of the run's tool history starts
+    at its first row, after ``floor`` (the origin's head), so it reaches down
+    over them; the completed-turn witness rechecks every one.
+
+    Returns:
+        The lowered start, or ``start`` when nothing below it is the run's.
+    """
+    terminal = repository.get_call(cursor, terminal_call_id)  # type: ignore[attr-defined]
+    if terminal is None or start - 1 <= floor:
+        return start
+    _origin, runs = run_chains(repository, cursor, terminal.run_id)  # type: ignore[arg-type]
+    dead = rewritten_sequences(
+        cursor, segment_id=segment_id, runs=runs, start=floor + 1, end=start - 1
+    )
+    while start - 1 in dead:
+        start -= 1
+    return start
 
 
 def _rewritten_range(
@@ -271,8 +316,9 @@ def remove_surface_slot(
 ) -> tuple[object, object]:
     """Remove one surface row with a content-free marker (ADR-337, 2026-11-24).
 
-    The replacement points at a removal marker, which every projection drops,
-    so nothing takes the row's place.
+    The replacement points at a removal marker. The surface projection drops
+    it, so nothing takes the row's place; readers of raw nodes count it as one
+    of the run's dead rows (``rewritten_sequences``).
 
     Returns:
         The marker node, now the segment's tail, and the replacement row.
@@ -401,12 +447,26 @@ def validate_fallback_rewrite(
     start = int(plan.start_sequence)  # type: ignore[attr-defined]
     end = int(plan.end_sequence)  # type: ignore[attr-defined]
     removed = tuple(entry for entry in entries if start <= entry[0] <= end)
+    live = tuple(sequence for sequence, _ in removed)
     if (
         getattr(plan, "chain", ())
         or getattr(plan, "predecessor_head_id", None) != tail.node_id
         or end - start + 1 > MAX_SURFACE_REPLACEMENT_SPAN
-        or tuple(sequence for sequence, _ in removed) != tuple(range(start, end + 1))
+        # The run's earlier rewrite may have left dead rows and its removal
+        # marker inside the range; nothing else may be missing.
+        or tuple(
+            sorted(
+                {
+                    *live,
+                    *rewritten_sequences(
+                        cursor, segment_id=segment_id, runs=runs, start=start, end=end
+                    ),
+                }
+            )
+        )
+        != tuple(range(start, end + 1))
         or tuple(descriptors) != witness.descriptors
+        or len(removed) != len(descriptors)
         or any(
             key[0] not in TOOL_ROW_KINDS
             or key[1] != "artifact"
@@ -421,7 +481,7 @@ def validate_fallback_rewrite(
             turn_id=failed.turn_id,
             policy_id=failed.policy_id,
             runs=runs,
-            sequences=tuple(range(start, end + 1)),
+            sequences=live,
         )
     ):
         raise _refuse()

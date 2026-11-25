@@ -742,10 +742,14 @@ of the same run. The retry rule inside a chain is unchanged.
    no schema.
 2. **Who mints a chain.** Only the Console agent adapter of a primary
    Capture-On run. It does so when the runtime's call names a target other
-   than its chain's, and only if that target is the next unused entry of the
-   run's configured fallback list (each entry once, in order). Any other target
-   change is refused before preparation, so nothing is reserved. Spawned
-   children keep their single chain and segment.
+   than its chain's, and only if that target's endpoint is an entry of the
+   run's configured fallback list after the last entry a fallback used. Any
+   such later entry qualifies, in list order, not only the next one: the
+   runtime skips an entry that is not ready, and an entry passed over is spent.
+   Each entry is used at most once, and the list is never walked back. Any
+   other target change is refused before preparation, so nothing is reserved.
+   Spawned children keep their single chain and segment. (Reworded
+   2026-11-25 to match the adapter; the rule is unchanged.)
 3. **Admitting the chain's first call** (in the reservation transaction, so a
    refusal rolls back and leaves no reserved call). The call whose boundary
    directly precedes it must be a call of another chain of the same actor. If
@@ -821,22 +825,32 @@ describes. That call may record one bounded rewrite of the surface.
 3. **Bound.** At most 256 rows are replaced, in one replacement with no
    chained links; more is refused. The removed system slot is one more row.
 4. **Recording.** The slot is removed by a replacement whose node is a
-   content-free removal marker, which every surface projection drops. The
-   tool rows are replaced by an ordinary bounded replacement: the first new
-   row takes the range's place and the rest follow at the end. Historical
-   calls, request heads and the removed rows' bytes stay as they were.
+   content-free removal marker. The service's surface projection, from which
+   every planner, checkpoint and reader takes the active rows, drops it.
+   Readers of raw nodes by sequence (the completed-turn witness's lineage
+   query and the rewrite's own checks) see the marker; they count it as one
+   of the run's dead rows, like the rows the rewrite replaced, and only when a
+   fallback chain's first call of that run wrote it. The tool rows are
+   replaced by an ordinary bounded replacement: the first new row takes the
+   range's place and the rest follow at the end. Historical calls, request
+   heads and the removed rows' bytes stay as they were. (Point 4 reworded
+   2026-11-25: it said "every surface projection drops" the marker, which
+   was not true of the raw readers.)
 5. **Recheck.** The rewrite is rechecked in the dispatch-binding transaction.
    A later completed-turn witness accepts the rewritten rows only by
-   rechecking, from the ledger, the rows they replaced.
+   rechecking, from the ledger, the rows they replaced, wherever those rows
+   are. Its range starts at the run's first row and reaches down over the
+   run's dead rows.
 
 Anything outside this is refused, as before. That covers a rewrite on any
 call other than a fallback chain's first, a removed row of another run,
 actor or turn, a removed row that is not the leading system slot or a tool
 row, and more than 256 rows. Refusal happens before the reservation commits.
 
-Not granted: putting a leading system row back. After a llama.cpp run falls
-back to a hosted provider, the next captured send to llama.cpp is refused, as
-any captured switch from a hosted provider to llama.cpp already was.
+Not granted here: putting a leading system row back. After a llama.cpp run
+falls back to a hosted provider, the next captured send to llama.cpp was
+refused, as any captured switch from a hosted provider to llama.cpp already
+was. (Granted by the next amendment.)
 
 ## Current-owner integration amendment (2026-10-13)
 

@@ -1,6 +1,8 @@
 """A failed call authorizes an unchanged retry, never arbitrary tool history."""
 
+import functools
 import json
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -1897,6 +1899,40 @@ async def test_a_captured_run_falls_back_only_along_its_configured_list(
         ]
 
 
+@pytest.mark.usefixtures("shut_down_console_controllers")
+async def test_a_captured_run_passes_over_an_unready_fallback_entry(
+    tmp_path, monkeypatch
+):
+    """TASK-42525 review finding M4: any later unused entry, in list order.
+
+    The runtime skips a configured fallback that is not ready, so the call
+    names a later entry. The adapter takes any entry after the last one used,
+    not only the next, and the skipped one is spent.
+    """
+    from Tests.Chat.test_console_project_instruction_traces import _project_console
+    from tldw_chatbook.Chat import provider_readiness
+
+    async with _project_console(tmp_path, monkeypatch) as app:
+        calls = _fallback_replies(
+            app, monkeypatch, [_credit()], configured=("huggingface", _GQ)
+        )
+        monkeypatch.setattr(
+            provider_readiness,
+            "configured_provider_is_ready",
+            lambda provider: provider != "huggingface",
+        )
+        result = await app.controller.submit_draft("Hello", session_id=app.session.id)
+
+        assert app.controller.run_state.status.value == "completed"
+        assert app.reservation_errors == []
+        assert [provider for provider, _ in calls] == [_DS, _GQ]
+        turn_id = app.store.get_message(result.user_message_id).persisted_message_id
+        assert _chain_calls(app, turn_id) == [
+            ("agent_first", "error", _DS, 0, 0),
+            ("tool_loop", "complete", _GQ, 1, 0),
+        ]
+
+
 @pytest.mark.parametrize(
     "scenario",
     [
@@ -1929,6 +1965,7 @@ async def test_a_fallback_chain_follows_only_its_failed_chain(
     policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
     actor = new_opaque_id()
     factory = ConsoleTraceBoundaryFactory(database)
+    boundary, refusals = _recording(factory)
     calls = []
 
     def provider(**kwargs):
@@ -1939,7 +1976,7 @@ async def test_a_fallback_chain_follows_only_its_failed_chain(
 
     gateway = make_gateway(
         chat_api_call_fn=provider,
-        trace_call_boundary_factory=factory,
+        trace_call_boundary_factory=boundary,
         safe_error_copy=lambda _provider, _exc: "fixture provider failure",
     )
     deepseek = ConsoleProviderResolution(
@@ -2036,6 +2073,13 @@ async def test_a_fallback_chain_follows_only_its_failed_chain(
         with pytest.raises(TraceCallPersistenceError):
             await send(target, ConsoleRequestRoute.TOOL_LOOP, new_opaque_id())
         assert calls == ["deepseek"]
+        # History the new call adds is a rewrite the run did not earn; every
+        # other scenario is not a fallback at all.
+        assert refusals == [
+            "trace_fallback_rewrite_unavailable"
+            if scenario == "unearned_history"
+            else "trace_tool_chain_unavailable"
+        ]
     with database.transaction() as cursor:
         assert (
             cursor.execute(
@@ -2198,6 +2242,274 @@ async def test_a_fallback_rewrites_the_runs_tool_calls_for_its_provider(
         assert _chain_calls(app, turn_id) == before
 
 
+def _misread_as_failed(monkeypatch, app, turn_id, provider, sequence):
+    """Read one of the turn's calls as failed wherever a later call looks it up.
+
+    Patched on the repository's class: a reloaded Console builds a new one.
+    """
+    from tldw_chatbook.Chat.console_trace_models import TraceCallState
+
+    repository_type = type(app.factory.repository)
+    logical = repository_type.get_call_by_logical_identity
+
+    def misread(instance, cursor, **identity):
+        call = logical(instance, cursor, **identity)
+        if (
+            call is not None
+            and call.turn_id == turn_id
+            and (call.provider_name, call.call_sequence) == (provider, sequence)
+        ):
+            return replace(call, state=TraceCallState.ERROR, outcome="error")
+        return call
+
+    monkeypatch.setattr(repository_type, "get_call_by_logical_identity", misread)
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("misread", [False, True], ids=["plain", "misread"])
+@pytest.mark.parametrize("ending", ["failed", "discarded", "failed_unextended"])
+async def test_the_message_after_a_rewritten_run_that_did_not_complete_is_sent(
+    tmp_path, monkeypatch, ending, misread
+):
+    """TASK-42525 review finding I2.
+
+    Without project context, the next message's trace replaces the run's
+    tool history from the row after the run's origin. A fallback rewrite left
+    those rows dead, replaced further on, so the range began at the
+    fallback's rows: a failed or discarded run's next message was refused
+    (`surface_replacement_checkpoint_unavailable`). The range now reaches
+    down over the run's dead rows and the witness rechecks them, so reading
+    the call that answered with the tool call as failed still refuses it.
+    `failed_unextended` keeps the old start (the start pin relaxed to admit
+    it): the witness still rechecks the rows the rewrite replaced, wherever
+    they are.
+    """
+    from datetime import datetime, timezone
+
+    from Tests.Chat.test_console_project_instruction_traces import _project_console
+    from Tests.Chat.test_console_trace_discarded_tool_run import _reload_console
+    from tldw_chatbook.Chat import console_trace_fallback_rewrite as rewrite
+    from tldw_chatbook.Chat.console_trace_final_values import (
+        CompletedToolTurnWitness,
+    )
+    from tldw_chatbook.Chat.console_trace_settlement import (
+        ConsoleTraceSettlementCoordinator,
+    )
+
+    async with _project_console(tmp_path, monkeypatch, source_name="NOTES.md") as app:
+        if ending == "discarded":
+            # The fallback answered with a tool call; the run's next call was
+            # refused, a restart settled it, and the user discarded the reply.
+            calls = _fallback_replies(
+                app, monkeypatch, [_TOOL_CALL, _credit(), _NATIVE_TOOL_CALL]
+            )
+            original = type(app.factory.service).prepare_current_surface_delta
+
+            def reject_fourth(instance, *args, **kwargs):
+                if len(calls) == 3:
+                    raise ValueError("unsupported_surface_change")
+                return original(instance, *args, **kwargs)
+
+            with monkeypatch.context() as fault:
+                fault.setattr(
+                    type(app.factory.service),
+                    "prepare_current_surface_delta",
+                    reject_fourth,
+                )
+                result = await app.controller.submit_draft(
+                    "Use calculator once", session_id=app.session.id
+                )
+            ConsoleTraceSettlementCoordinator(app.factory.repository).recover_open_calls(
+                app.db,
+                occurred_at=datetime.now(timezone.utc).isoformat(),
+                recovery_grace_seconds=0,
+            )
+            await _reload_console(app)
+            assert (
+                await app.controller.discard_dispatch_recovery(app.session.id)
+            ).accepted
+            app.reservation_errors.clear()
+            lineage = [
+                ("agent_first", "interrupted", _DS, 0, 0),
+                ("tool_loop", "error", _DS, 0, 1),
+                ("tool_loop", "interrupted", _GQ, 1, 0),
+            ]
+        else:
+            calls = _fallback_replies(
+                app, monkeypatch, [_TOOL_CALL, _credit(), _credit()]
+            )
+            result = await app.controller.submit_draft(
+                "Use calculator once", session_id=app.session.id
+            )
+            assert app.controller.run_state.status.value == "failed"
+            assert app.reservation_errors == []
+            lineage = [
+                ("agent_first", "complete", _DS, 0, 0),
+                ("tool_loop", "error", _DS, 0, 1),
+                ("tool_loop", "error", _GQ, 1, 0),
+            ]
+        turn_id = app.store.get_message(result.user_message_id).persisted_message_id
+        before = _chain_calls(app, turn_id)
+        assert before == lineage
+        if ending == "failed_unextended":
+            monkeypatch.setattr(
+                rewrite, "extend_over_rewrites", lambda *_args, start, **_kw: start
+            )
+            monkeypatch.setattr(
+                CompletedToolTurnWitness,
+                "matches_start_sequence",
+                lambda _self, start, origin: start >= origin + 1,
+            )
+        if misread:
+            _misread_as_failed(monkeypatch, app, turn_id, _DS, 0)
+        sent = len(calls)
+
+        follow_up = await app.controller.submit_draft(
+            "And now?", session_id=app.session.id
+        )
+
+        assert follow_up.accepted
+        if misread:
+            assert app.reservation_errors == ["completed_tool_turn_lineage"]
+            assert app.controller.run_state.status.value == "blocked"
+            assert len(calls) == sent
+        else:
+            assert app.reservation_errors == []
+            assert app.controller.run_state.status.value == "completed"
+            assert len(calls) == sent + 1
+        assert _chain_calls(app, turn_id) == before
+
+
+@asynccontextmanager
+async def _llamacpp_falls_back(
+    tmp_path, monkeypatch, *, tool_first, project, groq_replies=()
+):
+    """A captured llama.cpp run that falls back to groq (TASK-42472's path).
+
+    llama.cpp answers with a text tool call first when ``tool_first``, then
+    is busy until its in-place retries are spent. groq takes each of
+    ``groq_replies`` in turn, then answers. Yields the app, each groq
+    request's messages, and ``switch``: after it, the session's sends go to a
+    hosted provider (groq's endpoint) instead of llama.cpp.
+    """
+    from Tests.Chat.test_console_project_instruction_traces import _project_console
+    from tldw_chatbook.Chat import (
+        Chat_Functions,
+        console_agent_bridge,
+        provider_readiness,
+    )
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+        ConsoleEgressClass,
+        ConsoleResolvedDestination,
+    )
+
+    steps = ("tool",) * tool_first + ("busy",) * 3
+    async with _project_console(
+        tmp_path,
+        monkeypatch,
+        source_name="AGENTS.md" if project else "NOTES.md",
+        first_failure=_llama_script(*steps),
+        failures=len(steps),
+    ) as app:
+        llama, groq, replies, switched = (
+            app.gateway.resolve_for_send,
+            [],
+            list(groq_replies),
+            [],
+        )
+        hosted = replace(
+            _GROQ,
+            resolved_destination=ConsoleResolvedDestination(
+                provider=_GQ,
+                model=_GROQ.model,
+                endpoint_identity=_GROQ.base_url,
+                egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+            ),
+        )
+
+        async def resolve(selection):
+            if selection.provider == _GQ:
+                return _GROQ
+            return hosted if switched else await llama(selection)
+
+        @functools.wraps(Chat_Functions.chat_api_call)
+        def handler(*_args, **kwargs):
+            groq.append(kwargs["messages_payload"])
+            reply = (
+                replies.pop(0) if replies else {"role": "assistant", "content": "ok"}
+            )
+            return {"choices": [{"message": reply}]}
+
+        monkeypatch.setattr(app.gateway, "resolve_for_send", resolve)
+        monkeypatch.setattr(app.gateway, "_chat_api_call_fn", handler)
+        monkeypatch.setattr(
+            console_agent_bridge, "console_fallback_providers", lambda: (_GQ,)
+        )
+        monkeypatch.setattr(
+            provider_readiness, "configured_provider_is_ready", lambda _p: True
+        )
+        yield app, groq, lambda: switched.append(True)
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("misread", [False, True], ids=["plain", "misread"])
+@pytest.mark.parametrize("tool_first", [False, True], ids=["no_tools", "tool_first"])
+async def test_after_a_llamacpp_fallback_the_next_message_to_a_hosted_provider_is_sent(
+    tmp_path, monkeypatch, tool_first, misread
+):
+    """TASK-42525 review finding I1.
+
+    With project context, the next message's trace replaces the run's
+    suffix from its project context on. The fallback's removal marker sits
+    inside that range, behind the llama.cpp rows, and the witness read it as
+    a missing row (`completed_tool_turn_range`). It now counts the run's
+    marker as one of its dead rows. groq answered with a tool call, so its
+    chain's rows are still rechecked: read as failed, groq's first call
+    refuses the next message.
+    """
+    async with _llamacpp_falls_back(
+        tmp_path,
+        monkeypatch,
+        tool_first=tool_first,
+        project=True,
+        groq_replies=[_NATIVE_TOOL_CALL],
+    ) as (app, groq, switch):
+        result = await app.controller.submit_draft(
+            "Use calculator once", session_id=app.session.id
+        )
+
+        assert app.controller.run_state.status.value == "completed"
+        assert app.reservation_errors == []
+        turn_id = app.store.get_message(result.user_message_id).persisted_message_id
+        before = _chain_calls(app, turn_id)
+        assert before == [
+            ("agent_first", "complete" if tool_first else "error", "llama_cpp", 0, 0),
+            *(("tool_loop", "error", "llama_cpp", 0, n) for n in range(1, 3 + tool_first)),
+            ("tool_loop", "complete", _GQ, 1, 0),
+            ("tool_loop", "complete", _GQ, 1, 1),
+        ]
+        if misread:
+            _misread_as_failed(monkeypatch, app, turn_id, _GQ, 0)
+        switch()
+        sent = len(groq)
+
+        follow_up = await app.controller.submit_draft(
+            "And now?", session_id=app.session.id
+        )
+
+        assert follow_up.accepted
+        if misread:
+            assert app.reservation_errors == ["completed_tool_turn_lineage"]
+            assert app.controller.run_state.status.value == "blocked"
+            assert len(groq) == sent
+        else:
+            assert app.reservation_errors == []
+            assert app.controller.run_state.status.value == "completed"
+            assert len(groq) == sent + 1
+            assert groq[-1][0]["role"] != "system"
+        assert _chain_calls(app, turn_id) == before
+
+
 @pytest.mark.usefixtures("shut_down_console_controllers")
 @pytest.mark.parametrize("project", [True, False], ids=["project", "no_project"])
 @pytest.mark.parametrize("tool_first", [False, True], ids=["no_tools", "tool_first"])
@@ -2295,6 +2607,20 @@ async def test_a_captured_llamacpp_run_falls_back_to_a_hosted_provider(
         assert app.controller.run_state.status.value == "completed"
 
 
+def _recording(factory):
+    """``factory`` as the gateway calls it; each refusal's code is kept."""
+    refusals = []
+
+    def boundary(*args, **kwargs):
+        try:
+            return factory(*args, **kwargs)
+        except Exception as exc:
+            refusals.append(str(exc))
+            raise
+
+    return boundary, refusals
+
+
 def _tool_rows(policy, tag, count):
     """``count`` alternating tool-call and tool-result rows, as one format."""
     messages, descriptors = [], []
@@ -2330,6 +2656,7 @@ async def _failed_tool_run(
     _, revision = _saved_message(database, conversation, "hello")
     policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
     factory = ConsoleTraceBoundaryFactory(database)
+    boundary, refusals = _recording(factory)
     asked, failing = [], {"deepseek"}
 
     def provider(**kwargs):
@@ -2340,7 +2667,7 @@ async def _failed_tool_run(
 
     gateway = make_gateway(
         chat_api_call_fn=provider,
-        trace_call_boundary_factory=factory,
+        trace_call_boundary_factory=boundary,
         safe_error_copy=lambda _provider, _exc: "fixture provider failure",
     )
     if system:
@@ -2428,6 +2755,7 @@ async def _failed_tool_run(
         head=head,
         head_descriptors=head_descriptors,
         rows=rows,
+        refusals=refusals,
     )
 
 
@@ -2444,6 +2772,8 @@ def _reserved(database):
         "valid",
         "valid_slot",
         "valid_second_rewrite",
+        "valid_second_rewrite_after_slot",
+        "unearned_second_rewrite_after_slot",
         "retry_rewrite",
         "second_call",
         "user_row",
@@ -2466,7 +2796,9 @@ async def test_a_fallback_rewrite_is_admitted_only_in_its_one_shape(
     from tldw_chatbook.Chat import console_trace_fallback_rewrite as rewrite
 
     rows = 257 if scenario == "over_256" else 2
-    system = scenario in {"valid_slot", "slot_not_the_runs"}
+    system = scenario in {"valid_slot", "slot_not_the_runs"} or scenario.endswith(
+        "after_slot"
+    )
     run = await _failed_tool_run(
         tmp_path, make_database, make_gateway, monkeypatch, rows=rows, system=system
     )
@@ -2501,6 +2833,46 @@ async def test_a_fallback_rewrite_is_admitted_only_in_its_one_shape(
         messages, descriptors = head + again, head_descriptors + again_descriptors
         target = replace(_GROQ, provider="openai", execution_key="openai")
         chain = new_opaque_id()
+    elif scenario.endswith("second_rewrite_after_slot"):
+        # The first fallback removed the slot and rewrote the rows; its chain
+        # added rows and failed. The second rewrites all of them, across the
+        # first one's removal marker, which holds no row (review finding I1).
+        assert await run.send(
+            _GROQ, ConsoleRequestRoute.TOOL_LOOP, chain, messages, descriptors
+        ) == ["answered"]
+        more, more_descriptors = _tool_rows(run.policy, "native more", rows)
+        run.failing.add("groq")
+        with pytest.raises(ChatRateLimitError):
+            await run.send(
+                _GROQ,
+                ConsoleRequestRoute.TOOL_LOOP,
+                chain,
+                messages + more,
+                descriptors + more_descriptors,
+            )
+        again, again_descriptors = _tool_rows(run.policy, "text again", 2 * rows)
+        messages, descriptors = head + again, head_descriptors + again_descriptors
+        target = replace(_GROQ, provider="openai", execution_key="openai")
+        chain = new_opaque_id()
+        if scenario.startswith("unearned"):
+            # Read groq's first call as failed: the rows its chain added
+            # were not earned, marker or no marker.
+            from tldw_chatbook.Chat.console_trace_models import TraceCallState
+
+            logical = run.factory.repository.get_call_by_logical_identity
+
+            def unanswered(cursor, **key):
+                call = logical(cursor, **key)
+                if call is not None and (call.provider_name, call.call_sequence) == (
+                    "groq",
+                    0,
+                ):
+                    return replace(call, state=TraceCallState.ERROR, outcome="error")
+                return call
+
+            monkeypatch.setattr(
+                run.factory.repository, "get_call_by_logical_identity", unanswered
+            )
     elif scenario == "user_row":
         _, changed = _saved_message(run.database, run.conversation, "changed")
         messages = [{"role": "user", "content": "changed"}] + messages[1:]
@@ -2538,6 +2910,13 @@ async def test_a_fallback_rewrite_is_admitted_only_in_its_one_shape(
                 target, ConsoleRequestRoute.TOOL_LOOP, chain, messages, descriptors
             )
         assert run.asked == asked
+        # A rewrite on any call but a fallback chain's first is no rewrite:
+        # the planner refuses the changed surface before it is considered.
+        assert run.refusals == [
+            "unsupported_surface_change"
+            if scenario in {"retry_rewrite", "second_call"}
+            else "trace_fallback_rewrite_unavailable"
+        ]
     assert _reserved(run.database) == 0
 
 
@@ -2595,3 +2974,107 @@ async def test_only_the_runs_own_tool_rows_are_earned(
             **identity,
         )
     assert earned is (changed == "none")
+
+
+async def test_a_rewrites_bookkeeping_reads_only_its_own_rows(
+    tmp_path, make_database, make_gateway, monkeypatch
+):
+    """TASK-42525 review findings M6 and I1, called directly.
+
+    A rewrite whose new rows do not match the removed ones in number is
+    refused with the rewrite's own code, not zip's ValueError. A run's dead
+    rows are the rows its fallback rewrite replaced plus that rewrite's
+    removal marker, and only its own: another run's chains name none.
+    """
+    from tldw_chatbook.Chat.console_trace_continuation import run_chains
+    from tldw_chatbook.Chat.console_trace_fallback_rewrite import (
+        extend_over_rewrites,
+        rewritten_sequences,
+        validate_fallback_rewrite,
+    )
+    from tldw_chatbook.Chat.console_trace_final_values import FallbackRewriteWitness
+
+    run = await _failed_tool_run(
+        tmp_path, make_database, make_gateway, monkeypatch, system=True
+    )
+    repository = run.factory.repository
+    _calls, descriptors = _tool_rows(run.policy, "native", 2)
+    with run.database.transaction() as cursor:
+        (failed_id,) = cursor.execute(
+            "SELECT call_id FROM console_trace_calls WHERE call_sequence = 1"
+        ).fetchone()
+        failed = repository.get_call(cursor, failed_id)
+        tail = repository.get_surface_tail(cursor, failed.segment_id)
+        plan = SimpleNamespace(
+            start_sequence=tail.sequence - 1,
+            end_sequence=tail.sequence,
+            predecessor_head_id=tail.node_id,
+            chain=(),
+        )
+        for count in (2, 1):
+            witness = FallbackRewriteWitness(
+                failed.call_id, None, tuple(descriptors[:count])
+            )
+            check = functools.partial(
+                validate_fallback_rewrite,
+                run.factory.service,
+                cursor,
+                witness=witness,
+                owner_id=failed.owner_id,
+                segment_id=failed.segment_id,
+                plan=plan,
+                descriptors=witness.descriptors,
+            )
+            if count == 2:
+                check()  # the control: one for one
+            else:
+                with pytest.raises(ValueError) as refused:
+                    check()
+                assert refused.value.args == ("trace_fallback_rewrite_unavailable",)
+    rows = (tail.sequence - 1, tail.sequence)
+    native, native_descriptors = _tool_rows(run.policy, "native", 2)
+    assert await run.send(
+        _GROQ,
+        ConsoleRequestRoute.TOOL_LOOP,
+        new_opaque_id(),
+        run.head[1:] + native,
+        run.head_descriptors[1:] + native_descriptors,
+    ) == ["answered"]
+    with run.database.transaction() as cursor:
+        (marker,) = cursor.execute(
+            "SELECT sequence FROM console_trace_surface_nodes "
+            "WHERE component_kind = 'surface_removal'"
+        ).fetchone()
+        groq = cursor.execute(
+            "SELECT run_id FROM console_trace_calls WHERE provider_name = 'groq'"
+        ).fetchone()[0]
+        _origin, runs = run_chains(repository, cursor, groq)
+        dead = functools.partial(
+            rewritten_sequences, cursor, segment_id=failed.segment_id, start=0
+        )
+        assert dead(runs=runs, end=marker) == {*rows, marker}
+        assert dead(runs=runs, end=marker - 1) == set(rows)
+        foreign = frozenset({f"{new_opaque_id()}:{new_opaque_id()}"})
+        assert dead(runs=foreign, end=marker) == set()
+        # A completed-turn range reaches down from groq's rows over the rows
+        # its rewrite replaced, to the row after the origin's head, and only
+        # for the run that rewrote them.
+        (groq_call,) = cursor.execute(
+            "SELECT call_id FROM console_trace_calls WHERE provider_name = 'groq'"
+        ).fetchone()
+        (origin_head,) = cursor.execute(
+            "SELECT n.sequence FROM console_trace_calls c JOIN "
+            "console_trace_surface_nodes n ON n.node_id = c.surface_node_id "
+            "WHERE c.route_identity = 'agent_first'"
+        ).fetchone()
+        extend = functools.partial(
+            extend_over_rewrites,
+            repository,
+            cursor,
+            segment_id=failed.segment_id,
+            start=max(rows) + 1,
+            floor=origin_head,
+        )
+        assert min(rows) == origin_head + 1
+        assert extend(terminal_call_id=groq_call) == min(rows)
+        assert extend(terminal_call_id=failed.call_id) == max(rows) + 1

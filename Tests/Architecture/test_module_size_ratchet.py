@@ -1421,7 +1421,10 @@ _BUDGETS: dict[str, int] = {
     # exact measurement. The rewrite's planning and recheck live in
     # console_trace_fallback_rewrite.py; here, its threading through the
     # delta, the binding recheck, the removal marker and its projection.
-    "tldw_chatbook/Chat/console_trace_service.py": 6926,
+    # 2026-11-25, TASK-42525 review finding I2 (same rule): 6926 -> 6938
+    # (+12), exact measurement. A completed-turn range starts over the run's
+    # dead rows (helper in console_trace_fallback_rewrite.py).
+    "tldw_chatbook/Chat/console_trace_service.py": 6938,
     # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
     # approved child trace segments (ADR-337 amendment 2026-11-17): create and

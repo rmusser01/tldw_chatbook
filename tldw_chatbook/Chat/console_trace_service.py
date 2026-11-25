@@ -2781,6 +2781,7 @@ class ConsoleTraceService:
 
         replacement_range: VerifiedSurfaceReplacementRange | None = None
         compound = False
+        compound_start = 0
         rewritten: RewrittenTailWitness | None = None
         admitted_from = prefix
         admitted_to = len(descriptors)
@@ -2881,14 +2882,25 @@ class ConsoleTraceService:
                         if origin.surface_node_id is not None
                         else None
                     )
+                if origin_head is not None:
+                    from tldw_chatbook.Chat.console_trace_fallback_rewrite import (
+                        extend_over_rewrites,
+                    )
+
+                    # TASK-42525: from the run's first row, over the dead rows
+                    # its fallback rewrite left; the witness rechecks them.
+                    compound_start = extend_over_rewrites(
+                        self.repository,
+                        cursor,
+                        segment_id=segment_id,
+                        terminal_call_id=completed_tool_turn.terminal_call_id,
+                        start=min(s for _, s, _ in active[prefix : len(active) - suffix]),
+                        floor=origin_head.sequence,
+                    )
                 compound = (
                     origin_head is not None
                     and completed_tool_turn.matches_start_sequence(
-                        min(
-                            sequence
-                            for _, sequence, _ in active[prefix : len(active) - suffix]
-                        ),
-                        origin_head.sequence,
+                        compound_start, origin_head.sequence
                     )
                 )
             # A rewritten tail wider than one replacement is stored as a chain
@@ -2942,7 +2954,7 @@ class ConsoleTraceService:
                 changed_sequences = {
                     sequence for _ordinal, sequence, _key in changed_entries
                 }
-                start_sequence = min(changed_sequences)
+                start_sequence = compound_start if compound else min(changed_sequences)
                 end_sequence = max(changed_sequences)
                 if any(
                     start_sequence <= sequence <= end_sequence
