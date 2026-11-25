@@ -448,7 +448,10 @@ class ConsoleTraceBoundaryFactory:
             has_current_text_transform |= bool(transformed_sources)
             if transformed_sources and (
                 transformed_sources != active_revision_ids
-                or (not tool_loop and index != active_descriptor_index)
+                or (
+                    not (tool_loop or resent_tool_loop)
+                    and index != active_descriptor_index
+                )
                 or request.messages_payload[index].get("role") != "user"
             ):
                 raise ValueError("trace_current_transform_owner")
@@ -764,10 +767,21 @@ class ConsoleTraceBoundaryFactory:
                         if latest is None or latest.call_id is None
                         else self.repository.get_call(cursor, latest.call_id)
                     )
+                    # A llama.cpp resend runs on its own run; the finished
+                    # turn's run is the one of the call it resent.
+                    resent = (
+                        None
+                        if terminal is None
+                        else failed_stream_fallback_parent(
+                            self.repository, cursor, terminal.call_id, answered=True
+                        )
+                    )
                     origin = (
                         None
                         if terminal is None
-                        else self.repository.get_run_origin(cursor, terminal.run_id)
+                        else self.repository.get_run_origin(
+                            cursor, (resent or terminal).run_id
+                        )
                     )
                     if terminal is not None and origin is not None:
                         source_revision_id = None

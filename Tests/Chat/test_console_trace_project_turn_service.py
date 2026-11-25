@@ -189,12 +189,23 @@ def test_project_transition_keeps_old_suffix_lineage_and_span_guards(
 
 @pytest.mark.parametrize(
     "scenario",
-    ["valid", "stream_complete", "wrong_surface", "wrong_turn", "wrong_policy"],
+    [
+        "valid",
+        "stream_complete",
+        "wrong_surface",
+        "wrong_turn",
+        "wrong_policy",
+        "fallback_origin",
+    ],
 )
 def test_project_fallback_requires_the_exact_preceding_failed_stream(
     db, repository, scenario
 ):
-    """A fallback response cannot replace artifacts owned by a different stream."""
+    """A fallback response cannot replace artifacts owned by a different stream.
+
+    The witness names the streamed call's run origin, not the fallback's own
+    run (TASK-42534 review); naming the fallback is refused.
+    """
     from tldw_chatbook.Chat.console_trace_models import (
         SemanticRevisionRef,
         TraceCallState,
@@ -282,7 +293,11 @@ def test_project_fallback_requires_the_exact_preceding_failed_stream(
             admission,
             completed_tool_turn=replace(
                 witness,
-                origin_call_id=fallback.call_id,
+                origin_call_id=(
+                    fallback.call_id
+                    if scenario == "fallback_origin"
+                    else witness.origin_call_id
+                ),
                 terminal_call_id=fallback.call_id,
                 project_context_count=0,
             ),

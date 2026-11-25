@@ -534,7 +534,40 @@ def _hosted_replies(app, monkeypatch, replies):
 
 
 # Each run: (harness options, hosted script or None, first run's status, lineage).
+def _llama_script(*steps):
+    """A `first_failure` that answers each llama.cpp request with its step.
+
+    `tool` answers with a tool call (streamed or whole, as asked), `empty`
+    with an empty stream, `busy` with a 503.
+    """
+    seen = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        step = steps[len(seen) - 1]
+        if step == "busy":
+            return httpx.Response(503, json={"error": {"message": "busy"}})
+        if json.loads(request.content).get("stream"):
+            text = "" if step == "empty" else _TOOL_CALL
+            body = (
+                "data: "
+                + json.dumps({"choices": [{"delta": {"content": text}}]})
+                + "\n\ndata: [DONE]\n\n"
+                if text
+                else ""
+            )
+            return httpx.Response(
+                200, text=body, headers={"content-type": "text/event-stream"}
+            )
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": _TOOL_CALL}}]}
+        )
+
+    return respond
+
+
 _FAILED = ("tool_loop", "error")
+_RESEND_FAILED = ("llama_fallback", "error")
 _RUNS = {
     # Every call failed before any response: the in-place retries ran out.
     "hosted_exhausted": (
@@ -557,6 +590,23 @@ _RUNS = {
         "failed",
         [("agent_first", "error"), ("llama_fallback", "error")]
         + [_FAILED, ("llama_fallback", "error")] * 2,
+    ),
+    # A streamed tool call; then each stream and its resend failed, three
+    # rounds (TASK-42534 review): the terminal call is the last resend.
+    "llama_stream_tool_then_exhausted": (
+        {"response_mode": "stream", "script": ("tool",) + ("busy",) * 6},
+        None,
+        "failed",
+        [("agent_first", "complete")] + [_FAILED, _RESEND_FAILED] * 3,
+    ),
+    # TASK-42530's shape: the first stream is empty and its resend answers
+    # with the tool call; then every stream and resend failed.
+    "llama_resend_tool_then_exhausted": (
+        {"response_mode": "stream", "script": ("empty", "tool") + ("busy",) * 6},
+        None,
+        "failed",
+        [("agent_first", "error"), ("llama_fallback", "complete")]
+        + [_FAILED, _RESEND_FAILED] * 3,
     ),
     # Controls: a run that bore a response still closes its turn as before.
     "hosted_recovered": (
@@ -634,12 +684,16 @@ async def test_the_message_after_a_captured_run_that_failed_is_sent(
         _project_console,
     )
 
-    options = _RUNS[run][0]
+    options = dict(_RUNS[run][0])
+    script = options.pop("script", None)
+    if script is not None:
+        options.update(first_failure=_llama_script(*script), failures=len(script))
+    elif "failures" in options:
+        options.update(first_failure=_llama_failure("http503"))
     async with _project_console(
         tmp_path,
         monkeypatch,
         source_name="AGENTS.md" if project else "NOTES.md",
-        first_failure=_llama_failure("http503") if "failures" in options else None,
         **options,
     ) as app:
         calls, turn_id, before, links = await _first_run(app, monkeypatch, run)
@@ -706,13 +760,90 @@ async def test_a_failed_call_never_authorizes_the_tool_history_a_turn_closes(
         assert _turn_calls(app, turn_id) == (before, links)
 
 
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("project", [True, False], ids=["project", "no_project"])
+async def test_a_tool_run_interrupted_by_a_restart_and_discarded_still_closes(
+    tmp_path, monkeypatch, project
+):
+    """TASK-42534 review: startup recovery keeps a call's response.
+
+    A tool run whose third call was refused is left with two calls that bore
+    a response (`response_started`). After a restart, startup recovery
+    settles them as `interrupted`, the user discards the reply, and sends
+    again. Those calls bore the tool call that the removed history carries,
+    so the tool-history check must accept them; it refused the send.
+    """
+    from datetime import datetime, timezone
+
+    from Tests.Chat.test_console_project_instruction_traces import _project_console
+    from Tests.Chat.test_console_trace_discarded_tool_run import _reload_console
+    from tldw_chatbook.Agents import agent_service
+    from tldw_chatbook.Chat.console_trace_settlement import (
+        ConsoleTraceSettlementCoordinator,
+    )
+
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 100_000)
+    monkeypatch.setattr(
+        agent_service, "catalog_schema_tokens", lambda *_a, **_k: 10_001
+    )
+    async with _project_console(
+        tmp_path, monkeypatch, tools=2, discover_tools=True
+    ) as app:
+        app.store.set_session_project_instruction_state(
+            app.session.id,
+            replace(
+                app.session.project_instruction_state,
+                project_instructions_enabled=project,
+            ),
+        )
+        original = type(app.factory.service).prepare_current_surface_delta
+
+        def reject_third(instance, *args, **kwargs):
+            if len(app.http_payloads) == 2:
+                raise ValueError("unsupported_surface_change")
+            return original(instance, *args, **kwargs)
+
+        with monkeypatch.context() as fault:
+            fault.setattr(
+                type(app.factory.service), "prepare_current_surface_delta", reject_third
+            )
+            first = await app.controller.submit_draft(
+                "Find and load the calculator", session_id=app.session.id
+            )
+        assert first.accepted
+        turn_id = app.store.get_message(first.user_message_id).persisted_message_id
+        recovered = ConsoleTraceSettlementCoordinator(
+            app.factory.repository
+        ).recover_open_calls(
+            app.db,
+            occurred_at=datetime.now(timezone.utc).isoformat(),
+            recovery_grace_seconds=0,
+        )
+        assert [call.state.value for call in recovered] == ["interrupted"] * 2
+        before, links = _turn_calls(app, turn_id)
+        assert [row[2] for row in before] == ["interrupted", "interrupted"]
+        await _reload_console(app)
+        assert (await app.controller.discard_dispatch_recovery(app.session.id)).accepted
+        sent = len(app.http_payloads)
+
+        follow_up = await app.controller.submit_draft(
+            "And now?", session_id=app.session.id
+        )
+
+        assert follow_up.accepted
+        assert app.reservation_errors == ["unsupported_surface_change"]
+        assert app.controller.run_state.status.value == "completed"
+        assert len(app.http_payloads) == sent + 1
+        assert _turn_calls(app, turn_id) == (before, links)
+
+
 def _empty_stream(_request):
     return httpx.Response(200, text="", headers={"content-type": "text/event-stream"})
 
 
 @pytest.mark.usefixtures("shut_down_console_controllers")
 @pytest.mark.parametrize("project", [True, False], ids=["project", "no_project"])
-@pytest.mark.parametrize("empty", ["first", "every"])
+@pytest.mark.parametrize("empty", ["first", "every", "every_transformed"])
 async def test_a_llamacpp_tool_call_on_the_stream_resend_runs_the_tool(
     tmp_path, monkeypatch, empty, project
 ):
@@ -724,13 +855,17 @@ async def test_a_llamacpp_tool_call_on_the_stream_resend_runs_the_tool(
     refused at trace reservation: the trace looked for the failed stream as
     the latest call. When every stream is empty, the next call's own resend
     was refused too (`trace_turn_unavailable`): a resend of a tool-loop call
-    had no saved user message to own it.
+    had no saved user message to own it. A chat-dictionary transform of the
+    user's message (`every_transformed`) must not refuse that resend either
+    (TASK-42534 review).
     """
     from Tests.Chat.test_console_project_instruction_traces import (
         GUIDANCE,
         _project_console,
     )
 
+    transformed = empty == "every_transformed"
+    empty = "every" if transformed else empty
     async with _project_console(
         tmp_path,
         monkeypatch,
@@ -746,12 +881,24 @@ async def test_a_llamacpp_tool_call_on_the_stream_resend_runs_the_tool(
             }
         ),
     ) as app:
+        if transformed:
+            assert app.store.persist_session_if_needed(app.session.id)
+            app.controller._chat_dictionary_applier = (
+                lambda _conversation, text, _frozen_inputs: text.replace(
+                    "calculator", "calculator tool"
+                )
+            )
         result = await app.controller.submit_draft(
             "Use calculator once", session_id=app.session.id
         )
         assert result.accepted
         assert app.reservation_errors == []
         assert app.controller.run_state.status.value == "completed"
+        if transformed:
+            assert any(
+                row.get("content") == "Use calculator tool once"
+                for row in app.http_payloads[0]["messages"]
+            )
         turn_id = app.store.get_message(result.user_message_id).persisted_message_id
         calls, _links = _turn_calls(app, turn_id)
         resend = ("llama_fallback", "complete")
@@ -783,7 +930,14 @@ async def test_a_llamacpp_tool_call_on_the_stream_resend_runs_the_tool(
 
 
 @pytest.mark.parametrize(
-    "latest", ["failed_tool_loop", "answered", "failed_first_call"]
+    "latest",
+    [
+        "failed_tool_loop",
+        "answered",
+        "failed_first_call",
+        "unchanged_after_failed_tool_loop",
+        "appended_after_failed_tool_loop",
+    ],
 )
 async def test_a_resend_of_a_tool_loop_call_repeats_its_failed_call(
     tmp_path, make_database, make_gateway, latest
@@ -792,7 +946,8 @@ async def test_a_resend_of_a_tool_loop_call_repeats_its_failed_call(
 
     It runs on its own `llama_fallback` call, and takes the tool loop's turn
     from the request, so it is admitted only directly after the failed
-    tool-loop call it repeats, on that call's surface.
+    tool-loop call it repeats, on that call's surface, with nothing
+    appended (TASK-42534 review).
     """
     from tldw_chatbook.Chat.console_prepared_request import (
         resolve_request_capacity,
@@ -805,8 +960,9 @@ async def test_a_resend_of_a_tool_loop_call_repeats_its_failed_call(
     policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
     actor, chain = new_opaque_id(), new_opaque_id()
     script = {"failed_tool_loop": [200, 503, 200], "failed_first_call": [503]}.get(
-        latest, [200]
+        latest, [200, 503]
     )
+    after_failed_tool_loop = latest.endswith("_after_failed_tool_loop")
     requests = []
 
     def respond(request: httpx.Request) -> httpx.Response:
@@ -841,7 +997,7 @@ async def test_a_resend_of_a_tool_loop_call_repeats_its_failed_call(
     )
     messages, descriptors = [{"role": "user", "content": "hello"}], [revision]
 
-    async def send(route):
+    async def send(route, resolution=resolution):
         request = _semantic_request(
             messages, descriptors, policy, route=route, actor_id=actor, chain_id=chain
         )
@@ -878,7 +1034,19 @@ async def test_a_resend_of_a_tool_loop_call_repeats_its_failed_call(
             ("llama_fallback", "complete"),
         ]
         return
-    # A resend whose latest call is not a failed tool-loop call.
+    if after_failed_tool_loop:
+        # Not streamed, so the gateway sends no resend of its own: the
+        # failed tool-loop call stays the segment's latest call.
+        with pytest.raises(httpx.HTTPStatusError):
+            await send(
+                ConsoleRequestRoute.TOOL_LOOP, replace(resolution, streaming=False)
+            )
+    if latest == "appended_after_failed_tool_loop":
+        messages = messages + [{"role": "user", "content": "Tool result: 42"}]
+        descriptors = descriptors + [
+            ProviderArtifactTraceProvenance(TraceProvenanceSource.TOOL_RESULT, policy)
+        ]
+    # A resend after another kind of latest call, or that appends history.
     prepared = prepare_provider_request(
         _semantic_request(
             messages,
@@ -893,9 +1061,106 @@ async def test_a_resend_of_a_tool_loop_call_repeats_its_failed_call(
         model="qwen3.7-27b",
         capacity=resolve_request_capacity(context_window_tokens=None),
     )
+    if latest == "unchanged_after_failed_tool_loop":
+        assert factory(prepared, resolution, ConsoleRequestRoute.LLAMA_FALLBACK)
+        return
     with pytest.raises(TraceReservationRefused) as refused:
         factory(prepared, resolution, ConsoleRequestRoute.LLAMA_FALLBACK)
     assert refused.value.args[0] == "trace_tool_chain_unavailable"
+
+
+@pytest.mark.parametrize("forged", ["none", "model", "envelope"])
+async def test_a_llamacpp_resend_is_compared_with_the_call_it_repeats(
+    tmp_path, make_database, make_gateway, monkeypatch, forged
+):
+    """TASK-42534 review: a resend repeats its failed stream, settings and all.
+
+    A llama.cpp resend runs on its own run, so the retry comparison of its
+    request header never ran: nothing proved it repeated the failed call.
+    It is compared with the call whose boundary directly precedes its own;
+    only the verified streaming flip (in the settings and in the literal
+    envelope's `stream`) may differ. Here the stored stream is made to read
+    as another model, or as an envelope with another key.
+    """
+    database = make_database(tmp_path / "resend-header.sqlite", "resend-header")
+    conversation = database.add_conversation({"title": "resend"})
+    _, revision = _saved_message(database, conversation, "hello")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    actor, chain = new_opaque_id(), new_opaque_id()
+    requests = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(503, json={"error": {"message": "fixture"}})
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "recovered"}}]}
+        )
+
+    factory = ConsoleTraceBoundaryFactory(database)
+    repository = factory.repository
+    header_of, artifact_of = repository.get_request_header, repository.get_artifact
+
+    def forged_header(cursor, header_id):
+        header = header_of(cursor, header_id)
+        if forged == "model" and header.generation_parameters.get("streaming"):
+            return replace(header, model_name="qwen3.7-8b")
+        return header
+
+    def forged_artifact(cursor, artifact_id):
+        artifact = artifact_of(cursor, artifact_id)
+        value = json.loads(artifact.sanitized_bytes)
+        if forged == "envelope" and value == {"model": "qwen3.7-27b", "stream": True}:
+            return replace(
+                artifact,
+                sanitized_bytes=json.dumps({**value, "top_k": 5}).encode(),
+            )
+        return artifact
+
+    monkeypatch.setattr(repository, "get_request_header", forged_header)
+    monkeypatch.setattr(repository, "get_artifact", forged_artifact)
+    gateway = make_gateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+        trace_call_boundary_factory=factory,
+    )
+    resolution = ConsoleProviderResolution(
+        ready=True,
+        provider="llama_cpp",
+        execution_key="llama_cpp",
+        model="qwen3.7-27b",
+        base_url="http://localhost:8080",
+        streaming=True,
+    )
+    request = _semantic_request(
+        [{"role": "user", "content": "hello"}],
+        [revision],
+        policy,
+        route=ConsoleRequestRoute.AGENT_FIRST,
+        actor_id=actor,
+        chain_id=chain,
+    )
+
+    async def send():
+        items = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                request,
+                route=ConsoleRequestRoute.AGENT_FIRST,
+                route_actor_id=actor,
+                route_chain_id=chain,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ]
+        return "".join(item for item in items if isinstance(item, str))
+
+    if forged == "none":
+        assert await send() == "recovered"
+        assert len(requests) == 2
+    else:
+        with pytest.raises(TraceCallPersistenceError):
+            await send()
+        assert len(requests) == 1
 
 
 _TOOL_SCHEMA = {
@@ -920,11 +1185,12 @@ _TOOL_SCHEMA = {
         "changed_model",
         "changed_temperature",
         "changed_surface",
+        "forged_stream_settings",
     ],
 )
 @pytest.mark.parametrize("path", ["self_hosted", "llama_tools"])
 async def test_a_streamed_retry_after_a_failed_in_chain_resend_repeats_the_stream(
-    tmp_path, make_database, make_gateway, path, scenario
+    tmp_path, make_database, make_gateway, monkeypatch, path, scenario
 ):
     """TASK-42532: the retry repeats the streamed call, not its failed resend.
 
@@ -961,9 +1227,10 @@ async def test_a_streamed_retry_after_a_failed_in_chain_resend_repeats_the_strea
             raise ChatProviderError("fixture busy", provider=provider, status_code=503)
         return {"choices": [{"message": {"role": "assistant", "content": "recovered"}}]}
 
+    factory = ConsoleTraceBoundaryFactory(database)
     gateway = make_gateway(
         chat_api_call_fn=handler,
-        trace_call_boundary_factory=ConsoleTraceBoundaryFactory(database),
+        trace_call_boundary_factory=factory,
     )
     resolution = ConsoleProviderResolution(
         ready=True,
@@ -1035,6 +1302,28 @@ async def test_a_streamed_retry_after_a_failed_in_chain_resend_repeats_the_strea
         retry = replace(resolution, model="qwen3.7-8b")
     elif scenario == "changed_temperature":
         retry = replace(resolution, temperature=0.25)
+    elif scenario == "forged_stream_settings":
+        # The stored stream reads as if it had the retry's temperature: then
+        # the failed resend is no longer its verified flip, and the retry
+        # is compared with the resend, as before (TASK-42534 review).
+        retry = replace(resolution, temperature=0.25)
+        with database.transaction() as cursor:
+            streamed_header_id = cursor.execute(
+                "SELECT request_header_id FROM console_trace_calls "
+                "WHERE call_sequence = 0"
+            ).fetchone()[0]
+        header_of = factory.repository.get_request_header
+
+        def forged(cursor, header_id):
+            header = header_of(cursor, header_id)
+            if header_id != streamed_header_id:
+                return header
+            return replace(
+                header,
+                generation_parameters={**header.generation_parameters, "temp": 0.25},
+            )
+
+        monkeypatch.setattr(factory.repository, "get_request_header", forged)
     elif scenario == "changed_surface":
         messages = messages + [
             {"role": "tool", "content": "unobserved addition", "tool_call_id": "forged"}

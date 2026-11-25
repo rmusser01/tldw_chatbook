@@ -25,8 +25,10 @@ from tldw_chatbook.Chat.console_trace_continuation import (
     CONTINUATION_ROUND_NORMALIZATION,
     LiveNativeContinuationCustody,
     LiveNativeContinuationWitness,
+    adjacent_call,
     compact_continuation_projection,
     resolve_continuation_node,
+    retry_header_components,
 )
 from tldw_chatbook.Chat.console_trace_custom_pii import (
     CUSTOM_PII_RULESET_UNAVAILABLE,
@@ -2093,6 +2095,7 @@ class ConsoleTraceService:
             ),
             rendered_system_slot=rendered_system_slot,
         )
+        previous = None
         if reserved_call is not None and reserved_call.call_sequence > 0:
             previous = self.repository.get_call_by_logical_identity(
                 cursor,
@@ -2102,85 +2105,102 @@ class ConsoleTraceService:
                 run_id=reserved_call.run_id,
                 call_sequence=reserved_call.call_sequence - 1,
             )
-            if previous is not None and previous.state is TraceCallState.ERROR:
-                prior_header = self.repository.get_request_header(
-                    cursor, previous.request_header_id
+        elif (
+            reserved_call is not None
+            and surface_delta.route_identity == "llama_fallback"
+        ):
+            # TASK-42534 review: a llama.cpp resend runs on its own run, so it
+            # has no logical predecessor. It repeats the failed call whose
+            # boundary directly precedes its own, and is compared with it.
+            before = adjacent_call(self.repository, cursor, reserved_call, later=False)
+            if before is not None and (
+                before.owner_id,
+                before.segment_id,
+                before.turn_id,
+                before.policy_id,
+                before.surface_node_id,
+            ) == (
+                reserved_call.owner_id,
+                reserved_call.segment_id,
+                reserved_call.turn_id,
+                reserved_call.policy_id,
+                None if tail is None else tail.node_id,
+            ):
+                previous = before
+        if previous is not None and previous.state is TraceCallState.ERROR:
+            prior_header = self.repository.get_request_header(
+                cursor, previous.request_header_id
+            )
+            streamed = (
+                self.repository.get_call_by_logical_identity(
+                    cursor,
+                    owner_id=reserved_call.owner_id,
+                    segment_id=reserved_call.segment_id,
+                    turn_id=reserved_call.turn_id,
+                    run_id=previous.run_id,
+                    call_sequence=previous.call_sequence - 1,
                 )
-                streamed = (
-                    self.repository.get_call_by_logical_identity(
-                        cursor,
-                        owner_id=reserved_call.owner_id,
-                        segment_id=reserved_call.segment_id,
-                        turn_id=reserved_call.turn_id,
-                        run_id=reserved_call.run_id,
-                        call_sequence=previous.call_sequence - 1,
-                    )
-                    if prior_header is not None
-                    and previous.call_sequence > 0
-                    and prior_header.generation_parameters.get("streaming") is False
-                    and header.generation_parameters.get("streaming") is True
-                    else None
+                if prior_header is not None
+                and previous.call_sequence > 0
+                and prior_header.generation_parameters.get("streaming") is False
+                and header.generation_parameters.get("streaming") is True
+                else None
+            )
+            streamed_header = (
+                self.repository.get_request_header(cursor, streamed.request_header_id)
+                if streamed is not None
+                and streamed.state is TraceCallState.ERROR
+                # Nothing arrived, so the resend's own admission compared it.
+                and streamed.response_started_at is None
+                else None
+            )
+            if (
+                streamed_header is not None
+                and streamed_header.generation_parameters.get("streaming") is True
+                and _artifact_bytes(
+                    {**streamed_header.generation_parameters, "streaming": False}
                 )
-                streamed_header = (
-                    self.repository.get_request_header(
-                        cursor, streamed.request_header_id
-                    )
-                    if streamed is not None and streamed.state is TraceCallState.ERROR
-                    else None
+                == _artifact_bytes(prior_header.generation_parameters)
+            ):
+                # TASK-42532: ``previous`` was the failed non-streaming
+                # resend of the streamed call before it (it was admitted
+                # only as that verified flip). A streamed in-place retry
+                # repeats that call, so it is compared with it.
+                prior_header = streamed_header
+            # A verified True -> False resend (overlay-proven below).
+            resend = (
+                prior_header is not None
+                and prior_header.generation_parameters.get("streaming") is True
+                and header.generation_parameters.get("streaming") is False
+            )
+            if prior_header is None or (
+                prior_header.provider_name != header.provider_name
+                or prior_header.model_name != header.model_name
+                or prior_header.endpoint_identity != header.endpoint_identity
+                or not _retry_generation_matches(
+                    prior_header.generation_parameters,
+                    header.generation_parameters,
+                    bundle.overlays,
                 )
-                if (
-                    streamed_header is not None
-                    and streamed_header.generation_parameters.get("streaming") is True
-                    and _artifact_bytes(
-                        {**streamed_header.generation_parameters, "streaming": False}
-                    )
-                    == _artifact_bytes(prior_header.generation_parameters)
-                ):
-                    # TASK-42532: ``previous`` was the failed non-streaming
-                    # resend of the streamed call before it (it was admitted
-                    # only as that verified flip). A streamed in-place retry
-                    # repeats that call, so it is compared with it.
-                    prior_header = streamed_header
-                if prior_header is None or (
-                    prior_header.provider_name != header.provider_name
-                    or prior_header.model_name != header.model_name
-                    or prior_header.endpoint_identity != header.endpoint_identity
-                    or not _retry_generation_matches(
-                        prior_header.generation_parameters,
-                        header.generation_parameters,
-                        bundle.overlays,
-                    )
-                    or _artifact_bytes(prior_header.response_format)
-                    != _artifact_bytes(header.response_format)
-                    or _artifact_bytes(prior_header.reasoning_controls)
-                    != _artifact_bytes(header.reasoning_controls)
-                    or self._resolve_system_composition(prior_header)
-                    != self._resolve_system_composition(header)
-                    or tuple(
-                        item
-                        for item in prior_header.components
-                        if item.component_kind in {
-                            "rendered_system_part",
-                            "tool_schema",
-                            "provider_literal_envelope",
-                        }
-                    )
-                    != tuple(
-                        item
-                        for item in header.components
-                        if item.component_kind in {
-                            "rendered_system_part",
-                            "tool_schema",
-                            "provider_literal_envelope",
-                        }
-                    )
-                ):
-                    # Compare the sanitized request at the final dispatch
-                    # boundary. The route may advance AGENT_FIRST -> TOOL_LOOP;
-                    # the provider target, settings and schemas may not change.
-                    # A verified stream fallback may change only streaming=True
-                    # to False, as proven by its structural adapter overlay.
-                    raise ValueError("trace_tool_chain_unavailable")
+                or _artifact_bytes(prior_header.response_format)
+                != _artifact_bytes(header.response_format)
+                or _artifact_bytes(prior_header.reasoning_controls)
+                != _artifact_bytes(header.reasoning_controls)
+                or self._resolve_system_composition(prior_header)
+                != self._resolve_system_composition(header)
+                or retry_header_components(
+                    self.repository, cursor, prior_header, resend=resend
+                )
+                != retry_header_components(
+                    self.repository, cursor, header, resend=resend
+                )
+            ):
+                # Compare the sanitized request at the final dispatch
+                # boundary. The route may advance AGENT_FIRST -> TOOL_LOOP;
+                # the provider target, settings and schemas may not change.
+                # A verified stream fallback may change only streaming=True
+                # to False, as proven by its structural adapter overlay.
+                raise ValueError("trace_tool_chain_unavailable")
         if child_state is not None:
             root = _ProjectionRoot(
                 projection.root,

@@ -537,6 +537,25 @@ def is_failed_stream_fallback(
     )
 
 
+def bore_response(call: TraceCallRecord) -> bool:
+    """Whether ``call`` bore a provider response (TASK-42534).
+
+    INTERRUPTED is reached only from RESPONSE_STARTED, by startup recovery of
+    an open response (`_PERMITTED_CALL_TRANSITIONS` and the database's
+    lifecycle trigger); a promoted voice import may be inserted INTERRUPTED,
+    so that state also needs its response start.
+    """
+    from tldw_chatbook.Chat.console_trace_models import TraceCallState
+
+    return call.state in {
+        TraceCallState.RESPONSE_STARTED,
+        TraceCallState.COMPLETE,
+    } or (
+        call.state is TraceCallState.INTERRUPTED
+        and call.response_started_at is not None
+    )
+
+
 def is_answering_stream_fallback(
     streamed: TraceCallRecord, fallback: TraceCallRecord
 ) -> bool:
@@ -555,15 +574,10 @@ def is_answering_stream_fallback(
         True only for a response-bearing fallback of an errored call on the
         same owner, segment, turn, policy and surface.
     """
-    from tldw_chatbook.Chat.console_trace_models import TraceCallState
-
-    return _resends(streamed, fallback) and fallback.state in {
-        TraceCallState.RESPONSE_STARTED,
-        TraceCallState.COMPLETE,
-    }
+    return _resends(streamed, fallback) and bore_response(fallback)
 
 
-def _adjacent_call(
+def adjacent_call(
     repository: ConsoleTraceRepository,
     cursor: sqlite3.Cursor,
     call: TraceCallRecord,
@@ -591,6 +605,52 @@ def _adjacent_call(
     return None if row is None else repository.get_call(cursor, row[0])
 
 
+def retry_header_components(
+    repository: ConsoleTraceRepository,
+    cursor: sqlite3.Cursor,
+    header: object,
+    *,
+    resend: bool,
+) -> tuple[object, ...]:
+    """The request-header parts a retry must repeat exactly.
+
+    A verified stream resend (``resend``) changes only its streaming flag,
+    which its literal provider envelope carries too (``"stream"``), so the
+    envelope is compared without that key (TASK-42534 review).
+
+    Args:
+        repository: The trace repository.
+        cursor: Cursor for the caller-owned transaction.
+        header: A persisted request header.
+        resend: Whether the streaming flip was verified for this pair.
+
+    Returns:
+        The rendered system parts, tool schemas and literal envelope.
+    """
+    import json
+
+    kept = []
+    for item in header.components:
+        if item.component_kind not in {
+            "rendered_system_part",
+            "tool_schema",
+            "provider_literal_envelope",
+        }:
+            continue
+        if resend and item.component_kind == "provider_literal_envelope":
+            artifact = repository.get_artifact(cursor, item.artifact_id)
+            value = None if artifact is None else json.loads(artifact.sanitized_bytes)
+            if isinstance(value, dict):
+                value.pop("stream", None)
+            item = (
+                item.component_kind,
+                item.ordinal,
+                json.dumps(value, sort_keys=True),
+            )
+        kept.append(item)
+    return tuple(kept)
+
+
 def failed_stream_fallback_parent(
     repository: ConsoleTraceRepository,
     cursor: sqlite3.Cursor,
@@ -616,7 +676,7 @@ def failed_stream_fallback_parent(
     streamed = (
         None
         if fallback is None
-        else _adjacent_call(repository, cursor, fallback, later=False)
+        else adjacent_call(repository, cursor, fallback, later=False)
     )
     if streamed is None or not (
         is_failed_stream_fallback(streamed, fallback)
@@ -643,7 +703,7 @@ def answering_stream_fallback(
         The call whose boundary directly follows ``streamed``'s, when
         ``is_answering_stream_fallback`` holds for the pair; else ``None``.
     """
-    fallback = _adjacent_call(repository, cursor, streamed, later=True)
+    fallback = adjacent_call(repository, cursor, streamed, later=True)
     if fallback is None or not is_answering_stream_fallback(streamed, fallback):
         return None
     return fallback
@@ -738,40 +798,18 @@ def validate_completed_tool_turn(
     else:
         latest_id = None if latest is None else latest.call_id
     chain_terminal = terminal
-    fallback = (
-        project_transition
-        and terminal is not None
-        and terminal.route_identity == "llama_fallback"
-    )
+    # A llama.cpp resend terminal, with or without project context
+    # (TASK-42534 review): the witness names its streamed call's run origin.
+    fallback = terminal is not None and terminal.route_identity == "llama_fallback"
     if fallback:
         # The non-streaming retry owns a distinct run ID. Its exact
         # immediately preceding failed stream owns the unchanged surface;
         # neither an arbitrary older call nor the response link proves it.
-        fallback_events = cursor.execute(
-            """SELECT sequence FROM console_trace_events
-                   WHERE segment_id = ? AND event_type = 'call_boundary'
-                     AND call_id = ? ORDER BY sequence LIMIT 2""",
-            (segment_id, terminal.call_id),
-        ).fetchall()
-        previous_event = (
-            cursor.execute(
-                """SELECT call_id FROM console_trace_events
-                       WHERE segment_id = ? AND event_type = 'call_boundary'
-                         AND sequence < ? ORDER BY sequence DESC LIMIT 1""",
-                (segment_id, fallback_events[0][0]),
-            ).fetchone()
-            if len(fallback_events) == 1
-            else None
-        )
-        chain_terminal = (
-            self.repository.get_call(cursor, previous_event[0])
-            if previous_event is not None
-            else None
-        )
+        chain_terminal = adjacent_call(self.repository, cursor, terminal, later=False)
         if (
-            origin != terminal
-            or terminal.call_sequence != 0
+            terminal.call_sequence != 0
             or chain_terminal is None
+            or origin != self.repository.get_run_origin(cursor, chain_terminal.run_id)
             or chain_terminal.state is not trace.TraceCallState.ERROR
             or chain_terminal.route_identity
             not in {"agent_first", "fresh", "tool_loop"}
@@ -795,7 +833,6 @@ def validate_completed_tool_turn(
             )
         ):
             raise ValueError("completed_project_fallback_lineage")
-        origin = self.repository.get_run_origin(cursor, chain_terminal.run_id)
     if (
         owner is None
         or origin is None
@@ -1257,11 +1294,7 @@ def validate_completed_tool_turn(
             call_sequence=call_sequence - 1,
         )
         if previous is None or (
-            previous.state
-            not in {
-                trace.TraceCallState.RESPONSE_STARTED,
-                trace.TraceCallState.COMPLETE,
-            }
+            not bore_response(previous)
             # TASK-42530: or its llama.cpp resend bore the response.
             and answering_stream_fallback(self.repository, cursor, previous) is None
         ):
