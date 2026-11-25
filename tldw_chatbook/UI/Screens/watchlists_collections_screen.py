@@ -12273,7 +12273,6 @@ class WatchlistsCollectionsScreen(WatchlistsListeningMixin, BaseAppScreen):
                 )
             except Exception:
                 failed = True
-        availability = await self._listening.prepare_reader_issue(item, fetched)
         async with self._items_page_presentation_lock:
             if not is_current():
                 return
@@ -12289,7 +12288,6 @@ class WatchlistsCollectionsScreen(WatchlistsListeningMixin, BaseAppScreen):
                 # Preserve row identity and any existing body on a detail miss.
                 item["content"] = fetched
             self._select_entity(item)
-            self._listening.reader_issue = availability
             self._selected_content_item = item
             self._selected_content_page_key = selection_page_key
             try:

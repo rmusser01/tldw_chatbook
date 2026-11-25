@@ -767,6 +767,61 @@ async def test_body_availability_is_calculated_off_loop_once_per_view_selection(
 
 
 @pytest.mark.asyncio
+async def test_reader_open_publishes_while_listening_eligibility_is_pending(
+    monkeypatch,
+):
+    async with _watchlists(monkeypatch) as state:
+        screen, pilot, db = state.screen, state.pilot, state.db
+        screen.active_section = "items"
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _until(lambda: len(pane.items) >= 2)
+        first, second = state.ids[:2]
+        entered = {item: asyncio.Event() for item in (first, second)}
+        release = {item: asyncio.Event() for item in (first, second)}
+        completed = {item: asyncio.Event() for item in (first, second)}
+
+        async def eligibility(item):
+            key = item["item_id"]
+            entered[key].set()
+            try:
+                await release[key].wait()
+            except asyncio.CancelledError:
+                # A late completion still needs the selection fence.
+                await release[key].wait()
+            completed[key].set()
+            return ""
+
+        monkeypatch.setattr(screen._listening, "prepare_reader_issue", eligibility)
+        try:
+            pane.select_item_by_id(f"local:watchlist_item:{first}")
+            await _until(entered[first].is_set)
+            assert (
+                screen._selected_content_item is not None
+            ), "Ordinary Open must publish before optional eligibility finishes"
+            assert screen._selected_content_item["content"] == "Saved prose"
+            await _until(lambda: db.get_item_status(first) == "reviewed")
+            await _until(lambda: bool(screen.query("#watchlists-listen")))
+            assert not _enabled(screen, "#watchlists-listen")
+
+            pane.select_item_by_id(f"local:watchlist_item:{second}")
+            await _until(entered[second].is_set)
+            assert screen._selected_content_item["content"] == "Next saved prose"
+            await _until(lambda: db.get_item_status(second) == "reviewed")
+            release[first].set()
+            await _until(completed[first].is_set)
+            await pilot.pause()
+            assert not _enabled(screen, "#watchlists-listen")
+
+            release[second].set()
+            await _until(lambda: _enabled(screen, "#watchlists-listen"))
+            assert screen._selected_content_item["item_id"] == second
+            assert state.service.calls == []
+        finally:
+            for ready in release.values():
+                ready.set()
+
+
+@pytest.mark.asyncio
 async def test_manual_fixture_joins_complete_tts_shutdown(monkeypatch, tmp_path):
     from contextlib import nullcontext
 

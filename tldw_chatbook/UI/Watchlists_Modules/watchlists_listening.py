@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 _NO_SERVICE = "Article listening is unavailable in this profile."
 _FEED_TEXT = "Reads the saved feed text, which may be an excerpt."
 _SAVED_TEXT = "Reads the saved article body."
+_CHECKING_ARTICLE = "Checking saved article…"
 _BRIEF_LABELS = {
     "play": "Play cited excerpts",
     "replace": "Play cited excerpts",
@@ -97,7 +98,8 @@ class WatchlistsListening:
         self._preview_ticket: object | None = None
         self._context = 0
         self._confirming = False
-        self.reader_issue = listening_reason("missing_item")
+        self._reader_key: tuple[int, int] | None = None
+        self._reader_availability = _CHECKING_ARTICLE
         self.citation_issues: tuple[int, dict[int, str]] = (0, {})
 
     def invalidate_brief(self) -> None:
@@ -132,12 +134,40 @@ class WatchlistsListening:
             return issue
         if self.screen._selected_content_item is None:
             return listening_reason("missing_item")
-        return self.reader_issue
+        if self._reader_key != self._reader_selection():
+            return _CHECKING_ARTICLE
+        return self._reader_availability
+
+    def _reader_selection(self) -> tuple[int, int]:
+        return id(
+            self.screen._selected_content_item
+        ), self.screen._item_detail_generation
+
+    def _check_reader_availability(self, item: dict) -> None:
+        key = self._reader_selection()
+        if self._reader_key == key:
+            return
+        self._reader_key = key
+        self._reader_availability = _CHECKING_ARTICLE
+        self.screen.run_worker(
+            self._read_reader_availability(item, key),
+            exclusive=True,
+            group="wl-listening-reader-availability",
+        )
+
+    async def _read_reader_availability(self, item: dict, key: tuple[int, int]) -> None:
+        issue = await self.prepare_reader_issue(item)
+        if (
+            self.screen.is_attached
+            and self.screen._selected_content_item is item
+            and self._reader_selection() == key
+        ):
+            self._reader_availability = issue
+            self.refresh()
 
     @staticmethod
-    async def prepare_reader_issue(item: dict | None, fetched: str | None) -> str:
-        body = fetched if fetched is not None else (item or {}).get("content")
-        return await asyncio.to_thread(_item_issue, item, body)
+    async def prepare_reader_issue(item: dict) -> str:
+        return await asyncio.to_thread(_item_issue, item, item.get("content"))
 
     @staticmethod
     def load_citations(db, citation_ids):
@@ -304,8 +334,17 @@ class WatchlistsListening:
         except NoMatches:
             button = note = None
         if button is not None and note is not None:
+            item = self.screen._selected_content_item
+            if (
+                item is not None
+                and self.screen.active_section == "items"
+                and not self._local_issue(snapshot)
+            ):
+                # The Reader has already published this hydrated item. This
+                # optional check must never delay its Open or read receipt.
+                self._check_reader_availability(item)
             issue = self._reader_issue(snapshot)
-            item = self.screen._selected_content_item or {}
+            item = item or {}
             copy = issue or (
                 _FEED_TEXT
                 if item.get("source_type") in {"rss", "atom", "json_feed", "podcast"}
