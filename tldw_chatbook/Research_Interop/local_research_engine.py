@@ -113,6 +113,23 @@ class _RunCancelled(Exception):
     """Internal control-flow signal: the run was cancelled between phases."""
 
 
+class _RunHeldByEmergencyStop(Exception):
+    """The emergency stop held the run at a step boundary (TASK-33620.1.12)."""
+
+
+#: TASK-33620.1.12 (owner ruling 2026-11-24): a running /research stops at its
+#: next step while the emergency stop is active. The run ends like a
+#: cancelled one, keeping what earlier steps saved, with this message.
+EMERGENCY_STOP_MESSAGE = (
+    "Stopped by the emergency stop. Clear it (/emergency-stop clear) and "
+    "start the research again."
+)
+EMERGENCY_STOP_UNREADABLE_MESSAGE = (
+    "Stopped: the emergency stop's state couldn't be read, so research is "
+    "held. Start it again once Chatbook can read its data folder."
+)
+
+
 class _RunAwaitingReview(Exception):
     """Internal control-flow signal: a checkpointed run paused at a review
     boundary (task-16482); the engine exits non-terminally and the run
@@ -458,6 +475,39 @@ class LocalResearchEngine:
             raise _RunCancelled(run)
         return run
 
+    async def _check_emergency_stop(self, run_id: str, next_step: str) -> None:
+        """Stop at this step boundary while the emergency stop is active.
+
+        TASK-33620.1.12. The stop is read on a worker thread: this coroutine
+        runs in a Console or Research-screen worker on the app's event loop.
+        Doubt holds, as for every other stop reader. The run resolves the way
+        a cancellation does (``cancel_run``), fenced like it, after recording
+        why.
+
+        Raises:
+            _RunHeldByEmergencyStop: The stop is active (or unreadable).
+        """
+        # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+        from tldw_chatbook import emergency_stop
+
+        state = await asyncio.to_thread(emergency_stop.current_emergency_stop)
+        if not state.active:
+            return
+        unreadable = state.reason == emergency_stop.STATE_UNAVAILABLE_REASON
+        self._require_lease()
+        self.service.update_run_progress(
+            run_id,
+            progress_message=(
+                EMERGENCY_STOP_UNREADABLE_MESSAGE
+                if unreadable
+                else EMERGENCY_STOP_MESSAGE
+            ),
+            event="emergency_stop",
+            data={"step": next_step},
+        )
+        self._require_lease()
+        raise _RunHeldByEmergencyStop(self.service.cancel_run(run_id))
+
     @staticmethod
     def _normalize_source_policy(raw: Any) -> str:
         """Normalize a run's source_policy (task-16791) to one of
@@ -637,6 +687,9 @@ class LocalResearchEngine:
         except _RunCancelled as cancelled:
             logger.info(f"Research run {run_id} cancelled between phases")
             return cancelled.args[0]
+        except _RunHeldByEmergencyStop as held:
+            logger.info(f"Research run {run_id} stopped by the emergency stop")
+            return held.args[0]
         except ResearchLimitExceeded as exceeded:
             # Budget exhaustion is a clean stop at the phase boundary where
             # the check fired (task-16323): persist the ledger verdict, then
@@ -715,6 +768,8 @@ class LocalResearchEngine:
         sub_questions: list[str] = []
         warnings: list[str] = []
         for query in queries if source_policy != "academic_only" else []:
+            if self._run_id is not None:
+                await self._check_emergency_stop(self._run_id, "search")
             params = dict(base_params)
             if ledger.max_runtime_seconds is not None:
                 params["phase1_time_budget_s"] = max(
@@ -1069,6 +1124,7 @@ class LocalResearchEngine:
                 )
                 attempted_extras = 0
                 for position, query in enumerate(academic_queries):
+                    await self._check_emergency_stop(run_id, "paper_search")
                     if position >= base_count:
                         # An attempted provider call has spent, whether or not
                         # it returned -- settled here, not at planning time.
@@ -1199,6 +1255,7 @@ class LocalResearchEngine:
                         ]
 
             self._check_control(run_id, "synthesizing")
+            await self._check_emergency_stop(run_id, "synthesizing")
             ledger.check_runtime()
             self._require_lease()
             run = self.service.update_run_progress(
@@ -1260,6 +1317,7 @@ class LocalResearchEngine:
 
         # -- packaging -----------------------------------------------------
         self._check_control(run_id, "packaging")
+        await self._check_emergency_stop(run_id, "packaging")
         ledger.check_runtime()
         # Persist the ledger AFTER the last settlement of the run (synthesis
         # + gap analysis) so the artifact reflects final usage.

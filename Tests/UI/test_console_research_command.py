@@ -84,6 +84,10 @@ def test_oversized_args_rejected_by_shared_validator():
 class _RecordingScreen:
     """Duck-typed stand-in for the ChatScreen surface the handler touches."""
 
+    #: TASK-33620.1.12: the handler refuses during an emergency stop; this
+    #: screen's cached view says no stop holds (ChatScreen's own default).
+    _console_emergency_stop_copy = ""
+
     def __init__(self, app) -> None:
         self.app = app
         self.system_messages: list[str] = []
