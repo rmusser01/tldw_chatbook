@@ -1,11 +1,11 @@
 ---
 id: TASK-42525
 title: "A Console agent's provider fallback is refused at dispatch when Capture is On"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-23 23:00
-updated_date: 2026-11-25 03:03
+updated_date: 2026-11-25 07:40
 labels:
 - follow-up
 - console
@@ -50,11 +50,13 @@ The previous call is in `error`, so `ConsoleTraceService.persist_request` (`Chat
 Also decide what happens to the call the refusal leaves in `reserved`.
 
 **Owner decision (2026-11-24, recorded as "2 ok", approving the recommendation):** under Capture On, a provider fallback starts a **new trace chain** (option 1). The failed-call retry rule stays as strict as it is. Recorded in ADR-337 as the owner-approved amendment "a provider fallback starts a new chain (TASK-42525)".
+
+**Second owner decision (2026-11-24, via AskUserQuestion: "Allow it, do it now (Recommended)"):** a fallback chain's first call may record one bounded rewrite of the recorded history. It may remove the leading system-prompt slot plus the run's own tool rows. Each removed row must pass the same run-ownership checks the next-send witness uses, within the 256-row limit. This closes AC#1 for the two shapes the first design left refused: a native/text tool-call re-encoding after tool activity, and llama.cpp falling back to a hosted provider. Recorded in ADR-337 as the owner-approved amendment "a fallback chain's first call may rewrite the run's tail (TASK-42525)".
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 With Capture On, an agent run whose primary provider fails switches to a ready configured fallback provider and completes, as it does with Capture Off
+- [x] #1 With Capture On, an agent run whose primary provider fails switches to a ready configured fallback provider and completes, as it does with Capture Off
 - [x] #2 The captured trace shows the failed calls and the fallback call, and which provider each went to
 - [x] #3 A retry after a failed call that changes the provider, model or endpoint without being a fallback is still refused; the existing `changed_*` cases are still refused
 - [x] #4 No call is left in `reserved` after a refused or completed fallback
@@ -71,12 +73,18 @@ Also decide what happens to the call the refusal leaves in `reserved`.
 5. Trace factory: admit a TOOL_LOOP call at sequence 0 only as a fallback chain root linked to the failed call directly before it (same actor, other chain, settled ERROR with no response, same owner/segment/turn/policy, unchanged surface, nothing appended or replaced, provider or model changed). Resolve a run's origin through its fallback links for TOOL_LOOP admission and the completed-turn witness; generalise the witness's same-run lineage checks to the run's linked chains.
 6. Tests: AC#1/#2/#4 (lineage and providers, no `reserved`), AC#3 (`changed_*` still refused, plus a same-target new chain), next send after a completed, a failed and an interrupted-then-discarded fallback run, and the hard negatives (unconfigured target, unearned tool history, a second fallback beyond the list, after a response-bearing call, cross-turn and cross-owner links), each with a mutation run.
 7. User Guide (`semantic-trace-capture.md`, fallback docs if they mention Capture), size ratchets, lane timing, the brief's checks.
+
+Second phase (owner decision 2026-11-24, "Allow it, do it now"; rebased onto trace1's restack `10a2fbd4ae`):
+8. Write the bounded rewrite into ADR-337 as a second owner-approved amendment before any code: which rows, which checks, the bound.
+9. Admit it only on a fallback chain's first call: remove the leading rendered-system slot (a removal-only replacement whose marker every projection drops) and replace the run's earned tool rows at the tail one for one; recheck at binding; let the completed-turn witness and `run_chains` follow a rewriting first call.
+10. Tests: both shapes red -> green with their next sends; hard negatives each refused with mutations.
+11. Move `Tests/Chat/test_console_failed_call_retry_ownership.py` from the Dreams riders step to dreams-boundary's admission-sensitive step (coordinator's budget decision), with both steps' budget comments and every lane contract.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-**Status: AC#1 is met only in part; it needs an owner (ADR) choice (see "AC#1 and its limits" below).** AC#2-#5 are met.
+**Status:** AC#1-#5 are met. AC#1 was first met only in part (two shapes refused); the owner's second decision (2026-11-24) granted the rewrite that closes it (see "Second decision: the bounded rewrite").
 
 **Decision.** Owner decision 2026-11-24 ("2 ok", approving the recommendation): under Capture On, a provider fallback starts a new trace chain. ADR-337 now carries it as the owner-approved amendment "a provider fallback starts a new chain (TASK-42525)", written before the code.
 
@@ -141,14 +149,49 @@ Also decide what happens to the call the refusal leaves in `reserved`.
   - The llama.cpp limit pair and the text-tool fallback were soaked a further 20 rounds at `-n 2`: 3 passed in every round, at load 7.4-9.4. On the final tree: the touched files 184 passed at `-n 4`, `Tests/CI` 1946 passed, preflight passed.
 - **Lane cost.** The file is already a whole-file target of the Dreams tracking riders step. The first 35 new tests take 73.8 s serially with the step's flags (`-p no:xdist --timeout=180`), at load 9 with other work running. The llama.cpp limit pair adds about 8 s (4.2 s and 4.1 s). Census and workflow are unchanged.
 
-**AC#1 and its limits.** AC#1 holds when the fallback's request continues the run's trace surface unchanged. That covers the round-24 probe's deepseek -> groq shape, credit and exhausted, before and after tool calls, and a native -> text-tool provider before any tool call. Two cases still stop on "Trace capture could not start" before the fallback provider is asked, with nothing reserved; Capture Off completes them:
-- **Re-encoded tool history.** The model wrote its tool calls as text and the fallback provider takes them natively, or the reverse. ADR-110's projection rewrites rows already on the surface (`test_a_fallback_that_must_rewrite_the_runs_tool_history_is_refused`).
-- **A different system-prompt placement.** This is TASK-42472's path. llama.cpp is sent its system prompt as the first message and a hosted provider is not, so a llama.cpp run's fallback to groq is refused even before any tool call (`test_a_captured_llamacpp_run_cannot_yet_fall_back_to_a_hosted_provider`, with and without project context).
+**Second decision: the bounded rewrite.** The first design left two shapes refused, both because the fallback's request had to replace part of the trace surface: a native/text tool-call re-encoding after tool activity, and a llama.cpp run (system prompt as the first message) falling back to a hosted provider (system prompt outside the message list). The owner allowed one bounded rewrite on a fallback chain's first call. It is written into ADR-337 as a second owner-approved amendment, before the code.
+- **What it removes.** The leading rendered-system slot, only when it is the first active entry, the failed call's own header carried it, and the new request has no leading system row. The run's tool rows at the tail, replaced one for one, kind for kind, by the new call's rows.
+- **Checks.** Every removed tool row must be earned: appended by a tool-loop call of one of the run's chains, in the run's owner, turn and policy, after a response-bearing predecessor in its chain, or written by an earlier fallback rewrite whose own removed rows pass that check. At most 256 rows. Rechecked in the dispatch-binding transaction, where only a reserved sequence-0 call linked to the failed call may carry it.
+- **Recording.** The tool rows use an ordinary bounded replacement. The slot uses a removal-only replacement whose node is a content-free `surface_removal` marker that every projection drops (`TraceOmissionReason.SURFACE_SLOT_REMOVED`, no schema change). The removed rows' bytes and the earlier calls' heads are untouched.
+- **Next send.** `run_chains` now follows a first call that rewrote the surface from the failed call's head, and the completed-turn witness accepts the rewritten rows: their sources, dead inside the range, are rechecked there under the TASK-42534 rule.
+- **New refusal codes.** `fallback_rewrite_shape`, `fallback_rewrite_unavailable` and `trace_fallback_rewrite_unavailable` join the send-diagnostic categories (`Chat/console_send_diagnostics.py`). TASK-42471's census test failed until they did.
+- **Files.** New `Chat/console_trace_fallback_rewrite.py` (planning, recheck, earned check, slot removal). `Chat/console_trace_final_values.py` (`FallbackRewriteWitness` and its shape), `Chat/console_trace_service.py` (threading, binding recheck, marker projection), `Chat/console_trace_runtime.py`, `Chat/console_trace_continuation.py`, `Chat/console_trace_provenance.py`. The trace service's size row rises by its exact +100 (dated).
 
-Both need the new chain's first call to replace part of the surface. The amendment grants no replacement, and the 2026-09-08 per-call rendered-system amendment says it adds no replacement permission, so this is an owner (ADR) choice. Recommendation: let a fallback chain's first call carry one bounded replacement. Its removed nodes would be the surface's leading rendered-system slot and the run's earned tool rows, each passing the completed-turn witness's run-lineage checks, within the 256-node bound.
+**Second-phase evidence.**
+- **Red/green.** Run on the pre-rewrite source (`88b33e8d4a`), the shape tests failed: `test_a_fallback_rewrites_the_runs_tool_calls_for_its_provider` (2) and `test_a_captured_llamacpp_run_falls_back_to_a_hosted_provider` (4) each read `'blocked' == 'completed'`. The low-level rewrite tests could not import the new module. All pass after.
+- **Mutations** (each guard disabled; the tests turned red):
+  - the bound: `over_256`;
+  - the run set: `foreign_run`, earned `[run]`;
+  - policy, owner, turn: earned `[policy]`, `[owner]`, `[turn]`;
+  - an unanswered predecessor: earned `[unanswered]`;
+  - the slot's run ownership: `slot_not_the_runs`;
+  - the second-fallback branch: `valid_second_rewrite`;
+  - the marker projection: all four llama.cpp shapes;
+  - the witness's rewritten rows, dead rows, and `run_chains` following a rewrite: shape (a) with project context;
+  - the factory passing a rewrite to an in-place retry: `retry_rewrite`;
+  - the factory passing one to the chain's second call: `second_call`;
+  - the binding-time first-call check alone: nothing, because the factory refuses first. With the factory mutation, the refusal moves to binding and leaves a reserved call (red on AC#4). With both, the rewrite is admitted (red).
+  - `user_row` is refused by three checks: row kind, the appending call's route, and the sequence-0 branch's need for a recorded rewrite. Each alone leaves it refused; all three disabled admit it (red).
+- **Next sends.** After shape (a) the next message is sent, with and without project context. After shape (b) it goes back to llama.cpp and is refused (`unsupported_surface_change`); Send without capture then sends it. This is not new: a probe found the same refusal for an ordinary captured switch from a hosted provider to llama.cpp, with and without project context. Putting a leading system row back was not part of the decision.
 
-**Other limits and finds (proposed follow-ups).**
+**Second-phase runs** (tree after the rebase onto `10a2fbd4ae` and the rewrite):
+- **Soak.** The touched test files (the retry file, the rate-limit file and the trace diagnostic census) ran 20 rounds at `-n 4`: 220 passed in every round, at load 8.3-15.9.
+- **Wide run.** Every `Tests/Chat/test_console_trace_*.py`, the touched files, the provider-gateway, fallback and bridge files, and the adapter callers ran at `-n 4`: 2834 passed, 22 failed. TASK-42513's 32 are green now, after reds2. The 22 failures are:
+  - TASK-32032's `[stopped]`;
+  - the 3 gateway reds;
+  - the 17 base-identical reds listed below;
+  - the diagnostic census. That one was mine (the new refusal codes), and it is fixed above.
+- **Other checks.**
+  - `Tests/CI` at `-n 4`: 2009 passed, 2 skipped.
+  - `Tests/Architecture` serially: 1507 passed, 5 skipped.
+  - `./scripts/preflight.sh` passed. `ruff check tldw_chatbook --select F` is clean, and `ruff_gate` reports RATCHET OK after one B009 fix in the new module.
+
+**Lane move (coordinator's decision).** `Tests/Chat/test_console_failed_call_retry_ownership.py` moved from the Dreams tracking riders step to dreams-boundary's "Run Dreams admission-sensitive contracts". That step runs only `bootstrap_profile` files, as this file is. The move updated `DREAMS_TRACKING_RIDERS`, `DREAMS_ADMISSION_TARGETS` and `test_response_rules_critical_gate.py`'s pinned argv, and the file has one owner. The whole file is 166 tests in 250.4 s serially with the step's flags (`-p no:xdist --timeout=300`) at load ~6. Both steps after the move, serially via `r19-step.sh`: the admission-sensitive step, 6 targets, 276 passed in 370.4 s at load 5-7; the riders step, 42 targets, 1595 passed and 6 skipped in 759.3 s at load 5-6.
+
+**Limits and finds (proposed follow-ups).**
+- Putting a leading system row back on a captured send is refused: after a llama.cpp fallback to a hosted provider, and on any captured hosted -> llama.cpp switch. That needs an owner (ADR) choice; recommendation below in the report.
 - A spawned child's preset fallback under Capture On is unchanged: children keep one chain and segment.
-- Found while probing (pre-existing, not this change): with AGENTS.md project context, an ordinary next send that switches a captured chat from llama.cpp to groq is refused with `unsupported_surface_change`; without project context it is sent. The probe was deleted.
-- TASK-34100.2.1's fallback half (its AC#2 and the fallback part of AC#4) is met by this task.
+- With AGENTS.md project context, an ordinary captured switch from llama.cpp to groq is refused with `unsupported_surface_change`; without it, the switch goes through. Pre-existing; found by probe.
+- `test_console_continuation_group_merge.py` (10), `test_console_named_agent_model.py` (2), `test_console_redirect_stream_cut.py` (3) and `test_console_request_provenance_routes.py` (2) are red identically on the base.
+- TASK-34100.2.1's fallback half is met by this task.
 <!-- SECTION:NOTES:END -->
