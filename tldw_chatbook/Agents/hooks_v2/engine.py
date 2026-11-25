@@ -455,15 +455,21 @@ class HookEngine:
 
         TASK-33620.1.12. Read on a worker thread: deliveries run on the hook
         owner loop, which may be the app's. Doubt holds, as for every other
-        stop reader.
+        stop reader: a read whose worker fails (after executor shutdown, say)
+        holds as the stop's unavailable state, and its log line says so.
         """
         # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
         from tldw_chatbook import emergency_stop
 
         try:
             state = await asyncio.to_thread(emergency_stop.current_emergency_stop)
-        except Exception:  # noqa: BLE001 -- doubt holds
-            return True
+        except Exception as exc:  # noqa: BLE001 -- doubt holds
+            logger.warning(
+                "hooks-v2: emergency-stop read failed (error_type={}); "
+                "holding the action",
+                type(exc).__name__,
+            )
+            state = emergency_stop.stop_state_unavailable()
         if not state.active:
             return None
         return state.reason == emergency_stop.STATE_UNAVAILABLE_REASON

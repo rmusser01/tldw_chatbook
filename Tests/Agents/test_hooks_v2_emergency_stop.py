@@ -260,6 +260,48 @@ async def test_a_stop_that_cannot_be_located_holds_hook_actions(tmp_path, monkey
 
 @platform_support.v2_command
 @pytest.mark.asyncio
+@pytest.mark.emergency_stop_unavailable
+async def test_a_stop_read_that_fails_holds_as_unavailable_and_says_why(
+    tmp_path, monkeypatch
+):
+    """The read runs on a worker thread, which fails after executor shutdown.
+
+    The hold goes through the fail-safe's one state (so the suite sees it),
+    and its log line names the failed read, not an active stop.
+    """
+    from loguru import logger
+
+    def no_worker():
+        raise RuntimeError("cannot schedule new futures after shutdown")
+
+    handler = _command(tmp_path / "ran", "PostToolUse")
+    unavailable = emergency_stop.stop_state_unavailable
+    holds: list[object] = []
+    monkeypatch.setattr(
+        emergency_stop,
+        "stop_state_unavailable",
+        lambda: holds.append(1) or unavailable(),
+    )
+    # to_thread re-raises what its worker raised.
+    monkeypatch.setattr(emergency_stop, "current_emergency_stop", no_worker)
+    lines: list[str] = []
+    sink = logger.add(lambda message: lines.append(str(message)), level="INFO")
+    engine = await _engine(handler)
+    try:
+        result = await engine.fire_async(_event("PostToolUse", **TOOL))
+    finally:
+        await engine.close()
+        logger.remove(sink)
+
+    assert not (tmp_path / "ran").exists()
+    assert [f.code for f in result.failures] == [STOP_CODE]
+    assert holds == [1], "the hold bypassed the fail-safe's state"
+    failed = [line for line in lines if "emergency-stop read failed" in line]
+    assert len(failed) == 1 and "error_type=RuntimeError" in failed[0]
+
+
+@platform_support.v2_command
+@pytest.mark.asyncio
 async def test_hook_actions_run_again_once_the_stop_is_cleared(tmp_path):
     path = _stop_path()
     set_emergency_stop(path, reason="brief")

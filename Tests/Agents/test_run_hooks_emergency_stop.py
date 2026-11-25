@@ -180,6 +180,23 @@ def test_a_stop_that_cannot_be_located_holds_run_hooks(tmp_path, monkeypatch):
     assert not marker.exists()
 
 
+@pytest.mark.emergency_stop_unavailable
+def test_an_unlocatable_stop_denies_without_offering_clear(tmp_path, monkeypatch):
+    """Clearing writes to the same unreachable folder; the denial says so."""
+
+    def refuse():
+        raise PermissionError("data dir refused")
+
+    monkeypatch.setattr(emergency_stop, "default_emergency_stop_path", refuse)
+    marker = tmp_path / "ran"
+    engine = _engine(tmp_path, "PreToolUse", marker)
+
+    outcome = engine.fire("PreToolUse", session_id="s", data=TOOL)
+
+    assert not marker.exists() and outcome.blocked is True
+    assert outcome.reason == emergency_stop.STATE_UNAVAILABLE_COPY
+
+
 def test_run_hooks_run_again_once_the_stop_is_cleared(tmp_path):
     set_emergency_stop(_stop_path(), reason="brief")
     clear_emergency_stop(_stop_path())

@@ -14,6 +14,7 @@ proceeding -- for an emergency stop, halting on doubt is the safe direction.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -54,9 +55,11 @@ def read_emergency_stop(path: Path) -> EmergencyStopState:
         return EmergencyStopState(active=False)
     # TASK-33620.1.12: a file that is not UTF-8 is unreadable too; it used to
     # raise out of the send gate and the Console's still_held check.
+    # The error type only: a UnicodeDecodeError's repr carries the file's
+    # bytes, which hold the reason the user typed.
     except (OSError, UnicodeDecodeError) as exc:
         logger.warning(
-            f"emergency-stop read failed ({exc!r}); failing SAFE to stopped"
+            f"emergency-stop read failed ({type(exc).__name__}); failing SAFE to stopped"
         )
         return EmergencyStopState(active=True, reason="stop state unreadable")
     try:
@@ -90,14 +93,75 @@ def stop_state_unavailable() -> EmergencyStopState:
     return EmergencyStopState(active=True, reason=STATE_UNAVAILABLE_REASON)
 
 
+#: TASK-33620.1.12: the copy for work held because the stop's state could not
+#: be read at all. ``/emergency-stop clear`` writes to the same unreachable
+#: folder, so it is not offered (an agent tool call's refusal and a research
+#: run's message say the same in their own words).
+STATE_UNAVAILABLE_COPY = (
+    "The emergency stop's state couldn't be read, so new runs, tool calls, "
+    "hook actions and research are held. Chatbook could not reach its data "
+    "folder (a backup or restore may be running, or the folder's permissions "
+    "changed); try again once Chatbook is ready."
+)
+
+
+def held_copy(state: EmergencyStopState) -> str:
+    """The copy for work ``state`` holds.
+
+    Args:
+        state: An active stop state.
+
+    Returns:
+        ``STATE_UNAVAILABLE_COPY`` when the stop's state could not be read at
+        all, else the state's visible copy (an unreadable or corrupt file
+        keeps it: clearing rewrites that file).
+    """
+    if state.reason == STATE_UNAVAILABLE_REASON:
+        return STATE_UNAVAILABLE_COPY
+    return state.visible_copy()
+
+
+#: TASK-33620.1.12: the resolved stop path and the inputs it was resolved
+#: under. Resolving runs the guarded user-data-dir handshake (about 1 ms, and
+#: the config lock), and every agent tool call, hook action and research step
+#: now reads the stop. The path is reused while the resolver, the config's
+#: identity (its generation and effective path) and HOME are unchanged: a
+#: config change that moves the data folder resolves again, or a stop set at
+#: the new location would be missed. A failed resolution is never kept.
+_RESOLVED_PATH: tuple[tuple, Path] | None = None
+
+
+def _resolved_stop_path() -> Path:
+    """The stop's path, resolved once per set of inputs (see ``_RESOLVED_PATH``).
+
+    Raises:
+        Exception: Whatever the resolution raises; nothing is cached then.
+    """
+    global _RESOLVED_PATH
+    resolver = default_emergency_stop_path
+    try:
+        from tldw_chatbook.config import current_config_identity
+
+        key = (resolver, current_config_identity(), os.environ.get("HOME"))
+    except Exception:  # noqa: BLE001 -- no key: resolve without caching
+        return resolver()
+    cached = _RESOLVED_PATH
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    path = resolver()
+    _RESOLVED_PATH = (key, path)
+    return path
+
+
 def current_emergency_stop() -> EmergencyStopState:
     """Resolve the stop's default path and read it, FAIL-SAFE.
 
-    Blocking (a guarded config read, then a file read): call it off the UI
-    loop. A path that cannot be resolved holds, as an unreadable file does.
+    Blocking (a guarded config read on a miss, then a file read): call it off
+    the UI loop. A path that cannot be resolved holds, as an unreadable file
+    does.
     """
     try:
-        path = default_emergency_stop_path()
+        path = _resolved_stop_path()
     except Exception:  # noqa: BLE001 -- doubt holds (AC#4)
         return stop_state_unavailable()
     return read_emergency_stop(path)

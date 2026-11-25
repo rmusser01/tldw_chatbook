@@ -1653,8 +1653,9 @@ keeping what it had saved. The stop is durable (it survives a restart) and
 fail-safe: if its state can't be read, the app treats it as stopped rather
 than proceeding. When even the stop's location can't be reached (for example
 while a backup or restore holds the data folder), each tool call says "the
-emergency stop's state couldn't be read, so tools are held"; send again once
-Chatbook is ready. While it is active the Console shows it until it is
+emergency stop's state couldn't be read, so tools are held", and a send or a
+hook it holds says the same; it doesn't offer `/emergency-stop clear`, which
+can't reach that folder either. Send again once Chatbook is ready. While it is active the Console shows it until it is
 cleared, not just in the five-second toast: the header badge reads
 **Held · emergency stop** (just **Held** in a narrow window) instead of
 Ready, the status strip starts with **Emergency stop: runs and schedules

@@ -2173,6 +2173,8 @@ def _redirect_emergency_stop_path(request, tmp_path, monkeypatch):
     from tldw_chatbook import emergency_stop
 
     path = tmp_path / "emergency_stop.json"
+    # The resolved path is cached per process; no test reuses another's.
+    monkeypatch.setattr(emergency_stop, "_RESOLVED_PATH", None)
     if request.node.get_closest_marker("real_emergency_stop_path") is None:
         monkeypatch.setattr(emergency_stop, "default_emergency_stop_path", lambda: path)
     held: list[str] = []

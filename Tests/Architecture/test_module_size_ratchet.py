@@ -343,7 +343,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-24: re-measured after rebasing onto dev 75bac413f5 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 28764 -> 28763.
     # 2026-11-24, TASK-33620.1.12 (owner ruling: run hooks are held by the emergency stop; owner rule: raise by the change's own lines): 28763 -> 28774 (+11), a manual send whose stop landed after the Console gate is refused before its UserPromptSubmit hooks.
     # 2026-11-25: re-measured after rebasing onto dev 692acb43dc (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 28777 -> 28788.
-    "tldw_chatbook/Chat/console_chat_controller.py": 28788,
+    # 2026-11-25 (TASK-33620.1.12 review round 5): a send cancelled during the stop re-read or the hook-v2 prompt input releases its echo, preparation and run state (owner rule: exact measurement): 28788 -> 28821.
+    "tldw_chatbook/Chat/console_chat_controller.py": 28821,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     # TASK-41637, 2026-11-18: +9, a round armed with no running app and no
     # answerable view fails closed instead of waiting forever (dev's row +

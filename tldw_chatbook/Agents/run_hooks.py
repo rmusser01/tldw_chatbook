@@ -862,7 +862,10 @@ def _emergency_stop_hold() -> tuple[str, bool] | None:
     state = emergency_stop.current_emergency_stop()
     if not state.active:
         return None
-    return state.visible_copy(), state.reason == emergency_stop.STATE_UNAVAILABLE_REASON
+    return (
+        emergency_stop.held_copy(state),
+        state.reason == emergency_stop.STATE_UNAVAILABLE_REASON,
+    )
 
 
 def _run_hook(

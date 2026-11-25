@@ -310,13 +310,23 @@ async def emergency_stop_turn_refusal() -> str | None:
     the Send awaits its preparation before UserPromptSubmit hooks fire. A
     stop landing in that window must refuse the turn there, before any prompt
     hook or provider call runs (a prompt hook that fails open must never be
-    what lets it through). Doubt holds, as for every other stop reader.
+    what lets it through). Doubt holds, as for every other stop reader: a
+    read whose worker thread fails holds the send too.
     """
     # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
     from tldw_chatbook import emergency_stop
 
-    state = await asyncio.to_thread(emergency_stop.current_emergency_stop)
-    return state.visible_copy() if state.active else None
+    try:
+        state = await asyncio.to_thread(emergency_stop.current_emergency_stop)
+    except Exception as exc:  # noqa: BLE001 -- doubt holds
+        from loguru import logger
+
+        logger.warning(
+            "emergency-stop read for a send failed (error_type={}); holding the send",
+            type(exc).__name__,
+        )
+        state = emergency_stop.stop_state_unavailable()
+    return emergency_stop.held_copy(state) if state.active else None
 
 
 async def submission_hook_input(
