@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-24 09:14
-updated_date: 2026-11-25 01:13
+updated_date: 2026-11-25 01:47
 labels:
 - follow-up
 - ci
@@ -45,7 +45,9 @@ Raised by the coordinator's review of TASK-42472 (2026-11-24).
 
 ## Implementation Notes
 
-**Status.** AC#2 and AC#3 are met. AC#1 can only be read from the 10 PR runs after merge, so it stays open, and so does the task. The projection below puts the slower new profile at about 17-20 min of 35, which is 15 or more minutes under the cap.
+**Status.** AC#2 and AC#3 are met. AC#1 can only be read from the 10 PR runs after merge, so it stays open, and so does the task. On the slowest runner seen (the four runs cancelled at the cap), the projection below puts the head at up to about 18 min and the tail at up to about 25 min of 35: about 10 minutes under the cap, which meets AC#1's 8 with little to spare. Completed runs project lower (about 16 and 20 min).
+
+**Owner decision.** 2026-11-24: asked about the split, the owner chose "Split, +1 runner (Recommended)".
 
 **Evidence.**
 - Window: 126 PR jobs, 2026-11-22 03:42Z to 2026-11-24 23:09Z.
@@ -60,25 +62,34 @@ Raised by the coordinator's review of TASK-42472 (2026-11-24).
   - the two wrapped-collaborator files: 105 s and 102 s
   - everything else: under 60 s each
 
-**Choice: a split.**
+**Choice: a split** (the owner's decision above).
 - (c), fixing slow files, was rejected. Halving the largest file would save about 2.5 min, not the 7+ that AC#1 needs.
 - (b), moving files to a step with headroom, was rejected. A bootstrap_profile file can only go to an admission-sensitive invocation. Dreams boundary has about 15 min left (max 19.9 of 35); the PR admission jobs reach 24-29 of 35 and are off limits anyway.
 - Folding the tail into the restore profile was considered and rejected. It would add no runner, but TASK-40724 gave each invocation its own runner after the restore selectors once took 25m46s under sustained load.
 - So `console-p0-gate` gets a fourth matrix profile, `admission-sensitive 2`. Its step, "Run the admission-sensitive 2 Console P0 regression tests", takes the old step's tail from `test_console_project_instruction_traces.py` on: 24 targets with the same order and flags (`--timeout=300 --tb=short`), and the PR3023 witnesses still last.
 - The old step keeps its first 43 targets. The two lists concatenated equal the old list exactly, no file appears in both, and both are bootstrap-profile invocations, so isolation is unchanged.
 - The job's `if`, its 35-min cap and the aggregate's `needs` and single verdict on `needs.console-p0-gate.result` cover every matrix profile unchanged.
-- Cost: one more runner per full PR run, which makes 57 eligible test jobs, 36 concurrent runners and 37 with perf-guard. That is about 1.5 more runner-minutes per run (setup, collection and cleanup are about 85 s a job).
+- Cost: one more runner per full PR run, which makes 57 eligible test jobs, 36 concurrent runners and 37 with perf-guard. That is about 1.5 more runner-minutes per run (setup, collection and cleanup are about 85 s a job on completed runs, up to about 130 s on the slowest).
 
 **Timings.**
-- CI split of the nine logs, pytest time only:
-  - head: median 846 s, max 880 s, which projects to at most about 16.1 min a job
-  - tail: median 1052 s, max 1115 s, which projects to at most about 20.0 min
-  - these are upper bounds, because the tail no longer runs behind the head's heap
+- CI split of the nine completed logs, pytest time only:
+  - head: median 846 s, max 880 s, about 16.1 min a job with about 85 s of setup, collection and cleanup
+  - tail: median 1052 s, max 1115 s, about 20.0 min a job
+- The four runs cancelled at the cap were slower, and they set the ceilings (setup with collection 85-127 s):
+
+  | Run | Head | Tail | Setup |
+  |---|---|---|---|
+  | 45455465752 | 972 s | ~1400 s projected (killed in the discarded-tool-run file; project-instruction traces alone 521 s) | 92 s |
+  | 45446280626 | 877 s | ~1265 s projected (killed in the agent-call thinking file) | 127 s |
+  | 45435409101 | 866 s | ~1230 s projected (killed near the end) | 85 s |
+  | 45050043124 | 902 s | ~1124 s | 85 s |
+
+  - so a job takes up to about 18 min (head) and about 25 min (tail): about 10 min under the 35-min cap on the slowest runner seen
 - Linux check: ubuntu:24.04, Python 3.12.3, SQLite 3.45.1, ext4 named volumes for /tmp and /home/runner, user runner uid 1001, the job's exact install line, network disconnected, `--cpus 4`.
   - unsplit step: 528 passed in 1393 s
   - head: 294 passed in 588 s
   - tail: 234 passed in 683 s
-  - CI ran 1.40x (median) to 1.46x (max) the unsplit Linux time, so the projection is about 14.7-15.3 min (head) and 16.9-17.6 min (tail) with setup
+  - completed CI runs took 1.40x (median) to 1.46x (max) the unsplit Linux time, so for them the projection is about 14.7-15.3 min (head) and 16.9-17.6 min (tail) with setup; the factor comes from completed runs only, and 45455465752 ran at about 1.7x
   - the container, volumes and image were removed afterwards
 - Local, serially via `r19-step.sh` with the step's flags:
   - head: 294 passed in 626 s (wall 634 s) at load 8-11
@@ -91,7 +102,7 @@ Raised by the coordinator's review of TASK-42472 (2026-11-24).
   - `INHERITED` splits the admission list and pins the new step token by token.
   - `STEP_JOBS` gains the new step, and the step count goes from 6 to 7.
   - The weakening checks now run against both admission steps.
-  - New `test_missing_or_comment_only_admission_2_target_is_rejected` covers every new-step target, removed or commented out.
+  - `test_missing_or_comment_only_rule_target_is_rejected` is parametrized over (step name, target) pairs from `SELECTION` plus the new step's `INHERITED` targets, so every new-step target, removed or commented out, fails the contract; each case first asserts the target is executable in its step (review fix, 2026-11-25: folded in a duplicate test).
 - `Tests/CI/test_console_p0_regression_gate.py`: the new lane is added to `_lanes()` and to the bootstrap-OK set, so the run-once and overlap checks see it.
 - `Tests/CI/test_ci_queue_pressure_contract.py`: four profiles and seven steps; the new step's `if` and `--timeout=300`; no target shared with the PR admission jobs or with the head step; and a continue-on-error case.
 - `Tests/CI/test_self_hosted_runner_routing.py`: the matrix and four pytest steps.

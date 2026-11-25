@@ -275,18 +275,33 @@ def test_rule_critical_targets_execute_without_altering_inherited_processes():
     validate(yaml.safe_load(WORKFLOW.read_text()))
 
 
+def _executable_targets(step):
+    tokens = shlex.split(step["run"].replace("\\\n", " "), comments=True)
+    return [token for token in tokens if token.startswith("Tests/")]
+
+
+_ADMISSION_2 = "Run the admission-sensitive 2 Console P0 regression tests"
+
+
 @pytest.mark.parametrize(
-    "label,target",
-    [(label, target) for label, targets in SELECTION.items() for target in targets],
+    "name,target",
+    [
+        (f"Run the {label} Console P0 regression tests", target)
+        for label, targets in SELECTION.items()
+        for target in targets
+    ]
+    # TASK-42533: the split-off tail is pinned token by token in INHERITED.
+    + [(_ADMISSION_2, t) for t in INHERITED[_ADMISSION_2] if t.startswith("Tests/")],
 )
 @pytest.mark.parametrize("damage", ["remove", "comment"])
-def test_missing_or_comment_only_rule_target_is_rejected(label, target, damage):
+def test_missing_or_comment_only_rule_target_is_rejected(name, target, damage):
     document = yaml.safe_load(WORKFLOW.read_text())
     step = next(
         s
         for s in document["jobs"]["console-p0-gate"]["steps"]
-        if s.get("name") == "Run the " + label + " Console P0 regression tests"
+        if s.get("name") == name
     )
+    assert target in _executable_targets(step)
     lines = step["run"].splitlines()
     step["run"] = "\n".join(
         ("# " + line if damage == "comment" else "") if target in line else line
@@ -333,37 +348,6 @@ def test_suppressed_or_weakened_critical_process_is_rejected(damage, label):
         job["timeout-minutes"] = 25
     else:
         document["jobs"]["derived-artifacts"]["needs"].remove("console-p0-gate")
-    with pytest.raises(AssertionError):
-        validate(document)
-
-
-def _executable_targets(step):
-    tokens = shlex.split(step["run"].replace("\\\n", " "), comments=True)
-    return [token for token in tokens if token.startswith("Tests/")]
-
-
-_ADMISSION_2 = "Run the admission-sensitive 2 Console P0 regression tests"
-
-
-@pytest.mark.parametrize(
-    "target", [t for t in INHERITED[_ADMISSION_2] if t.startswith("Tests/")]
-)
-@pytest.mark.parametrize("damage", ["remove", "comment"])
-def test_missing_or_comment_only_admission_2_target_is_rejected(target, damage):
-    """TASK-42533: the split-off tail is pinned token by token, so a target
-    dropped or commented out of the new profile fails the contract."""
-    document = yaml.safe_load(WORKFLOW.read_text())
-    step = next(
-        s
-        for s in document["jobs"]["console-p0-gate"]["steps"]
-        if s.get("name") == _ADMISSION_2
-    )
-    assert target in _executable_targets(step)
-    lines = step["run"].splitlines()
-    step["run"] = "\n".join(
-        ("# " + line if damage == "comment" else "") if target in line else line
-        for line in lines
-    )
     with pytest.raises(AssertionError):
         validate(document)
 

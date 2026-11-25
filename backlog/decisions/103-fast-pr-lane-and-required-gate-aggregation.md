@@ -690,8 +690,9 @@ with no test failing. No runner is added.
 
 ## Amendment (2026-11-24, TASK-42533): a fourth Console P0 profile
 
-Over 126 PR jobs from 2026-11-22 to 2026-11-24, the Console P0 gate's
-admission-sensitive profile took a median 29.8, p90 33.6 and max 34.8 of its
+Owner decision of 2026-11-24, "Split, +1 runner (Recommended)". Over 126 PR
+jobs from 2026-11-22 to 2026-11-24, the Console P0 gate's admission-sensitive
+profile took a median 29.8, p90 33.6 and max 34.8 of its
 35 min, and four more were cancelled at the cap with every test so far
 passing. Per-file times from nine CI logs showed no one file to fix: the
 three Console trace files took about 13 min together, and four more files
@@ -701,9 +702,15 @@ and the PR3023 witnesses, still last), is now a fourth matrix profile,
 `admission-sensitive 2`, in the same order, with the same flags and its own
 bootstrap profile. No file runs in both. The job's `if`, cap and needs, and
 the aggregate's single verdict on `needs.console-p0-gate.result`, cover
-every profile unchanged. In those logs the head's pytest time was a median
-846 and max 880 s, and the tail's 1052 and 1115 s; with about 85 s of setup,
-collection and cleanup a job, that projects to at most about 16 and 20 min.
+every profile unchanged. In those nine completed logs the head's pytest
+time was a median 846 and max 880 s, and the tail's 1052 and 1115 s. The four
+runs cancelled at the cap were slower: head 866-972 s, tail about 1124-1400 s
+(45455465752's project-instruction traces file alone took 521 s), with setup
+and collection 85-127 s. On the slowest runner seen, a job therefore takes up
+to about 18 min (head) and 25 min (tail): about 10 min under the cap. On
+Ubuntu 24.04 with the job's install line the unsplit step took 1393 s and the
+two profiles 588 and 683 s; completed CI runs took 1.40-1.46x that, and
+45455465752 about 1.7x.
 
 Folding the tail into the restore profile (at most 3.9 of 35 min) would have
 added no runner. It was not done: TASK-40724 gave each invocation its own

@@ -1174,13 +1174,18 @@ jobs:
     # Console trace files ~13 min together, four more files ~2 min each), so
     # its tail, from the project-instruction traces file on, is a fourth
     # profile, "admission-sensitive 2": same order, flags and bootstrap
-    # profile, no file in both. In those nine logs the head's pytest time was
-    # median 846 / max 880 s and the tail's 1052 / 1115 s, plus about 85 s of
-    # setup, collection and cleanup a job: at most about 16 and 20 min of 35.
+    # profile, no file in both. Owner decision 2026-11-24: "Split, +1 runner
+    # (Recommended)". In those nine completed logs the head's pytest time was
+    # median 846 / max 880 s and the tail's 1052 / 1115 s. The four capped
+    # runs were slower: head 866-972 s, tail about 1124-1400 s (45455465752's
+    # project-instruction traces file alone took 521 s), and setup with
+    # collection 85-127 s. So a job takes up to about 18 min (head) and 25 min
+    # (tail) on the slowest runner seen: about 10 min under the cap, not more.
     # On Ubuntu 24.04 (CI's install line, ext4, 4 CPUs) the unsplit step took
-    # 1393 s and the two profiles 588 s and 683 s; at CI's 1.40-1.46x of that
-    # run, about 15 and 17-18 min. One more runner per PR, about 1.5 more
-    # runner-minutes of setup and collection.
+    # 1393 s and the two profiles 588 s and 683 s. Completed CI runs took
+    # 1.40-1.46x that run (about 15 and 17-18 min a job); 45455465752 took
+    # about 1.7x. One more runner per PR, about 1.5 more runner-minutes of
+    # setup and collection.
     name: Console P0 regression gate (${{ matrix.profile }})
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}

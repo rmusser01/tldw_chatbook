@@ -1911,7 +1911,8 @@ def test_console_p0_gate_runs_four_serial_minimal_python_312_profiles() -> None:
     assert p0["if"] == LANES
     assert p0["runs-on"] == PR_TEST_RUNNER
     assert p0["timeout-minutes"] == 35
-    # checkout, setup-python, install, sandboxed, admission-sensitive.
+    # checkout, setup-python, install, sandboxed, restore, admission-sensitive,
+    # admission-sensitive 2.
     # TASK-34986 moved PR2921's two Dreams/Guardian steps to dreams-boundary
     # (with them this job measured max 18.7 min of 20 over 76 PR runs).
     assert len(p0["steps"]) == 7
