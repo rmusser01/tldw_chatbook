@@ -183,6 +183,7 @@ class ArticleListeningService:
         self._audio = None
         self._active = None
         self._holder = None
+        self._empty_holder_owner: _Admission | None = None
         self._holder_task = None
         self._holder_stop = None
         self._command = asyncio.Lock()
@@ -279,6 +280,7 @@ class ArticleListeningService:
             self._holder_stop.set()
             await asyncio.shield(self._holder_task)
             self._holder_task = self._holder = self._holder_stop = None
+            self._empty_holder_owner = None
 
     def _eligible(self, attempt):
         try:
@@ -951,13 +953,14 @@ class ArticleListeningService:
                     return
                 if callable(self.store):
                     self.store = self.store()
-                await self._take_holder()
+                if self._holder is None:
+                    await self._take_holder()
+                    self._empty_holder_owner = request
+                holder = self._holder
                 s = self._session
                 if s is None:
                     s = self._session = await asyncio.to_thread(self.store.load_session)
                 if request.cancelled:
-                    if s is None:
-                        await self._release_holder()
                     return
                 if brief and s and s.brief_id == ident:
                     return
@@ -974,6 +977,9 @@ class ArticleListeningService:
                 epoch = self._epoch, self._admission
                 owner = self._output() if callable(self._output) else self._output
                 ticket = request.ticket = owner.begin_intent(tentative=True)
+                if s is None:
+                    # A later request assumes custody only once it has a ticket.
+                    self._empty_holder_owner = request
             # The previous owner can play, pause or stop while this request is prepared.
             voice = await self._freeze_voice()
             if (
@@ -1001,6 +1007,7 @@ class ArticleListeningService:
                     if (
                         epoch != (self._epoch, self._admission)
                         or self._authorize() != authority
+                        or self._holder is not holder
                         or not ticket.promote()
                     ):
                         return
@@ -1018,7 +1025,7 @@ class ArticleListeningService:
                     else:
                         if current.authority != authority:
                             current = self._session = await asyncio.to_thread(
-                                self.store.adopt_session, current, lease=self._holder
+                                self.store.adopt_session, current, lease=holder
                             )
                             candidate = await self._prepare_candidate(
                                 ident, brief, authority, voice
@@ -1037,7 +1044,7 @@ class ArticleListeningService:
                         self.store.replace_session,
                         candidate,
                         expected_revision=current.revision if current else None,
-                        lease=self._holder,
+                        lease=holder,
                     )
                 if epoch == (self._epoch, self._admission) and ticket.is_current():
                     self._epoch += 1
@@ -1049,10 +1056,12 @@ class ArticleListeningService:
         finally:
             if ticket is not None:
                 ticket.cancel()
-            if epoch is not None and self._session is None:
+            if self._empty_holder_owner is request:
                 async with self._command:
-                    if epoch[1] == self._admission and self._session is None:
-                        await self._release_holder()
+                    if self._empty_holder_owner is request:
+                        self._empty_holder_owner = None
+                        if self._session is None:
+                            await self._release_holder()
 
     async def resume(
         self, *, expected_revision: ListeningRevision | None = None
@@ -1320,6 +1329,6 @@ class ArticleListeningService:
                 self.store, profile_data_root=self.root, lease=self._holder
             )
             await asyncio.to_thread(assets.reconcile)
-        if self._session is None:
+        if self._session is None and self._empty_holder_owner is None:
             await self._release_holder()
         return result

@@ -1321,3 +1321,135 @@ async def test_delete_observes_original_authority_inside_sqlite_commit(
             await deletion
         await service._retiring_task
         assert records.get_item_status(1) == "new"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("survivor", ["older", "none", "newer"])
+async def test_empty_admission_releases_only_its_own_holder(
+    records, tmp_path, monkeypatch, survivor
+):
+    from threading import Event
+    from tldw_chatbook.Subscriptions.article_listening_lease import ListeningBusy
+    from tldw_chatbook.Subscriptions.article_speech import CONVERTER, prepare_saved_text
+
+    _, binding, store, voice = setup_store(records)
+    root = tmp_path / "audio"
+    create_private_directory(root)
+    # Leave an unreferenced, reusable WAV alongside a genuinely empty session.
+    candidate = store.prepare_item(
+        1,
+        authority=binding[0],
+        voice=voice,
+        converter=CONVERTER,
+        prepare_text=prepare_saved_text,
+    )
+    previous = store.replace_session(candidate, expected_revision=None)
+    publish(store, previous, root, previous.foreground, frames=480)
+    store.clear(expected_revision=store.load_session().revision)
+    output = Output()
+    entered_voice = [asyncio.Event(), asyncio.Event()]
+    finish_voice = [asyncio.Event(), asyncio.Event()]
+    voices = []
+
+    async def freeze():
+        i = len(voices)
+        voices.append(i)
+        entered_voice[i].set()
+        await finish_voice[i].wait()
+        return voice
+
+    service = service_type()(
+        store,
+        root,
+        freeze_voice=freeze,
+        authorize=lambda: binding[0],
+        output=output.owner,
+        prepare_output=output.prepare,
+        acquire_output=output.acquire,
+    )
+    await service.restore()
+    assert service.snapshot().phase == "empty"
+    entered_read, finish_read = asyncio.Event(), Event()
+    loop = asyncio.get_running_loop()
+    original = store.load_session
+    gate_read = False
+
+    def load_once():
+        nonlocal gate_read
+        if gate_read:
+            gate_read = False
+            loop.call_soon_threadsafe(entered_read.set)
+            assert finish_read.wait(5)
+        return original()
+
+    monkeypatch.setattr(store, "load_session", load_once)
+    real_open = store.open_playback
+    playback_holders = []
+
+    def open_playback(*args, lease):
+        playback_holders.append(lease)
+        return real_open(*args, lease=lease)
+
+    monkeypatch.setattr(store, "open_playback", open_playback)
+
+    def listen():
+        return asyncio.create_task(
+            service.listen("local:watchlist_item:1", runtime_backend="local")
+        )
+
+    tasks = []
+    try:
+        if survivor != "none":
+            first = listen()
+            tasks.append(first)
+            await asyncio.wait_for(entered_voice[0].wait(), 5)
+            initial_holder = service._holder
+            assert initial_holder is not None
+        older = set(service._tasks)
+        gate_read = True
+        second = listen()
+        tasks.append(second)
+        await asyncio.wait_for(entered_read.wait(), 5)
+        (reading,) = service._tasks - older
+        if survivor == "newer":
+            finish_read.set()
+            await asyncio.wait_for(entered_voice[1].wait(), 5)
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            finish_voice[0].set()
+            await asyncio.wait_for(asyncio.gather(*older), 5)
+        else:
+            second.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await second
+            finish_read.set()
+            await asyncio.wait_for(reading, 5)
+
+        assert original() is None
+        if survivor == "none":
+            with store.session_lease(root):
+                pass
+            assert not voices and output.started.empty()
+        else:
+            with pytest.raises(ListeningBusy), store.session_lease(root):
+                pass
+            # An ordinary coordinated removal can borrow the same empty holder.
+            # Its completion must leave the pending listening request in custody.
+            assert await service.delete_article(3)
+            with pytest.raises(ListeningBusy), store.session_lease(root):
+                pass
+            finish_voice[int(survivor == "newer")].set()
+            await asyncio.wait_for(second if survivor == "newer" else first, 5)
+            await started(output)
+            assert (
+                playback_holders == [initial_holder]
+                and service._holder is initial_holder
+            )
+            assert original().foreground.item_id == 1
+    finally:
+        finish_read.set()
+        for gate in finish_voice:
+            gate.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await service.close()
