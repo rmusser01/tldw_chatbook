@@ -15,6 +15,7 @@ from textual.widgets import Static
 
 from Tests.UI.app_factory import persist_seeded_config, run_on_host
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_console_right_rail import _wait_for_console_quiet
 from Tests.UI.test_console_internals_decomposition import (
     _build_bound_mcp_test_app,
     _open_console_inspector,
@@ -164,6 +165,39 @@ async def _wait_until(pilot, predicate, what: str, timeout: float = 10.0) -> Non
         if time.monotonic() >= deadline:
             raise AssertionError(f"Timed out waiting for {what}")
         await pilot.pause(0.02)
+
+
+def _approval_card_displayed(console) -> bool:
+    return any(card.display for card in console.query("#chat-approval-card"))
+
+
+async def _stage_pending_tool_card(console, pilot) -> None:
+    """Stage one legacy tool-approval card once Console startup is quiet.
+
+    Staged while startup work is still owed (attach reconcile, control-bar
+    replay, credential poll), the card was wiped: the runtime's attach
+    projects its empty decision head through `_set_console_pending_decision`,
+    which writes `pending_approval=None` (TASK-41959 review).
+    """
+    await _wait_for_console_quiet(pilot, console)
+    console.set_task_resume_state(
+        TaskResumeState(
+            pending_approval={
+                "calls": [
+                    {
+                        "llm_name": "mcp__srv__auth",
+                        "server_label": "Srv",
+                        "tool_name": "auth",
+                        "arguments": {},
+                    }
+                ],
+                "timeout_seconds": 30.0,
+            }
+        )
+    )
+    await _wait_until(
+        pilot, lambda: _approval_card_displayed(console), "the approval card to display"
+    )
 
 
 def _is_displayed(widget) -> bool:
@@ -515,28 +549,9 @@ async def test_console_approvals_chip_activation_focuses_the_decision_not_submit
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-control-bar")
 
-        console.set_task_resume_state(
-            TaskResumeState(
-                pending_approval={
-                    "calls": [
-                        {
-                            "llm_name": "mcp__srv__auth",
-                            "server_label": "Srv",
-                            "tool_name": "auth",
-                            "arguments": {},
-                        }
-                    ],
-                    "timeout_seconds": 30.0,
-                }
-            )
-        )
         # Bounded waits, not fixed pauses: in a whole-file `-n 4` run the
         # 0.1 s pauses left focus on the status line (TASK-41959).
-        await _wait_until(
-            pilot,
-            lambda: any(card.display for card in console.query("#chat-approval-card")),
-            "the approval card to display",
-        )
+        await _stage_pending_tool_card(console, pilot)
 
         # TASK-35160: focus the status line, walk its segment cursor to the
         # approvals segment, activate with Space (the chip's focus+Space).
@@ -890,22 +905,16 @@ async def test_console_inspector_prioritizes_actionable_status_before_secondary_
         # `app.console_pending_approval_count` is only the no-controller
         # fallback. So stage a real pending card, and open the Inspector:
         # TASK-37000 holds a closed rail's rebuild for its opening.
-        console.set_task_resume_state(
-            TaskResumeState(
-                pending_approval={
-                    "calls": [
-                        {
-                            "llm_name": "mcp__srv__auth",
-                            "server_label": "Srv",
-                            "tool_name": "auth",
-                            "arguments": {},
-                        }
-                    ],
-                    "timeout_seconds": 30.0,
-                }
-            )
-        )
+        await _stage_pending_tool_card(console, pilot)
         await _open_console_inspector(console, pilot)
+        await _wait_until(
+            pilot,
+            lambda: _approval_card_displayed(console),
+            "the approval card to survive the rail opening",
+        )
+        # Staging a card refreshes only the task cards; nothing re-projects
+        # the Inspector from it. Without this sync, Review approval never
+        # enabled within 10 s, on head or on dev.
         console._sync_console_rail_and_controls()
         await _wait_until(
             pilot,

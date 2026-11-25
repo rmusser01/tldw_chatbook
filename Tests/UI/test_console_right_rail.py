@@ -1825,3 +1825,126 @@ async def test_rag_row_probes_instead_of_trusting_the_unset_registry_flag(
         )
         screen._console_rag_extras_cache = None
         assert screen._console_rag_extras_available() is False
+
+
+async def _start_fleet_with_staged_tray(pilot, screen, *, tray_rows: int) -> None:
+    """Stage tray rows, then let three running sub-agents reach the fleet.
+
+    Drives the real sync path: `_sync_console_agent_section` derives the rows
+    from the fake bridge and runs the section's one-shot auto-open.
+    """
+    from Tests.UI.test_console_fleet_panel import _FleetBridge
+    from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
+    from tldw_chatbook.Chat.console_display_state import ConsoleStagedContextState
+    from tldw_chatbook.Widgets.Console.console_staged_context import (
+        ConsoleStagedContextTray,
+    )
+
+    await _wait_for_console_quiet(pilot, screen)
+    screen.query_one(
+        "#console-staged-context-tray", ConsoleStagedContextTray
+    ).sync_state(
+        ConsoleStagedContextState(
+            heading="Sources",
+            summary="",
+            rows=tuple(
+                ConsoleDisplayRow(f"Source {index}", f"value {index}")
+                for index in range(tray_rows)
+            ),
+            source_count=tray_rows,
+        )
+    )
+    screen._console_agent_bridge = _FleetBridge(
+        tuple(
+            FleetHandle(
+                handle_id=f"h{index}",
+                run_id=f"run-h{index}",
+                agent="researcher",
+                task="find pricing",
+                status="running",
+                started_at=1000.0,
+            )
+            for index in range(3)
+        )
+    )
+    screen._console_agent_drilldown_run_id = None
+    screen._character._current_console_rail_conversation_id = lambda: "conv-A"
+    screen._agent._console_agent_drilldown_conversation_id = "conv-A"
+    screen._console_agent_section_last = None
+    screen._sync_console_agent_section()
+    await pilot.pause()
+
+
+def _fleet_header_inside_rail_body(screen) -> bool:
+    body = screen.query_one("#console-inspector-rail-body")
+    header = screen.query_one(
+        "#console-agent-section-subagents .console-inspector-section-header"
+    )
+    return header.region.height > 0 and body.content_region.contains_region(
+        header.region
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("size", "tray_rows"), [((150, 40), 6), ((180, 48), 12)])
+async def test_fleet_auto_open_scrolls_the_agents_section_into_view(size, tray_rows):
+    """TASK-41959 review: the fleet's rail auto-open must show the fleet.
+
+    Agents now sits below the Sources tray, Library search and Scope. Its
+    one-shot expand ran while the rail was still hidden, so the section's
+    `scroll_on_expand` reveal was lost and the auto-opened rail showed no
+    fleet: at 150x40 (the narrowest auto-open width) the header sat below
+    the rail body's fold, and at 180x48 a 12-row tray pushed it there too.
+    """
+    async with make_console_pilot(size=size) as pilot:
+        screen = pilot.app.screen
+        assert not _right_rail_open(pilot)
+        await _start_fleet_with_staged_tray(pilot, screen, tray_rows=tray_rows)
+        assert screen.query_one("#console-agent-section-subagents").open
+
+        screen._sync_console_rail_visibility_if_changed(
+            screen._current_console_rail_state()
+        )
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: _fleet_header_inside_rail_body(screen),
+            description=lambda: (
+                "the auto-opened rail to show the Agents header: header "
+                f"{screen.query_one('#console-agent-section-subagents').region}, "
+                f"body {screen.query_one('#console-inspector-rail-body').content_region}"
+            ),
+            stable_polls=3,
+        )
+        assert _right_rail_open(pilot)
+
+
+@pytest.mark.asyncio
+async def test_manual_inspector_open_keeps_its_scroll_with_fleet_rows():
+    """The reveal belongs to the auto-open; a rail the user opens is theirs.
+
+    At 140 columns the fleet auto-open is declined, so the section expands
+    behind a closed rail. Opening the rail with Alt+I's action must leave
+    the body at the top, not jump to Agents.
+    """
+    async with make_console_pilot(size=(140, 40)) as pilot:
+        screen = pilot.app.screen
+        await _start_fleet_with_staged_tray(pilot, screen, tray_rows=6)
+        screen._sync_console_rail_visibility_if_changed(
+            screen._current_console_rail_state()
+        )
+        await pilot.pause()
+        assert not _right_rail_open(pilot)
+
+        await screen.action_toggle_console_inspector_rail()
+        body = screen.query_one("#console-inspector-rail-body")
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: _right_rail_open(pilot) and body.content_region.height > 0,
+            description="the manually opened rail to lay out",
+        )
+        for _ in range(5):
+            await pilot.pause(0.05)
+        assert body.scroll_y == 0, "the user's open jumped to the Agents section"
+        assert not _fleet_header_inside_rail_body(screen), (
+            "precondition: Agents must start below the fold for this to test a jump"
+        )

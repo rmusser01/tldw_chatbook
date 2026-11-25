@@ -458,7 +458,8 @@ list itself moved. Its rows and actions (including per-row cancel) are
 unchanged. Because this rail defaults closed, the rail now opens itself when
 a fleet starts producing rows — but only at 150 columns or wider, and only
 until you close it: dismissing it once keeps it closed for the rest of that
-busy window.
+busy window. When it opens itself this way it also scrolls down to the
+**Agents** section. A rail you open yourself keeps its scroll position.
 
 **Refreshing.** The panel does no work at all while the rail is closed —
 opening it is what triggers the first fetch. While open it re-reads the

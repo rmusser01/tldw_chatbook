@@ -1053,6 +1053,9 @@ class ConsoleAgentController:
         #: that drill-in is scoped to. Both proxied read-write on the screen.
         self._console_agent_drilldown_run_id: str | None = None
         self._console_agent_drilldown_conversation_id: str | None = None
+        #: TASK-41959: the fleet section opened behind a closed rail, so its
+        #: own reveal was lost; the rail's automatic opening owes it one.
+        self._fleet_reveal_pending = False
         #: `_console_agent_full_log_available`'s probe cache -- the resolved
         #: target run id and the answer for it. No reader outside this
         #: cluster, so no screen proxy.
@@ -2504,6 +2507,61 @@ class ConsoleAgentController:
             exclusive=True,
             group="console-sync",
         )
+
+    def open_fleet_section_for_rows(self, fleet_section: Any) -> None:
+        """Open the Inspector's fleet section for a busy window's first rows.
+
+        TASK-41959. Behind a closed rail the section's ``scroll_on_expand``
+        reveal scrolls nothing, and the section now sits below the Sources
+        tray, Library search and Scope row. The reveal is recorded here and
+        replayed by ``reveal_fleet_after_rail_auto_open`` when the rail opens.
+
+        Args:
+            fleet_section: The mounted ``#console-agent-section-subagents``.
+        """
+        self._fleet_reveal_pending = not self._screen._is_console_widget_displayed(
+            "console-right-rail"
+        )
+        fleet_section.set_open(True)
+
+    def reveal_fleet_after_rail_auto_open(self, rail_state: ConsoleRailState) -> None:
+        """Scroll the fleet section into view once an automatic open shows it.
+
+        A rail the user opened (``preferred_right_open``) keeps its scroll:
+        the pending reveal is dropped, not replayed. So is one whose busy
+        window ended before the rail opened.
+
+        Args:
+            rail_state: The state that just made the rail visible.
+        """
+        if not self._fleet_reveal_pending:
+            return
+        self._fleet_reveal_pending = False
+        screen = self._screen
+        if rail_state.preferred_right_open or not screen._console_fleet_rows_present:
+            return
+        from textual.css.query import QueryError
+
+        try:
+            fleet_section = screen.query_one("#console-agent-section-subagents")
+        except QueryError:
+            return
+
+        def reveal(attempts: int) -> None:
+            # The first refresh after the opening can still precede the
+            # rail's layout; a section with no region has none to scroll to.
+            if not fleet_section.is_mounted or not fleet_section.open:
+                return
+            if not fleet_section.region:
+                if attempts > 1:
+                    fleet_section.call_after_refresh(reveal, attempts - 1)
+                return
+            # Minimal scroll, not `top=True`: the rail's first layouts still
+            # move the rows above (a scrollbar narrows it, the tray's cap
+            # re-fits), and a header pinned to the top was pushed out.
+            fleet_section.scroll_visible(animate=False)
+
+        fleet_section.call_after_refresh(reveal, 5)
 
     def _apply_fleet_agent_section_auto_open(
         self, rail_state: ConsoleRailState

@@ -12355,7 +12355,7 @@ class ChatScreen(BaseAppScreen):
         ):
             return
         self._console_fleet_section_auto_opened = True
-        fleet_section.set_open(True)
+        self._agent.open_fleet_section_for_rows(fleet_section)
 
     def _note_console_fleet_surface_toggle(self, open: bool) -> None:
         """Record a deliberate open/collapse of a fleet surface.
@@ -12483,14 +12483,12 @@ class ChatScreen(BaseAppScreen):
         handles_only = console_rail_handle_copy_only_changed(previous, rail_state)
         self._sync_console_rail_visibility(rail_state, handles_only=handles_only)
         self._last_console_rail_state = rail_state
-        # task-13 (review M9): the ONE seam where the Inspect rail actually
-        # becomes visible, whatever opened it -- the Alt+I action, the handle
-        # button, the launch auto-open, the responsive band, or the fleet
-        # force. Refreshing here (rather than only at the explicit toggle)
-        # means an AUTO-opened rail never sits on stale data waiting for the
-        # 10s poll. Must run AFTER `_sync_console_rail_visibility` above:
-        # the controller's rail-open guard reads the DOM, which that call is
-        # what updates.
+        # task-13 (review M9): the ONE seam where the Inspect rail becomes
+        # visible, whatever opened it (Alt+I, the handle, the launch or fleet
+        # auto-open, the responsive band), so an AUTO-opened rail never waits
+        # for the 10s poll on stale data, and one the fleet opened shows that
+        # fleet (TASK-41959). Must run AFTER `_sync_console_rail_visibility`
+        # above: the controller's rail-open guard reads the DOM it updates.
         if rail_state.right_open and not (previous is not None and previous.right_open):
             controller = getattr(self, "_console_environment", None)
             if controller is not None:
@@ -12505,6 +12503,7 @@ class ChatScreen(BaseAppScreen):
                     if section.recompose_count != count:
                         hold_paints_until_rebuilt(section)
                 controller.notify_rail_opened()
+            self._agent.reveal_fleet_after_rail_auto_open(rail_state)
 
     @staticmethod
     def _sync_console_rail_descendant_visibility(widget: Any, visible: bool) -> None:
