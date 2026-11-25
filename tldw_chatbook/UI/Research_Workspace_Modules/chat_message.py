@@ -78,8 +78,17 @@ class ResearchChatMessageEditor(SafeModalDismissMixin, ModalScreen[str | None]):
             yield TextArea(self.body, id="research-chat-edit-body")
             yield Static("", id="research-chat-edit-status", markup=False)
             with Horizontal(classes="research-chat-row"):
-                yield Button("Save", id="research-chat-edit-save", variant="primary")
-                yield Button("Cancel", id="research-chat-edit-cancel")
+                yield Button(
+                    "Save",
+                    id="research-chat-edit-save",
+                    variant="primary",
+                    classes="research-chat-action",
+                )
+                yield Button(
+                    "Cancel",
+                    id="research-chat-edit-cancel",
+                    classes="research-chat-action",
+                )
 
     @on(Button.Pressed, "#research-chat-edit-save")
     def save(self) -> None:

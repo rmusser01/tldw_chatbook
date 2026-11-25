@@ -19346,14 +19346,14 @@ ResearchScreen #research-window.window {
     height: $ds-height-auto;
 }
 
-.research-chat-row > Select,
-.research-chat-row > Input {
+Select.research-chat-field,
+Input.research-chat-field {
     width: $ds-width-fill;
     min-width: $ds-size-0;
     height: $ds-control-height;
 }
 
-.research-chat-row > Button {
+Button.research-chat-action {
     width: $ds-width-auto;
     min-width: $ds-size-0;
 }
@@ -19426,7 +19426,9 @@ ResearchChatMessageEditor {
     margin-top: $ds-space-1;
 }
 
-.research-studio-card Static, .research-studio-history Static,
+Static.research-studio-caption, .research-studio-history .research-pane-title,
+#research-studio-history-detail, #research-studio-history SelectCurrent > #label,
+#research-studio-history SelectCurrent > .arrow,
 #research-studio-route, #research-studio-status {
     height: auto;
     color: $ds-text-muted;
@@ -19476,10 +19478,6 @@ ResearchWorkspaceSplit, ResearchWorkspaceSearchModal, ResearchHelpMenu, Research
     background: $panel;
 }
 
-.research-transfer-dialog Static {
-    height: auto;
-}
-
 .research-transfer-scroll-dialog {
     height: $ds-percent-90;
 }
@@ -19511,9 +19509,14 @@ ResearchWorkspaceSearch,
     max-height: $ds-size-3;
 }
 
-#research-studio-dialog Static, #research-studio-actions-dialog Static,
-#research-more-outputs-dialog Static {
-    height: auto;
+
+.research-transfer-dialog .research-pane-title,
+.research-transfer-dialog SelectCurrent > .arrow,
+#research-studio-dialog .research-pane-title,
+#research-studio-dialog SelectCurrent > .arrow,
+#research-studio-actions-dialog .research-pane-title,
+#research-more-outputs-dialog .research-pane-title {
+    height: $ds-height-auto;
 }
 
 ResearchPaneHandle {

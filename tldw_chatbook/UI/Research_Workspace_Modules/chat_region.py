@@ -103,8 +103,15 @@ class ResearchChatRegion(Vertical):
             Vertical(id="research-chat-controls"),
         ):
             with Horizontal(classes="research-chat-row"):
-                yield Select([], prompt="Conversation", id="research-chat-session")
-                yield Button("New", id="research-chat-new")
+                yield Select(
+                    [],
+                    prompt="Conversation",
+                    id="research-chat-session",
+                    classes="research-chat-field",
+                )
+                yield Button(
+                    "New", id="research-chat-new", classes="research-chat-action"
+                )
             with Horizontal(classes="research-chat-row"):
                 yield Select(
                     [
@@ -115,9 +122,18 @@ class ResearchChatRegion(Vertical):
                     value="auto",
                     allow_blank=False,
                     id="research-chat-mode",
+                    classes="research-chat-field",
                 )
-                yield Input(placeholder="Provider", id="research-chat-provider")
-                yield Input(placeholder="Model", id="research-chat-model")
+                yield Input(
+                    placeholder="Provider",
+                    id="research-chat-provider",
+                    classes="research-chat-field",
+                )
+                yield Input(
+                    placeholder="Model",
+                    id="research-chat-model",
+                    classes="research-chat-field",
+                )
             yield Static(
                 "Sources: checking selection", id="research-chat-sources", markup=False
             )
@@ -128,18 +144,21 @@ class ResearchChatRegion(Vertical):
                         value="fts",
                         allow_blank=False,
                         id="research-chat-retrieval",
+                        classes="research-chat-field",
                     )
                     yield Input(
                         "5",
                         placeholder="Results",
                         type="integer",
                         id="research-chat-top-k",
+                        classes="research-chat-field",
                         tooltip="Maximum results between 1 and 50",
                     )
                     yield Input(
                         placeholder="Score threshold",
                         type="number",
                         id="research-chat-threshold",
+                        classes="research-chat-field",
                     )
                 with Horizontal(classes="research-chat-row"):
                     yield Checkbox("Rerank", id="research-chat-rerank")
@@ -151,26 +170,90 @@ class ResearchChatRegion(Vertical):
             with Horizontal(
                 id="research-chat-message-actions", classes="research-chat-row"
             ):
-                yield Button("Copy", id="research-chat-copy", disabled=True)
-                yield Button("Citations", id="research-chat-citations", disabled=True)
-                yield Button("Save to Note", id="research-chat-note", disabled=True)
-                yield Button("Read aloud", id="research-chat-speak", compact=True)
+                yield Button(
+                    "Copy",
+                    id="research-chat-copy",
+                    disabled=True,
+                    classes="research-chat-action",
+                )
+                yield Button(
+                    "Citations",
+                    id="research-chat-citations",
+                    disabled=True,
+                    classes="research-chat-action",
+                )
+                yield Button(
+                    "Save to Note",
+                    id="research-chat-note",
+                    disabled=True,
+                    classes="research-chat-action",
+                )
+                yield Button(
+                    "Read aloud",
+                    id="research-chat-speak",
+                    compact=True,
+                    classes="research-chat-action",
+                )
             with Horizontal(
                 id="research-chat-revision-actions", classes="research-chat-row"
             ):
-                yield Button("Edit", id="research-chat-edit", compact=True)
-                yield Button("Delete", id="research-chat-delete", compact=True)
-                yield Button("Undo", id="research-chat-undo", compact=True)
-                yield Button("Branch", id="research-chat-branch", compact=True)
-                yield Button("Regenerate", id="research-chat-regenerate", compact=True)
+                yield Button(
+                    "Edit",
+                    id="research-chat-edit",
+                    compact=True,
+                    classes="research-chat-action",
+                )
+                yield Button(
+                    "Delete",
+                    id="research-chat-delete",
+                    compact=True,
+                    classes="research-chat-action",
+                )
+                yield Button(
+                    "Undo",
+                    id="research-chat-undo",
+                    compact=True,
+                    classes="research-chat-action",
+                )
+                yield Button(
+                    "Branch",
+                    id="research-chat-branch",
+                    compact=True,
+                    classes="research-chat-action",
+                )
+                yield Button(
+                    "Regenerate",
+                    id="research-chat-regenerate",
+                    compact=True,
+                    classes="research-chat-action",
+                )
             yield TextArea(id="research-chat-composer", disabled=True)
             with Horizontal(classes="research-chat-row"):
                 yield Button(
-                    "Send", id="research-chat-send", variant="primary", disabled=True
+                    "Send",
+                    id="research-chat-send",
+                    variant="primary",
+                    disabled=True,
+                    classes="research-chat-action",
                 )
-                yield Button("Stop", id="research-chat-stop", disabled=True)
-                yield Button("Clear draft", id="research-chat-clear", disabled=True)
-                yield Button("Retry", id="research-chat-retry", disabled=True)
+                yield Button(
+                    "Stop",
+                    id="research-chat-stop",
+                    disabled=True,
+                    classes="research-chat-action",
+                )
+                yield Button(
+                    "Clear draft",
+                    id="research-chat-clear",
+                    disabled=True,
+                    classes="research-chat-action",
+                )
+                yield Button(
+                    "Retry",
+                    id="research-chat-retry",
+                    disabled=True,
+                    classes="research-chat-action",
+                )
 
     def on_mount(self) -> None:
         self._sync_controls()

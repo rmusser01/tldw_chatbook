@@ -27,7 +27,12 @@ class ResearchStudioOutputCard(Vertical):
             disabled=True,
             compact=True,
         )
-        yield Static("", id=f"research-studio-availability-{self.key}", markup=False)
+        yield Static(
+            "",
+            id=f"research-studio-availability-{self.key}",
+            classes="research-studio-caption",
+            markup=False,
+        )
 
     def sync_availability(
         self, value: StudioAvailability | None, *, busy=False
