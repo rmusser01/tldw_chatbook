@@ -1987,6 +1987,10 @@ def test_the_first_run_message_differs_from_later_presses(monkeypatch):
     controller.start()
     controller.stop()
     first = [e for e in events if isinstance(e, cvi.VoiceModelPreparing)][0]
+    # One preparation at a time: the next press is refused until the first
+    # attempt's daemon releases admission (da28a28595), so wait for that
+    # release, the product's own event, before pressing again (TASK-33621.197).
+    assert controller._model_preparation.done.wait(2), "native disposal did not finish"
 
     events.clear()
     controller.start()
@@ -2736,6 +2740,121 @@ def test_a_pause_inside_a_download_restarts_the_stall_clock(monkeypatch):
     assert service.started is True
 
 
+#: TASK-33621.21 AC#1 (owner decision, 2026-11-20): the copy a long quiet
+#: preparation ends up showing. Pinned literally, not via the module constant,
+#: so a build without the note fails on the missing note, not on an import.
+_STILL_PREPARING = "Still preparing… or Cancel"
+
+
+def _still_preparing_notes(events) -> list:
+    return [
+        e
+        for e in events
+        if isinstance(e, cvi.VoiceModelPreparing) and e.message == _STILL_PREPARING
+    ]
+
+
+def _wait_for_note(events, timeout: float) -> list:
+    deadline = time.monotonic() + timeout
+    while not _still_preparing_notes(events) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    return _still_preparing_notes(events)
+
+
+def _quiet_controller(monkeypatch, service, *, notice_seconds, progress=None):
+    """A threaded controller whose still-preparing note fires after `notice_seconds`."""
+    monkeypatch.setattr(
+        cvi.ConsoleVoiceInputController,
+        "WARMUP_STILL_PREPARING_SECONDS",
+        notice_seconds,
+        raising=False,
+    )
+    return _threaded_controller(
+        monkeypatch, service, stall_seconds=0.3, progress=progress
+    )
+
+
+def test_a_long_quiet_load_says_it_is_still_preparing_and_keeps_waiting(monkeypatch):
+    """TASK-33621.21 AC#1: after N, a note -- the attempt does not fail.
+
+    Current adapters show no download progress (ADR-284), so the chip reads
+    "Loading speech model…" for as long as the native load runs and nothing
+    bounds it. After `WARMUP_STILL_PREPARING_SECONDS` the chip says the load is
+    still going and names the way out. The attempt keeps waiting: no failure,
+    no capture yet, and the capture starts once the load returns.
+    """
+    gate, entered = threading.Event(), threading.Event()
+    service = _WarmableService(transcriber=_Transcriber(gate=gate, entered=entered))
+    controller, events, _ = _quiet_controller(monkeypatch, service, notice_seconds=0.4)
+
+    try:
+        started = time.monotonic()
+        controller.start()
+        assert entered.wait(timeout=5), "the warm-up never ran"
+        time.sleep(0.1)
+        assert _still_preparing_notes(events) == [], "the note came before N"
+
+        notes = _wait_for_note(events, timeout=3.0)
+
+        assert notes, "a long quiet load never said it was still preparing"
+        assert time.monotonic() - started >= 0.4
+        assert len(f"◐ {_STILL_PREPARING}") <= cvi.WARMUP_MESSAGE_MAX_CELLS
+        # Several more progress checks: shown once, not re-emitted every poll.
+        time.sleep(0.25)
+        assert len(_still_preparing_notes(events)) == 1
+        assert controller.state == cvi.STATE_PREPARING
+        assert [e for e in events if isinstance(e, cvi.VoiceFailed)] == []
+        assert service.started is False
+    finally:
+        gate.set()
+    assert _wait_for_state(controller, cvi.STATE_LISTENING, timeout=3.0) == (
+        cvi.STATE_LISTENING
+    )
+    assert service.started is True
+
+
+def test_the_still_preparing_clock_restarts_when_visible_progress_ends(monkeypatch):
+    """The note never covers a download that is visibly landing bytes.
+
+    An attributed download shows its size while it grows, past N. When it
+    stops being observable (the artifact completed, native loading follows),
+    the quiet time is counted from then, so the note comes N after the bytes
+    stopped -- not at once because the attempt is already older than N.
+    """
+    gate, entered = threading.Event(), threading.Event()
+    service = _WarmableService(transcriber=_Transcriber(gate=gate, entered=entered))
+    growth = [0] + [n * 40_000_000 for n in range(1, 18)]
+    progress = _ScriptedProgress(growth, then=growth[-1])
+    controller, events, _ = _quiet_controller(
+        monkeypatch, service, notice_seconds=0.4, progress=progress
+    )
+
+    try:
+        controller.start()
+        assert entered.wait(timeout=5), "the warm-up never ran"
+        # 0.6 s of growth: longer than N, so a clock from the start would fire.
+        time.sleep(0.6)
+        assert controller.state == cvi.STATE_PREPARING
+        assert _still_preparing_notes(events) == [], "the note covered a download"
+        assert any(
+            isinstance(e, cvi.VoiceModelPreparing) and "MB" in e.message
+            for e in events
+        ), "the growing download was never shown"
+        progress.active = False
+        quiet_from = time.monotonic()
+
+        notes = _wait_for_note(events, timeout=3.0)
+
+        assert notes, "the quiet load after the download never got the note"
+        assert time.monotonic() - quiet_from >= 0.35
+        assert [e for e in events if isinstance(e, cvi.VoiceFailed)] == []
+    finally:
+        gate.set()
+    assert _wait_for_state(controller, cvi.STATE_LISTENING, timeout=3.0) == (
+        cvi.STATE_LISTENING
+    )
+
+
 @pytest.mark.parametrize("raw", [0, -5, "soon", float("nan"), float("inf"), None])
 def test_an_invalid_stall_bound_falls_back_to_the_default(monkeypatch, raw):
     settings = {}
@@ -2881,6 +3000,10 @@ def test_a_failed_warm_up_is_still_a_first_run_next_time(monkeypatch):
 
     controller.start()
     controller.stop()
+    # One preparation at a time: the next press is refused until the first
+    # attempt's daemon releases admission (da28a28595), so wait for that
+    # release, the product's own event, before pressing again (TASK-33621.197).
+    assert controller._model_preparation.done.wait(2), "native disposal did not finish"
     events.clear()
     controller.start()
 

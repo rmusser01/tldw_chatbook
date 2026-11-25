@@ -144,6 +144,23 @@ WARMUP_DOWNLOAD_MESSAGE_TEMPLATE = "Downloading speech model… {size}"
 #: (`dictation.model_prepare_stall_seconds`). Opaque native loading is excluded;
 #: only observed bytes belonging to this attempt reset the download clock.
 DEFAULT_MODEL_PREPARE_STALL_SECONDS = 120.0
+#: TASK-33621.21 AC#1 (owner decision, 2026-11-20): opaque loading has no
+#: automatic bound (ADR-284), so after `STILL_PREPARING_NOTICE_SECONDS` with
+#: no visible progress the chip says the attempt is still going and how to
+#: leave it. A note, not a failure: the attempt keeps waiting and Cancel is
+#: unchanged. Sized by measurement at 80x24, where the preparing chip leaves
+#: the draft no room: "◐ " plus this (28 cells) is the longest wording that
+#: paints whole beside every cell of the Cancel button. "Still preparing…
+#: keep waiting or Cancel" (41) pushed Cancel off the row entirely, and even
+#: the busy copy's full-width presentation offers it 41 of the 42 cells it
+#: needs. A painted test pins it at 80x24 and 235x52.
+WARMUP_STILL_PREPARING_MESSAGE = "Still preparing… or Cancel"
+#: Two minutes, the same time `DEFAULT_MODEL_PREPARE_STALL_SECONDS` lets an
+#: observed download go without progress before calling it stalled; well past
+#: a cached load (~1 s) and a fast first download (the 2.4 GB parakeet model
+#: streamed at ~31 MB/s live, about 80 s), well short of the 52 minutes the
+#: original report sat through with no word. Real progress is TASK-33621.110.
+STILL_PREPARING_NOTICE_SECONDS = 120.0
 
 # --- Stop-side outcomes ----------------------------------------------------
 #
@@ -1433,6 +1450,10 @@ class ConsoleVoiceInputController:
     #: How often that wait samples an attributed HTTP artifact, if supported,
     #: and checks its inactivity bound. Opaque loading has no such deadline.
     WARMUP_PROGRESS_POLL_SECONDS = 1.0
+    #: Quiet time before the chip shows `WARMUP_STILL_PREPARING_MESSAGE`.
+    #: Checked at the progress cadence above. A class attribute so tests can
+    #: shorten it.
+    WARMUP_STILL_PREPARING_SECONDS = STILL_PREPARING_NOTICE_SECONDS
 
     def __init__(
         self,
@@ -2004,8 +2025,11 @@ class ConsoleVoiceInputController:
 
         Only an attributed active download earns the inactivity bound. Current
         legacy adapters have no such observer and remain Loading until return
-        or Cancel. The retained record and admission survive logical retirement;
-        abandoned services are disposed after native return, without UI joining.
+        or Cancel; after `WARMUP_STILL_PREPARING_SECONDS` of that quiet loading
+        the chip shows `WARMUP_STILL_PREPARING_MESSAGE` instead, without ending
+        the attempt (TASK-33621.21). The retained record and admission survive
+        logical retirement; abandoned services are disposed after native
+        return, without UI joining.
 
         Args:
             transcriber: The transcription service to warm.
@@ -2051,7 +2075,7 @@ class ConsoleVoiceInputController:
                 self._finish_model_preparation(work, captured=True)
 
         shown = ""
-        last_progress_at = next_check = time.monotonic()
+        last_progress_at = next_check = quiet_since = time.monotonic()
         work.thread = threading.Thread(
             target=_work, daemon=True, name="ConsoleDictationModelWarmup"
         )
@@ -2079,9 +2103,19 @@ class ConsoleVoiceInputController:
             active = current is not None and bool(getattr(progress, "active", False))
             if not active:
                 last_progress_at = now
+                if active_before:
+                    # Visible progress just ended; quiet time starts now.
+                    quiet_since = now
                 active_before = False
-                if shown != WARMUP_MESSAGE:
-                    shown = WARMUP_MESSAGE
+                # TASK-33621.21 AC#1: a long quiet load gets a note, never a
+                # failure; the attempt keeps waiting and Cancel is unchanged.
+                message = (
+                    WARMUP_STILL_PREPARING_MESSAGE
+                    if now - quiet_since >= self.WARMUP_STILL_PREPARING_SECONDS
+                    else WARMUP_MESSAGE
+                )
+                if shown != message:
+                    shown = message
                     self._emit_quietly(
                         VoiceModelPreparing(message=shown), "model loading"
                     )

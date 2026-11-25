@@ -274,3 +274,200 @@ async def test_provenance_stage_failure_logs_a_content_free_category(
     text = "\n".join(lines)
     assert "PRIVATE-DRAFT-33621" not in text
     assert "database is locked" not in text
+
+
+async def _voice_send(harness, transcript: str):
+    """One Capture-On speculative voice turn through its production stages.
+
+    The controller prepares the attempt; the gateway dispatches it as a
+    provisional voice call with Capture On (its dispatch commit) and seals the
+    manifest; the winning promotion commits the pair and imports the trace,
+    wired as ``create_console_speculative_voice_session`` wires it. Only the
+    provider adapter at the bottom of the gateway is the harness's recorder.
+
+    Returns:
+        The rows the provider received, the prepared request's provenance,
+        the promotion outcome, and the trace imports (an exception when the
+        import refused the turn).
+    """
+    from Tests.Chat.test_console_voice_promotion import _inline
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderCallPurpose
+    from tldw_chatbook.Chat.console_trace_provenance import (
+        ConsoleRequestRoute,
+        ConsoleTraceCaptureMode,
+    )
+    from tldw_chatbook.Chat.console_trace_service import ConsoleTraceService
+    from tldw_chatbook.Chat.console_voice_attempts import VoiceAttemptSnapshot
+    from tldw_chatbook.Chat.console_voice_promotion import (
+        VoicePromotionContext,
+        VoicePromotionOwner,
+        VoiceWinningPromotion,
+    )
+    from tldw_chatbook.Chat.console_voice_trace_gateway import VoiceTraceImportContext
+
+    gateway, store = harness.gateway, harness.store
+    prepared = await harness.controller.prepare_speculative_voice_attempt(
+        attempt_epoch=1, transcript=transcript, turn_id="voice-turn"
+    )
+    request, seed = prepared.request, prepared.promotion_seed
+    assert prepared.requires_pre_dispatch_authority is False, (
+        "the voice turn fell back to an accepted send"
+    )
+    attempt = request.provisional_trace_attempt
+    assert attempt is not None, "the voice turn has no Capture-On trace"
+    before = len(harness.entries)
+    parts: list[str] = []
+    try:
+        async for item in gateway.stream_chat(
+            request.resolution,
+            request.prepared,
+            tools=request.prepared.tools,
+            dispatch_purpose=ConsoleProviderCallPurpose.VOICE_PROVISIONAL,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            route=ConsoleRequestRoute.FRESH,
+            provisional_trace_attempt=attempt,
+        ):
+            if isinstance(item, str):
+                parts.append(item)
+        manifest, envelopes = gateway.seal_provisional_voice_trace(attempt)
+    except BaseException:
+        gateway.abandon_provisional_voice_trace(attempt)
+        raise
+    reply = "".join(parts)
+    persistence = store.persistence
+    registry = gateway.provisional_trace_registry
+    imports: list[object] = []
+
+    def trace_context(_context, commit):
+        return VoiceTraceImportContext(
+            import_id=seed.promotion_id,
+            conversation_id=commit.conversation_id,
+            user_message_id=commit.user_message_id,
+            user_revision_id=commit.user_revision_id,
+            assistant_message_id=commit.assistant_message_id,
+            assistant_revision_id=commit.assistant_revision_id,
+            turn_id=commit.user_message_id,
+            run_id=f"voice:{seed.attempt_id}",
+            policy=seed.capture_policy,
+        )
+
+    def import_trace(sealed, sealed_envelopes, import_context):
+        try:
+            result = ConsoleTraceService(
+                repository=persistence.console_trace_repository
+            ).import_provisional_voice_trace(
+                persistence.db, registry, sealed, sealed_envelopes, import_context
+            )
+        except Exception as exc:  # recorded: promotion swallows trace failures
+            imports.append(exc)
+            raise
+        imports.append(result)
+        return result
+
+    winner = VoiceWinningPromotion(
+        VoicePromotionOwner(lambda: store, sync_runner=_inline),
+        trace_registry=registry,
+        trace_context_factory=trace_context,
+        trace_importer=import_trace,
+        sync_runner=_inline,
+    )
+    context = VoicePromotionContext(
+        promotion_id=seed.promotion_id,
+        attempt_id=seed.attempt_id,
+        origin=seed.origin,
+        expected_native_leaf_id=seed.expected_native_leaf_id,
+        expected_persisted_leaf_id=seed.expected_persisted_leaf_id,
+        user_text=transcript,
+        assistant_text=reply,
+        usage_json=None,
+        terminal_boundary_id=seed.terminal_boundary_id,
+        capture_eligible_at_dispatch=seed.capture_eligible_at_dispatch,
+    )
+    outcome = await winner.promote(
+        context,
+        VoiceAttemptSnapshot(
+            attempt_epoch=1,
+            response_text=reply,
+            trace_manifest=manifest,
+            trace_envelopes=envelopes,
+        ),
+    )
+    return harness.entries[before:], request.prepared.provenance, outcome, imports
+
+
+@pytest.mark.asyncio
+async def test_a_voice_send_after_an_image_result_traces_what_was_sent(harness):
+    """TASK-33621.46: the voice builder applies the typed path's saved-media rule.
+
+    Provider history sends an assistant image result as its text only, but
+    that message's saved revision projects the image too. The typed builder
+    (TASK-33621.2) admits such a row as a provider artifact; the voice builder
+    admitted every owned row as its saved revision, so the voice turn's trace
+    named a revision the provider never received. The voice turn's own
+    dispatch commit and trace import pass on both; what the turn recorded is
+    what differs, so this reads it back the way the typed tests do.
+    """
+    from tldw_chatbook.Chat.console_trace_provenance import (
+        SavedRevisionTraceProvenance,
+    )
+
+    first, sent, _system = await _send(harness, "hello")
+    _assert_answered(harness, first, sent)
+    _generate_image(harness.store, "session-1")
+
+    sent, provenance, outcome, imports = await _voice_send(harness, "describe it")
+
+    assert sent == [
+        [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "answer"},
+            {"role": "assistant", "content": "[image] a red square"},
+            {"role": "user", "content": "describe it"},
+        ]
+    ], "the provider must be contacted exactly once, with the image as text"
+    assert outcome._commit is not None, "the voice pair was not committed"
+    assert len(imports) == 1
+    assert not isinstance(imports[0], Exception), repr(imports[0])
+    descriptors = provenance.messages_payload
+    assert [type(item) is SavedRevisionTraceProvenance for item in descriptors] == [
+        True,
+        True,
+        False,  # the image result left its image out: not that revision
+        False,  # the active voice turn
+    ]
+    # The trace says what the provider received, not the saved revision.
+    calls = ConsoleTraceNativeReader(harness.db).read_calls(
+        outcome._commit.user_message_id
+    )
+    assert len(calls) == 1
+    recorded = calls[0].capture.request["messages_payload"]
+    assert recorded[:3] == sent[0][:3], recorded
+
+
+@pytest.mark.asyncio
+async def test_a_typed_send_after_a_promoted_voice_turn_is_traced(harness):
+    """TASK-33621.159: a voice turn must not lock Capture On out of the chat.
+
+    The promoted voice call's id is derived (UUIDv5, from the promotion id).
+    The next typed send's completed-turn witness names that call as its
+    origin, and the witness validated call ids as UUIDv4 revision refs, so
+    every later Capture-On send was refused before the provider was contacted.
+    """
+    first, sent, _system = await _send(harness, "hello")
+    _assert_answered(harness, first, sent)
+    _sent, _provenance, outcome, imports = await _voice_send(harness, "and you?")
+    assert outcome._commit is not None, "the voice pair was not committed"
+    assert len(imports) == 1
+    assert not isinstance(imports[0], Exception), repr(imports[0])
+
+    following, sent, _system = await _send(harness, "thanks")
+
+    _assert_answered(harness, following, sent)
+    assert sent[0] == [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "answer"},
+        {"role": "user", "content": "and you?"},
+        {"role": "assistant", "content": "answer"},
+        {"role": "user", "content": "thanks"},
+    ]
+    assert harness.failures == []

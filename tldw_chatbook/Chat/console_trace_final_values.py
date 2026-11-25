@@ -48,6 +48,7 @@ from tldw_chatbook.Chat.console_trace_models import (
     MAX_SURFACE_REPLACEMENT_CHAIN_LINKS,
     MAX_SURFACE_REPLACEMENT_SPAN,
     SemanticRevisionRef,
+    _validate_stable_opaque_id,
     new_opaque_id,
 )
 from tldw_chatbook.Provider_Contract.provider_continuation import (
@@ -307,7 +308,8 @@ class CompletedToolTurnWitness:
             optional complete assistant revision) triples for untraced turns.
 
     Raises:
-        ValueError: If an ID is not a canonical UUIDv4 string; source, response
+        ValueError: If a call ID is not a canonical UUIDv4/v5 string or another
+            ID is not a canonical UUIDv4 string; source, response
             or closure evidence is missing or conflicting; discard/closed
             followups have invalid pair/triple shapes, reach the lookup bound
             or lack their corresponding original owner;
@@ -342,12 +344,12 @@ class CompletedToolTurnWitness:
             and self.assistant_revision_id is None
         ):
             raise ValueError("completed_replay_count")
-        for identity in (
-            self.origin_call_id,
-            self.terminal_call_id,
-            self.user_revision_id,
-        ):
-            SemanticRevisionRef(identity)
+        # TASK-33621.159: call ids are ledger ids, random (typed sends) or
+        # derived from the promotion id (UUIDv5, a promoted voice call). The
+        # witness only looks them up; revision ids below stay UUIDv4.
+        _validate_stable_opaque_id(self.origin_call_id, "origin_call_id")
+        _validate_stable_opaque_id(self.terminal_call_id, "terminal_call_id")
+        SemanticRevisionRef(self.user_revision_id)
         if self.replacement_attempt_id is not None and (
             type(self.replacement_attempt_id) is not str
             or not self.replacement_attempt_id

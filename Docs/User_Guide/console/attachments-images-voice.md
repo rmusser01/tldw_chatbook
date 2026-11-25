@@ -194,7 +194,9 @@ is never sent automatically, so you can edit before pressing Enter.
   run downloads it and can take several minutes. Nothing is being recorded
   yet — the microphone opens once the model is ready." Current adapters
   show **Loading speech model…**: they do not expose an exact download
-  artifact or a native-load heartbeat. **Cancel** ends the recording attempt
+  artifact or a native-load heartbeat. After two minutes of that, the chip
+  reads **Still preparing… or Cancel**. Nothing has failed: keep waiting and
+  the microphone opens once the model is ready. **Cancel** ends the recording attempt
   promptly; preparation continues in the background until it finishes or you
   quit. Another press cannot start a second preparation while that work or its
   cleanup is still running, even after leaving and returning to Console.

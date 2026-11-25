@@ -282,6 +282,9 @@ def test_the_three_empty_capture_messages_are_all_different(monkeypatch):
         with pytest.raises(RuntimeError) as excinfo:
             session.stop_and_transcribe()
         messages.append(str(excinfo.value))
+        # One preparation at a time (da28a28595): the next session's press is
+        # refused until this one's daemon releases admission (TASK-33621.197).
+        assert session._controller._model_preparation.done.wait(3)
 
     assert len(set(messages)) == 3
 
@@ -308,6 +311,9 @@ def test_a_service_reporting_nothing_falls_back_to_the_recognizer_flag(monkeypat
     silent.start()
     with pytest.raises(RuntimeError) as silent_error:
         silent.stop_and_transcribe()
+    # One preparation at a time (da28a28595): the next session's press is
+    # refused until this one's daemon releases admission (TASK-33621.197).
+    assert silent._controller._model_preparation.done.wait(3)
 
     heard = _WarmableDictationService(stop_result=None)
     heard_session = _session(heard)
@@ -429,13 +435,21 @@ async def test_a_slow_first_run_shows_the_preparing_message_not_a_frozen_button(
             chip = composer.query_one("#console-voice-status", Static)
 
             await pilot.click("#console-dictation")
-            painted = await _wait_for_painted(chip, pilot, "speech model")
+            # TASK-33621.191: the chip settles on "Loading speech model…". The
+            # first poll of a quiet load repaints the first-run copy with it
+            # (da28a28595), and the User Guide documents that copy for current
+            # adapters (console/attachments-images-voice.md, "First run"); the
+            # first-run explanation rides in the toast checked below. Waiting
+            # for any "speech model" text read the chip inside that ~50 ms.
+            painted = await _wait_for_painted(
+                chip, pilot, voice_module.WARMUP_MESSAGE
+            )
 
             # The warm-up is provably still blocked...
             assert transcriber.entered.is_set()
             assert service.calls == [], "capture opened before the model was ready"
             # ...and the user is being told why, in text that actually paints.
-            assert painted == f"◐ {voice_module.WARMUP_MESSAGE_FIRST_RUN}"
+            assert painted == f"◐ {voice_module.WARMUP_MESSAGE}"
             # Not cut off mid-sentence: the painted line ends where the string
             # ends, and the chip is one row so there is no second line.
             assert painted.endswith("…")
@@ -488,7 +502,13 @@ async def test_an_unrelated_ui_refresh_cannot_wipe_the_preparing_message(monkeyp
             chip = composer.query_one("#console-voice-status", Static)
 
             await pilot.click("#console-dictation")
-            before = await _wait_for_painted(chip, pilot, "speech model")
+            # TASK-33621.191: snapshot the settled copy, not the first-run copy
+            # the warm-up's own first poll replaces (~50 ms, da28a28595);
+            # otherwise that scheduled repaint, not the refresh, changes it.
+            before = await _wait_for_painted(
+                chip, pilot, voice_module.WARMUP_MESSAGE
+            )
+            assert before == f"◐ {voice_module.WARMUP_MESSAGE}"
 
             await _sync_console_control_bar_now(console)
             await pilot.pause()
@@ -808,6 +828,102 @@ async def test_preparing_mic_paints_cancel_whole_at_both_sizes(monkeypatch, size
             assert "Cancel" in _painted_cells(console, mic), _painted_cells(
                 console, mic
             )
+    finally:
+        gate.set()
+
+
+#: TASK-33621.21 AC#1 (owner decision, 2026-11-20). Pinned literally so a
+#: build without the note fails on the missing note, not on an import.
+_STILL_PREPARING = "Still preparing… or Cancel"
+
+
+@pytest.mark.parametrize("ending", ["cancel", "ready"])
+@pytest.mark.parametrize("size", [(80, 24), (235, 52)], ids=["80x24", "235x52"])
+@pytest.mark.asyncio
+async def test_a_long_preparation_paints_still_preparing_until_it_ends(
+    monkeypatch, size, ending
+):
+    """AC#1: after N quiet minutes the chip says so; Cancel and success clear it.
+
+    Current adapters show no download progress (ADR-284), so nothing bounds a
+    quiet native load. The note is the owner's answer: it tells the user the
+    attempt is still going and how to leave it, without failing anything. It
+    must paint whole beside a whole Cancel at the smallest supported size, and
+    Cancel must behave exactly as it does without the note.
+    """
+    gate = threading.Event()
+    transcriber = _Transcriber(gate=gate)
+    service = _WarmableDictationService(transcriber=transcriber)
+    _patch_availability(monkeypatch)
+    _install_session(monkeypatch, service)
+    controller_type = voice_module.ConsoleVoiceInputController
+    monkeypatch.setattr(
+        controller_type, "WARMUP_PROGRESS_POLL_SECONDS", 0.05, raising=False
+    )
+    monkeypatch.setattr(
+        controller_type, "WARMUP_STILL_PREPARING_SECONDS", 0.3, raising=False
+    )
+    app, host = _ready_host()
+    notify = Mock()
+    app.notify = notify
+
+    def errors():
+        return [
+            call
+            for call in notify.call_args_list
+            if call.kwargs.get("severity") == "error"
+        ]
+
+    try:
+        async with host.run_test(size=size) as pilot:
+            console = await _mounted_console(host, pilot)
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+            chip = composer.query_one("#console-voice-status", Static)
+
+            await pilot.click("#console-dictation")
+            # The whole note, not its prefix: the first frame with the new text
+            # can still be clipped to the old chip width until it re-lays out.
+            painted = await _wait_for_painted(chip, pilot, _STILL_PREPARING)
+            await pilot.pause()
+
+            assert painted == f"◐ {_STILL_PREPARING}", painted
+            assert _STILL_PREPARING in _painted_cells(console, chip)
+            mic = composer.query_one("#console-dictation", Button)
+            assert "Cancel" in _painted_cells(console, mic), _painted_cells(
+                console, mic
+            )
+            # A note, not a failure: still waiting, nothing recorded.
+            assert transcriber.entered.is_set()
+            assert service.calls == []
+            assert console._console_dictation_state == "starting"
+            assert errors() == []
+
+            if ending == "cancel":
+                await pilot.pause(0.5)  # let Button's 0.2 s -active class clear
+                assert await pilot.click("#console-dictation")
+                await _wait_for_mic_label(composer, pilot, "Dictate")
+                assert console._console_dictation_state == "idle"
+                assert _painted(chip) == ""
+                assert any(
+                    "cancel" in str(call.args[0]).lower()
+                    for call in notify.call_args_list
+                )
+                assert any(
+                    "background" in str(call.args[0]).lower()
+                    and "quit" in str(call.args[0]).lower()
+                    for call in notify.call_args_list
+                ), "Cancel lost its retained-preparation disclosure"
+                gate.set()
+                for _ in range(10):
+                    await pilot.pause(0.02)
+                assert console._console_dictation_state == "idle"
+                assert service.calls == []
+            else:
+                gate.set()
+                await _wait_for_mic_label(composer, pilot, "Dictating")
+                assert service.calls == ["start_dictation"]
+                assert "Still preparing" not in _painted(chip)
+            assert errors() == []
     finally:
         gate.set()
 

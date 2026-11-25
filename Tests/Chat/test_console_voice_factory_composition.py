@@ -23,6 +23,7 @@ from tldw_chatbook.Chat.console_voice_trace_promotion import (
 )
 from Tests.Chat.test_console_voice_promotion import _post_dispatch_call
 from Tests.Chat.test_console_voice_capture import _eligible
+from Tests.private_profile import private_profile_test
 
 
 def _factory(monkeypatch, store, owner, gateway):
@@ -54,7 +55,11 @@ def _factory(monkeypatch, store, owner, gateway):
             self.bindings = bindings
 
     monkeypatch.setattr(console_voice_process, "ConsoleVoiceProcess", Endpoint)
-    supervisor = SimpleNamespace(device_lease=object(), retain=lambda _engine: None)
+    # The real supervisor, not a stub (TASK-33621.197): a hand-written
+    # `retain=lambda _engine: None` went stale when a102776f0d made the factory
+    # call `retain(engine, session_id=...)`, and 7 tests here broke with it. It
+    # opens nothing: the endpoint above is a fake and the lease is only held.
+    supervisor = console_voice_process.VoiceProcessSupervisor()
     monkeypatch.setattr(
         console_runtime,
         "ensure_console_runtime",
@@ -256,8 +261,12 @@ async def test_factory_imports_actual_trace_only_after_actual_pair_commit(
 
 
 @pytest.mark.asyncio
+# A real ConsoleChatController reads app config; on the shared bootstrap
+# profile that load is refused (raw_source_selection_changed), so the case runs
+# in a fresh profile like TASK-36381's app-building tests (TASK-33621.197).
+@private_profile_test
 async def test_real_saved_controller_sealed_headers_import_through_winning_claim(
-    tmp_path,
+    tmp_path, request
 ):
     import json
     import httpx
