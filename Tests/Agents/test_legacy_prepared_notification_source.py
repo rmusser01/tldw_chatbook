@@ -59,12 +59,39 @@ def _prepare_subagent_stop(engine, bridge, session_id):
 
 
 def _on_thread(function, *args):
-    box = []
-    thread = threading.Thread(target=lambda: box.append(function(*args)))
+    """Run ``function`` on a fresh thread; return its result or re-raise its error."""
+    box = {}
+
+    def run():
+        try:
+            box["result"] = function(*args)
+        except BaseException as error:  # noqa: BLE001 - re-raised in the caller
+            box["error"] = error
+
+    thread = threading.Thread(target=run, daemon=True)
     thread.start()
-    thread.join(10)
-    assert not thread.is_alive()
-    return box[0]
+    thread.join(30)
+    assert not thread.is_alive(), "the worker thread did not return"
+    if "error" in box:
+        raise box["error"]
+    return box["result"]
+
+
+def _install_other_workspace_database(h, monkeypatch):
+    """Install another workspace database, a real change of a legacy source."""
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Tools import workspace_file_roots
+    from tldw_chatbook.Workspaces.registry_service import (
+        LocalWorkspaceRegistryService,
+    )
+
+    other = WorkspaceDB(h.tmp_path / "other-workspaces.sqlite", client_id="test")
+    monkeypatch.setattr(
+        workspace_file_roots,
+        "_default_registry_instance",
+        LocalWorkspaceRegistryService(other),
+    )
+    return other
 
 
 def _marker_hook(h, event):
@@ -102,22 +129,11 @@ def test_prepared_notification_refuses_a_source_changed_after_capture(
     native_hooks, bridge, monkeypatch
 ):
     """Another workspace database installed before delivery refuses the hook."""
-    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
-    from tldw_chatbook.Tools import workspace_file_roots
-    from tldw_chatbook.Workspaces.registry_service import (
-        LocalWorkspaceRegistryService,
-    )
-
     h = native_hooks
     marker = _marker_hook(h, "Stop")
     custody = _on_thread(_prepare_stop, h.engine, bridge, h.session.id)
     assert custody is not None, "the notification was refused when prepared"
-    other = WorkspaceDB(h.tmp_path / "other-workspaces.sqlite", client_id="test")
-    monkeypatch.setattr(
-        workspace_file_roots,
-        "_default_registry_instance",
-        LocalWorkspaceRegistryService(other),
-    )
+    other = _install_other_workspace_database(h, monkeypatch)
     done = []
     original = h.engine._notification_done
 
@@ -160,3 +176,64 @@ def test_pre_tool_use_under_an_agent_admission_runs_its_hook(native_hooks, bridg
     outcome = _on_thread(fire)
     assert not outcome.blocked, outcome.reason
     assert marker.exists()
+
+
+def test_pre_tool_use_refuses_a_source_changed_while_its_target_waits(
+    native_hooks, bridge, monkeypatch
+):
+    """The capture-to-launch gap of PreToolUse: a target queued in the pool.
+
+    The four blocking workers are held, so the captured and admitted target
+    waits in the queue; another workspace database is installed; on release
+    the target's own check refuses it and no hook process starts.
+    """
+    from tldw_chatbook.Agents.activation import execution
+
+    h = native_hooks
+    marker = _marker_hook(h, "PreToolUse")
+    pool = h.engine._pool
+    started, release = threading.Semaphore(0), threading.Event()
+
+    def blocker():
+        started.release()
+        release.wait(30)
+
+    held = [pool.submit(blocker) for _ in range(pool._max_workers)]
+    raised = []
+    original = h.engine._results_from_futures
+
+    def recorded(futures):
+        for future in futures:
+            future.add_done_callback(lambda done: raised.append(done.exception()))
+        return original(futures)
+
+    monkeypatch.setattr(h.engine, "_results_from_futures", recorded)
+
+    def fire():
+        with execution(bridge):
+            return h.engine.fire(
+                "PreToolUse", session_id=h.session.id, data={"tool_name": "read"}
+            )
+
+    box = {}
+    thread = threading.Thread(target=lambda: box.update(outcome=fire()), daemon=True)
+    other = None
+    try:
+        for _ in held:
+            assert started.acquire(timeout=30), "a blocking worker never started"
+        thread.start()
+        wait_until(lambda: pool._work_queue.qsize() > 0, seconds=30)
+        other = _install_other_workspace_database(h, monkeypatch)
+    finally:
+        release.set()
+        thread.join(30)
+    try:
+        assert not thread.is_alive()
+        assert box["outcome"].blocked
+        assert box["outcome"].reason == "hook raised; failing closed"
+        wait_until(lambda: raised, seconds=30)
+        assert [str(error) for error in raised] == ["native hook source changed"]
+        assert not marker.exists()
+    finally:
+        if other is not None:
+            other.close()

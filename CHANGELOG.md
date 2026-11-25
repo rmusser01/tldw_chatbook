@@ -68,6 +68,14 @@ and this project adheres to Some kind of Versioning
   use the variable, remove the saved key in Settings ▸ Providers & Models and
   name the variable in the Env var field.
 
+### Fixed
+- Legacy `[hooks]` commands work again while the Console agent runtime is on.
+  Every Stop and SubagentStop hook was silently skipped, and a PreToolUse hook
+  matching an agent tool call blocked that call with "hook: hooks engine
+  error; failing closed" instead of running. A hook still does not run when
+  the profile's configuration, workspace database or tool sandbox changes
+  between the event and the hook's launch.
+
 ## [0.2.3] - 2026-10-02
 
 Includes committed development changes since 0.2.2 and retains the evaluation
