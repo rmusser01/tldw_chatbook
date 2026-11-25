@@ -335,6 +335,10 @@ async def test_local_audio_summary_links_persisted_history_and_retries_only_the_
 
     adapter = owner()
     assert (await adapter.speech_choices()) == (choice,)
+    assert await adapter.audio.preview(choice, 1.2) == b"local speech"
+    assert len(calls) == 1 and "voice preview" in calls[0].text and calls[0].speed == 1.2
+    assert not history_path.exists()
+    calls.clear()
 
     class Script:
         async def generate(self, *args, **kwargs):

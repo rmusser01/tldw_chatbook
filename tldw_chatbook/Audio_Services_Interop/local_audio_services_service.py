@@ -12,9 +12,12 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api.audio_schemas import OpenAISpeechRequest
 
 _history_lock = threading.RLock()
 _history_closed = False
@@ -352,6 +355,19 @@ class LocalAudioServicesService:
         if provider is None:
             return voices
         return {provider: voices.get(provider, [])}
+
+    async def preview_audio_speech(self, request_data: OpenAISpeechRequest) -> dict[str, Any]:
+        """Synthesize an exact speech sample without creating a history entry."""
+        self._enforce("audio.speech.launch.local")
+        audio = await self._exact_local_speech(
+            provider=request_data.backend,
+            text=request_data.input,
+            model=request_data.model,
+            voice=request_data.voice,
+            response_format=request_data.response_format,
+            speed=request_data.speed,
+        )
+        return {"content": audio, "content_type": self._tts_content_type(request_data.response_format)}
 
     async def create_audio_speech(self, request_data: Any) -> dict[str, Any]:
         with self._history_write():

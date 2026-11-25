@@ -19,12 +19,15 @@ from tldw_chatbook.tldw_api.exceptions import (
 
 from .studio_generation import NativeSubmissionUnconfirmed, StudioGeneratedOutput, spoken_script
 from .studio_models import STUDIO_SPEECH_FORMATS, StudioSpeechChoice
+from .studio_voice_preview import synthesize_voice_preview
 
 _STOPPED = StudioGeneratedOutput("cancelled")
 _UNCONFIRMED = (
     "Studio could not confirm whether Server Speech queued the audio summary. "
     "Check Server Jobs before starting a new generation."
 )
+
+
 def speech_artifact_path(output_id: int) -> str:
     return f"/api/v1/outputs/{output_id}/download"
 
@@ -141,6 +144,11 @@ class ServerStudioAudio:
             ),
             None,
         )
+
+    async def preview(self, choice: StudioSpeechChoice, speed: float) -> bytes:
+        if choice not in await self.choices():
+            raise ValueError("The selected Server voice or speech model is unavailable")
+        return await synthesize_voice_preview(self.scope, "server", choice, speed)
 
     async def prepare(self, request, generated, cancel_event) -> StudioGeneratedOutput:
         selection = request.generation.speech

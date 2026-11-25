@@ -292,6 +292,7 @@ async def test_native_slides_save_one_version_and_do_not_repeat_an_unconfirmed_l
             super().__init__()
             self.launches = []
             self.drop = True
+            self.drop_unlink = False
             self.native = PresentationResponse(
                 id=native_id, title="Native Slides", source_type="media", source_ref="42",
                 deleted=False, version=1, client_id="1", created_at=datetime.now(timezone.utc),
@@ -301,7 +302,22 @@ async def test_native_slides_save_one_version_and_do_not_repeat_an_unconfirmed_l
 
         async def get_presentation(self, owner_id):
             assert owner_id == native_id
+            if self.native.deleted:
+                raise APIResponseError(404, "Not Found")
             return self.native
+
+        async def delete_presentation(self, owner_id, *, if_match):
+            assert (owner_id, if_match) == (native_id, 'W/"v1"')
+            self.writes.append(("delete_native", owner_id))
+            self.native = self.native.model_copy(update={"deleted": True, "version": 2})
+            return self.native
+
+        async def update_workspace_artifact(self, workspace_id, artifact_id, payload):
+            assert self.native.deleted
+            assert payload.status == "unlinked" and payload.version == 1
+            if self.drop_unlink:
+                raise APIResponseError(503, "Please retry")
+            return await super().update_workspace_artifact(workspace_id, artifact_id, payload)
 
         async def generate_presentation_from_media(self, payload):
             self.launches.append(payload)
@@ -323,7 +339,7 @@ async def test_native_slides_save_one_version_and_do_not_repeat_an_unconfirmed_l
 
         async def _request(self, method, path, *, json_data=None, params=None, headers=None):
             if path.endswith("/research-data-tables"):
-                raise APIResponseError(404, "Not Found")
+                raise APIResponseError(503, "Unavailable")
             if path.endswith("/slides/capabilities"):
                 return {"schema_version": 1, "generation_modes": {
                     "structured_slides": {"enabled": True, "transport": "existing_source_endpoints"},
@@ -334,6 +350,7 @@ async def test_native_slides_save_one_version_and_do_not_repeat_an_unconfirmed_l
     owner = ServerStudioAdapter(lambda ref: server)
     caps = await owner.native_capabilities(SERVER, route, (source,), "r1")
     assert caps["generate_presentation_from_media"].available
+    assert not caps["generate_data_table"].available
     req = replace(
         server_request(), output_kind="slides", source_snapshot=(source,), processing_route=route,
         generation=ResearchGenerationConfig(slides_visual_style=("style-a", "builtin")),
@@ -352,3 +369,19 @@ async def test_native_slides_save_one_version_and_do_not_repeat_an_unconfirmed_l
     assert (server.launches[-1].media_id, server.launches[-1].visual_style_id) == (42, "style-a")
     assert (await owner.resolve_output(registered))["slides"]
     assert not next(iter(server.saved.values()))["content"]
+    with pytest.raises(ValueError, match="version changed"):
+        await owner.delete_output(replace(registered, owner_version=2))
+    with pytest.raises(ValueError, match="still available"):
+        await owner.unlink_output(registered)
+    artifact_id = next(iter(server.saved))
+    server.drop_unlink = True
+    with pytest.raises(ValueError, match="deleted.*Remove missing link"):
+        await owner.delete_output(registered)
+    assert (await owner.list_outputs(SERVER)).items == (registered,)
+    assert await owner.resolve_output(registered) is None
+    server.drop_unlink = False
+    reopened = ServerStudioAdapter(lambda ref: server)
+    await reopened.unlink_output(registered)
+    assert server.writes[-2:] == [("delete_native", native_id), ("update", artifact_id, 1)]
+    assert server.saved[artifact_id]["status"] == "unlinked"
+    assert not (await reopened.list_outputs(SERVER)).items

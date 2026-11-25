@@ -10,6 +10,7 @@ from tldw_chatbook.tldw_api.audio_schemas import OpenAISpeechRequest
 
 from .studio_generation import StudioGeneratedOutput, spoken_script
 from .studio_models import STUDIO_SPEECH_FORMATS, StudioSpeechChoice
+from .studio_voice_preview import synthesize_voice_preview
 
 
 class LocalStudioAudio:
@@ -81,6 +82,11 @@ class LocalStudioAudio:
         if row.get("id") != number or row.get("size_bytes", 0) < 1:
             return None
         return {**row, "version": 1, "format": row["response_format"]}
+
+    async def preview(self, choice: StudioSpeechChoice, speed: float) -> bytes:
+        if choice not in await self.choices():
+            raise ValueError("The selected on-device voice or model is unavailable")
+        return await synthesize_voice_preview(self.scope, "local", choice, speed)
 
     async def prepare(self, request, generated, cancel_event) -> StudioGeneratedOutput:
         choice = request.generation.speech

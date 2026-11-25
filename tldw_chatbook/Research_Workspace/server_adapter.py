@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import uuid4
 
 from tldw_chatbook.Media.media_reading_scope_service import MediaReadingBackend
@@ -62,6 +62,9 @@ from .quick_notes import (
     encode_note_keywords,
     split_note_keywords,
 )
+
+if TYPE_CHECKING:
+    from .studio_models import StudioSpeechChoice
 
 
 _AUDITED_SERVICE_METHODS = {
@@ -505,6 +508,14 @@ class ServerResearchWorkspaceAdapter:
         context = self._context_for_ref(ref)
         return await self._server_call(self._require_studio(ref).owner.speech_choices(ref), context=context)
 
+    async def preview_studio_voice(
+        self, ref: QualifiedWorkspaceRef, choice: StudioSpeechChoice, speed: float,
+    ) -> bytes:
+        context = self._context_for_ref(ref)
+        return await self._server_call(
+            self._require_studio(ref).owner.preview_voice(ref, choice, speed), context=context,
+        )
+
     async def _studio_approvals(self, ref: QualifiedWorkspaceRef) -> tuple[str, ...]:
         self._context_for_ref(ref)
         return ()
@@ -580,6 +591,22 @@ class ServerResearchWorkspaceAdapter:
         require_capability(self._capabilities_for_context(context), "update")
         await self._server_call(
             self._require_studio(output_ref.workspace).owner.accept_output(output_ref),
+            context=context,
+        )
+
+    async def delete_output(self, output_ref) -> None:
+        context = self._context_for_ref(output_ref.workspace)
+        require_capability(self._capabilities_for_context(context), "update")
+        await self._server_call(
+            self._require_studio(output_ref.workspace).owner.delete_output(output_ref),
+            context=context,
+        )
+
+    async def unlink_output(self, output_ref) -> None:
+        context = self._context_for_ref(output_ref.workspace)
+        require_capability(self._capabilities_for_context(context), "update")
+        await self._server_call(
+            self._require_studio(output_ref.workspace).owner.unlink_output(output_ref),
             context=context,
         )
 

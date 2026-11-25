@@ -1,5 +1,10 @@
 """Configure an output and expose actions for its exact owner."""
 
+import asyncio
+import tempfile
+from collections.abc import Awaitable, Callable
+from pathlib import Path
+
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -32,6 +37,27 @@ from .studio_history import StudioHistoryRow
 from .studio_output_card import output_label
 
 
+async def play_voice_preview(content: bytes, audio_format: str) -> None:
+    from ...TTS.audio_player import PlaybackState, get_audio_player
+
+    player = get_audio_player()
+    with tempfile.TemporaryDirectory(prefix="research-voice-") as directory:
+        path = Path(directory) / f"sample.{audio_format}"
+        path.write_bytes(content)
+        started = asyncio.create_task(asyncio.to_thread(player.play, path))
+        try:
+            if not await asyncio.shield(started):
+                raise ValueError("No audio player could play this voice sample.")
+            if player.get_state() is PlaybackState.HANDED_OFF:
+                await asyncio.sleep(8)
+            while player.get_current_file() == path and player.is_playing():
+                await asyncio.sleep(0.15)  # noqa: ASYNC110 -- The player exposes a status reader.
+        finally:
+            await asyncio.gather(started, return_exceptions=True)
+            if player.get_current_file() == path and player.is_playing():
+                await asyncio.to_thread(player.stop)
+
+
 class ResearchStudioOptions(
     SafeModalDismissMixin, ModalScreen[ResearchGenerationConfig | None]
 ):
@@ -48,6 +74,7 @@ class ResearchStudioOptions(
         action: str = "Generate",
         slide_styles: tuple[tuple[str, tuple[str, str]], ...] = (),
         speech_choices: tuple[StudioSpeechChoice, ...] = (),
+        speech_preview: Callable[[StudioSpeechChoice, float], Awaitable[bytes]] | None = None,
     ) -> None:
         super().__init__()
         self.kind = kind
@@ -57,6 +84,8 @@ class ResearchStudioOptions(
         self.action_label = action
         self.slide_styles = slide_styles
         self.speech_choices = speech_choices
+        self.speech_preview = speech_preview
+        self._previewing_voice = False
 
     @property
     def is_study(self) -> bool:
@@ -101,6 +130,8 @@ class ResearchStudioOptions(
                     "1.0", type="number", id="research-studio-speech-speed",
                     disabled=not self.speech_choices[0].supports_speed,
                 )
+                if self.speech_preview is not None:
+                    yield Button("Preview voice", id="research-studio-voice-preview", compact=True)
             else:
                 yield Static("Retrieval focus (optional for FTS)")
                 yield Input(id="research-studio-focus")
@@ -164,6 +195,36 @@ class ResearchStudioOptions(
             speed.disabled = not self.speech_choices[event.value].supports_speed
             if speed.disabled:
                 speed.value = "1.0"
+
+    @on(Button.Pressed, "#research-studio-voice-preview")
+    def preview_voice(self) -> None:
+        selection = self.query_one("#research-studio-speech", Select).value
+        if type(selection) is int and self.speech_preview is not None and not self._previewing_voice:
+            self._previewing_voice = True
+            self.run_worker(
+                self._preview_voice(self.speech_choices[selection], self._input("speech-speed")),
+                group="research-voice-preview", exclusive=True, exit_on_error=False,
+            )
+
+    async def _preview_voice(self, choice: StudioSpeechChoice, speed: str) -> None:
+        preview = self.speech_preview
+        if preview is None:
+            self._previewing_voice = False
+            return
+        status = self.query_one("#research-studio-options-status", Static)
+        status.update("Preparing voice preview…")
+        try:
+            async with asyncio.timeout(45):
+                sample = await preview(choice, float(speed))
+                status.update("Playing voice preview…")
+                await play_voice_preview(sample, choice.format)
+            status.update("Voice preview finished.")
+        except ValueError as exc:
+            status.update(str(exc))
+        except Exception:
+            status.update("The voice preview could not play. Check the selected Speech owner and retry.")
+        finally:
+            self._previewing_voice = False
 
     @on(Button.Pressed, "#research-studio-generate")
     def submit(self) -> None:

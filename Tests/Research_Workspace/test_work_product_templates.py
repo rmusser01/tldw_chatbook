@@ -71,13 +71,16 @@ async def test_text_work_products_keep_their_identity_in_chatbooks(
     assert all(label in instruction for label in sections)
 
 
-async def test_server_report_artifact_preserves_work_product_identity():
+@pytest.mark.parametrize("kind,sections", PRODUCTS)
+async def test_server_report_artifact_preserves_work_product_identity(kind, sections):
     server = _ArtifactServer()
     owner = ServerStudioAdapter(lambda _: server)
-    operation = server_request(output_kind="executive_brief")
-    fixture = _fixture(PRODUCTS[0][1])
+    operation = server_request()
+    second = replace(SECOND, ref=operation.workspace)
+    operation = replace(operation, output_kind=kind, source_snapshot=(*operation.source_snapshot, second))
+    fixture = _fixture(sections)
     fixture.sources = operation.source_snapshot
-    fixture.evidence = (StudioEvidence(fixture.sources[0], "Log", "Observation"),)
+    fixture.evidence = tuple(StudioEvidence(source, "Log", "Observation") for source in fixture.sources)
 
     async def scoped(ref):
         assert ref == operation.workspace
@@ -93,12 +96,12 @@ async def test_server_report_artifact_preserves_work_product_identity():
     saved = await ResearchStudioService(generator, owner).generate(
         operation, lambda _: None, asyncio.Event()
     )
-    artifact = await owner.resolve_output(saved)
+    reopened = ServerStudioAdapter(lambda _: server)
+    assert (await reopened.list_outputs(operation.workspace)).items == (saved,)
+    artifact = await reopened.resolve_output(saved)
     assert artifact["artifact_type"] == "report"
-    assert (
-        artifact["producer_metadata"]["research_generation"]["output_kind"]
-        == "executive_brief"
-    )
+    assert artifact["producer_metadata"]["research_generation"]["output_kind"] == kind
+    assert artifact["content"] == fixture.answer
 
 
 async def test_work_product_rejects_missing_sections_and_unknown_citations():

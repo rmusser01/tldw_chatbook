@@ -58,7 +58,7 @@ if TYPE_CHECKING:
     from .chat_models import ResearchChatSessionRequest, ResearchChatTurnRequest
     from .local_chat import LocalResearchChat
     from .local_studio import LocalStudioAdapter
-    from .studio_models import ResearchStudioRequest, WorkspaceOutputRef
+    from .studio_models import ResearchStudioRequest, StudioSpeechChoice, WorkspaceOutputRef
 
 
 _LOCAL_AVAILABLE = ResearchCapability(
@@ -317,6 +317,11 @@ class LocalResearchWorkspaceAdapter:
 
     async def studio_speech_choices(self, ref):
         return await self._require_studio(ref).owner.speech_choices()
+
+    async def preview_studio_voice(
+        self, ref: QualifiedWorkspaceRef, choice: StudioSpeechChoice, speed: float,
+    ) -> bytes:
+        return await self._require_studio(ref).owner.audio.preview(choice, speed)
 
     async def native_studio_capabilities(self, ref, route, sources):
         ready = bool(route and sources and await self.studio_speech_choices(ref))

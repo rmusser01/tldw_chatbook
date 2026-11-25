@@ -83,6 +83,43 @@ async def test_editing_processing_route_invalidates_previous_availability(
             await _until(pilot, lambda: summary.disabled, "old route disabled")
 
 
+async def test_audio_options_preview_the_selected_voice_without_generating(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Research_Workspace.studio_models import StudioSpeechChoice
+    from tldw_chatbook.UI.Research_Workspace_Modules import studio_dialogs
+
+    first = StudioSpeechChoice("audio_cpp", "reader", "voice-a", "wav", True)
+    second = StudioSpeechChoice("audio_cpp", "reader", "voice-b", "wav", True)
+    calls = []
+
+    async def preview(choice, speed):
+        calls.append((choice, speed))
+        return b"audio sample"
+
+    async def play(data, format):
+        calls.append((data, format))
+
+    monkeypatch.setattr(studio_dialogs, "play_voice_preview", play, raising=False)
+    app, _, _ = build_research_app(tmp_path, monkeypatch)
+    with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
+        async with app.run_test(size=(60, 20)) as pilot:
+            await open_chat(app, pilot)
+            modal = studio_dialogs.ResearchStudioOptions(
+                studio_dialogs.ResearchOutputKind.AUDIO_SUMMARY, "Local TTS history",
+                "On device", 2, speech_choices=(first, second), speech_preview=preview,
+            )
+            await app.push_screen(modal)
+            modal.query_one("#research-studio-speech", Select).value = 1
+            modal.query_one("#research-studio-speech-speed", Input).value = "1.2"
+            button = modal.query_one("#research-studio-voice-preview", Button)
+            button.focus()
+            await pilot.press("enter")
+            await _until(pilot, lambda: len(calls) == 2, "selected voice preview")
+            assert calls == [(second, 1.2), (b"audio sample", "wav")]
+            assert app.screen is modal and app.focused is button
+
+
 async def test_more_outputs_dispatches_work_product_to_canonical_artifact(
     tmp_path, monkeypatch
 ):

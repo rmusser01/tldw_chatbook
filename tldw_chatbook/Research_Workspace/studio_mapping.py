@@ -167,12 +167,12 @@ STUDIO_OUTPUT_MAPPINGS: Mapping[
         **PRIMARY_OUTPUT_MAPPINGS,
         (WorkspaceDataSource.SERVER, ResearchOutputKind.SLIDES): StudioOwnerMapping(
             StudioOwnerKind.SERVER_SLIDES, "Server Slides", "id", "version", "workspace_id",
-            "generate_presentation_from_media", None, None,
+            "generate_presentation_from_media", None, "update_workspace_artifact",
             "research_workspace", "research_workspace_artifact_target", artifact_type="slides",
         ),
         (WorkspaceDataSource.SERVER, ResearchOutputKind.AUDIO_SUMMARY): StudioOwnerMapping(
             StudioOwnerKind.SERVER_AUDIO, "Server Speech outputs", "output_id", "version", "workspace_id",
-            "create_audio_speech_job", None, None,
+            "create_audio_speech_job", None, "update_workspace_artifact",
             "research_workspace", "research_workspace_artifact_target", artifact_type="audio_overview",
         ),
         (WorkspaceDataSource.LOCAL, ResearchOutputKind.AUDIO_SUMMARY): StudioOwnerMapping(

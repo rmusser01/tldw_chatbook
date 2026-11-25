@@ -14,7 +14,7 @@ from tldw_chatbook.Notes.server_notes_workspace_service import (
 from tldw_chatbook.Audio_Services_Interop.audio_services_scope_service import AudioServicesScopeService
 from tldw_chatbook.Audio_Services_Interop.server_audio_services_service import ServerAudioServicesService
 from tldw_chatbook.Workspaces.output_membership import output_membership_metadata
-from tldw_chatbook.tldw_api.exceptions import APIResponseError
+from tldw_chatbook.tldw_api.exceptions import APIConnectionError, APIResponseError
 from tldw_chatbook.tldw_api.workspace_data_tables_client import WorkspaceDataTablesClient, canonical_table_uuid
 from tldw_chatbook.tldw_api.workspace_artifact_exports import (
     export_accepted_workspace_markdown,
@@ -49,6 +49,7 @@ from .studio_models import (
     ResearchOutputKind,
     ResearchStudioRequest,
     StudioOwnerKind,
+    StudioSpeechChoice,
     WorkspaceOutputRef,
     studio_output_kind,
     validate_output_page,
@@ -243,6 +244,14 @@ class ServerStudioAdapter:
         self._check_connection(ref, client)
         return choices
 
+    async def preview_voice(
+        self, ref: QualifiedWorkspaceRef, choice: StudioSpeechChoice, speed: float,
+    ) -> bytes:
+        client, _ = self._connection(ref)
+        sample = await self._audio(client).preview(choice, speed)
+        self._check_connection(ref, client)
+        return sample
+
     async def prepare_output(self, request, generated, *, cancel_event):
         if request.output_kind is not ResearchOutputKind.AUDIO_SUMMARY:
             return None
@@ -279,6 +288,8 @@ class ServerStudioAdapter:
     def _metadata(row):
         producer = row.get("producer_metadata")
         if not isinstance(producer, Mapping) or "research_generation" not in producer:
+            return None
+        if row.get("status") == "unlinked" and "research_native_owner" in producer:
             return None
         return output_membership_metadata(
             {"research_generation": producer["research_generation"]}, "output"
@@ -494,6 +505,76 @@ class ServerStudioAdapter:
 
     async def accept_output(self, output: WorkspaceOutputRef) -> None:
         await self._update_selected(output, review_state="accepted")
+
+    async def delete_output(self, output: WorkspaceOutputRef) -> None:
+        mapping = STUDIO_OUTPUT_MAPPINGS[output.workspace.data_source, output.output_kind]
+        if output.owner_kind not in SERVER_NATIVE_OWNERS or not mapping.delete_capability:
+            raise ValueError(f"Manage deletion in {mapping.owner_label}.")
+        if self.policy_enforcer is not None:
+            self.policy_enforcer.require_allowed(action_id="notes.workspace.update.server")
+        ref = output.workspace
+        client, service = self._connection(ref)
+        async with self._mutations:
+            link = await self._native_link_for_change(output, client, service)
+            version = output.owner_version
+            if not version or not await self._native_detail(output, client):
+                raise ValueError("The native output version changed. Reopen Studio history.")
+            try:
+                if output.owner_kind is StudioOwnerKind.SERVER_SLIDES:
+                    deleted = await client.delete_presentation(
+                        output.owner_id, if_match=f'W/"v{version}"',
+                    )
+                    if deleted.id != output.owner_id or not deleted.deleted or deleted.version != version + 1:
+                        raise ValueError("Server Slides could not confirm deletion.")
+                else:
+                    _, output_id = native_speech_ids(output.owner_id)
+                    deleted = await client.delete_output(output_id)
+                    if not deleted.success:
+                        raise ValueError("Server Speech could not confirm deletion.")
+            except APIResponseError as exc:
+                if exc.status_code in {404, 409, 412}:
+                    raise ValueError("The native output version changed. Reopen Studio history.") from exc
+                raise
+            try:
+                await self._remove_native_link(output, link, client, service)
+            except (APIConnectionError, APIResponseError, ValueError) as exc:
+                raise ValueError(
+                    "The native output was deleted. Reopen Studio history and choose Remove missing link."
+                ) from exc
+
+    async def unlink_output(self, output: WorkspaceOutputRef) -> None:
+        if output.owner_kind not in SERVER_NATIVE_OWNERS:
+            raise ValueError("Choose a native Server output link.")
+        client, service = self._connection(output.workspace)
+        async with self._mutations:
+            link = await self._native_link_for_change(output, client, service)
+            if await self._native_detail(output, client):
+                raise ValueError("The native output is still available.")
+            await self._remove_native_link(output, link, client, service)
+
+    async def _native_link_for_change(self, output, client, service):
+        mapping = STUDIO_OUTPUT_MAPPINGS[output.workspace.data_source, output.output_kind]
+        rows = await self._records(output.workspace, client, service)
+        link = self._matching_native_link(output, rows, mapping.artifact_type)
+        if link is None:
+            raise ValueError("The Workspace output version changed. Reopen Studio history.")
+        return link
+
+    async def _remove_native_link(self, output, link, client, service):
+        # The artifact owner supports version checks on updates. Keep the
+        # reference as an inactive audit row so other revisions stay intact.
+        artifact_id = validate_chat_id(link["id"], "artifact ID")
+        ref = output.workspace
+        saved = await service.save_workspace_artifact(
+            workspace_id=ref.workspace_id, artifact_id=artifact_id,
+            version=link["version"], status="unlinked",
+        )
+        self._check_connection(ref, client)
+        if (
+            saved.get("id") != artifact_id or saved.get("workspace_id") != ref.workspace_id
+            or saved.get("version") != link["version"] + 1 or saved.get("status") != "unlinked"
+        ):
+            raise ValueError("The Server did not confirm removal of the Workspace link.")
 
     async def _update_selected(self, output: WorkspaceOutputRef, **fields) -> None:
         ref = output.workspace
@@ -747,6 +828,8 @@ class ServerStudioAdapter:
             )
 
         def validated(row):
+            if row.get("status") == "unlinked":
+                raise ValueError("The Studio link was removed. Start a new generation.")
             if (
                 row.get("id") != artifact_id or row.get("workspace_id") != ref.workspace_id
                 or row.get("producer_metadata") != producer or row.get("content")

@@ -69,7 +69,7 @@ class WorkspaceDataTablesClient:
                 headers=self.headers,
             )
         except APIResponseError as exc:
-            if exc.status_code in {403, 404, 405, 422, 501}:
+            if exc.status_code in {403, 404, 405, 422, 429, 501, 503}:
                 return None
             raise
         if (

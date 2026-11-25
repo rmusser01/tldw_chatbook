@@ -501,6 +501,16 @@ class AudioServicesScopeService:
         )
         return self._with_record_id(normalized_mode, "audio", result, "speech")
 
+    async def preview_audio_speech(self, *, mode: AudioServicesBackend | str, request_data: Any) -> dict[str, Any]:
+        """Return the selected authority's synchronous speech sample."""
+        backend = self._normalize_mode(mode)
+        _, result = await self._call(
+            mode=backend, action_id="audio.speech.launch.local",
+            method_name="preview_audio_speech" if backend is AudioServicesBackend.LOCAL else "create_audio_speech",
+            kwargs={"request_data": request_data},
+        )
+        return result
+
     async def list_audio_speech_job_artifacts(
         self,
         *,

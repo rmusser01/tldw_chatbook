@@ -18,12 +18,13 @@ from ...Research_Workspace.action_registry import (
     ResearchActionProbes,
     project_research_actions,
 )
-from ...Research_Workspace.contracts import CapabilityUnavailableError
+from ...Research_Workspace.contracts import CapabilityUnavailableError, WorkspaceDataSource
 from ...Research_Workspace.egress_consent import ResearchEgressConsentService
 from ...Research_Workspace.layout_state import ResearchPanePreferences
 from ...Research_Workspace.overlay_store import OverlayConflictError
 from ...Research_Workspace.studio_generation import NativeSubmissionUnconfirmed
 from ...Research_Workspace.studio_mapping import (
+    SERVER_NATIVE_OWNERS,
     STUDIO_OUTPUT_MAPPINGS,
     project_studio_availability,
 )
@@ -262,6 +263,9 @@ class ResearchStudioRegion(VerticalScroll):
         revision = self._refresh_revision
         if port is None or not hasattr(port, "capture_chat_sources"):
             return
+        route_label = self.query_one("#research-studio-route", Static)
+        history = self.history
+        history_detail = history.query_one("#research-studio-history-detail", Static)
         capabilities = {}
         sources, route = None, None
         try:
@@ -312,9 +316,7 @@ class ResearchStudioRegion(VerticalScroll):
         self._action_probes = ResearchActionProbes(context, capabilities)
         self._probe_capture = capture
         self._probed_fields = fields
-        self.query_one("#research-studio-route", Static).update(
-            self._route_label(route)
-        )
+        route_label.update(self._route_label(route))
         self._sync_controls()
         if not hasattr(port, "list_outputs"):
             return
@@ -343,7 +345,7 @@ class ResearchStudioRegion(VerticalScroll):
                 )
                 rows.append(StudioHistoryRow(output, record, changed))
             if self._current(capture) and self._refresh_revision == revision:
-                self.history.sync_page(
+                history.sync_page(
                     rows,
                     preferred=preferred,
                     offset=self._offset,
@@ -354,10 +356,8 @@ class ResearchStudioRegion(VerticalScroll):
                 logger.debug(
                     "Research Studio history failed (error_type={})", type(exc).__name__
                 )
-                self.history.sync_page(())
-                self.history.query_one(
-                    "#research-studio-history-detail", Static
-                ).update(
+                history.sync_page(())
+                history_detail.update(
                     "Output history is unavailable. Check the selected owner and retry."
                 )
 
@@ -481,6 +481,16 @@ class ResearchStudioRegion(VerticalScroll):
                 raise ValueError("The selected authority has no available speech voice. Refresh its provider catalog.")
             if not self._current(capture):
                 return
+            preview_owner = getattr(port, "preview_studio_voice", None) if speech_choices else None
+
+            async def preview_voice(choice, speed):
+                if not self._current(capture):
+                    raise ValueError("The workspace changed. Reopen Audio Summary options.")
+                sample = await preview_owner(capture.ref, choice, speed)
+                if not self._current(capture):
+                    raise ValueError("The workspace changed. Reopen Audio Summary options.")
+                return sample
+
             options = await self.app.push_screen_wait(
                 ResearchStudioOptions(
                     kind,
@@ -490,6 +500,7 @@ class ResearchStudioRegion(VerticalScroll):
                     action=action,
                     slide_styles=styles,
                     speech_choices=speech_choices,
+                    speech_preview=preview_voice if callable(preview_owner) else None,
                 )
             )
             if (
@@ -725,6 +736,7 @@ class ResearchStudioRegion(VerticalScroll):
         output = row.output
         if capture.ref != output.workspace:
             return
+        notes = self.query_one(ResearchQuickNotesSection)
         owner = STUDIO_OUTPUT_MAPPINGS[output.workspace.data_source, output.output_kind]
         try:
             record = await self._port(output.workspace).resolve_output(output)
@@ -748,7 +760,6 @@ class ResearchStudioRegion(VerticalScroll):
                     StudioOwnerKind.SERVER_ARTIFACT,
                 }:
                     actions["deep-research"] = "Launch Deep Research"
-                notes = self.query_one(ResearchQuickNotesSection)
                 if notes.can_save_note:
                     actions["note"] = "Save to a new Quick Note"
                 if notes.can_append_note:
@@ -759,7 +770,8 @@ class ResearchStudioRegion(VerticalScroll):
                 actions["new-version"] = "Regenerate as new version"
                 if replace_capability and replace_capability.available:
                     actions["replace"] = "Regenerate and replace"
-            if owner.delete_capability and hasattr(
+            delete_capability = self._capabilities.get(owner.delete_capability)
+            if delete_capability and delete_capability.available and hasattr(
                 self._port(output.workspace), "delete_output"
             ):
                 actions["delete"] = "Delete output"
@@ -790,11 +802,15 @@ class ResearchStudioRegion(VerticalScroll):
             limits = (
                 "Undo requires a restorable version from the owner."
                 if "delete" in actions
-                else "Deletion requires version checks from the owner."
+                else f"Manage deletion in {owner.owner_label}."
             )
         else:
-            limits = "Missing canonical item"
-            if hasattr(self._port(output.workspace), "unlink_output"):
+            limits = "The saved owner version is unavailable."
+            update = self._capabilities.get("update_workspace_artifact")
+            can_unlink = output.workspace.data_source is WorkspaceDataSource.LOCAL or (
+                output.owner_kind in SERVER_NATIVE_OWNERS and update and update.available
+            )
+            if can_unlink and hasattr(self._port(output.workspace), "unlink_output"):
                 actions["unlink"] = "Remove missing link"
         action = await self.app.push_screen_wait(
             ResearchStudioActions(row, actions, limits, owner.owner_label)

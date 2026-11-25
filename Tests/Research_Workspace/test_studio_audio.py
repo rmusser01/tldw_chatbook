@@ -7,21 +7,25 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_server_audio_retries_a_known_job_and_reads_one_owned_native_artifact():
-    from Tests.Research_Workspace.test_server_studio import SERVER, server_request
     from dataclasses import replace
+    from Tests.Research_Workspace.test_server_studio import _ArtifactServer, SERVER, server_request
+    from tldw_chatbook.Research_Workspace.server_studio import ServerStudioAdapter
     from tldw_chatbook.Research_Workspace.server_studio_audio import ServerStudioAudio
     from tldw_chatbook.Research_Workspace.studio_generation import StudioGeneratedOutput
     from tldw_chatbook.Research_Workspace.studio_models import (
         ResearchGenerationConfig,
         StudioSpeechChoice,
     )
+    from tldw_chatbook.tldw_api.outputs_schemas import OutputDeleteResponse
 
     selected = StudioSpeechChoice("gateway:speaker", "reader", "voice-a", "mp3", True)
 
-    class Speech:
+    class Speech(_ArtifactServer):
         def __init__(self):
+            super().__init__()
             self.submissions = []
             self.polls = 0
+            self.deleted = False
 
         async def get_tts_health(self, **kwargs):
             return {"status": "healthy"}
@@ -48,7 +52,7 @@ async def test_server_audio_retries_a_known_job_and_reads_one_owned_native_artif
             return {
                 "job_id": job_id,
                 "artifacts": []
-                if job_id == 0
+                if job_id == 0 or self.deleted
                 else [
                     {
                         "type": "tts_audio",
@@ -79,6 +83,15 @@ async def test_server_audio_retries_a_known_job_and_reads_one_owned_native_artif
                 "uuid": "uuid",
             }
 
+        async def delete_output(self, output_id):
+            assert output_id == 51
+            self.deleted = True
+            return OutputDeleteResponse(success=True)
+
+        async def update_workspace_artifact(self, workspace_id, artifact_id, payload):
+            assert self.deleted and payload.status == "unlinked"
+            return await super().update_workspace_artifact(workspace_id, artifact_id, payload)
+
     speech = Speech()
     owner = ServerStudioAudio(speech)
     assert selected in await owner.choices()
@@ -103,3 +116,8 @@ async def test_server_audio_retries_a_known_job_and_reads_one_owned_native_artif
     assert submission.allow_fallback is False
     assert "[S1]" not in submission.input
     assert (await owner.detail(SERVER, "17:51"))["output_id"] == 51
+    studio = ServerStudioAdapter(lambda ref: speech)
+    studio._audio = lambda client: owner
+    output = await studio.save(request, result)
+    await studio.delete_output(output)
+    assert speech.deleted and not (await studio.list_outputs(SERVER)).items
