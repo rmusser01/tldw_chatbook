@@ -991,9 +991,6 @@ DREAMS_ADMISSION_TARGETS = (
     "Tests/Subscriptions/test_local_watchlists_service.py",
     "Tests/Watchlists/test_watchlists_bulk_source_authoring.py",
     "Tests/UI/test_settings_dreams_guardian_native_lifecycle.py",
-    # TASK-42525 (round 26): moved here from dreams-tracking's riders, whose
-    # job neared its 20-min cap. bootstrap_profile, like every file here.
-    "Tests/Chat/test_console_failed_call_retry_ownership.py",
 )
 
 #: The admission-sensitive invocation, exactly, in order (review of #3106,

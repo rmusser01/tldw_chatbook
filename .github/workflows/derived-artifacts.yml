@@ -1284,6 +1284,14 @@ jobs:
       # TASK-42533 (round 26, 2026-11-24): this profile ran 27-34 of its 35
       # min; its tail from the project-instruction traces file on runs in the
       # admission-sensitive 2 profile below, where the notes for it moved.
+      # TASK-42525 (round 26, 2026-11-25; the coordinator's lane decision):
+      # the failed-call retry rule file, last, bootstrap_profile like every
+      # file here. dreams-boundary (15.5-25.2 of its 35 min over successful
+      # runs 2026-11-24..25) projected to 30.1-32.2 with it. In TASK-42533's
+      # completed logs this profile's pytest time was median 846 / max 880 s,
+      # 866-972 s in the capped runs, and setup with collection 85-127 s: up to
+      # about 18 min. The file adds 4.9-7.0 min CI-scaled (about 4.7 min
+      # serially with these flags at load 6.5-7.6), so about 23-25 of 35.
       - name: Run the admission-sensitive Console P0 regression tests
         if: ${{ !cancelled() && matrix.profile == 'admission-sensitive' }}
         run: |
@@ -1331,6 +1339,7 @@ jobs:
             Tests/UI/test_response_rules_modal.py::test_manager_superseded_reload_cannot_replace_current_scope_rows \
             Tests/UI/test_response_rules_modal.py::test_manager_reload_preserves_edits_made_while_db_is_pending \
             Tests/Chat/test_response_rules_builder.py::test_new_learning_timestamps_are_canonical_and_old_offsets_still_parse \
+            Tests/Chat/test_console_failed_call_retry_ownership.py \
             --timeout=300 \
             --tb=short
 
@@ -1502,17 +1511,6 @@ jobs:
             --tb=short
 
       # PR2921: bounded privacy, native recovery and actual dispatch contracts.
-      # TASK-42525 (round 26, 2026-11-25; the coordinator's budget decision):
-      # the failed-call retry rule file moved here from dreams-tracking's
-      # riders, whose job took 11.1-19.6 of its 20 min (riders step 10-18.6).
-      # It is bootstrap_profile, like every file in this step. Measured over
-      # successful runs on 2026-11-24..25, before the move: this job took
-      # 15.5-25.2 of its 35 min, and this step 2.1-3.0 min. Serially with
-      # this step's flags on a dev machine, the whole step (6 targets, 307
-      # tests) took 400.1 s at load 6.5-7.6, about 4.7 min of it the file's;
-      # the other five targets take about 2.0 min there against 2.1-3.0 in
-      # CI, so the file should add 4.9-7.0 min. Projected job maximum:
-      # 30.1-32.2 of 35 min, 3-5 min to spare. Re-measure before adding here.
       - name: Run Dreams admission-sensitive contracts
         if: ${{ !cancelled() }}
         run: |
@@ -1522,7 +1520,6 @@ jobs:
             Tests/Subscriptions/test_local_watchlists_service.py \
             Tests/Watchlists/test_watchlists_bulk_source_authoring.py \
             Tests/UI/test_settings_dreams_guardian_native_lifecycle.py \
-            Tests/Chat/test_console_failed_call_retry_ownership.py \
             --timeout=300 \
             --tb=short
 
@@ -1660,7 +1657,7 @@ jobs:
     # on that ratio the job projects to about 11.3-15.9 of its 20 min, past
     # the ~14 min line at the top end; re-measure in CI before adding more.
     # TASK-42525 (2026-11-25): the failed-call retry file (166 tests, 250.4 s
-    # serially at load ~6) left for dreams-boundary's admission-sensitive
+    # serially at load ~6) left for console-p0-gate's admission-sensitive
     # step. The whole step, now 42 targets: 1595 passed in 759.3 s locally at
     # load 5-6.
     name: Dreams tracking tests and unlaned riders
@@ -1685,7 +1682,7 @@ jobs:
 
       # TASK-42472 (round 24, 2026-11-24): the failed-call retry rule file ran
       # here until TASK-42525 (round 26, 2026-11-25) moved it to
-      # dreams-boundary's admission-sensitive step (see there), for this
+      # console-p0-gate's admission-sensitive step (see there), for this
       # job's budget.
       # TASK-42534 review (round 26, 2026-11-24): the trace project-fallback
       # witness function, whose valid case changed, runs through the project
