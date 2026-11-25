@@ -1639,6 +1639,14 @@ jobs:
     # no file another PR step lists and the file's P0 node is in
     # console-p0-gate). Re-measured whole with it: 43 targets, 963.7 s
     # locally at load 9-11.
+    # Round 26 stack (2026-11-25): TASK-42530/42532/42534 grow two riders
+    # already here, the failed-call retry file and the project-turn file
+    # (whose project-fallback function runs inside its whole-file entry).
+    # Back to back at load 6-8 the two took 81 tests in 39.8 s before and
+    # 134 in 172.5 s after. The whole step, same 43 targets: 1706 passed in
+    # 1092.1 s locally at load 9, 1.13x the 963.7 s above. Combined budget:
+    # on that ratio the job projects to about 11.3-15.9 of its 20 min, past
+    # the ~14 min line at the top end; re-measure in CI before adding more.
     name: Dreams tracking tests and unlaned riders
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
