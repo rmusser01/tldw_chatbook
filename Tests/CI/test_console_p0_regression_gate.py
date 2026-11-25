@@ -227,6 +227,8 @@ _BOOTSTRAP_OK = (
     "PR Fast Lane (admission-sensitive)",
     "PR Fast Lane (admission-sensitive 2)",
     "Console P0 gate (admission-sensitive)",
+    # TASK-42533: the admission-sensitive step's tail, split into its own profile.
+    "Console P0 gate (admission-sensitive 2)",
     "Dreams contracts (admission-sensitive)",
 )
 
@@ -266,6 +268,9 @@ def _lanes() -> dict[str, tuple[str, ...]]:
         ),
         "Console P0 gate (admission-sensitive)": _step_targets(
             "console-p0-gate", "Run the admission-sensitive Console P0 regression tests"
+        ),
+        "Console P0 gate (admission-sensitive 2)": _step_targets(
+            "console-p0-gate", "Run the admission-sensitive 2 Console P0 regression tests"
         ),
         "Dreams and Guardian contracts (sandboxed)": _step_targets(
             "dreams-boundary", "Run Dreams and Guardian boundary contracts"

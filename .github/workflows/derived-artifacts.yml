@@ -1167,6 +1167,20 @@ jobs:
     # worst, not 6.
     # TASK-40724: run 43487945840 exhausted 20min in the first invocation.
     # Separate the existing profiles; each retains its own test deadlines.
+    # TASK-42533 (round 26, 2026-11-24): over 126 PR jobs (2026-11-22..24)
+    # the admission-sensitive profile took median 29.8 / p90 33.6 / max 34.8
+    # min of its 35, and four more hit the cap (45050043124, 45435409101,
+    # 45446280626, 45455465752). No file dominates (nine CI logs: the three
+    # Console trace files ~13 min together, four more files ~2 min each), so
+    # its tail, from the project-instruction traces file on, is a fourth
+    # profile, "admission-sensitive 2": same order, flags and bootstrap
+    # profile, no file in both. In those nine logs the head's pytest time was
+    # median 846 / max 880 s and the tail's 1052 / 1115 s, plus about 85 s of
+    # setup, collection and cleanup a job: at most about 16 and 20 min of 35.
+    # On Ubuntu 24.04 (CI's install line, ext4, 4 CPUs) the unsplit step took
+    # 1393 s and the two profiles 588 s and 683 s; at CI's 1.40-1.46x of that
+    # run, about 15 and 17-18 min. One more runner per PR, about 1.5 more
+    # runner-minutes of setup and collection.
     name: Console P0 regression gate (${{ matrix.profile }})
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -1174,7 +1188,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        profile: [sandboxed, restore, admission-sensitive]
+        profile: [sandboxed, restore, admission-sensitive, admission-sensitive 2]
 
     steps:
       - uses: actions/checkout@v4
@@ -1262,26 +1276,9 @@ jobs:
             --tb=short
 
       # bootstrap_profile suites retain their own invocation and now guest.
-      # Round 16 (2026-11-18), before the PR3023 nodes (which stay last): four
-      # Console trace files, bootstrap_profile and on no lane before (TASK-41508;
-      # the agent-call thinking file's two nodes moved here from
-      # pr-fast-lane-admission-2), 175 passed in 578 s serially with this step's
-      # flags at load 18-35; and the skill-discovery capture file (TASK-41511),
-      # 9 passed in 103 s, slowest case 13.6 s, at load 22-36.
-      # TASK-34975 (PR #3493 port, 2026-11-22), just before the PR3023 nodes: the
-      # held context-display read that Close must drain. 1 passed in 2.2 s
-      # serially with this step's flags at load 30-34.
-      # TASK-42342 (2026-11-22), just before TASK-34975's node: the held prompt
-      # mix-in reads (both kinds), and a controller read started during Close's
-      # hook drain, that Close must drain. 3 passed in 2.8 s serially with this
-      # step's flags at load 12.
-      # TASK-42472 (round 24, 2026-11-24), after the project-instruction traces
-      # file whose harness it uses: dev's captured model-retry contract
-      # (bootstrap_profile: that harness reads the tool gates through config),
-      # red on the stack and on no lane before. 4 passed in 10.2 s serially
-      # with this step's flags at load 5.
-      # TASK-42513 (round 26, 2026-11-24): the trace GC file's stale-mark node
-      # left this step; it runs inside its whole file in dreams-tracking.
+      # TASK-42533 (round 26, 2026-11-24): this profile ran 27-34 of its 35
+      # min; its tail from the project-instruction traces file on runs in the
+      # admission-sensitive 2 profile below, where the notes for it moved.
       - name: Run the admission-sensitive Console P0 regression tests
         if: ${{ !cancelled() && matrix.profile == 'admission-sensitive' }}
         run: |
@@ -1329,6 +1326,35 @@ jobs:
             Tests/UI/test_response_rules_modal.py::test_manager_superseded_reload_cannot_replace_current_scope_rows \
             Tests/UI/test_response_rules_modal.py::test_manager_reload_preserves_edits_made_while_db_is_pending \
             Tests/Chat/test_response_rules_builder.py::test_new_learning_timestamps_are_canonical_and_old_offsets_still_parse \
+            --timeout=300 \
+            --tb=short
+
+      # TASK-42533 (round 26, 2026-11-24): the admission-sensitive step's tail,
+      # moved whole and in order into its own matrix profile (same flags, same
+      # bootstrap profile, the PR3023 witnesses still last). Round 16
+      # (2026-11-18): four Console trace files, bootstrap_profile and on no
+      # lane before (TASK-41508; the agent-call thinking file's two nodes moved
+      # here from pr-fast-lane-admission-2), 175 passed in 578 s serially with
+      # this step's flags at load 18-35; and the skill-discovery capture file
+      # (TASK-41511), 9 passed in 103 s, slowest case 13.6 s, at load 22-36.
+      # TASK-42472 (round 24, 2026-11-24), after the project-instruction traces
+      # file whose harness it uses: dev's captured model-retry contract
+      # (bootstrap_profile: that harness reads the tool gates through config),
+      # red on the stack and on no lane before. 4 passed in 10.2 s serially
+      # with this step's flags at load 5.
+      # TASK-42342 (2026-11-22), just before TASK-34975's node: the held prompt
+      # mix-in reads (both kinds), and a controller read started during Close's
+      # hook drain, that Close must drain. 3 passed in 2.8 s serially with this
+      # step's flags at load 12.
+      # TASK-34975 (PR #3493 port, 2026-11-22), just before the PR3023 nodes: the
+      # held context-display read that Close must drain. 1 passed in 2.2 s
+      # serially with this step's flags at load 30-34.
+      # TASK-42513 (round 26, 2026-11-24): the trace GC file's stale-mark node
+      # left this step; it runs inside its whole file in dreams-tracking.
+      - name: Run the admission-sensitive 2 Console P0 regression tests
+        if: ${{ !cancelled() && matrix.profile == 'admission-sensitive 2' }}
+        run: |
+          pytest \
             Tests/Chat/test_console_project_instruction_traces.py \
             Tests/Chat/test_console_trace_model_retries.py \
             Tests/Chat/test_console_trace_failed_tool_run.py \

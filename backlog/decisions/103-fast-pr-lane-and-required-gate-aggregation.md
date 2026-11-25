@@ -162,7 +162,7 @@ cron entry on `dev`.
   (TASK-34916, TASK-34929, TASK-34986, TASK-38989, PR #3399, owner decision
   2026-11-06, TASK-41217, owner decision 2026-11-18), so an
   ordinary unlabeled,
-  non-GGUF PR now requests 35 test runners in parallel, 36 with perf-guard
+  non-GGUF PR now requests 36 test runners in parallel, 37 with perf-guard
   (see the dated notes below).
 - That figure is not a global maximum. The two path-scoped GGUF
   evidence matrices can add six jobs, and a synchronize event on a PR carrying
@@ -410,14 +410,15 @@ Even ideal balance at 27 shards has a lower-bound forecast of 1027.70 seconds un
 
 ## Amendment (2026-10-28, TASK-37266..37268): enroll native publication and export controls
 
-Current UI lane: 42 shards. The current total is 56 eligible test jobs per PR
+Current UI lane: 42 shards. The current total is 57 eligible test jobs per PR
 (2026-11-02: includes the third admission-sensitive lane; 2026-11-06: and the
 Architecture guard contracts job, TASK-38989, and the architecture-review
 tests' own job, `pr-fast-lane-arch`, split out of the PR Fast Lane at its
 35-min cap, PR #3399; 2026-11-07: and `recovered-suites` and four more UI
 shards, below; 2026-11-13: and two more Console P0 profile jobs, TASK-40724;
 2026-11-15: and two more UI shards and native plugin recovery UI, below;
-2026-11-17: and four more UI shards, below).
+2026-11-17: and four more UI shards, below; 2026-11-24: and a fourth Console
+P0 profile job, TASK-42533, below).
 As of this amendment, the `max-parallel: 17` ceiling (18 since 2026-11-07,
 19 since 2026-11-15, 21 since 2026-11-17, below), minimal dependencies, serial execution, 20-minute job cap,
 180-second test timeout and fail-closed required aggregation remain unchanged.
@@ -686,3 +687,28 @@ counting perf-guard.
 serial job, and its cap rises from 20 to 30 min. Over 24 PR runs on
 2026-11-18/19, 19 took 16 min or more and 5 hit the old 20-min cap, 4 of them
 with no test failing. No runner is added.
+
+## Amendment (2026-11-24, TASK-42533): a fourth Console P0 profile
+
+Over 126 PR jobs from 2026-11-22 to 2026-11-24, the Console P0 gate's
+admission-sensitive profile took a median 29.8, p90 33.6 and max 34.8 of its
+35 min, and four more were cancelled at the cap with every test so far
+passing. Per-file times from nine CI logs showed no one file to fix: the
+three Console trace files took about 13 min together, and four more files
+about 2 min each. The profile's tail, from the project-instruction traces
+file on (the round-16 trace files, the capture file, the Close-drain groups
+and the PR3023 witnesses, still last), is now a fourth matrix profile,
+`admission-sensitive 2`, in the same order, with the same flags and its own
+bootstrap profile. No file runs in both. The job's `if`, cap and needs, and
+the aggregate's single verdict on `needs.console-p0-gate.result`, cover
+every profile unchanged. In those logs the head's pytest time was a median
+846 and max 880 s, and the tail's 1052 and 1115 s; with about 85 s of setup,
+collection and cleanup a job, that projects to at most about 16 and 20 min.
+
+Folding the tail into the restore profile (at most 3.9 of 35 min) would have
+added no runner. It was not done: TASK-40724 gave each invocation its own
+runner after the restore selectors once took 25m46s under sustained load,
+and a fold would put that risk back on the admission tests.
+
+One more job: 57 eligible test jobs per PR, 36 concurrent test runners, 37
+counting perf-guard, and about 1.5 runner-minutes of setup more per full run.

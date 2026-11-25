@@ -1,10 +1,11 @@
 ---
 id: TASK-42533
 title: "The admission-sensitive Console P0 job runs 27-34 minutes of its 35-minute cap"
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+- '@claude'
 created_date: 2026-11-24 09:14
-updated_date: 2026-11-24 10:23
+updated_date: 2026-11-25 01:13
 labels:
 - follow-up
 - ci
@@ -29,6 +30,85 @@ Raised by the coordinator's review of TASK-42472 (2026-11-24).
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Over the next 10 PR runs after the change, the admission-sensitive profile's slowest run ends at least 8 minutes under its cap
-- [ ] #2 Each moved file passes in its new invocation, and a recorder shows no swallowed `RecoveryRequired` there (any file still needing `bootstrap_profile` stays out of sandboxed invocations)
-- [ ] #3 `Tests/CI/test_response_rules_critical_gate.py` and `Tests/CI/test_console_p0_regression_gate.py` match the new lane lists
+- [x] #2 Each moved file passes in its new invocation, and a recorder shows no swallowed `RecoveryRequired` there (any file still needing `bootstrap_profile` stays out of sandboxed invocations)
+- [x] #3 `Tests/CI/test_response_rules_critical_gate.py` and `Tests/CI/test_console_p0_regression_gate.py` match the new lane lists
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Measure: per-file times of the admission-sensitive step from four round-24 CI logs (45278583267, 45280698401, 45298294580, 45300571348), and the other legs' and jobs' times, to see where the 27-34 min goes and which jobs have headroom.
+2. Choose on that evidence between a split, moving files, or speeding up a few slow files; never just raise the cap.
+3. Split: a fourth `console-p0-gate` matrix profile, `admission-sensitive 2`, with its own bootstrap-profile pytest step. It takes the step's tail as one contiguous block (the round-16 trace files, the capture file, the Close-drain groups and the PR3023 witnesses, still last), so every target keeps its isolation profile and runs exactly once. Job-level `if`, `needs`, cap and the aggregate verdict are shared by all matrix legs, unchanged.
+4. Contract tests: pin the new step and matrix in `Tests/CI/test_response_rules_critical_gate.py` (`SELECTION`, `INHERITED`, step count), `Tests/CI/test_console_p0_regression_gate.py` (lanes, bootstrap-OK set), `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/CI/test_self_hosted_runner_routing.py` and `Tests/CI/test_derived_artifacts_workflow.py` (step list, PR3023 step); show removing or commenting out a new-step target turns the contract red. Update ADR-103's runner counts (pinned by `Tests/CI/test_ui_lane_shard_count_statements.py`) and the self-hosted README.
+5. Time both legs locally (serial, the step's flags, via `r19-step.sh`) and on Linux (ubuntu:24.04, ext4 volumes, uid 1001, CI's install line, network off); project each leg's CI time from the per-file CI times.
+6. Run `Tests/CI`, `Tests/Architecture` serially, preflight, ruff F and the ruff gate; notes, ACs.
+
+## Implementation Notes
+
+**Status.** AC#2 and AC#3 are met. AC#1 can only be read from the 10 PR runs after merge, so it stays open, and so does the task. The projection below puts the slower new profile at about 17-20 min of 35, which is 15 or more minutes under the cap.
+
+**Evidence.**
+- Window: 126 PR jobs, 2026-11-22 03:42Z to 2026-11-24 23:09Z.
+- Admission-sensitive profile: 115 succeeded, at a median of 29.8, p90 of 33.6 and max of 34.8 min. Four more were cancelled at the 35-min cap with every test so far passing (45050043124, 45435409101, 45446280626, 45455465752; the last died in the discarded-tool-run file at 87%).
+- The other profiles had plenty of room: sandboxed max 7.5 min, restore max 3.9.
+- Per-file times came from nine CI logs. Each progress line is timestamped when its newline arrives, so a file's time is the gap between line ends. No single file dominates:
+  - project-instruction traces: 303 s on average
+  - failed tool run: 294 s
+  - discarded tool run: 178 s
+  - row-menu sweep: 127 s
+  - skill-discovery capture: 115 s
+  - the two wrapped-collaborator files: 105 s and 102 s
+  - everything else: under 60 s each
+
+**Choice: a split.**
+- (c), fixing slow files, was rejected. Halving the largest file would save about 2.5 min, not the 7+ that AC#1 needs.
+- (b), moving files to a step with headroom, was rejected. A bootstrap_profile file can only go to an admission-sensitive invocation. Dreams boundary has about 15 min left (max 19.9 of 35); the PR admission jobs reach 24-29 of 35 and are off limits anyway.
+- Folding the tail into the restore profile was considered and rejected. It would add no runner, but TASK-40724 gave each invocation its own runner after the restore selectors once took 25m46s under sustained load.
+- So `console-p0-gate` gets a fourth matrix profile, `admission-sensitive 2`. Its step, "Run the admission-sensitive 2 Console P0 regression tests", takes the old step's tail from `test_console_project_instruction_traces.py` on: 24 targets with the same order and flags (`--timeout=300 --tb=short`), and the PR3023 witnesses still last.
+- The old step keeps its first 43 targets. The two lists concatenated equal the old list exactly, no file appears in both, and both are bootstrap-profile invocations, so isolation is unchanged.
+- The job's `if`, its 35-min cap and the aggregate's `needs` and single verdict on `needs.console-p0-gate.result` cover every matrix profile unchanged.
+- Cost: one more runner per full PR run, which makes 57 eligible test jobs, 36 concurrent runners and 37 with perf-guard. That is about 1.5 more runner-minutes per run (setup, collection and cleanup are about 85 s a job).
+
+**Timings.**
+- CI split of the nine logs, pytest time only:
+  - head: median 846 s, max 880 s, which projects to at most about 16.1 min a job
+  - tail: median 1052 s, max 1115 s, which projects to at most about 20.0 min
+  - these are upper bounds, because the tail no longer runs behind the head's heap
+- Linux check: ubuntu:24.04, Python 3.12.3, SQLite 3.45.1, ext4 named volumes for /tmp and /home/runner, user runner uid 1001, the job's exact install line, network disconnected, `--cpus 4`.
+  - unsplit step: 528 passed in 1393 s
+  - head: 294 passed in 588 s
+  - tail: 234 passed in 683 s
+  - CI ran 1.40x (median) to 1.46x (max) the unsplit Linux time, so the projection is about 14.7-15.3 min (head) and 16.9-17.6 min (tail) with setup
+  - the container, volumes and image were removed afterwards
+- Local, serially via `r19-step.sh` with the step's flags:
+  - head: 294 passed in 626 s (wall 634 s) at load 8-11
+  - tail: 234 passed in 870 s (wall 876 s) at load 8-13
+- AC#2: in a fresh process, the tail under the `RecoveryRequired.__init__` recorder (`$FU/probe-rr/r24rrcount.py`) passed 234 with **0** hits. No file moved into a sandboxed invocation.
+
+**Contracts, and their red evidence.**
+- `Tests/CI/test_response_rules_critical_gate.py`:
+  - `SELECTION` gains an empty `admission-sensitive 2` label.
+  - `INHERITED` splits the admission list and pins the new step token by token.
+  - `STEP_JOBS` gains the new step, and the step count goes from 6 to 7.
+  - The weakening checks now run against both admission steps.
+  - New `test_missing_or_comment_only_admission_2_target_is_rejected` covers every new-step target, removed or commented out.
+- `Tests/CI/test_console_p0_regression_gate.py`: the new lane is added to `_lanes()` and to the bootstrap-OK set, so the run-once and overlap checks see it.
+- `Tests/CI/test_ci_queue_pressure_contract.py`: four profiles and seven steps; the new step's `if` and `--timeout=300`; no target shared with the PR admission jobs or with the head step; and a continue-on-error case.
+- `Tests/CI/test_self_hosted_runner_routing.py`: the matrix and four pytest steps.
+- `Tests/CI/test_derived_artifacts_workflow.py`: the step list, and the PR3023 step is now the new one.
+- `Tests/CI/test_ui_lane_shard_count_statements.py`: docstring, and a 4-profile case.
+- Red, edit in place then revert:
+  - Commenting out `Tests/Chat/test_console_trace_model_retries.py` in the new step turned `test_rule_critical_targets_execute_without_altering_inherited_processes` red.
+  - Deleting the PR3023 native-commit witness turned that test red, plus the PR3023, TASK-34975 and TASK-42342 order tests.
+  - Before ADR-103 was updated, `test_ui_lane_shard_count_statements.py` was red three times (56 vs 57, 35 vs 36, 36 vs 37).
+
+**Files.**
+- `.github/workflows/derived-artifacts.yml`
+- `Tests/CI/test_response_rules_critical_gate.py`
+- `Tests/CI/test_console_p0_regression_gate.py`
+- `Tests/CI/test_ci_queue_pressure_contract.py`
+- `Tests/CI/test_self_hosted_runner_routing.py`
+- `Tests/CI/test_derived_artifacts_workflow.py`
+- `Tests/CI/test_ui_lane_shard_count_statements.py`
+- `backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md`: counts, plus a dated amendment
+- `scripts/ci/self_hosted/README.md`
