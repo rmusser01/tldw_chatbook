@@ -3438,7 +3438,10 @@ class ConsoleTraceService:
         origin_call_id: str,
     ) -> str | None:
         """Prove a selected clean response from its exact accepted operational attempt."""
-        from tldw_chatbook.DB.console_prompt_mixins import read_attempt
+        from tldw_chatbook.DB.console_prompt_mixins import (
+            read_attempt,
+            redispatches_bound_call,
+        )
         from tldw_chatbook.Utils.input_validation import strict_json_loads
 
         revision = self.repository.get_semantic_revision(cursor, assistant_revision_id)
@@ -3523,7 +3526,14 @@ class ConsoleTraceService:
                     != "recorded"
                 ):
                     return None
-                if prior[2] == origin_call_id:
+                # A Retry's re-dispatch keeps the first binding (TASK-33621.6).
+                if prior[2] == origin_call_id or redispatches_bound_call(
+                    cursor,
+                    conversation_id=conversation_id,
+                    turn_id=source_user_id,
+                    bound_call_id=prior[2] or "",
+                    later_call_id=origin_call_id,
+                ):
                     call = self.repository.get_call(cursor, origin_call_id)
                     owner = (
                         None

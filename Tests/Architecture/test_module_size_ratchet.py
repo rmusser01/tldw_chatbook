@@ -336,6 +336,14 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-24: re-measured after rebasing onto dev 9fa2bf1b1d (owner rule:
     # exact measurement): dev measures 28,763 + the same 14 lines of TASK-33621.46
     # = 28,777 (28773 -> 28777).
+    # 2026-11-21, TASK-33621.70: exact measurement on dev dc371f0842 plus this
+    # branch (-2: the temporary-chat checkpoint no longer reads a frozen
+    # "nothing staged" as unreconstructable): 28764 -> 28756.
+    # branch (net 0: the temporary-chat checkpoint no longer reads a frozen
+    # "nothing staged" as unreconstructable, and still treats hook context as
+    # unreconstructable, as the durable one does): 28764 -> 28758.
+    # 2026-11-22: re-measured after rebasing onto dev ddd3c02052 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 28758 -> 28759.
+    # 2026-11-24: re-measured after rebasing onto dev 6fa2635c14 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 28759 -> 28763.
     "tldw_chatbook/Chat/console_chat_controller.py": 28777,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     # TASK-41637, 2026-11-18: +9, a round armed with no running app and no
@@ -1402,7 +1410,13 @@ _BUDGETS: dict[str, int] = {
     # Rebased onto dev a6df4d8d48 (2026-11-19): 6739 -> 6766, exact measurement.
     # 2026-11-23, port onto dev b31e3e9241: re-measured, dev's file is still
     # 6,739, so the row stays 6,766 (dev's 6,739 + the branch's 27).
-    "tldw_chatbook/Chat/console_trace_service.py": 6774,
+    # 2026-11-21, TASK-33621.6 review (owner rule 2026-10-04: a fix over a size
+    # ratchet raises the row): 6739 -> 6749 (+10), exact measurement. The
+    # replacement proof accepts the binding a Retry's re-dispatch keeps
+    # (DB/console_prompt_mixins.redispatches_bound_call).
+    # 2026-11-24: re-measured after rebasing onto dev 578222f272 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6747 -> 6757.
+    # 2026-11-24: re-measured after rebasing onto dev 9fa2bf1b1d (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6774 -> 6784.
+    "tldw_chatbook/Chat/console_trace_service.py": 6784,
     # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
     # approved child trace segments (ADR-337 amendment 2026-11-17): create and

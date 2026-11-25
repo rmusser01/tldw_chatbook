@@ -150,6 +150,11 @@ One trap cost a round: faulthandler dumps at most 100 threads, newest first. Wit
 - `sample <pid>` for the main thread once a worker has more than 100 threads.
 
 Then list each worker's tests that ran 250 s or more, from per-test start times, before calling anything a hang: a 0% CPU worker is usually a test waiting out pytest-timeout.
+## A "keeps the feature working" test that never turns the feature on passed on broken behaviour (TASK-33621.6, 2026-11-21)
+
+**Incident.** The Retry-capture fix kept a mix-in attempt's first trace binding when Retry re-dispatched the turn. To show #3346's behaviour survived, a mounted test regenerated the recovered reply and sent the next turn with capture on. It went green, and the notes said the mix-in flows were preserved. The independent review then selected a mix-in in the same harness, using the app's real `prompt_mixin_service()` with a stub scope. The next turn was blocked twice over: the binding's only reader (`operational_replacement_attempt`) returned None after Regenerate, and the trace lineage rule refused the reused turn row even without Regenerate. In the original test, that reader and `_validate_completed_tool_turn` had run 0 times. The fix needed both proofs taught the re-dispatch, plus negative controls.
+
+**What to do.** Before claiming a change keeps feature X working, name the code that *reads* the state you changed, and show the test reaches it. A one-line probe counting calls (a scratch `-p` plugin) is enough. If X is off by default in the harness, turn it on through the real service, and parametrize the off and on cases.
 
 ## A slow local failure was filed as a DNS timeout, and two reported stalls did not reproduce (TASK-42027, 2026-11-20)
 

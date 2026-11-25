@@ -87,7 +87,14 @@ no actions here.
 Use the recovery controls above the composer. **Retry anyway** may send a
 duplicate request because the previous delivery cannot be confirmed. (If the
 request was accepted but never sent, the card reads **Response accepted;
-waiting for dispatch.** and offers **Retry response** instead.) A retry streams
+waiting for dispatch.** and offers **Retry response** instead.) The retry
+button is disabled, with its reason, when the original request cannot be
+rebuilt exactly: the send used a response prefill (a pinned one or a one-shot
+`/prefill`), Library evidence you staged for it, or context a
+`UserPromptSubmit` hook added. A retry that rebuilds the request is also
+refused, with a message, if the provider is not ready, the provider
+destination or the chat's Library access changed since the send, or the
+Automatic Library search it repeats fails. A retry streams
 the reply into the same pending response. Pressing **Retry anyway** or
 **Discard** disables both buttons at once and shows "Retrying…" (or
 "Discarding…") until the outcome arrives. **Discard** keeps your user message

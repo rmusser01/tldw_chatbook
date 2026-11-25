@@ -829,3 +829,114 @@ def test_mixin_indexes_service_real_lookup_and_message_cleanup_without_statistic
         ):
             assert any(index in row[3] for row in cleanup), (index, cleanup)
         assert cursor.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+@pytest.mark.parametrize(
+    "second",
+    [
+        "redispatch",
+        "same_run_tool_call",
+        "other_turn",
+        "attempt_missing",
+        "later_bound_elsewhere",
+    ],
+)
+def test_a_redispatched_attempt_keeps_its_first_trace_call(
+    make_database, tmp_path, second
+):
+    """TASK-33621.6: the trace card's Retry re-runs the same accepted attempt.
+
+    Its new run's first call must not be refused for the attempt's first
+    bound call (``mixin_trace_owner_unavailable`` rolled the whole trace
+    reservation back, so Retry could never re-run capture). The schema keeps
+    a bound call immutable, so the first call stays bound. Anything that is
+    not a later run's first call of the same turn is still refused.
+    """
+    from Tests.Chat.test_console_trace_repository import _policy
+    from Tests.Chat.test_console_transaction_contribution import _acceptance
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_prompt_mixin_service import MixinAttemptContribution
+    from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
+    from tldw_chatbook.DB.console_prompt_mixins import bind_attempt_trace_call
+
+    db = make_database(tmp_path / "bind.sqlite", "mixin-bind")
+    cid = db.add_conversation({"title": "Retry capture"})
+    batch = replace(attempt(), user_message_id="user", assistant_message_id="assistant")
+    service = ChatPersistenceService(db)
+    repository = ConsoleTraceRepository()
+    with db.transaction() as cursor:
+        service.console_dispatch_repository.insert_with_messages(
+            cursor, _acceptance(cid, MixinAttemptContribution(batch))
+        )
+        segment = repository.create_segment(cursor)
+        owner = repository.attach_owner(
+            cursor, conversation_id=cid, root_segment_id=segment.segment_id
+        )
+        policy = repository.ensure_policy(cursor, _policy())
+
+        def reserve(run_id, sequence, turn_id="user"):
+            # As the trace factory does: reserve, then record the call boundary.
+            call_id = repository.reserve_call(
+                cursor,
+                owner_id=owner.owner_id,
+                segment_id=segment.segment_id,
+                turn_id=turn_id,
+                run_id=run_id,
+                call_sequence=sequence,
+                idempotency_key=f"{run_id}:{sequence}:{turn_id}",
+                policy_id=policy.policy_id,
+            ).call_id
+            tail = repository.get_event_tail(cursor, segment.segment_id)
+            repository.append_event(
+                cursor,
+                segment_id=segment.segment_id,
+                sequence=0 if tail is None else tail.sequence + 1,
+                event_type="call_boundary",
+                call_id=call_id,
+            )
+            return call_id
+
+        first = reserve("run-1", 0)
+        bind = dict(conversation_id=cid, user_message_id="user")
+        bind_attempt_trace_call(cursor, call_id=first, **bind)
+        bind_attempt_trace_call(cursor, call_id=first, **bind)  # idempotent
+        if second == "redispatch":
+            bind_attempt_trace_call(cursor, call_id=reserve("run-2", 0), **bind)
+        else:
+            if second == "attempt_missing":
+                # The assistant anchor is gone (ON DELETE SET NULL): the
+                # checkpoint no longer names this attempt's owner.
+                later = reserve("run-2", 0)
+                cursor.execute(
+                    "UPDATE console_prompt_mixin_attempts SET assistant_message_id=NULL "
+                    "WHERE conversation_id=?",
+                    (cid,),
+                )
+            elif second == "same_run_tool_call":
+                later = reserve("run-1", 1)
+            elif second == "later_bound_elsewhere":
+                # Another attempt's own traced run is not this attempt's
+                # re-dispatch (forged directly: no flow writes it today).
+                later = reserve("run-2", 0)
+                cursor.execute(
+                    "DROP TRIGGER console_prompt_mixin_attempt_anchor_insert"
+                )
+                cursor.execute(
+                    "INSERT INTO console_prompt_mixin_attempts(conversation_id,"
+                    "attempt_id,schema_version,user_message_id,trace_call_id,"
+                    "expected_item_count) VALUES(?,'other',1,'user',?,0)",
+                    (cid, later),
+                )
+            else:
+                later = reserve("run-2", 0, turn_id="another-turn")
+            with pytest.raises(MixinSnapshotUnavailableError) as refused:
+                bind_attempt_trace_call(cursor, call_id=later, **bind)
+            assert str(refused.value) == "mixin_trace_owner_unavailable"
+            if second == "attempt_missing":
+                return
+        bound = cursor.execute(
+            "SELECT trace_call_id FROM console_prompt_mixin_attempts "
+            "WHERE conversation_id=? AND attempt_id='attempt'",
+            (cid,),
+        ).fetchone()[0]
+    assert bound == first

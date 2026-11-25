@@ -1336,6 +1336,12 @@ ADMISSION_4_TARGETS = (
     # admission. bootstrap_profile with native POSIX group custody; two cases,
     # about 1.7 s.
     "Tests/Agents/test_native_legacy_hooks.py::test_prompt_hook_runs_while_the_submit_task_holds_its_agent_admission",
+    # TASK-33621.6 / TASK-33621.70 (2026-11-21): trace-blocked recovery after a
+    # provider 429 on a mounted ChatScreen, on no PR lane before (its Retry
+    # capture node sat red on dev from #3346, 2026-11-02, to this fix). 16
+    # tests, about 2.6 min serially (2026-11-22): over the UI census's 30 s
+    # per-entry bar, so here.
+    "Tests/UI/test_console_trace_recovery_after_provider_error.py",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the

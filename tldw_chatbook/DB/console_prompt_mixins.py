@@ -476,10 +476,61 @@ def copy_conversation_mixins(
     )
 
 
+def redispatches_bound_call(
+    cursor: sqlite3.Cursor,
+    *,
+    conversation_id: str,
+    turn_id: str,
+    bound_call_id: str,
+    later_call_id: str,
+) -> bool:
+    """Whether ``later_call_id`` re-dispatches the turn ``bound_call_id`` first sent.
+
+    TASK-33621.6: the trace card's Retry answers in a second run of the same
+    accepted attempt. Both calls are the first call (sequence 0) of their
+    run, for ``turn_id`` under one owner of ``conversation_id``; the later
+    run is a different run whose call boundary comes after the bound call's,
+    and no mix-in attempt is bound to it. The same equivalence admits the
+    re-dispatch at binding time and proves it when a later turn reads the
+    binding (``ConsoleTraceService.operational_replacement_attempt``).
+
+    It is deliberately agnostic about the bound call's state: a later run
+    after a COMPLETE first call (a re-dispatch of a still-unsettled
+    checkpoint) is the same attempt sent again, not another attempt's send.
+    Another attempt's traced run is bound to that attempt, which the last
+    condition refuses.
+    """
+    return (
+        cursor.execute(
+            "SELECT 1 FROM console_trace_calls bound "
+            "JOIN console_trace_owners o ON o.owner_id=bound.owner_id "
+            "JOIN console_trace_calls later ON later.call_id=? "
+            "JOIN console_trace_events be ON be.call_id=bound.call_id "
+            "AND be.event_type='call_boundary' "
+            "JOIN console_trace_events le ON le.call_id=later.call_id "
+            "AND le.event_type='call_boundary' AND le.segment_id=be.segment_id "
+            "WHERE bound.call_id=? AND o.conversation_id=? AND bound.turn_id=? "
+            "AND bound.call_sequence=0 AND later.call_sequence=0 "
+            "AND later.owner_id=bound.owner_id AND later.turn_id=bound.turn_id "
+            "AND later.run_id<>bound.run_id AND le.sequence>be.sequence "
+            "AND NOT EXISTS (SELECT 1 FROM console_prompt_mixin_attempts m "
+            "WHERE m.conversation_id=o.conversation_id AND m.trace_call_id=later.call_id)",
+            (later_call_id, bound_call_id, conversation_id, turn_id),
+        ).fetchone()
+        is not None
+    )
+
+
 def bind_attempt_trace_call(
     cursor: sqlite3.Cursor, *, conversation_id: str, user_message_id: str, call_id: str
 ) -> None:
-    """Bind the first captured call using its still-owned native dispatch checkpoint."""
+    """Bind the first captured call using its still-owned native dispatch checkpoint.
+
+    A later run of the same turn re-dispatches the same attempt (the trace
+    card's Retry after its retry reserved nothing). Its first call keeps the
+    attempt's first binding, which the schema makes immutable (TASK-33621.6);
+    refusing it rolled that whole reservation back, so Retry never sent.
+    """
     _require_transaction(cursor)
     checkpoint = cursor.execute(
         "SELECT attempt_id,assistant_message_id FROM console_dispatch_checkpoints "
@@ -497,7 +548,26 @@ def bind_attempt_trace_call(
         "AND (trace_call_id IS NULL OR trace_call_id=?)",
         (call_id, conversation_id, attempt_id, assistant_id, call_id),
     ).rowcount
-    if changed != 1:
+    if changed == 1:
+        return
+    # State-agnostic about the bound call (see redispatches_bound_call): the
+    # re-dispatch keeps the attempt's first binding instead of refusing.
+    bound = cursor.execute(
+        "SELECT trace_call_id FROM console_prompt_mixin_attempts "
+        "WHERE conversation_id=? AND attempt_id=? AND assistant_message_id=?",
+        (conversation_id, attempt_id, assistant_id),
+    ).fetchone()
+    if (
+        bound is None
+        or bound[0] is None
+        or not redispatches_bound_call(
+            cursor,
+            conversation_id=conversation_id,
+            turn_id=user_message_id,
+            bound_call_id=bound[0],
+            later_call_id=call_id,
+        )
+    ):
         raise MixinSnapshotUnavailableError("mixin_trace_owner_unavailable")
 
 
