@@ -1,11 +1,11 @@
 ---
 id: TASK-42525
 title: "A Console agent's provider fallback is refused at dispatch when Capture is On"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-23 23:00
-updated_date: 2026-11-25 07:40
+updated_date: 2026-11-25 19:00
 labels:
 - follow-up
 - console
@@ -63,9 +63,9 @@ Also decide what happens to the call the refusal leaves in `reserved`.
 - [x] #3 A retry after a failed call that changes the provider, model or endpoint without being a fallback is still refused; the existing `changed_*` cases are still refused
 - [x] #4 No call is left in `reserved` after a refused or completed fallback
 - [x] #5 A test drives a Capture-On agent run through a fallback; it is red before the change and green after
-- [ ] #6 With Capture On, after a llama.cpp run falls back to a hosted provider, the next message sent back to llama.cpp is sent and traced, with and without tool activity and with and without project instructions
-- [ ] #7 With Capture On, a manual switch from a hosted provider to llama.cpp is sent and traced, with and without project instructions
-- [ ] #8 Putting the system slot back on any call but a new turn's first, anywhere but first, as a second system row, over a slot the surface already has, or together with a change the existing rules refuse, is still refused before anything is reserved
+- [x] #6 With Capture On, after a llama.cpp run falls back to a hosted provider, the next message sent back to llama.cpp is sent and traced, with and without tool activity and with and without project instructions
+- [x] #7 With Capture On, a manual switch from a hosted provider to llama.cpp is sent and traced, with and without project instructions
+- [x] #8 Putting the system slot back on any call but a new turn's first, anywhere but first, as a second system row, over a slot the surface already has, or together with a change the existing rules refuse, is still refused before anything is reserved
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -84,12 +84,18 @@ Second phase (owner decision 2026-11-24, "Allow it, do it now"; rebased onto tra
 9. Admit it only on a fallback chain's first call: remove the leading rendered-system slot (a removal-only replacement whose marker every projection drops) and replace the run's earned tool rows at the tail one for one; recheck at binding; let the completed-turn witness and `run_chains` follow a rewriting first call.
 10. Tests: both shapes red -> green with their next sends; hard negatives each refused with mutations.
 11. Move `Tests/Chat/test_console_failed_call_retry_ownership.py` from the Dreams riders step to dreams-boundary's admission-sensitive step (coordinator's budget decision), with both steps' budget comments and every lane contract.
+
+Third phase (round 3, 2026-11-25; rebased onto trace1's `f7b043814b`):
+12. Fix the review's findings I1, I2 and M3-M6, each with tests, controls and mutations; rerun the reviewer's probes.
+13. Record the owner's third decision here and as ADR-337 amendment 3 before any code: a new turn's first call may put the leading system slot back.
+14. Plan that call as if the slot led the surface, recheck at binding, write the slot first; tests for the fallback's next send back to llama.cpp and the plain hosted -> llama.cpp switch, hard negatives each pinned by code, with mutations.
+15. User Guide, size ratchet, follow-up task for the out-of-scope manual switch, the brief's checks.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-**Status:** AC#1-#5 are met. AC#1 was first met only in part (two shapes refused); the owner's second decision (2026-11-24) granted the rewrite that closes it (see "Second decision: the bounded rewrite").
+**Status:** AC#1-#8 are met. AC#1 was first met only in part (two shapes refused); the owner's second decision (2026-11-24) granted the rewrite that closes it (see "Second decision: the bounded rewrite"). AC#6-#8 come from the owner's third decision (2026-11-25; see "Round 3").
 
 **Decision.** Owner decision 2026-11-24 ("2 ok", approving the recommendation): under Capture On, a provider fallback starts a new trace chain. ADR-337 now carries it as the owner-approved amendment "a provider fallback starts a new chain (TASK-42525)", written before the code.
 
@@ -193,10 +199,32 @@ Second phase (owner decision 2026-11-24, "Allow it, do it now"; rebased onto tra
 
 **Lane move (coordinator's decision).** `Tests/Chat/test_console_failed_call_retry_ownership.py` moved from the Dreams tracking riders step to dreams-boundary's "Run Dreams admission-sensitive contracts". That step runs only `bootstrap_profile` files, as this file is. The move updated `DREAMS_TRACKING_RIDERS`, `DREAMS_ADMISSION_TARGETS` and `test_response_rules_critical_gate.py`'s pinned argv, and the file has one owner. The whole file is 166 tests in 250.4 s serially with the step's flags (`-p no:xdist --timeout=300`) at load ~6. Both steps after the move, serially via `r19-step.sh`: the admission-sensitive step, 6 targets, 276 passed in 370.4 s at load 5-7; the riders step, 42 targets, 1595 passed and 6 skipped in 759.3 s at load 5-6.
 
+**Round 3 (2026-11-25): rebase, review fixes, third decision.** Rebased onto trace1 `f7b043814b`; the old range and the new one are patch-identical (no file differs).
+
+*Review fixes.*
+- I1: the fallback's removal marker sat inside later ranges and read as a missing row. Both the next send to a hosted provider after a llama.cpp fallback with a groq tool call and AGENTS.md, and a second rewrite after a slot removal, were refused (`completed_tool_turn_range`; the rewrite's own code). `rewritten_sequences` now names the run's own marker together with the rows its rewrite replaced. The witness counts both as holes; the rewrite's contiguity check counts them too and checks earnedness on its live rows only. ADR amendment 2 point 4 now says where the marker is dropped (the service projection) and where it is counted (raw readers).
+- I2: after a rewrite, a failed or discarded run without project context blocked the next send (`surface_replacement_checkpoint_unavailable`). The completed-turn range now starts over the run's dead rows (`extend_over_rewrites`), so the witness rechecks them, and the start pin is unchanged. The witness's tool_loop/0 exemption is self-contained: `earned_tool_rows` runs on the rewriting call's rows, wherever the rows they replaced are.
+- M3: dreams-boundary's budget comment cites the measured job maximum (see the lane note below).
+- M4: ADR amendment 1 point 2 says any later unused entry, in list order, and a test passes over an unready first entry.
+- M5: the hard negatives pin each refusal code through a recording boundary factory.
+- M6: a length mismatch is refused with the rewrite's code, not zip's.
+- Every reviewer probe passes (40/40). The relaxed-pin probe's misread is now refused.
+
+*Third decision: the slot comes back.* `console_trace_slot_restore.py` plans a new turn's first call (AGENT_FIRST/FRESH) on a surface with no slot, when its first row is a system row. It stores the slot's artifact and hands the planner the surface with the slot first, at the sequence after the tail. The cold parent builds on that sequence, so every other row goes through the existing rules unchanged. At dispatch binding the call is rechecked (still its turn's first; the surface still has no slot) and the slot is written before the call's other rows, which keep their planned sequences. The surface projection puts a rendered-system node first. The header carries the row, as any slot call's does, so the reader rebuilds the request exactly. Three guards that no mutation could tell apart were deleted: a second system row is already a changed row the rules refuse; a post-write slot check repeated the planner's; the live checkpoint is already replaced by the cold parent.
+
+*Evidence (third decision).* The next send back to llama.cpp after the fallback is now sent and traced with the system row first, in 6 cases: with and without tools, with and without AGENTS.md, and with a tool call on the restored slot plus one more message. Before the change all 6 were refused. The plain captured hosted -> llama.cpp switch is sent in 3 cases (no project; project; project with a tool call and one more message), all red before. A gateway-level test covers `valid` and `valid_fresh` (the slot first in the trace and in the next call's checkpoint, at the sequences written) and `existing_slot_differs` (the existing header-owned rule). It also covers 9 negatives, each with its code: `tool_loop`, `bundled`, `over_a_slot` and `two_system` (`unsupported_surface_change`); `retry` (`surface_prefix_mismatch`); `fallback` (`trace_fallback_rewrite_unavailable`); `not_first` (the request builder refuses it, `TraceProvenanceAlignmentError`); `binding_has_slot` and `binding_not_first`, forged at binding only (`rendered_system_slot_unavailable`, no slot written, the call left reserved for Retry/Send without capture/Cancel like any binding refusal).
+
+*Mutations* (each guard removed or inverted, then the tests run; all killed). Review fixes: markers not counted, any run's markers counted, no holes in the rewrite's contiguity, no length check, planner range not extended, extended to the floor regardless of the run, witness earned check off, witness markers treated as rows, planner's extended start unused. Slot restore: planner route guard, planner has-slot guard, binding route/first and has-slot rechecks, the projection's slot-first rule, the plan's tail sequence, the replacement's predecessor after the slot, the checkpoint root's slot.
+
+*Lane (M3) and test time.* Successful dreams-boundary runs on 2026-11-24..25 (coordinator's GitHub API data) took 15.5-25.2 of the job's 35 min, and the admission-sensitive step 2.1-3.0 min, before the move. An autouse fixture now skips the retry backoff sleep in this file; the retries still run. That saves about 2.4 s per exhausted run, measured back to back on the 14 such tests: 50.5 s and 45.3 s with the fixture, 83.4 s and 76.0 s without. The step via `r19-step.sh` (`-p no:xdist --timeout=300`): 6 targets, 307 passed in 400.1 s at load 6.5-7.6, of which the file is about 4.7 min. Scaled by the other targets' CI/local ratio (1.05-1.5), the file adds 4.9-7.0 min in CI: projected job maximum 30.1-32.2 of 35, which is tight. The workflow comment says so.
+
+*Round-3 runs* (final tree): every `test_console_trace_*` file plus the retry, rate-limit, gateway, fallback-chain, preset-fallback, model-retry, redirect, bridge, adapter-thinking, routes, project-instruction, stream-cut, named-agent, provider-grammar, self-hosted-accounting, group-merge, luna and kimi files at -n 4: 2866 passed, 21 failed. The 21 are exactly the known list: TASK-32032 `[stopped]`, the 3 gateway reds and the 17 base-identical ones. Tests/CI 2009 passed, 2 skipped. Tests/Architecture (serial) 1507 passed, 5 skipped. Preflight passed, `ruff check tldw_chatbook --select F` is clean, and `Tests/lint/ruff_gate.py` exits 0. Soak: the retry, rate-limit and missing-revision-diagnostic files 20 times at -n 4, 20/20 at 251 passed, load 6.7-27.3. Out of scope: a captured manual llama.cpp -> hosted switch with AGENTS.md, filed as TASK-42550. A probe showed it is refused only with project instructions.
+
 **Limits and finds (proposed follow-ups).**
-- Putting a leading system row back on a captured send is refused: after a llama.cpp fallback to a hosted provider, and on any captured hosted -> llama.cpp switch. That needs an owner (ADR) choice; recommendation below in the report.
+- Putting a leading system row back on a captured send was refused (after a llama.cpp fallback to a hosted provider, and on a hosted -> llama.cpp switch). The owner's third decision granted it in round 3.
 - A spawned child's preset fallback under Capture On is unchanged: children keep one chain and segment.
-- With AGENTS.md project context, an ordinary captured switch from llama.cpp to groq is refused with `unsupported_surface_change`; without it, the switch goes through. Pre-existing; found by probe.
+- With AGENTS.md project context, an ordinary captured switch from llama.cpp to groq is refused with `unsupported_surface_change`; without it, the switch goes through. Pre-existing; found by probe; filed as TASK-42550 (out of the third decision's scope).
+- A run whose last call is a llama.cpp non-streaming resend after a fallback rewrite does not get the range extension of I2 (`extend_over_rewrites` walks the chains from that resend's own run id and finds none). Its next send stays refused as before.
 - `test_console_continuation_group_merge.py` (10), `test_console_named_agent_model.py` (2), `test_console_redirect_stream_cut.py` (3) and `test_console_request_provenance_routes.py` (2) are red identically on the base.
 - TASK-34100.2.1's fallback half is met by this task.
 <!-- SECTION:NOTES:END -->
