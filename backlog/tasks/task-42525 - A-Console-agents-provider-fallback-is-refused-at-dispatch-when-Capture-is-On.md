@@ -137,7 +137,8 @@ Also decide what happens to the call the refusal leaves in `reserved`.
   - `Tests/CI` at `-n 4`: 1946 passed, 2 skipped.
   - `Tests/Architecture` serially: 1507 passed, 5 skipped.
   - `./scripts/preflight.sh` passed. `ruff check tldw_chatbook --select F` is clean, and `Tests/lint/ruff_gate.py` reports RATCHET OK.
-  - The Dreams tracking riders step (`r19-step.sh`, `-p no:xdist --timeout=180`): 1618 passed, 6 skipped in 1027.1 s, at load 10-12 with the soak running alongside.
+  - The Dreams tracking riders step (`r19-step.sh`, `-p no:xdist --timeout=180`): 1618 passed, 6 skipped in 1027.1 s, at load 10-12 with the soak running alongside. Rerun on the final tree (with the llama.cpp limit pair): 1620 passed, 6 skipped in 1079.1 s.
+  - The llama.cpp limit pair and the text-tool fallback were soaked a further 20 rounds at `-n 2`: 3 passed in every round, at load 7.4-9.4. On the final tree: the touched files 184 passed at `-n 4`, `Tests/CI` 1946 passed, preflight passed.
 - **Lane cost.** The file is already a whole-file target of the Dreams tracking riders step. The first 35 new tests take 73.8 s serially with the step's flags (`-p no:xdist --timeout=180`), at load 9 with other work running. The llama.cpp limit pair adds about 8 s (4.2 s and 4.1 s). Census and workflow are unchanged.
 
 **AC#1 and its limits.** AC#1 holds when the fallback's request continues the run's trace surface unchanged. That covers the round-24 probe's deepseek -> groq shape, credit and exhausted, before and after tool calls, and a native -> text-tool provider before any tool call. Two cases still stop on "Trace capture could not start" before the fallback provider is asked, with nothing reserved; Capture Off completes them:
