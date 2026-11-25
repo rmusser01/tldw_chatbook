@@ -2799,12 +2799,12 @@ def test_live_projection_roots_path_copy_without_retaining_replacement_ancestry(
         root = root_type(
             root,
             appended=((sequence, reference),),
-            replacement=(index, index),
+            replacement=((index, index),),
         )
         descriptor_root = descriptor_root_type(
             descriptor_root,
             appended=((sequence, descriptor),),
-            replacement=(index, index),
+            replacement=((index, index),),
             appended_domains=((sequence, "messages_payload"),),
             removed_domain_counts=(("messages_payload", 1),),
         )

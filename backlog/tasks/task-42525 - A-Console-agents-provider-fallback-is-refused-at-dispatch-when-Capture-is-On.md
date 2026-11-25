@@ -204,6 +204,13 @@ Third phase (round 3, 2026-11-25; rebased onto trace1's `f7b043814b`):
 - Finding 4 (minor): "next unused entry" is gone from the adapter comment, the test docstring and these notes.
 - Service size row 7004 -> 7042 (+38).
 
+**Round 5 (2026-11-25, re-review of round 4).**
+- Correction: commit 0ccc7290 and the round-4 report called the planner's and the binding check's rendered-system kind checks "shadowed". They are not. A replacement row placed at position 0 has a newer sequence than the rows after it, and `_validate_replacement_range` also runs for calls with no slot. Two tests in `Tests/Chat/test_console_trace_chained_replacement.py` now kill each mutation; both use the reviewer's ledger (rows 0-9, rows 0-5 replaced by one row at sequence 10, rows 11-14 appended):
+  - `test_a_rewrite_never_skips_a_leading_row_that_is_not_a_slot` expects `["sequence_gap"]`. With the planner's kind check removed, preparation fails instead with a raw `replacement_chain_gap`.
+  - `test_dispatch_binding_skips_only_a_leading_system_slot` expects `replacement_chain_gap`. With the binding kind check removed, nothing is raised.
+- The single-range shim in `_without_ranges` is removed. `test_live_projection_roots_path_copy_without_retaining_replacement_ancestry` now passes stored ranges, `((index, index),)`. Service size row 7042 -> 7037 (-5).
+- The lane notes for the retry file now use the round-5 measurement (see the workflow's head-step and dreams-tracking notes).
+
 **Round 4 lane (coordinator's decision, 2026-11-25).** dreams-boundary projected to 30.1-32.2 of its 35 min with the retry file, too tight, so the file moved again: it is now the last target of console-p0-gate's admission-sensitive (head) profile, which runs up to about 18 min (TASK-42533's logs), so about 23-25 of 35 with the file. dreams-boundary's step and its contracts are back to dev's lists.
 
 **Lane move (coordinator's decision).** `Tests/Chat/test_console_failed_call_retry_ownership.py` moved from the Dreams tracking riders step to dreams-boundary's "Run Dreams admission-sensitive contracts". That step runs only `bootstrap_profile` files, as this file is. The move updated `DREAMS_TRACKING_RIDERS`, `DREAMS_ADMISSION_TARGETS` and `test_response_rules_critical_gate.py`'s pinned argv, and the file has one owner. The whole file is 166 tests in 250.4 s serially with the step's flags (`-p no:xdist --timeout=300`) at load ~6. Both steps after the move, serially via `r19-step.sh`: the admission-sensitive step, 6 targets, 276 passed in 370.4 s at load 5-7; the riders step, 42 targets, 1595 passed and 6 skipped in 759.3 s at load 5-6.

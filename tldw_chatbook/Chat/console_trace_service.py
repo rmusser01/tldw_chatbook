@@ -659,12 +659,7 @@ def _without_ranges(
     tree: _PersistentSequenceNode[_SequenceValue] | None,
     ranges: tuple[tuple[int, int], ...],
 ) -> tuple[int, _PersistentSequenceNode[_SequenceValue] | None]:
-    """Remove a replacement's stored ranges; return the first one's position.
-
-    ``ranges`` is a chain's links, or one ``(start, end)`` range.
-    """
-    if ranges and type(ranges[0]) is int:
-        ranges = (cast(tuple[int, int], ranges),)
+    """Remove a replacement's stored ranges; return the first one's position."""
     positions = [
         position
         for start, end in ranges

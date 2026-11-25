@@ -1434,7 +1434,10 @@ _BUDGETS: dict[str, int] = {
     # rule): 7004 -> 7042 (+38), exact measurement. A rewritten tail's links
     # skip a restored slot (planner, binding check, roots by stored ranges),
     # and slots move first after the replacements.
-    "tldw_chatbook/Chat/console_trace_service.py": 7042,
+    # 2026-11-25, TASK-42525 round 5 (same rule): 7042 -> 7037 (-5), exact
+    # measurement; the single-range shim in _without_ranges is gone (the one
+    # test that built a bare range now passes stored ranges).
+    "tldw_chatbook/Chat/console_trace_service.py": 7037,
     # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
     # approved child trace segments (ADR-337 amendment 2026-11-17): create and
