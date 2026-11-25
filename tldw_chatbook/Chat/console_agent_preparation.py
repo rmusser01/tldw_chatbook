@@ -236,6 +236,17 @@ def _prepare_native_reply(
     # byte-identical to before this task (existing callers that never
     # pass `builtin_gate` see no behavior change at all).
     skill_runner = None
+    skill_report_owner = None
+    if self._store is not None and _workflow_preparation is None:
+        from .console_skill_cost_report import skill_report_scope
+
+        try:
+            session = self._store._session_or_raise(session_id)
+        except (AttributeError, KeyError):
+            pass
+        else:
+            if not session.ephemeral and workspace_id in (None, session.workspace_id):
+                skill_report_owner = session, skill_report_scope(session)
     # TASK-1366: this run's UI-side diff channel. When this run takes
     # the fresh-build branch below, the provider's strip seam
     # (BuiltinToolProvider.invoke) appends
@@ -755,6 +766,7 @@ def _prepare_native_reply(
                 and entry.name in first_request_plan.config.allowed_tools
             ),
             skill_file_bindings=skill_file_bindings,
+            skill_report_owner=skill_report_owner,
             definition_digests={
                 name: digest
                 for name, digest in admitted_skill_definition_digests.items()
@@ -2322,6 +2334,39 @@ def _prepare_native_reply(
             propagate_trace_call_persistence_errors
         ),
     )
+    if skill_report_owner is not None:
+        from .console_skill_cost_report import prepared_agent_skill_observer
+
+        plugin_names = {row["tool_name"]: row["name"] for row in plugin_entries}
+        skill_names = {
+            f"skill:{name}": plugin_names.get(name, name)
+            for name in first_request_plan.skill_names
+        }
+        name_conflicts = (
+            tuple(
+                sorted(
+                    {
+                        plugin_names.get(row["name"], row["name"])
+                        for row in native_host._eligible_skill_entries(context)
+                        if row["name"] not in first_request_plan.skill_names
+                    }
+                )
+            )
+            if self._skills_service is not None
+            else ()
+        )
+
+        def observe_request_surface(schemas, native, protocol):
+            adapter._first_skill_cost_observer = prepared_agent_skill_observer(
+                *skill_report_owner,
+                schemas,
+                skill_names,
+                native=native,
+                protocol=protocol,
+                conflicts=name_conflicts,
+            )
+
+        service._console_request_surface_observer = observe_request_surface
     # PR2b Task 1: publish BEFORE `run_turn` is called (below) -- see
     # `self._fleet_services`'s own docstring in `__init__` for the
     # lifetime/thread-safety contract this relies on.

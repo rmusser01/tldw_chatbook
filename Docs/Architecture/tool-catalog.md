@@ -122,6 +122,15 @@ The stock local MCP capability manifest reads and parses its registration source
 
 The Console run-start helper may install a kept MCP composition into a fresh provider when the service, catalog fingerprint identity, connection states and provider composition key still match. Only a plain `MCPToolProvider` is eligible for this reuse. Incomplete inventory composition is not kept; a valid empty inventory can be reused. `install_composition()` clears approval stamps. This cache belongs to the run-start helper; the full registry and persona call caps remain run scoped.
 
+The Console skill cost report classifies schemas by the prepared primary
+request's admitted skill identities. Native schema shares partition the tool
+schema bucket. Fenced protocol shares partition the system bucket and use the
+protocol already rendered by the live request owner. If the composed surface differs
+from the admitted plan or the protocol proof is unavailable, the report shows
+the original buckets and labels skill attribution unavailable. A separate
+scoped catalog view reports visible conflicts, blocked skills and disabled
+components without composing or activating providers (TASK-38931, ADR-230).
+
 ## Config keys
 
 `[tools]`: `read_file_enabled`, `list_directory_enabled`, `write_file_enabled`, `create_note_enabled`, `update_note_enabled`, `glob_files_enabled`, `grep_files_enabled`, `expand_document_enabled` (all default **false**), `web_deep_search_enabled` (double opt-in), `ask_user_enabled` (default on). Every gate is read through `coerce_bool_setting` — a quoted `"false"` in TOML is truthy and must not fail a gate open.

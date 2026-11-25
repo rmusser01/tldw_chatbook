@@ -41,6 +41,7 @@ SYSTEM_COMMAND_HANDLER_ID = "apply-system"
 SKILLS_COMMAND_NAME = "skills"
 SKILLS_COMMAND_ARGUMENT_HINT = "[name] [args]"
 SKILLS_COMMAND_HANDLER_ID = "skills"
+SKILL_COST_COMMAND = "skill-cost"
 
 FEWER_PERMISSION_PROMPTS_COMMAND_NAME = "fewer-permission-prompts"
 FEWER_PERMISSION_PROMPTS_COMMAND_ARGUMENT_HINT = ""
@@ -281,6 +282,11 @@ def default_console_registry() -> ConsoleCommandRegistry:
             name=SKILLS_COMMAND_NAME,
             argument_hint=SKILLS_COMMAND_ARGUMENT_HINT,
             handler_id=SKILLS_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=SKILL_COST_COMMAND, argument_hint="", handler_id=SKILLS_COMMAND_HANDLER_ID
         )
     )
     registry.register(

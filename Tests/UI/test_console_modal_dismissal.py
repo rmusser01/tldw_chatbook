@@ -169,6 +169,7 @@ from tldw_chatbook.Widgets.Console.console_rewind_modal import (
     ConsoleRewindModal,
 )
 from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal
+from tldw_chatbook.Widgets.Console.console_skill_cost_modal import ConsoleSkillCostModal
 from tldw_chatbook.Widgets.Console.console_save_as_modal import ConsoleSaveAsModal
 from tldw_chatbook.Widgets.Console.console_save_markdown_modal import (
     ConsoleSaveMarkdownModal,
@@ -646,6 +647,16 @@ TASK2_MODAL_CONTRACTS = (
         "#console-run-log-modal",
         None,
         "Console run log action",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task2ModalContract(
+        ConsoleSkillCostModal,
+        lambda: ConsoleSkillCostModal("Current Console session"),
+        "#console-skill-cost-modal",
+        None,
+        "Console skill cost command",
         None,
         "none",
         _RESTORE_OPENER,
@@ -1692,7 +1703,7 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     # TASK-35582 adds the safe-dismissal code-review report reader.
     # TASK-39147 adds the three safe-dismissal workflow dialogs.
     # TASK-41307 adds the held tool slots list (TASK-41730 names it).
-    assert len(reachable_modal_types) == 81
+    assert len(reachable_modal_types) == 82
     all_contract_types = (
         console_contract_types
         | {contract.modal_type for contract in TASK4_MODAL_CONTRACTS}
@@ -1835,7 +1846,7 @@ class _SyntheticDeclaredOwner:
 
 
 def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
-    assert len(TASK2_MODAL_CONTRACTS) == 17
+    assert len(TASK2_MODAL_CONTRACTS) == 18
     assert {contract.modal_type.__name__ for contract in TASK2_MODAL_CONTRACTS} == {
         "ConsoleHeldToolSlotsModal",
         "ConsoleWorkspaceFilesModal",
@@ -1851,6 +1862,7 @@ def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
         "ConsolePromptQueueModal",
         "ConsoleReviewNotesModal",
         "ConsoleRunLogModal",
+        "ConsoleSkillCostModal",
         "ConsoleScopePickerModal",
         "ConsoleSideChatModal",
         "ConsoleStylePickerModal",

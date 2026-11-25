@@ -14,7 +14,7 @@ from typing import Any
 
 from loguru import logger
 
-from ...Chat.console_command_grammar import CommandParse
+from ...Chat.console_command_grammar import SKILL_COST_COMMAND, CommandParse
 from ...Chat.console_skill_resolver import (
     SKILL_UNTRUSTED_REFUSE,
     SkillCommandCandidate,
@@ -568,3 +568,94 @@ def _capture_console_skill_discovery(controller: Any) -> Callable[[], bool] | No
         )
 
     return current
+
+
+async def dispatch_skill_command(screen: Any, parse: CommandParse) -> None:
+    """Handle the two read-only Console skill commands."""
+    if parse.name == SKILL_COST_COMMAND:
+        await show_skill_cost_report(screen)
+    else:
+        await screen._skill._console_command_skills(parse)
+
+
+async def show_skill_cost_report(screen: Any) -> None:
+    """Open the report only while its originating chat and binding are visible."""
+    from ...Backup_Recovery.bootstrap import RecoveryRequired
+    from ...Chat.console_configuration_preparation import _ready_published_plugin
+    from ...Chat.console_skill_cost_report import (
+        format_skill_cost_report,
+        skill_report_scope,
+    )
+    from ...Constants import LIBRARY_NAV_CONTEXT_MODE, TAB_LIBRARY, TAB_SETTINGS
+    from ...Plugins.admission import PluginUnavailable
+    from ...Widgets.Console.console_skill_cost_modal import (
+        ConsoleSkillCostModal,
+        SkillManagementDestination,
+    )
+    from ..Navigation.main_navigation import NavigateToScreen
+    from .command_handoff import refuse_if_chat_changed
+
+    if refuse_if_chat_changed(SKILL_COST_COMMAND):
+        return
+    store = screen._ensure_console_chat_store()
+    session = store._session_or_raise(store.active_session_id)
+    scope = skill_report_scope(session)
+    active_epoch = store.active_session_epoch()
+    screen._clear_console_composer_draft()
+    catalog = (
+        {} if session.ephemeral else await screen._skill._fetch_console_skill_context()
+    )
+
+    def is_current() -> bool:
+        return (
+            screen._ensure_console_chat_store() is store
+            and store.active_session_id == session.id
+            and store.active_session_epoch() == active_epoch
+            and skill_report_scope(session) == scope
+        )
+
+    if (
+        refuse_if_chat_changed(SKILL_COST_COMMAND)
+        or not is_current()
+        or screen.app.screen is not screen
+    ):
+        return
+    if session.ephemeral:
+        report = (
+            "Temporary Console session · Skill usage and request costs are unavailable."
+        )
+    else:
+        config = screen.app_instance.app_config
+        disabled = (config.get("skills") or {}).get("disabled_builtins")
+        local_skills = vars(screen.app_instance).get("_local_skills_service")
+        try:
+            plugin_service = _ready_published_plugin(local_skills, screen.app_instance)
+            components = (
+                plugin_service.list_components(session.workspace_id)
+                if plugin_service is not None
+                else ()
+            )
+        except (PluginUnavailable, RecoveryRequired):
+            components = None
+        report = format_skill_cost_report(
+            session,
+            catalog,
+            plugin_components=components,
+            disabled_builtins=disabled if isinstance(disabled, (list, tuple)) else (),
+            mcp_enabled=(config.get("mcp") or {}).get("enabled"),
+        )
+
+    def open_management(destination: SkillManagementDestination | None) -> None:
+        if destination is None or not is_current():
+            return
+        if destination == "skills":
+            request = NavigateToScreen(
+                TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_MODE: "skills"}
+            )
+        elif destination == "tools":
+            request = NavigateToScreen(TAB_SETTINGS, {"category": "tools"})
+        else:
+            request = NavigateToScreen("plugins")
+        screen.app.post_message(request)
+
+    screen.app.push_screen(ConsoleSkillCostModal(report), callback=open_management)

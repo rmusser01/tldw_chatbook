@@ -19401,7 +19401,7 @@ class ChatScreen(BaseAppScreen):
         await self._prompts._open_console_system_prompt_editor()
 
     async def _console_command_skills(self, parse: CommandParse) -> None:
-        await self._skill._console_command_skills(parse)
+        await skill_controller.dispatch_skill_command(self, parse)
 
     async def _console_command_fewer_permission_prompts(
         self, parse: CommandParse

@@ -99,6 +99,7 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     TraceProvenance,
     request_route_provenance,
     stream_fallback_route_provenance,
+    validate_request_trace_binding as _validate_request_trace_binding,
 )
 from tldw_chatbook.Chat.console_trace_final_values import (
     ProviderOverlayProvenance,
@@ -524,53 +525,6 @@ class _ProviderAdapterAdmission:
             if self._issuer is not issuer or self._consumed:
                 raise TraceCallPersistenceError()
             self._consumed = True
-
-
-def _validate_request_trace_binding(
-    request: PreparedConsoleRequest | PreparedProviderRequest,
-    *,
-    route: ConsoleRequestRoute | None,
-    route_actor_id: str | None,
-    route_chain_id: str | None,
-    capture_mode: ConsoleTraceCaptureMode,
-) -> None:
-    """Fail closed unless preparation provenance matches this dispatch."""
-
-    if type(capture_mode) is not ConsoleTraceCaptureMode:
-        raise TypeError("capture_mode must be ConsoleTraceCaptureMode")
-    provenance = request.provenance
-    if capture_mode is ConsoleTraceCaptureMode.CAPTURE_OFF:
-        if provenance is not None:
-            raise TraceProvenanceAlignmentError(
-                "Capture Off cannot dispatch a capture-on prepared request"
-            )
-        return
-    if provenance is None:
-        raise TraceProvenanceAlignmentError(
-            "Capture On requires prepared request provenance"
-        )
-    route_descriptor = (
-        request_route_provenance(
-            route,
-            actor_id=route_actor_id,
-            chain_id=route_chain_id,
-        )
-        if route is not None
-        else None
-    )
-    route_descriptors = tuple(
-        item
-        for item in provenance.metadata
-        if type(item) is RequestRouteTraceProvenance
-    )
-    if (
-        route_descriptor is None
-        or len(route_descriptors) != 1
-        or replace(route_descriptors[0], parent_revision_id=None) != route_descriptor  # child: turn checked by the adapter
-    ):
-        raise TraceProvenanceAlignmentError(
-            "capture-on request route provenance is missing or mismatched"
-        )
 
 
 def _thinking_stream_capability(
@@ -5998,6 +5952,7 @@ class ConsoleProviderGateway:
         provisional_trace_attempt: ProvisionalTraceAttempt | None = None,
         before_provider_dispatch: Callable[[], Awaitable[None]] | None = None,
         emission_observer: Callable[[bool], None] | None = None,
+        prepared_observer: Callable[[PreparedProviderRequest], None] | None = None,
     ) -> AsyncIterator[ProviderStreamItem]:
         """Dispatch streaming for a resolved Console provider.
 
@@ -6166,6 +6121,11 @@ class ConsoleProviderGateway:
                     else None
                 ),
             )
+            if prepared_observer is not None:
+                try:
+                    prepared_observer(prepared)
+                except Exception:  # noqa: BLE001 - observation must not affect dispatch
+                    pass
             capture_off_admission: _ProviderAdapterAdmission | None = None
             resuming_stream_fallback = False
             if capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON:

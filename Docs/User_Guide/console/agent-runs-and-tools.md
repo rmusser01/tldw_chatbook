@@ -2447,6 +2447,21 @@ Skills are reusable instruction packs kept in Library ▸ Skills.
 - A skill that hasn't been reviewed yet refuses to run: "Skill "name" isn't
   trusted (…) — review and approve it in Library ▸ Skills before running it."
 
+Open **`/skill-cost`** to review the current Console session. The report shows
+when its latest request sample was prepared, the estimated input tokens spent
+advertising skills and other tools, and each observed use and its recency.
+The estimates split the request's existing Context breakdown. Estimated skill
+text loaded by a child counts separately from the parent request. A manual
+`$name` expansion counts once per accepted turn, with body costs shown as
+unavailable when they cannot be attributed.
+
+Usage starts with the first observation in this live chat. Earlier use shows as
+unknown. The report works with trace Capture off. Temporary chats show an
+unavailable state. Use **Skills** to review name conflicts or blocked skills in the Library,
+**MCP** to open connector settings, and **Plugins** to review unavailable
+components. Opening the report makes no model call and adds nothing to the
+transcript.
+
 When an **agent** (not you) tries something skill-related, a confirm card
 appears above the transcript:
 

@@ -3459,6 +3459,9 @@ class ConsoleCompactionPreflight:
                     **prepared,
                 )
             return provider_messages, None
+        from .console_skill_cost_report import record_skill_cost, skill_report_scope
+
+        skill_scope = skill_report_scope(owner) if not owner.ephemeral else None
         conversation_id = owner.persisted_conversation_id
         effective = self.read_controller__select_session_effective_memory()(
             session_id,
@@ -3560,6 +3563,8 @@ class ConsoleCompactionPreflight:
                 ),
             )
         self.read_controller__context_accounting_by_session()[session_id] = accounting
+        if skill_scope is not None:
+            record_skill_cost(owner, skill_scope, accounting, native=bool(surface.tools))
         mandatory_tokens = (
             prepared_before.accounting.non_compactable_tokens
             - prepared_before.accounting.memory_tokens

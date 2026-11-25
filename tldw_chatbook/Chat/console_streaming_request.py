@@ -466,6 +466,20 @@ def chat_call_impl(
 
         if isinstance(self._gateway, bridge.ConsoleProviderGateway):
             stream_kwargs["emission_observer"] = observe_emission
+            observer = getattr(self, "_first_skill_cost_observer", None)
+            if (
+                route is bridge.ConsoleRequestRoute.AGENT_FIRST
+                and not is_subagent
+                and observer is not None
+            ):
+                stream_kwargs["prepared_observer"] = observer
+                self._first_skill_cost_observer = None
+            elif is_subagent:
+                # Inline skills share the primary thread's request counter.
+                from .console_skill_cost_report import SKILL_CHILD_OBSERVATION
+
+                if (child := SKILL_CHILD_OBSERVATION.get()) is not None:
+                    stream_kwargs["prepared_observer"] = child.observe
         owner_session_id = self._session_id or self._store.session_id_for_message(
             self._assistant_message_id
         )

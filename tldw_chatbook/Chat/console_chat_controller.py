@@ -184,6 +184,7 @@ from tldw_chatbook.Chat.console_history_budget import (
 
 # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (console_auxiliary_routing imports at its one call site.)
 from tldw_chatbook.Agents.agent_service import append_personal_context
+from tldw_chatbook.Chat import console_skill_cost_report as skill_cost
 from tldw_chatbook.Chat.console_context_compaction import (
     NO_LEGACY_MEMORY,
     CompactionAdmission,
@@ -17558,14 +17559,7 @@ class ConsoleChatController:
             return "no active run to steer — plain messages queue for the next turn"
         return steer(text)
 
-    def context_breakdown_accounting(self, session_id: str):
-        """The LAST prepared request's accounting for one session, if any.
-
-        TASK-26019. Captured at the send preflight; None before the first
-        send of a session (the surface says so rather than estimating).
-        Reading it never triggers a model call (AC#5).
-        """
-        return self._context_accounting_by_session.get(session_id)
+    context_breakdown_accounting = skill_cost.context_breakdown_accounting
 
     def redirect_active_run(self, text: str) -> str | None:
         """Cut off the ACTIVE session's current model response and re-run the
@@ -24531,6 +24525,10 @@ class ConsoleChatController:
             # no-op since nothing will ever read a closed session's state.
             return self._session_closed_result()
         owner = next((s for s in self.store.sessions() if s.id == owner_id), None)
+        observe_skills = skill_cost.manual_use_observer(
+            owner, skill_bindings, assistant_message_id, route,
+            replay=prepare_retry or variant_mode,
+        )
         turn_context = self._require_complete_turn_execution_context(turn_context)
         if turn_context.session_id != owner_id:
             raise ValueError("Console turn context does not own the assistant row.")
@@ -24945,6 +24943,7 @@ class ConsoleChatController:
             }:
                 return self._session_closed_result()
             stream_signals.automatic_work_chain_id = work_chain_id
+            observe_skills()
             if (
                 bool(
                     turn_context.tool_configuration.get(
@@ -25732,6 +25731,7 @@ class ConsoleChatController:
             owner_id = self.store.session_id_for_message(assistant_message_id)
         except KeyError:
             return self._session_closed_result()
+        observe_cost = skill_cost.direct_request_observer(self.store, owner_id)
         one_shot_used = one_shot_prefill_revision if prefill_from_one_shot else None
         provider_messages = self._provider_messages_with_prefill(
             provider_messages,
@@ -26022,6 +26022,7 @@ class ConsoleChatController:
                     enter_provider_dispatch if deferred_boundary else None
                 ),
             }
+            observe_cost(dispatch_request)
             provider_stream = self.provider_gateway.stream_chat(
                 resolution,
                 dispatch_request,

@@ -367,6 +367,8 @@ def test_skill_run_child_still_approval_gated(tmp_path):
         review_tool_calls=build_local_review_hook(provider, request_approvals),
         review_state_scope=provider.stamp_scope,
     )
+    surfaces = []
+    service._console_request_surface_observer = lambda *surface: surfaces.append(surface)
     _run_id, outcome = service.run_turn(
         conversation_id="c",
         messages=[{"role": "user", "content": "research it"}],
@@ -384,6 +386,11 @@ def test_skill_run_child_still_approval_gated(tmp_path):
         api_endpoint="llama_cpp",  # fence-protocol endpoint (harness pattern)
     )
     assert outcome.status == RUN_DONE
+    [(schemas, native, protocol)] = surfaces
+    assert not native
+    assert any(schema.id == "skill:web-research" for schema in schemas)
+    assert '"name": "web-research"' in protocol
+    assert '"name": "web_fetch"' not in protocol
     # The child's web_fetch call hit the shared review hook exactly once.
     assert len(approval_calls) == 1
     assert len(approval_calls[0]) == 1

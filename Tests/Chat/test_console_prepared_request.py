@@ -656,6 +656,7 @@ async def test_gateway_prepares_once_and_dispatches_that_exact_artifact(
         )
     )
     prepared_calls = []
+    observed = []
     original_prepare = gateway.prepare_chat_request
 
     def prepare_spy(*args, **kwargs):
@@ -669,11 +670,16 @@ async def test_gateway_prepares_once_and_dispatches_that_exact_artifact(
         {"role": "user", "content": "hello"},
     ]
 
-    chunks = [chunk async for chunk in gateway.stream_chat(_resolution(), messages)]
+    chunks = [
+        chunk async for chunk in gateway.stream_chat(
+            _resolution(), messages, prepared_observer=observed.append
+        )
+    ]
 
     assert chunks == ["ok"]
     assert len(prepared_calls) == 1
     artifact = prepared_calls[0]
+    assert len(observed) == 1 and observed[0] is artifact
     assert dispatched["system_message"] == artifact.system_message
     assert dispatched["messages_payload"] == [
         thaw_json(item) for item in artifact.messages_payload

@@ -56,6 +56,7 @@ def make_call_model(
     )
     initial_context_checked = False
     context_observed = False
+    surface_observed = False
     staged = staged_delivery if staged_delivery is not None else {}
     # TASK-1272 (Phase 3): the ONLY gate on whether eviction may run at
     # all is (a) `log_active` -- the SAME condition, reused verbatim,
@@ -94,6 +95,7 @@ def make_call_model(
         current_continuation: ProviderContinuationCheckpoint | None = None,
     ) -> ModelTurn:
         nonlocal protocol_key, protocol_text, initial_context_checked, context_observed
+        nonlocal surface_observed
         if (
             project_instruction_context is not None
             and payload_state is not None
@@ -467,6 +469,17 @@ def make_call_model(
                         )
                     )
             with admission_scope:
+                observer = getattr(self, "_console_request_surface_observer", None)
+                if (
+                    observer is not None
+                    and trusted_role == "primary"
+                    and not surface_observed
+                ):
+                    surface_observed = True
+                    try:
+                        observer(schemas, native, protocol_text)
+                    except Exception:  # noqa: BLE001 - observation must not affect dispatch
+                        pass
                 resp = self.chat_call(
                     api_endpoint=config.provider or api_endpoint,
                     messages_payload=checked_payload,

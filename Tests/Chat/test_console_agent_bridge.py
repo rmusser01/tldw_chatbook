@@ -11811,6 +11811,37 @@ def _routed_child_messages():
 
 
 @pytest.mark.bootstrap_profile
+def test_inline_skill_child_receives_its_prepared_observer_after_primary():
+    from tldw_chatbook.Chat.console_skill_cost_report import (
+        SKILL_CHILD_OBSERVATION,
+        SkillChildObservation,
+        skill_body_digest,
+    )
+
+    requests = []
+
+    class RecordingGateway(ConsoleProviderGateway):
+        async def stream_chat(self, _resolution, _messages, *, route, **kwargs):
+            requests.append((route, kwargs.get("prepared_observer")))
+            yield "ok"
+
+    gateway = RecordingGateway()
+    with _streaming_adapter(_routing_parent_resolution(), gateway) as adapter:
+        adapter.chat_call(messages_payload=[{"role": "user", "content": "primary"}])
+        child = SkillChildObservation(10, skill_body_digest("child task"))
+        token = SKILL_CHILD_OBSERVATION.set(child)
+        try:
+            adapter.chat_call(messages_payload=_routed_child_messages())
+        finally:
+            SKILL_CHILD_OBSERVATION.reset(token)
+
+    assert requests == [
+        (bridge_module.ConsoleRequestRoute.AGENT_FIRST, None),
+        (bridge_module.ConsoleRequestRoute.TOOL_LOOP, child.observe),
+    ]
+
+
+@pytest.mark.bootstrap_profile
 def test_per_call_routing_kwargs_re_resolve_and_forward(monkeypatch):
     """A routed child re-resolves through the gateway's send-resolution seam:
     the child's provider/model/base_url and sampling params reach

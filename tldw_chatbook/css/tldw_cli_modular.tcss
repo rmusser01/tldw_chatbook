@@ -4326,6 +4326,10 @@ App.-wide-viewport #file-notes-conflict-dialog {
   width: $ds-percent-85;
   max-width: $ds-size-170;
 }
+App.-wide-viewport #console-skill-cost-modal {
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
+}
 App.-wide-viewport #console-run-log-modal {
   width: $ds-percent-85;
   max-width: $ds-size-170;
@@ -9019,6 +9023,7 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
     align-horizontal: right;
 }
 
+#console-skill-cost-modal,
 #console-run-log-modal {
     width: $ds-size-96;
     max-width: $ds-percent-95;
@@ -9029,6 +9034,7 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
     padding: $ds-space-1 $ds-space-2;
 }
 
+#console-skill-cost-text,
 #console-run-log-text {
     width: $ds-width-full;
     height: $ds-height-fill;
@@ -9038,11 +9044,21 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
     color: $ds-text-primary;
 }
 
+#console-skill-cost-actions,
 #console-run-log-actions {
     height: $ds-size-3;
     min-height: $ds-size-3;
     align-horizontal: right;
     margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+}
+
+#console-skill-cost-skills,
+#console-skill-cost-tools,
+#console-skill-cost-plugins,
+#console-skill-cost-close {
+    width: $ds-width-fill;
+    min-width: $ds-size-7;
+    padding: $ds-space-0;
 }
 
 #console-system-prompt-clear,
