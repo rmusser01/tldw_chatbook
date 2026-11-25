@@ -877,18 +877,26 @@ message, and the surface had no slot for it.
    none after a message. Nothing else is relaxed.
 3. **Recording.** Before its other writes, the call appends one
    rendered-system node directly after the surface tail, holding the
-   request's system row as a first call's slot does. The surface projection
-   places a rendered-system node first, so the slot leads again; at most one
-   is ever active. The call's header carries the row as every later slot
+   request's system row as a first call's slot does. After its replacements,
+   the surface projection moves the active rendered-system rows to the front
+   in sequence order, so the slot leads again (and two leading system rows
+   keep their order). The call's header carries the row as every later slot
    call's header does (`rendered_system_row`), so the reader rebuilds the
    request exactly. Nothing is removed; earlier calls, heads and bytes stay as
-   they were.
+   they were. (Wording corrected 2026-11-25: it said "at most one is ever
+   active", which a first call with two leading system rows contradicts.)
 4. **Recheck.** The planner proves the shape in the reservation transaction
    and checks the slot like any leading slot (a system row, under the call's
    frozen policy). The dispatch-binding transaction checks the shape again
    before writing: the call is still its turn's first and the surface still
    has no slot. From then on the slot is an ordinary leading slot, which the
    run's tool-loop calls and the next send match under the existing rules.
+   Its sequence sits mid-history, so a later Compact now or Edit & resend
+   whose rewritten range starts before it stores that range as links that
+   skip it: the slot stays where it is, and the dispatch-binding check of the
+   chain accepts that one skipped row only as the projection's leading
+   rendered-system row. (Added 2026-11-25 after the round-3 re-review: such
+   a send was refused for a sequence gap.)
 
 Still refused: a slot put back by any other call; a system row anywhere but
 first; a request with two system rows; a second slot over a surface that

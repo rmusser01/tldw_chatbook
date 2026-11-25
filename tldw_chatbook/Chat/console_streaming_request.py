@@ -177,8 +177,8 @@ def chat_call_impl(
         self._thread_loop.route_chain_id = route_chain_id
     if self._trace_request_factory is not None and not is_subagent:
         # TASK-42525: a captured run's provider fallback names another target.
-        # It starts a new chain of this run, and only for the next unused
-        # entry of the run's configured fallback list.
+        # It starts a new chain of this run, and only for a later unused
+        # entry of the run's configured fallback list, in list order.
         target = (requested_endpoint, str(model or ""))
         if target != getattr(self._thread_loop, "route_target", target):
             configured = [name.strip().lower() for name in self._fallback_providers]

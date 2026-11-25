@@ -606,7 +606,7 @@ class _ProjectionRoot:
     parent: _ProjectionRoot | None
     base: tuple[tuple[int, SurfaceReferenceKey], ...] = ()
     appended: tuple[tuple[int, SurfaceReferenceKey], ...] = ()
-    replacement: tuple[int, int] | None = None
+    replacement: tuple[tuple[int, int], ...] | None = None
     size: int = field(init=False)
     _tree: _PersistentSequenceNode[SurfaceReferenceKey] | None = field(
         init=False,
@@ -629,11 +629,7 @@ class _ProjectionRoot:
                 ((sequence, key, None) for sequence, key in self.appended),
             )
         else:
-            start, end = self.replacement
-            position = _persistent_first_position_in_range(tree, start, end)
-            if position is None:
-                raise ValueError("surface_replacement_target_inactive")
-            tree = _persistent_without_sequence_range(tree, start, end)
+            position, tree = _without_ranges(tree, self.replacement)
             tree = _persistent_insert_entries(
                 tree,
                 position,
@@ -659,6 +655,24 @@ class _ProjectionRoot:
         return _persistent_first_position_in_range(self._tree, start, end)
 
 
+def _without_ranges(
+    tree: _PersistentSequenceNode[_SequenceValue] | None,
+    ranges: tuple[tuple[int, int], ...],
+) -> tuple[int, _PersistentSequenceNode[_SequenceValue] | None]:
+    """Remove a replacement's stored ranges; return the first one's position."""
+    positions = [
+        position
+        for start, end in ranges
+        if (position := _persistent_first_position_in_range(tree, start, end))
+        is not None
+    ]
+    if not positions:
+        raise ValueError("surface_replacement_target_inactive")
+    for start, end in ranges:
+        tree = _persistent_without_sequence_range(tree, start, end)
+    return min(positions), tree
+
+
 @dataclass(frozen=True, slots=True)
 class _DescriptorRoot:
     """Private persistent structural projection; it never carries provider values."""
@@ -666,7 +680,7 @@ class _DescriptorRoot:
     parent: _DescriptorRoot | None
     base: tuple[tuple[int, TraceProvenance], ...] = ()
     appended: tuple[tuple[int, TraceProvenance], ...] = ()
-    replacement: tuple[int, int] | None = None
+    replacement: tuple[tuple[int, int], ...] | None = None
     base_domains: tuple[tuple[int, str], ...] = ()
     appended_domains: tuple[tuple[int, str], ...] = ()
     removed_domain_counts: tuple[tuple[str, int], ...] = ()
@@ -702,11 +716,7 @@ class _DescriptorRoot:
                 ),
             )
         else:
-            start, end = self.replacement
-            position = _persistent_first_position_in_range(tree, start, end)
-            if position is None:
-                raise ValueError("surface_replacement_target_inactive")
-            tree = _persistent_without_sequence_range(tree, start, end)
+            position, tree = _without_ranges(tree, self.replacement)
             appended_domains = dict(self.appended_domains)
             tree = _persistent_insert_entries(
                 tree,
@@ -838,7 +848,7 @@ class _ProjectedProviderValues(Sequence[object]):
         cursor: sqlite3.Cursor,
         parent: _ProjectionRoot,
         appended: tuple[tuple[int, TraceProvenance, object], ...],
-        replacement: tuple[int, int] | None,
+        replacement: tuple[tuple[int, int], ...] | None,
         descriptor_root: _DescriptorRoot,
         owner_id: str,
         domain: str,
@@ -876,11 +886,22 @@ class _ProjectedProviderValues(Sequence[object]):
                 (sequence, key, None) for sequence, key in parent
             ] + [(sequence, None, value) for sequence, value in inserted]
         else:
-            start, end = self._replacement
-            insert_at = self._parent.first_position_in_range(start, end)
+            insert_at = min(
+                (
+                    position
+                    for start, end in self._replacement
+                    if (position := self._parent.first_position_in_range(start, end))
+                    is not None
+                ),
+                default=None,
+            )
             if insert_at is None:
                 raise ValueError("surface_replacement_target_inactive")
-            parent = [entry for entry in parent if not start <= entry[0] <= end]
+            parent = [
+                entry
+                for entry in parent
+                if not any(start <= entry[0] <= end for start, end in self._replacement)
+            ]
             combined = [(sequence, key, None) for sequence, key in parent]
             combined[insert_at:insert_at] = [
                 (sequence, None, value) for sequence, value in inserted[:1]
@@ -2278,13 +2299,13 @@ class ConsoleTraceService:
                 projection.root
                 if removed_slot is None
                 else _ProjectionRoot(
-                    projection.root, replacement=(removed_slot, removed_slot)
+                    projection.root, replacement=((removed_slot, removed_slot),)
                 ),
                 appended=tuple(
                     (node.sequence, self._node_reference_key(node)) for node in appended
                 ),
                 replacement=(
-                    (replacement.start_sequence, replacement.end_sequence)
+                    _replaced_ranges(replacement)
                     if stored_replacement is not None and replacement is not None
                     else None
                 ),
@@ -2955,8 +2976,14 @@ class ConsoleTraceService:
             # A rewritten tail wider than one replacement is stored as a chain
             # of links (ADR-337 amendment 2026-11-06). Dead sequences an earlier
             # replacement left inside a link count toward its span.
+            # A slot put back after the tail stays where it is: the links
+            # skip it (ADR-337 amendment 2026-11-25).
+            retained_slot = (
+                active[0][1] if prefix and active[0][2][0] == "rendered_system" else None
+            )
             links = _replacement_links(
-                sorted(sequence for _, sequence, _ in active[prefix:])
+                sorted(sequence for _, sequence, _ in active[prefix:]),
+                around=retained_slot,
             )
             rewritten = (
                 _rewritten_tails().build_rewritten_tail_witness(
@@ -3008,6 +3035,7 @@ class ConsoleTraceService:
                 if any(
                     start_sequence <= sequence <= end_sequence
                     and sequence not in changed_sequences
+                    and not (rewritten is not None and sequence == retained_slot)
                     for sequence, _key in physical_active
                 ):
                     record_refusal("sequence_gap")
@@ -4142,9 +4170,14 @@ class ConsoleTraceService:
                 known_credentials=known_credentials,
             )
         if replacement_range is not None:
-            replacement_position = parent.root.first_position_in_range(
-                replacement_range.start_sequence,
-                replacement_range.end_sequence,
+            replacement_position = min(
+                (
+                    position
+                    for start, end in _replaced_ranges(replacement_range)
+                    if (position := parent.root.first_position_in_range(start, end))
+                    is not None
+                ),
+                default=None,
             )
             if replacement_position is None:
                 raise ValueError("surface_replacement_target_inactive")
@@ -4284,10 +4317,7 @@ class ConsoleTraceService:
                         else admitted
                     )
                 ),
-                replacement=(
-                    int(getattr(replacement_range, "start_sequence")),
-                    int(getattr(replacement_range, "end_sequence")),
-                ),
+                replacement=_replaced_ranges(replacement_range),
                 appended_domains=tuple(
                     (next_sequence + offset, domain)
                     for offset, domain in enumerate(
@@ -4381,12 +4411,7 @@ class ConsoleTraceService:
             for offset, (descriptor, value) in enumerate(physical_pairs)
         )
         replacement_span = (
-            None
-            if replacement_range is None
-            else (
-                replacement_range.start_sequence,
-                replacement_range.end_sequence,
-            )
+            None if replacement_range is None else _replaced_ranges(replacement_range)
         )
         message_values = _ProjectedProviderValues(
             self,
@@ -4940,12 +4965,7 @@ class ConsoleTraceService:
                 node.sequence,
                 self._node_reference_key(node),
             )
-            # A slot put back after the tail still leads (ADR-337, 2026-11-25).
-            root_node = (
-                _sequence_insert(root_node, 0, sequence_node)
-                if node.component_kind == "rendered_system"
-                else _sequence_merge(root_node, sequence_node)
-            )
+            root_node = _sequence_merge(root_node, sequence_node)
             active[node.sequence] = sequence_node
         by_id = {node.node_id: node for node in nodes}
         for record in replacements:
@@ -4983,7 +5003,12 @@ class ConsoleTraceService:
             root_node = _sequence_insert(root_node, insert_at, sequence_node)
             active[node.sequence] = sequence_node
         entries = _sequence_entries(root_node)
-        root = _ProjectionRoot(None, base=tuple(entries))
+        # A slot put back after the tail still leads (ADR-337, 2026-11-25):
+        # rendered-system rows first, in sequence order, then the rest.
+        entries = tuple(
+            sorted(entry for entry in entries if entry[1][0] == "rendered_system")
+        ) + tuple(entry for entry in entries if entry[1][0] != "rendered_system")
+        root = _ProjectionRoot(None, base=entries)
         inherited_lineage = (
             () if inherited_projection is None else inherited_projection.lineage_domains
         )
@@ -6161,14 +6186,15 @@ class ConsoleTraceService:
             for sequence in range(first, last + 1)
         }
         covered: set[int] = set()
-        for sequence, _key in self._surface_projection(
-            cursor, segment_id, tail
-        ).root.iter_entries():
+        entries = self._surface_projection(cursor, segment_id, tail).entries
+        for position, (sequence, key) in enumerate(entries):
             if not plan.start_sequence <= sequence <= plan.end_sequence:
                 continue
             index = link_of.get(sequence)
-            if index is None:
+            if index is None and not (position == 0 and key[0] == "rendered_system"):
                 raise ValueError("replacement_chain_gap")
+            if index is None:
+                continue  # the retained leading slot (ADR-337, 2026-11-25)
             covered.add(index)
         if len(covered) != len(plan.chain):
             raise ValueError("replacement_chain_link_inactive")
@@ -6747,14 +6773,21 @@ def _rewritten_tails():
     return console_trace_rewritten_tail
 
 
-def _replacement_links(sequences: Sequence[int]) -> list[tuple[int, int]]:
+def _replacement_links(
+    sequences: Sequence[int], *, around: int | None = None
+) -> list[tuple[int, int]]:
     """Group sorted live sequences into ranges spanning at most 256 sequences.
 
-    A run of dead sequences between two ranges is not replaced again.
+    A run of dead sequences between two ranges is not replaced again, and no
+    range covers ``around``, a retained slot among them (ADR-337, 2026-11-25).
     """
     links: list[tuple[int, int]] = []
     for sequence in sequences:
-        if links and sequence - links[-1][0] < MAX_SURFACE_REPLACEMENT_SPAN:
+        if (
+            links
+            and sequence - links[-1][0] < MAX_SURFACE_REPLACEMENT_SPAN
+            and not (around is not None and links[-1][1] < around < sequence)
+        ):
             links[-1] = (links[-1][0], sequence)
         else:
             links.append((sequence, sequence))

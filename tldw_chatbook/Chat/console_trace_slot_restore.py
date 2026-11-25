@@ -5,9 +5,9 @@ removal. When the surface has no rendered-system row (it never had one, or a
 fallback's marker removed it) and a new turn's first call starts with a
 system prompt, the call is planned as if the slot already led the surface:
 every other row meets the existing rules. The slot is written directly after
-the tail, before the call's other rows, and the surface projection puts a
-rendered-system node first. This module plans and writes; the service calls
-it.
+the tail, before the call's other rows; after its replacements the surface
+projection moves the active rendered-system rows first, in sequence order.
+This module plans and writes; the service calls it.
 """
 
 from __future__ import annotations

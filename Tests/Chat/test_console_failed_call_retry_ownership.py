@@ -40,6 +40,17 @@ from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
 pytestmark = pytest.mark.bootstrap_profile
 make_database = _make_database_fixture
 make_gateway = _make_gateway_fixture
+from Tests.Chat.test_console_trace_current_turn_transforms import (  # noqa: E402, F401
+    trace_harness,
+)
+from Tests.Chat.test_console_trace_rewritten_history import (  # noqa: E402, F401
+    _LONG,
+    SESSION,
+    harness,
+)
+from Tests.Chat.test_console_trace_rewritten_history import (  # noqa: E402
+    _send as _history_send,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -1886,7 +1897,8 @@ async def test_a_captured_run_falls_back_only_along_its_configured_list(
     """TASK-42525: only the run's configured fallback list starts a chain.
 
     The adapter mints a new chain for a call to another target only when the
-    target is the next unused entry of the list the run was planned with.
+    target is a later unused entry, in list order, of the list the run was
+    planned with.
     Any other switch is refused before the request is prepared, so no call is
     reserved and the provider is never asked.
     """
@@ -3323,6 +3335,42 @@ async def test_a_rewrites_bookkeeping_reads_only_its_own_rows(
         assert min(rows) == origin_head + 1
         assert extend(terminal_call_id=groq_call) == min(rows)
         assert extend(terminal_call_id=failed.call_id) == max(rows) + 1
+        # From a llama.cpp resend of groq's call, on the resend's own run
+        # (forged here; round 4 drives the real shape end to end): the run's
+        # chains are found through the call it resent.
+        from tldw_chatbook.Chat import console_trace_continuation as continuation
+
+        groq_record = repository.get_call(cursor, groq_call)
+        resend = replace(
+            groq_record,
+            call_id=new_opaque_id(),
+            run_id=new_opaque_id(),
+            route_identity="llama_fallback",
+        )
+        get_call, origin_of = repository.get_call, repository.get_run_origin
+        resent_by = {resend.call_id: groq_record}
+        monkeypatch.setattr(
+            repository,
+            "get_call",
+            lambda cursor, call_id: resend
+            if call_id == resend.call_id
+            else get_call(cursor, call_id),
+        )
+        monkeypatch.setattr(
+            repository,
+            "get_run_origin",
+            lambda cursor, run_id: resend
+            if run_id == resend.run_id
+            else origin_of(cursor, run_id),
+        )
+        monkeypatch.setattr(
+            continuation,
+            "failed_stream_fallback_parent",
+            lambda _repository, _cursor, call_id, answered=False: resent_by.get(call_id),
+        )
+        assert extend(terminal_call_id=resend.call_id) == min(rows)
+        resent_by.clear()  # not a resend of anything: no chains to follow
+        assert extend(terminal_call_id=resend.call_id) == max(rows) + 1
 
 
 @pytest.mark.parametrize(
@@ -3590,3 +3638,291 @@ async def test_a_system_slot_comes_back_only_on_a_new_turns_first_call(
             }.get(scenario, "unsupported_surface_change")
         ]
     assert _reserved(database) == 0
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize(
+    ("start", "edit", "binding"),
+    [
+        pytest.param("hosted", "first", None, id="restored-edit_first"),
+        pytest.param("llama", "first", None, id="always_llama-edit_first"),
+        pytest.param("hosted", "second", None, id="restored-edit_after_restore"),
+        pytest.param("hosted", "first", "slot_is_not_a_slot", id="forged_slot_kind"),
+        pytest.param("hosted", "first", "drop_the_system_row", id="drops_the_slot"),
+    ],
+)
+async def test_edit_and_resend_before_a_restored_slot_keeps_the_next_send(
+    tmp_path, monkeypatch, start, edit, binding
+):
+    """TASK-42525 round-4 re-review, finding 1 (Edit & resend).
+
+    Turn 1 on a hosted provider (no slot), turns 2-3 on llama.cpp: the slot
+    comes back mid-history. Edit & resend of the first message makes the
+    next captured send a rewritten tail whose range starts before the slot.
+    It was refused (`unsupported_surface_change`, the planner's sequence
+    gap); its links now skip the retained slot. Controls: a chat always on
+    llama.cpp (slot at row 0) and an edit after the restore.
+
+    `forged_slot_kind` reads the leading row as another kind at dispatch
+    binding only: the call's slot is rechecked there and the row skipped
+    between links is not one (`rendered_system_slot_mismatch`).
+    `drops_the_slot` sends that message to a
+    hosted provider, which has no system row: the slot is one of the
+    rewritten rows, as it is for a chat that was always on llama.cpp
+    (the existing rewritten-tail rule, unchanged).
+    """
+    from tldw_chatbook.Chat import console_trace_service as trace
+
+    async with _llamacpp_falls_back(
+        tmp_path, monkeypatch, tool_first=False, project=False, busy=0
+    ) as (app, groq, hosted):
+        if start == "hosted":
+            hosted.append(True)
+        first = await app.controller.submit_draft("Hello", session_id=app.session.id)
+        hosted.clear()
+        second = await app.controller.submit_draft("Second", session_id=app.session.id)
+        await app.controller.submit_draft("Third", session_id=app.session.id)
+        assert app.reservation_errors == []
+        target = first if edit == "first" else second
+        resent = await app.controller.edit_and_resend_message(
+            target.user_message_id, "Edited"
+        )
+        assert resent.accepted
+        if binding == "drop_the_system_row":
+            hosted.append(True)
+        elif binding == "slot_is_not_a_slot":
+            service_type = trace.ConsoleTraceService
+            persist, projection_of, bound = (
+                service_type.persist_request,
+                service_type._surface_projection,
+                [],
+            )
+
+            def forged(self, cursor, segment_id, tail):
+                projection = projection_of(self, cursor, segment_id, tail)
+                if not bound:
+                    return projection
+                (sequence, key), *rest = projection.entries
+                return trace._SurfaceProjection(
+                    projection.head_id,
+                    trace._ProjectionRoot(
+                        None, base=((sequence, ("message", *key[1:])), *rest)
+                    ),
+                    lineage_domains=projection.lineage_domains,
+                )
+
+            def persisting(self, *args, **kwargs):
+                bound.append(True)
+                try:
+                    return persist(self, *args, **kwargs)
+                except Exception as exc:
+                    app.reservation_errors.append(str(exc))
+                    raise
+                finally:
+                    bound.clear()
+
+            monkeypatch.setattr(service_type, "_surface_projection", forged)
+            monkeypatch.setattr(service_type, "persist_request", persisting)
+
+        after = await app.controller.submit_draft("After edit?", session_id=app.session.id)
+
+        assert after.accepted
+        if binding == "slot_is_not_a_slot":
+            assert app.reservation_errors == ["rendered_system_slot_mismatch"]
+            assert app.controller.run_state.status.value == "blocked"
+            return
+        assert app.reservation_errors == []
+        assert app.controller.run_state.status.value == "completed"
+        turn = app.store.get_message(after.user_message_id).persisted_message_id
+        with app.db.transaction() as cursor:
+            (segment,) = cursor.execute(
+                "SELECT segment_id FROM console_trace_calls WHERE turn_id = ?",
+                (turn,),
+            ).fetchone()
+            tail = app.factory.repository.get_surface_tail(cursor, segment)
+            entries = app.factory.service._surface_projection(
+                cursor, segment, tail
+            ).entries
+        kinds = [key[0] for _, key in entries]
+        if binding == "drop_the_system_row":
+            assert "rendered_system" not in kinds
+        else:
+            assert kinds[0] == "rendered_system"
+            assert kinds.count("rendered_system") == 1
+            _assert_slot_first(app, after, 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("harness", ["agent"], indirect=True)
+@pytest.mark.parametrize("start", ["hosted", "llama"], ids=["restored", "always_llama"])
+async def test_compact_now_after_a_restored_slot_keeps_the_next_send(
+    harness,  # noqa: F811 - the imported fixture
+    monkeypatch,
+    start,
+):
+    """TASK-42525 round-4 re-review, finding 1 (Compact now).
+
+    Turn 1 without a system row in its messages (a hosted provider's
+    shape), turns 2-4 with one (llama.cpp's): the slot comes back
+    mid-history. After Compact now the next send's rewritten tail starts
+    before it, and was refused (`unsupported_surface_change`). The control
+    keeps the slot at row 0 throughout.
+    """
+    from tldw_chatbook.Chat.console_context_policy import (
+        ConsoleContextPolicyOverrides,
+        ContextBudgetMode,
+        ContextCompactionMode,
+    )
+
+    harness.store.set_session_context_policy_overrides(
+        SESSION,
+        ConsoleContextPolicyOverrides(
+            budget_mode=ContextBudgetMode.CUSTOM,
+            custom_budget_tokens=1_800,
+            compaction_mode=ContextCompactionMode.OFF,
+            summary_max_tokens=100,
+        ),
+    )
+    prepare = harness.gateway.prepare_chat_request
+    llama = {"on": start == "llama"}
+
+    def styled(*args, **kwargs):
+        prepared = prepare(*args, **kwargs)
+        if not llama["on"]:
+            return prepared
+        return prepare_provider_request(
+            prepared.semantic,
+            wire_style="distinct_roles",
+            provider=prepared.provider,
+            model=prepared.model,
+            capacity=prepared.capacity,
+        )
+
+    monkeypatch.setattr(harness.gateway, "prepare_chat_request", styled)
+    roles = []
+    for index in range(4):
+        result, sent, _reserved_calls = await _history_send(
+            harness, f"q{index}: {_LONG}"
+        )
+        assert result.terminal_status.value == "completed"
+        assert harness.failures == []
+        roles.append(sent[0][0].get("role"))
+        llama["on"] = True
+    assert roles == ["system" if start == "llama" else "user"] + ["system"] * 3
+    succeeded, _copy = await harness.controller.compact_context_now(SESSION)
+    assert succeeded
+
+    result, sent, _reserved_calls = await _history_send(harness, "after compaction")
+
+    assert result.terminal_status.value == "completed"
+    assert harness.failures == []
+    assert len(sent) == 1 and sent[0][0]["role"] == "system"
+
+
+@pytest.mark.parametrize("restart", [False, True], ids=["warm", "restart"])
+async def test_two_leading_system_rows_keep_their_order(
+    tmp_path, make_database, make_gateway, monkeypatch, restart
+):
+    """TASK-42525 round-4 re-review, finding 2.
+
+    The projection puts rendered-system rows first so that a slot put back
+    after the tail leads; it did so per node while building, which reversed
+    two leading system rows: the reader rebuilt Beta, Alpha against a wire
+    of Alpha, Beta, and after a restart the next same-shape send was refused
+    (`unsupported_surface_change`). The rows now move first after the
+    replacements, in sequence order.
+    """
+    from tldw_chatbook.Chat.console_trace_native_reader import (
+        ConsoleTraceNativeReader,
+    )
+
+    database = make_database(tmp_path / "two.sqlite", "two")
+    conversation = database.add_conversation({"title": "two"})
+    hello_id, hello = _saved_message(database, conversation, "hello")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    asked = []
+
+    def provider(**kwargs):
+        asked.append([row.get("content") for row in kwargs["messages_payload"]])
+        return {"choices": [{"message": {"content": "answered"}}]}
+
+    def gateway_for(factory):
+        boundary, refusals = _recording(factory)
+        gateway = make_gateway(
+            chat_api_call_fn=provider,
+            trace_call_boundary_factory=boundary,
+            safe_error_copy=lambda _provider, _exc: "fixture provider failure",
+        )
+        prepare = gateway.prepare_chat_request
+
+        def distinct_roles(*args, **kwargs):
+            prepared = prepare(*args, **kwargs)
+            return prepare_provider_request(
+                prepared.semantic,
+                wire_style="distinct_roles",
+                provider=prepared.provider,
+                model=prepared.model,
+                capacity=prepared.capacity,
+            )
+
+        monkeypatch.setattr(gateway, "prepare_chat_request", distinct_roles)
+        return gateway, refusals
+
+    deepseek = ConsoleProviderResolution(
+        ready=True,
+        provider="deepseek",
+        execution_key="deepseek",
+        model="deepseek-chat",
+        base_url="https://api.deepseek.com",
+        api_key="fixture",
+        streaming=False,
+    )
+
+    def system(content):
+        return {"role": "system", "content": content}, ProviderArtifactTraceProvenance(
+            TraceProvenanceSource.RENDERED_SYSTEM, policy
+        )
+
+    async def send(gateway, pairs):
+        actor, chain = new_opaque_id(), new_opaque_id()
+        request = _semantic_request(
+            [row for row, _ in pairs],
+            [item for _, item in pairs],
+            policy,
+            route=ConsoleRequestRoute.AGENT_FIRST,
+            actor_id=actor,
+            chain_id=chain,
+        )
+        return [
+            item
+            async for item in gateway.stream_chat(
+                deepseek,
+                request,
+                route=ConsoleRequestRoute.AGENT_FIRST,
+                route_actor_id=actor,
+                route_chain_id=chain,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ]
+
+    gateway, refusals = gateway_for(ConsoleTraceBoundaryFactory(database))
+    first = [system("Alpha"), system("Beta"), ({"role": "user", "content": "hello"}, hello)]
+    assert await send(gateway, first) == ["answered"]
+    (call,) = ConsoleTraceNativeReader(database).read_calls(hello_id)
+    rebuilt = [row.get("content") for row in call.capture.request["messages_payload"]]
+    assert rebuilt == asked[-1] == ["Alpha", "Beta", "hello"]
+    _, answered = _saved_message(database, conversation, "answered", sender="assistant")
+    _, again = _saved_message(database, conversation, "again")
+    if restart:
+        # A new process: a fresh factory and service, nothing cached.
+        gateway, refusals = gateway_for(ConsoleTraceBoundaryFactory(database))
+
+    assert await send(
+        gateway,
+        [
+            *first,
+            ({"role": "assistant", "content": "answered"}, answered),
+            ({"role": "user", "content": "again"}, again),
+        ],
+    ) == ["answered"]
+    assert refusals == []
