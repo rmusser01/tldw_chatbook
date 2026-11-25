@@ -323,6 +323,26 @@ async def click_settled(host, pilot, screen, selector, what, *, region=None) -> 
     assert landed, f"the click on {what} landed elsewhere: {painted(host)}"
 
 
+async def click_row_settled(host, pilot, screen, title: str) -> None:
+    """Click the rendered note row titled ``title`` on a settled Notes screen.
+
+    Row ids are list positions (``library-notes-row-{index}``), so the row is
+    looked up only once Notes has settled, never across a rebuild.
+    """
+    await until_settled(
+        pilot,
+        screen,
+        lambda: any(
+            getattr(row, "note_id", "") and title in str(row.label)
+            for row in note_rows(screen)
+        ),
+        lambda: f"the {title!r} row on a settled screen: {painted(host)}",
+    )
+    await click_settled(
+        host, pilot, screen, f"#{row_for(screen, title).id}", f"the {title!r} row"
+    )
+
+
 async def enter_select_mode(host, pilot, screen) -> None:
     # Wait for the toggle's layout, not a longer timeout. Right after a
     # recompose (opening a note re-shapes the list pane) the toggle exists

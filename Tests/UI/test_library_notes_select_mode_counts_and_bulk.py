@@ -33,6 +33,7 @@ from textual.widgets import Button, Input
 from Tests.UI.library_notes_bulk_support import (
     RENDERED,
     TRIP_TITLES,
+    click_row_settled,
     click_settled,
     enter_select_mode,
     folder_row,
@@ -285,14 +286,16 @@ async def test_actions_move_moves_every_selected_note_and_names_the_count(
         )
         await enter_select_mode(host, pilot, screen)
         for title in picked:
-            await pilot.click(f"#{row_for(screen, title).id}")
+            await click_row_settled(host, pilot, screen, title)
         await until(pilot, lambda: _selected(screen) == 4, "four checked rows")
         bread_in_recipes = seed.placement_rows("Recipes", "Bread")
         assert [deleted for deleted, _ in bread_in_recipes] == [0], bread_in_recipes
 
         # Actions… opens the three choices; Move to folder… opens the
         # all-folders picker. (Escape at each step: the ``_extended`` sibling.)
-        await pilot.click("#library-notes-select-actions")
+        await click_settled(
+            host, pilot, screen, "#library-notes-select-actions", "Actions…"
+        )
         await until(
             pilot,
             lambda: bool(screen.query("#library-notes-select-action-move")),
@@ -300,7 +303,9 @@ async def test_actions_move_moves_every_selected_note_and_names_the_count(
         )
         for label in ("Move to folder…", "Add keyword…", "Remove keyword…"):
             assert label in painted(host), label
-        await pilot.click("#library-notes-select-action-move")
+        await click_settled(
+            host, pilot, screen, "#library-notes-select-action-move", "Move to folder…"
+        )
         await until(
             pilot,
             lambda: isinstance(host.screen, LibraryNoteFolderTargetDialog)
@@ -367,7 +372,7 @@ async def test_the_select_strip_paints_every_action_beside_an_open_note(
             "the note to open beside the list",
         )
         await enter_select_mode(host, pilot, screen)
-        await pilot.click(f"#{row_for(screen, 'Reading list').id}")
+        await click_row_settled(host, pilot, screen, "Reading list")
         await until(pilot, lambda: _selected(screen) == 1, "one checked row")
 
         def on_pane(size: tuple[int, int]) -> str:
@@ -420,13 +425,15 @@ async def test_the_select_strip_paints_every_action_beside_an_open_note(
             lambda: f"the list stage at 80x24: {painted(host)}",
         )
         await enter_select_mode(host, pilot, screen)
-        await pilot.click(f"#{row_for(screen, 'Reading list').id}")
+        await click_row_settled(host, pilot, screen, "Reading list")
         await until(pilot, lambda: _selected(screen) == 1, "one checked row at 80x24")
         await until(pilot, lambda: not on_pane((80, 24)), lambda: on_pane((80, 24)))
         assert f"All {RENDERED}" in strip_text(host, screen)
 
         # Clickable, not merely painted: Actions… opens its chooser.
-        await pilot.click("#library-notes-select-actions")
+        await click_settled(
+            host, pilot, screen, "#library-notes-select-actions", "Actions…"
+        )
         await until(
             pilot,
             lambda: bool(screen.query(".library-notes-select-action-choice")),

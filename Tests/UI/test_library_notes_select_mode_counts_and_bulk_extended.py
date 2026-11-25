@@ -28,6 +28,8 @@ import pytest
 from textual.widgets import Input, TextArea
 
 from Tests.UI.library_notes_bulk_support import (
+    click_row_settled,
+    click_settled,
     enter_select_mode,
     mounted,
     notes_ready,
@@ -51,7 +53,7 @@ def _selected(screen) -> int:
 
 async def _check(host, pilot, screen, titles) -> None:
     for title in titles:
-        await pilot.click(f"#{row_for(screen, title).id}")
+        await click_row_settled(host, pilot, screen, title)
     await until(
         pilot,
         lambda: _selected(screen) == len(titles),
@@ -60,13 +62,17 @@ async def _check(host, pilot, screen, titles) -> None:
 
 
 async def _choose_action(host, pilot, screen, option_id: str) -> None:
-    await pilot.click("#library-notes-select-actions")
-    await until(
-        pilot,
-        lambda: bool(screen.query(f"#{option_id}")),
-        lambda: f"the Actions chooser: {painted(host)}",
+    # Every Notes sync rebuilds Actions… and its choices: a row check, a bulk
+    # receipt, the chooser opening itself. A click sent mid-rebuild finds no
+    # control, or lands where it was (PR #3423 CI run 45680538018: NoMatches
+    # on the retry after a refused change, with both Notes canvases mid-
+    # recompose). So each click waits for a settled screen.
+    await click_settled(
+        host, pilot, screen, "#library-notes-select-actions", "Actions…"
     )
-    await pilot.click(f"#{option_id}")
+    await click_settled(
+        host, pilot, screen, f"#{option_id}", f"the {option_id} choice"
+    )
 
 
 async def _keyword(host, pilot, screen, option_id: str, keyword: str, title: str):
@@ -275,7 +281,9 @@ async def test_a_partial_bulk_move_names_what_did_not_move_and_keeps_it_checked(
         before = seed.memberships()
 
         # Escape on the open chooser closes it; focus returns to Actions….
-        await pilot.click("#library-notes-select-actions")
+        await click_settled(
+            host, pilot, screen, "#library-notes-select-actions", "Actions…"
+        )
         await until(
             pilot,
             lambda: bool(screen.query(".library-notes-select-action-choice"))
@@ -402,7 +410,9 @@ async def test_the_stacked_actions_chooser_paints_one_row_per_action(
         screen = await notes_ready(host, pilot)
         await enter_select_mode(host, pilot, screen)
         await _check(host, pilot, screen, ("Reading list",))
-        await pilot.click("#library-notes-select-actions")
+        await click_settled(
+            host, pilot, screen, "#library-notes-select-actions", "Actions…"
+        )
         await until(
             pilot,
             lambda: len(screen.query(".library-notes-select-action-choice")) == count
