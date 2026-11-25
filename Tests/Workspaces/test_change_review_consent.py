@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -555,4 +556,43 @@ def test_admission_revision_moves_only_when_ready_roots_can_change(
         assert service.admission_revision != revoked, "a disposed service admits nothing"
     finally:
         release.set()
+        service.shutdown(timeout=0.2)
+
+
+@private_profile_test
+def test_the_first_turn_capture_after_a_restart_discloses_its_unprepared_root(
+    request, tmp_path
+) -> None:
+    """TASK-42111: readiness lives in memory, so a restart starts with none.
+
+    A stock turn's configuration reads ``capture_turn``, which never schedules
+    preparation. When nothing had admitted the workspace since start (the
+    Environment panel's read races the first Send), the root had no readiness
+    entry and the capture dropped it: no "change review skipped" row.
+    """
+    from tldw_chatbook.Chat.console_turn_context import capture_change_review_metadata
+
+    registry = _registry(tmp_path)
+    root = tmp_path / "root"
+    root.mkdir()
+    binding = registry.add_folder_binding("ws-review", root)
+    registry.set_change_review_enabled("ws-review", True)
+    calls: list[str] = []
+    service = consent_module.ChangeReviewConsentService(
+        registry, initialize_root=calls.append, worker_count=1
+    )
+    app = SimpleNamespace(change_review_consent_service=service)
+    try:
+        assert capture_change_review_metadata(app, "ws-review") == (
+            (),
+            (),
+            (
+                consent_module.SkippedReviewRoot(
+                    binding.binding_id,
+                    "Preparing change history; this turn continues without it.",
+                ),
+            ),
+        )
+        assert calls == [], "a capture still schedules no preparation"
+    finally:
         service.shutdown(timeout=0.2)

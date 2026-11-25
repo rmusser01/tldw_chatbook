@@ -342,6 +342,12 @@ class ChangeReviewConsentService:
             for binding in bindings:
                 entry = self._readiness.get((workspace_id, binding.locator))
                 if entry is None or entry.revision != consent.revision:
+                    # A capture schedules nothing, and readiness is memory-only:
+                    # the first turn after a restart still says it skipped the
+                    # root (TASK-42111).
+                    skipped.append(
+                        SkippedReviewRoot(binding.binding_id, self._PREPARING_REASON)
+                    )
                     continue
                 if entry.state is RootReadinessState.READY:
                     ready.append(binding.locator)
