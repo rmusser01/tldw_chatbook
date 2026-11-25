@@ -609,6 +609,18 @@ class OrdinaryTurn:
             self.check_personal_source()
         if source == "virtual_cli":
             self.check_virtual_call(provider)
+        if source == "code_review" and name not in {
+            "code_review_guide",  # guidance text only
+            "code_review_release",  # always refused (native_discard_required)
+        }:
+            # Prepare/read/submit run git in the bound root, which can read a linked
+            # worktree's objects outside it; every review then spawns reviewers,
+            # which widen anyway. Widen at the first such call, like a skill
+            # install (TASK-40715), so a busy workspace refuses it up front.
+            try:
+                self.widen()
+            except CapacityRefused as refused:
+                raise RuntimeError(widen_refusal(name, refused)) from None
 
     def check_mcp_definition(self, tool, name):
         if self.mcp_source_maximum is None:

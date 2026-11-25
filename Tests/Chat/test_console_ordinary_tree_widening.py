@@ -216,6 +216,99 @@ async def test_spawn_conflicting_with_another_running_turn_is_refused_not_awaite
     assert [row["agent_kind"] for row in rows] == ["primary"]
 
 
+@pytest.mark.parametrize("contended", [False, True])
+async def test_review_tool_widens_the_claim_or_is_refused_while_another_turn_runs(
+    ordinary_host, monkeypatch, contended
+):
+    """TASK-41028: a review turn composes CodeReviewToolProvider after capture.
+
+    Its tools are in the turn's maximum, so the run is not refused. The guide
+    has no effect; prepare runs git in the bound root, so its call widens the
+    claim, or is refused while another turn holds the workspace.
+    """
+    h = ordinary_host
+    monkeypatch.setenv("TLDW_AGENTS_AUTOWAKE_ENABLED", "false")
+    h.controller._confirm_project_instruction_dispatch = lambda notice: "proceed"
+    acting = _chat(h)
+    held = _Held("held chat")
+    acting_payloads, opaque = [], []
+    script = (
+        fence(
+            "load_tools",
+            {
+                "ids": [
+                    "code_review:code_review_guide",
+                    "code_review:code_review_release",
+                    "code_review:code_review_prepare",
+                ]
+            },
+        ),
+        fence("code_review_guide", {"stage": "review"}),
+        # Always refused (native_discard_required): no reason to widen.
+        fence(
+            "code_review_release", {"review_id": "unknown-review", "expected_revision": 0}
+        ),
+        fence(
+            "code_review_prepare",
+            {
+                "target": {
+                    "kind": "working_tree",
+                    "binding_ref": h.binding.binding_id,
+                    "staged": False,
+                    "unstaged": True,
+                }
+            },
+        ),
+    )
+
+    class Gateway(_RecordingGateway):
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.payloads.append(messages)
+            await held.hold(messages)
+            if "review a diff" in str(messages):
+                acting_payloads.append(messages)
+                opaque.append(_turn(h, acting).footprint.opaque)
+                if len(acting_payloads) <= len(script):
+                    yield script[len(acting_payloads) - 1]
+                    return
+            yield "done"
+
+    _install(h, Gateway())
+    blocking = None
+    if contended:
+        blocker = _chat(h)
+        blocking = asyncio.create_task(
+            h.controller.submit_draft("held chat", session_id=blocker.id)
+        )
+        h.tasks.append(blocking)
+        await until(lambda: held.entered.is_set() or blocking.done())
+        assert held.entered.is_set()
+    try:
+        result = await asyncio.wait_for(
+            h.controller.submit_draft("review a diff", session_id=acting.id), 30
+        )
+        assert result.accepted, result.visible_copy
+    finally:
+        held.release.set()
+        if blocking is not None:
+            await blocking
+    assert len(acting_payloads) == 5, "the review turn did not carry on"
+    assert opaque[:4] == [False] * 4, "availability, guide or release widened"
+    if contended:
+        assert opaque[4] is False
+        assert (
+            "code_review_prepare is unavailable while other workspace activity "
+            "is running" in str(acting_payloads[4])
+        )
+    else:
+        assert opaque[4] is True, "code_review_prepare ran without widening"
+        # Prepare itself ran under the widened claim: this host has no review
+        # team, so the service (not the claim) refuses it.
+        prepared = _last_user(acting_payloads[4])
+        assert "review_team_empty" in prepared, prepared
+        assert "unavailable" not in prepared, prepared
+
+
 class _ScriptSkills:
     """Skills service whose granted script run records the claim it ran under."""
 

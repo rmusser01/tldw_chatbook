@@ -894,6 +894,16 @@ def _capture_other_providers(tree):
             if tree.catalog_permits("canvas", name)
         )
         opaque = not tree.light_surface  # Canvas is not on the light surface.
+    # A turn classified as a review composes CodeReviewToolProvider after this
+    # capture. Only names are bounded here: the service itself lists nothing
+    # with its gate off, and calls widen the claim when made
+    # (check_catalog_call). Reading the gate would load the review service on
+    # every send (TASK-33620.15.53 keeps it off ordinary turns).
+    tree.other_maximum["code_review"] = frozenset(
+        name
+        for name in tool_catalog.CODE_REVIEW_RESERVED_TOOL_NAMES
+        if tree.catalog_permits("code_review", name)
+    )
     if tree.personal_getter is not None and not tree.session.ephemeral:
         tree.other_maximum["personal-context"] = frozenset(
             name
