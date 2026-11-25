@@ -1416,7 +1416,6 @@ class AutomaticWorkLedger:
                 link is None
                 or link["chain_id"] != row["chain_id"]
                 or link["conversation_id"] != row["conversation_id"]
-                or row["session_id"] != row["conversation_id"]
                 or json.loads(row["run_ids_json"]) != []
             ):
                 raise ValueError("goal attempt link mismatch")
@@ -2151,10 +2150,15 @@ class AutomaticWorkLedger:
                 row["state"],
             )
 
-    def prepare_goal_iteration(self, goal_id: str, *, owner_id: str) -> GoalAttempt:
+    def prepare_goal_iteration(
+        self, goal_id: str, *, owner_id: str, session_id: str | None = None
+    ) -> GoalAttempt:
         """Reserve one generation and link it to real goal intent in FULL commit."""
         _identity(goal_id)
         goal = self._db.goal_runs.get(goal_id)
+        session_id = _identity(
+            goal.conversation_id if session_id is None else session_id
+        )
         with self._admission_transaction(goal.chain_id) as conn:
             self._check_runtime_owner(conn, owner_id)
             row = conn.execute(
@@ -2171,7 +2175,9 @@ class AutomaticWorkLedger:
                 (goal_id,),
             ).fetchone()
             if existing:
-                self._attempt(conn, existing["id"], owner_id, "goal_iteration")
+                attempt = self._attempt(conn, existing["id"], owner_id, "goal_iteration")
+                if attempt["session_id"] != session_id:
+                    raise ValueError("goal attempt session link mismatch")
                 attempt_id = existing["id"]
                 if not conn.execute(
                     "SELECT 1 FROM goal_payload_reservations WHERE attempt_id=?",
@@ -2204,7 +2210,7 @@ class AutomaticWorkLedger:
                         attempt_id,
                         goal.chain_id,
                         goal.conversation_id,
-                        goal.conversation_id,
+                        session_id,
                         owner_id,
                         reservation_id,
                         now,
@@ -2222,6 +2228,7 @@ class AutomaticWorkLedger:
         attempt_id: str,
         *,
         owner_id: str,
+        session_id: str | None = None,
         admission_guard: Callable[[], None] | None = None,
     ) -> bool:
         """Accept once; an optional runtime guard may only refuse admission.
@@ -2235,6 +2242,7 @@ class AutomaticWorkLedger:
             limits=AutomaticWorkLimits.from_settings("goal_iteration"),
             kind="goal_iteration",
             admission_guard=admission_guard,
+            goal_session_id=session_id,
         )
 
     def abort_goal_iteration(self, attempt_id: str, *, owner_id: str) -> bool:
@@ -2249,6 +2257,7 @@ class AutomaticWorkLedger:
         limits: AutomaticWorkLimits | None,
         kind: str,
         admission_guard: Callable[[], None] | None = None,
+        goal_session_id: str | None = None,
     ) -> bool:
         with self._db.connection() as conn:
             attempt = self._attempt(conn, attempt_id, owner_id, kind)
@@ -2281,6 +2290,7 @@ class AutomaticWorkLedger:
                 kind=kind,
                 admission_guard=admission_guard,
                 has_review_scope=has_review_scope,
+                goal_session_id=goal_session_id,
             )
 
     def _accept_attempt_transaction(
@@ -2293,10 +2303,15 @@ class AutomaticWorkLedger:
         kind,
         admission_guard,
         has_review_scope,
+        goal_session_id,
     ):
         with self._admission_transaction(chain_id) as conn:
             self._check_runtime_owner(conn, owner_id)
             attempt = self._attempt(conn, attempt_id, owner_id, kind)
+            if kind == "goal_iteration" and attempt["session_id"] != (
+                attempt["conversation_id"] if goal_session_id is None else goal_session_id
+            ):
+                raise ValueError("goal attempt session link mismatch")
             if attempt["state"] != "prepared":
                 return False
             if attempt["review_boundary_id"] is not None:

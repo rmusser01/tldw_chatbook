@@ -77,6 +77,10 @@ requirement to build CLI support or postpone verification first.
    service construction must not trigger a second global recovery. Separate
    `awaiting_result_review` from `recovery_required`: quality approval cannot
    release physical ownership, clear uncertain charges or authorize replay.
+   The goal retains its saved conversation and accounting chain across tab
+   closes. Reopening after a committed close gives the live session a fresh
+   ID and binds later iterations to it. Callbacks keep their original
+   session identity and remain subject to its close fence.
 8. Keep reports bounded and private. Use compact deterministic handoff memory;
    resolve evidence against exact run/source ownership. Missing history cannot
    be presented as successful verification. Referenced active evidence must

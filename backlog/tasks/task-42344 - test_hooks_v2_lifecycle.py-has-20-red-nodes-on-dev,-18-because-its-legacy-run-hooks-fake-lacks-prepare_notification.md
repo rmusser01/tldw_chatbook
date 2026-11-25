@@ -1,21 +1,23 @@
 ---
 id: TASK-42344
-title: "test_hooks_v2_lifecycle.py has 20 red nodes on dev, 18 because its legacy run-hooks fake lacks prepare_notification"
-status: To Do
+title: >-
+  test_hooks_v2_lifecycle.py has 20 red nodes on dev, 18 because its legacy
+  run-hooks fake lacks prepare_notification
+status: Done
 assignee: []
-created_date: 2026-11-22 16:37
-updated_date: 2026-11-22 16:37
+created_date: '2026-11-22T16:37:00Z'
+updated_date: '2026-11-24T21:00:10Z'
 labels:
-- follow-up
-- tests
-- console
-- hooks
-priority: medium
-references:
-- Tests/Chat/test_hooks_v2_lifecycle.py
-- tldw_chatbook/Chat/console_chat_controller.py
-- tldw_chatbook/Agents/run_hooks.py
+  - follow-up
+  - tests
+  - console
+  - hooks
 dependencies: []
+references:
+  - Tests/Chat/test_hooks_v2_lifecycle.py
+  - tldw_chatbook/Chat/console_chat_controller.py
+  - tldw_chatbook/Agents/run_hooks.py
+priority: medium
 ---
 
 ## Description
@@ -31,8 +33,34 @@ Found by the TASK-34975 port (round 20, fu/r20-ctxclose), which reported it as `
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The 18 `prepare_notification` nodes pass, with the test fake matching the engine interface the controller now calls
-- [ ] #2 The other two red nodes are traced: each is fixed, or the implementation notes show it is a separate cause and name a task for it
-- [ ] #3 The whole file passes through the scratch wrapper at `-n 4` on a branch carrying the fix, with the load average recorded
-- [ ] #4 The file runs on a PR lane
+- [x] #1 The 18 `prepare_notification` nodes pass, with the test fake matching the engine interface the controller now calls
+- [x] #2 The other two red nodes are traced: each is fixed, or the implementation notes show it is a separate cause and name a task for it
+- [x] #3 The whole file passes through the scratch wrapper at `-n 4` on a branch carrying the fix, with the load average recorded
+- [x] #4 The file runs on a PR lane
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce the lifecycle failures. Update the legacy engine double to model an unattached notification preparation and isolate the scheduled wake and MCP Stop cases.
+2. Keep real command and MCP coverage. Separate setup from the measured Interrupt guard and verify the full file at four workers on a supported host.
+3. Carry the original ordinary turn's opaque claim to the exact live Interrupt parent across the Stop task boundary. Preserve native event admission and the existing deadline.
+4. Add the file to a required admission-sensitive lane.
+5. Preserve the first-send warm-up contract when importing execution capacity for Interrupt ownership.
+
+ADR required: no
+ADR path: [ADR-163](../decisions/163-expanded-console-hook-runtime.md), [ADR-285](../decisions/285-native-phased-agent-workflows.md), and [ADR-345](../decisions/345-console-run-hooks.md)
+Reason: The fix restores borrowing under the existing physical-ownership and notification contracts.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+The recorder now claims the exact legacy notification token once. Scheduled wake passed after the fixture correction. The native trace showed Interrupt trying to take a second opaque claim from outside the accepted turn task and refusing with `hook_activity_busy`. Exact cancellation now carries the already-admitted ordinary owner into the existing native event guard. The queued worker rechecks the accepted turn's original source under the existing ADR-163 borrowing contract. A regression fails without that retained source and passes when replacing the app config is refused.
+
+Final Ubuntu 24.04 qualification at four workers recorded 47 passes and two Darwin-only skips. Load moved from 0.84/0.31/0.14 to 1.81/0.75/0.31. The source replacement control ran again with the original event capture and failed at its refusal assertion. The required admission-sensitive job selects the whole file. [Linux job](https://github.com/rmusser01/tldw_chatbook/actions/runs/45475265787/job/138733698267).
+
+The official first-send test found that the Interrupt ownership imports loaded execution capacity during Console startup. Both imports now run at the hook call sites. A fresh interpreter reproduced the eager import before the fix and confirmed that ordinary reply warm-up loads execution capacity after the fix. [First-send job](https://github.com/rmusser01/tldw_chatbook/actions/runs/45494939921/job/138915435237).
+
+The official PR Fast Lane (admission-sensitive) job on PR #3763 passed on reviewed commit 0df0b348f6, including this task's test suite. [GitHub Actions job](https://github.com/rmusser01/tldw_chatbook/actions/runs/45480195611/job/138754609157).
+<!-- SECTION:NOTES:END -->

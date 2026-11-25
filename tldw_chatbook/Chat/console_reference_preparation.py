@@ -294,10 +294,7 @@ class _ReferenceRead:
             or refs.reference_callbacks() != self.callbacks
             or r is not None
             and (
-                r._disposed
-                or self.session.id in r._admission_fenced_sessions
-                or r._chat_controller is not c
-                or r._chat_store is not self.store
+                not r.owns_session(c, self.store, self.session.id)
                 or r._app is not self.app
                 or self.capacity is not None
                 and r._execution_capacity is not self.capacity

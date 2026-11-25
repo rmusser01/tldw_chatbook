@@ -1,22 +1,24 @@
 ---
 id: TASK-42345
-title: "A Console session reopened under the id of a closed session stays fenced until the app restarts"
-status: To Do
+title: >-
+  A Console session reopened under the id of a closed session stays fenced until
+  the app restarts
+status: Done
 assignee: []
-created_date: 2026-11-22 16:37
-updated_date: 2026-11-22 16:56
+created_date: '2026-11-22T16:37:00Z'
+updated_date: '2026-11-24T21:47:16Z'
 labels:
-- follow-up
-- console
-- bug
-priority: medium
-references:
-- tldw_chatbook/Chat/console_goal_runs.py
-- tldw_chatbook/Chat/console_chat_store.py
-- tldw_chatbook/Chat/console_runtime.py
-- tldw_chatbook/Chat/console_chat_controller.py
-- tldw_chatbook/Web_Server/mobile_service.py
+  - follow-up
+  - console
+  - bug
 dependencies: []
+references:
+  - tldw_chatbook/Chat/console_goal_runs.py
+  - tldw_chatbook/Chat/console_chat_store.py
+  - tldw_chatbook/Chat/console_runtime.py
+  - tldw_chatbook/Chat/console_chat_controller.py
+  - tldw_chatbook/Web_Server/mobile_service.py
+priority: medium
 ---
 
 ## Description
@@ -39,8 +41,35 @@ The root cause is the id reuse. The latches are deliberate: a close that timed o
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 After a clean close of a goal run's chat, resuming that paused or ready goal gives a session the user can send in and close
-- [ ] #2 Late callbacks from a closed session, including one whose close timed out, still cannot reach the reopened session
-- [ ] #3 A test closes a goal run's chat, resumes the goal, then sends and closes, and is shown red before the fix
-- [ ] #4 The new test runs on a PR lane
+- [x] #1 After a clean close of a goal run's chat, resuming that paused or ready goal gives a session the user can send in and close
+- [x] #2 Late callbacks from a closed session, including one whose close timed out, still cannot reach the reopened session
+- [x] #3 A test closes a goal run's chat, resumes the goal, then sends and closes, and is shown red before the fix
+- [x] #4 The new test runs on a PR lane
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Close a goal chat through the runtime, resume it, and check that both automatic dispatch and another close target the new live session. Cover an old producer that outlives the bounded close drain.
+2. Keep the durable goal conversation and ledger chain. Allocate a fresh live session ID after close and bind the next goal attempt to that exact ID. Reject an attempt retry from a different session.
+3. Run the goal dispatch, attempt ledger, and close regressions in the required recovered-suites job.
+4. Close the concurrent ledger test's worker-owned SQLite handles and rerun it with the recovered-suites storage-lease guard.
+
+ADR required: no new ADR
+ADR path: backlog/decisions/227-native-console-goal-runs.md
+Reason: The fix preserves the durable goal and its existing authority and repairs a live session lifecycle bug.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Both close variants reproduced the closed-session refusal. The live-session fix passed those two cases and 11 ledger tests locally. The timeout case holds an old producer across hydration and observes its original close fence, then sends in the reopened chat and closes it. Required Linux CI also exercises public Resume on a real paused goal and verifies the saved conversation and the new live session in the next durable attempt. ADR-227 records the identity distinction.
+
+The provider send and second close pass locally after an old producer outlives the original close, and the late producer still observes its exact admission fence.
+
+The tightened regression uses one real runtime for close, public Resume, a native automatic iteration, an ordinary provider send, and the second close. Final Ubuntu qualification passed all 39 Goal and ledger cases at four workers. The same test with clean dev 9fa2bf1b1d production code failed in 6.17 seconds because the reopened live ID equaled the closed ID. [Linux job](https://github.com/rmusser01/tldw_chatbook/actions/runs/45475265787/job/138733698986).
+
+The official recovered-suites job passed 2,022 tests and failed teardown because the Goal ledger test's two accept workers retained SQLite leases. Each accept worker now closes the handle it opened. The exact failure reproduced with `--storage-lease-guard` before that change. The complete Goal ledger file then passed all 11 cases with the guard enabled. [Initial PR lane](https://github.com/rmusser01/tldw_chatbook/actions/runs/45480195611/job/138754609306).
+
+The official PR lane (recovered suites) job on PR #3763 passed on reviewed commit a4cd501350, including this task's test suite. [GitHub Actions job](https://github.com/rmusser01/tldw_chatbook/actions/runs/45486307493/job/138780223049).
+<!-- SECTION:NOTES:END -->

@@ -375,7 +375,11 @@ async def test_chat_and_canonical_settings_open_the_same_scoped_manager(tmp_path
     from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 
     async with mounted_rules_console(tmp_path, (120, 35)) as case:
+        existing_workers = set(case.host.workers)
         case.console.action_open_console_session_settings()
+        (settings_worker,) = set(case.host.workers) - existing_workers
+        # The action hydrates context before it can push the modal.
+        assert await settings_worker.wait(), "the Chat Settings action refused to open"
         # TASK-39166: bounded waits on each step's state, not pilot-turn counts.
         step = lambda: case.pilot.pause(0.01)  # noqa: E731
         await _until(

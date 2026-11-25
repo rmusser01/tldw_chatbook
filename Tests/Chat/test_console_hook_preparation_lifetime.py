@@ -111,24 +111,15 @@ async def test_original_admission_snapshot_keeps_received_custody_through_stop_a
                 probe.entered.is_set, 5
             ), "original snapshot not reached"
             probe.assert_live()
-            assert record.store is state.store and record.received_claim is claim
-            assert record.inputs.attachments == (state.attachment,)
+            _assert_received_live(state, record, claim)
             assert state.controller.stop_active_run()
             assert claim.sealed
             for _ in range(2):
                 task.cancel()
                 await asyncio.sleep(0.05)
                 probe.assert_live()
-                assert (
-                    not task.done()
-                ), "cancellation abandoned original native snapshot"
-                assert state.store.received_turn_for_session(state.session.id) is claim
-                assert state.runtime._turn_custody[turn_id] is record
+                _assert_received_live(state, record, claim)
                 assert record.request is state.request
-                assert record.store is state.store and record.received_claim is claim
-                assert record.inputs.attachments[0] is state.attachment
-                assert any(row is state.session for row in state.store.sessions())
-                assert state.gateway.user_turns == []
         finally:
             probe.release.set()
             if task is not None:
@@ -143,8 +134,9 @@ async def test_original_admission_snapshot_keeps_received_custody_through_stop_a
     assert state.session.draft == state.request.draft
     (recovery,) = state.runtime.recoveries_for_session(state.session.id)
     assert recovery.draft == state.request.draft
-    assert recovery.attachments == (state.attachment,)
-    assert recovery.attachments[0] is state.attachment
+    assert recovery.attachments == ()
+    (attachment,) = state.store.pending_attachments(state.session.id)
+    assert attachment is state.attachment
 
 
 async def _stock_request(state):
@@ -174,13 +166,21 @@ def _start_received(state, request):
     return record, claim
 
 
-def _assert_received_live(state, record, claim):
-    assert not record.task.done()
+def _assert_received_live(state, record, claim, *, attachments_transferred=False):
+    assert not record.task.done(), "cancellation abandoned original native snapshot"
     assert state.runtime._turn_custody[record.turn_id] is record
     assert record.store is state.store and record.received_claim is claim
     assert state.store.received_turn_for_session(state.session.id) is claim
-    assert record.request is not None
-    assert record.inputs.attachments[0] is state.attachment
+    assert record.request.attachment_ids == (state.attachment.attachment_id,)
+    assert record.inputs.attachments_transferred is attachments_transferred
+    pending = state.store.pending_attachments(state.session.id)
+    if attachments_transferred:
+        assert not pending
+        (attachment,) = record.inputs.attachments
+    else:
+        assert record.inputs.attachments == ()
+        (attachment,) = pending
+    assert attachment is state.attachment
     assert any(row is state.session for row in state.store.sessions())
     assert state.gateway.user_turns == []
 
@@ -566,7 +566,9 @@ async def test_original_workspace_context_outlives_dispose_cancelled_during_grac
                 await asyncio.sleep(0.05)
                 assert not closing.done()
                 probe.assert_live()
-                _assert_received_live(state, record, claim)
+                _assert_received_live(
+                    state, record, claim, attachments_transferred=True
+                )
                 assert CONSOLE_RUNTIME_SHUTDOWN_GRACE_SECONDS == 3.0
                 await asyncio.sleep(CONSOLE_RUNTIME_SHUTDOWN_GRACE_SECONDS + 0.05)
                 closing.cancel()
@@ -575,7 +577,9 @@ async def test_original_workspace_context_outlives_dispose_cancelled_during_grac
                 assert ended == []
                 assert not read.retired.done()
                 probe.assert_live()
-                _assert_received_live(state, record, claim)
+                _assert_received_live(
+                    state, record, claim, attachments_transferred=True
+                )
             finally:
                 probe.release.set()
                 if task is not None:
@@ -752,6 +756,12 @@ async def test_original_v2_capture_refuses_changed_controller_input_before_conte
     preparation_runtime, replacement, monkeypatch
 ):
     from tldw_chatbook.Agents.hook_permissions import HookPermissions
+    from tldw_chatbook.Chat.console_automatic_submission import (
+        _HOOK_ADMISSION_OWNER_CHANGED,
+    )
+    from tldw_chatbook.Chat.console_hook_preparation import hook_preparation_reads_for
+    from tldw_chatbook.Chat.console_preparation_reads import preparation_read_for
+    from tldw_chatbook.Chat.console_runtime import _ConsoleTurnRefusedError
 
     state = preparation_runtime
     request = await _stock_request(state)
@@ -776,6 +786,15 @@ async def test_original_v2_capture_refuses_changed_controller_input_before_conte
     task = None
 
     def observe(frame, event, arg):
+        if event == "call" and frame.f_code is probe.raw_code:
+            # The ordinary footprint also reads v2 configuration. Hold only
+            # the runtime's later read, which owns the controller source check.
+            read = preparation_read_for(state.runtime)
+            if read is None or (
+                getattr(read.callback, "__func__", None)
+                is not HookPermissions.v2_configuration
+            ):
+                return
         if (
             event == "call"
             and frame.f_code is context_code
@@ -789,21 +808,31 @@ async def test_original_v2_capture_refuses_changed_controller_input_before_conte
         return request.configuration
 
     probe.observe = observe
+    state.gateway.release[0].set()  # An unexpected send must finish and fail the test.
     with probe.installed():
         try:
             record, _claim = _start_received(state, request)
             task = record.task
-            assert await _until(
-                probe.entered.is_set, 5
-            ), "original v2 capture not reached"
+            # Cold send setup is outside the source-refusal window measured below.
+            async with asyncio.timeout(60):
+                while not probe.entered.is_set() and not task.done():
+                    await asyncio.sleep(0.01)
+            assert probe.entered.is_set(), "turn ended before the original v2 capture"
             probe.assert_live()
+            (read,) = hook_preparation_reads_for(
+                state.runtime._preparation_reads, state.session.id
+            )
+            assert read.task is task and not read.retired.done()
             if replacement == "app":
                 state.controller.app = SimpleNamespace(app_config={})
             else:
                 state.controller._turn_context_provider = successor_provider
             probe.release.set()
-            await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 5)
-            assert await _until(probe.retired, 5)
+            with pytest.raises(_ConsoleTurnRefusedError) as refusal:
+                await asyncio.wait_for(task, 5)
+            assert refusal.value.reason == _HOOK_ADMISSION_OWNER_CHANGED
+            assert read.callback_returned
+            assert read.retired.done() and not read.retired.cancelled()
             assert (
                 context_entries == []
             ), "source drift reached the next original context reader"
@@ -815,7 +844,6 @@ async def test_original_v2_capture_refuses_changed_controller_input_before_conte
             probe.release.set()
             if task is not None:
                 await asyncio.gather(task, return_exceptions=True)
-            assert await _until(probe.retired, 5)
             state.controller.app = original_app
             state.controller._turn_context_provider = original_provider
     probe.assert_retired()

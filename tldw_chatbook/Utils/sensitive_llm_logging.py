@@ -10,11 +10,16 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
+from math import isfinite
+from time import monotonic
 from urllib.parse import urlsplit
 
 
 _SENSITIVE_LLM_REQUEST: ContextVar[bool] = ContextVar(
     "sensitive_llm_request", default=False
+)
+_NATIVE_RULE_DEADLINE: ContextVar[float | None] = ContextVar(
+    "native_rule_transport_deadline", default=None
 )
 SENSITIVE_CONTENT_REDACTION = "<sensitive-content-redacted>"
 SENSITIVE_ERROR_REDACTION = "<sensitive-error-detail-redacted>"
@@ -61,6 +66,35 @@ def sensitive_llm_request() -> Iterator[None]:
         yield
     finally:
         _SENSITIVE_LLM_REQUEST.reset(token)
+
+
+@contextmanager
+def native_rule_transport_timeout(seconds: float | None) -> Iterator[None]:
+    """Carry a native helper's remaining allowance to its HTTP transport.
+
+    Args:
+        seconds: Remaining helper time; None leaves ordinary requests unchanged.
+    """
+    if seconds is None:
+        yield
+        return
+    if isinstance(seconds, bool) or not isfinite(seconds) or seconds <= 0:
+        raise TimeoutError("Native rule transport deadline expired.")
+    deadline = monotonic() + seconds
+    inherited = _NATIVE_RULE_DEADLINE.get()
+    token = _NATIVE_RULE_DEADLINE.set(
+        min(deadline, inherited) if inherited is not None else deadline
+    )
+    try:
+        yield
+    finally:
+        _NATIVE_RULE_DEADLINE.reset(token)
+
+
+def native_rule_transport_remaining() -> float | None:
+    """Return the native transport allowance, or None outside native helpers."""
+    deadline = _NATIVE_RULE_DEADLINE.get()
+    return None if deadline is None else max(0.0, deadline - monotonic())
 
 
 def safe_llm_log_value(value: object) -> object:

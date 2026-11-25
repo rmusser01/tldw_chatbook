@@ -200,6 +200,7 @@ from tldw_chatbook.provider_registry import ENGINE_RECORDS, RECORDS_BY_KEY
 from tldw_chatbook.Utils.egress import capture_rate_limits_for
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
+    native_rule_transport_timeout,
     sensitive_llm_request,
 )
 from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
@@ -5760,6 +5761,7 @@ class ConsoleProviderGateway:
                                         kwargs,
                                         admission,
                                         resolution.provider,
+                                        min(resolution.request_timeout, rule_lease.remaining_seconds),
                                     )
                                     if call_signals is not None and isinstance(
                                         raw, Mapping
@@ -5881,22 +5883,20 @@ class ConsoleProviderGateway:
         kwargs: Mapping[str, Any],
         admission: _ProviderAdapterAdmission,
         provider: str = "",
+        native_timeout: float | None = None,
     ) -> Any:
         """Invoke the final synchronous adapter under the sensitive policy.
 
-        ``provider`` is the session-facing provider the cost tooltip looks up
-        (TASK-28229), not ``api_endpoint``: for a custom endpoint that is the
-        shared execution handler, so its readings would land in one bucket.
+        ``provider`` is the session-facing cost identity, not its handler (TASK-28229).
         """
-
         provider_key = provider_config_key(provider)
-        with sensitive_llm_request(), capture_rate_limits_for(provider_key):
+        with (
+            sensitive_llm_request(),
+            capture_rate_limits_for(provider_key),
+            native_rule_transport_timeout(native_timeout),
+        ):
             _check_automatic_dispatch()
-            return self._enter_provider_adapter(
-                admission,
-                self._chat_api_call,
-                **dict(kwargs),
-            )
+            return self._enter_provider_adapter(admission, self._chat_api_call, **dict(kwargs))
 
     @staticmethod
     def _auxiliary_response_text(response: Any) -> str:

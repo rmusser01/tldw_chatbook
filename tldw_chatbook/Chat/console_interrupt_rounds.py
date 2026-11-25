@@ -260,21 +260,20 @@ class InterruptRoundHost(InitialHookReviewMixin):
 
     POLL_SECONDS = 1.0
 
-    def notify_hook_interrupt(self, cancellation, lifecycle, turn_id: str) -> bool:
-        """Publish once after the host's irreversible per-turn cancel seal.
-
-        H2 owns notification deadlines and real process cleanup; no UI card,
-        permission prompt or process wait runs under this host's registry lock.
-        """
+    def notify_hook_interrupt(self, cancellation, lifecycle, turn_id: str, tree) -> bool:
+        """Publish once after cancellation, borrowing the live turn's claim."""
         if not cancellation.is_set():
             return False
         with self.lock:
             if cancellation in self._hook_interrupts:
                 return False
             self._hook_interrupts.add(cancellation)
-        return lifecycle.engine.notify_teardown(
-            lifecycle.event("Interrupt", turn_id=turn_id, initiator="manual")
-        )
+        from tldw_chatbook.Agents.execution_capacity import bind_ordinary_tree
+
+        with bind_ordinary_tree(tree):
+            return lifecycle.engine.notify_teardown(
+                lifecycle.event("Interrupt", turn_id=turn_id, initiator="manual")
+            )
 
     def __init__(
         self,

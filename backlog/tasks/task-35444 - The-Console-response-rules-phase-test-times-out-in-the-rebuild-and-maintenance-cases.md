@@ -1,15 +1,18 @@
 ---
 id: TASK-35444
-title: The Console response-rules phase test times out in the rebuild and maintenance cases
-status: In Progress
+title: >-
+  The Console response-rules phase test times out in the rebuild and maintenance
+  cases
+status: Done
 assignee:
-- '@claude'
-created_date: 2026-10-18 10:10
-updated_date: '2026-10-20 01:16'
+  - '@claude'
+created_date: '2026-10-18T10:10:00Z'
+updated_date: '2026-11-24T17:44:38Z'
 labels:
-- tests
-- flaky
-- console
+  - tests
+  - flaky
+  - console
+dependencies: []
 priority: medium
 ---
 
@@ -22,7 +25,7 @@ Tests/UI/test_console_response_rules.py::test_rule_phase_events_project_only_the
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 The cause of the remaining timeout is identified, in the test or the product
-- [ ] #2 The test passes 20 consecutive pull-request runs in CI
+- [x] #2 The test passes 20 consecutive pull-request runs in CI
 - [x] #3 If the product was at fault, a test that fails deterministically without the fix pins it
 <!-- AC:END -->
 
@@ -39,6 +42,7 @@ Tests/UI/test_console_response_rules.py::test_rule_phase_events_project_only_the
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 
 Data: every completed attempt of the pull_request runs of derived-artifacts.yml created from #3152's merge (2026-10-18 08:50Z) to 21:36Z: 36 runs, 35 completed attempts, every head containing the merge; 25 of them finished all ten UI shards, on 11 branches. The test failed in 5 of the 25 (shard 10): [rebuild] 39160862810/1 and 39152595713/1 (feat/tools-hub-in-settings), 39151497191/1 (docs/task-33160-ac2-remeasure, backlog only); [maintenance] 39151491658/1 (docs/task-34991-close, backlog only) and 39148610450/1 (feat/18928-approval-suggestions). All five are the TimeoutError of the 1 s wait after Stop, and all five printed the same blocked UI stack.
@@ -70,12 +74,9 @@ Side effects, accepted: a deferred rail-visibility or guidance refresh lands on 
 Files: tldw_chatbook/UI/Console_Modules/config_sync.py, tldw_chatbook/UI/Screens/chat_screen.py, tldw_chatbook/Chat/console_chat_controller.py, Tests/UI/test_console_response_rules.py, scripts/ui_pr_gate_census.txt, backlog/docs/lessons-testing-evidence.md.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
-## Final Summary
+2026-11-24 hosted PR evidence closes AC2. Both [rebuild] and [maintenance] passed in 20 consecutive distinct executions of the relevant shard. Every PR head placed the selector at census index 187 in 42 shards, which resolved to UI Fast Lane (20). The logs showed both named call times, four passing variants, and a passing pytest summary.
 
-<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Range: [oldest completed shard](https://github.com/rmusser01/tldw_chatbook/actions/runs/45298294580/job/138132079585) to [newest completed shard](https://github.com/rmusser01/tldw_chatbook/actions/runs/45435088532/job/138604701047), 04:10:25–17:35:25 UTC. Counted run/attempt IDs, newest first: 45435088532/1, 45428697126/2, 45424338566/1, 45403482405/1, 45390859290/1, 45388820378/1, 45388706882/1, 45386817731/2, 45386605571/1, 45373570032/1, 45346935576/1, 45339894528/1, 45337350878/1, 45331690285/1, 45335508540/1, 45333640156/1, 45299036078/1, 45330132824/1, 45300571348/1, 45298294580/1.
 
-<!-- SECTION:FINAL_SUMMARY:END -->
-
-## Definition of Done
-<!-- DOD:BEGIN -->
-<!-- DOD:END -->
+Run 45304937145/1 never assigned a runner or started the relevant shard. Run 45386817731/3 reused the exact attempt-2 shard execution and contributes once. Run 45339894528/1 contributes because its relevant shard completed even though the overall run was cancelled.
+<!-- SECTION:NOTES:END -->

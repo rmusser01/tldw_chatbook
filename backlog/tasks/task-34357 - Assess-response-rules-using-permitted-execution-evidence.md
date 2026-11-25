@@ -1,11 +1,11 @@
 ---
 id: TASK-34357
 title: Assess response rules using permitted execution evidence
-status: In Progress
+status: Done
 assignee:
   - '@codex'
-created_date: '2026-10-04 05:54'
-updated_date: '2026-10-12 23:14'
+created_date: '2026-10-04T05:54:00Z'
+updated_date: '2026-11-24T17:42:25Z'
 labels: []
 dependencies:
   - TASK-34356
@@ -23,9 +23,9 @@ Enable the approved Console response-rule behavior for plan task 4. Preserve exi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Frozen completed-response evidence preserves uncertainty and work revisions.
-- [ ] #2 One strict semantic batch excludes feedback and expected verdict labels.
-- [ ] #3 Unavailable semantic checks preserve independent deterministic results without a false pass.
+- [x] #1 Frozen completed-response evidence preserves uncertainty and work revisions.
+- [x] #2 One strict semantic batch excludes feedback and expected verdict labels.
+- [x] #3 Unavailable semantic checks preserve independent deterministic results without a false pass.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -44,4 +44,6 @@ Current-dev PR3010 integration: follow Docs/superpowers/plans/2026-10-11-pr3010-
 Freeze only the active task chain and already model-bound result bodies, pairing definitive body-free tool dispatch facts. Closed semantic batches exclude feedback/labels and reject invented evidence, malformed results and overflow. Native context preflight retains transport limits; Save remaps actual durable message versions. ADR-232. Evidence: 81 feature/evidence/storage/resource tests; 52 existing auxiliary gateway cases (one reproduced baseline failure excluded); black/ruff/mypy pass. Current work freshness remains unknown when the execution owner supplies no revision.
 
 2026-10-12 current integration (historical source evidence above remains unchanged): Assessment uses captured current task input and permitted retained tool evidence. Goal input is the exact genuine coordinator capability, accepted SYSTEM handoff and message version. Two real coordinator assessments pass under actual GC with intentional Capture Off. Arbitrary SYSTEM, stale/forged capabilities and Stop refuse. Existing ADR232 governs, with ADR337 live-revision GC and ADR227 Goal constraints applied. Current report: E/pr3010-current-integration/task-1-report.md. All tasks stay In Progress and acceptance remains open pending independent review, actual-base/hosted qualification and unmet external/model checks.
+
+Current dev qualification passed the response-rule evidence and semantic suites at four workers, including actual dispatch ownership, exact opaque-ID batching, and behavior on malformed or unavailable semantics. Combined rule-domain and recovery run: 297 passed. ADR-232 continues to govern the evidence and authority boundary.
 <!-- SECTION:NOTES:END -->

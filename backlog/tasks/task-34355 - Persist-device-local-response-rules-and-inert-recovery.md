@@ -1,11 +1,11 @@
 ---
 id: TASK-34355
 title: Persist device-local response rules and inert recovery
-status: In Progress
+status: Done
 assignee:
   - '@codex'
-created_date: '2026-10-04 05:53'
-updated_date: '2026-10-13 00:58'
+created_date: '2026-10-04T05:53:00Z'
+updated_date: '2026-11-24T17:42:03Z'
 labels: []
 dependencies:
   - TASK-34354
@@ -23,10 +23,10 @@ Enable the approved Console response-rule behavior for plan task 2. Preserve exi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Saved Chat rules reopen locally and temporary Chat rules adopt atomically on save.
-- [ ] #2 Scoped drafts remain inspectable after invalid or failed learning and binding edits use compare-and-swap.
-- [ ] #3 Imported rules are inactive without changing preserved local owners or rollback snapshots.
-- [ ] #4 Current installed profiles and every supported recovery lineage upgrade to the actual next response-rule schema with exact catalog parity, fail-closed voice sidecar residue and inactive imports.
+- [x] #1 Saved Chat rules reopen locally and temporary Chat rules adopt atomically on save.
+- [x] #2 Scoped drafts remain inspectable after invalid or failed learning and binding edits use compare-and-swap.
+- [x] #3 Imported rules are inactive without changing preserved local owners or rollback snapshots.
+- [x] #4 Current installed profiles and every supported recovery lineage upgrade to the actual next response-rule schema with exact catalog parity, fail-closed voice sidecar residue and inactive imports.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -57,4 +57,6 @@ Implemented private SQLite v76 revisions, scoped CAS bindings, drafts, evidence 
 2026-10-12 bounded R1 correction: Disable/Exclude/Delete now check current user scope/adoption and revoke affected work under a short shared fence before SQLite writer admission. The lock is released during the writer wait; existing post-admission scope/CAS/invalidation and settlement fences remain, including revocation of new work accepted during the wait. Assessment-epoch revocation does not revoke the manager's current user-scope intent. No F1/F2 owner, UI, timeout, schema or allowance changes. Genuine destructive-only native RED:12 cases retain source eligibility; final native controls now use actual retained deterministic assessments, durable and real ephemeral Chats, held writer or real query-only SQLite admission refusal. Failed admission leaves the pin unchanged and its assessment revoked; event loop/borrowed handles/physical cleanup survive. Added three post-wait current-Chat/CAS/new-source interleavings. Corrected old Stop expectation when destructive intent already ended Checking, and a listener-count assertion that did not express the contract. Retained partial receipts:02 has46pass/6test-cleanup failures from awaiting a callback checkpoint while holding its writer;03 has54pass/1test fixture scope mismatch (workspace context was not the manager's current-Chat owner);04 has43pass/12test assertions confusing assessment state=completed with outcome=violation. No product changes were needed for those setup corrections. Final05:75pass in54.355s. Exactly15 new cases sum6.878s; they are automatically enrolled in the existing contention-file selector. All15 CI selectors/processes/profile markers/timeouts/20min cap/aggregate are unchanged. Existing ADR232/source section6 governs; root's explicit bounded extra-cycle ruling and cost precede code. Original164 and prior35 sealed assets remain immutable. Source-bound committed qualification and new revocation-correction report/handoff follow. No task Done; model/native/Goal/inherited/actual-base/hosted/re-review limits remain open.
 
 2026-10-12 Task2 implemented constructor-free selected-import recovery under existing ADR126/232. Staging imports DB/recovery_response_rules directly; the prior Chat module is a one-way callable re-export. The two transform functions retain canonical stdlib JSON, fixed installed owner/candidate validation, narrow restriction, transaction/cancel/rollback and native connection retirement. Only the exact private-SQLite dispatch source pin moved; all seven owner/path/namespace/validation/guard/reassignment/order negatives passed. Fresh-process native populated RED caught startup config import; five cold cases now pass (valid Unicode canonicalization, malformed shape, invalid JSON refusal, pre-cancel and actual SQLite progress cancellation after a mutation), proving unchanged source, failure rollback, restriction reset and physically closed handles. The existing required P0 selected-import selector covers all five cases (5.34s entire isolated process); workflow/selectors/processes/caps unchanged. Original complete rebackup passed at unchanged limits; one intermediate affected run retained 236 pass/1 incorrect test expectation, corrected without changing product validation. Final committed-head proof and every attempt are in new eval-recovery-fix receipts/report. Original164+35+29 evidence remains immutable. No new ADR/schema/startup/admission/allowance policy, timeout increase, task Done or external qualification claim. Scoped Task2 review, hosted CI/publication, human native and authorized DeepSeek checks remain root-owned; settled Goal repair refusal and inherited759/756 method debt remain explicit.
+
+Current dev qualification passed the rule store, write contention, migration and restricted restore suites at four workers, plus current Canvas lineage validation, the shipped-76 rollback, voice residue, and private inventory dispatch. Combined run: 297 passed on the current schema-87 implementation. Original migration evidence remains historical. The live saved-Chat journey is recorded in the October TASK-34975 qualification.
 <!-- SECTION:NOTES:END -->

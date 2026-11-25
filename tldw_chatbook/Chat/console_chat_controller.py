@@ -15188,7 +15188,7 @@ class ConsoleChatController:
                     self._active_stop_reasons[session_id] = reason
             cancel_event.set()
             self.prompt_queue_coordinator.pause_for_stop(session_id)
-            parent = self.prompt_queue_coordinator.interrupt_parent(session_id)
+            parent = self.prompt_queue_coordinator.interrupt_parent(session_id, cancel_event)
             if parent is not None:
                 self._interrupt_host.notify_hook_interrupt(cancel_event, *parent)
             self.prompt_queue_coordinator.cancel_pending_stop(session_id, cancel_event)

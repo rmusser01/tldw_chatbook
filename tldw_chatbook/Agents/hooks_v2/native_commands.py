@@ -124,6 +124,9 @@ class _CommandEvent:
         from ..execution_capacity import current_ordinary_tree
 
         self.ordinary_tree = current_ordinary_tree(self.controller)
+        if teardown and event.event == "Interrupt" and self.ordinary_tree is not None:
+            # Stop can arrive outside the ordinary turn's source-issuing task.
+            self.agent_sources = self.ordinary_tree.source
         self.sources = _guard.captured_sources(None)
         self.maximum = tuple(h for h in self.definitions if h.event == event.event)
         # Match fields cannot be rewritten by input transformations. Retain every

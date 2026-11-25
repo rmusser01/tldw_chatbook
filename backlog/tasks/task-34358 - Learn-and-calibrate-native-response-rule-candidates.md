@@ -1,11 +1,11 @@
 ---
 id: TASK-34358
 title: Learn and calibrate native response rule candidates
-status: In Progress
+status: Done
 assignee:
   - '@codex'
-created_date: '2026-10-04 05:54'
-updated_date: '2026-10-12 23:14'
+created_date: '2026-10-04T05:54:00Z'
+updated_date: '2026-11-24T17:42:48Z'
 labels: []
 dependencies:
   - TASK-34357
@@ -23,9 +23,9 @@ Enable the approved Console response-rule behavior for plan task 5. Preserve exi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Learning discriminates the recorded and paraphrased violation from acceptable controls within three attempts and 120 seconds.
-- [ ] #2 Synthetic responses cannot fabricate work success and unrelated action guidance remains inactive.
-- [ ] #3 Editor tests retain the exact edited candidate and reuse validation only with matching evidence and protocol.
+- [x] #1 Learning discriminates the recorded and paraphrased violation from acceptable controls within three attempts and 120 seconds.
+- [x] #2 Synthetic responses cannot fabricate work success and unrelated action guidance remains inactive.
+- [x] #3 Editor tests retain the exact edited candidate and reuse validation only with matching evidence and protocol.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -44,4 +44,6 @@ Current-dev PR3010 integration: follow Docs/superpowers/plans/2026-10-11-pr3010-
 Bounded native drafting returns inactive candidates; four opaque host-labelled controls share original evidence and use the public evaluator. No prompt replay or executable hook. Exact edited definitions remain unchanged. Feedback-only reuse binds original input, fixture fingerprints and protocol; missing provenance requires retesting. Conservative host action/target checks and original-task wrapper reject additional-action guidance. ADR-232. RED missing builder -> GREEN 21 focused cases; 81 combined model/storage/semantic cases; black/ruff/mypy pass. Scripted classifications qualify orchestration, not actual model quality.
 
 2026-10-12 current integration (historical source evidence above remains unchanged): Integrated draft, independent calibration, tested activation and correction learning under current helper and native owners. Actual offline Qwen2.5-0.5b failed learning (three draft calls) and all seven semantic controls; invalid schema remains couldnt_verify. No prompt/parser loosening, synthetic output replacement or quality-pass claim was made. Existing ADR232 governs, with ADR337 live-revision GC and ADR227 Goal constraints applied. Current report: E/pr3010-current-integration/task-1-report.md. All tasks stay In Progress and acceptance remains open pending independent review, actual-base/hosted qualification and unmet external/model checks.
+
+Current dev qualification passed the learner and editor candidate controls at four workers, including discriminating controls, attempt and time bounds, forged-evidence refusal and exact test reuse. Combined rule-domain and recovery run: 297 passed. The October live-model limitations remain recorded in TASK-34975.
 <!-- SECTION:NOTES:END -->

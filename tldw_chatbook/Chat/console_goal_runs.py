@@ -446,6 +446,7 @@ class ConsoleGoalCoordinator:
         self._launch_task: asyncio.Task[GoalSnapshot] | None = None
         self._launch_id: str | None = None
         self._resume_goal_id: str | None = None
+        self._session_ids: dict[str, str] = {}
         self.service._control_listener = self._control_changed
 
     def bind_runtime_submitter(self, submitter) -> None:
@@ -495,7 +496,7 @@ class ConsoleGoalCoordinator:
     async def restore_session(
         self, goal_id: str, *, app: Any, settings: ConsoleSessionSettings | None = None
     ) -> ConsoleChatSession:
-        """Use normal persisted-tree hydration with stable identity and no navigation."""
+        """Hydrate the goal's durable history without activating its live chat."""
         from dataclasses import replace
 
         from tldw_chatbook.Chat.console_conversation_hydration import (
@@ -510,17 +511,19 @@ class ConsoleGoalCoordinator:
         goal = self.service.get(goal_id)
         if goal.request is None:
             raise ValueError("goal_payload_removed")
+        session_id = self._session_ids.get(goal_id, goal.conversation_id)
         existing = next(
             (
                 s
                 for s in self.controller.store.sessions()
-                if s.id == goal.conversation_id
+                if s.id == session_id
             ),
             None,
         )
         if existing is not None:
             if existing.persisted_conversation_id != goal.conversation_id:
                 raise ValueError("conversation_identity_conflict")
+            self._require_open_session(session_id)
             return existing
         tree = await load_console_conversation_tree(app, goal.conversation_id)
         if tree is None:
@@ -534,16 +537,24 @@ class ConsoleGoalCoordinator:
             model=goal.request.provider.model,
         )
         settings = apply_resume_settings_overrides(settings, tree["conversation"])
-        return await hydrate_console_session(
+        # Keep the old close generation latched for late callbacks. Saved
+        # history and automatic accounting still belong to the conversation.
+        session = await hydrate_console_session(
             app=app,
             store=self.controller.store,
             conversation_id=goal.conversation_id,
             tree=tree,
             settings=settings,
             target_workspace_id=goal.request.binding.workspace_id,
-            session_id=goal.conversation_id,
+            session_id=(
+                None
+                if session_id in self.controller._session_close_generations
+                else session_id
+            ),
             activate=False,
         )
+        self._session_ids[goal_id] = session.id
+        return session
 
     def _control_changed(self, snapshot):
         """The service may run on a DB thread; controller mutation stays on its loop."""
@@ -818,6 +829,10 @@ class ConsoleGoalCoordinator:
         if self._stop_requested:
             raise AutomaticWorkRefused("cancelled")
 
+    def _require_open_session(self, session_id: str) -> None:
+        if session_id in self.controller._session_close_generations:
+            raise AutomaticWorkRefused("goal_session_closed")
+
     def authorizes(self, authorization: object, session_id: str | None) -> bool:
         return (
             isinstance(authorization, GoalIterationAuthorization)
@@ -853,15 +868,22 @@ class ConsoleGoalCoordinator:
         self._check_admission_open()
         if not self.authorizes(authorization, session_id):
             raise PermissionError("goal authority is no longer live")
+        self._require_open_session(session_id)
         authorization.check_binding()
         if self._manual_priority(authorization.goal.conversation_id):
             raise AutomaticWorkRefused("primary_capacity")
+
+        def guard() -> None:
+            self._check_admission_open()
+            self._require_open_session(session_id)
+
         authorization.acceptance_started = True
         accepted = await self.service.call(
             self.ledger.accept_goal_iteration,
             authorization.attempt_id,
             owner_id=self._owner_id,
-            admission_guard=self._check_admission_open,
+            session_id=session_id,
+            admission_guard=guard,
         )
         if not accepted:
             raise AutomaticWorkRefused("attempt_not_prepared")
@@ -941,11 +963,12 @@ class ConsoleGoalCoordinator:
             return GoalIterationResult(
                 goal_id, 0, None, None, None, "runtime_unavailable"
             )
+        session_id = self._session_ids.get(goal_id, goal.conversation_id)
         session = next(
             (
                 s
                 for s in self.controller.store.sessions()
-                if s.id == goal.conversation_id
+                if s.id == session_id
                 and s.persisted_conversation_id == goal.conversation_id
             ),
             None,
@@ -989,9 +1012,13 @@ class ConsoleGoalCoordinator:
         reason_code = None
         try:
             attempt = await self.service.call(
-                self.ledger.prepare_goal_iteration, goal_id, owner_id=self._owner_id
+                self.ledger.prepare_goal_iteration,
+                goal_id,
+                owner_id=self._owner_id,
+                session_id=session.id,
             )
             self._check_admission_open()
+            self._require_open_session(session.id)
             authorization = GoalIterationAuthorization(self, goal, attempt, _key=_KEY)
             self._active = authorization
             from tldw_chatbook.Chat.console_project_instructions import (

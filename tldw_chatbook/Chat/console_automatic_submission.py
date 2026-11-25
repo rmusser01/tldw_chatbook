@@ -573,10 +573,9 @@ async def read_hook_admission_result(self) -> tuple[str | None, Any]:
                     runtime is not None
                     and (
                         getattr(self, "_hooks_v2_runtime", None) is not runtime
-                        or runtime._disposed
-                        or runtime._chat_store is not runtime_store
-                        or runtime._chat_controller is not runtime_controller
-                        or session_id in runtime._admission_fenced_sessions
+                        or not runtime.owns_session(
+                            runtime_controller, runtime_store, session_id
+                        )
                         or (
                             source.managed
                             and source.permissions is not None
@@ -638,10 +637,7 @@ def shared_hook_owner(self, session_id: str | None) -> Any:
     reader = self._hook_admission_reason
     if (
         self._disposed
-        or runtime._disposed
-        or runtime._chat_controller is not self
-        or runtime._chat_store is not self.store
-        or session_id in runtime._admission_fenced_sessions
+        or not runtime.owns_session(self, self.store, session_id)
         or not (
             isinstance(accessor, MethodType)
             and accessor.__self__ is runtime

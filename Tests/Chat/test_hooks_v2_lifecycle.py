@@ -25,11 +25,22 @@ async def session_case(tmp_path):
     notifications = []
 
     class LegacyRecorder:
+        def prepare_notification(self, event, session_id, tool_name=None):
+            return SimpleNamespace(
+                notification=(event, session_id, tool_name),
+                notification_claimed=False,
+                abandon_unstarted=lambda: None,
+            )
+
         async def fire_async(self, event, **kwargs):
             notifications.append((event, kwargs))
             return HookOutcome()
 
-        def notify(self, event, **kwargs):
+        def notify(self, event, *, _prepared=None, **kwargs):
+            if _prepared is not None:
+                assert _prepared.notification == (event, kwargs["session_id"], None)
+                assert not _prepared.notification_claimed
+                _prepared.notification_claimed = True
             notifications.append((event, kwargs))
 
     rig = _controller_rig(tmp_path, ensure_run_hooks=lambda: LegacyRecorder())
@@ -1300,6 +1311,7 @@ async def test_actual_console_stop_mcp_notification_keeps_one_second_guard_deadl
 ):
     import asyncio
     import time
+    from threading import Event
     from uuid import uuid4
 
     from Tests.Agents.test_hooks_v2_tool_pipeline import hook_command
@@ -1381,6 +1393,9 @@ async def test_actual_console_stop_mcp_notification_keeps_one_second_guard_deadl
         pending = asyncio.create_task(runtime.wait_for_turn(turn))
         try:
             await asyncio.wait_for(started.wait(), 5)
+            assert controller.prompt_queue_coordinator.interrupt_parent(
+                session.id, Event()
+            ) is None
             stamp = time.monotonic()
             assert controller.stop_active_run()
             controller.stop_active_run()
@@ -1412,6 +1427,43 @@ async def test_actual_console_stop_mcp_notification_keeps_one_second_guard_deadl
             await asyncio.gather(pending, return_exceptions=True)
             async with disposed_hook_rig(runtime, controller, _runs, chacha):
                 pass
+
+
+@pytest.mark.asyncio
+async def test_borrowed_interrupt_rechecks_original_source_after_capture(
+    session_case, monkeypatch
+):
+    from contextlib import nullcontext
+
+    from tldw_chatbook.Agents.execution_capacity import bind_ordinary_tree
+    from tldw_chatbook.Agents.hooks_v2.lifecycle import lifecycle_event
+    from tldw_chatbook.Agents.hooks_v2.native_commands import NativeCommandEvents
+
+    case = session_case
+    session_id = case.session.id
+    engine = case.runtime._hooks_v2_engines[session_id]
+    issuer = NativeCommandEvents(case.runtime, engine, session_id)
+    monkeypatch.setattr(engine, "_native_commands", issuer)
+    app = case.controller.app
+    original_config = {}
+    monkeypatch.setattr(app, "app_config", original_config, raising=False)
+
+    def check_original_source():
+        if app.app_config is not original_config:
+            raise RuntimeError("original agent storage source changed")
+
+    tree = SimpleNamespace(
+        controller=case.controller,
+        owner=SimpleNamespace(activate=nullcontext),
+        source=SimpleNamespace(check_memory=check_original_source),
+    )
+    event = lifecycle_event("Interrupt", session_id, turn_id="accepted-turn")
+    with bind_ordinary_tree(tree):
+        captured = issuer.capture(event, teardown=True)
+    captured.check()
+    monkeypatch.setattr(app, "app_config", {})
+    with pytest.raises(RuntimeError, match="original agent storage source changed"):
+        captured.check()
 
 
 @pytest.mark.asyncio

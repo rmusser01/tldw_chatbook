@@ -1,11 +1,14 @@
 """Goal authority cannot be minted twice or used as a survivor claim."""
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
+from types import SimpleNamespace
 
 import pytest
 
 from Tests.Agents.test_goal_models import request
 from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
@@ -17,6 +20,48 @@ def enabled_goal_policy(monkeypatch):
 def ready_goal(db):
     goal = db.goal_runs.create(request(), launch_id="launch")
     return db.goal_runs.set_provisioning(goal, status="ready")
+
+
+def test_goal_attempt_retry_is_bound_to_the_live_session(tmp_path):
+    with closing(AgentRunsDB(tmp_path / "runs.db")) as db:
+        goal = ready_goal(db)
+        ledger = db.automatic_work
+        attempt = ledger.prepare_goal_iteration(
+            goal.id, owner_id="owner", session_id="current-tab"
+        )
+        assert attempt.conversation_id == goal.conversation_id
+        assert attempt.session_id == "current-tab"
+        retry = ledger.prepare_goal_iteration(
+            goal.id, owner_id="owner", session_id="current-tab"
+        )
+        assert retry == attempt
+        with pytest.raises(ValueError, match="session"):
+            ledger.prepare_goal_iteration(
+                goal.id, owner_id="owner", session_id="old-tab"
+            )
+        with pytest.raises(ValueError, match="session"):
+            ledger.accept_goal_iteration(
+                attempt.id, owner_id="owner", session_id="old-tab"
+            )
+        assert ledger.accept_goal_iteration(
+            attempt.id, owner_id="owner", session_id="current-tab"
+        )
+        context = AutomaticWorkContext(
+            ledger,
+            goal.chain_id,
+            "owner",
+            attempt.id,
+            attempt_kind="goal_iteration",
+            goal=SimpleNamespace(session_id="current-tab"),
+        )
+        assert context._read_attempt().session_id == "current-tab"
+        with db.transaction() as connection:
+            connection.execute(
+                "UPDATE automatic_wake_attempts SET session_id=? WHERE id=?",
+                ("old-tab", attempt.id),
+            )
+        with pytest.raises(AutomaticWorkRefused, match="goal_authority_expired"):
+            context._read_attempt()
 
 
 def test_concurrent_prepares_accept_exactly_one_generation(tmp_path):
@@ -41,12 +86,13 @@ def test_concurrent_prepares_accept_exactly_one_generation(tmp_path):
         a, b = pool.map(prepare, range(2))
     assert a.id == b.id
     assert a.goal_id == goal.id and a.ordinal == 1
+
+    def accept(_):
+        with closing(db):  # Keep SQLite cleanup on the opening worker thread.
+            return ledger.accept_goal_iteration(a.id, owner_id="owner")
+
     with ThreadPoolExecutor(2) as pool:
-        accepted = list(
-            pool.map(
-                lambda _: ledger.accept_goal_iteration(a.id, owner_id="owner"), range(2)
-            )
-        )
+        accepted = list(pool.map(accept, range(2)))
     assert sorted(accepted) == [False, True]
     assert ledger.snapshot(goal.chain_id).used["generation"] == 1
     assert ledger.snapshot(goal.chain_id).reserved["generation"] == 0

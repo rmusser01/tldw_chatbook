@@ -218,11 +218,8 @@ def hook_preparation_source_current(self, source):
         and reader.__func__ is source.authority_reader.__func__
     )
     return not (
-        self._disposed
-        or source.session_id in self._admission_fenced_sessions
+        not self.owns_session(source.controller, source.store, source.session_id)
         or self._app is not source.app
-        or self._chat_store is not source.store
-        or self._chat_controller is not source.controller
         or self._hook_permissions is not source.permissions
         or not same_reader
         or session is not source.session
