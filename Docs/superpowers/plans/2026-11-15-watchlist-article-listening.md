@@ -309,11 +309,26 @@ These rulings implement ADR367 without a new schema or runtime dependency.
 - Reader posts `ArticleListenRequested(item_id: str, runtime_backend: str)`; citation selection posts its separate Listen intent, never `CitationActivated` (the existing Open path changes view/read state).
 - Transport consumes `ListeningSnapshot` and posts typed intents only. Reader `l` is the candidate binding after checking descendants/global keys. Palette exposes live Pause/Resume/Stop actions through the same service.
 
-- [ ] **Step 1: Write failing mounted tests.** Listen on reader and selected citation; Play cited excerpts count/unavailable preview; same queue Resume/different queue replacement confirmation; source body excerpt/output-host notice; preparation state; suspended queue labels; restored Resume versus completed Play again; actionable failures and Clear. Assert brief stays visible, read state unchanged, footer hints truthful, selection/focus retained and old-screen unmount cannot stop new output.
-- [ ] **Step 2: Observe RED.** Run only new mounted nodes and relevant existing Watchlists citation/palette nodes; verify missing controls/actions cause failures.
-- [ ] **Step 3: Implement projection.** Read `backlog/docs/design-language.md`, component patterns and keybinding ADR before UI edits. Compose existing token-backed compact controls with no ad-hoc sizes/colors. Keep handlers thin and provider work off-loop. Disable unsupported server/change items with a reason; expose host-local audio location in serve mode before play.
-- [ ] **Step 4: Observe GREEN.** Run the mounted tests at 80x24 and wide sizes, palette/keyboard tests, `Tests/UI/test_design_token_governance.py` and CSS bundle sync guard after rebuilding. Native terminal/serve checks establish focus, progress and host-output notice; no remote-browser streaming claim. Run Ruff on changed Python.
-- [ ] **Step 5: Review and commit** `feat: add watchlist article listening controls` with mounted geometry/focus and native evidence.
+- [x] **Step 1: Write failing mounted tests.** Listen on reader and selected citation; Play cited excerpts count/unavailable preview; same queue Resume/different queue replacement confirmation; source body excerpt/output-host notice; preparation state; suspended queue labels; restored Resume versus completed Play again; actionable failures and Clear. Assert brief stays visible, read state unchanged, footer hints truthful, selection/focus retained and old-screen unmount cannot stop new output.
+- [x] **Step 2: Observe RED.** Run only new mounted nodes and relevant existing Watchlists citation/palette nodes; verify missing controls/actions cause failures.
+- [x] **Step 3: Implement projection.** Read `backlog/docs/design-language.md`, component patterns and keybinding ADR before UI edits. Compose existing token-backed compact controls with no ad-hoc sizes/colors. Keep handlers thin and provider work off-loop. Disable unsupported server/change items with a reason; expose host-local audio location in serve mode before play.
+- [x] **Step 4: Observe GREEN.** Run the mounted tests at 80x24 and wide sizes, palette/keyboard tests, `Tests/UI/test_design_token_governance.py` and CSS bundle sync guard after rebuilding. Native terminal/serve checks establish focus, progress and host-output notice; no remote-browser streaming claim. Run Ruff on changed Python.
+- [x] **Step 5: Review and commit** `feat: add watchlist article listening controls` with mounted geometry/focus and native evidence.
+
+**Completed, 2026-11-24:** TASK-41181 is Done with all four criteria checked.
+Independent review and three scoped fix rounds approved source `e74018a6e5`.
+The mounted/token/CSS/palette batch passed 105 cases; review-era receipts include
+27 affected nodes, 11 Reader/adjacent checks and the final eight-case regression
+run (overlapping selections, not additive unique counts). Formatting and syntax
+checks passed with the unchanged legacy lint baseline. Actual 80×24 terminal
+controls and a 151×43 authenticated served UI verified retained-tone restoration,
+host notice, progress, citation/Reader Listen, suspended queue and global Stop;
+the [qualification supplement](../../Testing/watchlist-article-audio-qualification.md#reader-and-served-controls-2026-11-24)
+records their source attribution and cleanup. The final same-row eligibility
+edge is proven by its discriminating mounted regression. This does not replace
+the configured-provider/native recovery workflow in Task 7. The pre-existing
+page-replacement interleaving during a pending body fetch remains recorded as
+mixed adjacent evidence rather than a new regression or blanket green result.
 
 ### Task 7: Qualify end-to-end recovery and document release limits (TASK-41182)
 
@@ -330,4 +345,4 @@ These rulings implement ADR367 without a new schema or runtime dependency.
 
 The seven deliveries cover all ten design acceptance outcomes. The five Review Focus cases each have an owning test step above. Store, preparation, output and service signatures match their consumers. Tasks are ordered so a storage/voice/UI implementation cannot bypass qualification. SQL names and schema number are intentionally selected against the implementation base, while their ownership and rollback contracts are fixed here.
 
-Gate status: [native evidence](../../Testing/watchlist-article-audio-qualification.md) records the passing 21-case Windows matrix, explicit Windows listener confirmation and passing current-profile three-round startup-Stop supplement. The Windows-first release gate passes; the two earlier supplemental attempts remain preserved and all nine players/captures retired. Linux route/timing/listener evidence and native macOS evidence remain unqualified; they are unsupported for this first delivery and the portable gate remains open. Tasks 1 and 2 are Done under their revised Windows-first AC. Tasks 3 and 4 are Done with their recorded storage and synthesis evidence. Task 5 is Done after independent review and two scoped fix rounds, delivered in draft PR #3768. Task 6 is In Progress; Task 7 remains To Do.
+Gate status: [native evidence](../../Testing/watchlist-article-audio-qualification.md) records the passing 21-case Windows matrix, explicit Windows listener confirmation and passing current-profile three-round startup-Stop supplement. The Windows-first release gate passes; the two earlier supplemental attempts remain preserved and all nine players/captures retired. Linux route/timing/listener evidence and native macOS evidence remain unqualified; they are unsupported for this first delivery and the portable gate remains open. Tasks 1 and 2 are Done under their revised Windows-first AC. Tasks 3 and 4 are Done with their recorded storage and synthesis evidence. Task 5 is Done after independent review and two scoped fix rounds, delivered in draft PR #3768. Task 6 is Done after independent review and three scoped fix rounds; Task 7 remains To Do.
