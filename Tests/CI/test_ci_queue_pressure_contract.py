@@ -545,9 +545,6 @@ DREAMS_TRACKING_RIDERS = (
     # Round 24: bootstrap_profile (its gateway reads [model_catalog]), so after
     # Tool_Packs.
     "Tests/Chat/test_console_trace_retry_recovery_proof.py",
-    # TASK-42472 (2026-11-24): the failed-call retry rule. bootstrap_profile
-    # (its gateway reads [model_catalog]), so after Tool_Packs.
-    "Tests/Chat/test_console_failed_call_retry_ownership.py",
     # TASK-42515 (round 25): bootstrap_profile (Tests/conftest.py keeps the
     # whole file on it), so after Tool_Packs.
     "Tests/Chat/test_console_provider_failure_copy.py",
@@ -994,6 +991,9 @@ DREAMS_ADMISSION_TARGETS = (
     "Tests/Subscriptions/test_local_watchlists_service.py",
     "Tests/Watchlists/test_watchlists_bulk_source_authoring.py",
     "Tests/UI/test_settings_dreams_guardian_native_lifecycle.py",
+    # TASK-42525 (round 26): moved here from dreams-tracking's riders, whose
+    # job neared its 20-min cap. bootstrap_profile, like every file here.
+    "Tests/Chat/test_console_failed_call_retry_ownership.py",
 )
 
 #: The admission-sensitive invocation, exactly, in order (review of #3106,

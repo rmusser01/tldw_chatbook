@@ -212,6 +212,7 @@ INHERITED = {
         "Tests/Subscriptions/test_local_watchlists_service.py",
         "Tests/Watchlists/test_watchlists_bulk_source_authoring.py",
         "Tests/UI/test_settings_dreams_guardian_native_lifecycle.py",
+        "Tests/Chat/test_console_failed_call_retry_ownership.py",  # TASK-42525
         "--timeout=300",
         "--tb=short",
     ],
