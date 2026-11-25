@@ -2,10 +2,11 @@
 """TASK-26004: a single global emergency-stop sentinel.
 
 One durable switch, several readers (agent sends, scheduled dispatch, and
-since TASK-33620.1.12 every agent tool call). It stops NEW work from
-STARTING, and an in-flight run's tool calls are refused while it holds (a
-call already executing finishes). It survives a restart (a small JSON file),
-and it is deliberately FAIL-SAFE:
+since TASK-33620.1.12 every agent tool call, hook-v2 action and /research
+step). It stops NEW work from STARTING, and an in-flight run's tool calls,
+hook actions and research steps are refused while it holds (a step already
+executing finishes). It survives a restart (a small JSON file), and it is
+deliberately FAIL-SAFE:
 if the read itself errors, the system treats it as STOPPED rather than
 proceeding -- for an emergency stop, halting on doubt is the safe direction.
 """
@@ -36,11 +37,12 @@ class EmergencyStopState:
     def visible_copy(self) -> str:
         """User-facing copy naming the stop and how to clear it (AC#5)."""
         why = f" ({self.reason})" if self.reason else ""
-        # TASK-33620.1.12: a running run's tool calls are held too.
+        # TASK-33620.1.12: a running run's tool calls, hook actions and
+        # /research are held too.
         return (
-            f"Emergency stop is active{why}: new runs, agent tool calls and "
-            f"scheduled dispatches are held. Run {EMERGENCY_STOP_CLEAR_COMMAND} "
-            "to resume."
+            f"Emergency stop is active{why}: new runs, tool calls, hook actions, "
+            f"research and scheduled dispatches are held. Run "
+            f"{EMERGENCY_STOP_CLEAR_COMMAND} to resume."
         )
 
 
@@ -70,6 +72,35 @@ def read_emergency_stop(path: Path) -> EmergencyStopState:
         active=bool(raw.get("active", False)),
         reason=str(raw.get("reason", "") or ""),
     )
+
+
+#: TASK-33620.1.12: the reason a hold carries when the stop's state could not
+#: be read at all (its location could not be resolved).
+STATE_UNAVAILABLE_REASON = "stop state unavailable"
+
+
+def stop_state_unavailable() -> EmergencyStopState:
+    """The fail-safe's state when the stop could not be read at all: held.
+
+    Every reader that fails closed this way returns this, so the test suite
+    can see each such hold (Tests/conftest.py fails a test that hits it unless
+    it is marked ``emergency_stop_unavailable``): a silent hold once let a
+    test pass for the wrong reason.
+    """
+    return EmergencyStopState(active=True, reason=STATE_UNAVAILABLE_REASON)
+
+
+def current_emergency_stop() -> EmergencyStopState:
+    """Resolve the stop's default path and read it, FAIL-SAFE.
+
+    Blocking (a guarded config read, then a file read): call it off the UI
+    loop. A path that cannot be resolved holds, as an unreadable file does.
+    """
+    try:
+        path = default_emergency_stop_path()
+    except Exception:  # noqa: BLE001 -- doubt holds (AC#4)
+        return stop_state_unavailable()
+    return read_emergency_stop(path)
 
 
 # emergency_stop_state is the readable alias used by surfaces that want the

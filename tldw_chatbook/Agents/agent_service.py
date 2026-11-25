@@ -3538,6 +3538,7 @@ class AgentService:
                 "holding the call",
                 type(exc).__name__,
             )
+            emergency_stop.stop_state_unavailable()
             return tool_refusals.emergency_stop_unavailable_tool_refusal()
         if not state.active:
             return None

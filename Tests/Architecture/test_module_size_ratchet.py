@@ -1181,7 +1181,9 @@ _BUDGETS: dict[str, int] = {
     # in-flight run's tool calls; owner rule: raise by the change's own
     # lines): 7698 -> 7744 (+46) -- the run's fail-safe stop probe, its
     # path cache and its LoopDeps wiring.
-    "tldw_chatbook/Agents/agent_service.py": 7744,
+    # 2026-11-24, TASK-33620.1.12 review 2 (same rule): 7744 -> 7745 (+1), the
+    # unreadable-stop hold reports through the shared fail-safe notifier.
+    "tldw_chatbook/Agents/agent_service.py": 7745,
     # 2026-10-31, PR #3259: explicit user size-limit waiver. Pin the
     # actual current-base N-32 file-body F6 integration at 9,541 lines.
     # TASK-36513, 2026-11-03 (size waiver per the burn-down brief: re-pin at
@@ -1490,7 +1492,9 @@ _BUDGETS: dict[str, int] = {
     # its batch hold before review, its per-call hold at dispatch, the
     # held-turn breaker that ends a run the stop keeps holding, and the goal
     # runs' emergency-stop termination reason.
-    "tldw_chatbook/Agents/agent_runtime.py": 4172,
+    # 2026-11-24, TASK-33620.1.12 review 2 (same rule): 4172 -> 4175 (+3), the
+    # raising-probe hold reports through the shared fail-safe notifier.
+    "tldw_chatbook/Agents/agent_runtime.py": 4175,
     # 2026-11-20, TASK-42014 (owner rule: raise by the change's own lines):
     # 6108 -> 6110 (+2) -- the credential buttons carry the class their
     # press handler selects, so a press a recompose forwards still runs it.

@@ -1904,8 +1904,11 @@ def _emergency_stop_refusal(state: LoopState) -> str | None:
         return None
     if isinstance(refusal, str) and refusal:
         return refusal
+    from tldw_chatbook import emergency_stop
+
     from . import tool_refusals
 
+    emergency_stop.stop_state_unavailable()
     return tool_refusals.emergency_stop_unavailable_tool_refusal()
 
 

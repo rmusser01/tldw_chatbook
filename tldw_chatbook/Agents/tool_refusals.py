@@ -70,9 +70,6 @@ TOOL_EMERGENCY_STOP_UNAVAILABLE_REFUSAL = (
 def emergency_stop_unavailable_tool_refusal() -> str:
     """The fail-safe's refusal when the stop's state could not be read.
 
-    A function (not just the constant) so the test suite can see every run
-    that hit it: a silent hold there once passed tests for the wrong reason.
-
     Returns:
         ``TOOL_EMERGENCY_STOP_UNAVAILABLE_REFUSAL``.
     """

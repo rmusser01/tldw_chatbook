@@ -2160,34 +2160,36 @@ def _redirect_emergency_stop_path(request, tmp_path, monkeypatch):
     ``tmp_path / "emergency_stop.json"`` (absent means clear), unless it is
     marked ``real_emergency_stop_path``.
 
-    And a run whose stop check could not read the stop at all
-    (``tool_refusals.emergency_stop_unavailable_tool_refusal``) fails the
-    test at teardown, unless it is marked ``emergency_stop_unavailable``:
-    that hold is never silent here.
+    And anything held because the stop could not be read at all -- an agent
+    tool call, a hook action, a research step
+    (``emergency_stop.stop_state_unavailable``) -- fails the test at
+    teardown, unless it is marked ``emergency_stop_unavailable``: that hold
+    is never silent here.
+
+    Read the redirected path through the module
+    (``emergency_stop.default_emergency_stop_path()``): a name imported into
+    a test module at collection is the unpatched function.
     """
     from tldw_chatbook import emergency_stop
-    from tldw_chatbook.Agents import tool_refusals
 
     path = tmp_path / "emergency_stop.json"
     if request.node.get_closest_marker("real_emergency_stop_path") is None:
         monkeypatch.setattr(emergency_stop, "default_emergency_stop_path", lambda: path)
     held: list[str] = []
-    unavailable = tool_refusals.emergency_stop_unavailable_tool_refusal
+    unavailable = emergency_stop.stop_state_unavailable
 
-    def record_unavailable() -> str:
+    def record_unavailable():
         held.append(request.node.nodeid)
         return unavailable()
 
-    monkeypatch.setattr(
-        tool_refusals, "emergency_stop_unavailable_tool_refusal", record_unavailable
-    )
+    monkeypatch.setattr(emergency_stop, "stop_state_unavailable", record_unavailable)
     yield path
     if held and request.node.get_closest_marker("emergency_stop_unavailable") is None:
         pytest.fail(
-            f"{len(held)} agent tool call(s) were held because the emergency "
-            "stop's state could not be read (TASK-33620.1.12). Fix the test's "
-            "stop path, or mark it emergency_stop_unavailable if that hold is "
-            "what it tests.",
+            f"{len(held)} action(s) were held because the emergency stop's "
+            "state could not be read (TASK-33620.1.12). Fix the test's stop "
+            "path, or mark it emergency_stop_unavailable if that hold is what "
+            "it tests.",
             pytrace=False,
         )
 
