@@ -824,7 +824,8 @@ def run_chains(
 
     A chain that starts with a TOOL_LOOP call is a provider fallback's; it is
     followed back to the chain it replaced, which must hold the same owner,
-    segment, turn, policy and surface.
+    segment, turn, policy and surface. A llama.cpp resend runs on its own run
+    id; it is followed to the call it resent (TASK-42472, TASK-42530).
 
     Args:
         repository: The trace repository.
@@ -838,6 +839,13 @@ def run_chains(
     chains = [run_id]
     for _ in range(_MAX_RUN_CHAINS):
         origin = repository.get_run_origin(cursor, chains[-1])
+        if origin is not None and origin.route_identity == "llama_fallback":
+            resent = failed_stream_fallback_parent(
+                repository, cursor, origin.call_id, answered=True
+            )
+            if resent is not None:
+                chains.append(resent.run_id)
+                continue
         if origin is None or origin.route_identity != "tool_loop":
             return origin, frozenset(chains if origin is not None else ())
         failed = fallback_parent(

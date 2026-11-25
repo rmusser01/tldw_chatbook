@@ -2395,6 +2395,168 @@ async def test_the_message_after_a_rewritten_run_that_did_not_complete_is_sent(
         assert _chain_calls(app, turn_id) == before
 
 
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("misread", [False, True], ids=["plain", "misread"])
+@pytest.mark.parametrize("ending", ["failed", "discarded"])
+async def test_the_message_after_a_rewritten_run_that_ended_on_a_llamacpp_resend_is_sent(
+    tmp_path, monkeypatch, ending, misread
+):
+    """TASK-42525 round 4: the I2 range when the run's last call is a resend.
+
+    llama.cpp with native tool calls answers with one, then its retries run
+    out; the run falls back to a llama.cpp target that reads tool calls from
+    text, so the fallback's first call rewrites the run's tool rows. That
+    call's stream is empty and llama.cpp is asked once more without
+    streaming, on the resend's own run id: the run's last call. The resend
+    fails (`failed`), or answers with a tool call, the next call is refused
+    and the reply is discarded after a restart (`discarded`). Without
+    project context the next message's range must reach down over the
+    rewritten rows; the run's chains were not found from the resend, so it
+    was refused (`surface_replacement_checkpoint_unavailable`). Read as
+    failed, the call that answered with the tool call still refuses it.
+    """
+    from datetime import datetime, timezone
+
+    from Tests.Chat.test_console_project_instruction_traces import _project_console
+    from Tests.Chat.test_console_trace_discarded_tool_run import _reload_console
+    from tldw_chatbook.Chat import (
+        Chat_Functions,
+        console_agent_bridge,
+        provider_readiness,
+    )
+    from tldw_chatbook.Chat.console_trace_settlement import (
+        ConsoleTraceSettlementCoordinator,
+    )
+    from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
+
+    steps = ("empty", "busy" if ending == "failed" else "tool")
+    async with _project_console(
+        tmp_path,
+        monkeypatch,
+        source_name="NOTES.md",
+        first_failure=_llama_script(*steps),
+        failures=len(steps),
+    ) as app:
+        llama, replies, native = (
+            app.gateway.resolve_for_send,
+            [_NATIVE_TOOL_CALL, _busy(), _busy(), _busy()],
+            [],
+        )
+
+        @functools.wraps(Chat_Functions.chat_api_call)
+        def handler(*_args, **kwargs):
+            # The native-tools target is sent through the provider handler.
+            native.append(kwargs["messages_payload"])
+            reply = replies.pop(0) if replies else "Fixture reply"
+            if isinstance(reply, Exception):
+                raise reply
+            if not isinstance(reply, dict):
+                reply = {"role": "assistant", "content": reply}
+            return {"choices": [{"message": reply}]}
+
+        async def resolve(selection):
+            resolution = await llama(selection)
+            if selection.provider == "local_llamacpp":
+                # Text tool calls, streamed through the llama.cpp client.
+                return replace(
+                    resolution,
+                    provider="local_llamacpp",
+                    model="other-model",
+                    streaming=True,
+                )
+            return replace(
+                resolution,
+                reasoning_replay=ReasoningReplayPolicy(
+                    "off", "override", native_tools=True
+                ),
+            )
+
+        monkeypatch.setattr(app.gateway, "resolve_for_send", resolve)
+        monkeypatch.setattr(app.gateway, "_chat_api_call_fn", handler)
+        monkeypatch.setattr(
+            console_agent_bridge,
+            "console_fallback_providers",
+            lambda: ("local_llamacpp",),
+        )
+        monkeypatch.setattr(
+            provider_readiness, "configured_provider_is_ready", lambda _p: True
+        )
+        original = type(app.factory.service).prepare_current_surface_delta
+
+        def reject_after_the_resend(instance, *args, **kwargs):
+            if ending == "discarded" and len(app.attempts) == 2:
+                raise ValueError("unsupported_surface_change")
+            return original(instance, *args, **kwargs)
+
+        with monkeypatch.context() as fault:
+            fault.setattr(
+                type(app.factory.service),
+                "prepare_current_surface_delta",
+                reject_after_the_resend,
+            )
+            result = await app.controller.submit_draft(
+                "Use calculator once", session_id=app.session.id
+            )
+        turn_id = app.store.get_message(result.user_message_id).persisted_message_id
+        if ending == "discarded":
+            ConsoleTraceSettlementCoordinator(app.factory.repository).recover_open_calls(
+                app.db,
+                occurred_at=datetime.now(timezone.utc).isoformat(),
+                recovery_grace_seconds=0,
+            )
+            await _reload_console(app)
+            assert (
+                await app.controller.discard_dispatch_recovery(app.session.id)
+            ).accepted
+            app.reservation_errors.clear()
+        else:
+            assert app.controller.run_state.status.value == "failed"
+            assert app.reservation_errors == []
+        with app.db.transaction() as cursor:
+            lineage = [
+                tuple(row)
+                for row in cursor.execute(
+                    "SELECT route_identity, state, call_sequence "
+                    "FROM console_trace_calls WHERE turn_id = ? ORDER BY rowid",
+                    (turn_id,),
+                ).fetchall()
+            ]
+            kinds = [
+                row[0]
+                for row in cursor.execute(
+                    "SELECT component_kind FROM console_trace_surface_nodes "
+                    "ORDER BY sequence"
+                ).fetchall()
+            ]
+        # Startup recovery settles the response-bearing calls it found open.
+        answered = "complete" if ending == "failed" else "interrupted"
+        assert lineage == [
+            ("agent_first", answered, 0),
+            *(("tool_loop", "error", n) for n in (1, 2, 3)),
+            ("tool_loop", "error", 0),  # the fallback chain's first call
+            ("llama_fallback", "error" if ending == "failed" else "interrupted", 0),
+        ]
+        # The native rows the fallback rewrote, then its text rows.
+        assert kinds[-4:] == ["tool_call", "tool_result"] * 2
+        if misread:
+            _misread_as_failed(monkeypatch, app, turn_id, "llama_cpp", 0)
+        sent = len(native)
+
+        follow_up = await app.controller.submit_draft(
+            "And now?", session_id=app.session.id
+        )
+
+        assert follow_up.accepted
+        if misread:
+            assert app.reservation_errors == ["completed_tool_turn_lineage"]
+            assert app.controller.run_state.status.value == "blocked"
+            assert len(native) == sent
+        else:
+            assert app.reservation_errors == []
+            assert app.controller.run_state.status.value == "completed"
+            assert len(native) == sent + 1
+
+
 @asynccontextmanager
 async def _llamacpp_falls_back(
     tmp_path,
