@@ -66,8 +66,9 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Self
 
 from rich.console import Group, RenderableType
 from rich.markdown import Markdown
@@ -97,6 +98,13 @@ from ...Widgets.prune_safe_select import PruneSafeSelect
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .humane_time import humane_timestamp
 from .table_selection import highlight_is_user_driven
+
+if TYPE_CHECKING:
+    from ...Subscriptions.article_listening_service import (
+        ArticleListeningService,
+        BriefListeningPreview,
+        ListeningRevision,
+    )
 
 # A briefing body is model output written from remote feed/site content, so
 # every link in it is doubly untrusted: the source chose the URL and the
@@ -140,12 +148,40 @@ class BriefingSelected(Message):
         super().__init__()
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class BriefListeningTarget:
+    """The owner, context and guidance represented by the enabled control."""
+
+    service: ArticleListeningService
+    briefing_id: int
+    context: int
+    revision: ListeningRevision
+    preview: BriefListeningPreview | None
+
+
 class BriefListeningRequested(Message):
     """Request the listening action for the displayed briefing."""
 
-    def __init__(self, briefing_id: int) -> None:
-        self.briefing_id = briefing_id
+    def __init__(self, button: BriefListeningButton, target: BriefListeningTarget) -> None:
+        self.button = button
+        self.target = target
         super().__init__()
+
+
+class BriefListeningButton(Button):
+    """Capture the displayed target on activation, before the intent bubbles."""
+
+    target: BriefListeningTarget | None = None
+
+    def press(self) -> Self:
+        target = self.target
+        if target is not None and not self.disabled and self.display:
+            super().press()
+            self.post_message(BriefListeningRequested(self, target))
+        return self
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
 
 
 class CitationListenRequested(Message):
@@ -1480,7 +1516,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             with Horizontal(
                 id="artifacts-listening-actions", classes="destination-filter-strip",
             ):
-                yield Button(
+                yield BriefListeningButton(
                     "Play cited excerpts", id="artifacts-play-cited",
                     compact=True, disabled=True,
                 )
@@ -2333,14 +2369,12 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = str(event.button.id)
-        if button_id in {"artifacts-play-cited", "artifacts-listen-citation"}:
+        if button_id == "artifacts-listen-citation":
             event.stop()
             briefing = (self.selected_briefing or {}).get("id")
             if event.button.disabled or type(briefing) is not int:
                 return
-            if button_id == "artifacts-play-cited":
-                self.post_message(BriefListeningRequested(briefing))
-            elif (citation := self.highlighted_citation()) is not None:
+            if (citation := self.highlighted_citation()) is not None:
                 self.post_message(CitationListenRequested(briefing, citation))
         elif button_id == "artifacts-retry-button":
             self.post_message(RefreshBriefingsRequested())

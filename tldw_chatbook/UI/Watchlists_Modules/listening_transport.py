@@ -206,6 +206,7 @@ class ListeningTransport(Vertical):
     def compose(self):
         yield Static("", id="wl-listening-status", markup=False)
         yield Static("", id="wl-listening-detail", markup=False)
+        yield Static("", id="wl-listening-suspended", markup=False)
         with Horizontal(id="wl-listening-actions", classes="destination-filter-strip"):
             yield Button("Pause", id="wl-listening-primary", compact=True)
             yield Button("Stop", id="wl-listening-stop", compact=True)
@@ -240,12 +241,16 @@ class ListeningTransport(Vertical):
             details.append("Saved feed text")
         if snapshot.queue_position is not None:
             details.append(f"Queue {snapshot.queue_position}/{snapshot.queue_count}")
-        if snapshot.suspended_title is not None:
-            details.append("Suspended: " + _title(snapshot.suspended_title))
         if host and snapshot.actions & START_ACTIONS:
             details.append(host)
         update_listening_note(
             self.query_one("#wl-listening-detail", Static), " · ".join(details)
+        )
+        update_listening_note(
+            self.query_one("#wl-listening-suspended", Static),
+            "Suspended: " + _title(snapshot.suspended_title)
+            if snapshot.suspended_title is not None
+            else "",
         )
 
         allowed = snapshot.actions - START_ACTIONS if issue else snapshot.actions

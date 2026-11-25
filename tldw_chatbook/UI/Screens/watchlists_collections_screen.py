@@ -88,7 +88,6 @@ from ...Subscriptions.item_dates import effective_date
 from ...Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from ...Subscriptions.watchlist_normalizers import (
     build_watchlist_item_id,
-    normalize_watchlist_item,
 )
 from ...Subscriptions.watchlist_failure import (
     classify_watchlist_failure,
@@ -8638,8 +8637,8 @@ class WatchlistsCollectionsScreen(WatchlistsListeningMixin, BaseAppScreen):
                 self._citation_item_lookup = {}
             else:
                 try:
-                    rows_by_id = await asyncio.to_thread(
-                        db.get_subscription_items_by_ids, citation_ids
+                    rows_by_id, issues = await asyncio.to_thread(
+                        self._listening.load_citations, db, citation_ids
                     )
                 except Exception as exc:  # noqa: BLE001 - reported, not raised
                     logger.warning(
@@ -8667,8 +8666,8 @@ class WatchlistsCollectionsScreen(WatchlistsListeningMixin, BaseAppScreen):
                 citations: list[dict[str, Any]] = []
                 lookup: dict[int, dict[str, Any]] = {}
                 for item_id in citation_ids:
-                    row = rows_by_id.get(item_id)
-                    if row is None:
+                    normalized = rows_by_id.get(item_id)
+                    if normalized is None:
                         # The named invariant: an id that does not resolve
                         # degrades honestly rather than quietly passing as
                         # available. `available=False` and a label that
@@ -8684,7 +8683,6 @@ class WatchlistsCollectionsScreen(WatchlistsListeningMixin, BaseAppScreen):
                             }
                         )
                         continue
-                    normalized = normalize_watchlist_item("local", row)
                     lookup[item_id] = normalized
                     title = str(normalized.get("title") or "Untitled item")
                     citations.append(
@@ -8702,6 +8700,7 @@ class WatchlistsCollectionsScreen(WatchlistsListeningMixin, BaseAppScreen):
                     )
                 self._loaded_citations = citations
                 self._citation_item_lookup = lookup
+                self._listening.citation_issues = (id(lookup), issues)
             # Task 4: the toolbar's pickers. One combined `to_thread` hop
             # for both the watchlist's stored settings (the SAME columns
             # `briefing_service._selection_mode` reads) and the full preset
@@ -12274,6 +12273,7 @@ class WatchlistsCollectionsScreen(WatchlistsListeningMixin, BaseAppScreen):
                 )
             except Exception:
                 failed = True
+        availability = await self._listening.prepare_reader_issue(item, fetched)
         async with self._items_page_presentation_lock:
             if not is_current():
                 return
@@ -12289,6 +12289,7 @@ class WatchlistsCollectionsScreen(WatchlistsListeningMixin, BaseAppScreen):
                 # Preserve row identity and any existing body on a detail miss.
                 item["content"] = fetched
             self._select_entity(item)
+            self._listening.reader_issue = availability
             self._selected_content_item = item
             self._selected_content_page_key = selection_page_key
             try:

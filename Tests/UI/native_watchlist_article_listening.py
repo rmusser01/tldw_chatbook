@@ -156,9 +156,13 @@ async def _prepare_private_profile(root, *, verify_only):
             "Seeded two retained marked WAVs and one unavailable citation.", flush=True
         )
     finally:
-        await service.close()
-        await app.tts_service.close()
-        db.close()
+        try:
+            try:
+                await service.close()
+            finally:
+                await app.tts_service.wait_closed()
+        finally:
+            db.close()
 
 
 @contextmanager
@@ -237,6 +241,7 @@ def _serve(root, port):
 
 @pytest.mark.skipif(os.name != "nt", reason="qualified Windows playback")
 @pytest.mark.timeout(0)
+@pytest.mark.loopback_network
 def test_watchlist_listening_terminal_and_serve(tmp_path):
     """Keep one guarded profile alive while the operator uses both real surfaces."""
     assert (

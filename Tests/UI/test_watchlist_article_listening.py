@@ -3,6 +3,8 @@
 import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from sqlite3 import OperationalError
+from threading import get_ident
 from types import SimpleNamespace
 
 import pytest
@@ -105,6 +107,8 @@ def _painted(screen, widget):
 async def _click(screen, pilot, selector):
     button = screen.query_one(selector, Button)
     assert not button.disabled
+    # Textual ignores mouse presses on a button during its active effect.
+    await _until(lambda: not button.has_class("-active"))
     button.scroll_visible(animate=False, immediate=True)
     await pilot.pause()
     hit = await pilot.click(selector)
@@ -435,7 +439,7 @@ async def test_transport_projects_progress_and_recovery_without_losing_focus(
         status = screen.query_one("#wl-listening-status", Static)
         await _until(lambda: "Preparing" in _text(status))
         assert "1/4" in _text(status) and "Story [literal]" in _text(status)
-        assert "Suspended" in _text(screen.query_one("#wl-listening-detail", Static))
+        assert "Suspended" in _text(screen.query_one("#wl-listening-suspended", Static))
         pause = await _click(screen, pilot, "#wl-listening-primary")
         await _until(lambda: service.calls == [("pause", revision)])
         assert screen.focused is pause
@@ -529,3 +533,281 @@ async def test_global_palette_uses_the_live_owner_from_another_screen(monkeypatc
             lambda: state.service.calls == [("pause", revision), ("resume", revision)]
         )
         assert state.host.screen is away
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reproject", [False, True])
+async def test_play_rechecks_the_guidance_the_user_clicked(monkeypatch, reproject):
+    async with _watchlists(monkeypatch) as state:
+        service, screen, pilot = state.service, state.screen, state.pilot
+        await _open_brief(state)
+        await _until(lambda: _enabled(screen, "#artifacts-play-cited"))
+        note = screen.query_one("#artifacts-listening-note", Static)
+        assert "2 playable" in _text(note)
+        before = service.state.revision
+        changed = BriefListeningPreview(1, ("empty_body", "missing_item"), "play")
+        entered, released = asyncio.Event(), asyncio.Event()
+
+        async def preview(*args, **kwargs):
+            if not entered.is_set():
+                entered.set()
+                await released.wait()
+            return changed
+
+        monkeypatch.setattr(service, "preview_brief", preview)
+        try:
+            await _click(screen, pilot, "#artifacts-play-cited")
+            await _until(entered.is_set)
+            if reproject:
+                service.state = replace(
+                    service.state, revision=replace(before, epoch=1)
+                )
+                await _until(lambda: "1 playable" in _text(note))
+            released.set()
+            await state.host.workers.wait_for_complete()
+            assert service.calls == []
+            assert "1 playable" in _text(note)
+            await _click(screen, pilot, "#artifacts-play-cited")
+            await _until(lambda: len(service.calls) == 1)
+            assert service.calls[0] == (
+                "brief",
+                state.brief,
+                "local",
+                False,
+                service.state.revision,
+            )
+        finally:
+            released.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("citation", [False, True])
+async def test_unmount_withdraws_pending_article_on_the_same_owner(
+    monkeypatch, citation
+):
+    async with _watchlists(monkeypatch, (140, 42)) as state:
+        if citation:
+            table = await _open_brief(state)
+            table.focus()
+            await state.pilot.press("down")
+        else:
+            await _open_reader(state)
+        selector = "#artifacts-listen-citation" if citation else "#watchlists-listen"
+        started, release, withdrawn = (asyncio.Event() for _ in range(3))
+        service = state.service
+
+        async def listen(*args, **kwargs):
+            started.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                withdrawn.set()
+                raise
+            service.calls.append("output selected")
+
+        monkeypatch.setattr(service, "listen", listen)
+        try:
+            await _until(lambda: _enabled(state.screen, selector))
+            await _click(state.screen, state.pilot, selector)
+            await _until(started.is_set)
+            await state.host.switch_screen(Screen())
+            await _until(lambda: not state.screen.is_attached)
+            assert withdrawn.is_set()
+            assert service.calls == []
+        finally:
+            release.set()
+
+
+@pytest.mark.asyncio
+async def test_delayed_transport_resume_needs_the_view_after_readiness(monkeypatch):
+    async with _watchlists(monkeypatch) as state:
+        await _open_reader(state)
+        await _until(lambda: _enabled(state.screen, "#watchlists-listen"))
+        service = state.service
+        service.state = replace(
+            service.state,
+            phase="paused",
+            current_title="Saved",
+            actions=frozenset({"resume"}),
+        )
+        button = state.screen.query_one("#wl-listening-primary", Button)
+        await _until(
+            lambda: button.label.plain == "Resume saved listening"
+            and button.region.width > 0
+        )
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def probe():
+            started.set()
+            await release.wait()
+
+        monkeypatch.setattr(controlled_wav_profile, "controlled_wav_readiness", probe)
+        try:
+            await _click(state.screen, state.pilot, "#wl-listening-primary")
+            await _until(started.is_set)
+            await state.host.switch_screen(Screen())
+            await _until(lambda: not state.screen.is_attached)
+        finally:
+            release.set()
+        await state.host.workers.wait_for_complete()
+        assert service.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("during_click", [False, True])
+async def test_preview_storage_error_can_be_rechecked_without_playing(
+    monkeypatch, during_click
+):
+    async with _watchlists(monkeypatch) as state:
+        service, screen, pilot = state.service, state.screen, state.pilot
+        successful = service.preview_brief
+
+        async def unavailable(*args, **kwargs):
+            raise OperationalError("private diagnostic")
+
+        if during_click:
+            await _open_brief(state)
+            await _until(lambda: _enabled(screen, "#artifacts-play-cited"))
+            monkeypatch.setattr(service, "preview_brief", unavailable)
+            await _click(screen, pilot, "#artifacts-play-cited")
+        else:
+            monkeypatch.setattr(service, "preview_brief", unavailable)
+            await _open_brief(state)
+        button = screen.query_one("#artifacts-play-cited", Button)
+        note = screen.query_one("#artifacts-listening-note", Static)
+        await _until(lambda: "storage is unavailable" in _text(note))
+        assert "private diagnostic" not in _text(note)
+        assert button.label.plain == "Recheck cited excerpts"
+        assert service.calls == []
+        monkeypatch.setattr(service, "preview_brief", successful)
+        await _click(screen, pilot, "#artifacts-play-cited")
+        await _until(lambda: "2 playable" in _text(note))
+        assert service.calls == []
+        await _click(screen, pilot, "#artifacts-play-cited")
+        await _until(lambda: len(service.calls) == 1)
+
+
+@pytest.mark.asyncio
+async def test_long_legal_titles_keep_compact_host_notice_and_actions_visible(
+    monkeypatch,
+):
+    async with _watchlists(monkeypatch, (80, 24), served=True) as state:
+        await state.pilot.resize_terminal(*state.size)
+        await _until(lambda: state.screen.size.width == 80)
+        service = state.service
+        service.state = replace(
+            service.state,
+            phase="paused",
+            current_title="current [literal] " * 111,
+            suspended_title="suspended [literal] " * 100,
+            actions=frozenset({"resume", "stop", "clear"}),
+            queue_count=2,
+        )
+        screen = state.screen
+        details = screen.query_one("#wl-listening-detail", Static)
+        await _until(lambda: "computer running Chatbook" in _text(details))
+        await state.pilot.pause()
+        transport = screen.query_one("#wl-listening")
+        assert screen.region.contains_region(transport.region)
+        assert "Audio plays on the computer running Chatbook." in _painted(
+            screen, details
+        )
+        await _click(screen, state.pilot, "#wl-listening-primary")
+        await _until(lambda: service.calls == [("resume", service.state.revision)])
+
+
+@pytest.mark.asyncio
+async def test_body_availability_is_calculated_off_loop_once_per_view_selection(
+    monkeypatch,
+):
+    inspected = []
+
+    class Body(str):
+        def strip(self, *args):
+            inspected.append(get_ident())
+            return super().strip(*args)
+
+        def isspace(self):
+            inspected.append(get_ident())
+            return super().isspace()
+
+    async with _watchlists(monkeypatch) as state:
+        screen = state.screen
+        body = Body(" " * 8192 + "Saved text")
+
+        async def load_body(**kwargs):
+            return body
+
+        monkeypatch.setattr(screen._controller, "get_item_content", load_body)
+        await _open_reader(state)
+        await _until(lambda: _enabled(screen, "#watchlists-listen"))
+        await state.pilot.pause(0.65)
+        assert inspected and get_ident() not in inspected
+        count = len(inspected)
+        screen.query_one("#items-search-input", Input).focus()
+        await state.pilot.pause(0.65)
+        assert len(inspected) == count
+
+        original_citations = state.db.get_subscription_items_by_ids
+
+        def load_citations(ids):
+            rows = original_citations(ids)
+            rows[state.ids[1]]["content"] = body
+            return rows
+
+        monkeypatch.setattr(state.db, "get_subscription_items_by_ids", load_citations)
+        table = await _open_brief(state)
+        table.focus()
+        await state.pilot.press("down")
+        await _until(lambda: _enabled(screen, "#artifacts-listen-citation"))
+        assert len(inspected) > count and get_ident() not in inspected
+        count = len(inspected)
+        await state.pilot.pause(0.65)
+        assert len(inspected) == count
+
+
+@pytest.mark.asyncio
+async def test_manual_fixture_joins_complete_tts_shutdown(monkeypatch, tmp_path):
+    from contextlib import nullcontext
+
+    from Tests.UI import native_watchlist_article_listening as helper
+    from tldw_chatbook import app, config
+
+    calls = []
+
+    async def close_listening():
+        calls.append("listening")
+
+    async def begin_shutdown():
+        calls.append("tts registry only")
+
+    async def finish_shutdown():
+        calls.append("tts complete")
+        raise RuntimeError("bounded complete shutdown failure")
+
+    db = SimpleNamespace(
+        db_path=tmp_path / "fixture.db", close=lambda: calls.append("database")
+    )
+    store = SimpleNamespace(
+        session_lease=lambda root: nullcontext(
+            SimpleNamespace(recover_predecessor=lambda: None),
+        )
+    )
+    service = SimpleNamespace(store=store, close=close_listening)
+    watchlists = SimpleNamespace(listening=service, subscriptions_db=db)
+    monkeypatch.setattr(config, "get_cli_config_path", lambda: tmp_path / "config.toml")
+    monkeypatch.setattr(config, "get_user_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        app,
+        "TldwCli",
+        lambda: SimpleNamespace(
+            subscriptions_db=db,
+            services=SimpleNamespace(watchlists=watchlists),
+            tts_service=SimpleNamespace(
+                close=begin_shutdown, wait_closed=finish_shutdown
+            ),
+        ),
+    )
+    with pytest.raises(RuntimeError, match="bounded complete shutdown failure"):
+        await helper._prepare_private_profile(tmp_path, verify_only=True)
+    assert calls == ["listening", "tts complete", "database"]

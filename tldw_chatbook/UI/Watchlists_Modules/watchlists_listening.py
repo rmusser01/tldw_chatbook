@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
+from sqlite3 import Error as SQLiteError
 from typing import TYPE_CHECKING
 
 from textual.css.query import NoMatches
 from textual.widgets import Button, Input, Static, TextArea
 
 from ...Subscriptions.article_listening_lease import ListeningBusy
-from ...Subscriptions.article_listening_models import ListeningConflict
+from ...Subscriptions.watchlist_normalizers import normalize_watchlist_item
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from .artifacts_pane import (
     ArtifactsPane,
+    BriefListeningButton,
     BriefListeningRequested,
+    BriefListeningTarget,
     CitationListenRequested,
 )
 from .content_pane import ArticleListenRequested
@@ -50,7 +54,7 @@ _BRIEF_LABELS = {
 }
 
 
-def _item_issue(item: dict | None) -> str:
+def _item_issue(item: dict | None, body: object) -> str:
     if item is None:
         return listening_reason("missing_item")
     if item.get("backend") != "local":
@@ -62,8 +66,7 @@ def _item_issue(item: dict | None) -> str:
         return (
             "This item has no supported article body. Change reports are unavailable."
         )
-    body = item.get("content")
-    if not isinstance(body, str) or not body.strip():
+    if not isinstance(body, str) or not body or body.isspace():
         return listening_reason("empty_body")
     return ""
 
@@ -73,6 +76,12 @@ def _preview_copy(preview: BriefListeningPreview) -> str:
     for reason in dict.fromkeys(preview.unavailable_reasons):
         text += " · " + listening_reason(reason)
     return text
+
+
+def _preview_failure(error: Exception) -> str:
+    if isinstance(error, SQLiteError):
+        return listening_reason("article_audio_database_unavailable")
+    return listening_reason(error.args[0] if error.args else None)
 
 
 class WatchlistsListening:
@@ -85,14 +94,18 @@ class WatchlistsListening:
         self._preview_key = None
         self._preview: BriefListeningPreview | None = None
         self._preview_issue = ""
+        self._preview_ticket: object | None = None
         self._context = 0
         self._confirming = False
+        self.reader_issue = listening_reason("missing_item")
+        self.citation_issues: tuple[int, dict[int, str]] = (0, {})
 
     def invalidate_brief(self) -> None:
         self._context += 1
         self._preview_key = None
         self._preview = None
         self._preview_issue = ""
+        self._preview_ticket = None
 
     def _active(self) -> bool:
         return self.screen.is_attached and self.screen.app.screen is self.screen
@@ -114,9 +127,28 @@ class WatchlistsListening:
     def _reader_issue(self, snapshot: ListeningSnapshot | None) -> str:
         if self.screen.active_section != "items":
             return "Open Read to listen to this article."
-        return self._local_issue(snapshot) or _item_issue(
-            self.screen._selected_content_item
-        )
+        issue = self._local_issue(snapshot)
+        if issue:
+            return issue
+        if self.screen._selected_content_item is None:
+            return listening_reason("missing_item")
+        return self.reader_issue
+
+    @staticmethod
+    async def prepare_reader_issue(item: dict | None, fetched: str | None) -> str:
+        body = fetched if fetched is not None else (item or {}).get("content")
+        return await asyncio.to_thread(_item_issue, item, body)
+
+    @staticmethod
+    def load_citations(db, citation_ids):
+        rows = {
+            item_id: normalize_watchlist_item("local", row)
+            for item_id, row in db.get_subscription_items_by_ids(citation_ids).items()
+        }
+        return rows, {
+            item_id: _item_issue(row, row.get("content"))
+            for item_id, row in rows.items()
+        }
 
     def reader_key_available(self) -> bool:
         service = self.service
@@ -174,7 +206,7 @@ class WatchlistsListening:
                     self._preview_key = None
                     self.refresh()
 
-        self.screen.app.run_worker(start(), name="watchlists-listen-article")
+        self.screen.run_worker(start(), name="watchlists-listen-article")
 
     def _brief_id(self, pane: ArtifactsPane) -> int | None:
         brief = pane.selected_briefing or {}
@@ -195,6 +227,14 @@ class WatchlistsListening:
             else None
         )
 
+    def _citation_issue(self, key: str | None) -> str:
+        if self._citation_item(key) is None:
+            return listening_reason("missing_item")
+        lookup_id, issues = self.citation_issues
+        if lookup_id != id(self.screen._citation_item_lookup):
+            return "Checking saved citation…"
+        return issues.get(int(key), listening_reason("missing_item"))
+
     def listen_citation(self, briefing_id: int, item_key: str) -> None:
         service = self.service
         if (
@@ -213,7 +253,7 @@ class WatchlistsListening:
         ):
             return
         item = self._citation_item(item_key)
-        if item is not None and not _item_issue(item):
+        if item is not None and not self._citation_issue(item_key):
             context = self._context
             self._listen(
                 service,
@@ -295,40 +335,36 @@ class WatchlistsListening:
         try:
             pane = self.screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
             actions = pane.query_one("#artifacts-listening")
-            play = pane.query_one("#artifacts-play-cited", Button)
+            play = pane.query_one("#artifacts-play-cited", BriefListeningButton)
             note = pane.query_one("#artifacts-listening-note", Static)
         except NoMatches:
             return
         briefing_id = self._brief_id(pane)
         actions.set_class(briefing_id is None, "artifacts-listening-hidden")
         if briefing_id is None:
+            play.target = None
             return
         issue = self._local_issue(snapshot)
         if not issue and service is not None and snapshot is not None:
             # While active, timing checkpoints can advance the opaque
             # revision. Re-read guidance on context/action changes and when
             # idle state is replaced. A click always obtains fresh guidance.
-            key = (
-                self._context,
-                service,
-                briefing_id,
-                snapshot.phase,
-                snapshot.actions,
-                snapshot.revision
-                if snapshot.phase not in {"preparing", "playing"}
-                else None,
-            )
+            key = self._guidance_key(service, briefing_id, snapshot)
             if key != self._preview_key:
                 self._preview_key = key
                 self._preview = None
                 self._preview_issue = ""
+                ticket = self._preview_ticket = object()
                 self.screen.run_worker(
-                    self._read_preview(service, briefing_id, key),
+                    self._read_preview(service, briefing_id, ticket),
                     exclusive=True,
                     group="wl-listening-preview",
                 )
         preview = self._preview if not issue else None
         label = _BRIEF_LABELS[preview.action] if preview else _BRIEF_LABELS["play"]
+        recheck = not issue and bool(self._preview_issue)
+        if recheck:
+            label = "Recheck cited excerpts"
         if (
             preview is not None
             and snapshot is not None
@@ -341,7 +377,14 @@ class WatchlistsListening:
         available = bool(
             preview and snapshot and self._brief_action_available(preview, snapshot)
         )
-        play.disabled = not available
+        play.target = (
+            BriefListeningTarget(
+                service, briefing_id, self._context, snapshot.revision, preview
+            )
+            if (available or recheck) and service and snapshot and snapshot.revision
+            else None
+        )
+        play.disabled = play.target is None
         copy = (
             issue
             or self._preview_issue
@@ -357,20 +400,36 @@ class WatchlistsListening:
             reason = pane.query_one("#artifacts-citation-listen-note", Static)
         except NoMatches:
             return
-        citation_issue = issue or _item_issue(
-            self._citation_item(pane.highlighted_citation())
-        )
+        citation_issue = issue or self._citation_issue(pane.highlighted_citation())
         listen.disabled = bool(citation_issue)
         update_listening_note(reason, " ".join(filter(None, (citation_issue, host))))
 
-    async def _read_preview(self, service, briefing_id, key) -> None:
+    def _guidance_key(self, service, briefing_id, snapshot) -> tuple:
+        return (
+            self._context,
+            service,
+            briefing_id,
+            snapshot.phase,
+            snapshot.actions,
+            snapshot.revision
+            if snapshot.phase not in {"preparing", "playing"}
+            else None,
+        )
+
+    def _publish_guidance(self, service, briefing_id, preview, issue="") -> None:
+        self._preview_key = self._guidance_key(service, briefing_id, service.snapshot())
+        self._preview_ticket = None
+        self._preview, self._preview_issue = preview, issue
+        self.refresh()
+
+    async def _read_preview(self, service, briefing_id, ticket) -> None:
         try:
             preview = await service.preview_brief(briefing_id, runtime_backend="local")
             issue = ""
-        except (ListeningConflict, ListeningBusy, ValueError, OSError) as error:
+        except (ListeningBusy, ValueError, OSError, SQLiteError) as error:
             preview = None
-            issue = listening_reason(error.args[0] if error.args else None)
-        if key == self._preview_key and service is self.service:
+            issue = _preview_failure(error)
+        if ticket is self._preview_ticket and service is self.service:
             self._preview, self._preview_issue = preview, issue
             self.refresh()
 
@@ -387,22 +446,16 @@ class WatchlistsListening:
         )
         return action in snapshot.actions
 
-    def play_brief(self, briefing_id: int) -> None:
-        if (
-            not self._active()
-            or self._confirming
-            or self._preview is None
-            or self._preview_key is None
-            or self._preview_key[2] != briefing_id
-        ):
+    def play_brief(self, event: BriefListeningRequested) -> None:
+        if not self._active() or self._confirming:
             return
         self._confirming = True
-        self.screen.run_worker(self._play_brief(briefing_id), name="wl-listen-brief")
+        self.screen.run_worker(self._play_brief(event), name="wl-listen-brief")
 
-    async def _play_brief(self, briefing_id: int) -> None:
+    async def _play_brief(self, event: BriefListeningRequested) -> None:
         screen = self.screen
-        service = self.service
-        scope, context = screen.tree_scope, self._context
+        target = event.target
+        service, briefing_id = target.service, target.briefing_id
         try:
             pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
 
@@ -411,26 +464,21 @@ class WatchlistsListening:
                     self._active()
                     and self.service is service
                     and screen.runtime_backend == "local"
-                    and screen.tree_scope == scope
-                    and self._context == context
+                    and self._context == target.context
+                    and event.button.is_attached
                     and pane.is_attached
                     and self._brief_id(pane) == briefing_id
                 )
 
-            if service is None or not current():
-                return
-            snapshot = service.snapshot()
-            revision = snapshot.revision
-            if revision is None or self._local_issue(snapshot):
+            if not current() or self._local_issue(service.snapshot()):
                 return
             preview = await service.preview_brief(briefing_id, runtime_backend="local")
-            if not current() or not self._brief_action_available(
-                preview, service.snapshot()
-            ):
+            if not current():
                 return
-            if self._preview is not None and preview.action != self._preview.action:
-                self._preview = preview
-                self.refresh()
+            if preview != target.preview:
+                self._publish_guidance(service, briefing_id, preview)
+                return
+            if not self._brief_action_available(preview, service.snapshot()):
                 return
             if preview.action in {"resume", "resume_foreground", "play_again"}:
                 action = "play_again" if preview.action == "play_again" else "resume"
@@ -438,7 +486,7 @@ class WatchlistsListening:
                     screen.app_instance,
                     service,
                     action,
-                    revision,
+                    target.revision,
                     view_is_current=current,
                 )
                 return
@@ -458,27 +506,27 @@ class WatchlistsListening:
                 checked = await service.preview_brief(
                     briefing_id, runtime_backend="local"
                 )
-                if not current() or checked != preview:
+                if not current():
+                    return
+                if checked != target.preview:
+                    self._publish_guidance(service, briefing_id, checked)
                     screen.notify(
                         "The cited excerpts changed. Review them and try again.",
                         severity="warning",
                     )
-                    self.invalidate_brief()
                     return
             await service.play_brief(
                 briefing_id,
                 runtime_backend="local",
                 replace=replacing,
-                expected_revision=revision,
+                expected_revision=target.revision,
             )
         except NoMatches:
             return
-        except (ListeningConflict, ListeningBusy, ValueError, OSError) as error:
-            if self._active():
-                screen.notify(
-                    listening_reason(error.args[0] if error.args else None),
-                    severity="warning",
-                    markup=False,
+        except (ListeningBusy, ValueError, OSError, SQLiteError) as error:
+            if current():
+                self._publish_guidance(
+                    service, briefing_id, None, _preview_failure(error)
                 )
         finally:
             self._confirming = False
@@ -489,7 +537,11 @@ class WatchlistsListening:
         if self._active() and service is not None:
             self.screen.app.run_worker(
                 run_transport(
-                    self.screen.app_instance, service, event.action, event.revision
+                    self.screen.app_instance,
+                    service,
+                    event.action,
+                    event.revision,
+                    view_is_current=self._active,
                 ),
                 name="watchlists-listening-transport",
             )
@@ -508,7 +560,7 @@ class WatchlistsListeningMixin:
 
     def on_brief_listening_requested(self, event: BriefListeningRequested) -> None:
         event.stop()
-        self._listening.play_brief(event.briefing_id)
+        self._listening.play_brief(event)
 
     def on_listening_transport_requested(
         self, event: ListeningTransportRequested
