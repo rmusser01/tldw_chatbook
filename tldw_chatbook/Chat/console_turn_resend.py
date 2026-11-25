@@ -337,6 +337,12 @@ async def _replay_message(
                         getattr(resolution, "visible_copy", "")
                     ),
                 )
+            if origin is ConsoleSubmissionOrigin.MANUAL:
+                # TASK-33620.1.12: as for Send, before any prompt hook runs.
+                from .console_automatic_submission import emergency_stop_turn_refusal
+
+                if held := await emergency_stop_turn_refusal():
+                    return refused(held)
             try:
                 hook_rows = await controller._submission_hook_input(prompt, origin)
             except Exception:  # noqa: BLE001 -- same required input boundary as Send

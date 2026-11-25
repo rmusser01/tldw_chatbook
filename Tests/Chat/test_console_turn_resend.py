@@ -1432,3 +1432,30 @@ async def test_runtime_bound_queued_retry_keeps_scheduled_hook_semantics(tmp_pat
         if runtime is not None:
             await runtime.dispose()
         database.close()
+
+
+@pytest.mark.asyncio
+async def test_resend_is_refused_by_a_stop_that_lands_after_its_gate(
+    tmp_path, databases, monkeypatch
+):
+    """TASK-33620.1.12: a resend's gate reads the stop before its replay
+    awaits preparation; a stop landing in that window refuses the turn
+    before its prompt hooks or the provider run."""
+    from tldw_chatbook import emergency_stop
+
+    console = _console(tmp_path, databases, "error")
+    await console.controller.submit_draft("hello there")
+    user = _user(console)
+    console.gateway.mode = "ok"
+    calls = len(console.gateway.seen)
+    # The gate passed before the stop landed.
+    monkeypatch.setattr(console.controller, "send_refusal_copy", lambda _session: None)
+    emergency_stop.set_emergency_stop(
+        emergency_stop.default_emergency_stop_path(), reason="after the resend gate"
+    )
+
+    result = await resend_turn(console.controller, user.id)
+
+    assert not result.accepted
+    assert result.visible_copy.startswith("Emergency stop is active")
+    assert len(console.gateway.seen) == calls, "the resend reached the provider"

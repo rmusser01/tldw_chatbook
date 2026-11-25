@@ -11169,6 +11169,17 @@ class ConsoleChatController:
                     "content": clean_draft,
                 },
             ]
+        # TASK-33620.1.12: a stop that lands after the Console's send gate
+        # refuses the turn here, before any UserPromptSubmit hook runs.
+        if origin is ConsoleSubmissionOrigin.MANUAL:
+            from .console_automatic_submission import emergency_stop_turn_refusal
+
+            if held := await emergency_stop_turn_refusal():
+                if echoed_user is not None:
+                    self._mark_transient_echo_blocked(echoed_user.id)
+                if preparation is not None:
+                    self._abandon_preparation(preparation.preparation_id)
+                return self._block(session.id, held)
         hook_owner = getattr(self, "_hooks_v2_submissions", {}).get(
             asyncio.current_task()
         )
