@@ -536,6 +536,53 @@ $ds-approval-compact-body-height: 6;
     min-height: $ds-size-0;
 }
 
+.watchlists-listening-note {
+    height: auto;
+    width: $ds-width-full;
+    padding: $ds-space-0 $ds-space-1;
+    color: $ds-text-muted;
+}
+
+#wl-listening {
+    height: auto;
+    width: $ds-width-full;
+}
+
+#wl-listening.wl-listening-hidden {
+    display: none;
+}
+
+#wl-listening-status {
+    height: $ds-size-1;
+    width: $ds-width-full;
+    padding: $ds-space-0 $ds-space-1;
+    text-style: bold;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#wl-listening-detail {
+    height: auto;
+    width: $ds-width-full;
+    padding: $ds-space-0 $ds-space-1;
+    color: $ds-text-muted;
+}
+
+#wl-listening-actions Button,
+#artifacts-listening-actions Button,
+#artifacts-citation-listening-actions Button {
+    width: auto;
+    min-width: $ds-size-0;
+}
+
+#artifacts-listening {
+    height: auto;
+}
+
+#artifacts-listening.artifacts-listening-hidden {
+    display: none;
+}
+
 .watchlists-region-title {
     height: $ds-size-1;
     text-style: bold;

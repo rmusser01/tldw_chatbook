@@ -79,6 +79,18 @@ Reader j/k and next-unread navigation use the article list selection intent whil
 
 `Subscriptions/article_listening_service.py` coordinates the retained synthesis owner and the registered output retirement callback. The terminal transaction runs before successful output transfer. Runtime changes and maintenance close intake synchronously, then drain speech, output and checkpoint work before releasing the original holder. Source deletion uses that same holder to coordinate the durable queue and derived audio.
 
+The Reader and Artifacts panes post separate Listen intents. Citation Open
+continues to navigate to the article, while Listen keeps the briefing and its
+selection in place. `UI/Watchlists_Modules/watchlists_listening.py` validates
+the mounted scope and projects the app-owned snapshot into a compact transport
+outside the Watchlists workbench's scrolling regions. Briefing previews
+provide counts, unavailable reasons and the current queue action. The screen
+revalidates the candidate after a replacement confirmation. Transport and
+global palette actions dispatch through the live service with the original
+rendered revision. Screen teardown retires the view's observation and leaves
+the app's playback owner in place. The served child identifies the playback
+host independently of the Watchlists data backend.
+
 The public brief preview reports playable counts, unavailable reasons and an
 `action`. A new brief offers `play`, a different installed session requires
 `replace`, and a matching completed brief offers `play_again`. An unfinished

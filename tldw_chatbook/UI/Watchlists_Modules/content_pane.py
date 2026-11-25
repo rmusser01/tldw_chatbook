@@ -289,6 +289,15 @@ class OpenInBrowserRequested(Message):
         super().__init__()
 
 
+class ArticleListenRequested(Message):
+    """Listen to a hydrated reader item without taking its Open path."""
+
+    def __init__(self, item_id: str, runtime_backend: str) -> None:
+        self.item_id = item_id
+        self.runtime_backend = runtime_backend
+        super().__init__()
+
+
 class ContentPane(RecomposeCaptureGuard, Vertical):
     """Hosts the reader for the currently selected item.
 
@@ -355,6 +364,7 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
         # The buttons share one one-row toolbar so the article keeps the body
         # budget.
         with HorizontalScroll(id="content-actions", classes="destination-filter-strip"):
+            yield Button("Listen", id="watchlists-listen", compact=True, disabled=True)
             # TASK-3072 plan task 7: the same star the `s` key toggles, as a
             # button. The label reflects the open item's state on compose and
             # flips on the screen's SUCCESS path (see `on_button_pressed` --
@@ -378,6 +388,10 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
                 tooltip="Open this item in your browser (keyboard: o).",
                 compact=True,
             )
+        yield Static(
+            "", id="watchlists-listen-note", classes="watchlists-listening-note",
+            markup=False,
+        )
         with VerticalScroll(id="content-body-scroll"):
             yield Static(render_for(self.item), id="content-body")
         # TASK-3072 plan task 9: the position footer. "N of M" is seeded and
@@ -396,7 +410,14 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
             )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "content-mark-unread-button":
+        if event.button.id == "watchlists-listen":
+            event.stop()
+            if self.item is not None and not event.button.disabled:
+                item_id = self.item.get("id")
+                backend = self.item.get("backend")
+                if isinstance(item_id, str) and isinstance(backend, str):
+                    self.post_message(ArticleListenRequested(item_id, backend))
+        elif event.button.id == "content-mark-unread-button":
             event.stop()
             self.post_message(UnreadToggleRequested(self.item))
         elif event.button.id == "content-star-button":

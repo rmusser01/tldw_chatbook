@@ -65,6 +65,7 @@ def _seed_one_new_item(db, *, content_hash: str = "hash-read-status"):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_opening_an_item_marks_it_read():
     """Selecting an item in the reader -- with no other action -- must move
     it from "new" to "reviewed" in the real database.
