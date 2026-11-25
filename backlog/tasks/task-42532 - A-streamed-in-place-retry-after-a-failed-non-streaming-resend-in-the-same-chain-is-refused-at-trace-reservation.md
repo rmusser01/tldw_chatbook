@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-24 09:14
-updated_date: 2026-11-25 00:52
+updated_date: 2026-11-25 01:22
 labels:
 - follow-up
 - console
@@ -71,7 +71,9 @@ TASK-42472 AC#8 covered only the no-tools llama.cpp resend, which has its own ru
 
 **Review round 1 (2026-11-24).**
 - *M6.* The swap to the streamed call's header now also requires that call never started a response (`response_started_at` is None): a resend is only sent when nothing arrived, so only then did the resend's own admission compare it with the stream.
-- *The settings-equality check is now pinned*, correcting the first notes' claim that no test could reach it: `forged_stream_settings` (both paths) makes the stored stream's header read `"temp": 0.25` and retries with `temperature=0.25`. With the check, the resend is no longer that stream's verified flip, the retry is compared with the resend, and it is refused; with the check removed it is admitted. The `response_started_at` condition is not pinned: through the gateway an in-chain resend is only sent after a stream that delivered nothing.
+- *The settings-equality check is now pinned*, correcting the first notes' claim that no test could reach it: `forged_stream_settings` (both paths) makes the stored stream's header read `"temp": 0.25` and retries with `temperature=0.25`. With the check, the resend is no longer that stream's verified flip, the retry is compared with the resend, and it is refused; with the check removed it is admitted. (Re-review, 2026-11-24: the `response_started_at` condition is pinned too, see below; the claim that it could not be was wrong.)
 - ADR-337's note now states both conditions.
 - Runs for this round: TASK-42534's review notes.
+
+**Re-review (2026-11-24).** `streamed_bore_response` (both paths) pins the `response_started_at` condition: a `get_call_by_logical_identity` stand-in makes the stored stream (`call_sequence` 0) read as having started a response (`response_started_at = dispatch_started_at`). The streamed retry is then compared with the failed resend and refused; with the condition removed (temporary edit, reverted) both cases are admitted.
 <!-- SECTION:NOTES:END -->

@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-24 09:14
-updated_date: 2026-11-25 00:52
+updated_date: 2026-11-25 01:22
 labels:
 - follow-up
 - console
@@ -197,4 +197,6 @@ The test's `no_project` cases pin the same matrix.
   - "Run the admission-sensitive Console P0 regression tests": 529 passed in 1,537 s;
   - "Run fast PR contract" (the size ratchet): 4,871 passed, 4 skipped in 1,182 s.
 - *Size row.* `console_trace_service.py` 6,809 -> 6,829 (+20), exact measurement, dated comment.
+
+**Runs (re-review, 2026-11-24).** The touched file plus the project-fallback function at `-n 4`: 5/5 rounds, 585/585 passed (117 each), load 12-25. The touched file with `Tests/Chat/test_console_project_instruction_traces.py` and `Tests/Chat/test_console_refused_stream_retry.py`, `-n 4`: 230 passed. `Tests/CI` `-n 4`: 1,946 passed, 2 skipped. `preflight.sh`: all checks passed. `ruff --select F`: clean. `ruff_gate`: ratchet OK.
 <!-- SECTION:NOTES:END -->

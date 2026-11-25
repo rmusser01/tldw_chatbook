@@ -1069,7 +1069,10 @@ async def test_a_resend_of_a_tool_loop_call_repeats_its_failed_call(
     assert refused.value.args[0] == "trace_tool_chain_unavailable"
 
 
-@pytest.mark.parametrize("forged", ["none", "model", "envelope"])
+@pytest.mark.parametrize(
+    "forged",
+    ["none", "model", "envelope", "missing_envelope", "unstreamed_envelope"],
+)
 async def test_a_llamacpp_resend_is_compared_with_the_call_it_repeats(
     tmp_path, make_database, make_gateway, monkeypatch, forged
 ):
@@ -1080,7 +1083,9 @@ async def test_a_llamacpp_resend_is_compared_with_the_call_it_repeats(
     It is compared with the call whose boundary directly precedes its own;
     only the verified streaming flip (in the settings and in the literal
     envelope's `stream`) may differ. Here the stored stream is made to read
-    as another model, or as an envelope with another key.
+    as another model, or as an envelope with another key; or both envelopes
+    read as missing; or the stream's envelope reads as not streamed, so the
+    pair is no True -> False flip.
     """
     database = make_database(tmp_path / "resend-header.sqlite", "resend-header")
     conversation = database.add_conversation({"title": "resend"})
@@ -1110,15 +1115,36 @@ async def test_a_llamacpp_resend_is_compared_with_the_call_it_repeats(
     def forged_artifact(cursor, artifact_id):
         artifact = artifact_of(cursor, artifact_id)
         value = json.loads(artifact.sanitized_bytes)
-        if forged == "envelope" and value == {"model": "qwen3.7-27b", "stream": True}:
-            return replace(
-                artifact,
-                sanitized_bytes=json.dumps({**value, "top_k": 5}).encode(),
+        streamed = value == {"model": "qwen3.7-27b", "stream": True}
+        if (
+            forged == "missing_envelope"
+            # Only once the resend's header is written: writes read it back.
+            and written
+            and isinstance(value, dict)
+            and set(value) == {"model", "stream"}
+        ):
+            return None
+        if streamed and forged in {"envelope", "unstreamed_envelope"}:
+            changed = (
+                {**value, "top_k": 5}
+                if forged == "envelope"
+                else {**value, "stream": False}
             )
+            return replace(artifact, sanitized_bytes=json.dumps(changed).encode())
         return artifact
+
+    written = []
+    create_header = repository.create_or_reuse_request_header
+
+    def note_written(cursor, **values):
+        header = create_header(cursor, **values)
+        if requests:  # the resend's header, after the stream was sent
+            written.append(header)
+        return header
 
     monkeypatch.setattr(repository, "get_request_header", forged_header)
     monkeypatch.setattr(repository, "get_artifact", forged_artifact)
+    monkeypatch.setattr(repository, "create_or_reuse_request_header", note_written)
     gateway = make_gateway(
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
         trace_call_boundary_factory=factory,
@@ -1186,6 +1212,7 @@ _TOOL_SCHEMA = {
         "changed_temperature",
         "changed_surface",
         "forged_stream_settings",
+        "streamed_bore_response",
     ],
 )
 @pytest.mark.parametrize("path", ["self_hosted", "llama_tools"])
@@ -1324,6 +1351,21 @@ async def test_a_streamed_retry_after_a_failed_in_chain_resend_repeats_the_strea
             )
 
         monkeypatch.setattr(factory.repository, "get_request_header", forged)
+    elif scenario == "streamed_bore_response":
+        # The stored stream reads as if a response had started: then its
+        # resend was not sent for want of one, and the retry is compared
+        # with the resend, as before (TASK-42534 re-review).
+        logical = factory.repository.get_call_by_logical_identity
+
+        def bore_response(cursor, **identity):
+            call = logical(cursor, **identity)
+            if call is not None and call.call_sequence == 0:
+                return replace(call, response_started_at=call.dispatch_started_at)
+            return call
+
+        monkeypatch.setattr(
+            factory.repository, "get_call_by_logical_identity", bore_response
+        )
     elif scenario == "changed_surface":
         messages = messages + [
             {"role": "tool", "content": "unobserved addition", "tool_call_id": "forged"}

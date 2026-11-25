@@ -605,50 +605,68 @@ def adjacent_call(
     return None if row is None else repository.get_call(cursor, row[0])
 
 
-def retry_header_components(
+def retry_header_parts_match(
     repository: ConsoleTraceRepository,
     cursor: sqlite3.Cursor,
-    header: object,
+    prior: object,
+    current: object,
     *,
     resend: bool,
-) -> tuple[object, ...]:
-    """The request-header parts a retry must repeat exactly.
+) -> bool:
+    """Whether ``current`` repeats ``prior``'s header parts a retry must keep.
 
-    A verified stream resend (``resend``) changes only its streaming flag,
-    which its literal provider envelope carries too (``"stream"``), so the
-    envelope is compared without that key (TASK-42534 review).
+    Those are the rendered system parts, tool schemas and literal provider
+    envelope. A verified stream resend (``resend``) changes only its
+    streaming flag, which its envelope carries too, so its envelope may
+    differ only as the prior one with ``"stream": true`` turned false. A
+    missing envelope never matches (TASK-42534 review).
 
     Args:
         repository: The trace repository.
         cursor: Cursor for the caller-owned transaction.
-        header: A persisted request header.
+        prior: The failed call's persisted request header.
+        current: The retry's persisted request header.
         resend: Whether the streaming flip was verified for this pair.
 
     Returns:
-        The rendered system parts, tool schemas and literal envelope.
+        True when every part is the same, or differs only by that flip.
     """
     import json
 
-    kept = []
-    for item in header.components:
-        if item.component_kind not in {
-            "rendered_system_part",
-            "tool_schema",
-            "provider_literal_envelope",
-        }:
+    def parts(header):
+        return tuple(
+            item
+            for item in header.components
+            if item.component_kind
+            in {"rendered_system_part", "tool_schema", "provider_literal_envelope"}
+        )
+
+    before, after = parts(prior), parts(current)
+    if before == after:
+        return True
+    if not resend or len(before) != len(after):
+        return False
+    for old, new in zip(before, after, strict=True):
+        if old == new:
             continue
-        if resend and item.component_kind == "provider_literal_envelope":
-            artifact = repository.get_artifact(cursor, item.artifact_id)
-            value = None if artifact is None else json.loads(artifact.sanitized_bytes)
-            if isinstance(value, dict):
-                value.pop("stream", None)
-            item = (
-                item.component_kind,
-                item.ordinal,
-                json.dumps(value, sort_keys=True),
-            )
-        kept.append(item)
-    return tuple(kept)
+        if (old.component_kind, old.ordinal) != (new.component_kind, new.ordinal) or (
+            old.component_kind != "provider_literal_envelope"
+        ):
+            return False
+        artifacts = [
+            repository.get_artifact(cursor, item.artifact_id) for item in (old, new)
+        ]
+        if None in artifacts:
+            return False
+        streamed, resent = (json.loads(item.sanitized_bytes) for item in artifacts)
+        if (
+            not isinstance(streamed, dict)
+            or streamed.get("stream") is not True
+            or json.dumps({**streamed, "stream": False}, sort_keys=True)
+            != json.dumps(resent, sort_keys=True)
+        ):
+            return False
+    return True
 
 
 def failed_stream_fallback_parent(

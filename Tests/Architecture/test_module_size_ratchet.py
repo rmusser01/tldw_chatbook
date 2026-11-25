@@ -1411,7 +1411,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-24, TASK-42534 review (same rule): 6809 -> 6829 (+20), exact
     # measurement. A llama.cpp resend is compared with the failed call it
     # repeats (literal envelope modulo the verified stream flip).
-    "tldw_chatbook/Chat/console_trace_service.py": 6829,
+    # 2026-11-24, TASK-42534 re-review: 6829 -> 6826 (-3), exact measurement;
+    # the header-part comparison moved into one pairwise helper.
+    "tldw_chatbook/Chat/console_trace_service.py": 6826,
     # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
     # approved child trace segments (ADR-337 amendment 2026-11-17): create and

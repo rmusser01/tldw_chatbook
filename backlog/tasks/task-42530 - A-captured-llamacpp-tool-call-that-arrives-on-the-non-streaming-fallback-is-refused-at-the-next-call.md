@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-24 09:14
-updated_date: 2026-11-25 00:52
+updated_date: 2026-11-25 01:22
 labels:
 - follow-up
 - console
@@ -95,4 +95,6 @@ TASK-42472 AC#8's shared helper (`Chat/console_trace_continuation.py::failed_str
   - (TASK-42532) no settings-equality check: both `forged_stream_settings` cases are admitted.
   At the round base 75bac413f5, the restart-and-discard cases pass (the send was blocked only on this branch), and the four new llama.cpp tool runs fail during the first run (`trace_turn_unavailable` or `trace_tool_chain_unavailable`).
 - Runs for this round: TASK-42534's review notes.
+
+**Re-review (2026-11-24).** `retry_header_components` compared each header on its own, so two missing envelope artifacts both read as `null` and matched, where the old content-id comparison failed closed; and it dropped `stream` from both sides of any resend pair. `retry_header_parts_match` replaces it and compares the pair: identical parts match; under the verified flip only the literal envelope may differ, both artifacts must load (a missing one refuses), and the stream's envelope must have `"stream": true` and equal the resend's with that turned false (canonical JSON, so `0` is not `false`). Tests in `test_a_llamacpp_resend_is_compared_with_the_call_it_repeats`: `missing_envelope` (both envelopes read as missing once the resend's header is written) and `unstreamed_envelope` (the stream's envelope reads `"stream": false`), both refused. Each was admitted at 7cfd270751 and under its matching temporary edit (a missing artifact treated as equal; the `"stream": true` requirement removed), both reverted. `console_trace_service.py`'s row goes 6,829 -> 6,826 (-3, exact).
 <!-- SECTION:NOTES:END -->

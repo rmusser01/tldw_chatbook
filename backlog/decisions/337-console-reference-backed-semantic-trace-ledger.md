@@ -702,7 +702,8 @@ binding like a retry, with the call whose boundary directly precedes its own
 endpoint, generation settings, response format, reasoning controls, system
 composition, rendered system parts, tool schemas and literal envelope must
 match, except the overlay-proven streaming flip, which the envelope's `stream`
-key carries too. TASK-42472 let a failed resend stand aside for the agent's
+key carries too (the stream's envelope must read `"stream": true` and equal the
+resend's with that turned false; a missing envelope refuses). TASK-42472 let a failed resend stand aside for the agent's
 unchanged retry of the streamed call. A resend that bore a response is that
 call's answer instead: the next TOOL_LOOP call of the run is admitted after it
 as the step that carries its reply and tool results, and is refused if it

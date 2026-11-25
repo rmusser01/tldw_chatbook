@@ -28,7 +28,7 @@ from tldw_chatbook.Chat.console_trace_continuation import (
     adjacent_call,
     compact_continuation_projection,
     resolve_continuation_node,
-    retry_header_components,
+    retry_header_parts_match,
 )
 from tldw_chatbook.Chat.console_trace_custom_pii import (
     CUSTOM_PII_RULESET_UNAVAILABLE,
@@ -2188,11 +2188,8 @@ class ConsoleTraceService:
                 != _artifact_bytes(header.reasoning_controls)
                 or self._resolve_system_composition(prior_header)
                 != self._resolve_system_composition(header)
-                or retry_header_components(
-                    self.repository, cursor, prior_header, resend=resend
-                )
-                != retry_header_components(
-                    self.repository, cursor, header, resend=resend
+                or not retry_header_parts_match(
+                    self.repository, cursor, prior_header, header, resend=resend
                 )
             ):
                 # Compare the sanitized request at the final dispatch
