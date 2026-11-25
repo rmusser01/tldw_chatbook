@@ -1224,6 +1224,12 @@ jobs:
       # step's flags at load 55-61.
       # TASK-42516 (round 25, 2026-11-24): the native-76 compatibility node
       # moved to dreams-tracking, where its whole file now runs.
+      # TASK-42525 (round 26, 2026-11-25): the chained-replacement trace file
+      # (TASK-38298, on no PR lane before), which now also pins that a
+      # rewrite's links skip only a system slot. Sandboxed, no config read:
+      # 15 passed in 56.0 / 67.4 / 80.2 s serially with this step's flags at
+      # load 24.7-42.4. This profile had the most headroom (208 s whole on
+      # Linux).
       - name: Run the sandboxed Console P0 regression tests
         if: ${{ !cancelled() && matrix.profile == 'sandboxed' }}
         run: |
@@ -1258,6 +1264,7 @@ jobs:
             Tests/Chat/test_console_voice_pair_persistence.py::test_voice_promotion_response_rule_residue_refuses_without_mutation \
             Tests/DB/test_private_sqlite_inventory.py::test_response_rule_import_dispatch_is_exact_and_validated \
             Tests/Dreams/test_query_synthesis.py \
+            Tests/Chat/test_console_trace_chained_replacement.py \
             --timeout=180 \
             --tb=short
 
