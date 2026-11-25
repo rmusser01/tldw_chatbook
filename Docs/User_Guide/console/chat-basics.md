@@ -88,8 +88,9 @@ or a reply this device saved just before sending it. The card for such a
 reply cannot tell where the request came from, so it names no device and
 offers no actions. It reads **Response was accepted but its delivery wasn't
 confirmed. Send a new message to continue.**, or **Response delivery status is
-unknown; it may have reached the provider.** when the request may already have
-gone out. Sending a new message is not blocked.
+unknown; it may have reached the provider. Send a new message to continue.**
+when the request may already have gone out. Sending a new message is not
+blocked, and it replaces the card with the new turn.
 
 Use the recovery controls above the composer. **Retry anyway** may send a
 duplicate request because the previous delivery cannot be confirmed. (If the

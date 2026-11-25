@@ -861,7 +861,7 @@ On another device or after import, `accepted` renders
 2026-11-24, TASK-33621.30: this device writes checkpoint-free `accepted`
 rows too, so the copy is now device-neutral:
 `Response was accepted but its delivery wasn't confirmed. Send a new message to continue.`
-and `Response delivery status is unknown; it may have reached the provider.`)
+and `Response delivery status is unknown; it may have reached the provider. Send a new message to continue.`)
 These states are
 inert: they cannot expose source-device Retry/Discard. An explicit **Retry as a
 new response** may create a sibling assistant variant without mutating or

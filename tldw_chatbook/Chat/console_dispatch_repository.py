@@ -945,7 +945,7 @@ class ConsoleDispatchRepository:
                 conversation_id=conversation_id,
                 visible_copy=(
                     "Response delivery status is unknown; it may have reached "
-                    "the provider."
+                    "the provider. Send a new message to continue."
                 ),
                 actions=(),
             )

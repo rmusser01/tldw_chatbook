@@ -58,7 +58,8 @@ def _state(*, started: bool = False, in_flight: bool = False, remote: bool = Fal
             conversation_id="conversation-1",
             # TASK-33621.30: a checkpoint-free owner names no device.
             visible_copy=(
-                "Response delivery status is unknown; it may have reached the provider."
+                "Response delivery status is unknown; it may have reached the "
+                "provider. Send a new message to continue."
                 if started
                 else "Response was accepted but its delivery wasn't confirmed. "
                 "Send a new message to continue."

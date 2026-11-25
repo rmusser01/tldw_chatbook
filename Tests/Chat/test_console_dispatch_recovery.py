@@ -567,7 +567,8 @@ REMOTE_ACCEPTED_COPY = (
     "Send a new message to continue."
 )
 REMOTE_DISPATCH_STARTED_COPY = (
-    "Response delivery status is unknown; it may have reached the provider."
+    "Response delivery status is unknown; it may have reached the provider. "
+    "Send a new message to continue."
 )
 
 
@@ -690,8 +691,18 @@ def test_this_devices_pending_reply_reopens_device_neutral_and_admits_a_send(
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile  # hook admission, as the first-send suite runs
+@pytest.mark.parametrize(
+    ("stale_state", "kind_name", "copy"),
+    [
+        ("accepted", "REMOTE_ACCEPTED", REMOTE_ACCEPTED_COPY),
+        ("dispatch_started", "REMOTE_DISPATCH_STARTED", REMOTE_DISPATCH_STARTED_COPY),
+    ],
+)
 async def test_a_new_message_after_a_checkpoint_free_owner_is_sent_once(
     tmp_path: Path,
+    stale_state: str,
+    kind_name: str,
+    copy: str,
 ) -> None:
     """TASK-33621.30 AC#2: the next action the copy names actually works.
 
@@ -721,14 +732,22 @@ async def test_a_new_message_after_a_checkpoint_free_owner_is_sent_once(
     ChatPersistenceService(db).save_pending_assistant(
         conversation_id, "stale-reply-1", user_id, None
     )
+    if stale_state != "accepted":
+        # A synced row whose source device had started dispatch.
+        _raw_semantic_corruption(
+            db,
+            "UPDATE messages SET assistant_generation_state = ? WHERE id = ?",
+            (stale_state, "stale-reply-1"),
+        )
+        db.get_connection().commit()
     db.set_conversation_active_leaf(conversation_id, "stale-reply-1")
 
     store, session_id = _restored_store(db, conversation_id)
     # Reopen as the runtime does: the chat's durable Library policy is loaded.
     await store.hydrate_session_library_policy(session_id)
     stale = store.dispatch_recovery_for_presentation(session_id)
-    assert stale is not None and stale.kind is kind.REMOTE_ACCEPTED
-    assert stale.visible_copy == REMOTE_ACCEPTED_COPY
+    assert stale is not None and stale.kind is getattr(kind, kind_name)
+    assert stale.visible_copy == copy
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,
@@ -747,7 +766,7 @@ async def test_a_new_message_after_a_checkpoint_free_owner_is_sent_once(
         for row in rows
     ][-2:] == [("user", "second prompt", None), ("assistant", "done", "complete")]
     stale_row = db.get_message_by_id("stale-reply-1")
-    assert stale_row["assistant_generation_state"] == "accepted"
+    assert stale_row["assistant_generation_state"] == stale_state
     assert (
         db.get_connection()
         .execute("SELECT COUNT(*) FROM console_dispatch_checkpoints")
@@ -757,20 +776,54 @@ async def test_a_new_message_after_a_checkpoint_free_owner_is_sent_once(
     assert _reconcile(ConsoleDispatchRepository(db), conversation_id) is None
 
 
+@pytest.mark.parametrize("owner_case", ["checkpoint", "quarantined", "continuation"])
 def test_a_checkpoint_owning_owner_is_never_replaced_by_another_publication(
     tmp_path: Path,
+    owner_case: str,
 ) -> None:
-    """Guard for the TASK-33621.30 store change: only an inert owner yields.
+    """Guard for the TASK-33621.30 store change: only an inert REMOTE_* yields.
 
     A device-local owner (with a checkpoint) keeps its Retry/Discard authority;
-    publishing a different durable owner over it is still refused.
+    publishing a different durable owner over it is still refused. So are the
+    other checkpoint-free owners: quarantined ownership and an active provider
+    continuation must never be silently dropped by a new send.
     """
     _action_id, kind, _state = _recovery_symbols()
-    db, conversation_id, repository = _database(tmp_path / "local-owner.sqlite")
+    db, conversation_id, repository = _database(tmp_path / f"{owner_case}.sqlite")
     checkpoint = _insert(db, repository, _acceptance(conversation_id))
+    if owner_case != "checkpoint":
+        connection = db.get_connection()
+        connection.execute("DELETE FROM console_dispatch_checkpoints")
+        _raw_semantic_corruption(
+            db,
+            "UPDATE messages SET provider_continuation_json = ?, "
+            "assistant_generation_state = ? WHERE id = ?",
+            (
+                (
+                    None
+                    if owner_case == "quarantined"
+                    else _active_continuation_json()
+                ),
+                "continuation_active" if owner_case == "quarantined" else None,
+                checkpoint.assistant_message_id,
+            ),
+        )
+        connection.commit()
+    reconciled = _reconcile(repository, conversation_id)
     store, session_id = _restored_store(db, conversation_id)
+    if owner_case == "continuation":
+        # This minimal restore carries no continuation sidecar, so the restore
+        # normalizer drops the owner; install the repository's real projection.
+        assert reconciled.kind is kind.CONTINUATION
+        store._dispatch_recoveries_by_session[session_id] = reconciled
     owner = store.dispatch_recovery_for_session(session_id)
-    assert owner is not None and owner.kind is kind.ACCEPTED
+    expected = {
+        "checkpoint": kind.ACCEPTED,
+        "quarantined": kind.QUARANTINED,
+        "continuation": kind.CONTINUATION,
+    }[owner_case]
+    assert owner is not None and owner.kind is expected
+    assert (owner.checkpoint is None) is (owner_case != "checkpoint")
 
     with pytest.raises(RuntimeError, match="Durable dispatch recovery owner changed"):
         store.publish_durable_dispatch_checkpoint(
