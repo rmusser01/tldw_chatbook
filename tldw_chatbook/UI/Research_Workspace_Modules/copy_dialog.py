@@ -88,7 +88,7 @@ class ResearchWorkspaceActions(SafeModalDismissMixin, ModalScreen[str | None]):
         ):
             yield Static("Workspace actions", classes="research-pane-title")
             yield Static(f"{self.authority.value.title()} data")
-            with VerticalScroll(classes="research-transfer-scroll"):
+            with VerticalScroll(name="Workspace commands", classes="research-transfer-scroll"):
                 yield from self._lifecycle_commands()
                 if self.presentation_available:
                     yield from self._presentation_commands()
@@ -116,6 +116,7 @@ class ResearchWorkspaceActions(SafeModalDismissMixin, ModalScreen[str | None]):
             compact=True,
             disabled=not self.catalog_ready or bool(create and not create.available),
         )
+        yield Button("Manage Local Workspaces…", id="research-action-settings-workspaces", compact=True)
         if self.authority is WorkspaceDataSource.LOCAL:
             yield Button(
                 "Import workspace bundle…",
@@ -152,8 +153,14 @@ class ResearchWorkspaceActions(SafeModalDismissMixin, ModalScreen[str | None]):
                 "Delete in Settings…", id="research-action-delete-local", compact=True
             )
         else:
+            yield Button("Duplicate workspace", id="research-action-duplicate", compact=True, disabled=True)
             yield Static(
-                "Server duplicate requires a workspace copy contract. Server deletion with a version check is unavailable.",
+                "Server Workspaces has no verified duplicate. Review Copy to Local to transfer supported items.",
+                markup=False,
+            )
+            yield Button("Delete workspace", id="research-action-delete-server", compact=True, disabled=True)
+            yield Static(
+                "Server Workspaces cannot check the version during deletion. Archive this workspace here.",
                 markup=False,
             )
 
@@ -171,7 +178,12 @@ class ResearchWorkspaceActions(SafeModalDismissMixin, ModalScreen[str | None]):
             yield Button("Split workspace…", id="research-action-split", compact=True)
 
     def _transfer_commands(self) -> ComposeResult:
-        yield Button("Open in Console", id="research-action-console", compact=True)
+        yield Button(
+            "Open in Console", id="research-action-console", compact=True,
+            disabled=self.authority is not WorkspaceDataSource.LOCAL,
+        )
+        if self.authority is not WorkspaceDataSource.LOCAL:
+            yield Static("Choose a Local workspace to open its context in Console.")
         yield Button("Collections", id="research-action-collections", compact=True)
         yield Button("Export BibTeX…", id="research-action-bibtex", compact=True)
         if self.authority is WorkspaceDataSource.LOCAL:
@@ -189,6 +201,12 @@ class ResearchWorkspaceActions(SafeModalDismissMixin, ModalScreen[str | None]):
                 disabled=not self.can_copy,
             )
         else:
+            yield Button("Import workspace bundle…", id="research-action-import", compact=True, disabled=True)
+            yield Button("Export bundle", id="research-action-export", compact=True, disabled=True)
+            yield Static(
+                "Workspace bundles use Local Notes and Artifacts. Review Copy for transfers involving this Server workspace.",
+                markup=False,
+            )
             yield Button(
                 "Copy to Local",
                 id="research-action-copy-local",
@@ -311,6 +329,7 @@ class ResearchCopyTargetDialog(
 
         if self.server_ref is None:
             return
+        status = self.query_one("#research-copy-target-status", Static)
         draft = await self.app.push_screen_wait(
             ResearchSharingDialog(
                 self.server_ref,
@@ -322,9 +341,7 @@ class ResearchCopyTargetDialog(
         )
         if draft is not None and self.is_mounted:
             self._share_draft = draft
-            self.query_one("#research-copy-target-status", Static).update(
-                "Share settings saved for review after Copy."
-            )
+            status.update("Share settings saved for review after Copy.")
 
     @on(Button.Pressed, "#research-copy-target-cancel")
     def close(self) -> None:

@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from .contracts import QualifiedWorkspaceRef, WorkspaceDataSource
+
 
 @dataclass(frozen=True, slots=True)
 class ResearchOwnerLink:
@@ -22,5 +24,14 @@ RESEARCH_OWNER_LINKS = MappingProxyType(
         "library": ResearchOwnerLink("Open Library", "library"),
         "artifacts": ResearchOwnerLink("Open Artifacts", "artifacts"),
         "study": ResearchOwnerLink("Open Study", "study"),
+        "settings-workspaces": ResearchOwnerLink(
+            "Manage Workspaces in Settings", "settings", (("category", "workspaces"),)
+        ),
+        "speech": ResearchOwnerLink("Open Speech", "stts"),
+        "runs": ResearchOwnerLink("Open Runs", "research"),
     }
 )
+
+
+def can_open_workspace_in_console(ref: QualifiedWorkspaceRef | None) -> bool:
+    return ref is not None and ref.data_source is WorkspaceDataSource.LOCAL

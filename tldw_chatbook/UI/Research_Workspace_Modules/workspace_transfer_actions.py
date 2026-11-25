@@ -8,7 +8,6 @@ from loguru import logger
 
 from ...Research_Workspace.contracts import CapabilityUnavailableError, WorkspaceDataSource
 from ...Research_Workspace.copy_manifest import ResearchCopyCandidate
-from ...Research_Workspace.owner_links import RESEARCH_OWNER_LINKS
 from ...Research_Workspace.copy_models import (
     CopyReason,
     ResearchCopyConfirmation,
@@ -23,6 +22,7 @@ from .copy_dialog import (
     ResearchWorkspaceActions,
 )
 from .copy_receipt_view import ResearchCopyProgress, ResearchCopyReceiptView
+from .owner_navigation import navigate_to_research_owner
 from .workspace_lifecycle_actions import LIFECYCLE_ACTIONS, run_workspace_lifecycle
 from .workspace_presentation_actions import PRESENTATION_ACTIONS, run_workspace_presentation_action
 
@@ -86,6 +86,8 @@ async def show_workspace_actions(screen, capture) -> None:
             from .workspace_export import import_local_workspace
 
             await import_local_workspace(screen, current)
+        elif action == "settings-workspaces":
+            navigate_to_research_owner(screen, action, ref)
         elif capture is None:
             return
         elif action == "share":
@@ -97,8 +99,7 @@ async def show_workspace_actions(screen, capture) -> None:
         elif action == "collections":
             screen.post_message(NavigateToScreen("library", {"mode": "collections"}))
         elif action == "console":
-            link = RESEARCH_OWNER_LINKS[action]
-            screen.post_message(NavigateToScreen(link.route, dict(link.context)))
+            navigate_to_research_owner(screen, action, ref)
         elif action == "bibtex":
             from .workspace_export import export_workspace_bibtex
 

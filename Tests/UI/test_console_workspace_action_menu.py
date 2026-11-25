@@ -46,6 +46,7 @@ from tldw_chatbook.Widgets.Console.console_workspace_tree import (
     WorkspaceTreeMenuRequested,
 )
 
+pytestmark = pytest.mark.bootstrap_profile
 
 _MENU_SETTLE_SECONDS = 0.4
 
@@ -455,7 +456,8 @@ async def test_new_chat_does_not_create_when_activation_cannot_land(
         console = pilot.app.screen
         calls: list[str] = []
 
-        async def _fake_create():
+        async def _fake_create(*, workspace_id):
+            assert workspace_id == "ws-beta"
             calls.append("created")
 
         monkeypatch.setattr(
@@ -638,7 +640,8 @@ async def test_workspace_actions_route_through_the_existing_seams(
             _fake_files,
         )
 
-        async def _fake_create():
+        async def _fake_create(*, workspace_id):
+            assert workspace_id == "ws-beta"
             calls.append(("new-chat", None))
 
         monkeypatch.setattr(

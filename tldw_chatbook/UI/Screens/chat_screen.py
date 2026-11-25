@@ -6614,20 +6614,41 @@ class ChatScreen(BaseAppScreen):
             group="console-row-action-menu-open",
         )
 
+    def open_research_workspace_context(self, ref: object, *, create_chat: bool = False) -> None:
+        """Accept a qualified Local Research workspace after Console navigation."""
+        from ...Research_Workspace.contracts import QualifiedWorkspaceRef, WorkspaceDataSource
+
+        if not isinstance(ref, QualifiedWorkspaceRef) or ref.data_source is not WorkspaceDataSource.LOCAL:
+            return
+        self._pending_research_console_workspace = (ref.workspace_id, create_chat)
+        self._consume_research_console_workspace()
+
+    def _consume_research_console_workspace(self) -> None:
+        pending = self._pending_research_console_workspace
+        if pending is None or not self._console_attach_reconciled or not self._is_active_console_screen():
+            return
+        self._pending_research_console_workspace = None
+        workspace_id, create_chat = pending
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        record = registry.get_workspace(workspace_id) if registry is not None else None
+        if record is None or record.archived:
+            self.app_instance.notify("Choose an active Local workspace in Research.", severity="warning")
+            return
+        if create_chat:
+            self.run_worker(
+                self._create_console_chat_in_workspace(workspace_id),
+                exclusive=True,
+                group="console-workspace-new-chat",
+            )
+        elif not record.active:
+            self._workspace.activate_workspace_id(workspace_id)
+
     async def _create_console_chat_in_workspace(self, workspace_id: str) -> None:
         """Activate a workspace, then create the new chat inside it.
 
-        TASK-25712: "New chat" on a non-active workspace composes the two
-        existing operations -- activation, then session creation, which
-        targets the active workspace -- rather than threading a workspace
-        parameter through session creation.
-
-        Review, PR #2255: the activation wrapper deliberately discards
-        ``_switch_console_workspace``'s failure result (its other callers
-        are fire-and-forget), so success is verified against the registry
-        afterwards. A missing workspace or a failed switch must NOT create
-        the chat in the previously active workspace -- the user asked for
-        it somewhere specific.
+        Verify the registry activation and pass its identity explicitly.
+        The previous Console session can still own the projected context
+        while the workspace switch repaints.
         """
         registry_service = getattr(
             self.app_instance, "workspace_registry_service", None
@@ -6656,7 +6677,9 @@ class ChatScreen(BaseAppScreen):
                     severity="warning",
                 )
                 return
-        await self._session._create_native_console_session_from_active_context()
+        await self._session._create_native_console_session_from_active_context(
+            workspace_id=workspace_id,
+        )
 
     def on_workspace_action_chosen(self, event: "WorkspaceActionChosen") -> None:
         """Run the chosen workspace command against the captured row.
@@ -6990,6 +7013,7 @@ class ChatScreen(BaseAppScreen):
     _pending_console_provider_return: object | None = None  # provider_return.py
 
     _console_attach_reconciled: bool = False
+    _pending_research_console_workspace: tuple[str, bool] | None = None
     _console_attach_visit_generation: int = 0
     _console_attach_reconcile_running: bool = False
     _console_resume_after_reconcile: bool = False
@@ -15399,6 +15423,7 @@ class ChatScreen(BaseAppScreen):
                 self._console_attach_reconciled = True
                 self._console_attach_reconcile_retry_count = 0
                 self._console_attach_reconcile_retry_exhausted = False
+                self.call_after_refresh(self._consume_research_console_workspace)
         except Exception as exc:  # noqa: BLE001 -- a repaint never kills the app
             if not _console_screen_is_torn_down(self):
                 failure = exc
@@ -22851,6 +22876,7 @@ class ChatScreen(BaseAppScreen):
           leave running/installed across a suspend.
         """
         self._console_attach_visit_generation += 1
+        self._pending_research_console_workspace = None
         _end_canvas_poll_handoffs(self)
         note_suspend_style_inputs(self)  # TASK-38950
         self._console_discovery_rearm_pending = True

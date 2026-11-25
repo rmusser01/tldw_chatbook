@@ -7,15 +7,19 @@ from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
-from ...Research_Workspace.owner_links import RESEARCH_OWNER_LINKS
+from ...Research_Workspace.owner_links import RESEARCH_OWNER_LINKS, can_open_workspace_in_console
 from ...Widgets.modal_dismissal import SafeModalDismissMixin
-from ..Navigation.main_navigation import NavigateToScreen
 from .operation_status import workspace_operation_status
+from .owner_navigation import navigate_to_research_owner
 
 
 class ResearchHelpMenu(SafeModalDismissMixin, ModalScreen[str | None]):
     BINDINGS = [Binding("escape", "request_safe_cancel", "Close", show=False)]
     SAFE_MODAL_CONTENT = "#research-help-dialog"
+
+    def __init__(self, ref=None) -> None:
+        super().__init__()
+        self.ref = ref
 
     def compose(self) -> ComposeResult:
         with Vertical(
@@ -23,7 +27,7 @@ class ResearchHelpMenu(SafeModalDismissMixin, ModalScreen[str | None]):
             classes="research-transfer-dialog research-transfer-scroll-dialog",
         ):
             yield Static("Research Workspace Help", classes="research-pane-title")
-            with VerticalScroll(classes="research-transfer-scroll"):
+            with VerticalScroll(name="Research Help commands", classes="research-transfer-scroll"):
                 yield Button(
                     "First-source tour",
                     id="research-help-tour",
@@ -43,6 +47,7 @@ class ResearchHelpMenu(SafeModalDismissMixin, ModalScreen[str | None]):
                     compact=True,
                 )
                 for key in (
+                    "console",
                     "agent-task",
                     "acp-history",
                     "sandbox",
@@ -51,13 +56,19 @@ class ResearchHelpMenu(SafeModalDismissMixin, ModalScreen[str | None]):
                     "library",
                     "artifacts",
                     "study",
+                    "settings-workspaces",
+                    "speech",
+                    "runs",
                 ):
                     yield Button(
                         RESEARCH_OWNER_LINKS[key].label,
                         id=f"research-help-{key}",
                         classes="research-help-action",
                         compact=True,
+                        disabled=key in {"console", "agent-task"} and not can_open_workspace_in_console(self.ref),
                     )
+                if not can_open_workspace_in_console(self.ref):
+                    yield Static("Choose a Local workspace to open its context in Console.")
             yield Button("Close", id="research-help-close", compact=True)
 
     @on(Button.Pressed, ".research-help-action")
@@ -111,11 +122,12 @@ async def show_research_help(screen, bindings) -> None:
         active = bindings.get(key)
         if active is not None and active.enabled and active.binding.description:
             shortcuts.append(f"{label} · {active.binding.description}")
-    action = await screen.app.push_screen_wait(ResearchHelpMenu())
+    ref = screen.controller.selected_ref
+    action = await screen.app.push_screen_wait(ResearchHelpMenu(ref))
     if not screen.is_attached:
         return
-    if link := RESEARCH_OWNER_LINKS.get(action):
-        screen.post_message(NavigateToScreen(link.route, dict(link.context)))
+    if action in RESEARCH_OWNER_LINKS and screen.controller.selected_ref == ref:
+        navigate_to_research_owner(screen, action, ref)
     elif action == "keyboard":
         await screen.app.push_screen_wait(
             ResearchHelpDetail("Keyboard shortcuts", "\n".join(shortcuts))
