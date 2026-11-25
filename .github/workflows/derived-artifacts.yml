@@ -1666,6 +1666,11 @@ jobs:
       # console-p0-gate's admission-sensitive profile, which ran 27-34 of its
       # 35 min in CI (TASK-42533). 59 passed in 26.9 s serially with this
       # step's flags at load 6.
+      # TASK-42534 review (round 26, 2026-11-24): the trace project-fallback
+      # witness function, whose valid case changed, runs through the project
+      # turn service file's whole-file entry (TASK-42513), not on its own line,
+      # so it runs once. Sandboxed, no config read (RecoveryRequired recorder:
+      # 0). 6 passed in 3.8 s serially with this step's flags at load 7.
       - name: Run the Dreams tracking tests and unlaned riders
         run: |
           pytest \

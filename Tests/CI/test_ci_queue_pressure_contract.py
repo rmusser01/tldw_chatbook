@@ -536,6 +536,8 @@ DREAMS_TRACKING_RIDERS = (
     # Tool_Packs; the GC file's one console-p0-gate node folded in here.
     "Tests/Chat/test_console_trace_graph_gc.py",
     "Tests/Chat/test_console_trace_project_turn_service.py",
+    # TASK-42534 review (round 26): the file's project-fallback witness
+    # function runs through the whole-file entry above, not on its own line.
     # TASK-42517 review: the locator inventory node (sandboxed, no config
     # read); its file's P0 node runs in console-p0-gate.
     "Tests/Chat/test_console_voice_pair_persistence.py::test_voice_promotion_locator_inventory_covers_owned_message_revision_tables",
