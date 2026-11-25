@@ -229,27 +229,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
     # the local MCP control service gets a storage provider (+1), which
     # reports the DBs unavailable before the bundle is published (+1).
-    # 2026-10-29, TASK-34000.29 polish-1b final review C-1 (same owner
-    # decision): 3690 -> 3708 (+18, measured) -- Sync v2's ``note_exists``
-    # seam, ``_sync_v2_note_ids_present`` (reads the ChaChaNotes DB at call
-    # time; no DB means nothing is held) and its kwarg at the
-    # ``LocalFirstSyncService`` construction, so a purged note's queued
-    # upsert never leaves the device. Missed by the wave's own ratchet
-    # re-runs; found by the finishing pass's full Tests/Architecture pair.
-    # 2026-11-05, rebased onto dev 29592ecc9b: 3693 -> 3711 (polish-1b's
-    # own +18; same owner decision: expand limits, don't contort code).
-    # 2026-11-06, rebased onto dev 2684e5453f: 3693 -> 3711 (polish-1b's
-    # own +18; same owner decision: expand limits, don't contort code).
-    # 2026-11-12, rebased onto dev 4b90eb860b: 3704 -> 3715 (dev measures
-    # 3697; polish-1b's own +18; same owner decision: expand limits,
-    # don't contort code).
-    # 2026-11-20, rebased onto dev d85e90bc9e: 3704 -> 3693 (dev measures
-    # 3675; polish-1b's own +18; same owner decision: expand limits,
-    # don't contort code).
-    # 2026-11-24, rebased onto dev 9fa2bf1b1d: 3693 -> 3694 (dev measures
-    # 3676; polish-1b's own +18; same owner decision: expand limits,
-    # don't contort code).
-    "tldw_chatbook/app_service_wiring.py": 3694,
+    "tldw_chatbook/app_service_wiring.py": 3704,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
