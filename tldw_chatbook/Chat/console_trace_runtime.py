@@ -949,6 +949,7 @@ class ConsoleTraceBoundaryFactory:
                             known_credentials=(
                                 getattr(_resolution, "api_key", None) or "",
                             ),
+                            fallback_parent=fallback,
                         )
                     )
                 except ValueError as exc:
@@ -958,8 +959,12 @@ class ConsoleTraceBoundaryFactory:
                     # A successful rollback proves no reservation was created;
                     # an error while unwinding remains an unknown failure.
                     raise TraceSurfaceChangeRefused() from exc
-                if failed_call_retry and (
-                    admission.descriptors or admission.replacement_range is not None
+                if (
+                    failed_call_retry
+                    and admission.fallback_rewrite is None
+                    and (
+                        admission.descriptors or admission.replacement_range is not None
+                    )
                 ):
                     # ERROR proves a finished attempt, never authority to add
                     # unobserved tool results or replace its request surface.

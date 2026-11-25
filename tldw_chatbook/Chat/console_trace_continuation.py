@@ -780,6 +780,43 @@ def falls_back_from(failed: TraceCallRecord, provider: str, model: str) -> bool:
     )
 
 
+def _rewrites_from(
+    repository: ConsoleTraceRepository,
+    cursor: sqlite3.Cursor,
+    root: TraceCallRecord,
+    head_id: str | None,
+) -> bool:
+    """Whether a fallback chain's first call rewrote the surface at ``head_id``."""
+    row = cursor.execute(
+        """SELECT 1 FROM console_trace_events e
+             JOIN console_trace_surface_replacements r
+               ON r.replacement_id = e.surface_replacement_id
+            WHERE e.segment_id = ? AND e.event_type = 'surface_replace'
+              AND r.predecessor_head_id = ?
+              AND e.sequence > (SELECT b.sequence FROM console_trace_events b
+                                 WHERE b.segment_id = ? AND b.call_id = ?
+                                   AND b.event_type = 'call_boundary')
+              AND NOT EXISTS (SELECT 1 FROM console_trace_events later
+                               WHERE later.segment_id = e.segment_id
+                                 AND later.event_type = 'call_boundary'
+                                 AND later.sequence > (
+                                     SELECT b.sequence FROM console_trace_events b
+                                      WHERE b.segment_id = ? AND b.call_id = ?
+                                        AND b.event_type = 'call_boundary')
+                                 AND later.sequence < e.sequence)
+            LIMIT 1""",
+        (
+            root.segment_id,
+            head_id,
+            root.segment_id,
+            root.call_id,
+            root.segment_id,
+            root.call_id,
+        ),
+    ).fetchone()
+    return row is not None
+
+
 def run_chains(
     repository: ConsoleTraceRepository, cursor: sqlite3.Cursor, run_id: str
 ) -> tuple[TraceCallRecord | None, frozenset[str]]:
@@ -814,20 +851,13 @@ def run_chains(
             or not falls_back_from(
                 failed, origin.provider_name or "", origin.model_name or ""
             )
-            or (
-                failed.owner_id,
-                failed.segment_id,
-                failed.turn_id,
-                failed.policy_id,
-                failed.surface_node_id,
-            )
-            != (
-                origin.owner_id,
-                origin.segment_id,
-                origin.turn_id,
-                origin.policy_id,
-                origin.surface_node_id,
-            )
+            or (failed.owner_id, failed.segment_id, failed.turn_id, failed.policy_id)
+            != (origin.owner_id, origin.segment_id, origin.turn_id, origin.policy_id)
+            # It continued the failed call's surface, or rewrote it from there
+            # (ADR-337 amendment 2026-11-24); the rewrite is rechecked by
+            # whoever relies on its rows.
+            or failed.surface_node_id != origin.surface_node_id
+            and not _rewrites_from(repository, cursor, origin, failed.surface_node_id)
         ):
             return None, frozenset()
         chains.append(failed.run_id)
@@ -1337,8 +1367,24 @@ def validate_completed_tool_turn(
         )
         if prior.rounds != complete.rounds:
             raise ValueError("completed_replay_prior_attachment")
+    # TASK-42525: rows a fallback chain's first call of this run rewrote are
+    # dead inside the range. They are rechecked with the rest below, which
+    # vouches for that call's own rows.
+    from tldw_chatbook.Chat.console_trace_fallback_rewrite import (
+        rewritten_sequences,
+    )
+
+    rewritten_dead = rewritten_sequences(
+        cursor,
+        segment_id=segment_id,
+        runs=runs,
+        start=plan.start_sequence,
+        end=plan.end_sequence,
+    ) - {sequence for sequence, _ in suffix}
     if tuple(
-        sorted({sequence for sequence, _ in suffix} | replay_continuations)
+        sorted(
+            {sequence for sequence, _ in suffix} | replay_continuations | rewritten_dead
+        )
     ) != tuple(range(plan.start_sequence, plan.end_sequence + 1)) or any(
         sequence not in replay_continuations
         and (
@@ -1365,28 +1411,29 @@ def validate_completed_tool_turn(
     # establish that ownership. The output is bounded by the removed span.
     rows = cursor.execute(
         """SELECT n.sequence, c.owner_id, c.segment_id, c.turn_id, c.run_id,
-                      c.policy_id, c.route_identity, c.call_sequence
+                      c.policy_id, c.route_identity, c.call_sequence, e.event_type
                  FROM console_trace_surface_nodes n
                  LEFT JOIN console_trace_surface_replacements r ON r.replacement_node_id = n.node_id
                       AND r.segment_id = n.segment_id
                  JOIN console_trace_events e ON e.segment_id = n.segment_id AND (
                       (e.surface_node_id = n.node_id AND e.event_type = 'surface_append')
-                      OR (? AND e.surface_replacement_id = r.replacement_id AND e.event_type = 'surface_replace'))
+                      OR (e.surface_replacement_id = r.replacement_id AND e.event_type = 'surface_replace'))
                  JOIN console_trace_calls c ON c.call_id = (
                      SELECT b.call_id FROM console_trace_events b
                       WHERE b.segment_id = e.segment_id AND b.event_type = 'call_boundary'
                         AND b.sequence < e.sequence ORDER BY b.sequence DESC LIMIT 1)
                 WHERE n.segment_id = ? AND n.sequence BETWEEN ? AND ?
                 ORDER BY n.sequence LIMIT 257""",
-        (
-            bool(witness.replay_row_count),
-            segment_id,
-            plan.start_sequence,
-            plan.end_sequence,
-        ),
+        (segment_id, plan.start_sequence, plan.end_sequence),
     ).fetchall()
+    # TASK-42525: a fallback chain's first call (the only tool-loop call at
+    # sequence 0) may have rewritten the run's tool rows; its rows stand on
+    # the rows they replaced, which are in this range and checked below.
+    rewritten = {
+        row[0] for row in rows if (row[6], row[7]) == ("tool_loop", 0)
+    }
     if tuple(row[0] for row in rows) != tuple(
-        sorted({sequence for sequence, _ in suffix} | replay_continuations)
+        sorted({sequence for sequence, _ in suffix} | replay_continuations | rewritten_dead)
     ) or any(
         (row[1], row[2], row[3], row[5])
         != (owner_id, segment_id, terminal.turn_id, terminal.policy_id)
@@ -1401,9 +1448,13 @@ def validate_completed_tool_turn(
             )
             else row[6] != "tool_loop"
             or row[7] < 1
+            and row[0] not in rewritten
             or row[4] == chain_terminal.run_id
             and row[7] > chain_terminal.call_sequence
         )
+        or row[8] == "surface_replace"
+        and not witness.replay_row_count
+        and row[0] not in rewritten
         for row in rows
     ):
         raise ValueError("completed_tool_turn_lineage")
@@ -1411,7 +1462,9 @@ def validate_completed_tool_turn(
     # (TASK-42534): each tool-loop call that appended a removed node must
     # follow a call of this run that bore a response.
     for run_id, call_sequence in {
-        (row[4], row[7]) for row in rows if row[6] == "tool_loop"
+        (row[4], row[7])
+        for row in rows
+        if row[6] == "tool_loop" and row[0] not in rewritten
     }:
         previous = self.repository.get_call_by_logical_identity(
             cursor,

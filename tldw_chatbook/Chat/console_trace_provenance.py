@@ -81,6 +81,9 @@ class TraceOmissionReason(str, Enum):
     # A placeholder that one link of a chained replacement leaves in place of
     # its group; the chain's final link replaces it (ADR-337, 2026-11-06).
     REPLACEMENT_CHAIN_LINK = "replacement_chain_link"
+    # The marker a fallback rewrite leaves for the leading slot it removes;
+    # projections drop it (ADR-337, 2026-11-24, TASK-42525).
+    SURFACE_SLOT_REMOVED = "surface_slot_removed"
 
 
 class TraceTransformKind(str, Enum):

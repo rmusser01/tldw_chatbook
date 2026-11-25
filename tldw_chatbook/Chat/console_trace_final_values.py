@@ -570,12 +570,62 @@ class RewrittenTailWitness:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class FallbackRewriteWitness:
+    """A fallback chain's first call rewriting the run's tail (TASK-42525).
+
+    ADR-337 amendment 2026-11-24 (owner-approved). The call may remove the
+    surface's leading rendered-system slot, and may replace the run's tool
+    rows at the tail with its own rows in the same places. Every removed row
+    is rechecked from the ledger when the call is planned and bound.
+
+    Args:
+        failed_call_id: The failed call the new chain follows.
+        removed_slot_sequence: The removed leading slot's sequence, or None.
+        descriptors: The new tool rows replacing the run's, in order.
+
+    Raises:
+        ValueError: If the witness removes nothing.
+    """
+
+    failed_call_id: str
+    removed_slot_sequence: int | None
+    descriptors: tuple[TraceProvenance, ...] = ()
+
+    def __post_init__(self) -> None:
+        if (
+            not self.failed_call_id
+            or type(self.descriptors) is not tuple
+            or (
+                self.removed_slot_sequence is not None
+                and (
+                    type(self.removed_slot_sequence) is not int
+                    or self.removed_slot_sequence < 0
+                )
+            )
+            or (self.removed_slot_sequence is None and not self.descriptors)
+        ):
+            raise ValueError("fallback_rewrite_shape")
+
+    @property
+    def descriptor_count(self) -> int:
+        """Count the new tool rows."""
+        return len(self.descriptors)
+
+    def matches_descriptors(self, descriptors: tuple[TraceProvenance, ...]) -> bool:
+        """Match the exact new tool rows."""
+        return tuple(descriptors) == self.descriptors
+
+
 def replacement_descriptor_count(
     completed_tool_turn: CompletedToolTurnWitness | None,
     rewritten_tail: RewrittenTailWitness | None,
     live_native: LiveNativeContinuationWitness | None = None,
+    fallback_rewrite: FallbackRewriteWitness | None = None,
 ) -> int:
     """Return how many descriptors one admitted surface replacement carries."""
+    if fallback_rewrite is not None:
+        return fallback_rewrite.descriptor_count
     if live_native is not None:
         return live_native.descriptor_count
     if completed_tool_turn is not None:
@@ -631,6 +681,9 @@ class SurfaceDeltaAdmission:
         default=None, repr=False, kw_only=True
     )
     live_native_ordinal: int | None = field(default=None, kw_only=True)
+    fallback_rewrite: FallbackRewriteWitness | None = field(
+        default=None, kw_only=True
+    )
 
     def __post_init__(self) -> None:
         if not all(
@@ -644,6 +697,19 @@ class SurfaceDeltaAdmission:
             raise ValueError("surface_delta_admission")
         if not self.descriptors and self.predecessor_surface_head_id is None:
             raise ValueError("surface_delta_admission")
+        if self.fallback_rewrite is not None:
+            _validate_fallback_rewrite_shape(
+                self.fallback_rewrite,
+                route_identity=self.route_identity,
+                others=(
+                    self.completed_tool_turn,
+                    self.rewritten_tail,
+                    self.live_native,
+                ),
+                replacement=self.replacement_range,
+                descriptors=self.descriptors,
+            )
+            return
         if self.live_native is not None:
             from tldw_chatbook.Chat.console_trace_continuation import (
                 LiveNativeContinuationWitness,
@@ -710,6 +776,9 @@ class VerifiedSurfaceDelta:
         default=None, repr=False, kw_only=True
     )
     live_native_ordinal: int | None = field(default=None, kw_only=True)
+    fallback_rewrite: FallbackRewriteWitness | None = field(
+        default=None, kw_only=True
+    )
 
     def __post_init__(self) -> None:
         if (
@@ -719,6 +788,32 @@ class VerifiedSurfaceDelta:
             or not self.preparation_identity
         ):
             raise ValueError("surface_delta_identity")
+        if self.fallback_rewrite is not None:
+            _validate_fallback_rewrite_shape(
+                self.fallback_rewrite,
+                route_identity=self.route_identity,
+                others=(
+                    self.completed_tool_turn,
+                    self.rewritten_tail,
+                    self.live_native,
+                ),
+                replacement=self.replacement,
+                descriptors=(
+                    ()
+                    if self.replacement is None
+                    else (self.replacement.item.provenance,)
+                    + tuple(item.provenance for item in self.items)
+                ),
+            )
+            if self.replacement is not None and any(
+                item.component_name != "messages_payload"
+                or item.ordinal != self.replacement.item.ordinal + offset
+                for offset, item in enumerate(self.items, 1)
+            ):
+                raise ValueError("surface_delta_shape")
+            if self.replacement is None and self.items:
+                raise ValueError("surface_delta_shape")
+            return
         if self.live_native is not None:
             from tldw_chatbook.Chat.console_trace_continuation import (
                 LiveNativeContinuationWitness,
@@ -906,7 +1001,10 @@ def build_verified_surface_delta(
             if (
                 delta_count
                 != replacement_descriptor_count(
-                    admission.completed_tool_turn, admission.rewritten_tail, admission.live_native
+                    admission.completed_tool_turn,
+                    admission.rewritten_tail,
+                    admission.live_native,
+                    admission.fallback_rewrite,
                 )
                 or ordinal < 0
                 or ordinal >= len(full_messages) + len(full_continuations)
@@ -957,7 +1055,10 @@ def build_verified_surface_delta(
     replacement: VerifiedSurfaceReplacement | None = None
     if admission.replacement_range is not None:
         if len(items) != replacement_descriptor_count(
-            admission.completed_tool_turn, admission.rewritten_tail, admission.live_native
+            admission.completed_tool_turn,
+            admission.rewritten_tail,
+            admission.live_native,
+            admission.fallback_rewrite,
         ):
             raise ValueError("surface_delta_shape")
         replacement_range = admission.replacement_range
@@ -1008,7 +1109,44 @@ def build_verified_surface_delta(
         live_native_custody=admission.live_native_custody,
         live_native_ordinal=admission.live_native_ordinal,
         rewritten_tail=admission.rewritten_tail,
+        fallback_rewrite=admission.fallback_rewrite,
     )
+
+
+def _validate_fallback_rewrite_shape(
+    witness: FallbackRewriteWitness,
+    *,
+    route_identity: str,
+    others: tuple[object, ...],
+    replacement: VerifiedSurfaceReplacementRange | VerifiedSurfaceReplacement | None,
+    descriptors: tuple[TraceProvenance, ...],
+) -> None:
+    """Refuse a fallback rewrite outside its one shape (ADR-337, 2026-11-24).
+
+    It belongs to a tool-loop call, carries no other witness, and replaces
+    the run's tool rows with one unchained message range, or removes only the
+    leading slot.
+    """
+    if (
+        type(witness) is not FallbackRewriteWitness
+        or route_identity != "tool_loop"
+        or any(item is not None for item in others)
+        or (replacement is None) != (not witness.descriptors)
+        or (
+            replacement is not None
+            and (
+                replacement.chain
+                or (
+                    replacement.component_name
+                    if type(replacement) is VerifiedSurfaceReplacementRange
+                    else replacement.item.component_name
+                )
+                != "messages_payload"
+            )
+        )
+        or not witness.matches_descriptors(descriptors)
+    ):
+        raise ValueError("surface_delta_shape")
 
 
 def _surface_omission_source(

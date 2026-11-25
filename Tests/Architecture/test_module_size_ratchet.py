@@ -1416,7 +1416,12 @@ _BUDGETS: dict[str, int] = {
     # repeats (literal envelope modulo the verified stream flip).
     # 2026-11-24, TASK-42534 re-review: 6829 -> 6826 (-3), exact measurement;
     # the header-part comparison moved into one pairwise helper.
-    "tldw_chatbook/Chat/console_trace_service.py": 6826,
+    # 2026-11-25, TASK-42525 (owner decision 2026-11-24, a fallback chain's
+    # first call may rewrite the run's tail; same rule): 6826 -> 6926 (+100),
+    # exact measurement. The rewrite's planning and recheck live in
+    # console_trace_fallback_rewrite.py; here, its threading through the
+    # delta, the binding recheck, the removal marker and its projection.
+    "tldw_chatbook/Chat/console_trace_service.py": 6926,
     # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
     # approved child trace segments (ADR-337 amendment 2026-11-17): create and

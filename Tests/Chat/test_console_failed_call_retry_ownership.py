@@ -2046,41 +2046,6 @@ async def test_a_fallback_chain_follows_only_its_failed_chain(
 
 
 @pytest.mark.usefixtures("shut_down_console_controllers")
-async def test_a_fallback_that_must_rewrite_the_runs_tool_history_is_refused(
-    tmp_path, monkeypatch
-):
-    """TASK-42525's limit: a fallback that re-encodes earned tool history.
-
-    The model answered with a tool call written as text; the fallback
-    provider takes tool calls natively, so ADR-110 rewrites those rows for
-    it. That rewrite would replace rows already on the trace surface, which
-    the new-chain amendment does not grant. The run stops on the trace card
-    before groq is asked, with nothing reserved.
-    """
-    from Tests.Chat.test_console_project_instruction_traces import _project_console
-
-    async with _project_console(tmp_path, monkeypatch) as app:
-        calls = _fallback_replies(app, monkeypatch, [_TOOL_CALL, _credit()])
-        result = await app.controller.submit_draft(
-            "Use calculator once", session_id=app.session.id
-        )
-
-        assert result.accepted
-        assert app.controller.run_state.status.value == "blocked"
-        assert app.reservation_errors == ["unsupported_surface_change"]
-        assert [provider for provider, _ in calls] == [_DS, _DS]
-        turn_id = app.store.get_message(result.user_message_id).persisted_message_id
-        # The blocked run leaves its answered call open, as any blocked run.
-        assert _chain_calls(app, turn_id) == [
-            ("agent_first", "response_started", _DS, 0, 0),
-            ("tool_loop", "error", _DS, 0, 1),
-        ]
-        assert app.controller.run_state.visible_copy == (
-            "Trace capture could not start. Retry, Send without capture, or Cancel."
-        )
-
-
-@pytest.mark.usefixtures("shut_down_console_controllers")
 @pytest.mark.parametrize("reads_as", ["answered", "unsettled"])
 async def test_the_next_message_rechecks_the_fallbacks_link(
     tmp_path, monkeypatch, reads_as
@@ -2177,19 +2142,83 @@ async def test_a_fallback_to_a_text_tool_provider_brings_its_own_instructions(
         ]
 
 
+def _roles(rows):
+    return [row.get("role") for row in rows]
+
+
 @pytest.mark.usefixtures("shut_down_console_controllers")
 @pytest.mark.parametrize("project", [True, False], ids=["project", "no_project"])
-async def test_a_captured_llamacpp_run_cannot_yet_fall_back_to_a_hosted_provider(
+async def test_a_fallback_rewrites_the_runs_tool_calls_for_its_provider(
     tmp_path, monkeypatch, project
 ):
-    """TASK-42525's other limit, on TASK-42472's path.
+    """TASK-42525, second owner decision: the re-encoded tool history.
+
+    The model wrote its tool call as text; groq takes tool calls natively, so
+    ADR-110 rewrites the run's tool rows for it. That rewrite replaced rows
+    already on the trace surface and was refused. The fallback chain's first
+    call may now record it: the run completes, the trace keeps deepseek's
+    calls as sent and records groq's as sent, and the next message is sent.
+    """
+    from Tests.Chat.test_console_project_instruction_traces import _project_console
+    from tldw_chatbook.Chat.console_trace_native_reader import (
+        ConsoleTraceNativeReader,
+    )
+
+    async with _project_console(
+        tmp_path, monkeypatch, source_name="AGENTS.md" if project else "NOTES.md"
+    ) as app:
+        calls = _fallback_replies(app, monkeypatch, [_TOOL_CALL, _credit()])
+        result = await app.controller.submit_draft(
+            "Use calculator once", session_id=app.session.id
+        )
+
+        assert app.controller.run_state.status.value == "completed"
+        assert app.reservation_errors == []
+        turn_id = app.store.get_message(result.user_message_id).persisted_message_id
+        before = _chain_calls(app, turn_id)
+        assert before == [
+            ("agent_first", "complete", _DS, 0, 0),
+            ("tool_loop", "error", _DS, 0, 1),
+            ("tool_loop", "complete", _GQ, 1, 0),
+        ]
+        (_, _), (_, as_text), (_, native) = calls
+        assert "tool" not in _roles(as_text) and "tool" in _roles(native)
+        traced = ConsoleTraceNativeReader(app.db).read_calls(turn_id)
+        assert [
+            _roles(call.capture.request["messages_payload"]) for call in traced[1:]
+        ] == [_roles(as_text), _roles(native)]
+
+        follow_up = await app.controller.submit_draft(
+            "And now?", session_id=app.session.id
+        )
+
+        assert follow_up.accepted
+        assert app.reservation_errors == []
+        assert app.controller.run_state.status.value == "completed"
+        assert _chain_calls(app, turn_id) == before
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("project", [True, False], ids=["project", "no_project"])
+@pytest.mark.parametrize("tool_first", [False, True], ids=["no_tools", "tool_first"])
+async def test_a_captured_llamacpp_run_falls_back_to_a_hosted_provider(
+    tmp_path, monkeypatch, tool_first, project
+):
+    """TASK-42525 on TASK-42472's path, second owner decision.
 
     llama.cpp HTTP failures are transient, so a llama.cpp run reaches its
-    fallback once the in-place retries are spent. llama.cpp's request carries
-    its system prompt as the first message, a hosted provider's does not, so
-    groq's request does not continue the run's trace surface even before any
-    tool call (`unsupported_surface_change`). The run stops before groq is
-    asked, with nothing reserved.
+    fallback once the in-place retries are spent. llama.cpp is sent the
+    system prompt as the first message, groq is not, and after a tool call
+    the run's text tool rows are rewritten for groq's native format. The
+    fallback chain's first call removes the leading system slot and rewrites
+    those rows: the run completes, and the trace keeps the llama.cpp calls
+    with their system row and records groq's call without it.
+
+    The next message goes back to llama.cpp and needs the slot back. Putting
+    a leading system row back is the refusal any hosted -> llama.cpp switch
+    meets under capture (`unsupported_surface_change`), which the owner's
+    decision did not grant; it stays refused, and Send without capture
+    sends it.
     """
     import functools
 
@@ -2199,13 +2228,17 @@ async def test_a_captured_llamacpp_run_cannot_yet_fall_back_to_a_hosted_provider
         console_agent_bridge,
         provider_readiness,
     )
+    from tldw_chatbook.Chat.console_trace_native_reader import (
+        ConsoleTraceNativeReader,
+    )
 
+    steps = ("tool",) * tool_first + ("busy",) * 3
     async with _project_console(
         tmp_path,
         monkeypatch,
         source_name="AGENTS.md" if project else "NOTES.md",
-        first_failure=_llama_script(*["busy"] * 3),
-        failures=3,
+        first_failure=_llama_script(*steps),
+        failures=len(steps),
     ) as app:
         llama, groq = app.gateway.resolve_for_send, []
 
@@ -2214,7 +2247,7 @@ async def test_a_captured_llamacpp_run_cannot_yet_fall_back_to_a_hosted_provider
 
         @functools.wraps(Chat_Functions.chat_api_call)
         def handler(*_args, **kwargs):
-            groq.append(kwargs["api_endpoint"])
+            groq.append(kwargs["messages_payload"])
             return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
 
         monkeypatch.setattr(app.gateway, "resolve_for_send", resolve)
@@ -2225,14 +2258,340 @@ async def test_a_captured_llamacpp_run_cannot_yet_fall_back_to_a_hosted_provider
         monkeypatch.setattr(
             provider_readiness, "configured_provider_is_ready", lambda _p: True
         )
-        result = await app.controller.submit_draft("Hello", session_id=app.session.id)
+        result = await app.controller.submit_draft(
+            "Use calculator once" if tool_first else "Hello",
+            session_id=app.session.id,
+        )
 
-        assert app.controller.run_state.status.value == "blocked"
-        assert app.reservation_errors == ["unsupported_surface_change"]
-        assert groq == []
+        assert app.controller.run_state.status.value == "completed"
+        assert app.reservation_errors == []
         turn_id = app.store.get_message(result.user_message_id).persisted_message_id
-        assert _chain_calls(app, turn_id) == [
-            ("agent_first", "error", "llama_cpp", 0, 0),
-            ("tool_loop", "error", "llama_cpp", 0, 1),
-            ("tool_loop", "error", "llama_cpp", 0, 2),
+        failed = [("tool_loop", "error", "llama_cpp", 0, n) for n in (1, 2, 3)]
+        before = _chain_calls(app, turn_id)
+        assert before == [
+            ("agent_first", "complete" if tool_first else "error", "llama_cpp", 0, 0),
+            *failed[: 2 + tool_first],
+            ("tool_loop", "complete", _GQ, 1, 0),
         ]
+        (sent,) = groq
+        assert sent[0]["role"] != "system"
+        assert ("tool" in _roles(sent)) is tool_first
+        traced = ConsoleTraceNativeReader(app.db).read_calls(turn_id)
+        requests = [call.capture.request["messages_payload"] for call in traced]
+        assert all(rows[0]["role"] == "system" for rows in requests[:-1])
+        assert _roles(requests[-1]) == _roles(sent)
+
+        follow_up = await app.controller.submit_draft(
+            "And now?", session_id=app.session.id
+        )
+
+        assert follow_up.accepted
+        assert app.reservation_errors == ["unsupported_surface_change"]
+        assert app.controller.run_state.status.value == "blocked"
+        assert _chain_calls(app, turn_id) == before
+        paused = app.store.preparation_for_session(app.session.id)
+        resent = await app.controller.send_without_capture(paused.preparation_id)
+        assert resent.accepted, resent.visible_copy
+        assert app.controller.run_state.status.value == "completed"
+
+
+def _tool_rows(policy, tag, count):
+    """``count`` alternating tool-call and tool-result rows, as one format."""
+    messages, descriptors = [], []
+    for index in range(count):
+        call = index % 2 == 0
+        messages.append(
+            {"role": "assistant", "content": f"{tag} call {index}"}
+            if call
+            else {"role": "tool", "content": f"{tag} result {index}"}
+        )
+        descriptors.append(
+            ProviderArtifactTraceProvenance(
+                TraceProvenanceSource.TOOL_CALL
+                if call
+                else TraceProvenanceSource.TOOL_RESULT,
+                policy,
+            )
+        )
+    return messages, descriptors
+
+
+async def _failed_tool_run(
+    tmp_path, make_database, make_gateway, monkeypatch, *, rows=2, system=False
+):
+    """A deepseek run whose first call answered and whose tool-loop call failed.
+
+    Its tool rows are written as text (``"text"``). Returns a namespace with
+    the database, factory, the history, ``send`` and the providers asked.
+    """
+    database = make_database(tmp_path / "rewrite.sqlite", "rewrite")
+    conversation = database.add_conversation({"title": "rewrite"})
+    _, earlier = _saved_message(database, conversation, "earlier")
+    _, revision = _saved_message(database, conversation, "hello")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    factory = ConsoleTraceBoundaryFactory(database)
+    asked, failing = [], {"deepseek"}
+
+    def provider(**kwargs):
+        asked.append(kwargs["api_endpoint"])
+        if kwargs["api_endpoint"] in failing and len(asked) > 1:
+            raise ChatRateLimitError("fixture", provider=kwargs["api_endpoint"])
+        return {"choices": [{"message": {"content": "answered"}}]}
+
+    gateway = make_gateway(
+        chat_api_call_fn=provider,
+        trace_call_boundary_factory=factory,
+        safe_error_copy=lambda _provider, _exc: "fixture provider failure",
+    )
+    if system:
+        # llama.cpp's shape: the system prompt is the first message.
+        prepare = gateway.prepare_chat_request
+
+        def distinct_roles(*args, **kwargs):
+            prepared = prepare(*args, **kwargs)
+            return prepare_provider_request(
+                prepared.semantic,
+                wire_style="distinct_roles",
+                provider=prepared.provider,
+                model=prepared.model,
+                capacity=prepared.capacity,
+            )
+
+        monkeypatch.setattr(gateway, "prepare_chat_request", distinct_roles)
+    deepseek = ConsoleProviderResolution(
+        ready=True,
+        provider="deepseek",
+        execution_key="deepseek",
+        model="deepseek-chat",
+        base_url="https://api.deepseek.com",
+        api_key="fixture",
+        streaming=False,
+    )
+    head = [
+        {"role": "user", "content": "earlier"},
+        {"role": "user", "content": "hello"},
+    ]
+    head_descriptors = [earlier, revision]
+    if system:
+        head.insert(0, {"role": "system", "content": "Text tool protocol"})
+        head_descriptors.insert(
+            0,
+            ProviderArtifactTraceProvenance(
+                TraceProvenanceSource.RENDERED_SYSTEM, policy
+            ),
+        )
+    actor, chain = new_opaque_id(), new_opaque_id()
+
+    async def send(resolution, route, chain_id, messages, descriptors):
+        request = _semantic_request(
+            messages,
+            descriptors,
+            policy,
+            route=route,
+            actor_id=actor,
+            chain_id=chain_id,
+        )
+        return [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                request,
+                route=route,
+                route_actor_id=actor,
+                route_chain_id=chain_id,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ]
+
+    assert await send(
+        deepseek, ConsoleRequestRoute.AGENT_FIRST, chain, head, head_descriptors
+    )
+    text, text_descriptors = _tool_rows(policy, "text", rows)
+    with pytest.raises(ChatRateLimitError):
+        await send(
+            deepseek,
+            ConsoleRequestRoute.TOOL_LOOP,
+            chain,
+            head + text,
+            head_descriptors + text_descriptors,
+        )
+    return SimpleNamespace(
+        database=database,
+        conversation=conversation,
+        factory=factory,
+        policy=policy,
+        send=send,
+        asked=asked,
+        failing=failing,
+        deepseek=deepseek,
+        chain=chain,
+        head=head,
+        head_descriptors=head_descriptors,
+        rows=rows,
+    )
+
+
+def _reserved(database):
+    with database.transaction() as cursor:
+        return cursor.execute(
+            "SELECT COUNT(*) FROM console_trace_calls WHERE state = 'reserved'"
+        ).fetchone()[0]
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "valid",
+        "valid_slot",
+        "valid_second_rewrite",
+        "retry_rewrite",
+        "second_call",
+        "user_row",
+        "foreign_run",
+        "slot_not_the_runs",
+        "over_256",
+    ],
+)
+async def test_a_fallback_rewrite_is_admitted_only_in_its_one_shape(
+    tmp_path, make_database, make_gateway, monkeypatch, scenario
+):
+    """TASK-42525, second owner decision: the rewrite's bounds.
+
+    A fallback chain's first call may remove the leading system slot and
+    replace the run's earned tool rows one for one. Anything else is refused
+    before a call is reserved, and the provider is never asked: a rewrite on
+    any other call, a removed row that is not a tool row, rows the run did not
+    earn, a slot the run's own call did not carry, and more than 256 rows.
+    """
+    from tldw_chatbook.Chat import console_trace_fallback_rewrite as rewrite
+
+    rows = 257 if scenario == "over_256" else 2
+    system = scenario in {"valid_slot", "slot_not_the_runs"}
+    run = await _failed_tool_run(
+        tmp_path, make_database, make_gateway, monkeypatch, rows=rows, system=system
+    )
+    native, native_descriptors = _tool_rows(run.policy, "native", rows)
+    head, head_descriptors = run.head, run.head_descriptors
+    if system:
+        head, head_descriptors = head[1:], head_descriptors[1:]
+    messages = head + native
+    descriptors = head_descriptors + native_descriptors
+    target, chain = _GROQ, new_opaque_id()
+    if scenario == "retry_rewrite":
+        # An in-place retry of the failed call that rewrites its tool rows.
+        target, chain = run.deepseek, run.chain
+    elif scenario == "second_call":
+        text, text_descriptors = _tool_rows(run.policy, "text", rows)
+        assert await run.send(
+            _GROQ,
+            ConsoleRequestRoute.TOOL_LOOP,
+            chain,
+            head + text,
+            head_descriptors + text_descriptors,
+        )
+    elif scenario == "valid_second_rewrite":
+        # The first fallback rewrote the rows and failed too; the second
+        # rewrites the first one's rows again, which stand on the earned ones.
+        run.failing.add("groq")
+        with pytest.raises(ChatRateLimitError):
+            await run.send(
+                _GROQ, ConsoleRequestRoute.TOOL_LOOP, chain, messages, descriptors
+            )
+        again, again_descriptors = _tool_rows(run.policy, "text again", rows)
+        messages, descriptors = head + again, head_descriptors + again_descriptors
+        target = replace(_GROQ, provider="openai", execution_key="openai")
+        chain = new_opaque_id()
+    elif scenario == "user_row":
+        _, changed = _saved_message(run.database, run.conversation, "changed")
+        messages = [{"role": "user", "content": "changed"}] + messages[1:]
+        descriptors = [changed] + descriptors[1:]
+    elif scenario == "foreign_run":
+        monkeypatch.setattr(
+            rewrite,
+            "run_chains",
+            lambda *_args: (None, frozenset({f"{new_opaque_id()}:{new_opaque_id()}"})),
+        )
+    elif scenario == "slot_not_the_runs":
+        get_header = run.factory.repository.get_request_header
+
+        def without_slot(cursor, header_id):
+            header = get_header(cursor, header_id)
+            return replace(
+                header,
+                components=tuple(
+                    item
+                    for item in header.components
+                    if item.component_kind != "rendered_system_row"
+                ),
+            )
+
+        monkeypatch.setattr(run.factory.repository, "get_request_header", without_slot)
+    asked = list(run.asked)
+    if scenario.startswith("valid"):
+        assert await run.send(
+            target, ConsoleRequestRoute.TOOL_LOOP, chain, messages, descriptors
+        ) == ["answered"]
+        assert run.asked == asked + [target.execution_key]
+    else:
+        with pytest.raises(TraceCallPersistenceError):
+            await run.send(
+                target, ConsoleRequestRoute.TOOL_LOOP, chain, messages, descriptors
+            )
+        assert run.asked == asked
+    assert _reserved(run.database) == 0
+
+
+@pytest.mark.parametrize(
+    "changed", ["none", "owner", "turn", "policy", "run", "unanswered"]
+)
+async def test_only_the_runs_own_tool_rows_are_earned(
+    tmp_path, make_database, make_gateway, monkeypatch, changed
+):
+    """TASK-42525: the rewrite's run-ownership check, row by row.
+
+    A removed tool row is earned only when a tool-loop call of one of the
+    run's chains appended it, in the run's owner, turn and policy, after a
+    call of its chain that bore a response (``unanswered`` reads that call
+    as failed).
+    """
+    from tldw_chatbook.Chat.console_trace_models import TraceCallState
+
+    from tldw_chatbook.Chat.console_trace_continuation import run_chains
+    from tldw_chatbook.Chat.console_trace_fallback_rewrite import earned_tool_rows
+
+    run = await _failed_tool_run(tmp_path, make_database, make_gateway, monkeypatch)
+    with run.database.transaction() as cursor:
+        failed = cursor.execute(
+            "SELECT call_id FROM console_trace_calls WHERE call_sequence = 1"
+        ).fetchone()[0]
+        failed = run.factory.repository.get_call(cursor, failed)
+        _origin, runs = run_chains(run.factory.repository, cursor, failed.run_id)
+        tail = run.factory.repository.get_surface_tail(cursor, failed.segment_id)
+        identity = {
+            "segment_id": failed.segment_id,
+            "owner_id": failed.owner_id,
+            "turn_id": failed.turn_id,
+            "policy_id": failed.policy_id,
+            "runs": runs,
+        }
+        if changed == "run":
+            identity["runs"] = frozenset({f"{new_opaque_id()}:{new_opaque_id()}"})
+        elif changed == "unanswered":
+            logical = run.factory.repository.get_call_by_logical_identity
+
+            def unanswered(cursor, **key):
+                call = logical(cursor, **key)
+                return replace(call, state=TraceCallState.ERROR, outcome="error")
+
+            monkeypatch.setattr(
+                run.factory.repository, "get_call_by_logical_identity", unanswered
+            )
+        elif changed != "none":
+            identity[f"{changed}_id"] = new_opaque_id()
+        earned = earned_tool_rows(
+            run.factory.service,
+            cursor,
+            sequences=(tail.sequence - 1, tail.sequence),
+            **identity,
+        )
+    assert earned is (changed == "none")

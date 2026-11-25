@@ -780,11 +780,63 @@ of the same run. The retry rule inside a chain is unchanged.
 Still refused:
 - A fallback whose history projection rewrites rows already on the surface
   (native and fenced tool protocols, after tool activity). It needs a
-  replacement, which this amendment does not grant.
+  replacement, which this amendment does not grant. (Granted by the next
+  amendment.)
 - A fallback between providers that place the system prompt differently
   (llama.cpp sends it as the first message, a hosted provider does not). The
-  new call does not continue the surface even before any tool call.
+  new call does not continue the surface even before any tool call. (Granted
+  by the next amendment.)
 - A spawned child's preset fallback.
+
+### Amendment recorded 2026-11-24 (owner-approved): a fallback chain's first call may rewrite the run's tail (TASK-42525)
+
+The owner approved this on 2026-11-24 ("Allow it, do it now"). It grants the
+replacement the previous amendment withheld. It applies to one call only: the
+first call of a provider fallback's new chain, admitted as that amendment
+describes. That call may record one bounded rewrite of the surface.
+
+1. **What it may remove.**
+   - The surface's leading rendered-system slot. This is allowed only when
+     that slot is the first active entry, the failed call's own request
+     header carried it (a `rendered_system_row` component), and the new
+     call's request has no leading system row: a provider that takes the
+     system prompt outside the message list.
+   - The run's own tool rows at the surface's tail, replaced by the new
+     call's rows in the same places. This is ADR-110's re-encoding for the new
+     provider's tool-call format.
+
+   Nothing else is removed. Every other row must match the request unchanged,
+   before and after the removal. That includes user and assistant rows,
+   project context and provider continuations.
+2. **Checks.** The removed tool rows are one contiguous run at the tail.
+   - Every one of them is a tool-call or tool-result artifact.
+   - Each was appended by a tool-loop call of one of the run's chains (same
+     owner, segment, turn and policy) whose predecessor in its own chain bore
+     a response. This is the completed-turn witness's TASK-42534 rule. A row
+     may instead have been written by an earlier fallback rewrite of the run
+     (a second fallback re-encoding the first one's rows), in which case the
+     rows that rewrite removed must pass this check too.
+   - The new rows match them one for one, kind for kind (tool call for tool
+     call, tool result for tool result).
+3. **Bound.** At most 256 rows are replaced, in one replacement with no
+   chained links; more is refused. The removed system slot is one more row.
+4. **Recording.** The slot is removed by a replacement whose node is a
+   content-free removal marker, which every surface projection drops. The
+   tool rows are replaced by an ordinary bounded replacement: the first new
+   row takes the range's place and the rest follow at the end. Historical
+   calls, request heads and the removed rows' bytes stay as they were.
+5. **Recheck.** The rewrite is rechecked in the dispatch-binding transaction.
+   A later completed-turn witness accepts the rewritten rows only by
+   rechecking, from the ledger, the rows they replaced.
+
+Anything outside this is refused, as before. That covers a rewrite on any
+call other than a fallback chain's first, a removed row of another run,
+actor or turn, a removed row that is not the leading system slot or a tool
+row, and more than 256 rows. Refusal happens before the reservation commits.
+
+Not granted: putting a leading system row back. After a llama.cpp run falls
+back to a hosted provider, the next captured send to llama.cpp is refused, as
+any captured switch from a hosted provider to llama.cpp already was.
 
 ## Current-owner integration amendment (2026-10-13)
 

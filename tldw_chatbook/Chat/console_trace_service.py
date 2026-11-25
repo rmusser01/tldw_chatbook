@@ -37,6 +37,7 @@ from tldw_chatbook.Chat.console_trace_custom_pii import (
 from tldw_chatbook.Chat.console_trace_final_values import (
     _SURFACE_VERIFICATION_ISSUER,
     CompletedToolTurnWitness,
+    FallbackRewriteWitness,
     FinalValueBinding,
     RewrittenTailWitness,
     replacement_descriptor_count,
@@ -205,6 +206,10 @@ class PersistedTraceRequest:
     # link held in ``replacement`` (ADR-337 amendment 2026-11-06).
     chain_nodes: tuple[SurfaceNodeRecord, ...] = ()
     chain_replacements: tuple[SurfaceReplacementRecord, ...] = ()
+    # A fallback rewrite's removal marker and its removal-only replacement
+    # (ADR-337 amendment 2026-11-24, TASK-42525).
+    removal_node: SurfaceNodeRecord | None = None
+    removal: SurfaceReplacementRecord | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1158,6 +1163,7 @@ class _ChildState:
     live_native_ordinal: int | None = None
     live_native_surface: Mapping[str, object] | None = field(default=None, repr=False)
     rewritten_tail: RewrittenTailWitness | None = None
+    fallback_rewrite: FallbackRewriteWitness | None = None
 
 
 class _ParentSurfaceCapability:
@@ -1629,7 +1635,15 @@ class ConsoleTraceService:
                     != persisted.header
                     or any(
                         self.repository.get_surface_node(cursor, node.node_id) != node
-                        for node in (*persisted.chain_nodes, *persisted.appended_nodes)
+                        for node in (
+                            *persisted.chain_nodes,
+                            *persisted.appended_nodes,
+                            *(
+                                ()
+                                if persisted.removal_node is None
+                                else (persisted.removal_node,)
+                            ),
+                        )
                     )
                 ):
                     return "unknown"
@@ -1637,7 +1651,7 @@ class ConsoleTraceService:
                     ()
                     if persisted.replacement is None
                     else (*persisted.chain_replacements, persisted.replacement)
-                )
+                ) + (() if persisted.removal is None else (persisted.removal,))
                 for index, expected in enumerate(records):
                     replacement = expected.replacement
                     row = cursor.execute(
@@ -1833,6 +1847,24 @@ class ConsoleTraceService:
                 current_policy_id=reserved_call.policy_id,
                 reserved_call=reserved_call,
                 known_credentials=known_credentials,
+            )
+        if surface_delta.fallback_rewrite is not None:
+            # Rechecked in the dispatch-binding transaction (TASK-42525).
+            from tldw_chatbook.Chat.console_trace_fallback_rewrite import (
+                validate_fallback_rewrite,
+            )
+
+            if reserved_call is None or child_state is None:
+                raise ValueError("fallback_rewrite_unavailable")
+            validate_fallback_rewrite(
+                self,
+                cursor,
+                witness=surface_delta.fallback_rewrite,
+                owner_id=owner_id,
+                segment_id=segment_id,
+                plan=replacement,
+                descriptors=descriptors,
+                reserved_call=reserved_call,
             )
         if surface_delta.rewritten_tail is not None:
             if reserved_call is None or replacement is None:
@@ -2040,6 +2072,7 @@ class ConsoleTraceService:
             or surface_delta.completed_tool_turn is not None
             or surface_delta.live_native is not None
             or surface_delta.rewritten_tail is not None
+            or surface_delta.fallback_rewrite is not None
         ):
             offset = 1 if replacement is not None else 0
             for descriptor, value in zip(
@@ -2068,6 +2101,23 @@ class ConsoleTraceService:
                         event_type="gap",
                         omission_reason_code=tail.omission_reason_code,
                     )
+        removal_node = removal = None
+        removed_slot = (
+            None
+            if surface_delta.fallback_rewrite is None
+            else surface_delta.fallback_rewrite.removed_slot_sequence
+        )
+        if removed_slot is not None:
+            # Written last, so the rewritten tool rows keep their places.
+            assert tail is not None
+            from tldw_chatbook.Chat.console_trace_fallback_rewrite import (
+                remove_surface_slot,
+            )
+
+            removal_node, removal = remove_surface_slot(
+                self, cursor, segment_id=segment_id, tail=tail, sequence=removed_slot
+            )
+            tail = removal_node
 
         if tail is None:
             reason = bundle.omission_reason or TraceOmissionReason.SOURCE_UNAVAILABLE
@@ -2200,7 +2250,11 @@ class ConsoleTraceService:
                 raise ValueError("trace_tool_chain_unavailable")
         if child_state is not None:
             root = _ProjectionRoot(
-                projection.root,
+                projection.root
+                if removed_slot is None
+                else _ProjectionRoot(
+                    projection.root, replacement=(removed_slot, removed_slot)
+                ),
                 appended=tuple(
                     (node.sequence, self._node_reference_key(node)) for node in appended
                 ),
@@ -2256,7 +2310,7 @@ class ConsoleTraceService:
                 lineage_domains[node.sequence] = _surface_reference_domain(
                     self._node_reference_key(node)
                 )
-        for node in chain_nodes:
+        for node in (*chain_nodes, *(() if removal_node is None else (removal_node,))):
             # Placeholders stay in the lineage, as the cold reader counts them.
             lineage_domains[node.sequence] = _surface_reference_domain(
                 self._node_reference_key(node)
@@ -2313,6 +2367,8 @@ class ConsoleTraceService:
             checkpoint=checkpoint,
             chain_nodes=chain_nodes,
             chain_replacements=chain_replacements,
+            removal_node=removal_node,
+            removal=removal,
         )
 
     @staticmethod
@@ -2389,6 +2445,7 @@ class ConsoleTraceService:
         current_policy_id: str | None = None,
         reserved_call: TraceCallRecord | None = None,
         known_credentials: tuple[str, ...] = (),
+        fallback_parent: TraceCallRecord | None = None,
     ) -> tuple[SurfaceDeltaAdmission, object]:
         """Plan an append, no-op, or one-item bounded surface replacement.
 
@@ -2672,6 +2729,33 @@ class ConsoleTraceService:
         prefix = 0
         while prefix < min(len(active), len(descriptors)) and matches(prefix, prefix):
             prefix += 1
+        if fallback_parent is not None and not prefix == len(active) == len(descriptors):
+            # A fallback chain's first call may rewrite the run's tail
+            # (ADR-337 amendment 2026-11-24, TASK-42525); nothing else may.
+            from tldw_chatbook.Chat.console_trace_fallback_rewrite import (
+                prepare_fallback_rewrite,
+            )
+
+            return prepare_fallback_rewrite(
+                self,
+                cursor,
+                failed=fallback_parent,
+                owner_id=owner_id,
+                segment_id=segment_id,
+                route_identity=route_identity,
+                preparation_identity=preparation_identity,
+                provenance=provenance,
+                values=values,
+                tail=tail,
+                projection=projection,
+                active=active,
+                matches=matches,
+                retained_artifact_values=retained_artifact_values,
+                rendered_system=lambda: rendered_system,
+                current_policy_id=current_policy_id,
+                reserved_call=reserved_call,
+                known_credentials=known_credentials,
+            )
         # ADR-337 amendment, owner-approved 2026-11-13 (TASK-34100.3): a send
         # growing both domains appends each at its end, ahead of compound rules.
         domain_append = (
@@ -4118,7 +4202,10 @@ class ConsoleTraceService:
             )
         else:
             if len(admitted) != replacement_descriptor_count(
-                admission.completed_tool_turn, admission.rewritten_tail, admission.live_native
+                admission.completed_tool_turn,
+                admission.rewritten_tail,
+                admission.live_native,
+                admission.fallback_rewrite,
             ):
                 raise ValueError("surface_delta_shape")
             descriptor_root = _DescriptorRoot(
@@ -4429,6 +4516,8 @@ class ConsoleTraceService:
                 is not None
                 or cast(SurfaceDeltaAdmission, prepared.admission).rewritten_tail
                 is not None
+                or cast(SurfaceDeltaAdmission, prepared.admission).fallback_rewrite
+                is not None
             ):
                 # Removed tool artifacts no longer contribute disclosure policy
                 # or structural metadata to the composed request.
@@ -4551,6 +4640,7 @@ class ConsoleTraceService:
                 else None
             ),
             rewritten_tail=admission.rewritten_tail,
+            fallback_rewrite=admission.fallback_rewrite,
         )
         self._child_capabilities[id(binding)] = state
         self._prepared_capabilities.pop(id(provenance), None)
@@ -4596,6 +4686,7 @@ class ConsoleTraceService:
             or child.live_native_ordinal != delta.live_native_ordinal
             or child.completed_tool_turn != delta.completed_tool_turn
             or child.rewritten_tail != delta.rewritten_tail
+            or child.fallback_rewrite != delta.fallback_rewrite
         ):
             raise ValueError("surface_child_binding")
         return child
@@ -4810,6 +4901,10 @@ class ConsoleTraceService:
                 removed = active.pop(sequence, None)
                 if removed is not None:
                     root_node = _sequence_delete(root_node, removed)
+            if node.component_kind == SURFACE_REMOVAL_COMPONENT:
+                # A fallback rewrite's removal marker leaves nothing in place
+                # of the range (ADR-337 amendment 2026-11-24).
+                continue
             sequence_node = _SequenceNode(
                 node.sequence,
                 self._node_reference_key(node),
@@ -6560,6 +6655,11 @@ def _domain_appends():
     from tldw_chatbook.Chat import console_trace_domain_append
 
     return console_trace_domain_append
+
+
+#: Component of the content-free node a removal-only replacement points at
+#: (ADR-337 amendment 2026-11-24, TASK-42525). Projections drop it.
+SURFACE_REMOVAL_COMPONENT = "surface_removal"
 
 
 def _rewritten_tails():
