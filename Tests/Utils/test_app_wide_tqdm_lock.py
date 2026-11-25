@@ -119,6 +119,9 @@ def _run(script: str, *args: str, tmp_path: Path) -> dict:
         if not name.startswith(("PYTHON", "HF_", "TQDM_"))
     }
     env["PYTHONPATH"] = str(PROJECT_ROOT)
+    # The PYTHON* filter above drops the conftest's null keyring pin; put it
+    # back so the child never resolves the OS store (TASK-42520's census).
+    env["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
     completed = subprocess.run(
         [sys.executable, "-c", script, str(PROJECT_ROOT), *args],
         cwd=tmp_path,
