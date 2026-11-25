@@ -490,8 +490,8 @@ def _hosted_replies(app, monkeypatch, replies):
     """Send through deepseek's handler seam; each call takes the next reply.
 
     The stand-in keeps ``chat_api_call``'s signature (the TASK-41310 trap).
-    An exception in ``replies`` is raised; past the script, the call answers.
-    Returns each call's ``messages_payload``, in order.
+    An exception in ``replies`` is raised, a dict is the whole message; past
+    the script, the call answers. Returns each call's ``messages_payload``.
     """
     import functools
 
@@ -509,7 +509,9 @@ def _hosted_replies(app, monkeypatch, replies):
         calls.append(kwargs["messages_payload"])
         if isinstance(reply, Exception):
             raise reply
-        return {"choices": [{"message": {"role": "assistant", "content": reply}}]}
+        if not isinstance(reply, dict):
+            reply = {"role": "assistant", "content": reply}
+        return {"choices": [{"message": reply}]}
 
     async def resolve(_selection):
         return ConsoleProviderResolution(
@@ -1462,3 +1464,714 @@ async def test_a_captured_run_retries_a_refused_stream_whose_resend_failed(
             assert lineage == [("agent_first", "error"), _FAILED, *failed_round * 2]
             copy = app.controller.run_state.visible_copy
             assert "503" in copy and "trace" not in copy.lower(), copy
+
+
+# TASK-42525: a provider fallback under Capture On starts a new chain.
+_GROQ = ConsoleProviderResolution(
+    ready=True,
+    provider="groq",
+    execution_key="groq",
+    model="llama-3.3-70b-versatile",
+    base_url="https://api.groq.com/openai/v1",
+    api_key="fixture",
+    streaming=False,
+)
+
+
+def _credit():
+    from tldw_chatbook.Provider_Contract import ChatProviderError
+
+    return ChatProviderError(
+        "fixture out of credit", provider="deepseek", status_code=402
+    )
+
+
+def _fallback_replies(app, monkeypatch, replies, *, configured=("groq",), chain=None):
+    """deepseek falls back to groq; each call takes the next reply.
+
+    As ``_hosted_replies``, but each call is resolved and answered for the
+    provider it names. ``configured`` is `[console] agent_fallback_providers`.
+    ``chain``, when given, is the provider chain the runtime walks instead:
+    a runtime that strays from the configuration. Returns each call's
+    ``(provider, messages_payload)``.
+    """
+    import functools
+
+    from tldw_chatbook.Agents import fallback_chain
+    from tldw_chatbook.Chat import console_agent_bridge, provider_readiness
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+        ConsoleEgressClass,
+        ConsoleResolvedDestination,
+    )
+
+    payloads = _hosted_replies(app, monkeypatch, replies)
+    primary, handler = app.gateway.resolve_for_send, app.gateway._chat_api_call_fn
+    calls = []
+
+    @functools.wraps(handler)
+    def routed(*args, **kwargs):
+        try:
+            return handler(*args, **kwargs)
+        finally:
+            calls.append((kwargs["api_endpoint"], payloads[-1]))
+
+    async def resolve(selection):
+        if selection.provider not in {*configured, *(chain or ())}:
+            return await primary(selection)
+        return replace(
+            _GROQ,
+            provider=selection.provider,
+            execution_key=selection.provider,
+            resolved_destination=ConsoleResolvedDestination(
+                provider=selection.provider,
+                model=_GROQ.model,
+                endpoint_identity=_GROQ.base_url,
+                egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+            ),
+        )
+
+    monkeypatch.setattr(app.gateway, "resolve_for_send", resolve)
+    monkeypatch.setattr(app.gateway, "_chat_api_call_fn", routed)
+    monkeypatch.setattr(
+        console_agent_bridge, "console_fallback_providers", lambda: configured
+    )
+    monkeypatch.setattr(
+        provider_readiness, "configured_provider_is_ready", lambda _provider: True
+    )
+    if chain is not None:
+        resolve_chain = fallback_chain.resolve_fallback_chain
+        monkeypatch.setattr(
+            fallback_chain,
+            "resolve_fallback_chain",
+            lambda _configured, primary, ready: resolve_chain(chain, primary, ready),
+        )
+    return calls
+
+
+def _chain_calls(app, turn_id):
+    """The turn's calls as (route, state, provider, chain, sequence)."""
+    with app.db.transaction() as cursor:
+        rows = cursor.execute(
+            "SELECT route_identity, state, provider_name, run_id, call_sequence "
+            "FROM console_trace_calls WHERE turn_id = ? ORDER BY rowid",
+            (turn_id,),
+        ).fetchall()
+        reserved = cursor.execute(
+            "SELECT COUNT(*) FROM console_trace_calls WHERE state = 'reserved'"
+        ).fetchone()[0]
+    actors = {row[3].split(":")[0] for row in rows}
+    chains = list(dict.fromkeys(row[3] for row in rows))
+    assert len(actors) == 1, rows  # one run
+    assert reserved == 0  # AC#4
+    return [(row[0], row[1], row[2], chains.index(row[3]), row[4]) for row in rows]
+
+
+_DS, _GQ = "deepseek", "groq"
+_NATIVE_TOOL_CALL = {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+        {
+            "id": "call_fixture",
+            "type": "function",
+            "function": {"name": "calculator", "arguments": '{"expression": "6*7"}'},
+        }
+    ],
+}
+_FALLBACK_RUNS = {
+    # A 402 is credit-terminal: no in-place retry, straight to the fallback.
+    "credit": (
+        [_credit()],
+        [("agent_first", "error", _DS, 0, 0), ("tool_loop", "complete", _GQ, 1, 0)],
+    ),
+    # The in-place retries ran out first.
+    "exhausted": (
+        [_busy(), _busy(), _busy()],
+        [
+            ("agent_first", "error", _DS, 0, 0),
+            ("tool_loop", "error", _DS, 0, 1),
+            ("tool_loop", "error", _DS, 0, 2),
+            ("tool_loop", "complete", _GQ, 1, 0),
+        ],
+    ),
+    # The fallback carries the tool history its run earned.
+    "tool_then_credit": (
+        [_NATIVE_TOOL_CALL, _credit()],
+        [
+            ("agent_first", "complete", _DS, 0, 0),
+            ("tool_loop", "error", _DS, 0, 1),
+            ("tool_loop", "complete", _GQ, 1, 0),
+        ],
+    ),
+    # The fallback answers with a tool call and its chain goes on.
+    "credit_then_tool": (
+        [_credit(), _NATIVE_TOOL_CALL],
+        [
+            ("agent_first", "error", _DS, 0, 0),
+            ("tool_loop", "complete", _GQ, 1, 0),
+            ("tool_loop", "complete", _GQ, 1, 1),
+        ],
+    ),
+}
+
+
+async def _fallback_run(app, monkeypatch, run, **options):
+    script, lineage = {**_FALLBACK_RUNS, **_FAILED_FALLBACK_RUNS}[run]
+    calls = _fallback_replies(app, monkeypatch, script, **options)
+    result = await app.controller.submit_draft(
+        "Use calculator once" if _NATIVE_TOOL_CALL in script else "Hello",
+        session_id=app.session.id,
+    )
+    assert result.accepted
+    turn_id = app.store.get_message(result.user_message_id).persisted_message_id
+    return calls, result, turn_id, lineage
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("run", list(_FALLBACK_RUNS))
+async def test_a_captured_agent_run_falls_back_to_its_configured_provider(
+    tmp_path, monkeypatch, run
+):
+    """TASK-42525 AC#1, #2, #4 and #5: the fallback runs and is traced.
+
+    With `[console] agent_fallback_providers = ["groq"]`, a run whose
+    deepseek calls fail goes on to groq, with Capture Off. With Capture On
+    the run planned no fallback (round 24), and before that the fallback was
+    refused at dispatch (`trace_tool_chain_unavailable`) and left its call
+    `reserved`. The fallback now starts a new chain of the same run.
+    """
+    from Tests.Chat.test_console_project_instruction_traces import _project_console
+    from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
+
+    async with _project_console(tmp_path, monkeypatch) as app:
+        calls, result, turn_id, lineage = await _fallback_run(app, monkeypatch, run)
+
+        assert app.controller.run_state.status.value == "completed", (
+            app.controller.run_state.visible_copy,
+            app.reservation_errors,
+        )
+        assert app.reservation_errors == []
+        reply = app.store.get_message(result.assistant_message_id)
+        assert (reply.status, reply.content) == ("complete", "Fixture reply")
+        assert [provider for provider, _ in calls] == [row[2] for row in lineage]
+        # AC#2, #4: the failed calls, then the fallback's new chain, each
+        # with the provider it went to; nothing is left reserved.
+        assert _chain_calls(app, turn_id) == lineage
+        traced = ConsoleTraceNativeReader(app.db).read_calls(turn_id)
+        assert [(call.capture.provider, call.capture.status) for call in traced] == [
+            (row[2], row[1]) for row in lineage
+        ]
+
+
+# A failed fallback run: the fallback fails too, and the list is spent.
+_FAILED_FALLBACK_RUNS = {
+    "credit_then_failed": (
+        [_credit(), _credit()],
+        [("agent_first", "error", _DS, 0, 0), ("tool_loop", "error", _GQ, 1, 0)],
+    ),
+    "tool_then_credit_then_failed": (
+        [_NATIVE_TOOL_CALL, _credit(), _credit()],
+        [
+            ("agent_first", "complete", _DS, 0, 0),
+            ("tool_loop", "error", _DS, 0, 1),
+            ("tool_loop", "error", _GQ, 1, 0),
+        ],
+    ),
+    "credit_then_tool_then_failed": (
+        [_credit(), _NATIVE_TOOL_CALL, _credit()],
+        [
+            ("agent_first", "error", _DS, 0, 0),
+            ("tool_loop", "complete", _GQ, 1, 0),
+            ("tool_loop", "error", _GQ, 1, 1),
+        ],
+    ),
+}
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("project", [True, False], ids=["project", "no_project"])
+@pytest.mark.parametrize(
+    "run", ["credit", "tool_then_credit", "credit_then_tool", *_FAILED_FALLBACK_RUNS]
+)
+async def test_the_message_after_a_captured_fallback_run_is_sent(
+    tmp_path, monkeypatch, run, project
+):
+    """TASK-42525: the next message proves the run across its chains.
+
+    Its trace replaces the finished run's suffix (project context, tool
+    history) only on the run's own evidence. A fallback run spans two chains:
+    the history was earned in either, and the terminal call is the fallback
+    chain's. Completed or failed (TASK-42534), the next message is sent and
+    the run's calls are unchanged.
+    """
+    from Tests.Chat.test_console_project_instruction_traces import (
+        GUIDANCE,
+        _project_console,
+    )
+
+    async with _project_console(
+        tmp_path, monkeypatch, source_name="AGENTS.md" if project else "NOTES.md"
+    ) as app:
+        calls, _result, turn_id, lineage = await _fallback_run(app, monkeypatch, run)
+        status = "failed" if run in _FAILED_FALLBACK_RUNS else "completed"
+        assert app.controller.run_state.status.value == status
+        before = _chain_calls(app, turn_id)
+        assert before == lineage
+
+        follow_up = await app.controller.submit_draft(
+            "And now?", session_id=app.session.id
+        )
+
+        assert follow_up.accepted
+        assert app.reservation_errors == []
+        assert app.controller.run_state.status.value == "completed"
+        reply = app.store.get_message(follow_up.assistant_message_id)
+        assert (reply.status, reply.content) == ("complete", "Fixture reply")
+        provider, wire = calls[-1]
+        assert provider == _DS  # a new run starts on the session's provider
+        assert any(GUIDANCE in str(row.get("content")) for row in wire) is project
+        assert _chain_calls(app, turn_id) == before
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize(
+    ("run", "chain"), [("tool_then_credit", 0), ("credit_then_tool", 1)]
+)
+async def test_a_fallback_run_never_lends_its_tool_history_a_failed_call(
+    tmp_path, monkeypatch, run, chain
+):
+    """TASK-42525 with TASK-42534's rule: in either chain of a fallback run,
+    the call that answered with the tool call must have borne a response.
+    Read as failed, the next message is refused before the provider is asked,
+    and the trace is left alone."""
+    from Tests.Chat.test_console_project_instruction_traces import _project_console
+    from tldw_chatbook.Chat.console_trace_models import TraceCallState
+
+    async with _project_console(tmp_path, monkeypatch) as app:
+        calls, _result, turn_id, _lineage = await _fallback_run(app, monkeypatch, run)
+        before = _chain_calls(app, turn_id)
+        sent = len(calls)
+        repository = app.factory.repository
+        logical = repository.get_call_by_logical_identity
+        answered = [row for row in before if row[3] == chain and row[1] == "complete"][
+            0
+        ]
+
+        def answered_by_a_failed_call(cursor, **identity):
+            call = logical(cursor, **identity)
+            if (
+                call is not None
+                and call.turn_id == turn_id
+                and call.provider_name == answered[2]
+                and call.call_sequence == answered[4]
+            ):
+                return replace(call, state=TraceCallState.ERROR, outcome="error")
+            return call
+
+        monkeypatch.setattr(
+            repository, "get_call_by_logical_identity", answered_by_a_failed_call
+        )
+        follow_up = await app.controller.submit_draft(
+            "And now?", session_id=app.session.id
+        )
+
+        assert follow_up.accepted
+        assert app.reservation_errors == ["completed_tool_turn_lineage"]
+        assert app.controller.run_state.status.value == "blocked"
+        assert len(calls) == sent
+        assert _chain_calls(app, turn_id) == before
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+async def test_an_interrupted_fallback_run_that_was_discarded_still_closes(
+    tmp_path, monkeypatch
+):
+    """TASK-42525 with TASK-42534's restart case: the fallback answered with a
+    tool call and the run's next call was refused, so two calls (one per
+    chain) bore a response and stayed `response_started`. Startup recovery
+    settles them `interrupted`; the user discards the reply and sends again,
+    and the next message closes the run across both chains."""
+    from datetime import datetime, timezone
+
+    from Tests.Chat.test_console_project_instruction_traces import _project_console
+    from Tests.Chat.test_console_trace_discarded_tool_run import _reload_console
+    from tldw_chatbook.Chat.console_trace_settlement import (
+        ConsoleTraceSettlementCoordinator,
+    )
+
+    async with _project_console(tmp_path, monkeypatch) as app:
+        calls = _fallback_replies(
+            app, monkeypatch, [_NATIVE_TOOL_CALL, _credit(), _NATIVE_TOOL_CALL]
+        )
+        original = type(app.factory.service).prepare_current_surface_delta
+
+        def reject_fourth(instance, *args, **kwargs):
+            if len(calls) == 3:
+                raise ValueError("unsupported_surface_change")
+            return original(instance, *args, **kwargs)
+
+        with monkeypatch.context() as fault:
+            fault.setattr(
+                type(app.factory.service),
+                "prepare_current_surface_delta",
+                reject_fourth,
+            )
+            first = await app.controller.submit_draft(
+                "Use calculator once", session_id=app.session.id
+            )
+        assert first.accepted
+        turn_id = app.store.get_message(first.user_message_id).persisted_message_id
+        recovered = ConsoleTraceSettlementCoordinator(
+            app.factory.repository
+        ).recover_open_calls(
+            app.db,
+            occurred_at=datetime.now(timezone.utc).isoformat(),
+            recovery_grace_seconds=0,
+        )
+        # Recovery orders by run id, and each chain's id is random.
+        assert sorted(call.provider_name for call in recovered) == [_DS, _GQ]
+        before = _chain_calls(app, turn_id)
+        assert before == [
+            ("agent_first", "interrupted", _DS, 0, 0),
+            ("tool_loop", "error", _DS, 0, 1),
+            ("tool_loop", "interrupted", _GQ, 1, 0),
+        ]
+        await _reload_console(app)
+        assert (await app.controller.discard_dispatch_recovery(app.session.id)).accepted
+        app.reservation_errors.clear()
+
+        follow_up = await app.controller.submit_draft(
+            "And now?", session_id=app.session.id
+        )
+
+        assert follow_up.accepted
+        assert app.reservation_errors == []
+        assert app.controller.run_state.status.value == "completed"
+        assert len(calls) == 4
+        assert _chain_calls(app, turn_id) == before
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize(
+    ("configured", "chain"),
+    [
+        # A runtime that strays from the configuration.
+        pytest.param(("groq",), ("openai",), id="unconfigured"),
+        # The list is spent: a second fallback has nowhere to go.
+        pytest.param(("groq",), ("groq", "openai"), id="beyond_the_list"),
+        # The list is walked once, in order; it never goes back.
+        pytest.param(("groq", "openai"), ("openai", "groq"), id="back_up_the_list"),
+    ],
+)
+async def test_a_captured_run_falls_back_only_along_its_configured_list(
+    tmp_path, monkeypatch, configured, chain
+):
+    """TASK-42525: only the run's configured fallback list starts a chain.
+
+    The adapter mints a new chain for a call to another target only when the
+    target is the next unused entry of the list the run was planned with.
+    Any other switch is refused before the request is prepared, so no call is
+    reserved and the provider is never asked.
+    """
+    from Tests.Chat.test_console_project_instruction_traces import _project_console
+
+    async with _project_console(tmp_path, monkeypatch) as app:
+        calls = _fallback_replies(
+            app,
+            monkeypatch,
+            [_credit()] * len(chain),
+            configured=configured,
+            chain=chain,
+        )
+        result = await app.controller.submit_draft("Hello", session_id=app.session.id)
+
+        assert result.accepted
+        assert app.controller.run_state.status.value == "failed"
+        assert app.reservation_errors == []
+        allowed = len(chain) - 1
+        assert [provider for provider, _ in calls] == [_DS, *chain[:allowed]]
+        turn_id = app.store.get_message(result.user_message_id).persisted_message_id
+        assert [(row[2], row[3]) for row in _chain_calls(app, turn_id)] == [
+            (_DS, 0),
+            *((provider, index + 1) for index, provider in enumerate(chain[:allowed])),
+        ]
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "valid",
+        "new_instructions",
+        "same_target",
+        "unearned_history",
+        "after_response",
+        "after_partial_response",
+        "other_actor",
+        "cross_turn",
+        "cross_owner",
+    ],
+)
+async def test_a_fallback_chain_follows_only_its_failed_chain(
+    tmp_path, make_database, make_gateway, monkeypatch, scenario
+):
+    """TASK-42525: a new chain's first call is admitted only as a fallback.
+
+    It must follow the failed call of another chain of its actor, in the
+    same owner, turn and policy; that call bore no response; the new call
+    goes to another target and appends nothing. Its own rendered system
+    row may differ from the failed call's (`new_instructions`, with the
+    system row in the message list). Each refusal comes before anything is
+    reserved, and the provider is never asked.
+    """
+    database = make_database(tmp_path / "fallback.sqlite", "fallback")
+    conversation = database.add_conversation({"title": "fallback"})
+    _, revision = _saved_message(database, conversation, "hello")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    actor = new_opaque_id()
+    factory = ConsoleTraceBoundaryFactory(database)
+    calls = []
+
+    def provider(**kwargs):
+        calls.append(kwargs["api_endpoint"])
+        if kwargs["api_endpoint"] == "deepseek" and scenario != "after_response":
+            raise ChatRateLimitError("fixture", provider="deepseek")
+        return {"choices": [{"message": {"content": "answered"}}]}
+
+    gateway = make_gateway(
+        chat_api_call_fn=provider,
+        trace_call_boundary_factory=factory,
+        safe_error_copy=lambda _provider, _exc: "fixture provider failure",
+    )
+    deepseek = ConsoleProviderResolution(
+        ready=True,
+        provider="deepseek",
+        execution_key="deepseek",
+        model="deepseek-chat",
+        base_url="https://api.deepseek.com",
+        api_key="fixture",
+        streaming=False,
+    )
+    messages, descriptors = [{"role": "user", "content": "hello"}], [revision]
+    if scenario == "new_instructions":
+        messages.insert(0, {"role": "system", "content": "Native tool protocol"})
+        descriptors.insert(
+            0,
+            ProviderArtifactTraceProvenance(
+                TraceProvenanceSource.RENDERED_SYSTEM, policy
+            ),
+        )
+        prepare = gateway.prepare_chat_request
+
+        def distinct_roles(*args, **kwargs):
+            prepared = prepare(*args, **kwargs)
+            return prepare_provider_request(
+                prepared.semantic,
+                wire_style="distinct_roles",
+                provider=prepared.provider,
+                model=prepared.model,
+                capacity=prepared.capacity,
+            )
+
+        monkeypatch.setattr(gateway, "prepare_chat_request", distinct_roles)
+
+    async def send(resolution, route, chain):
+        request = _semantic_request(
+            messages, descriptors, policy, route=route, actor_id=actor, chain_id=chain
+        )
+        return [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                request,
+                route=route,
+                route_actor_id=actor,
+                route_chain_id=chain,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ]
+
+    if scenario == "after_response":
+        assert await send(deepseek, ConsoleRequestRoute.AGENT_FIRST, new_opaque_id())
+    else:
+        with pytest.raises(ChatRateLimitError):
+            await send(deepseek, ConsoleRequestRoute.AGENT_FIRST, new_opaque_id())
+    target = _GROQ
+    if scenario == "new_instructions":
+        messages[0] = {"role": "system", "content": "Text tool protocol"}
+    elif scenario == "same_target":
+        target = deepseek
+    elif scenario == "unearned_history":
+        messages = messages + [
+            {"role": "tool", "content": "unobserved", "tool_call_id": "forged"}
+        ]
+        descriptors = descriptors + [
+            ProviderArtifactTraceProvenance(TraceProvenanceSource.TOOL_RESULT, policy)
+        ]
+    elif scenario == "after_partial_response":
+        get_call = factory.repository.get_call
+
+        def partly_answered(cursor, call_id):
+            call = get_call(cursor, call_id)
+            if call is not None and call.provider_name == "deepseek":
+                return replace(call, response_started_at=call.dispatch_started_at)
+            return call
+
+        monkeypatch.setattr(factory.repository, "get_call", partly_answered)
+    elif scenario == "other_actor":
+        actor = new_opaque_id()
+    elif scenario == "cross_turn":
+        _, later = _saved_message(database, conversation, "again")
+        messages = messages + [{"role": "user", "content": "again"}]
+        descriptors = descriptors + [later]
+    elif scenario == "cross_owner":
+        other = database.add_conversation({"title": "other"})
+        _, revision = _saved_message(database, other, "hello")
+        descriptors = [revision]
+    if scenario in {"valid", "new_instructions"}:
+        assert await send(target, ConsoleRequestRoute.TOOL_LOOP, new_opaque_id()) == [
+            "answered"
+        ]
+        assert calls == ["deepseek", "groq"]
+    else:
+        with pytest.raises(TraceCallPersistenceError):
+            await send(target, ConsoleRequestRoute.TOOL_LOOP, new_opaque_id())
+        assert calls == ["deepseek"]
+    with database.transaction() as cursor:
+        assert (
+            cursor.execute(
+                "SELECT COUNT(*) FROM console_trace_calls WHERE state = 'reserved'"
+            ).fetchone()[0]
+            == 0
+        )
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+async def test_a_fallback_that_must_rewrite_the_runs_tool_history_is_refused(
+    tmp_path, monkeypatch
+):
+    """TASK-42525's limit: a fallback that re-encodes earned tool history.
+
+    The model answered with a tool call written as text; the fallback
+    provider takes tool calls natively, so ADR-110 rewrites those rows for
+    it. That rewrite would replace rows already on the trace surface, which
+    the new-chain amendment does not grant. The run stops on the trace card
+    before groq is asked, with nothing reserved.
+    """
+    from Tests.Chat.test_console_project_instruction_traces import _project_console
+
+    async with _project_console(tmp_path, monkeypatch) as app:
+        calls = _fallback_replies(app, monkeypatch, [_TOOL_CALL, _credit()])
+        result = await app.controller.submit_draft(
+            "Use calculator once", session_id=app.session.id
+        )
+
+        assert result.accepted
+        assert app.controller.run_state.status.value == "blocked"
+        assert app.reservation_errors == ["unsupported_surface_change"]
+        assert [provider for provider, _ in calls] == [_DS, _DS]
+        turn_id = app.store.get_message(result.user_message_id).persisted_message_id
+        # The blocked run leaves its answered call open, as any blocked run.
+        assert _chain_calls(app, turn_id) == [
+            ("agent_first", "response_started", _DS, 0, 0),
+            ("tool_loop", "error", _DS, 0, 1),
+        ]
+        assert app.controller.run_state.visible_copy == (
+            "Trace capture could not start. Retry, Send without capture, or Cancel."
+        )
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("reads_as", ["answered", "unsettled"])
+async def test_the_next_message_rechecks_the_fallbacks_link(
+    tmp_path, monkeypatch, reads_as
+):
+    """TASK-42525: the next message follows the run back to its first chain
+    and rechecks each link. The call a fallback followed must be a failed
+    call that bore no response; read as anything else, the earlier chain's
+    tool history is not this run's, and the next message is refused before
+    the provider is asked."""
+    from Tests.Chat.test_console_project_instruction_traces import _project_console
+    from tldw_chatbook.Chat.console_trace_models import TraceCallState
+
+    async with _project_console(tmp_path, monkeypatch) as app:
+        calls, _result, turn_id, _lineage = await _fallback_run(
+            app, monkeypatch, "tool_then_credit"
+        )
+        before = _chain_calls(app, turn_id)
+        sent = len(calls)
+        repository = app.factory.repository
+        get_call = repository.get_call
+
+        def misread(cursor, call_id):
+            call = get_call(cursor, call_id)
+            if call is None or (
+                call.turn_id,
+                call.provider_name,
+                call.call_sequence,
+            ) != (
+                turn_id,
+                _DS,
+                1,
+            ):
+                return call
+            if reads_as == "answered":
+                return replace(
+                    call,
+                    state=TraceCallState.COMPLETE,
+                    outcome="complete",
+                    response_started_at=call.dispatch_started_at,
+                )
+            return replace(call, state=TraceCallState.DISPATCH_UNKNOWN, outcome=None)
+
+        monkeypatch.setattr(repository, "get_call", misread)
+        follow_up = await app.controller.submit_draft(
+            "And now?", session_id=app.session.id
+        )
+
+        assert follow_up.accepted
+        assert app.reservation_errors == ["unsupported_surface_change"]
+        assert app.controller.run_state.status.value == "blocked"
+        assert len(calls) == sent
+        assert _chain_calls(app, turn_id) == before
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+async def test_a_fallback_to_a_text_tool_provider_brings_its_own_instructions(
+    tmp_path, monkeypatch
+):
+    """TASK-42525: a new chain's system prompt is its own.
+
+    deepseek takes tool calls natively; huggingface reads them from text, so
+    its calls carry no tool schemas and a system prompt with the text tool
+    protocol. Before any tool call the history needs no rewrite. The new
+    chain's system prompt and schemas are its own header's, not compared with
+    the failed call's as a retry's would be.
+    """
+    from Tests.Chat.test_console_project_instruction_traces import _project_console
+
+    async with _project_console(tmp_path, monkeypatch) as app:
+        calls = _fallback_replies(
+            app, monkeypatch, [_credit()], configured=("huggingface",)
+        )
+        handler, headers = app.gateway._chat_api_call_fn, []
+
+        def header_of(*args, **kwargs):
+            headers.append((kwargs["system_message"], "tools" in kwargs))
+            return handler(*args, **kwargs)
+
+        monkeypatch.setattr(app.gateway, "_chat_api_call_fn", header_of)
+        result = await app.controller.submit_draft("Hello", session_id=app.session.id)
+
+        assert app.controller.run_state.status.value == "completed", (
+            app.reservation_errors
+        )
+        (_, primary), (_, fallback) = calls
+        assert primary == fallback  # the same history
+        (system, native), (text_system, text_native) = headers
+        assert (native, text_native) == (True, False)
+        assert "```tool_call" in text_system and system != text_system
+        turn_id = app.store.get_message(result.user_message_id).persisted_message_id
+        assert _chain_calls(app, turn_id) == [
+            ("agent_first", "error", _DS, 0, 0),
+            ("tool_loop", "complete", "huggingface", 1, 0),
+        ]

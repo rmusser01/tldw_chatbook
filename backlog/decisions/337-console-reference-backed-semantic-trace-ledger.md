@@ -666,6 +666,8 @@ system content cannot bypass unchanged-message checks. Provider, model, endpoint
 generation parameters, response format, reasoning controls, tool schemas and
 literal provider envelope must also match the preceding failed attempt. The
 AGENT_FIRST to TOOL_LOOP route transition is allowed; it grants no target change.
+(A provider fallback is not such a retry: it starts a new chain, amendment
+2026-11-24, TASK-42525.)
 An appended or replaced surface, unknown/open dispatch, stale or foreign chain,
 or unsaved settlement remains ineligible. Each retry reserves a distinct ordered
 call; it never rewrites the failed call or relabels it as a tool response.
@@ -721,6 +723,65 @@ streamed call the resend repeated, not with the resend, when that call failed
 before any response and its stored settings equal the resend's apart from the
 streaming flag (the resend was admitted only as that verified True -> False
 flip). Every other target, setting and surface change remains refused.
+
+### Amendment recorded 2026-11-24 (owner-approved): a provider fallback starts a new chain (TASK-42525)
+
+The owner approved this on 2026-11-24 ("2 ok", approving the task's
+recommendation). An agent's provider fallback (ADR-110) goes to another
+provider, model or endpoint, and may re-encode the run's history for that
+provider's tool protocol. It is not a retry, so the 2026-10-04 rule ("a failed
+call authorizes an unchanged retry") refused it at dispatch, and a captured run
+planned no fallback at all. Under Capture On a fallback now starts a new chain
+of the same run. The retry rule inside a chain is unchanged.
+
+1. **Identity.** A run's chains share its actor. The fallback mints a new
+   chain, so its calls are run `actor:new_chain`. Its first call is that
+   chain's sequence 0, on the TOOL_LOOP route: it is the run's next model call
+   and carries the run's history. That shared actor, plus the call boundary
+   order below, is the link to the failed chain. It is content-free and needs
+   no schema.
+2. **Who mints a chain.** Only the Console agent adapter of a primary
+   Capture-On run. It does so when the runtime's call names a target other
+   than its chain's, and only if that target is the next unused entry of the
+   run's configured fallback list (each entry once, in order). Any other target
+   change is refused before preparation, so nothing is reserved. Spawned
+   children keep their single chain and segment.
+3. **Admitting the chain's first call** (in the reservation transaction, so a
+   refusal rolls back and leaves no reserved call). The call whose boundary
+   directly precedes it must be a call of another chain of the same actor. If
+   that call is a failed llama.cpp resend, the streamed call it resent counts
+   instead. That failed call must:
+   - be a settled ERROR that never started a response, with no answering
+     resend;
+   - have the same owner, segment, turn and frozen policy;
+   - still hold the surface tail.
+
+   The new call must append and replace nothing: the run's history on the
+   surface is what its earlier chains earned. Its provider or model must differ
+   from the failed call's, because a call to the same target is a retry and
+   stays in its chain. Its rendered system row, tool schemas and generation
+   settings belong to its own header and are not compared with the failed
+   call's.
+4. **The run's origin** is the AGENT_FIRST call. A fallback chain reaches it
+   through these links, followed back through earlier fallbacks. Every TOOL_LOOP
+   origin check (owner, segment, turn, policy, source pin) applies to it as
+   before. Later calls in the new chain are ordinary TOOL_LOOP calls of that
+   chain: an in-place retry after one of them fails is compared with it, under
+   the unchanged retry rule.
+5. **Completed-turn witness.** A run is its AGENT_FIRST chain plus the fallback
+   chains linked from it. The witness's origin is the AGENT_FIRST call. Every
+   removed node must have been appended by a tool-loop call (sequence 1 or
+   later) of one of those chains, and that call's predecessor in its own chain
+   must have borne a response (TASK-42534). Every call boundary between origin
+   and terminal must belong to one of those chains, or be a llama.cpp resend of
+   one of their calls. A chain's first call appends nothing, so it never vouches
+   for tool history.
+
+Still refused:
+- A fallback whose history projection rewrites rows already on the surface
+  (native and fenced tool protocols, after tool activity). It needs a
+  replacement, which this amendment does not grant.
+- A spawned child's preset fallback.
 
 ## Current-owner integration amendment (2026-10-13)
 

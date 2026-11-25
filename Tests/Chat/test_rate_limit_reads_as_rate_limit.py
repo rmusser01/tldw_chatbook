@@ -446,20 +446,12 @@ def test_run_reply_plans_a_captured_run_with_its_model_retries(mode: str) -> Non
     assert budget is not None and budget.max_model_retries == 2
 
 
-@pytest.mark.parametrize(
-    ("mode", "chain"),
-    [("CAPTURE_ON", ()), ("CAPTURE_OFF", ("anthropic", "groq"))],
-)
-def test_a_captured_run_never_falls_back_to_another_provider(
-    mode: str, chain: tuple[str, ...]
-) -> None:
-    """Review round 1 (F7): with [console] agent_fallback_providers set, a
-    429 or 5xx under capture went on to the ADR-110 fallback call, to another
-    provider, and the trace contract refused it: the 'Trace capture blocked --
-    the provider was not contacted' card again, hiding the provider's own
-    error. Until the trace contract can record such a call (TASK-42525), a
-    captured run plans no fallback chain; Capture Off keeps the configured
-    one."""
+@pytest.mark.parametrize("mode", ["CAPTURE_ON", "CAPTURE_OFF"])
+def test_a_captured_run_plans_its_configured_fallback_chain(mode: str) -> None:
+    """Review round 1 (F7) planned no fallback chain under capture, because
+    the trace contract refused the fallback call ('Trace capture blocked --
+    the provider was not contacted'). TASK-42525: the trace records that call
+    as a new chain of the run, so both modes plan the configured chain."""
     from unittest.mock import MagicMock
 
     from tldw_chatbook.Agents.agent_models import RunBudget
@@ -507,7 +499,7 @@ def test_a_captured_run_never_falls_back_to_another_provider(
                 capture_mode=getattr(ConsoleTraceCaptureMode, mode),
             )
 
-    assert seen == [chain]
+    assert seen == [("anthropic", "groq")]
 
 
 def test_an_anthropic_retired_model_keeps_its_404() -> None:

@@ -448,11 +448,13 @@ for example "Provider error from Google Gemini: rate limit exceeded. Status:
 429. Google Gemini says: You exceeded your current quota… Free-tier limit: 20
 requests per day for gemini-3.8-flash. Retry in 38527s." A run retries a 429
 or 5xx a couple of times first (`[console] agent_max_model_retries`, 2 by
-default), with trace capture on or off. If the error persists, a captured chat
-(trace capture on, the default) does not switch to a provider listed in
-`[console] agent_fallback_providers`: the provider's error ends the run, and
-you send again when the limit allows. Turn capture off for a chat and its runs
-try the fallback providers once the retries are spent.
+default), with trace capture on or off. If the error persists, the run
+switches to the next ready provider listed in `[console]
+agent_fallback_providers`, with trace capture on or off; a 402 or 403 (out of
+credit or quota) switches at once. When the list is spent, the provider's
+error ends the run, and you send again when the limit allows. With capture on,
+the trace shows the failed calls and the fallback provider's calls, each with
+its provider (see [Semantic trace capture](console/semantic-trace-capture.md)).
 
 A known connection failure blocks sending too. When a connection test of
 this chat's server — **Test connection & list models** in Chat settings, or

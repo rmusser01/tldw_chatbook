@@ -1133,7 +1133,10 @@ _BUDGETS: dict[str, int] = {
     # +60, exact: 10,170.
     # 2026-11-24, TASK-42472 AC#9 (round-24 stack): `captured_run_budget` is
     # deleted, 10,170 -> 10,142, exact measurement.
-    "tldw_chatbook/Chat/console_agent_bridge.py": 10142,
+    # 2026-11-25, TASK-42525 (round 26): `captured_fallback_providers` is
+    # deleted (-25) and the streaming adapter keeps the run's configured
+    # fallback list (+3), 10,142 -> 10,120, exact measurement.
+    "tldw_chatbook/Chat/console_agent_bridge.py": 10120,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # TASK-36944.2, 2026-11-03: +6 for the public `setting` Console reads.

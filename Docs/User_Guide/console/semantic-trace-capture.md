@@ -245,6 +245,15 @@ transcript:
 - A llama.cpp stream that returns no text is asked once more without
   streaming, as its own call. When that resend answers, including with a tool
   call, the run continues from its reply with capture on.
+- When an agent run switches to a provider from `[console]
+  agent_fallback_providers`, the trace keeps the failed calls and records the
+  fallback provider's calls after them, each with its provider and model. The
+  fallback carries the run's history and tool results as they were. One
+  exception: when the run's earlier tool calls must be rewritten for the
+  fallback provider's tool-call format (for example, tool calls a model wrote
+  as text, sent on to a provider that takes them natively), capture cannot
+  record the rewrite yet. The run stops with "Trace capture could not start"
+  before the fallback provider is asked.
 - Edit & resend and Regenerate send their reply with capture off, so that reply
   has no trace call of its own. Your next send in the chat is captured as usual.
   It records the edited branch as one bounded replacement of the earlier trace

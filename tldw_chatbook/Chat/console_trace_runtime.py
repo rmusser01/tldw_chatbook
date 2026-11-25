@@ -16,6 +16,9 @@ from tldw_chatbook.Chat.console_trace_continuation import (
     LiveNativeContinuationCustody,
     answering_stream_fallback,
     failed_stream_fallback_parent,
+    fallback_parent,
+    falls_back_from,
+    run_chains,
 )
 from tldw_chatbook.Chat.console_trace_errors import (
     TraceReservationRefused,
@@ -573,8 +576,26 @@ class ConsoleTraceBoundaryFactory:
                     )
                 ):
                     raise ValueError("trace_fresh_turn_requires_owned_recovery")
+                fallback = None
+                if tool_loop and call_sequence == 0 and owner is not None:
+                    # TASK-42525: a provider fallback's new chain of the run.
+                    latest_call = self.repository.get_latest_call_boundary(
+                        cursor, segment_id
+                    )
+                    fallback = fallback_parent(
+                        self.repository,
+                        cursor,
+                        None
+                        if latest_call is None
+                        else self.repository.get_call(cursor, latest_call.call_id),
+                        run_id=run_id,
+                    )
                 if tool_loop:
-                    origin = self.repository.get_run_origin(cursor, run_id)
+                    origin, _ = run_chains(
+                        self.repository,
+                        cursor,
+                        run_id if fallback is None else fallback.run_id,
+                    )
                     if (
                         origin is None
                         or owner is None
@@ -608,7 +629,7 @@ class ConsoleTraceBoundaryFactory:
                         or (has_current_text_transform and origin_pins[0][0] is None)
                     ):
                         raise ValueError("trace_tool_chain_source_mismatch")
-                    previous = self.repository.get_call_by_logical_identity(
+                    previous = fallback or self.repository.get_call_by_logical_identity(
                         cursor,
                         owner_id=owner.owner_id,
                         segment_id=segment_id,
@@ -663,6 +684,16 @@ class ConsoleTraceBoundaryFactory:
                     failed_call_retry = (
                         previous.state is TraceCallState.ERROR and answer is None
                     )
+                    if fallback is not None and not falls_back_from(
+                        previous,
+                        getattr(_resolution, "execution_key", None)
+                        or _resolution.provider,
+                        _resolution.model,
+                    ):
+                        # The new chain follows a failed call that bore no
+                        # response, to another target (TASK-42525). Like a
+                        # retry, it may append nothing (checked below).
+                        raise ValueError("trace_tool_chain_unavailable")
                     if previous.state is TraceCallState.ERROR and (
                         previous.outcome != TraceCallState.ERROR.value
                         or previous.settled_at is None
@@ -779,9 +810,9 @@ class ConsoleTraceBoundaryFactory:
                     origin = (
                         None
                         if terminal is None
-                        else self.repository.get_run_origin(
-                            cursor, (resent or terminal).run_id
-                        )
+                        else run_chains(
+                            self.repository, cursor, (resent or terminal).run_id
+                        )[0]
                     )
                     if terminal is not None and origin is not None:
                         source_revision_id = None
@@ -944,6 +975,7 @@ class ConsoleTraceBoundaryFactory:
                     raise ValueError("trace_tool_chain_unavailable")
                 if (
                     failed_call_retry
+                    and fallback is None
                     and provenance.messages_payload
                     and _is_rendered_system_row(
                         provenance.messages_payload[0], request.messages_payload[0]

@@ -716,31 +716,6 @@ def console_run_budget() -> RunBudget:
     )
 
 
-def captured_fallback_providers(
-    capture_mode: ConsoleTraceCaptureMode,
-) -> tuple[str, ...] | None:
-    """A captured run plans no provider fallback (TASK-34100.2 review F7).
-
-    ADR-110's fallback call follows a failed model request and goes to another
-    provider, model or endpoint. The trace contract admits a call after a
-    failed one only as an unchanged retry of it, so it refuses to reserve the
-    fallback (``trace_tool_chain_unavailable``), and the Console showed 'Trace
-    capture blocked -- the provider was not contacted' instead of the
-    provider's own error. Until the trace contract can record that call
-    (TASK-42525), a captured run ends on the provider's error once its in-place
-    retries are spent.
-
-    Args:
-        capture_mode: The run's trace capture mode.
-
-    Returns:
-        ``()`` (no chain) under capture, else ``None``: the configured chain.
-    """
-    if capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON:
-        return ()
-    return None
-
-
 def intersect_console_run_budget(
     maximum: RunBudget, live: RunBudget
 ) -> RunBudget:
@@ -3428,8 +3403,11 @@ class _StreamingModelAdapter:
         capture_mode: ConsoleTraceCaptureMode = ConsoleTraceCaptureMode.CAPTURE_OFF,
         trace_request: PreparedConsoleRequest | None = None,
         live_usage_sink: Callable[[AgentLiveUsageEvent], None] | None = None,
+        fallback_providers: tuple[str, ...] = (),
     ):
         self._store = store
+        # The run's configured provider fallback list (TASK-42525).
+        self._fallback_providers = fallback_providers
         self._gateway = provider_gateway
         self._resolution = resolution
         self._assistant_message_id = assistant_message_id

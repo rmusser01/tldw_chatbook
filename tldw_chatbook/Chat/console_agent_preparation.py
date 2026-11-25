@@ -583,7 +583,6 @@ def _prepare_native_reply(
         agent_definitions=runtime_definitions,
         fleet_max_live=fleet_max_live,
         run_budget=run_budget,
-        fallback_providers=native_host.captured_fallback_providers(capture_mode),
         persona_policy_rules=persona_policy_rules,
         profile_context_service=profile_context_service,
         personal_context_snapshot=personal_context_snapshot,
@@ -1207,6 +1206,7 @@ def _prepare_native_reply(
         generation_token=generation_token,
         capture_mode=capture_mode,
         trace_request=trace_request,
+        fallback_providers=tuple(config.fallback_providers or ()),
     )
 
     # PR3a-1 Task 6b (audit F1): this turn's own key into
