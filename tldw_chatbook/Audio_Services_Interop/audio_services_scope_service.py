@@ -590,12 +590,17 @@ class AudioServicesScopeService:
         *,
         mode: AudioServicesBackend | str | None = None,
         history_id: int,
+        include_content: bool = True,
     ) -> dict[str, Any]:
+        requested_mode = self._normalize_mode(mode)
+        kwargs = {"history_id": history_id}
+        if requested_mode is AudioServicesBackend.LOCAL and not include_content:
+            kwargs["include_content"] = False
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="audio.history.detail.local",
             method_name="get_tts_history_entry",
-            kwargs={"history_id": history_id},
+            kwargs=kwargs,
         )
         return self._with_record_id(
             normalized_mode, "audio_history", result, history_id

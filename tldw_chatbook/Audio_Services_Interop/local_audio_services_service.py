@@ -288,6 +288,30 @@ class LocalAudioServicesService:
             chunks.append(bytes(chunk))
         return b"".join(chunks)
 
+    async def _exact_local_speech(
+        self, *, provider, text, model, voice, response_format, speed,
+    ) -> bytes:
+        from tldw_chatbook.TTS import get_tts_service
+        from tldw_chatbook.TTS.adapter_types import TTSRequest
+
+        if provider != "audio_cpp":
+            raise ValueError("Choose the on-device audio.cpp speech runtime")
+        service = await get_tts_service()
+        request = TTSRequest(provider, model, text, voice, response_format, speed)
+        response, selection = await service.synthesize_exact(request)
+        try:
+            if selection.voice_id != voice or (response.provider_id, response.model_id, response.audio_format) != (
+                provider, model, response_format,
+            ):
+                raise ValueError("Local speech returned a different provider, model, voice, or format")
+            chunks = [bytes(chunk) async for chunk in response.byte_stream]
+            audio = b"".join(chunks)
+            if not audio:
+                raise ValueError("The speech runtime returned no audio")
+            return audio
+        finally:
+            await response.aclose()
+
     def get_tts_health(self) -> dict[str, Any]:
         self._enforce("audio.health.observe.local")
         providers = self._safe_mapping(self.tts_provider_loader)
@@ -345,17 +369,24 @@ class LocalAudioServicesService:
             stream = bool(payload.get("stream", True))
             speed = float(payload.get("speed", 1.0) or 1.0)
 
-            generator = self.tts_audio_generator or self._default_tts_audio_generator
-            audio = await self._maybe_await(
-                generator(
-                    text=text,
-                    model=model,
-                    voice=voice,
-                    response_format=response_format,
-                    stream=stream,
-                    speed=speed,
+            provider = payload.get("backend")
+            if provider is not None:
+                audio = await self._exact_local_speech(
+                    provider=provider, text=text, model=model, voice=voice,
+                    response_format=response_format, speed=speed,
                 )
-            )
+            else:
+                generator = self.tts_audio_generator or self._default_tts_audio_generator
+                audio = await self._maybe_await(
+                    generator(
+                        text=text,
+                        model=model,
+                        voice=voice,
+                        response_format=response_format,
+                        stream=stream,
+                        speed=speed,
+                    )
+                )
             if not isinstance(audio, bytes | bytearray):
                 raise ValueError("local_tts_generator_must_return_bytes")
 
@@ -369,7 +400,7 @@ class LocalAudioServicesService:
             record = {
                 "id": history_id,
                 "created_at": datetime.now(timezone.utc).isoformat(),
-                "provider": self._tts_provider_for_model(model),
+                "provider": provider or self._tts_provider_for_model(model),
                 "model": model,
                 "voice": voice,
                 "response_format": response_format,
@@ -425,13 +456,16 @@ class LocalAudioServicesService:
             "total": len(records),
         }
 
-    async def get_tts_history_entry(self, history_id: int) -> dict[str, Any]:
+    async def get_tts_history_entry(
+        self, history_id: int, *, include_content: bool = True,
+    ) -> dict[str, Any]:
         self._enforce("audio.history.detail.local")
         record = self._find_history_record(history_id)
         detail = self._history_summary(record)
-        detail["text"] = record.get("text")
-        content_base64 = record.get("content_base64")
-        detail["content"] = base64.b64decode(content_base64) if content_base64 else b""
+        if include_content:
+            detail["text"] = record.get("text")
+            content_base64 = record.get("content_base64")
+            detail["content"] = base64.b64decode(content_base64) if content_base64 else b""
         return detail
 
     async def update_tts_history_favorite(

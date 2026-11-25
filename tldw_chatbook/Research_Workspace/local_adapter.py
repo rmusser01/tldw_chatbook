@@ -315,6 +315,22 @@ class LocalResearchWorkspaceAdapter:
         self._require_local_ref(ref)
         return self._studio.owner.capabilities() if self._studio is not None else {}
 
+    async def studio_speech_choices(self, ref):
+        return await self._require_studio(ref).owner.speech_choices()
+
+    async def native_studio_capabilities(self, ref, route, sources):
+        ready = bool(route and sources and await self.studio_speech_choices(ref))
+        audio = ResearchCapability(
+            ready, "available" if ready else "local_speech_unavailable",
+            "Local speech is ready." if ready else "Local Audio Summary needs a ready on-device voice and saved history.",
+            "local_audio", "" if ready else "Verify a voice in the on-device Speech runtime, then refresh Studio with ready sources.",
+        )
+        return {
+            "generate_grounded_artifact": audio,
+            "create_audio_speech": audio,
+            "get_tts_history_entry": audio,
+        }
+
     async def chat_capability(self, ref: QualifiedWorkspaceRef) -> ResearchCapability:
         self._require_local_ref(ref)
         if self._chat is not None:

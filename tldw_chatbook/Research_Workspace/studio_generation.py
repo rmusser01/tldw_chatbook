@@ -56,6 +56,15 @@ _INSTRUCTIONS = {
 }
 
 
+def spoken_script(text: str, *, limit: int = 5000) -> str:
+    script = _CITATION_PATTERN.sub("", text).strip()
+    if not script or len(script) > limit:
+        raise ValueError(
+            f"The spoken summary must contain between 1 and {limit:,} characters"
+        )
+    return script
+
+
 def validate_diagram_text(kind: ResearchOutputKind, text: str) -> str:
     """Check bounded diagrams before saving code or text to a Server artifact."""
     body = text.replace("\r\n", "\n").strip()

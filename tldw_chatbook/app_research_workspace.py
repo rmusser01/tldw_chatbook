@@ -64,6 +64,7 @@ def create_research_workspace_screen(app: Any, screen_class: type, user_data_dir
                 getattr(app, "local_chatbook_service", None),
                 getattr(app, "local_study_service", None),
                 getattr(app, "local_quiz_service", None),
+                audio=getattr(app, "audio_services_scope_service", None),
             )
             if chat
             else None,

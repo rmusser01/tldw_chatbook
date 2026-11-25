@@ -175,6 +175,11 @@ STUDIO_OUTPUT_MAPPINGS: Mapping[
             "create_audio_speech_job", None, None,
             "research_workspace", "research_workspace_artifact_target", artifact_type="audio_overview",
         ),
+        (WorkspaceDataSource.LOCAL, ResearchOutputKind.AUDIO_SUMMARY): StudioOwnerMapping(
+            StudioOwnerKind.LOCAL_AUDIO, "Local TTS history", "id", "version", "workspace_membership",
+            "create_audio_speech", None, "delete_tts_history_entry",
+            "research_workspace", "research_workspace_artifact_target", membership_item_type="tts_audio",
+        ),
         **{
             (WorkspaceDataSource.SERVER, kind): StudioOwnerMapping(
                 StudioOwnerKind.SERVER_DATA_TABLE,

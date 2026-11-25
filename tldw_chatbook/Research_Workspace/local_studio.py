@@ -20,6 +20,7 @@ from .contracts import ResearchCapability
 from .studio_generation import StudioGeneratedOutput
 from .studio_mapping import STUDIO_OUTPUT_MAPPINGS, StudioOwnerMapping
 from .studio_models import (
+    ResearchOutputKind,
     ResearchStudioRequest,
     StudioOwnerKind,
     WorkspaceOutputRef,
@@ -49,11 +50,14 @@ class StudioOutputPersistenceError(RuntimeError):
 
 
 class LocalStudioAdapter:
-    def __init__(self, registry, chatbooks, study, quizzes) -> None:
+    def __init__(self, registry, chatbooks, study, quizzes, *, audio=None) -> None:
+        from .local_studio_audio import LocalStudioAudio
+
         self.registry = registry
         self.chatbooks = chatbooks
         self.study = study
         self.quizzes = quizzes
+        self.audio = LocalStudioAudio(audio)
         self._mutations = asyncio.Lock()
 
     @staticmethod
@@ -67,6 +71,7 @@ class LocalStudioAdapter:
             StudioOwnerKind.LOCAL_CHATBOOK: self.chatbooks,
             StudioOwnerKind.LOCAL_STUDY_DECK: self.study,
             StudioOwnerKind.LOCAL_QUIZ: self.quizzes,
+            StudioOwnerKind.LOCAL_AUDIO: self.audio if self.audio.persistent_history else None,
         }
         result = {}
         for (authority, _kind), mapping in STUDIO_OUTPUT_MAPPINGS.items():
@@ -90,6 +95,14 @@ class LocalStudioAdapter:
                     )
         return result
 
+    async def speech_choices(self):
+        return await self.audio.choices()
+
+    async def prepare_output(self, request, generated, *, cancel_event):
+        if request.output_kind is not ResearchOutputKind.AUDIO_SUMMARY:
+            return None
+        return await self.audio.prepare(request, generated, cancel_event)
+
     @staticmethod
     async def _off_loop(function, *args, **kwargs):
         return await asyncio.to_thread(
@@ -103,6 +116,8 @@ class LocalStudioAdapter:
         return await self._off_loop(function, *args, **kwargs)
 
     async def _read_owner(self, owner: StudioOwnerMapping, owner_id: str):
+        if owner.owner_kind is StudioOwnerKind.LOCAL_AUDIO:
+            return await self.audio.detail(owner_id)
         if owner.owner_kind is StudioOwnerKind.LOCAL_CHATBOOK:
             if self.chatbooks is None:
                 return None
@@ -142,11 +157,15 @@ class LocalStudioAdapter:
         )
 
     async def resolve_output(self, output: WorkspaceOutputRef) -> Mapping | None:
-        if not await self._related_link(output):
+        link = await self._related_link(output)
+        if not link:
             return None
-        return await self._read_owner(
+        row = await self._read_owner(
             self._owner(output.workspace, output.output_kind), output.owner_id
         )
+        if row and output.owner_kind is StudioOwnerKind.LOCAL_AUDIO:
+            return {**row, "title": link.title}
+        return row
 
     async def get_imported_report(
         self, request: ResearchStudioRequest
@@ -317,10 +336,16 @@ class LocalStudioAdapter:
                         if owner.owner_kind is StudioOwnerKind.LOCAL_CHATBOOK
                         else "reference"
                     ),
-                    title=str(record.get("name") or request.output_kind.value),
+                    title=str(
+                        request.generation.title or "Audio Summary"
+                        if owner.owner_kind is StudioOwnerKind.LOCAL_AUDIO
+                        else record.get("name") or request.output_kind.value
+                    ),
                 )
                 return await self._link_metadata(ref, owner, record, link, metadata)
             except Exception as exc:
+                if owner.owner_kind is StudioOwnerKind.LOCAL_AUDIO:
+                    raise StudioOutputPersistenceError(owner_id) from exc
                 try:
                     if not await self._delete_owner(
                         owner, owner_id, record.get(owner.version_field)
@@ -394,6 +419,13 @@ class LocalStudioAdapter:
         return build_research_chatbook_payload(request, generated)
 
     async def _create_owner(self, request, generated, owner):
+        if owner.owner_kind is StudioOwnerKind.LOCAL_AUDIO:
+            if generated.native_owner:
+                owner_id, version = generated.native_owner
+                saved = await self.audio.detail(owner_id)
+                if saved and saved["version"] == version:
+                    return saved
+            raise ValueError("The saved Local speech history entry is unavailable")
         if owner.owner_kind is StudioOwnerKind.LOCAL_CHATBOOK and self.chatbooks:
             options = {}
             if request.research_run_ref:
@@ -474,6 +506,12 @@ class LocalStudioAdapter:
             return await self.chatbooks.delete_chatbook(
                 owner_id, expected_revision=version
             )
+        if owner.owner_kind is StudioOwnerKind.LOCAL_AUDIO:
+            saved = await self.audio.detail(owner_id)
+            if not saved or saved["version"] != version:
+                return False
+            deleted = await self.audio.scope.delete_tts_history_entry(mode="local", history_id=saved["id"])
+            return deleted.get("id") == saved["id"] and deleted.get("deleted") is True
         if owner.owner_kind is StudioOwnerKind.LOCAL_STUDY_DECK:
             return await self._study_call(
                 self.study, "delete_deck", owner_id, expected_version=version
@@ -553,6 +591,12 @@ class LocalStudioAdapter:
 
     async def export_output(self, output: WorkspaceOutputRef, format: str) -> bytes:
         owner = self._owner(output.workspace, output.output_kind)
+        if owner.owner_kind is StudioOwnerKind.LOCAL_AUDIO:
+            if await self._related_link(output):
+                detail = await self.audio.detail(output.owner_id, include_content=True)
+                if detail and detail["format"] == format and detail["version"] == output.owner_version:
+                    return detail["content"]
+            raise StudioOutputConflict("Reload the Local audio history entry before downloading it")
         if (
             format != "markdown"
             or owner.owner_kind is not StudioOwnerKind.LOCAL_CHATBOOK

@@ -281,3 +281,83 @@ async def test_local_workspace_port_generates_from_real_selected_library_media(
         assert owner["metadata"]["content"].endswith("[S1].")
     finally:
         store.close()
+
+
+async def test_local_audio_summary_links_persisted_history_and_retries_only_the_link(
+    local_studio, tmp_path, monkeypatch
+):
+    from tldw_chatbook import TTS
+    from tldw_chatbook.Audio_Services_Interop.audio_services_scope_service import AudioServicesScopeService
+    from tldw_chatbook.Audio_Services_Interop.local_audio_services_service import LocalAudioServicesService
+    from tldw_chatbook.Research_Workspace.studio_models import ResearchGenerationConfig, StudioSpeechChoice
+    from tldw_chatbook.Research_Workspace.studio_service import ResearchStudioService
+    from tldw_chatbook.TTS.adapter_types import ProviderHealth, TTSAudioResponse, TTSModelInfo, TTSProviderCatalog
+
+    choice = StudioSpeechChoice("audio_cpp", "narrator", "voice-a", "wav", True)
+    calls = []
+
+    class Runtime:
+        def configuration_revision(self, provider):
+            return 1
+
+        def latest_native_capability_observation(self, provider):
+            catalog = TTSProviderCatalog(
+                provider, 1, ProviderHealth("available", True),
+                (TTSModelInfo("narrator", "Narrator", "family", "tts", ("wav",), ("voice-a",), True),),
+            )
+            return SimpleNamespace(snapshot=SimpleNamespace(
+                catalog=catalog, configuration_revision=1,
+                voice_results={"narrator": SimpleNamespace(state="complete", voices=("voice-a",))},
+            ))
+
+        async def synthesize_exact(self, speech):
+            calls.append(speech)
+
+            async def audio():
+                yield b"local speech"
+
+            return TTSAudioResponse(
+                provider_id="audio_cpp", model_id="narrator", audio_format="wav",
+                content_type="audio/wav", byte_stream=audio(),
+            ), SimpleNamespace(voice_id="voice-a")
+
+    async def get_tts_service():
+        return Runtime()
+
+    monkeypatch.setattr(TTS, "get_tts_service", get_tts_service)
+    history_path = tmp_path / "tts-history.json"
+
+    def owner():
+        audio = AudioServicesScopeService(
+            local_service=LocalAudioServicesService(history_store_path=history_path)
+        )
+        return LocalStudioAdapter(local_studio.registry, local_studio.artifacts, None, None, audio=audio)
+
+    adapter = owner()
+    assert (await adapter.speech_choices()) == (choice,)
+
+    class Script:
+        async def generate(self, *args, **kwargs):
+            return StudioGeneratedOutput("complete", "The observatory is at the station. [S1]")
+
+    studio = ResearchStudioService(Script(), adapter)
+    turn = replace(request("summary"), output_kind="audio_summary", generation=ResearchGenerationConfig(speech=choice))
+    save_metadata = local_studio.registry.upsert_membership_metadata
+
+    def lose_link(*args, **kwargs):
+        raise OSError("workspace data temporarily unavailable")
+
+    monkeypatch.setattr(local_studio.registry, "upsert_membership_metadata", lose_link)
+    with pytest.raises(Exception, match="needs recovery"):
+        await studio.generate(turn, lambda _: None, asyncio.Event())
+    monkeypatch.setattr(local_studio.registry, "upsert_membership_metadata", save_metadata)
+
+    saved = await studio.retry(turn.workspace, turn.operation_id)
+    assert len(calls) == 1 and "[S1]" not in calls[0].text
+    assert saved.owner_id == "1" and saved.owner_version == 1
+    reopened = owner()
+    assert (await reopened.list_outputs(turn.workspace)).items == (saved,)
+    assert (await reopened.resolve_output(saved))["format"] == "wav"
+    assert await reopened.export_output(saved, "wav") == b"local speech"
+    await reopened.delete(saved)
+    assert await reopened.resolve_output(saved) is None

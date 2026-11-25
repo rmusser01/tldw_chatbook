@@ -17,7 +17,7 @@ from tldw_chatbook.tldw_api.exceptions import (
     TLDWAPIError,
 )
 
-from .studio_generation import NativeSubmissionUnconfirmed, StudioGeneratedOutput
+from .studio_generation import NativeSubmissionUnconfirmed, StudioGeneratedOutput, spoken_script
 from .studio_models import STUDIO_SPEECH_FORMATS, StudioSpeechChoice
 
 _STOPPED = StudioGeneratedOutput("cancelled")
@@ -25,18 +25,6 @@ _UNCONFIRMED = (
     "Studio could not confirm whether Server Speech queued the audio summary. "
     "Check Server Jobs before starting a new generation."
 )
-_CITATIONS = re.compile(r"\[S[1-9][0-9]{0,2}\]")
-
-
-def spoken_script(text: str, *, limit: int = 5000) -> str:
-    script = _CITATIONS.sub("", text).strip()
-    if not script or len(script) > limit:
-        raise ValueError(
-            f"The spoken summary must contain between 1 and {limit:,} characters"
-        )
-    return script
-
-
 def speech_artifact_path(output_id: int) -> str:
     return f"/api/v1/outputs/{output_id}/download"
 
