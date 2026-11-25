@@ -17,6 +17,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from threading import RLock
 
+from loguru import logger
+
 from .budgets import BudgetExceeded, HookBudgetOwner
 from .command_executor import CommandExecutor
 from .matching import UnsupportedEventField, matches_handler
@@ -448,11 +450,12 @@ class HookEngine:
             return True, "dependency_check_failed"
 
     @staticmethod
-    async def _emergency_stop_holds() -> bool:
-        """Whether the emergency stop holds hook actions (TASK-33620.1.12).
+    async def _emergency_stop_hold() -> bool | None:
+        """``None`` while the stop is clear, else whether its state was unreadable.
 
-        Read on a worker thread: deliveries run on the hook owner loop, which
-        may be the app's. Doubt holds, as for every other stop reader.
+        TASK-33620.1.12. Read on a worker thread: deliveries run on the hook
+        owner loop, which may be the app's. Doubt holds, as for every other
+        stop reader.
         """
         # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
         from tldw_chatbook import emergency_stop
@@ -461,7 +464,9 @@ class HookEngine:
             state = await asyncio.to_thread(emergency_stop.current_emergency_stop)
         except Exception:  # noqa: BLE001 -- doubt holds
             return True
-        return state.active
+        if not state.active:
+            return None
+        return state.reason == emergency_stop.STATE_UNAVAILABLE_REASON
 
     async def _authority_status(self, handler, event, stage) -> tuple[bool, str | None]:
         try:
@@ -870,8 +875,18 @@ class HookEngine:
             # TASK-33620.1.12: the one point every command and MCP action (an
             # awaited fire or a notification) passes before its executor
             # starts. During a stop the action is skipped and recorded.
-            if failure is None and await self._emergency_stop_holds():
-                failure = EMERGENCY_STOP_FAILURE
+            if failure is None:
+                unreadable = await self._emergency_stop_hold()
+                if unreadable is not None:
+                    # The event and handler id only: never its command or input.
+                    logger.info(
+                        "hooks-v2: event={} handler={} held by the emergency stop "
+                        "(unreadable={})",
+                        event.event,
+                        handler.id,
+                        unreadable,
+                    )
+                    failure = EMERGENCY_STOP_FAILURE
             if failure is None and (delivery.cancel.is_set() or execution.closed):
                 failure = "cancelled"
             if failure:

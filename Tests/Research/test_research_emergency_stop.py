@@ -75,18 +75,29 @@ def _events(service, run_id):
 
 
 def test_a_run_started_during_the_stop_fetches_nothing():
+    from loguru import logger
+
+    lines: list[str] = []
+    sink = logger.add(lambda message: lines.append(str(message)), level="INFO")
     service = LocalResearchService(":memory:")
     run = service.launch_run(query="held from the start", autonomy_mode="autonomous")
     search_fn, analyze_fn, calls = _pipeline()
     engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
     set_emergency_stop(_stop_path(), reason="research hold")
 
-    final = asyncio.run(engine.execute_run(run["id"]))
+    try:
+        final = asyncio.run(engine.execute_run(run["id"]))
+    finally:
+        logger.remove(sink)
 
     assert calls == {"search": 0, "analyze": 0}, "research fetched during the stop"
     assert final["status"] == "cancelled"
     assert final["progress_message"].startswith(STOPPED)
     assert "emergency_stop" in _events(service, run["id"])
+    # One diagnostic line names the step and why, never the question.
+    held = [line for line in lines if "held by the emergency stop" in line]
+    assert len(held) == 1 and "before search" in held[0]
+    assert "held from the start" not in held[0]
 
 
 def test_a_running_research_stops_at_its_next_step():

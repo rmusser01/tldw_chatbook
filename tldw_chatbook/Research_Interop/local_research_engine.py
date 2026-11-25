@@ -494,6 +494,12 @@ class LocalResearchEngine:
         if not state.active:
             return
         unreadable = state.reason == emergency_stop.STATE_UNAVAILABLE_REASON
+        logger.info(
+            "research: run {} held by the emergency stop before {} (unreadable={})",
+            run_id,
+            next_step,
+            unreadable,
+        )
         self._require_lease()
         self.service.update_run_progress(
             run_id,
@@ -688,7 +694,6 @@ class LocalResearchEngine:
             logger.info(f"Research run {run_id} cancelled between phases")
             return cancelled.args[0]
         except _RunHeldByEmergencyStop as held:
-            logger.info(f"Research run {run_id} stopped by the emergency stop")
             return held.args[0]
         except ResearchLimitExceeded as exceeded:
             # Budget exhaustion is a clean stop at the phase boundary where

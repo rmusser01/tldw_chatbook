@@ -272,3 +272,28 @@ async def test_hook_actions_run_again_once_the_stop_is_cleared(tmp_path):
         await engine.close()
 
     assert marker.exists() and result.succeeded
+
+
+@platform_support.v2_command
+@pytest.mark.asyncio
+async def test_a_held_action_logs_its_event_and_handler_never_its_command(
+    tmp_path, stop
+):
+    """hooks_v2 keeps no log of its own; a held action leaves one line."""
+    from loguru import logger
+
+    lines: list[str] = []
+    sink = logger.add(lambda message: lines.append(str(message)), level="INFO")
+    marker = tmp_path / "logged-ran"
+    handler = _command(marker, "PostToolUse")
+    engine = await _engine(handler)
+    try:
+        await engine.fire_async(_event("PostToolUse", **TOOL))
+    finally:
+        await engine.close()
+        logger.remove(sink)
+
+    held = [line for line in lines if "held by the emergency stop" in line]
+    assert len(held) == 1
+    assert "event=PostToolUse" in held[0] and "handler=command-PostToolUse" in held[0]
+    assert str(marker) not in held[0] and handler.argv[0] not in held[0]
