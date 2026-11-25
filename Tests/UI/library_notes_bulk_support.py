@@ -351,8 +351,11 @@ async def enter_select_mode(host, pilot, screen) -> None:
     await click_settled(
         host, pilot, screen, "#library-notes-select-toggle", "the Select toggle"
     )
-    await until(
+    # Settled, not merely painted: the toggle's own sync re-composes the list
+    # pane, and a key sent mid-rebuild lands on a grip (``notes_settled``).
+    await until_settled(
         pilot,
+        screen,
         lambda: screen._notes_state.select_mode
         and "Done" in strip_text(host, screen),
         lambda: f"the select strip to paint: {painted(host)}",

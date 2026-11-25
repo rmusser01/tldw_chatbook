@@ -208,7 +208,7 @@ async def test_space_toggles_the_focused_note_row_and_nothing_else(tmp_path) -> 
         assert screen._notes_state.row_selection.ids == frozenset({second.note_id})
 
         # A text field keeps its Space: typed into the filter, nothing toggled.
-        await pilot.click("#library-notes-filter")
+        await click_settled(host, pilot, screen, "#library-notes-filter", "the filter")
         await pilot.press("a", "space", "b")
         await until(
             pilot,

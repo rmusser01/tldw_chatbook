@@ -36,6 +36,7 @@ from Tests.UI.library_notes_bulk_support import (
     painted,
     row_for,
     until,
+    until_settled,
 )
 from tldw_chatbook.Widgets.Library.library_note_folder_dialog import (
     LibraryNoteFolderTargetDialog,
@@ -284,16 +285,18 @@ async def test_a_partial_bulk_move_names_what_did_not_move_and_keeps_it_checked(
         await click_settled(
             host, pilot, screen, "#library-notes-select-actions", "Actions…"
         )
-        await until(
+        await until_settled(
             pilot,
+            screen,
             lambda: bool(screen.query(".library-notes-select-action-choice"))
             and screen.focused is not None
             and screen.focused.has_class("library-notes-select-action-choice"),
             lambda: f"the Actions chooser with focus in it: {painted(host)}",
         )
         await pilot.press("escape")
-        await until(
+        await until_settled(
             pilot,
+            screen,
             lambda: not screen.query(".library-notes-select-action-choice")
             and getattr(screen.focused, "id", "") == "library-notes-select-actions",
             lambda: f"Escape to close the chooser (focus {screen.focused!r})",
@@ -303,8 +306,9 @@ async def test_a_partial_bulk_move_names_what_did_not_move_and_keeps_it_checked(
         # Escape in the picker writes nothing and keeps the selection; focus
         # is back on the opener (Actions…), not in a text field.
         await pilot.press("enter")
-        await until(
+        await until_settled(
             pilot,
+            screen,
             lambda: getattr(screen.focused, "id", "")
             == "library-notes-select-action-move",
             "Enter on Actions… to focus Move to folder…",
