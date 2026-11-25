@@ -218,6 +218,11 @@ opaque claim and reserve initializer operations before enqueue and parent finish
 independent reacquisition behind that tree would self-conflict. Ordinary hooks,
 references, child lifetimes and workflow phase/window integration remain pending.
 
+An initializer whose Git cleanup is retained as unproven keeps its opaque activity
+claim until restart, and Release frees only its tool slot, so later Console sends
+are refused as busy until then (owner decision 2026-11-25, TASK-41950; recorded in
+ADR-134's "Retained Change Review initialization claim amendment").
+
 This is a substantive extension to admission and shared-worktree coordination,
 not merely a plan prompt. Existing captured authority, physical retirement and
 database durability remain load-bearing. Resource bounds may pause useful work;

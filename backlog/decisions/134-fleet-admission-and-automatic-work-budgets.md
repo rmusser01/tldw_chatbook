@@ -284,6 +284,19 @@ Implementation note, not an owner decision. It extends the TASK-40716 note that 
 - Such a root, the retained one included, reads the `RESTART_REQUIRED` readiness, which says that change history waits for an app restart because an earlier cleanup could not be proven. Settings ▸ Workspaces shows it on its own line with no retry, and "Retry failed preparation" skips it. `ChangeReviewConsentService._fail` maps each refusal to its readiness in one place; "busy; retry from Settings" is left for refusals a retry can clear.
 - Threads stay bounded: the two pool threads, at most one live custody worker per pool thread, and one per retained cleanup. Until Release, the retained owner refuses further reservations (`CleanupUnprovenRefused`) and its claim refuses every other initialization, so only jobs admitted before the first retention can still be retained, at most one per folder admitted with it. A Release frees the retained operation, so a still-live turn can then admit, and possibly retain, more initializations: each further custody worker follows a user's Release. The custody worker itself lives until restart.
 
+## Retained Change Review initialization claim amendment (TASK-41950, 2026-11-25)
+
+**Owner decision, 2026-11-25 ([TASK-41950](../tasks/task-41950%20-%20A-retained-Change-Review-initialization-jobs-opaque-claim-refuses-every-later-workspace-ac.md)).** It applies the TASK-40716 decision to a Change Review initialization job that runs under its own owner (outside any ordinary turn).
+- When such a job's Git cleanup is retained as unproven, the job keeps its opaque workspace activity claim until restart, as every retained operation keeps its claim.
+- Releasing the job's tool slot (Release in "Held tool slots", TASK-41307) frees only the slot. The claim stays held.
+
+**What this costs, accepted.** An opaque claim conflicts with every other claim, and the Console runtime keeps one activity registry for all chats. So until restart every later Console Send is refused at ordinary-turn admission, in any workspace and not only the job's, with "Workspace activity is busy; retry after it finishes." That copy does not say that only a restart clears it. Later initializations read `RESTART_REQUIRED` (section above).
+
+**Implementation note (not an owner decision).**
+- The refusal is `OrdinaryTurn.admit`'s `CapacityRefused("worktree_activity_busy")`, which the Console turns into that copy. It applies where an ordinary turn takes a claim: on platforms with native process groups (macOS and Linux).
+- Nothing in the running process retires the claim. `retain_unproven` marks the owner's drain unproven, and `WorktreeActivity._retire_if_settled` retires a claim only when every member's drain is proven. Even `UnprovenRetention.prove`, which no production code calls, lets the custody worker return but leaves the claim held.
+- Pinned by `test_a_retained_initialization_claim_refuses_later_console_sends_until_restart` (`Tests/Workspaces/test_native_change_review_initialization.py`).
+
 ## Ask compaction hold amendment (TASK-33621.153, 2026-11-19)
 
 This narrows "Elapsed time includes queueing and human approval waits" above for one pause.

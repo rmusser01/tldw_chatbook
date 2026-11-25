@@ -878,6 +878,98 @@ def test_retained_cleanups_hold_later_roots_until_restart_and_say_so(
         claim.settle(durable=True)
 
 
+def test_a_retained_initialization_claim_refuses_later_console_sends_until_restart(
+    native_initializer, monkeypatch, tmp_path
+):
+    """Owner decision 2026-11-25 (TASK-41950, ADR-134): an initialization job
+    under its own owner whose Git cleanup is retained keeps its opaque activity
+    claim until restart, as TASK-40716 keeps every retained claim. A later
+    Console Send is refused at ordinary-turn admission, in the job's workspace
+    and in any other, and Release frees only the job's tool slot. The same rig
+    admits a Send before the job runs."""
+    from Tests.Chat.test_console_skill_substitution import _RecordingGateway
+    from Tests.console_provider_doubles import persisted_console_store
+    from tldw_chatbook.Agents.execution_capacity import holds_unproven_custody
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Tools import workspace_file_roots as roots_api
+    from tldw_chatbook.Workspaces import change_turn_tracker
+    from tldw_chatbook.Workspaces.change_review_ownership import (
+        native_snapshot_ticket,
+    )
+
+    h = native_initializer
+    capacity, activity = h.runtime.execution_capacity, h.runtime.worktree_activity
+
+    def unproven(root, **kwargs):
+        # As run_native_git does when no cleanup proof remains.
+        native_snapshot_ticket().operation.retain_unproven("native Git").hold()
+        raise OSError("native Git cleanup proof unavailable")
+
+    monkeypatch.setattr(change_turn_tracker, "initialize_shadow_root", unproven)
+    monkeypatch.setattr(roots_api, "_registry_factory", lambda: h.registry)
+    monkeypatch.setattr(roots_api, "_LAUNCH_CWD", str(h.root))
+    store = persisted_console_store(
+        db_path=tmp_path / "chat.db", workspace_registry=h.registry
+    )
+    gateway = _RecordingGateway()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, provider="llama_cpp", model="m"
+    )
+    h.app.chachanotes_db = store.persistence.db
+    h.app.local_chat_conversation_service = ChatConversationService(
+        store.persistence.db
+    )
+    h.runtime.set_chat_store(store)
+    h.runtime.set_chat_controller(controller)
+    session = store.create_session(workspace_id="init-workspace")
+    h.registry.create_workspace(workspace_id="elsewhere", name="Elsewhere")
+    elsewhere = store.create_session(workspace_id="elsewhere")
+    busy = "Workspace activity is busy; retry after it finishes."
+
+    def no_custody():
+        return not any(holds_unproven_custody(t) for t in threading.enumerate())
+
+    async def scenario():
+        # Control: with no initialization job, this rig admits a Send.
+        sent = await controller.submit_draft("before the job", session_id=session.id)
+        assert sent.accepted, sent.visible_copy
+        stream = controller._active_stream_tasks.get(session.id)
+        if stream is not None:
+            await asyncio.wait_for(asyncio.shield(stream), 15)
+        await asyncio.to_thread(wait_until, lambda: not h.runtime._ordinary_turns, 15)
+        assert len(gateway.payloads) == 1
+
+        h.registry.set_change_review_enabled("init-workspace", True)
+        h.service.admit_turn("init-workspace")  # no turn bound: its own owner
+        await asyncio.to_thread(wait_until, lambda: capacity.retained(), 15)
+        (retention,) = capacity.retained()
+        owner = retention.operation.owner
+        assert owner.conversation_id == "" and owner.run_id is None
+        assert activity.holds_conflicting_claim(owner, WorktreeFootprint(opaque=True))
+
+        refused = await controller.submit_draft("a later send", session_id=session.id)
+        assert (refused.accepted, refused.visible_copy) == (False, busy)
+        # The claim is opaque: a chat in another workspace is refused as well.
+        refused = await controller.submit_draft("elsewhere", session_id=elsewhere.id)
+        assert (refused.accepted, refused.visible_copy) == (False, busy)
+        # Release returns the tool slot only; the claim, and the refusal, stay.
+        assert capacity.snapshot().tool_workers == 1
+        assert retention.abandon()
+        assert capacity.snapshot().tool_workers == 0
+        refused = await controller.submit_draft("after release", session_id=session.id)
+        assert (refused.accepted, refused.visible_copy) == (False, busy)
+        assert len(gateway.payloads) == 1
+
+    try:
+        with roots_api.run_file_sandbox(h.root):
+            asyncio.run(scenario())
+    finally:
+        for retention in capacity.retained():
+            retention.prove()
+        wait_until(no_custody, timeout=15)
+
+
 def test_a_claim_held_without_a_retained_cleanup_stays_retryable(native_initializer):
     """Only a retained cleanup's own claim means "restart" (TASK-41635 control).
 
