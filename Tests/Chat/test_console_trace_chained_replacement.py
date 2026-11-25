@@ -473,8 +473,8 @@ def test_dispatch_binding_refuses_a_link_that_covers_no_live_row(
     real_links = trace_service_module._replacement_links
     defective = [(0, 0), (1, 130), (131, 255), (256, 260)]
 
-    def defective_links(sequences):
-        assert real_links(sequences) == [(0, 255), (256, 260)]
+    def defective_links(sequences, **options):
+        assert real_links(sequences, **options) == [(0, 255), (256, 260)]
         return defective
 
     real_persist = ConsoleTraceService.persist_request

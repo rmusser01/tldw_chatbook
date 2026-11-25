@@ -202,7 +202,7 @@ Third phase (round 3, 2026-11-25; rebased onto trace1's `f7b043814b`):
 - Finding 2 (minor): the projection moved every rendered-system node to the front while building, which reversed two leading system rows (reader Beta/Alpha against a wire of Alpha/Beta; refused after a restart). Rendered-system rows now move first after the replacements, in sequence order. Test: reader order and a restart, red before and green after. ADR amendment 3 and the module docstring no longer say "at most one is ever active".
 - Finding 3 (minor) is round 4's part 2 above; a forged resend-terminal case was added to `test_a_rewrites_bookkeeping_reads_only_its_own_rows` (it fails with the `run_chains` branch removed).
 - Finding 4 (minor): "next unused entry" is gone from the adapter comment, the test docstring and these notes.
-- Service size row 7004 -> 7037 (+33).
+- Service size row 7004 -> 7042 (+38).
 
 **Round 4 lane (coordinator's decision, 2026-11-25).** dreams-boundary projected to 30.1-32.2 of its 35 min with the retry file, too tight, so the file moved again: it is now the last target of console-p0-gate's admission-sensitive (head) profile, which runs up to about 18 min (TASK-42533's logs), so about 23-25 of 35 with the file. dreams-boundary's step and its contracts are back to dev's lists.
 

@@ -1431,10 +1431,10 @@ _BUDGETS: dict[str, int] = {
     # projection, the slot-first write and roots, and the projection rule
     # that puts a rendered-system node first.
     # 2026-11-25, TASK-42525 round-4 re-review (findings 1 and 2; same
-    # rule): 7004 -> 7037 (+33), exact measurement. A rewritten tail's links
+    # rule): 7004 -> 7042 (+38), exact measurement. A rewritten tail's links
     # skip a restored slot (planner, binding check, roots by stored ranges),
     # and slots move first after the replacements.
-    "tldw_chatbook/Chat/console_trace_service.py": 7037,
+    "tldw_chatbook/Chat/console_trace_service.py": 7042,
     # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
     # approved child trace segments (ADR-337 amendment 2026-11-17): create and
