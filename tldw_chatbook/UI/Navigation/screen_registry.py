@@ -44,6 +44,8 @@ class ScreenRoute:
     #: ``on_unmount`` teardown (see ``_create_navigation_screen``'s history
     #: of why UNINSTALLED instances must never be reused).
     reusable: bool = False
+    #: Whether to warm this route in the speculative post-startup pass.
+    preimport: bool = True
 
     def dependencies_available(self) -> bool:
         """Return whether optional dependencies for this route are available."""
@@ -231,14 +233,12 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
         "tldw_chatbook.UI.Screens.research_screen",
         "ResearchScreen",
     ),
-    # Task 1 records the lazy route contract. The screen module is created by
-    # the dedicated screen task, so this metadata is intentionally not
-    # importable yet.
     "research_workspace": ScreenRoute(
         "research_workspace",
         TAB_RESEARCH_WORKSPACE,
         "tldw_chatbook.UI.Screens.research_workspace_screen",
         "ResearchWorkspaceScreen",
+        preimport=False,
     ),
     "chatbooks": ScreenRoute(
         "chatbooks",

@@ -144,7 +144,11 @@ class StudioGeneratedOutput:
     native_owner: tuple[str, int] | None = None
 
 
-class NativeSubmissionUnconfirmed(ValueError):
+class StudioRetryUnavailable(ValueError):
+    """Retry cannot continue the captured Studio generation."""
+
+
+class NativeSubmissionUnconfirmed(StudioRetryUnavailable):
     """A native output may have been admitted without a confirmed receipt."""
 
 

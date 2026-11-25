@@ -147,7 +147,6 @@ from ..Console_Modules.review_selection import (
     run_console_turn_undo,
     prepare_console_turn_undo,
 )
-from ..Console_Modules.research_workspace_handoff import consume_workspace_handoff
 from ..Console_Modules.dispatch_recovery import ConsoleDispatchRecoveryRegion
 from ..Console_Modules.left_rail import (
     CONSOLE_DISCARD_DEFAULT_RETRY_ID,
@@ -15395,7 +15394,10 @@ class ChatScreen(BaseAppScreen):
                 self._console_attach_reconciled = True
                 self._console_attach_reconcile_retry_count = 0
                 self._console_attach_reconcile_retry_exhausted = False
-                self.call_after_refresh(consume_workspace_handoff, self)
+                if self._pending_research_console_workspace is not None:
+                    from ..Console_Modules.research_workspace_handoff import consume_workspace_handoff
+
+                    self.call_after_refresh(consume_workspace_handoff, self)
         except Exception as exc:  # noqa: BLE001 -- a repaint never kills the app
             if not _console_screen_is_torn_down(self):
                 failure = exc

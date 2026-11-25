@@ -1,5 +1,6 @@
 """Launch a native run and review its verified Report in Research Workspace."""
 
+from asyncio import CancelledError
 from uuid import uuid4
 
 from loguru import logger
@@ -26,7 +27,7 @@ from ...Research_Workspace.deep_research_context import (
 from ...Utils.timestamps import utc_now_iso
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.modal_dismissal import SafeModalDismissMixin
-from ...tldw_api.exceptions import APIConnectionError
+from ...tldw_api.exceptions import APIConnectionError, APIResponseError
 from ...tldw_api.workspace_research_runs import WorkspaceResearchRunsClient
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.pending_handoff_store import HandoffChannel
@@ -269,21 +270,49 @@ def start_research_return(screen) -> bool:
 async def _show_research_return(screen, store, claim) -> None:
     target = claim.value
     ref = target.origin
+    controller = screen.controller
+    catalog_generation = controller.catalog_generation
+    catalog_revision = controller.context_revision
+    catalog_applied = False
+    capture = None
+    retry = False
     try:
         if not research_run_target_current(screen.app_instance, ref):
             raise ValueError("Open the run's original Server profile and account")
-        screen.controller.select_data_source(ref.data_source)
+        controller.select_data_source(ref.data_source)
+        catalog_revision = controller.context_revision
         screen.query_one("#research-workspace-header").sync_data_source(ref.data_source)
-        state = await screen.controller.refresh_workspace_catalog()
-        if not screen.is_attached or not store.is_current_claim(claim):
+        catalog_generation += 1
+        state = await controller.refresh_workspace_catalog()
+        if (
+            not screen.is_attached
+            or not store.is_current_claim(claim)
+            or not controller.is_current_catalog_state(state)
+        ):
+            return
+        if not research_run_target_current(screen.app_instance, ref):
+            raise ValueError("Open the run's original Server profile and account")
+        catalog_applied = True
+        if state.recovery is not None:
+            retry = state.recovery.reason_code == "server_unavailable"
+            await screen._apply_catalog_state(state)
             return
         if not any(row.ref == ref and not row.archived for row in state.workspaces):
-            raise ValueError("The run's origin workspace is unavailable")
-        await screen._apply_catalog_state(state, preferred_ref=ref)
-        if not screen.is_attached or screen.controller.selected_ref != ref:
+            await screen._apply_catalog_state(state)
+            if store.is_current_claim(claim):
+                _show_error(
+                    screen, ValueError("The run's origin workspace is unavailable")
+                )
             return
-        capture = screen.controller.capture_request()
-        port = screen.controller.port_for_data_source(ref.data_source)
+        await screen._apply_catalog_state(state, preferred_ref=ref)
+        if (
+            not screen.is_attached
+            or controller.selected_ref != ref
+            or not store.is_current_claim(claim)
+        ):
+            return
+        capture = controller.capture_request()
+        port = controller.port_for_data_source(ref.data_source)
         preview = await _bound_bridge(screen, ref, port).preview_return(target)
         if not _current(screen, capture) or not store.is_current_claim(claim):
             return
@@ -317,18 +346,40 @@ async def _show_research_return(screen, store, claim) -> None:
             else:
                 studio._status("Saved a draft Report in Studio.")
                 studio.refresh_studio(preferred=history_key(saved))
+    except CancelledError:
+        retry = True
+        raise
     except Exception as exc:
-        if screen.controller.selected_ref in {None, ref}:
+        retry = isinstance(
+            exc, (APIConnectionError, ConnectionError, TimeoutError)
+        ) or (
+            isinstance(exc, APIResponseError)
+            and exc.status_code in {408, 425, 429, 500, 502, 503, 504}
+        )
+        if (
+            store.is_current_claim(claim)
+            if capture is None
+            else _current(screen, capture)
+        ):
             _show_error(screen, exc)
     finally:
         if store.is_current_claim(claim):
-            store.release(claim)
             if (
-                screen.is_attached
-                and screen.app.is_running
-                and screen.controller.selected_ref is None
+                retry
+                and research_run_target_current(screen.app_instance, ref)
+                and (capture is None or controller.is_current_request(capture))
             ):
-                screen._start_catalog_refresh()
+                store.release(claim)
+            else:
+                store.acknowledge_current(claim)
+        if (
+            not catalog_applied
+            and controller.catalog_generation == catalog_generation
+            and controller.context_revision == catalog_revision
+            and screen.is_attached
+            and screen.app.is_running
+        ):
+            screen._start_catalog_refresh()
 
 
 def _show_error(screen, exc: Exception) -> None:

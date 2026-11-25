@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, StrictBool, StrictInt
 from .data_tables_schemas import (
     DataTableDetailResponse,
     DataTableGenerateResponse,
+    DataTableJobCancelResponse,
     DataTableJobStatus,
 )
 from .exceptions import APIResponseError
@@ -105,10 +106,19 @@ class WorkspaceDataTablesClient:
             raise ValueError("The Server returned a different Data Tables job")
         return state
 
-    async def cancel(self, receipt: WorkspaceTableAdmission) -> None:
-        await self.client._request(
+    async def cancel(
+        self, receipt: WorkspaceTableAdmission
+    ) -> DataTableJobCancelResponse:
+        """Return the native cancellation status for the admitted job."""
+        raw = await self.client._request(
             "DELETE", f"/api/v1/data-tables/jobs/{receipt.job_id}", headers=self.headers
         )
+        result = DataTableJobCancelResponse.model_validate(raw)
+        if not result.success or result.job_id != receipt.job_id:
+            raise ValueError(
+                "The Server did not confirm cancellation of the selected Data Tables job"
+            )
+        return result
 
     async def detail(
         self, table_id: str, *, rows_limit: int = 1

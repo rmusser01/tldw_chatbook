@@ -349,7 +349,8 @@ class ResearchCopyTargetDialog(
 
 
 class ResearchCopyPreview(
-    SafeModalDismissMixin, ModalScreen[bool | dict[int, CopyConflictChoice] | None]
+    SafeModalDismissMixin,
+    ModalScreen[bool | dict[int, CopyConflictChoice | None] | None],
 ):
     BINDINGS = [Binding("escape", "request_safe_cancel", "Cancel", show=False)]
     SAFE_MODAL_CONTENT = "#research-copy-preview-dialog"
@@ -358,9 +359,17 @@ class ResearchCopyPreview(
         super().__init__()
         self.manifest = manifest
 
+    def _can_confirm(self) -> bool:
+        return any(row.actionable for row in self.manifest.items) and all(
+            row.treatment is not CopyTreatment.BLOCKED
+            and row.conflict is not CopyConflictChoice.CANCEL
+            for row in self.manifest.items
+        )
+
     def compose(self) -> ComposeResult:
         manifest = self.manifest
         destination = manifest.destination
+        has_choices = False
         with Vertical(
             id="research-copy-preview-dialog",
             classes="research-transfer-dialog research-transfer-scroll-dialog",
@@ -385,6 +394,10 @@ class ResearchCopyPreview(
                     "Device-only pane preferences, folders, annotations, and drafts are excluded.",
                     markup=False,
                 )
+                if any(
+                    item.treatment is CopyTreatment.BLOCKED for item in manifest.items
+                ):
+                    yield Static("Resolve or omit blocked items before confirming.")
                 for position, item in enumerate(manifest.items):
                     version = (
                         f" · version {item.source.version}"
@@ -407,27 +420,38 @@ class ResearchCopyPreview(
                             f"Previous destination {item.destination.owner_id} · {version}",
                             markup=False,
                         )
+                    if (
+                        item.destination is not None
+                        or item.treatment is CopyTreatment.BLOCKED
+                        or item.conflict is CopyConflictChoice.OMIT
+                    ):
+                        has_choices = True
+                        existing = item.destination is not None
+                        choice = item.conflict
+                        if not existing and choice is not CopyConflictChoice.OMIT:
+                            choice = None
                         yield Select(
-                            _CHOICES,
+                            _CHOICES
+                            if existing
+                            else [("Omit from this Copy", CopyConflictChoice.OMIT)],
                             id=f"research-copy-choice-{position}",
-                            value=item.conflict or Select.NULL,
-                            prompt="Choose conflict treatment",
+                            value=choice or Select.NULL,
+                            prompt=(
+                                "Choose conflict treatment"
+                                if existing
+                                else "Choose whether to omit this item"
+                            ),
                         )
-            if any(row.destination is not None for row in manifest.items):
+            if has_choices:
                 yield Button(
-                    "Review conflict choices", id="research-copy-resolve", compact=True
+                    "Review Copy choices", id="research-copy-resolve", compact=True
                 )
             yield Button(
                 "Confirm Copy",
                 id="research-copy-confirm",
                 compact=True,
                 variant="primary",
-                disabled=not any(row.actionable for row in manifest.items)
-                or any(
-                    row.reason is CopyReason.CHOOSE_CONFLICT
-                    or row.conflict is CopyConflictChoice.CANCEL
-                    for row in manifest.items
-                ),
+                disabled=not self._can_confirm(),
             )
             yield Button("Cancel", id="research-copy-preview-cancel", compact=True)
 
@@ -435,9 +459,12 @@ class ResearchCopyPreview(
     def resolve(self) -> None:
         self.dismiss(
             {
-                int(widget.id.rsplit("-", 1)[-1]): widget.value
+                int(widget.id.rsplit("-", 1)[-1]): (
+                    widget.value
+                    if isinstance(widget.value, CopyConflictChoice)
+                    else None
+                )
                 for widget in self.query(Select)
-                if isinstance(widget.value, CopyConflictChoice)
             }
         )
 
@@ -448,13 +475,8 @@ class ResearchCopyPreview(
             != self.manifest.items[int(widget.id.rsplit("-", 1)[-1])].conflict
             for widget in self.query(Select)
         )
-        allowed = any(row.actionable for row in self.manifest.items) and not any(
-            row.reason is CopyReason.CHOOSE_CONFLICT
-            or row.conflict is CopyConflictChoice.CANCEL
-            for row in self.manifest.items
-        )
         self.query_one("#research-copy-confirm", Button).disabled = (
-            changed or not allowed
+            changed or not self._can_confirm()
         )
 
     @on(Button.Pressed, "#research-copy-confirm")

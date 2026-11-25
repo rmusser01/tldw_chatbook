@@ -1,13 +1,15 @@
-"""Encode generation fields without carrying the output or source text."""
+"""Project Studio provenance without carrying the output or source text."""
 
 import json
 from dataclasses import asdict
 from hashlib import sha256
+from uuid import NAMESPACE_URL, uuid5
 
 from tldw_chatbook.Workspaces.output_membership import output_membership_metadata
 
 from .chat_models import ResearchSourceVersionRef
-from .studio_models import ResearchStudioRequest, WorkspaceOutputRef
+from .studio_mapping import STUDIO_OUTPUT_MAPPINGS
+from .studio_models import ResearchOutputKind, ResearchStudioRequest, WorkspaceOutputRef
 
 
 def generation_metadata(
@@ -55,6 +57,21 @@ def output_reference(
         ),
         provenance["settings_fingerprint"],
         provenance["status"],
+    )
+
+
+def server_copy_artifact_id(workspace_id: str, item_key: str) -> str:
+    """Derive the Server artifact identity from the existing Copy owner proof."""
+    return str(uuid5(NAMESPACE_URL, f"tldw:research-copy:{workspace_id}:{item_key}"))
+
+
+def copied_output_reference(
+    ref, owner_id, version, artifact_type, proof
+) -> WorkspaceOutputRef:
+    kind = ResearchOutputKind(artifact_type)
+    owner = STUDIO_OUTPUT_MAPPINGS[ref.data_source, kind]
+    return WorkspaceOutputRef(
+        ref, kind, owner.owner_kind, owner_id, version, (), None, "complete", proof
     )
 
 

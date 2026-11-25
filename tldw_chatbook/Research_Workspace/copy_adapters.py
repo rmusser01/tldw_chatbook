@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field, replace
-from uuid import NAMESPACE_URL, UUID, uuid5
+from uuid import UUID
 
 from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
@@ -20,9 +20,8 @@ from .copy_models import CopyItemKind, CopyOwnerRef, ResearchCopyItem
 from .copy_receipts import CopyReceiptFailure
 from .copy_service import CopyOwnerActionError, CopySourceSnapshot
 from .quick_notes import ResearchNoteSaveRequest, ResearchQuickNote
-
-
-_TEXT_ARTIFACTS = frozenset({"summary", "report", "compare_sources"})
+from .studio_models import COPYABLE_STUDIO_TEXT_KINDS
+from .studio_provenance import server_copy_artifact_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,7 +32,7 @@ class CopyTextArtifact:
 
     def __post_init__(self) -> None:
         if (
-            self.artifact_type not in _TEXT_ARTIFACTS
+            self.artifact_type not in COPYABLE_STUDIO_TEXT_KINDS
             or not self.title
             or len(self.title) > 256
         ):
@@ -274,11 +273,7 @@ class TextArtifactCopyOwner:
         if not await self._associated(item.source, outbound=True):
             raise CopyOwnerActionError(CopyReceiptFailure.SOURCE_CHANGED)
         client, service = self._server(workspace)
-        artifact_id = str(
-            uuid5(
-                NAMESPACE_URL, f"tldw:research-copy:{workspace.workspace_id}:{item_key}"
-            )
-        )
+        artifact_id = server_copy_artifact_id(workspace.workspace_id, item_key)
         target = CopyOwnerRef(workspace, item.source.kind, artifact_id)
         proof = {"item_key": item_key, "source_revision": item.source.version}
         row = await self._read_server(target, client, service)

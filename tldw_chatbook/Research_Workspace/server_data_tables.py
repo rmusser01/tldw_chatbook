@@ -9,7 +9,7 @@ from tldw_chatbook.tldw_api.workspace_data_tables_client import (
 )
 
 from .source_readiness import versioned_media_sources
-from .studio_generation import StudioGeneratedOutput
+from .studio_generation import StudioGeneratedOutput, StudioRetryUnavailable
 from .studio_models import ResearchOutputKind, ResearchWorkProductKind
 
 MAX_TABLE_SOURCES = 20
@@ -75,17 +75,20 @@ async def generate_native_table(
     status, publication = receipt.status, receipt.publication_status
     version = receipt.published_version
     for _ in range(300):
-        if cancel_event.is_set():
-            if status not in {
-                "cancelled",
-                "completed",
-                "failed",
-                "dead_letter",
-                "quarantined",
-            }:
-                await owner.cancel(receipt)
-            return StudioGeneratedOutput("cancelled")
+        stopping = cancel_event.is_set()
+        if stopping and status not in {
+            "cancelled",
+            "completed",
+            "failed",
+            "dead_letter",
+            "quarantined",
+        }:
+            status = (await owner.cancel(receipt)).status
         if status == "cancelled":
+            raise StudioRetryUnavailable(
+                "The native Data Tables job was cancelled. Start a new generation."
+            )
+        if stopping:
             return StudioGeneratedOutput("cancelled")
         if status in {"failed", "dead_letter", "quarantined"}:
             raise ValueError(

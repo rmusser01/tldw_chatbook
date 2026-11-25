@@ -1,4 +1,7 @@
+from uuid import UUID
+
 import pytest
+from textual.app import App
 from textual.widgets import Button, Input, Select, Static
 
 from Tests.UI.library_quit_guard_support import _settings_without_splash, _until
@@ -6,13 +9,201 @@ from Tests.UI.test_research_chat_region import build_research_app, open_chat
 from Tests.UI.test_research_studio_pane import prepare_studio
 from Tests.app_module_patches import patch_app_global
 from tldw_chatbook.Research_Workspace.action_registry import PLANNED_OUTPUTS
+from tldw_chatbook.Research_Workspace.chat_models import ResearchSourceVersionRef
+from tldw_chatbook.Research_Workspace.contracts import (
+    ProcessingRoute,
+    QualifiedWorkspaceRef,
+    ResearchCapability,
+)
+from tldw_chatbook.Research_Workspace.controller import ResearchWorkspaceController
+from tldw_chatbook.Research_Workspace.server_studio import ServerStudioAdapter
 from tldw_chatbook.Research_Workspace.studio_models import ResearchWorkProductKind
+from tldw_chatbook.Research_Workspace.studio_service import ResearchStudioService
 from tldw_chatbook.Research_Workspace.work_product_templates import (
     TEXT_WORK_PRODUCT_TEMPLATES,
 )
 from tldw_chatbook.UI.Research_Workspace_Modules.studio_history import history_key
+from tldw_chatbook.UI.Research_Workspace_Modules.studio_region import (
+    ResearchStudioRegion,
+)
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
+
+
+class _NativeServerPort:
+    ref = QualifiedWorkspaceRef("server", "observatory", "server-a", "jwt-sub:1")
+    route = ProcessingRoute("server", "server", "provider", "model")
+
+    def __init__(self, source_count):
+        self.sources = tuple(
+            ResearchSourceVersionRef(
+                self.ref, f"source-{index}", str(index), "media", 1, 1, ("fts",)
+            )
+            for index in range(1, source_count + 1)
+        )
+
+    async def studio_capabilities(self, workspace):
+        assert workspace == self.ref
+        ready = ResearchCapability(True, "available", "Ready", "server")
+        return {"save_workspace_artifact": ready, "generate_grounded_artifact": ready}
+
+    async def capture_chat_sources(self, workspace):
+        assert workspace == self.ref
+        return self.sources
+
+    async def resolve_chat_route(self, workspace, *_):
+        assert workspace == self.ref
+        return self.route
+
+    async def native_studio_capabilities(self, workspace, processing, selected):
+        assert (workspace, processing, selected) == (self.ref, self.route, self.sources)
+        verified = ResearchCapability(
+            True,
+            "available",
+            "Ready",
+            "server",
+            capability_revision="workspace-api:reachable:authenticated",
+        )
+        result = dict.fromkeys(
+            (
+                "generate_data_table",
+                "get_data_table",
+                "generate_literature_matrix",
+                "generate_corpus_gap_finder",
+                "create_audio_speech_job",
+                "list_audio_speech_job_artifacts",
+            ),
+            verified,
+        )
+        if len(self.sources) == 1:
+            result.update(
+                generate_presentation_from_media=verified, get_presentation=verified
+            )
+        return result
+
+
+async def _mount_and_open_more_outputs(app, pilot, port):
+    ref = port.ref
+    controller = ResearchWorkspaceController({ref.data_source: port})
+    controller.select_workspace(ref)
+    studio = ResearchStudioRegion(controller=controller)
+    await app.mount(studio)
+    studio.set_workspace(ref)
+    studio.query_one("#research-studio-check-route", Button).press()
+    route_status = studio.query_one("#research-studio-route", Static)
+    await _until(
+        pilot, lambda: "provider / model" in str(route_status.render()), "Server route"
+    )
+    studio.query_one("#research-studio-more-outputs", Button).press()
+    await _until(
+        pilot, lambda: bool(app.screen.query("#research-more-slides")), "More outputs"
+    )
+    return studio
+
+
+@pytest.mark.parametrize(
+    ("source_count", "enabled"),
+    (
+        (1, ("data-table", "slides", "audio-summary")),
+        (2, ("data-table", "literature-matrix", "corpus-gap-finder", "audio-summary")),
+    ),
+)
+async def test_more_outputs_enables_native_server_owners_at_the_probed_revision(
+    source_count, enabled
+):
+    app = App()
+    async with app.run_test(size=(120, 32)) as pilot:
+        await _mount_and_open_more_outputs(app, pilot, _NativeServerPort(source_count))
+        for kind in enabled:
+            action = app.screen.query_one(f"#research-more-{kind}", Button)
+            assert not action.disabled, kind
+
+        app.screen.query_one("#research-more-data-table", Button).press()
+        await _until(
+            pilot,
+            lambda: bool(app.screen.query("#research-studio-max-rows")),
+            "Data Table options",
+        )
+
+
+@pytest.mark.parametrize("initial_status", ("queued", "cancelled"))
+async def test_terminal_native_table_cancellation_requires_a_new_generation(
+    initial_status,
+):
+    port = _NativeServerPort(1)
+    status = initial_status
+    job_uuid, table_uuid = str(UUID(int=54)), str(UUID(int=60))
+    launched = []
+    cancelled = []
+
+    class TableServer:
+        async def _request(self, method, path, *, headers, json_data=None):
+            nonlocal status
+            assert headers == {"X-TLDW-Expected-User-ID": "1"}
+            if method == "POST":
+                assert path == "/api/v1/workspaces/observatory/research-data-tables"
+                launched.append(json_data["operation_id"])
+                return {
+                    "job_id": 54,
+                    "job_uuid": job_uuid,
+                    "status": status,
+                    "table": {
+                        "uuid": table_uuid,
+                        "name": "Data Table",
+                        "prompt": "Extract",
+                        "status": "generating",
+                        "row_count": 0,
+                        "version": 1,
+                        "workspace_tag": "workspace:observatory",
+                    },
+                }
+            assert path == "/api/v1/data-tables/jobs/54"
+            if method == "DELETE":
+                cancelled.append(path)
+                status = "cancelled"
+                return {"success": True, "job_id": 54, "status": status}
+            assert method == "GET"
+            return {
+                "id": 54,
+                "uuid": job_uuid,
+                "status": status,
+                "job_type": "data_table_generate",
+                "owner_user_id": "1",
+                "created_at": "2026-11-24T19:00:00Z",
+                "started_at": None,
+                "completed_at": None,
+                "cancelled_at": None,
+                "cancellation_reason": None,
+                "progress_percent": 0,
+                "progress_message": "queued",
+                "result": None,
+                "error_message": None,
+                "table_uuid": table_uuid,
+            }
+
+    server = TableServer()
+    service = ResearchStudioService(None, ServerStudioAdapter(lambda _: server))
+    port.generate_output = service.generate
+    app = App()
+    async with app.run_test(size=(120, 32)) as pilot:
+        studio = await _mount_and_open_more_outputs(app, pilot, port)
+        app.screen.query_one("#research-more-data-table", Button).press()
+        await _until(
+            pilot,
+            lambda: bool(app.screen.query("#research-studio-generate")),
+            "Data Table options",
+        )
+        app.screen.query_one("#research-studio-generate", Button).press()
+        await _until(pilot, lambda: bool(launched), "native table admission")
+        if initial_status == "queued":
+            studio.query_one("#research-studio-stop", Button).press()
+        await _until(pilot, lambda: not studio.is_busy, "settled native generation")
+        assert len(cancelled) == (1 if initial_status == "queued" else 0)
+        assert len(launched) == 1
+        assert studio.query_one("#research-studio-retry", Button).disabled
+        assert "Start a new generation" in str(
+            studio.query_one("#research-studio-status", Static).render()
+        )
 
 
 async def test_more_outputs_has_one_command_per_action_and_no_focusable_planned_items(

@@ -53,6 +53,7 @@ from .models import (
     WorkspaceRuntimeBinding,
     WorkspaceSyncStatus,
     WorkspaceTransferPolicy,
+    _WorkspaceOutputMembershipAccess,
     registry_now_iso,
 )
 from .change_review_consent import (
@@ -61,7 +62,6 @@ from .change_review_consent import (
     ChangeReviewStateConflict,
     MISSING_CHANGE_REVIEW_REVISION,
 )
-from .workspace_output_store import WorkspaceOutputMemberships
 
 
 _STORAGE_FAILURE_MESSAGE = "Workspace registry storage failed."
@@ -653,7 +653,7 @@ def _validated_remote_exclusion_relative(binding: Any, path: str) -> PurePosixPa
     return candidate
 
 
-class LocalWorkspaceRegistryService(WorkspaceOutputMemberships):
+class LocalWorkspaceRegistryService(_WorkspaceOutputMembershipAccess):
     """SQLite-backed local workspace registry."""
 
     def __init__(

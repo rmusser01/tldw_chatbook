@@ -20,6 +20,7 @@ from .contracts import ResearchCapability
 from .studio_generation import StudioGeneratedOutput
 from .studio_mapping import STUDIO_OUTPUT_MAPPINGS, StudioOwnerMapping
 from .studio_models import (
+    COPYABLE_STUDIO_TEXT_KINDS,
     ResearchOutputKind,
     ResearchStudioRequest,
     StudioOwnerKind,
@@ -28,6 +29,7 @@ from .studio_models import (
 )
 from .studio_provenance import (
     citation_references,
+    copied_output_reference,
     generation_metadata,
     output_reference,
 )
@@ -144,17 +146,78 @@ class LocalStudioAdapter:
             owner.membership_item_type,
             output.owner_id,
         )
-        return next(
+        link = next(
             (
                 row
                 for row in memberships
                 if row.workspace_id == output.workspace.workspace_id
                 and row.role == "output"
-                and row.metadata.get("research_generation", {}).get("output_kind")
-                == output.output_kind
             ),
             None,
         )
+        if link is None:
+            return None
+        if output.copy_provenance is None:
+            return (
+                link
+                if link.metadata.get("research_generation", {}).get("output_kind")
+                == output.output_kind
+                else None
+            )
+        proofs = await self._off_loop(
+            self.registry.list_workspace_artifact_copy_proofs,
+            output.workspace.workspace_id,
+            owner_id=output.owner_id,
+        )
+        record = await self._read_owner(owner, output.owner_id)
+        copied = self._copied_ref(output.workspace, record, proofs)
+        if copied and (copied.output_kind, copied.copy_provenance) == (
+            output.output_kind,
+            output.copy_provenance,
+        ):
+            return link
+        return None
+
+    @staticmethod
+    def _copied_ref(ref, record, proofs):
+        if not record or not isinstance(metadata := record.get("metadata"), Mapping):
+            return None
+        kind = metadata.get("artifact_kind")
+        key = metadata.get("research_copy_replacement") or record.get("research_copy_key")
+        if (
+            metadata.get("artifact_source") != "research"
+            or not isinstance(kind, str)
+            or kind not in COPYABLE_STUDIO_TEXT_KINDS
+            or not isinstance(key, str)
+        ):
+            return None
+        indexed = proofs.get((record["id"], key))
+        version = record.get("artifact_revision")
+        if indexed and type(version) is int and version >= indexed[0]:
+            return copied_output_reference(
+                ref, record["id"], version, kind, indexed[1]
+            )
+        return None
+
+    async def _list_copied_refs(self, ref):
+        if self.chatbooks is None:
+            return {}
+        proofs = await self._off_loop(
+            self.registry.list_workspace_artifact_copy_proofs, ref.workspace_id
+        )
+        if not proofs:
+            return {}
+        owner_ids = {owner_id for owner_id, _ in proofs}
+        snapshot = await self._off_loop(
+            self.chatbooks.artifact_read_snapshot, chatbook_ids=owner_ids
+        )
+        outputs = {}
+        for owner_id in owner_ids:
+            if owner_id.isascii() and owner_id.isdecimal():
+                record = snapshot.get_record(int(owner_id))
+                if copied := self._copied_ref(ref, record, proofs):
+                    outputs[owner_id] = copied
+        return outputs
 
     async def resolve_output(self, output: WorkspaceOutputRef) -> Mapping | None:
         link = await self._related_link(output)
@@ -200,14 +263,19 @@ class LocalStudioAdapter:
         self, ref: QualifiedWorkspaceRef, *, limit=20, offset=0
     ) -> BoundedPageResult[WorkspaceOutputRef]:
         self._owner(ref, "summary")
+        copies = await self._list_copied_refs(ref)
         rows, total = await self._off_loop(
             self.registry.list_workspace_output_memberships,
             ref.workspace_id,
             limit=limit,
             offset=offset,
+            copied_owner_ids=tuple(copies),
         )
         outputs = []
         for row in rows:
+            if not row.metadata:
+                outputs.append(copies[row.item_id])
+                continue
             details = row.metadata["research_generation"]
             owner = self._owner(ref, details["output_kind"])
             if row.item_type != owner.membership_item_type:

@@ -194,12 +194,26 @@ supports editing saved questions and version-checked message deletion. When a
 Local speech provider resolves, **Read aloud** asks you to confirm its processing
 destination before it uses the selected message.
 
+## Studio outputs
+
+Choose a provider and model in Studio and select **Check processing route**.
+**More outputs…** shows the actions available for the selected workspace and
+sources. On Server, **Stop** asks Data Tables to cancel its generation job. If
+the Server confirms cancellation, start a new generation from **More outputs…**.
+
+## Copy and sharing
+
+Open the workspace **Actions** menu and choose **Copy to Server**, **Copy to
+Server and Share**, or **Copy to Local**. Copy can transfer supported text
+artifacts in both directions and Server notes into Local Notes. If an item is
+blocked, choose **Omit from this Copy**, then select **Review Copy choices** to
+see the updated preview before confirming.
+
+**Copy to Server and Share** opens Sharing after the Server finalizes the Copy.
+
 ## Current limitations
 
-- Studio output generators are not yet available. Summary, Flashcards, Quiz,
-  Report, Compare Sources, and the extended output set remain future phases;
-  this screen does not advertise working generation buttons.
-- Cross-authority Move/Copy is not implemented in this phase.
+- Copy of source Media and cross-authority Move remain unavailable.
 - Server web search and version-safe Server Quick Note deletion remain
   unavailable for the reasons shown beside their controls.
 

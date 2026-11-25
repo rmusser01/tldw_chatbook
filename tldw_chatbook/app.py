@@ -5137,7 +5137,7 @@ class TldwCli(
         name is just a dict lookup, but there's no reason to schedule the
         redundant work. ``SCREEN_PREIMPORT_PRIORITY_ROUTE_IDS`` (chat/
         library/settings, the audit's three multi-thousand-line modules) go
-        first; the rest of the registry follows in stable sorted order.
+        first; remaining prewarm-enabled routes follow in stable sorted order.
 
         Route ids that are ALSO a key in the alias table are skipped: at real
         navigation time, ``_lookup_route()`` resolves the alias to a
@@ -5157,7 +5157,7 @@ class TldwCli(
         seen_modules: set[str] = set()
 
         def _consider(route: ScreenRoute | None) -> None:
-            if route is None or route.screen_name in shadowed_route_ids:
+            if route is None or not route.preimport or route.screen_name in shadowed_route_ids:
                 return
             if route.module_path in seen_modules:
                 return

@@ -2,19 +2,38 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import timedelta
+from typing import TYPE_CHECKING
+
+from pydantic import ValidationError
 
 from .models import WorkspaceMembership
 from .output_membership import (
+    OutputCopyProvenance,
     encode_output_membership_metadata,
     output_membership_metadata,
 )
 
+if TYPE_CHECKING:
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
 
 class WorkspaceOutputMemberships:
     """Persist output links through the workspace registry's existing SQLite connection."""
+
+    def __init__(
+        self,
+        db: WorkspaceDB,
+        now_factory: Callable[[], str],
+        bump_mutation_generation: Callable[[], None],
+    ) -> None:
+        self.db = db
+        self._now_factory = now_factory
+        self._bump_mutation_generation = bump_mutation_generation
 
     def upsert_membership_metadata(
         self,
@@ -80,6 +99,50 @@ class WorkspaceOutputMemberships:
         self._bump_mutation_generation()
         return saved
 
+    def list_workspace_artifact_copy_proofs(
+        self, workspace_id: str, *, owner_id: str | None = None
+    ) -> dict[tuple[str, str], tuple[int, OutputCopyProvenance]]:
+        """Read verified incoming Copy receipts for linked Local Chatbooks."""
+        from .registry_service import _normalize_required_text
+
+        safe_id = _normalize_required_text(workspace_id, "workspace_id")
+        with self.db.transaction() as conn:
+            rows = conn.execute(
+                """SELECT links.item_id, copies.item_key, copies.destination_owner_version,
+                          json_extract(operations.manifest_json,
+                              '$.items[' || copies.ordinal || '].source.version') AS source_revision
+                   FROM research_copy_operations AS operations
+                   JOIN research_copy_items AS copies USING (transfer_id)
+                   JOIN workspace_memberships AS links
+                     ON (links.workspace_id, links.item_id) =
+                        (operations.destination_workspace_id, copies.destination_owner_id)
+                   WHERE (operations.destination_data_source, operations.destination_server_profile_id,
+                          operations.destination_principal_id, operations.destination_workspace_id)
+                         = ('local', '', '', ?)
+                     AND links.item_type = 'chatbook' AND links.role = 'output'
+                     AND links.metadata_json IS NULL AND (? IS NULL OR links.item_id = ?)
+                     AND copies.stage = 'verified' AND copies.rolled_back = 0
+                     AND copies.destination_owner_version > 0
+                     AND json_extract(operations.manifest_json,
+                         '$.items[' || copies.ordinal || '].source.kind') = 'artifact'
+                     AND json_extract(operations.manifest_json,
+                         '$.items[' || copies.ordinal || '].treatment') = 'copy_content'""",
+                (safe_id, owner_id, owner_id),
+            ).fetchall()
+        proofs = {}
+        for row in rows:
+            try:
+                proof = OutputCopyProvenance(
+                    item_key=row["item_key"], source_revision=row["source_revision"]
+                )
+            except ValidationError:
+                continue
+            proofs[row["item_id"], proof.item_key] = (
+                row["destination_owner_version"],
+                proof,
+            )
+        return proofs
+
     def list_workspace_output_memberships(
         self,
         workspace_id: str,
@@ -87,6 +150,7 @@ class WorkspaceOutputMemberships:
         limit: int = 20,
         offset: int = 0,
         operation_id: str | None = None,
+        copied_owner_ids: tuple[str, ...] = (),
     ) -> tuple[tuple[WorkspaceMembership, ...], int]:
         """Page the workspace's output links, optionally by exact generation operation."""
         from .registry_service import _membership_from_row, _normalize_required_text
@@ -97,18 +161,22 @@ class WorkspaceOutputMemberships:
         if type(offset) is not int or not 0 <= offset <= 10_000:
             raise ValueError("offset must be between 0 and 10000")
         with self.db.transaction() as conn:
-            params = (safe_id, operation_id, operation_id)
+            params = (safe_id, json.dumps(copied_owner_ids), operation_id, operation_id)
             total = conn.execute(
                 """SELECT COUNT(*) FROM workspace_memberships
-                   WHERE workspace_id = ? AND role = 'output' AND metadata_json IS NOT NULL
+                   WHERE workspace_id = ? AND role = 'output'
+                     AND (metadata_json IS NOT NULL OR
+                          (item_type = 'chatbook' AND item_id IN (SELECT value FROM json_each(?))))
                      AND (? IS NULL OR json_extract(metadata_json, '$.research_generation.operation_id') = ?)""",
                 params,
             ).fetchone()[0]
             rows = conn.execute(
                 """SELECT * FROM workspace_memberships
-                   WHERE workspace_id = ? AND role = 'output' AND metadata_json IS NOT NULL
+                   WHERE workspace_id = ? AND role = 'output'
+                     AND (metadata_json IS NOT NULL OR
+                          (item_type = 'chatbook' AND item_id IN (SELECT value FROM json_each(?))))
                      AND (? IS NULL OR json_extract(metadata_json, '$.research_generation.operation_id') = ?)
-                   ORDER BY updated_at DESC, membership_id ASC LIMIT ? OFFSET ?""",
+                   ORDER BY COALESCE(updated_at, created_at) DESC, membership_id ASC LIMIT ? OFFSET ?""",
                 (*params, limit, offset),
             ).fetchall()
         return tuple(_membership_from_row(row) for row in rows), int(total)

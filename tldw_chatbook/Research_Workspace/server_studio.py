@@ -7,13 +7,18 @@ import json
 from collections.abc import Callable, Mapping
 from uuid import NAMESPACE_URL, uuid5
 
+from pydantic import ValidationError
+
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 from tldw_chatbook.Notes.server_notes_workspace_service import (
     ServerNotesWorkspaceService,
 )
 from tldw_chatbook.Audio_Services_Interop.audio_services_scope_service import AudioServicesScopeService
 from tldw_chatbook.Audio_Services_Interop.server_audio_services_service import ServerAudioServicesService
-from tldw_chatbook.Workspaces.output_membership import output_membership_metadata
+from tldw_chatbook.Workspaces.output_membership import (
+    OutputCopyProvenance,
+    output_membership_metadata,
+)
 from tldw_chatbook.tldw_api.exceptions import APIConnectionError, APIResponseError
 from tldw_chatbook.tldw_api.workspace_data_tables_client import WorkspaceDataTablesClient, canonical_table_uuid
 from tldw_chatbook.tldw_api.workspace_artifact_exports import (
@@ -46,6 +51,7 @@ from .studio_mapping import (
     STUDIO_OUTPUT_MAPPINGS,
 )
 from .studio_models import (
+    COPYABLE_STUDIO_TEXT_KINDS,
     ResearchOutputKind,
     ResearchStudioRequest,
     StudioOwnerKind,
@@ -59,8 +65,10 @@ from .server_data_tables import generate_native_table
 from .source_readiness import versioned_media_sources
 from .studio_provenance import (
     citation_references,
+    copied_output_reference,
     generation_metadata,
     output_reference,
+    server_copy_artifact_id,
 )
 
 
@@ -287,15 +295,44 @@ class ServerStudioAdapter:
     @staticmethod
     def _metadata(row):
         producer = row.get("producer_metadata")
-        if not isinstance(producer, Mapping) or "research_generation" not in producer:
+        if not isinstance(producer, Mapping):
             return None
         if row.get("status") == "unlinked" and "research_native_owner" in producer:
             return None
-        return output_membership_metadata(
-            {"research_generation": producer["research_generation"]}, "output"
-        )
+        if "research_generation" in producer:
+            return output_membership_metadata(
+                {"research_generation": producer["research_generation"]}, "output"
+            )
+        artifact_type = row.get("artifact_type")
+        workspace_id = row.get("workspace_id")
+        version = row.get("version")
+        if (
+            not isinstance(artifact_type, str)
+            or artifact_type not in COPYABLE_STUDIO_TEXT_KINDS
+            or not isinstance(workspace_id, str)
+            or row.get("status") != "complete"
+            or type(version) is not int
+            or version < 1
+            or "research_copy" not in producer
+        ):
+            return None
+        try:
+            proof = OutputCopyProvenance.model_validate(producer["research_copy"])
+        except ValidationError:
+            return None
+        if row.get("id") == server_copy_artifact_id(workspace_id, proof.item_key):
+            return {"research_copy": proof}
+        return None
 
     def _reference(self, ref, row, metadata) -> WorkspaceOutputRef:
+        if "research_copy" in metadata:
+            return copied_output_reference(
+                ref,
+                row["id"],
+                row["version"],
+                row["artifact_type"],
+                metadata["research_copy"],
+            )
         details = metadata["research_generation"]
         kind = studio_output_kind(details["output_kind"])
         owner = STUDIO_OUTPUT_MAPPINGS[WorkspaceDataSource.SERVER, kind]
@@ -487,7 +524,7 @@ class ServerStudioAdapter:
                 metadata = self._metadata(row)
                 if (
                     not metadata
-                    or metadata["research_generation"].get("research_run_ref")
+                    or metadata.get("research_generation", {}).get("research_run_ref")
                     != request.research_run_ref.provenance()
                 ):
                     raise ValueError(

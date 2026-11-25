@@ -6,14 +6,28 @@ import pytest
 from textual.widgets import Button, Input, Select, Static
 
 from Tests.app_module_patches import patch_app_global
+from Tests.Research_Workspace.test_copy_service import ItemOwner
+from Tests.Research_Workspace.test_server_migration_receipts import RecordingServer
 from Tests.UI.library_quit_guard_support import _settings_without_splash, _until
 from Tests.UI.test_research_chat_region import build_research_app, open_chat
 from tldw_chatbook.Research_Workspace.contracts import QualifiedWorkspaceRef
+from tldw_chatbook.Research_Workspace.copy_manifest import (
+    ResearchCopyCandidate,
+    ResearchCopyPreflightBuilder,
+)
 from tldw_chatbook.Research_Workspace.copy_models import (
+    CopyConflictChoice,
+    CopyItemKind,
     CopyOwnerRef,
+    CopyTreatment,
     ResearchCopyItem,
     ResearchCopyManifest,
     ResearchCopyStatus,
+)
+from tldw_chatbook.Research_Workspace.copy_receipts import ResearchCopyReceiptStore
+from tldw_chatbook.Research_Workspace.copy_service import ResearchCopyService
+from tldw_chatbook.Research_Workspace.server_migration_receipts import (
+    ServerMigrationReceiptService,
 )
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
@@ -143,6 +157,105 @@ async def test_copy_and_share_opens_sharing_only_after_completed_copy(
                 )
                 assert not shares
             assert executed == planned and screen.controller.selected_ref == current
+
+
+async def test_copy_and_share_can_omit_blocked_media_for_a_new_server_workspace(
+    tmp_path, monkeypatch
+):
+    app, _, _ = build_research_app(tmp_path, monkeypatch)
+    target = QualifiedWorkspaceRef(
+        "server", "b5abc8e3-b12e-4caa-9238-280394803454", "profile-1", "principal-1"
+    )
+    owner = ItemOwner(target)
+    remote = RecordingServer()
+    revisions = []
+    shared = []
+    service = ResearchCopyService(
+        ResearchCopyReceiptStore(app.workspace_registry_service.db),
+        lambda item, _: owner if item.source.kind is CopyItemKind.ARTIFACT else None,
+        assert_current=lambda _: None,
+        migrations=ServerMigrationReceiptService(lambda _: remote),
+    )
+
+    async def preflight(source, destination, candidates=None, *, target_name):
+        if candidates is None:
+            candidates = (
+                ResearchCopyCandidate(CopyOwnerRef(source, "artifact", "report", 1)),
+                ResearchCopyCandidate(CopyOwnerRef(source, "media", "5", 1)),
+            )
+        manifest = ResearchCopyPreflightBuilder().build(
+            source,
+            destination,
+            candidates,
+            available={CopyItemKind.ARTIFACT: frozenset({CopyTreatment.CONTENT})},
+            created_at="2026-11-24T19:00:00Z",
+            target_name=target_name,
+        )
+        revisions.append(manifest)
+        return manifest
+
+    async def share(ref, *, draft=None):
+        shared.append(ref)
+
+    with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
+        async with app.run_test(size=(60, 20)) as pilot:
+            screen, _ = await open_chat(app, pilot)
+            screen.copy_workspace = SimpleNamespace(
+                new_server_target=lambda: target,
+                preflight_copy=preflight,
+                service=service,
+            )
+            monkeypatch.setattr(screen, "_open_research_sharing", share)
+            screen.query_one("#research-workspace-actions", Button).press()
+            await _until(
+                pilot,
+                lambda: bool(app.screen.query("#research-action-copy-server-share")),
+                "Local workspace actions",
+            )
+            app.screen.query_one("#research-action-copy-server-share", Button).press()
+            await _until(
+                pilot,
+                lambda: bool(app.screen.query("#research-copy-preview")),
+                "Server target",
+            )
+            app.screen.query_one("#research-copy-preview", Button).press()
+            await _until(
+                pilot,
+                lambda: bool(app.screen.query("#research-copy-confirm")),
+                "first Copy preview",
+            )
+            original = app.screen
+            assert original.query_one("#research-copy-confirm", Button).disabled
+            original.query_one(
+                "#research-copy-choice-1", Select
+            ).value = CopyConflictChoice.OMIT
+            original.query_one("#research-copy-resolve", Button).press()
+            await _until(
+                pilot,
+                lambda: (
+                    app.screen is not original
+                    and bool(app.screen.query("#research-copy-confirm"))
+                ),
+                "revised Copy preview",
+            )
+            assert len(revisions) == 2
+            first, reviewed = revisions
+            assert first.manifest_hash != reviewed.manifest_hash
+            assert first.items[1].treatment is CopyTreatment.BLOCKED
+            assert reviewed.items[1].treatment is CopyTreatment.OMIT
+            assert owner.saved == {} and remote.session is None and shared == []
+            confirm = app.screen.query_one("#research-copy-confirm", Button)
+            assert not confirm.disabled
+            confirm.press()
+            await _until(pilot, lambda: bool(shared), "sharing after finalization")
+            assert shared == [target]
+            receipt = await service.get_copy_receipt(
+                reviewed.transfer_id, workspace=target
+            )
+            assert receipt.status is ResearchCopyStatus.COMPLETED
+            assert receipt.server_migration_finalized
+            assert [row.owner_id for row in owner.saved.values()] == ["created-report"]
+            assert len(remote.accepted) == 1
 
 
 async def test_workspace_actions_export_the_reviewed_local_bundle(

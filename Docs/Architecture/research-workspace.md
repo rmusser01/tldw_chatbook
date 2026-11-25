@@ -120,7 +120,9 @@ while Local Chatbooks and Server `report` artifacts own the content.
 Server Data Tables owns Data Table, Literature Matrix, and Corpus Gap Finder.
 The selected provider and model must pass the native Workspace admission.
 That endpoint checks selected Media revisions and lets a retry recover the
-same table reservation and Jobs receipt. The deployment currently needs
+same table reservation and Jobs receipt. Stop asks the native owner to cancel
+the job. Once the owner confirms cancellation, Studio clears Retry and asks
+for a new generation. The deployment currently needs
 server-managed credentials and disabled usage quotas on this route. Studio
 opens the published revision and exports CSV, JSON, or XLSX through Data Tables.
 
@@ -184,7 +186,9 @@ current version through its canonical owner. Replacing an eligible Local
 artifact requires a second confirmation. The owner checks that version before
 writing. Copy currently has canonical transfer adapters for text artifacts in
 both directions and Server notes into Local Notes. The preview reports other
-owner types as blocked when their import contract is unavailable.
+owner types as blocked when their import contract is unavailable. Explicit
+omissions produce a new preview for review before Copy can start. Copied text
+appears in Studio history and Workspace output search with its Copy provenance.
 
 WorkspaceDB records each item checkpoint and the Server migration receipt.
 Stopping finishes the current checkpoint so a later attempt can recover

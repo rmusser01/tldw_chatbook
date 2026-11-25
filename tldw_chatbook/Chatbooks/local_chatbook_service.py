@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Set
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -433,8 +433,10 @@ class LocalChatbookService:
         return records[: int(limit)]
 
     @content_call(_content_sources)
-    def artifact_read_snapshot(self) -> ChatbookArtifactSnapshot:
-        """Read the registry once for a synchronous Library worker request.
+    def artifact_read_snapshot(
+        self, *, chatbook_ids: Set[str] | None = None
+    ) -> ChatbookArtifactSnapshot:
+        """Read the registry once, optionally for a set of exact Chatbook IDs.
 
         The detached snapshot never writes or reopens the registry. Window,
         rank, and selected-record reads share its request-owned content.
@@ -444,7 +446,12 @@ class LocalChatbookService:
         with self._registry_lock:
             registry = self._load_registry()
         return ChatbookArtifactSnapshot(
-            [self._record_copy(record) for record in registry["records"]]
+            [
+                self._record_copy(record)
+                for record in registry["records"]
+                if chatbook_ids is None
+                or str(record.get("id", record.get("chatbook_id"))) in chatbook_ids
+            ]
         )
 
     @content_call(_content_sources)

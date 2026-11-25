@@ -9,6 +9,8 @@ from enum import StrEnum
 from hashlib import sha256
 from typing import Literal
 
+from tldw_chatbook.Workspaces.output_membership import OutputCopyProvenance
+
 from .chat_models import (
     MAX_CHAT_SOURCES,
     ResearchRetrievalSettings,
@@ -50,6 +52,14 @@ PRIMARY_RESEARCH_OUTPUT_KINDS = (
     ResearchOutputKind.QUIZ,
     ResearchOutputKind.REPORT,
     ResearchOutputKind.COMPARE_SOURCES,
+)
+
+COPYABLE_STUDIO_TEXT_KINDS = frozenset(
+    {
+        ResearchOutputKind.SUMMARY,
+        ResearchOutputKind.REPORT,
+        ResearchOutputKind.COMPARE_SOURCES,
+    }
 )
 
 
@@ -323,8 +333,9 @@ class WorkspaceOutputRef:
     owner_id: str
     owner_version: int | None
     source_snapshot: tuple[ResearchSourceVersionRef, ...]
-    generation_fingerprint: str
+    generation_fingerprint: str | None
     status: ResearchTurnStatus
+    copy_provenance: OutputCopyProvenance | None = None
 
     def __post_init__(self) -> None:
         from .studio_mapping import STUDIO_OUTPUT_MAPPINGS
@@ -353,7 +364,17 @@ class WorkspaceOutputRef:
             type(self.owner_version) is not int or self.owner_version < 0
         ):
             raise ValueError("Output owner revision must be non-negative")
-        if not isinstance(self.generation_fingerprint, str) or not re.fullmatch(
+        if self.copy_provenance is not None:
+            if (
+                not isinstance(self.copy_provenance, OutputCopyProvenance)
+                or self.output_kind not in COPYABLE_STUDIO_TEXT_KINDS
+                or self.status != "complete"
+                or not self.owner_version
+                or self.source_snapshot
+                or self.generation_fingerprint is not None
+            ):
+                raise ValueError("A copied output requires an exact text artifact revision")
+        elif not isinstance(self.generation_fingerprint, str) or not re.fullmatch(
             r"[0-9a-f]{64}", self.generation_fingerprint
         ):
             raise ValueError("Generation fingerprint must be a SHA-256 digest")

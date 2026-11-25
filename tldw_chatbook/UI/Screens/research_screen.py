@@ -13,12 +13,6 @@ from ...Constants import TAB_RESEARCH_WORKSPACE
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.pending_handoff_store import HandoffChannel
-from ..Navigation.research_run_handoffs import (
-    active_server_identity,
-    research_run_target_current,
-    workspace_target_from_run,
-)
-from ..Research_Workspace_Modules.mode_bar import ResearchModeStrip
 from ..Research_Window import ResearchWindow
 
 
@@ -37,6 +31,8 @@ class ResearchScreen(BaseAppScreen):
     def compose_content(self) -> ComposeResult:
         """Compose the screen's content: the ResearchWindow plus any pending
         state restoration."""
+        from ..Research_Workspace_Modules.mode_bar import ResearchModeStrip
+
         yield ResearchModeStrip(active_route="research", id="research-mode-strip")
         self.research_window = ResearchWindow(
             self.app_instance,
@@ -66,6 +62,11 @@ class ResearchScreen(BaseAppScreen):
             )
 
     async def _open_run_handoff(self, store, claim) -> None:
+        from ..Navigation.research_run_handoffs import (
+            research_run_target_current,
+            workspace_target_from_run,
+        )
+
         target = claim.value
         window = self.research_window
         app = self.app_instance
@@ -116,6 +117,8 @@ class ResearchScreen(BaseAppScreen):
 
     @on(ResearchWindow.SelectionChanged)
     def _run_selection_changed(self) -> None:
+        from ..Navigation.research_run_handoffs import workspace_target_from_run
+
         window = self.research_window
         if window is None or not self.is_attached or not self.app.is_running:
             return
@@ -143,6 +146,11 @@ class ResearchScreen(BaseAppScreen):
             )
 
     async def _load_return_origin(self, window, run_id: str, revision: int) -> None:
+        from ..Navigation.research_run_handoffs import (
+            active_server_identity,
+            workspace_target_from_run,
+        )
+
         identity = active_server_identity(self.app_instance)
         if identity is None:
             return
@@ -170,6 +178,8 @@ class ResearchScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#research-return-to-workspace")
     def _return_to_workspace(self) -> None:
+        from ..Navigation.research_run_handoffs import research_run_target_current
+
         app = self.app_instance
         target = self._return_target
         window = self.research_window

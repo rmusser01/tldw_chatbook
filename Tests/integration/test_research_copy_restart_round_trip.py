@@ -9,6 +9,8 @@ from Tests.Research_Workspace.test_copy_models import LOCAL, SERVER, TIME
 from Tests.Research_Workspace.test_server_migration_receipts import RecordingServer
 from tldw_chatbook.Chatbooks.local_chatbook_service import LocalChatbookService
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+from tldw_chatbook.Research_Workspace.contracts import ResearchWorkspaceSummary
+from tldw_chatbook.Research_Workspace.controller import ResearchWorkspaceCatalogState
 from tldw_chatbook.Research_Workspace.copy_adapters import TextArtifactCopyOwner
 from tldw_chatbook.Research_Workspace.copy_models import (
     CopyOwnerRef,
@@ -22,9 +24,11 @@ from tldw_chatbook.Research_Workspace.copy_receipts import (
     ResearchCopyReceiptStore,
 )
 from tldw_chatbook.Research_Workspace.copy_service import ResearchCopyService
+from tldw_chatbook.Research_Workspace.local_studio import LocalStudioAdapter
 from tldw_chatbook.Research_Workspace.server_migration_receipts import (
     ServerMigrationReceiptService,
 )
+from tldw_chatbook.Research_Workspace.workspace_search import search_workspace
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
@@ -134,6 +138,26 @@ async def test_server_to_local_copy_recovers_the_same_canonical_owner(
             (LOCAL.workspace_id, "output")
         ]
         assert remote.records["report"]["version"] == 2
+        studio = LocalStudioAdapter(registry, chatbooks, None, None)
+        catalog = ResearchWorkspaceCatalogState(
+            LOCAL.data_source, 0, 0, (ResearchWorkspaceSummary(LOCAL, "Destination"),)
+        )
+        hits = [
+            hit
+            async for hit in search_workspace(studio, catalog, "output:saved report")
+        ]
+        assert [(hit.item_id, hit.title) for hit in hits] == [
+            (original, "Saved report")
+        ]
+        (output,) = (await studio.list_outputs(LOCAL)).items
+        assert output == hits[0].output
+        assert output.source_snapshot == ()
+        assert output.generation_fingerprint is None
+        assert output.copy_provenance.source_revision == 2
+        assert output.copy_provenance.item_key == completed.items[0].item_key
+        assert (await studio.resolve_output(output))["metadata"][
+            "content"
+        ] == "Native report body"
     finally:
         reopened.close()
 

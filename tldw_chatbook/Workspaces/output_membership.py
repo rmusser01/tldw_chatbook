@@ -57,6 +57,15 @@ class _ResearchRunRef(BaseModel):
     run_id: _IDENTIFIER
 
 
+class OutputCopyProvenance(BaseModel):
+    """A bounded Copy proof without content or destination source claims."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True, frozen=True)
+
+    item_key: _FINGERPRINT
+    source_revision: Annotated[int, Field(strict=True, ge=1, lt=2**63)]
+
+
 class OutputGenerationProvenance(BaseModel):
     """Fields the workspace can retain alongside the canonical owner ID."""
 

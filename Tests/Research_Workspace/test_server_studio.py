@@ -2,14 +2,21 @@ from dataclasses import replace
 
 import pytest
 
-from Tests.Research_Workspace.test_studio_models import ROUTE, SERVER, SOURCE
+from Tests.Research_Workspace.test_copy_models import LOCAL
+from Tests.Research_Workspace.test_local_studio import local_studio as local_studio
 from Tests.Research_Workspace.test_studio_generation import request
+from Tests.Research_Workspace.test_studio_models import ROUTE, SERVER, SOURCE
+from tldw_chatbook.Research_Workspace.contracts import ResearchWorkspaceSummary
+from tldw_chatbook.Research_Workspace.controller import ResearchWorkspaceCatalogState
+from tldw_chatbook.Research_Workspace.copy_adapters import TextArtifactCopyOwner
+from tldw_chatbook.Research_Workspace.copy_models import CopyOwnerRef, ResearchCopyItem
 from tldw_chatbook.Research_Workspace.server_studio import ServerStudioAdapter
-from tldw_chatbook.tldw_api.exceptions import APIResponseError
 from tldw_chatbook.Research_Workspace.studio_generation import (
     StudioCitation,
     StudioGeneratedOutput,
 )
+from tldw_chatbook.Research_Workspace.workspace_search import search_workspace
+from tldw_chatbook.tldw_api.exceptions import APIResponseError
 
 pytestmark = pytest.mark.asyncio
 
@@ -94,6 +101,61 @@ class _ArtifactServer:
             "content": "Reviewed report",
             "bytes": 15,
         }
+
+
+@pytest.mark.bootstrap_profile
+async def test_server_studio_and_search_discover_copied_text(local_studio):
+    server = _ArtifactServer()
+    copy_owner = TextArtifactCopyOwner(
+        local_studio.registry, local_studio.artifacts, lambda _ref: server
+    )
+    local_studio.registry.create_workspace(
+        workspace_id=LOCAL.workspace_id, name="Local source"
+    )
+    record = await local_studio.artifacts.create_chatbook(
+        name="Copied field report",
+        metadata={
+            "artifact_source": "research",
+            "artifact_kind": "report",
+            "content": "Exact copied text",
+        },
+    )
+    local_studio.registry.link_membership(
+        LOCAL.workspace_id,
+        item_type="chatbook",
+        item_id=record["id"],
+        role="output",
+        transfer_policy="copy",
+    )
+    item = ResearchCopyItem(
+        CopyOwnerRef(LOCAL, "artifact", record["id"], version=1), "copy_content"
+    )
+    destination = await copy_owner.create_destination(
+        item, await copy_owner.inspect_source(item.source), SERVER, "a" * 64
+    )
+    original = server.saved[destination.owner_id]
+    server.saved["unrelated"] = {**original, "id": "unrelated"}
+    studio = ServerStudioAdapter(lambda _ref: server)
+    catalog = ResearchWorkspaceCatalogState(
+        SERVER.data_source, 0, 0, (ResearchWorkspaceSummary(SERVER, "Destination"),)
+    )
+
+    hits = [
+        hit async for hit in search_workspace(studio, catalog, "output:field report")
+    ]
+    assert [(hit.item_id, hit.title) for hit in hits] == [
+        (destination.owner_id, "Copied field report")
+    ]
+    (output,) = (await studio.list_outputs(SERVER)).items
+    assert output.owner_id == destination.owner_id
+    assert output.source_snapshot == ()
+    assert output.generation_fingerprint is None
+    assert output.copy_provenance.source_revision == 1
+    assert output.copy_provenance.item_key == "a" * 64
+    assert (await studio.resolve_output(output))["content"] == "Exact copied text"
+    assert original["producer_metadata"] == {
+        "research_copy": {"item_key": "a" * 64, "source_revision": 1}
+    }
 
 
 async def test_server_studio_uses_canonical_artifact_versions_and_reloads_provenance():

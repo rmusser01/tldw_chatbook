@@ -22,7 +22,7 @@ from ...Research_Workspace.contracts import CapabilityUnavailableError, Workspac
 from ...Research_Workspace.egress_consent import ResearchEgressConsentService
 from ...Research_Workspace.layout_state import ResearchPanePreferences
 from ...Research_Workspace.overlay_store import OverlayConflictError
-from ...Research_Workspace.studio_generation import NativeSubmissionUnconfirmed
+from ...Research_Workspace.studio_generation import StudioRetryUnavailable
 from ...Research_Workspace.studio_mapping import (
     SERVER_NATIVE_OWNERS,
     STUDIO_OUTPUT_MAPPINGS,
@@ -310,8 +310,17 @@ class ResearchStudioRegion(VerticalScroll):
         self._availability = project_studio_availability(
             capture.ref, sources or (), route, capabilities
         )
+        capability_revision = capture.capability_revision
+        if not capability_revision:
+            owner_revisions = {
+                capability.capability_revision
+                for capability in capabilities.values()
+                if capability.capability_revision
+            }
+            if len(owner_revisions) == 1:
+                capability_revision = owner_revisions.pop()
         context = ResearchActionContext(
-            capture.ref, capture.capability_revision, route, sources or ()
+            capture.ref, capability_revision, route, sources or ()
         )
         self._action_probes = ResearchActionProbes(context, capabilities)
         self._probe_capture = capture
@@ -629,7 +638,7 @@ class ResearchStudioRegion(VerticalScroll):
             self._status(
                 f"{exc.capability.user_message} {exc.capability.recovery_action}".strip()
             )
-        elif isinstance(exc, NativeSubmissionUnconfirmed):
+        elif isinstance(exc, StudioRetryUnavailable):
             self._retry = None
             self._status(str(exc))
         elif isinstance(exc, ValueError):

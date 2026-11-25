@@ -9,10 +9,12 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Mapping, NamedTuple
 
-from .output_membership import output_membership_metadata
-
 if TYPE_CHECKING:
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
     from .change_turn_tracker import TurnHandle
+    from .output_membership import OutputCopyProvenance
+    from .workspace_output_store import WorkspaceOutputMemberships
 
 
 class WorkspaceAuthority(str, Enum):
@@ -224,9 +226,13 @@ class WorkspaceMembership:
         object.__setattr__(self, "item_id", _required_text(self.item_id, "item_id"))
         object.__setattr__(self, "role", _required_text(self.role, "role"))
         object.__setattr__(self, "title", _optional_text(self.title))
-        object.__setattr__(
-            self, "metadata", output_membership_metadata(self.metadata, self.role)
-        )
+        if isinstance(self.metadata, Mapping) and not self.metadata:
+            metadata = {}
+        else:
+            from .output_membership import output_membership_metadata
+
+            metadata = output_membership_metadata(self.metadata, self.role)
+        object.__setattr__(self, "metadata", metadata)
         if self.updated_at is not None:
             if self.role != "output":
                 raise ValueError(
@@ -248,6 +254,56 @@ class WorkspaceMembership:
                 "membership_id",
                 _required_text(self.membership_id, "membership_id"),
             )
+
+
+class _WorkspaceOutputMembershipAccess:
+    """Expose output operations to the registry without loading their store at boot."""
+
+    if TYPE_CHECKING:
+        db: WorkspaceDB
+        _now_factory: Callable[[], str]
+        _bump_mutation_generation: Callable[[], None]
+
+    def _output_memberships(self) -> WorkspaceOutputMemberships:
+        from .workspace_output_store import WorkspaceOutputMemberships
+
+        return WorkspaceOutputMemberships(
+            self.db, self._now_factory, self._bump_mutation_generation
+        )
+
+    def upsert_membership_metadata(
+        self,
+        membership: WorkspaceMembership,
+        *,
+        expected_updated_at: str | None = None,
+    ) -> WorkspaceMembership:
+        return self._output_memberships().upsert_membership_metadata(
+            membership, expected_updated_at=expected_updated_at
+        )
+
+    def list_workspace_artifact_copy_proofs(
+        self, workspace_id: str, *, owner_id: str | None = None
+    ) -> dict[tuple[str, str], tuple[int, OutputCopyProvenance]]:
+        return self._output_memberships().list_workspace_artifact_copy_proofs(
+            workspace_id, owner_id=owner_id
+        )
+
+    def list_workspace_output_memberships(
+        self,
+        workspace_id: str,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+        operation_id: str | None = None,
+        copied_owner_ids: tuple[str, ...] = (),
+    ) -> tuple[tuple[WorkspaceMembership, ...], int]:
+        return self._output_memberships().list_workspace_output_memberships(
+            workspace_id,
+            limit=limit,
+            offset=offset,
+            operation_id=operation_id,
+            copied_owner_ids=copied_owner_ids,
+        )
 
 
 @dataclass(frozen=True)
