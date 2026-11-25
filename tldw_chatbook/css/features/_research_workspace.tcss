@@ -58,7 +58,9 @@ ResearchScreen #research-window.window {
     text-style: bold;
 }
 
-#research-mode-strip Button.research-mode-chip {
+#research-mode-strip Button.research-mode-chip,
+#research-authority-summary .research-data-source-button,
+#research-pane-mode-strip .research-pane-mode-button {
     width: auto;
     min-width: $ds-size-0;
     height: $ds-size-1;
@@ -119,17 +121,6 @@ ResearchScreen #research-window.window {
 
 #research-authority-summary #research-data-source-separator {
     margin: $ds-space-0;
-}
-
-#research-authority-summary .research-data-source-button {
-    width: auto;
-    min-width: $ds-size-0;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    padding: $ds-space-0 $ds-space-1;
-    border: none;
-    background: $surface-darken-1;
-    color: $text-muted;
 }
 
 #research-authority-summary .research-data-source-button:focus {
@@ -211,17 +202,6 @@ ResearchScreen #research-window.window {
     padding: $ds-space-0 $ds-space-1;
     background: $surface-darken-1;
     align-horizontal: center;
-}
-
-#research-pane-mode-strip .research-pane-mode-button {
-    width: auto;
-    min-width: $ds-size-0;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    padding: $ds-space-0 $ds-space-1;
-    border: none;
-    background: $surface-darken-1;
-    color: $text-muted;
 }
 
 #research-pane-mode-strip .research-pane-mode-button.is-active {
