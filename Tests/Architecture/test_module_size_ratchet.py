@@ -1418,6 +1418,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-21: re-measured after rebasing onto dev dc371f0842 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7089 -> 7098.
     # 2026-11-22: re-measured after rebasing onto dev 2f7790873a (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7095 -> 7104.
     # 2026-11-22: re-measured after rebasing onto dev fe8c87e3e2 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7104 -> 7113.
+    # 2026-11-25: re-measured after rebasing onto dev 692acb43dc (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7113 -> 7112.
     "tldw_chatbook/Chat/console_runtime.py": 7108,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
