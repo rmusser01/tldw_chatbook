@@ -718,6 +718,9 @@ class LifecycleMixin:
         """Drain durable app-owned work before Textual closes screen state."""
         from .Workspaces.project_index.runtime import close_project_index_service
 
+        listening = vars(self).get("article_listening_service")
+        if listening is not None:
+            await listening.close()
         await close_project_index_service(self)
         actor_recovery_cancellation = await self._shutdown_actor_pack_recovery()
         await self._shutdown_workflow_session()

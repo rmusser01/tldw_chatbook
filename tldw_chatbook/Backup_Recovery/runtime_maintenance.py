@@ -6,6 +6,7 @@ import logging
 import sys
 import time
 from dataclasses import dataclass
+from ..app_services import installed_article_listening
 
 from .bootstrap import RecoveryRequired
 from .local_content_lifetime import participant as content_lifetime
@@ -249,6 +250,7 @@ class RuntimeMaintenance:
                 runtime,
                 None if runtime is None else runtime.chat_controller,
                 app.console_image_edit_operations,
+                installed_article_listening(app),
                 article_listening_lease.listening_producer,
                 app.scheduler_loop,
                 getattr(app, "db_status_manager", None),
@@ -323,6 +325,17 @@ class RuntimeMaintenance:
             [_app_hook(app, "_speech_initialization")], self.closed, deadline
         )
         self._owners = self._owner_snapshot()
+        await _settle_stage(
+            [
+                _bind(
+                    installed_article_listening(app),
+                    "Subscriptions.article_listening_service",
+                    "ArticleListeningService",
+                )
+            ],
+            self.closed,
+            deadline,
+        )
         listening = _bind(
             article_listening_lease.listening_producer,
             "Subscriptions.article_listening_lease",

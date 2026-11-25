@@ -852,14 +852,11 @@ class TldwCli(
     def active_server_id(self) -> str | None:
         return self._runtime_policy_projection_snapshot[1]
 
-    def _publish_runtime_policy_projection(
-        self,
-        state: RuntimeSourceState,
-    ) -> None:
-        self._runtime_policy_projection_snapshot = (
-            state.active_source,
-            state.active_server_id,
-        )
+    def _publish_runtime_policy_projection(self, state: RuntimeSourceState) -> None:
+        self._runtime_policy_projection_snapshot = (state.active_source, state.active_server_id)
+        listening = vars(self).get("article_listening_service")
+        if listening is not None:
+            listening.policy_changed()
 
     # Product name shown in the terminal title (legacy "tldw CLI" retired).
     TITLE = "tldw chatbook"
@@ -3328,6 +3325,9 @@ class TldwCli(
         self.watchlists_operation_coordinator.bind_running_loop()
         self._wire_watchlists_command_service()
         self._bind_tts_service()
+        self._create_deferred_startup_task(
+            self.article_listening_service.restore(), name="restore_article_listening"
+        )
         self._start_backup_maintenance_monitor()
         # TASK-21247: gate CONSTRUCTION, not only start. Reading the lazy
         # property unconditionally paid the ~15-module notes-sync

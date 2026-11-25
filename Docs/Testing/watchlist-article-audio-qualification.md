@@ -561,6 +561,29 @@ supplied player. These checks validate the measuring tool, not native playback.
 
 ## Reproduction and focused checks
 
+### App process death and startup Stop on Windows (2026-11-24)
+
+`Tests/Subscriptions/native_article_listening_crash.py` runs the composed listening service in separate app processes against a guarded disposable SQLite database and a retained, silent 48 kHz WAV. The observer opens the original player with synchronization and query rights and checks its creation FILETIME. A restarted app must restore the paused foreground, suspended queue, matching digest and durable frame before manual Resume. The observer checks the next output grant and player birth against the original handle's signaled state and the 250 ms settlement requirement.
+
+| Boundary exercised | Durable / restored frame | First observed progress after Resume | Original player signaled before next grant / birth |
+| --- | ---: | ---: | ---: |
+| App killed after player advanced beyond the last checkpoint | 41280 / 41280 | 45120 | 19.166 s / 19.184 s |
+| App killed after the suspended player's receipt was flushed, before ResumeThread | 0 / 0 | 3840 | 18.353 s / 18.371 s |
+| Stop received during suspended startup | 0 / 0 | Paused with no automatic queue return | Original handle signaled before Stop completed |
+
+These intervals include startup of the successor app. A separate direct holder test observes a matching live predecessor refuse acquisition, then measures at least 250 ms of settlement after death. This supplement measures native process custody and durable progress. The loopback qualification above supplies the acoustic measurements. To reproduce, select the native test file with the guarded launcher and use `-rP` to see its numeric receipts.
+
+### Configured provider and retained Resume (2026-11-24)
+
+A service-level smoke used the selected app's real policy, TTS service and
+official OpenAI speech endpoint with a synthetic sentence in a disposable
+private database. One speech request published a verified 48 kHz retained WAV
+with 101999 content frames and 456040 bytes. Reopening that database and
+manually resuming preserved its generation and reused the artifact with zero
+provider accesses. Private-child cleanup was verified. This smoke declined
+device admission after preparation; it supplies provider/publication/reuse
+evidence, with native playback covered separately above.
+
 Tool source and adjacent tests: `tools/evidence/watchlist_article_audio/`.
 Use the verified Python environment with the isolated helper directory on
 `PYTHONPATH`. Run deterministic tests and static checks first:

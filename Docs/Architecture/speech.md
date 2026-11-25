@@ -293,6 +293,16 @@ Engine fork at entry: realtime (opt-in `[realtime] enabled`) or the pipeline FSM
 | Profile store integrity failure | Coded repository errors; migrations back up first; capability gate fails closed |
 | httpx logging | Hard-filtered in network adapters to keep URLs/keys out of logs |
 
+### Watchlists process custody on Windows
+
+The qualified ffplay adapter creates each player suspended with a noninherited kill-on-close job assigned through the Windows process attribute list at birth. The adapter flushes a predecessor receipt through the held profile lock file, checks the current start permission again and resumes the primary thread. New synthesis checks that containment works using the pinned executable's version command.
+
+`Subscriptions/article_playback_receipt.py` defines the device-local 20-byte companion payload. Bytes 0–3 are ASCII `ALP1` (format version 1), bytes 4–7 hold a positive unsigned PID, bytes 8–15 hold a positive unsigned process creation FILETIME, and bytes 16–19 hold the unsigned CRC32 of bytes 0–15. Integers use big-endian byte order. An empty payload represents no predecessor. Partial, malformed and unknown-version records refuse acquisition. Recovery classifies a valid receipt as intentionally excluded. Detached import and restore exclude the native lock file.
+
+After parent death, a successor checks the exact process identity with query and synchronization rights, then waits the qualified 250 ms settlement interval after observing death, absence or PID reuse. A matching live process or an inconclusive observation keeps the gate closed. Normal retirement reaps the child, settles, clears its exact receipt and finishes the terminal checkpoint before releasing output. The native probe in `Tests/Subscriptions/native_article_listening_crash.py` observes this path in separate application processes. [ADR-367](../../backlog/decisions/367-watchlist-article-listening-and-controlled-playback.md)
+
+An unstarted run can already own pinned files. When output admission is refused or becomes stale, the service keeps that run, the profile holder and any exact returned output grant until the runner confirms retirement. Stop also waits for an outstanding preparation to return its pins. A later Stop can confirm settlement before an explicit Retry.
+
 ## Governing decisions
 
 ADR-023 (TTS adapter registry + audio.cpp runtime boundary), ADR-294 (character TTS profile ownership), ADR-304 (global and studio settings ownership), ADR-306 (Speech Lab current result/auto-play), ADR-308 (audio.cpp generated model setup), ADR-051 (private TTS clone references), ADR-012 (provider credentials), ADR-025 (shared STT artifacts). Note duplicate ADR numbers exist — cite by filename. User guides: `Docs/User_Guide/console/voice-and-hands-free.md`, `Docs/User_Guide/console/attachments-images-voice.md`, `Docs/Features/Speech-Services-Guide.md`.

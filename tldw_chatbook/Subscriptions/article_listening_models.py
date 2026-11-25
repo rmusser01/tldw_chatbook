@@ -273,6 +273,7 @@ class ListeningEntry:
     bookmark: WavBookmark | None
     availability: Literal["pending", "ready", "missing", "unavailable"]
     unavailable_reason: UnavailableReason | None
+    stored_feed_text: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from .Subscriptions.article_listening_service import ArticleListeningService
 
     from .ACP_Interop.runtime_process import ACPRuntimeProcessManager
     from .Actor_Packs.activation import ActorPackActivationService
@@ -483,6 +484,7 @@ class WatchlistsServices:
     scope: WatchlistScopeService
     subscriptions_db: SubscriptionsDB
     watchlist_bundle_service: WatchlistBundleService
+    listening: ArticleListeningService | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -629,6 +631,14 @@ class ApplicationServices:
     ]
 
 
+def installed_article_listening(app: Any) -> ArticleListeningService | None:
+    """Return the explicitly installed owner during startup and teardown."""
+    try:
+        return app.article_listening_service
+    except AttributeError:
+        return None
+
+
 def _optional(app: Any, name: str) -> Any:
     """Read a service that composition leaves ``None`` when it is unavailable.
 
@@ -713,6 +723,7 @@ def assemble_application_services(app: Any) -> ApplicationServices:
             scope=app.watchlist_scope_service,
             subscriptions_db=app.subscriptions_db,
             watchlist_bundle_service=app.watchlist_bundle_service,
+            listening=installed_article_listening(app),
         ),
         quiz=ScopedServices(
             local=_optional(app, "local_quiz_service"),

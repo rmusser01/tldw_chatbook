@@ -4468,7 +4468,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
         if not confirmed:
             return
-        service.delete(watchlist_id)
+        from ...app_services import installed_article_listening
+        if (listening := installed_article_listening(self.app)) is not None:
+            await listening.delete_watchlist(watchlist_id, service)
+        else:
+            service.delete(watchlist_id)
         self._request_tree_scope(TreeScope(kind="unassigned"))
         self._notify_watchlists(
             f'Watchlist "{escape_markup(name)}" deleted. Its {source_count} '

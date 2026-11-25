@@ -15,6 +15,7 @@ from types import SimpleNamespace
 import pytest
 
 import tldw_chatbook.STT.executor_process_tree as process_tree_module
+from tldw_chatbook.Utils import windows_job
 from Tests.STT.executor_test_support import (
     containment_crashed_leader_with_term_ignoring_descendant,
     containment_descendant,
@@ -149,7 +150,7 @@ def _querying_job_api(
             return 0
         accounting = ctypes.cast(
             information,
-            ctypes.POINTER(process_tree_module._JobObjectBasicAccountingInformation),
+            ctypes.POINTER(windows_job._JobObjectBasicAccountingInformation),
         ).contents
         accounting.ActiveProcesses = active_process_counts.pop(0)
         return 1
@@ -373,7 +374,7 @@ def test_windows_job_api_binds_basic_accounting_query_with_native_layout(
         CloseHandle=_FakeCFunction(),
         QueryInformationJobObject=_FakeCFunction(),
     )
-    monkeypatch.setattr(process_tree_module, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(windows_job, "os", SimpleNamespace(name="nt"))
     monkeypatch.setattr(
         ctypes,
         "WinDLL",
@@ -383,7 +384,7 @@ def test_windows_job_api_binds_basic_accounting_query_with_native_layout(
 
     _WindowsJobApi()
 
-    accounting = process_tree_module._JobObjectBasicAccountingInformation
+    accounting = windows_job._JobObjectBasicAccountingInformation
     assert [name for name, _kind in accounting._fields_] == [
         "TotalUserTime",
         "TotalKernelTime",
@@ -412,7 +413,7 @@ def test_windows_job_empty_polling_observes_active_process_transition(
     calls: list[object] = []
     clock = _FakeClock()
     api = _querying_job_api([2, 1, 0], calls)
-    monkeypatch.setattr(process_tree_module, "time", clock)
+    monkeypatch.setattr(windows_job, "time", clock)
 
     assert api.wait_for_job_empty(99, 1.0) is True
     assert calls == [
@@ -429,7 +430,7 @@ def test_windows_job_empty_polling_stops_at_monotonic_deadline(
     calls: list[object] = []
     clock = _FakeClock()
     api = _querying_job_api([1, 1, 1, 1], calls)
-    monkeypatch.setattr(process_tree_module, "time", clock)
+    monkeypatch.setattr(windows_job, "time", clock)
 
     assert api.wait_for_job_empty(99, 0.025) is False
     assert len(calls) == 4

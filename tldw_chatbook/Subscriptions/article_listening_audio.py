@@ -500,20 +500,28 @@ class ArticleListeningAudio:
         tts_service: TTSService | None,
         profile_service: TTSProfileService | None = None,
         readiness: Callable[[], Awaitable[str | None]] = controlled_wav_readiness,
+        lease=None,
+        progress=None,
+        speech_services=None,
     ) -> None:
         self.store = store
         self.root = profile_data_root
         self.tts = tts_service
         self.profiles = profile_service
         self.readiness = readiness
+        self.lease = lease
+        self.progress = progress
+        self.speech_services = speech_services
         self._task = None
         self._decision = None
         self._unretired = None
+        self.attached_session = None
 
-    def revoke(self) -> None:
+    def revoke(self) -> bool:
         """Revoke the active observer's permission immediately; workers retain custody."""
         if self._decision is not None:
-            self._decision.revoke()
+            return self._decision.revoke()
+        return True
 
     async def settle(self) -> None:
         """Wait for the current response, workers, and reservation cleanup to retire."""
@@ -524,7 +532,12 @@ class ArticleListeningAudio:
             raise ArticleSpeechError("article_retirement_unconfirmed")
 
     async def prepare(
-        self, entry_id: str, *, expected_revision: int, regenerate: bool = False
+        self,
+        entry_id: str,
+        *,
+        expected_revision: int,
+        regenerate: bool = False,
+        permission=None,
     ) -> ArticleAudio:
         """Verify retained audio first, otherwise synthesize the exact saved entry."""
         if self._unretired is not None:
@@ -532,9 +545,10 @@ class ArticleListeningAudio:
         if self._task is not None and not self._task.done():
             raise ArticleSpeechError("article_audio_busy")
         decision = _ArticleDecision()
+        self.attached_session = None
         self._decision = decision
         task = asyncio.create_task(
-            self._prepare(entry_id, expected_revision, regenerate, decision)
+            self._prepare(entry_id, expected_revision, regenerate, decision, permission)
         )
         self._task = task
         # An abandoned observer must never leave an unobserved exception.
@@ -554,12 +568,14 @@ class ArticleListeningAudio:
         if self._task is task:
             self._task = None
 
-    async def _prepare(self, entry_id, revision, regenerate, decision):
+    async def _prepare(self, entry_id, revision, regenerate, decision, permission=None):
         store = self.store
         authority = store._authority()
 
         def check():
             decision.check()
+            if permission is not None and not permission():
+                raise ArticleSpeechError("article_audio_retired")
             store._authority(authority)
 
         def current():
@@ -594,7 +610,11 @@ class ArticleListeningAudio:
                 # Source deletion shares this nonblocking native lease. Enter and
                 # retire it on one worker through the provider's lazy first read.
                 custody = ExitStack()
-                custody.enter_context(store.mutation_lease())
+                custody.enter_context(
+                    store.mutation_lease()
+                    if self.lease is None
+                    else self.lease.borrow(store.database, profile=authority.profile)
+                )
                 try:
                     store.verify_pending_audio(claim)
                     loop.call_soon_threadsafe(ready.set)
@@ -628,7 +648,10 @@ class ArticleListeningAudio:
         # This guard runs again inside the IMMEDIATE attachment transaction,
         # after validating the exact minted claim and before commit.
         assets = ArticleAudioAssets(
-            store, profile_data_root=self.root, authorize_commit=authorize_commit
+            store,
+            profile_data_root=self.root,
+            authorize_commit=authorize_commit,
+            lease=self.lease,
         )
         claim = None
         try:
@@ -672,6 +695,7 @@ class ArticleListeningAudio:
                 replace_missing=missing_attachment,
             )
             if artifact is not None:
+                self.attached_session = assets.attached_session
                 return artifact
             _require_reconstructible(entry.voice.provider, entry.voice.speed)
             if entry.voice.provider == "audio_cpp":
@@ -684,16 +708,22 @@ class ArticleListeningAudio:
             if reason := await self.readiness():
                 raise ArticleSpeechError(reason)
             check()
+            if self.speech_services is not None:
+                self.tts, self.profiles = await self.speech_services(entry.voice)
+                check()
             claim = await asyncio.to_thread(
                 store.reserve_audio,
                 entry_id,
                 expected_revision=revision,
                 regenerate=regenerate,
+                lease=self.lease,
             )
             if claim.image != image:
                 raise ListeningConflict("listening_database_changed")
             assembly = ArticleWavAssembly()
-            for chunk in chunks:
+            if self.progress is not None:
+                self.progress(0, len(chunks))
+            for index, chunk in enumerate(chunks, 1):
                 args = await resolve_listening_voice(
                     entry.voice, tts_service=self.tts, profile_service=self.profiles
                 )
@@ -741,6 +771,8 @@ class ArticleListeningAudio:
                         audio_format=response.audio_format,
                         check=check,
                     )
+                    if self.progress is not None:
+                        self.progress(index, len(chunks))
                 finally:
                     try:
                         await response.aclose()
@@ -760,6 +792,7 @@ class ArticleListeningAudio:
                 profile_data_root=self.root,
                 reservation=claim,
                 authorize_commit=authorize_commit,
+                lease=self.lease,
             )
             artifact = await asyncio.to_thread(
                 producer.publish,
@@ -768,6 +801,7 @@ class ArticleListeningAudio:
                 generation=claim.generation,
             )
             claim = None
+            self.attached_session = producer.attached_session
             return artifact
         except (ArticleSpeechError, ListeningConflict, ArticleAudioError):
             raise
@@ -776,7 +810,10 @@ class ArticleListeningAudio:
         finally:
             if claim is not None:
                 try:
-                    await asyncio.to_thread(store.cancel_audio, claim)
+                    if self.lease is None:
+                        await asyncio.to_thread(store.cancel_audio, claim)
+                    else:
+                        await asyncio.to_thread(store.cancel_held_audio, claim, self.lease)
                 except ListeningConflict:
                     pass
                 except Exception:

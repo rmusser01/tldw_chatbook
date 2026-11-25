@@ -464,8 +464,10 @@ class LocalWatchlistsService:
         run_executor: Callable[[Mapping[str, Any]], Any] | None = None,
         filter_service: WatchlistFilterService | None = None,
         content_alert_service: WatchlistContentAlertService | None = None,
+        delete_source=None,
     ):
         self._db_factory = db_factory
+        self._delete_listening_source = delete_source
         self._db_instance: SubscriptionsDB | None = None
         # Guards `_db_instance` only -- see `_db` for why a lock is needed at
         # all. Plain `Lock`, not `RLock`: a factory that re-entered `_db()`
@@ -1232,7 +1234,11 @@ class LocalWatchlistsService:
 
     async def delete_source(self, source_id: Any) -> dict[str, Any]:
         db = self._db()
-        success = await run_db_off_loop(db, db.delete_subscription, int(source_id))
+        success = (
+            await self._delete_listening_source(int(source_id), database=db)
+            if self._delete_listening_source
+            else await run_db_off_loop(db, db.delete_subscription, int(source_id))
+        )
         return {
             "success": success,
             "id": f"local:subscription:{source_id}",

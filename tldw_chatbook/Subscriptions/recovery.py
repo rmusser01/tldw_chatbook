@@ -206,6 +206,98 @@ def shared_article_roots(doc: ArchiveManifest) -> dict[str, str]:
     return aliases
 
 
+def _inspect_local_companion(path, observe=None):
+    """Validate a bounded private receipt and retain its named identity across observation."""
+    from .article_playback_receipt import RECEIPT_SIZE, decode_predecessor
+
+    with pinned_directory(path.parent) as parent:
+        fd = os.open(
+            path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent
+        )
+        try:
+            info = os.fstat(fd)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_nlink != 1
+                or info.st_uid != os.geteuid()
+                or info.st_mode & 0o077
+                or info.st_size not in (0, RECEIPT_SIZE)
+            ):
+                raise ValueError("unsafe_listening_lock")
+            named = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+            if not os.path.samestat(info, named):
+                raise ValueError("listening_lock_changed")
+            payload = os.read(fd, RECEIPT_SIZE + 1)
+            if len(payload) != info.st_size:
+                raise ValueError("listening_lock_changed")
+            previous = decode_predecessor(payload)
+            if previous is not None and observe is not None:
+                observe(previous)
+            os.lseek(fd, 0, os.SEEK_SET)
+            final = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+            if (
+                not os.path.samestat(final, info)
+                or (final.st_mtime_ns, final.st_size)
+                != (info.st_mtime_ns, info.st_size)
+                or os.read(fd, RECEIPT_SIZE + 1) != payload
+            ):
+                raise ValueError("listening_lock_changed")
+        finally:
+            os.close(fd)
+
+
+def recheck_listening_destinations(target, mutations):
+    """Discharge only device-local companions for the affected installed destinations."""
+    owners = {"db.subscriptions", _OWNER}
+    paths = {path for _, path in mutations}
+    parents = {parent for path in paths for parent in path.parents}
+    profiles = set()
+    for key, _ in mutations:
+        fields = key.split(":", 3)
+        if len(fields) >= 3 and fields[0] == "profile" and fields[2] in owners:
+            profiles.add(fields[1])
+
+    databases = {}
+    companions = {}
+    for row in target.items:
+        if row.owner not in owners or row.path is None:
+            continue
+        fields = row.logical_id.split(":", 3)
+        if len(fields) < 3 or fields[0] != "profile" or fields[2] != row.owner:
+            raise ValueError("previous_player_unconfirmed")
+        profile = fields[1]
+        if row.owner == "db.subscriptions" and len(fields) == 3:
+            databases[profile] = row.path
+        elif row.owner == _OWNER and fields[3:] == ["listening_lock"]:
+            companions[profile] = row
+        if (
+            row.path in paths
+            or row.path in parents
+            or not paths.isdisjoint(row.path.parents)
+        ):
+            profiles.add(profile)
+
+    from tldw_chatbook.TTS.controlled_wav_profile import wait_for_predecessor
+
+    for profile in profiles.intersection(databases.keys() | companions.keys()):
+        database = databases.get(profile)
+        if database is None:
+            raise ValueError("previous_player_unconfirmed")
+        path = database.with_name(database.name + ".article-listening.lock")
+        companion = companions.get(profile)
+        if companion is not None and (
+            companion.path != path or companion.status != "intentionally_excluded"
+        ):
+            raise ValueError("previous_player_unconfirmed")
+        try:
+            _inspect_local_companion(path, wait_for_predecessor)
+        except FileNotFoundError:
+            if companion is not None and companion.metadata is not None:
+                raise ValueError("previous_player_unconfirmed") from None
+        except (OSError, ValueError, RuntimeError):
+            raise ValueError("previous_player_unconfirmed") from None
+
+
 class _BriefingAudio(_RawDeclaration):
     def absent_target_ids(
         self, source, declaration, producers, context, configured, target
@@ -290,17 +382,10 @@ class _BriefingAudio(_RawDeclaration):
         )
         if lock_item.status == "intentionally_excluded" and lock_item.metadata:
             try:
-                with pinned_directory(lock.parent) as parent:
-                    info = os.stat(lock.name, dir_fd=parent, follow_symlinks=False)
-                    if (
-                        not stat.S_ISREG(info.st_mode)
-                        or info.st_nlink != 1
-                        or info.st_uid != os.geteuid()
-                        or info.st_mode & 0o077
-                        or info.st_size
-                    ):
-                        lock_item = replace(lock_item, status="unsupported")
-            except (OSError, ValueError, RuntimeError):
+                _inspect_local_companion(lock)
+            except ValueError:
+                lock_item = replace(lock_item, status="unsupported")
+            except (OSError, RuntimeError):
                 lock_item = replace(lock_item, status="unavailable")
         return (
             *self._tree(config, root / "briefing_audio"),

@@ -23,6 +23,7 @@ from .controlled_wav_profile import (
     RATE,
     RetainedWav,
     WavBookmark,
+    POST_REAP_SETTLE_S,
     check_route,
     prepare_files,
 )
@@ -36,9 +37,15 @@ from .controlled_wav_progress import (
 
 
 _now = time.perf_counter
-_SETTLE_S = 0.250
 _STOP_WAIT_S = 1.5
 _POLL_S = 0.020
+
+
+def settle_after_reap(reaped_at=None):
+    """Honor the qualified device interval after positively observing process death."""
+    time.sleep(
+        POST_REAP_SETTLE_S if reaped_at is None else max(0.0, POST_REAP_SETTLE_S - (_now() - reaped_at))
+    )
 
 
 class CompletionKind(str, Enum):
@@ -90,6 +97,8 @@ class ControlledWavPlayback:
         self._reaped_at: float | None = None
         self._retired_at: float | None = None
         self._reader_ok = False
+        self._before_release = None
+        self._custody = None
 
     @classmethod
     async def prepare(
@@ -98,9 +107,13 @@ class ControlledWavPlayback:
         bookmark: WavBookmark,
         *,
         executable: Path | None = None,
+        before_release=None,
+        custody=None,
     ) -> ControlledWavPlayback:
         """Validate and pin off-loop before asking an existing owner to stop."""
         run = cls(artifact, bookmark)
+        run._before_release = before_release
+        run._custody = custody
         # Publish all futures and the dedicated custodian before it can enter.
         run._worker = threading.Thread(
             target=run._lifetime, args=(executable,), daemon=True
@@ -146,6 +159,8 @@ class ControlledWavPlayback:
             interrupted = self._interrupted()
             self._interrupt()
             lease.block()
+            if self._before_release is not None:
+                raise ControlledWavError("startup_deadline_exceeded") from None
             self._publish(
                 CompletionKind.STOPPED if interrupted else CompletionKind.UNCERTAIN,
                 "interrupted" if interrupted else "startup_deadline_exceeded",
@@ -192,37 +207,57 @@ class ControlledWavPlayback:
             if not self._loop.is_closed():
                 raise
 
-    def _publish(self, kind: CompletionKind, reason: str) -> None:
+    def _result(self, kind: CompletionKind, reason: str):
+        clock = self._clock
+        last = clock.last if clock else None
+        evidence = PlaybackEvidence(
+            clock.launched_at if clock else None,
+            self._stop_at,
+            self._reaped_at,
+            self._retired_at,
+            clock.last_physical_frame if clock else None,
+            clock.advanced_span_s if clock else 0.0,
+            clock.clock_skew_s if clock else None,
+            last.observed_at_s if last else None,
+        )
+
+        return PlaybackCompletion(
+            kind,
+            reason,
+            replace(
+                self._bookmark,
+                frame=last.frame if last else self._bookmark.frame,
+            ),
+            self._lease.generation if self._lease else None,
+            evidence,
+        )
+
+    def _publish(self, kind, reason):
         if not self._completion.done():
-            clock = self._clock
-            last = clock.last if clock else None
-            evidence = PlaybackEvidence(
-                clock.launched_at if clock else None,
-                self._stop_at,
-                self._reaped_at,
-                self._retired_at,
-                clock.last_physical_frame if clock else None,
-                clock.advanced_span_s if clock else 0.0,
-                clock.clock_skew_s if clock else None,
-                last.observed_at_s if last else None,
-            )
-            self._completion.set_result(
-                PlaybackCompletion(
-                    kind,
-                    reason,
-                    replace(
-                        self._bookmark,
-                        frame=last.frame if last else self._bookmark.frame,
-                    ),
-                    self._lease.generation if self._lease else None,
-                    evidence,
-                )
-            )
+            self._completion.set_result(self._result(kind, reason))
 
     def _finish(self, kind: CompletionKind, reason: str, retired: bool) -> None:
-        if kind is not CompletionKind.ALREADY_AT_END and self._interrupted():
+        if retired and kind is not CompletionKind.ALREADY_AT_END and self._interrupted():
             kind, reason = CompletionKind.STOPPED, "interrupted"
-        self._publish(kind, reason)
+        result = self._result(kind, reason)
+        if retired and self._before_release is not None and self._lease is not None:
+            self._loop.create_task(self._finish_checkpoint(result, retired))
+            return
+        self._release(result, retired)
+
+    async def _finish_checkpoint(self, result, retired):
+        try:
+            await self._before_release(result)
+        except BaseException:
+            retired = False
+            result = replace(
+                result, kind=CompletionKind.UNCERTAIN, reason="checkpoint_unconfirmed"
+            )
+        self._release(result, retired)
+
+    def _release(self, result, retired):
+        if not self._completion.done():
+            self._completion.set_result(result)
         if self._lease:
             if retired:
                 self._lease.release()
@@ -338,7 +373,10 @@ class ControlledWavPlayback:
             birth_unknown = True
             try:
                 child = _spawn(
-                    argv, env=env, start_allowed=lambda: not self._interrupted()
+                    argv,
+                    env=env,
+                    start_allowed=lambda: not self._interrupted(),
+                    **({"custody": self._custody} if self._custody is not None else {}),
                 )
             except SpawnRefused:
                 birth_unknown = False
@@ -349,6 +387,9 @@ class ControlledWavPlayback:
                     self._partial_birth = error.child
                     if error.child.has_process:
                         child = error.child
+                        # CreateProcess returned an exact suspended child. Its
+                        # revoked resume is a known birth requiring checked reap.
+                        birth_unknown = not child.birth_confirmed or bool(child.uncertain_closes)
                 return
             if child is None:
                 return
@@ -387,7 +428,16 @@ class ControlledWavPlayback:
                         CompletionKind.UNCERTAIN,
                         "terminal_progress_unconfirmed",
                     )
-                time.sleep(max(0.0, _SETTLE_S - (_now() - self._reaped_at)))
+                settle_after_reap(self._reaped_at)
+                if (
+                    clean
+                    and self._custody is not None
+                    and child.predecessor is not None
+                ):
+                    try:
+                        self._custody.clear_predecessor(*child.predecessor)
+                    except Exception:
+                        clean = False
             if not birth_unknown:
                 for pin in reversed(pins):
                     if not pin.close():

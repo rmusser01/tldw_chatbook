@@ -726,7 +726,12 @@ This is native retirement metadata in the existing companion, not a second queue
 manifest. Recovery recognizes only legacy-empty or strictly valid bounded records
 as intentionally excluded; malformed contents remain unsupported. Backup, detached
 import and restore do not transport a device-local predecessor or erase a live
-destination's record. Creation/containment readiness and the predecessor gate must
+destination's record. Namespace-exclusive replacement observes the exact original
+installed destination companion during target rechecks, without reopening an
+ordinary lease. It refuses live or uncertain custody and observes exact death
+plus the same settle interval without changing those bytes. Source/archive
+discovery remains inert and never queries a transported PID.
+Creation/containment readiness and the predecessor gate must
 pass before a new provider request. Native evidence must kill a private app after
 a checkpoint and before suspended-child release, retain the original child handle,
 and prove death plus settling before the next grant and manual retained-WAV Resume.

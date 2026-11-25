@@ -10,8 +10,12 @@ import math
 import os
 import subprocess
 
+from tldw_chatbook.Utils.windows_job import process_creation_time as _creation_time
+
 _close_fd = os.close
 _HANDLE_LIST = 0x00020002  # PROC_THREAD_ATTRIBUTE_HANDLE_LIST
+_JOB_LIST = 0x0002000D  # PROC_THREAD_ATTRIBUTE_JOB_LIST
+_SUSPENDED = 0x00000004
 _EXTENDED_UNICODE = 0x00080000 | 0x00000400
 
 
@@ -69,6 +73,7 @@ def _kernel():
             W.BOOL,
         ),
         ("DeleteProcThreadAttributeList", [W.LPVOID], None),
+        ("ResumeThread", [W.HANDLE], W.DWORD),
         (
             "CreateProcessW",
             [
@@ -128,6 +133,9 @@ class WindowsPlayer:
         self.stderr = _Reader()
         self.returncode: int | None = None
         self.uncertain_closes = []
+        self.birth_confirmed = False
+        self.job = None
+        self.predecessor = None
 
     @property
     def has_process(self) -> bool:
@@ -163,6 +171,13 @@ class WindowsPlayer:
     def close_process_handle(self) -> None:
         import _winapi
 
+        if self.job is not None:
+            job, self.job = self.job, None
+            try:
+                _winapi.CloseHandle(job)
+            except BaseException:
+                self.uncertain_closes.append(job)
+                raise
         handle, self.info.process = self.info.process, None
         if handle is not None:
             try:
@@ -181,11 +196,51 @@ def _environment_block(environment: dict[str, str]):
     return C.create_unicode_buffer("\0".join(entries) + "\0")
 
 
+_unconfirmed_version_probes = []
+
+
+def check_contained_version(executable):
+    """Prove this process can create the qualified binary in a birth-assigned job."""
+    if _unconfirmed_version_probes:
+        raise OSError("player_containment_unconfirmed")
+    env = dict(os.environ)
+    env.pop("FFREPORT", None)
+    child = None
+    try:
+        try:
+            child = spawn_player([str(executable), "-version"], env=env)
+        except UncertainBirth as error:
+            child = error.child
+            raise OSError("player_containment_unconfirmed") from None
+        except SpawnRefused:
+            raise OSError("player_containment_unavailable") from None
+        try:
+            code = child.wait(5)
+        except subprocess.TimeoutExpired:
+            raise OSError("player_containment_unavailable") from None
+        if code != 0:
+            raise OSError("player_containment_unavailable")
+    finally:
+        if child is not None:
+            try:
+                if child.has_process and child.poll() is None:
+                    child.terminate()
+                    child.wait(5)
+                child.stderr.close()
+                child.close_process_handle()
+                if child.uncertain_closes:
+                    raise OSError("player_containment_unconfirmed")
+            except BaseException:
+                _unconfirmed_version_probes.append(child)
+                raise
+
+
 def spawn_player(
     argv: list[str],
     *,
     env: dict[str, str],
     start_allowed: Callable[[], bool] | None = None,
+    custody=None,
 ) -> WindowsPlayer:
     """Launch with only DEVNULL and the stderr writer inheritable by this child."""
     try:
@@ -194,6 +249,7 @@ def spawn_player(
 
         child = WindowsPlayer()
         kernel = _kernel()
+        from tldw_chatbook.Utils.windows_job import WindowsJobApi
     except BaseException:
         # No process or per-attempt file/pipe has been allocated.
         raise SpawnRefused from None
@@ -202,6 +258,7 @@ def spawn_player(
     attr_initialized = False
     state = "preparing"
     try:
+        child.job = WindowsJobApi().create_kill_on_close_job()
         null_fd = os.open(os.devnull, os.O_RDWR | os.O_BINARY)
         child.stderr.fd, writer_fd = os.pipe()
         handles = (W.HANDLE * 2)(
@@ -210,12 +267,12 @@ def spawn_player(
         for handle in handles:
             os.set_handle_inheritable(handle, True)
         size = C.c_size_t()
-        kernel.InitializeProcThreadAttributeList(None, 1, 0, C.byref(size))
+        kernel.InitializeProcThreadAttributeList(None, 2, 0, C.byref(size))
         if not size.value:
             raise OSError("handle_list_size_unavailable")
         attributes = C.create_string_buffer(size.value)
         if not kernel.InitializeProcThreadAttributeList(
-            attributes, 1, 0, C.byref(size)
+            attributes, 2, 0, C.byref(size)
         ):
             raise OSError("handle_list_setup_failed")
         attr_initialized = True
@@ -223,6 +280,11 @@ def spawn_player(
             attributes, 0, _HANDLE_LIST, handles, C.sizeof(handles), None, None
         ):
             raise OSError("handle_allowlist_failed")
+        jobs = (W.HANDLE * 1)(child.job)
+        if not kernel.UpdateProcThreadAttribute(
+            attributes, 0, _JOB_LIST, jobs, C.sizeof(jobs), None, None
+        ):
+            raise OSError("player_containment_unavailable")
         startup = _StartupInfoEx()
         startup.base.cb = C.sizeof(startup)
         startup.base.flags = 0x100  # STARTF_USESTDHANDLES
@@ -243,13 +305,25 @@ def spawn_player(
             None,
             None,
             True,
-            _EXTENDED_UNICODE,
+            _EXTENDED_UNICODE | _SUSPENDED,
             environment,
             None,
             C.byref(startup),
             C.byref(child.info),
         )
-        state = "created" if created else "refused"
+        if created:
+            child.birth_confirmed = True
+            if custody is not None:
+                predecessor = child.info.pid, _creation_time(child.info.process)
+                custody.seal_predecessor(*predecessor)
+                child.predecessor = predecessor
+            if start_allowed is not None and not start_allowed():
+                raise OSError("player_start_revoked")
+            if kernel.ResumeThread(child.info.thread) != 1:
+                raise OSError("player_resume_unconfirmed")
+            state = "created"
+        else:
+            state = "refused"
     except BaseException:
         # Native interruptions can occur after the kernel populates child.info.
         # Classify the last observed state after all setup closes have run.
@@ -275,6 +349,11 @@ def spawn_player(
     if state == "created" and child.has_process and not child.uncertain_closes:
         return child
     if not child.has_process:
+        if state in {"preparing", "refused"}:
+            try:
+                child.close_process_handle()
+            except BaseException:
+                pass  # The child retains its uncertain close evidence.
         try:
             child.stderr.close()
         except BaseException:

@@ -16,6 +16,7 @@ from tldw_chatbook.Backup_Recovery.native_files import (
 from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import ProducerLifetime
 from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
 from tldw_chatbook.Utils.platform_files import fcntl, os
+from .article_playback_receipt import RECEIPT_SIZE, decode_predecessor, encode_predecessor
 
 
 class ListeningBusy(RuntimeError):
@@ -59,12 +60,57 @@ class ListeningLease:
         self._profile = profile
         self._database_identity = None
         self._related_paths = frozenset()
+        self._session_asset_root = None
         self._storage = storage
         self._owner = owner
         self._condition = threading.Condition()
         self._open = True
         self._borrowers = 0
         self._asset_active = False
+        self._receipt_lock = threading.Lock()
+
+    def _read_predecessor(self):
+        os.lseek(self._owner, 0, os.SEEK_SET)
+        return decode_predecessor(os.read(self._owner, RECEIPT_SIZE + 1))
+
+    def recover_predecessor(self):
+        """Check a previous exact process and its post-reap settle before reuse."""
+        with self.borrow(self._database, profile=self._profile), self._receipt_lock:
+            previous = self._read_predecessor()
+            if previous is None:
+                return
+            from tldw_chatbook.TTS.controlled_wav_profile import (
+                ControlledWavError,
+                wait_for_predecessor,
+            )
+
+            try:
+                wait_for_predecessor(previous)
+            except ControlledWavError as exc:
+                raise ListeningBusy("previous_player_unconfirmed") from exc
+            self._clear_predecessor(previous)
+
+    def _clear_predecessor(self, previous):
+        if previous != self._read_predecessor():
+            raise ListeningBusy("player_predecessor_changed")
+        os.ftruncate(self._owner, 0)
+        os.fsync(self._owner)
+
+    def seal_predecessor(self, pid, created):
+        with self.borrow(self._database, profile=self._profile), self._receipt_lock:
+            if self._read_predecessor() is not None:
+                raise ListeningBusy("previous_player_unconfirmed")
+            data = encode_predecessor(pid, created)
+            os.lseek(self._owner, 0, os.SEEK_SET)
+            if os.write(self._owner, data) != len(data):
+                raise OSError("player_predecessor_short_write")
+            os.fsync(self._owner)
+            if self._read_predecessor() != (pid, created):
+                raise OSError("player_predecessor_unconfirmed")
+
+    def clear_predecessor(self, pid, created):
+        with self.borrow(self._database, profile=self._profile), self._receipt_lock:
+            self._clear_predecessor((pid, created))
 
     def __copy__(self):
         raise TypeError("listening_lease_cannot_be_copied")
@@ -110,6 +156,25 @@ class ListeningLease:
             self._open = False
 
     @contextmanager
+    def admit_assets(self, database, *, profile, related_paths):
+        """Hold the DB owner and independently admit each finite asset path."""
+        if self._session_asset_root is None:
+            with self.borrow(database, profile=profile, related_paths=related_paths):
+                yield self
+            return
+        if (
+            not related_paths
+            or related_paths[0] != self._session_asset_root
+            or any(
+                path.parent != self._session_asset_root for path in related_paths[1:]
+            )
+        ):
+            raise ListeningBusy("listening_asset_scope_changed")
+        with self.borrow(database, profile=profile):
+            with acquire_storage(database, related_paths=related_paths):
+                yield self
+
+    @contextmanager
     def asset_operation(self):
         """Admit one finite file operation per native holder without waiting on SQL."""
         with self._condition:
@@ -136,6 +201,7 @@ def hold_listening(
     profile: str | None,
     related_paths: tuple[Path, ...] = (),
     memory: bool = False,
+    session_asset_root: Path | None = None,
 ):
     """Hold ordinary storage and the same private lock inode through physical return."""
     canonical = database.resolve()
@@ -189,7 +255,11 @@ def hold_listening(
         lease = ListeningLease(canonical, profile, storage, fd, issuer=_ISSUER)
         lease._database_identity = identity
         lease._related_paths = frozenset(related_paths)
+        lease._session_asset_root = session_asset_root
         try:
+            # A dead parent's OS lock alone cannot authorize a destructive
+            # writer, reconciliation or a new output over a still-live player.
+            lease.recover_predecessor()
             yield lease
         finally:
             lease._retire()

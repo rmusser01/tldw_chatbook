@@ -75,6 +75,10 @@ Reader j/k and next-unread navigation use the article list selection intent whil
 
 ## Saved article listening
 
+`app_article_listening.py` binds one `ArticleListeningService` to the app's exact subscriptions database, config selector and data root. The service requires an explicit local runtime and checks the live Watchlists permission before preparing a candidate. Its long-lived profile lease admits each finite asset operation against the existing storage gate. The service exposes an immutable snapshot. Restore reads saved roles and bookmarks without opening speech or output. Manual Resume adopts the current policy epoch. Interruption preserves independent foreground and queue bookmarks, including when both refer to the same WAV.
+
+`Subscriptions/article_listening_service.py` coordinates the retained synthesis owner and the registered output retirement callback. The terminal transaction runs before successful output transfer. Runtime changes and maintenance close intake synchronously, then drain speech, output and checkpoint work before releasing the original holder. Source deletion uses that same holder to coordinate the durable queue and derived audio.
+
 `Subscriptions/article_listening_store.py` owns the immutable listening records
 in SubscriptionsDB v4. Each explicit config selector has one session and an empty
 revision/incarnation witness. Queue and foreground bookmarks commit together;
@@ -131,6 +135,12 @@ members use explicit profile IDs. Private stages and the device-local DB-sibling
 lock are excluded. Recovery validates the v4 catalog, source authority and WAV
 bytes without constructing a provider or player. DB-only restore preserves
 bookmarks even when their corresponding audio is absent.
+
+A fresh listening, deletion or pruning lease checks the device-local predecessor
+before handing the caller its physical owner. An installed replacement rechecks
+each affected destination's private companion under namespace-exclusive maintenance.
+It pins the same file and bytes across process-identity observation and settlement,
+and leaves those bytes intact. Archive discovery only decodes the bounded format.
 
 Selected profiles can share an article directory and its default DB, or use
 distinct custom DBs with the same data root. Inventory assigns each file to its
