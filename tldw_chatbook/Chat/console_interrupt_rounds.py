@@ -54,7 +54,6 @@ from tldw_chatbook.Agents.approval_provenance import (
     stamp_answer_provenance as _stamp_answer_provenance,  # noqa: F401 - retained host alias
     approval_was_unanswered as approval_was_unanswered,  # noqa: PLC0414 - retained public seam
 )
-from tldw_chatbook.Agents.execution_capacity import bind_ordinary_tree
 from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
 from .console_local_review_hook import (
     build_local_review_hook as build_local_review_hook,
@@ -269,6 +268,8 @@ class InterruptRoundHost(InitialHookReviewMixin):
             if cancellation in self._hook_interrupts:
                 return False
             self._hook_interrupts.add(cancellation)
+        from tldw_chatbook.Agents.execution_capacity import bind_ordinary_tree
+
         with bind_ordinary_tree(tree):
             return lifecycle.engine.notify_teardown(
                 lifecycle.event("Interrupt", turn_id=turn_id, initiator="manual")

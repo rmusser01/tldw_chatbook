@@ -11,7 +11,6 @@ from threading import Event
 from typing import TYPE_CHECKING, Protocol
 from uuid import uuid4
 
-from tldw_chatbook.Agents.execution_capacity import current_ordinary_tree
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleControllerActivity,
     ConsoleQueuedAcceptanceEvent,
@@ -294,6 +293,8 @@ class ConsolePromptQueueCoordinator:
             lifecycle.engine.notification_omissions += 1
             chain.hook_execution = False
         chain.hook_parent = (lifecycle, scope, event, assistant_id, request)
+        from tldw_chatbook.Agents.execution_capacity import current_ordinary_tree
+
         tree = current_ordinary_tree()
         chain.hook_parent_tree = (
             tree

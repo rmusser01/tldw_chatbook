@@ -46,6 +46,7 @@ Found by the TASK-34975 port (round 20, fu/r20-ctxclose), which reported it as `
 2. Keep real command and MCP coverage. Separate setup from the measured Interrupt guard and verify the full file at four workers on a supported host.
 3. Carry the original ordinary turn's opaque claim to the exact live Interrupt parent across the Stop task boundary. Preserve native event admission and the existing deadline.
 4. Add the file to a required admission-sensitive lane.
+5. Preserve the first-send warm-up contract when importing execution capacity for Interrupt ownership.
 
 ADR required: no
 ADR path: [ADR-163](../decisions/163-expanded-console-hook-runtime.md), [ADR-285](../decisions/285-native-phased-agent-workflows.md), and [ADR-345](../decisions/345-console-run-hooks.md)
@@ -58,6 +59,8 @@ Reason: The fix restores borrowing under the existing physical-ownership and not
 The recorder now claims the exact legacy notification token once. Scheduled wake passed after the fixture correction. The native trace showed Interrupt trying to take a second opaque claim from outside the accepted turn task and refusing with `hook_activity_busy`. Exact cancellation now carries the already-admitted ordinary owner into the existing native event guard. The queued worker rechecks the accepted turn's original source under the existing ADR-163 borrowing contract. A regression fails without that retained source and passes when replacing the app config is refused.
 
 Final Ubuntu 24.04 qualification at four workers recorded 47 passes and two Darwin-only skips. Load moved from 0.84/0.31/0.14 to 1.81/0.75/0.31. The source replacement control ran again with the original event capture and failed at its refusal assertion. The required admission-sensitive job selects the whole file. [Linux job](https://github.com/rmusser01/tldw_chatbook/actions/runs/45475265787/job/138733698267).
+
+The official first-send test found that the Interrupt ownership imports loaded execution capacity during Console startup. Both imports now run at the hook call sites. A fresh interpreter reproduced the eager import before the fix and confirmed that ordinary reply warm-up loads execution capacity after the fix. [First-send job](https://github.com/rmusser01/tldw_chatbook/actions/runs/45494939921/job/138915435237).
 
 The official PR Fast Lane (admission-sensitive) job on PR #3763 passed on reviewed commit 0df0b348f6, including this task's test suite. [GitHub Actions job](https://github.com/rmusser01/tldw_chatbook/actions/runs/45480195611/job/138754609157).
 <!-- SECTION:NOTES:END -->
