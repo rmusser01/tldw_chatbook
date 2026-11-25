@@ -360,6 +360,11 @@ FAST_LANE_TARGETS = (
     # 9.6 s serially with this step's flags at load 46-49).
     "Tests/Workspaces/test_change_revert.py",
     "Tests/Workspaces/test_git_workspace_commit.py",
+    # TASK-42281 (owner, 2026-11-22): TASK-42172's regression. A fresh profile
+    # with no config folder starts instead of opening on "Recovery required"
+    # (Linux reports the folder as missing_parent). Not bootstrap_profile;
+    # three cases, under 1 s.
+    "Tests/Backup_Recovery/test_startup_unlock.py::test_fresh_profile_without_a_config_folder_starts_normally",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
@@ -1326,6 +1331,11 @@ ADMISSION_4_TARGETS = (
     "Tests/Chat/test_console_headless_wake_invariants.py",
     "Tests/Chat/test_console_fleet_wake_view_mark.py",
     "Tests/Chat/test_console_fleet_wake_staleness.py",
+    # TASK-42281 (owner, 2026-11-22): TASK-42173's regression. UserPromptSubmit
+    # hooks run (and can block) while a Console submit holds its agent
+    # admission. bootstrap_profile with native POSIX group custody; two cases,
+    # about 1.7 s.
+    "Tests/Agents/test_native_legacy_hooks.py::test_prompt_hook_runs_while_the_submit_task_holds_its_agent_admission",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
