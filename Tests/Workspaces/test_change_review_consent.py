@@ -559,16 +559,19 @@ def test_admission_revision_moves_only_when_ready_roots_can_change(
         service.shutdown(timeout=0.2)
 
 
+@pytest.mark.parametrize("missing", ["after_a_restart", "after_a_consent_change"])
 @private_profile_test
-def test_the_first_turn_capture_after_a_restart_discloses_its_unprepared_root(
-    request, tmp_path
+def test_a_turn_capture_discloses_a_root_with_no_current_readiness(
+    request, tmp_path, missing
 ) -> None:
-    """TASK-42111: readiness lives in memory, so a restart starts with none.
+    """TASK-42111: readiness lives in memory, keyed by consent revision.
 
     A stock turn's configuration reads ``capture_turn``, which never schedules
-    preparation. When nothing had admitted the workspace since start (the
-    Environment panel's read races the first Send), the root had no readiness
-    entry and the capture dropped it: no "change review skipped" row.
+    preparation. After a restart nothing has admitted the workspace yet (the
+    Environment panel's read races the first Send), and after a consent change
+    the ready entry belongs to the old revision. Either way the capture dropped
+    the root: no "change review skipped" row. It now names the root, without
+    promising a preparation it does not start.
     """
     from tldw_chatbook.Chat.console_turn_context import capture_change_review_metadata
 
@@ -577,22 +580,38 @@ def test_the_first_turn_capture_after_a_restart_discloses_its_unprepared_root(
     root.mkdir()
     binding = registry.add_folder_binding("ws-review", root)
     registry.set_change_review_enabled("ws-review", True)
-    calls: list[str] = []
     service = consent_module.ChangeReviewConsentService(
-        registry, initialize_root=calls.append, worker_count=1
+        registry, initialize_root=lambda _root: None, worker_count=1
     )
     app = SimpleNamespace(change_review_consent_service=service)
     try:
-        assert capture_change_review_metadata(app, "ws-review") == (
+        if missing == "after_a_consent_change":
+            ready = (str(root.resolve()),)
+            _wait_until(
+                lambda: service.admit_turn("ws-review").ready_roots == ready,
+                timeout=10.0,
+            )
+            registry.compare_and_set_change_review_consent(
+                "ws-review",
+                expected=registry.read_change_review_consent("ws-review"),
+                enabled=True,
+            )
+
+        captured = capture_change_review_metadata(app, "ws-review")
+
+        # Scheduling records PREPARING readiness under the lock, before the
+        # admission returns: a capture that scheduled would show it here.
+        assert service.status("ws-review").roots == ()
+        assert captured == (
             (),
             (),
             (
                 consent_module.SkippedReviewRoot(
                     binding.binding_id,
-                    "Preparing change history; this turn continues without it.",
+                    "Change history is not prepared yet; "
+                    "this turn continues without it.",
                 ),
             ),
         )
-        assert calls == [], "a capture still schedules no preparation"
     finally:
         service.shutdown(timeout=0.2)

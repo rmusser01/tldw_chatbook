@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-20 07:20
-updated_date: '2026-11-25 14:04'
+updated_date: '2026-11-25 14:39'
 labels:
 - follow-up
 - console
@@ -59,15 +59,26 @@ Seen once during TASK-42101's live check (2026-11-19, branch fu2/lfs-filters, sc
 - the capture's only reads were `capture_turn` → `()`;
 - the turn's configuration had `change_review_skipped_roots=()` and `workspace_roots=()`, so no row.
 
-With the fix, the same probe gave `(SkippedReviewRoot(alias='folder-…', reason='Preparing change history; this turn continues without it.'),)`.
+With the first fix (47f2d636ec), the same probe listed the root as skipped; since review M3 the capture's reason is "Change history is not prepared yet; this turn continues without it."
 
-**Fix (AC#2).** One branch in the shared `_admit`. A bound root with no entry for the current consent revision is now listed as skipped, with the existing preparing reason. That is the same row `admit_turn` shows on its first read of that root. A capture still schedules nothing. The fix covers every capture caller.
+**Fix (AC#2).** One branch in the shared `_admit`: a bound root with no entry for the current consent revision is now listed as skipped instead of dropped. The capture path (`schedule_missing=False`) gives the new `_NOT_PREPARED_REASON`, "Change history is not prepared yet; this turn continues without it.", because a capture starts no preparation. An admission (`schedule_missing=True`) keeps `_PREPARING_REASON`, because a concurrent admission is re-scheduling the root. A capture still schedules nothing. Every capture caller goes through `_admit`, so all of them are covered.
 
-**Test, red first.** `test_the_first_turn_capture_after_a_restart_discloses_its_unprepared_root` (`Tests/Workspaces/test_change_review_consent.py`) uses a fresh service over a real registry. It checks that the stock turn-configuration read (`capture_change_review_metadata`) returns the root as skipped, and that no preparation is scheduled. It failed before the fix with `assert ((), (), ()) == ((), (), (SkippedReviewRoot(...),))`. The negative control (fix reverted with `git apply -R`) failed it again, and the probe gave `()` again. Restored: green.
+**Tests, red first.** `test_a_turn_capture_discloses_a_root_with_no_current_readiness` in `Tests/Workspaces/test_change_review_consent.py` runs over a real registry and the stock turn-configuration read (`capture_change_review_metadata`). It has two cases: `after_a_restart`, a fresh service, and `after_a_consent_change`, where the root became READY and then a consent compare-and-set moved the revision while consent stayed on. Each asserts `service.status(...).roots == ()` right after the capture; scheduling records PREPARING readiness under the lock before the admission returns, so a scheduling capture fails this deterministically. Each then asserts the exact skipped row. Controls, each run on both cases:
+- dev's `change_review_consent.py`: both fail with `assert ((), (), ()) == ((), (), (SkippedReviewRoot(...),))`. The root is dropped after a restart and after a consent change (review M2).
+- the first fix (47f2d636ec, preparing reason on the capture path): both fail on the reason (review M3).
+- the fix with `capture_turn` mutated to `schedule_missing=True`: both fail with `assert (RootReadiness(...),) == ()` (review M1).
+- the fix: both pass.
+
+**Review of 47f2d636ec (local).** Every finding is fixed or recorded:
+- **M1, fixed.** The old `calls == []` check ran before any worker could call the initializer; the reviewer's `schedule_missing=True` mutation passed it 3 of 3. It is replaced by the `status()` check above, which fails that mutation.
+- **M2, fixed.** The revision-mismatch half of the condition is covered by the `after_a_consent_change` case, red on dev.
+- **M3, fixed.** "Preparing change history" overpromised on the capture path. On paths where `admit_ordinary_turn` returns early (`Chat/console_ordinary_tree.py:66-67`: no native process groups, as on Windows, or no hooks v2 runtime), nothing on the Send path calls `admit_turn`. The capture now gives the neutral reason, a named constant beside `_PREPARING_REASON`. A grep for "Preparing change history" found no other test or doc asserting it for the capture path. The other hits are admission paths (`test_change_review_consent.py`'s preparing tests), Settings (`workspace_change_review.py`, `test_settings_workspaces_category.py`) and hand-made reasons in Chat tests.
+- **N1, fixed.** The comment on the branch now covers both cases: a capture after a restart or consent change, and an admission whose entry a concurrent one re-keyed to a newer revision.
+- **N2, recorded as a known gap, not changed here.** `ChangeReviewConsentService.status()` (`tldw_chatbook/Workspaces/change_review_consent.py:371`, the filter at :385) still drops a root with no readiness entry for the current revision. After a restart, Settings ▸ Workspaces shows no readiness for a root that the turn row reports as not prepared, until something admits the workspace.
 
 **Runs.**
-- `Tests/Workspaces/test_change_review_consent.py` whole: 12 passed on dev; 13 passed with the change (twice, `-n 4`).
-- Every test file that reads Change Review admission, in one `-n 4` run at load 40-57 (16 files): 28 failed / 374 passed. Seven of those files on unmodified dev: 25 failed / 213 passed. 24 failure ids are shared, mostly `test_console_turn_execution_context.py` (`'_CustodyController' object has no attribute 'store'`) and `test_console_configuration_capture.py` (a fake consent service the stock path no longer reads). Three ids failed only on the branch: `test_review_runs_before_baseline_gate_and_tool_dispatch_waits`, `test_a_bound_workspace_lands_through_the_real_consent_service` and `test_consent_revoked_after_a_worker_re_check_drops_the_landing`. All three passed when rerun on the branch (3 passed, load 39); they assert ready roots or ordering, not skipped roots.
+- `Tests/Workspaces/test_change_review_consent.py` whole: 12 passed on dev. After review: 14 passed serially (`-n 0`) and 14 passed at `-n 4`.
+- Every test file that reads Change Review admission, at 47f2d636ec, in one `-n 4` run at load 40-57 (16 files): 28 failed / 374 passed. Seven of those files on unmodified dev: 25 failed / 213 passed. 24 failure ids are shared, mostly `test_console_turn_execution_context.py` (`'_CustodyController' object has no attribute 'store'`) and `test_console_configuration_capture.py` (a fake consent service the stock path no longer reads). Three ids failed only on the branch: `test_review_runs_before_baseline_gate_and_tool_dispatch_waits`, `test_a_bound_workspace_lands_through_the_real_consent_service` and `test_consent_revoked_after_a_worker_re_check_drops_the_landing`. All three passed when rerun on the branch (3 passed, load 39); they assert ready roots or ordering, not skipped roots.
 - `test_console_session_admitted_roots.py::test_the_three_readers_return_the_same_string_roots` fails on dev under load as well (3 of 3 `-n 4` file runs at load 47-57: `TimeoutError` in its 5 s `asyncio.timeout` around two roots' preparation). It passed alone. This is pre-existing and was not touched.
 - Preflight passed. `ruff check tldw_chatbook --select F` passed, and `Tests/lint/ruff_gate.py` passed. Logger calls are unchanged.
 
