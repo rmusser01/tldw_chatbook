@@ -42,6 +42,21 @@ make_database = _make_database_fixture
 make_gateway = _make_gateway_fixture
 
 
+@pytest.fixture(autouse=True)
+def _no_backoff_sleep(monkeypatch):
+    """In-place retries still run here; only their backoff sleep is skipped.
+
+    The retry rules are what this file tests, not the delay curve (that is
+    Tests/Agents/test_model_retry.py). The sleeps cost about 2 s per
+    exhausted run in dreams-boundary's 35-minute job (TASK-42525 round 3).
+    """
+    from tldw_chatbook.Agents import model_retry
+
+    monkeypatch.setattr(
+        model_retry, "retry_delay_seconds", lambda *_args, **_kwargs: 0.0
+    )
+
+
 @pytest.mark.parametrize("wire_style", ["single_preamble", "distinct_roles"])
 @pytest.mark.parametrize(
     "scenario",
