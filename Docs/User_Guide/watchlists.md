@@ -147,6 +147,31 @@ airport or VPN network, a bare name such as `nas`, a `.local` name or a
 private address such as `192.168.1.20` can belong to someone else's
 machine, which is exactly the risky case. List only hosts you trust.
 
+## Listening to saved articles and briefings
+
+In **Watchlists → Read**, open a saved article and choose **Listen** or press **l**
+when the footer shows it. Chatbook reads the stored article body. Feed text may
+be an excerpt. Articles without a saved body and change reports show why
+listening is unavailable.
+
+In **Artifacts**, select a completed briefing and choose **Play cited excerpts**
+to queue its playable saved articles in citation order. The control shows the
+playable and unavailable counts before you start. Highlight a citation and
+choose **Listen to citation** to hear that article while keeping the briefing
+open. Starting a different queue asks before replacing your saved position.
+
+The Watchlists transport shows preparation, playback progress and any suspended
+queue. **Pause** or **Stop** keeps your position. **Skip** moves past the current
+entry and **Clear** removes the saved listening session. When you return later,
+choose **Resume saved listening** for unfinished work or **Play again** for a
+completed queue. If saved audio is missing or damaged, **Regenerate from start**
+prepares it again from the beginning. Press **Ctrl+P** to find the available
+Pause, Resume and Stop commands from another destination.
+
+Article listening uses Local Watchlists, a supported speech voice, and the
+qualified Windows ffplay output. When you use the served browser interface,
+audio plays on the computer running Chatbook.
+
 ## Exporting briefings and podcast feeds
 
 The **Artifacts** section of a watchlist holds its briefings — text digests

@@ -402,6 +402,7 @@ from tldw_chatbook.app_command_providers import (
     ThemeProvider,
     _bindings_to_shortcuts,
 )
+from tldw_chatbook.UI.Watchlists_Modules.listening_palette import ArticleListeningCommandProvider
 from tldw_chatbook.app_feature_glue import (
     FeatureGlueMixin,
     setup_owns_startup_networking,  # noqa: F401 -- re-export
@@ -1003,6 +1004,7 @@ class TldwCli(
         ThemeProvider,
         TabNavigationProvider,
         QuickActionsProvider,
+        ArticleListeningCommandProvider,
         SettingsProvider,
         CharacterProvider,
         MediaProvider,
@@ -1014,12 +1016,9 @@ class TldwCli(
         PatternGalleryProvider,
     }
 
-    # T169: "notes-window" removed -- no widget composes that id anymore (the
-    # standalone Notes tab / Notes_Window.py it belonged to is gone, replaced
-    # by the Library workbench's Notes canvas), confirmed via
+    # T169: Library's Notes canvas replaced the removed standalone Notes tab.
     # `grep -rn 'id="notes-window"' tldw_chatbook/`.
 
-    # Define reactive at class level with a placeholder default and type hint
     current_tab: reactive[str] = reactive("")
 
     # Splash screen state

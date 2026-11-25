@@ -1191,6 +1191,8 @@ class TestCommandPaletteIntegration:
     @pytest.mark.asyncio
     async def test_provider_discovery_matches_textual_contract(self, mock_app):
         """Providers either return Hits or inherit optional discovery."""
+        from tldw_chatbook.app import ArticleListeningCommandProvider
+
         mock_screen = MagicMock()
         mock_screen.app = mock_app
 
@@ -1213,6 +1215,10 @@ class TestCommandPaletteIntegration:
 
             if type(provider).discover is Provider.discover:
                 assert hits == [NotImplemented]
+                continue
+            if isinstance(provider, ArticleListeningCommandProvider):
+                # An app with no installed session has no transport actions.
+                assert hits == []
                 continue
 
             assert (

@@ -24,6 +24,7 @@ from tldw_chatbook.Utils.input_validation import escape_markup
 from rich.text import Text
 from textual import events, on, work
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.command import Hit, Hits, Provider
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
@@ -87,7 +88,6 @@ from ...Subscriptions.item_dates import effective_date
 from ...Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from ...Subscriptions.watchlist_normalizers import (
     build_watchlist_item_id,
-    normalize_watchlist_item,
 )
 from ...Subscriptions.watchlist_failure import (
     classify_watchlist_failure,
@@ -154,6 +154,8 @@ from ..Watchlists_Modules.content_pane import (
     StarToggleRequested,
     UnreadToggleRequested,
 )
+from ..Watchlists_Modules.listening_transport import ListeningTransport
+from ..Watchlists_Modules.watchlists_listening import WatchlistsListening, WatchlistsListeningMixin
 from ..Watchlists_Modules.article_list import (
     ArticleListPane,
     NextItemsPageRequested,
@@ -590,7 +592,7 @@ class WatchlistsSourceSelectionCommandProvider(Provider):
                 )
 
 
-class WatchlistsCollectionsScreen(BaseAppScreen):
+class WatchlistsCollectionsScreen(WatchlistsListeningMixin, BaseAppScreen):
     """Monitored sources, runs, alerts, and recovery."""
 
     COMMANDS = BaseAppScreen.COMMANDS | {WatchlistsSourceSelectionCommandProvider}
@@ -629,6 +631,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # http/https only (the URL is a remote-derived string reaching an OS
         # primitive, so the scheme check lives in the handler, not here).
         ("o", "open_in_browser", "Open in browser"),
+        Binding("l", "listen_article", "Listen", show=False),
         # TASK-3791 plan task 3: jump to the search box; typing then drives
         # the corpus-wide FTS path through the debounced reload below.
         ("/", "focus_items_search", "Search"),
@@ -747,6 +750,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     def __init__(self, app_instance: Any, **kwargs: Any) -> None:
         super().__init__(app_instance, "watchlists_collections", **kwargs)
+        self._listening = WatchlistsListening(self)
         self._console_handoff = WatchlistsConsoleHandoff(app_instance)
         self._local_watchlist_records: tuple[Mapping[str, Any], ...] = ()
         self._local_watchlist_count = 0
@@ -1268,6 +1272,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         return getattr(self.app_instance, "watchlist_bundle_service", None)
 
     def on_mount(self) -> None:
+        self.set_interval(0.25, self._listening.refresh)
         # No super().on_mount(): the dispatcher already invokes
         # BaseAppScreen.on_mount separately for this Mount event.
         # Push the layout into the already-mounted workbench, not just this
@@ -3446,6 +3451,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     "watchlists-read-mode" if self.active_section == "items" else ""
                 ),
             )
+            yield ListeningTransport()
 
     def _available_layout_width(self) -> int | None:
         """Return positive screen allocation, never descendant content width."""
@@ -4743,6 +4749,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
           changes by any path other than a fresh `_build_tree_pane`
           construction.
         """
+        self._listening.invalidate_brief()
         if not self.is_mounted:
             return
         self._refresh_centre_header_for_scope()
@@ -5301,6 +5308,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `action_toggle_region` consults `_focus_in_centre_header` to refuse
         exactly that.
         """
+        self.call_after_refresh(self._listening.sync_reader_hint)
         node = event.widget
         while node is not None:
             node_id = getattr(node, "id", None) or ""
@@ -5326,6 +5334,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._focus_in_centre_header = False
 
     def watch_active_section(self) -> None:
+        self._listening.invalidate_brief()
         self._item_detail_generation += 1
         # A tab switch always rebuilds the centre header and the section's own
         # pane (below): whatever `_focus_in_centre_header` was tracking about
@@ -5454,6 +5463,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self.app.push_screen(OpmlImportDialog(), callback=self._on_opml_import_complete)
 
     def watch_runtime_backend(self) -> None:
+        self._listening.invalidate_brief()
         self._item_detail_generation += 1
         # Backend identity is part of every Runs/detail publication. Advance
         # the monotonic owners even for an A -> B -> A transition, where a
@@ -8627,8 +8637,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self._citation_item_lookup = {}
             else:
                 try:
-                    rows_by_id = await asyncio.to_thread(
-                        db.get_subscription_items_by_ids, citation_ids
+                    rows_by_id, issues = await asyncio.to_thread(
+                        self._listening.load_citations, db, citation_ids
                     )
                 except Exception as exc:  # noqa: BLE001 - reported, not raised
                     logger.warning(
@@ -8656,8 +8666,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 citations: list[dict[str, Any]] = []
                 lookup: dict[int, dict[str, Any]] = {}
                 for item_id in citation_ids:
-                    row = rows_by_id.get(item_id)
-                    if row is None:
+                    normalized = rows_by_id.get(item_id)
+                    if normalized is None:
                         # The named invariant: an id that does not resolve
                         # degrades honestly rather than quietly passing as
                         # available. `available=False` and a label that
@@ -8673,7 +8683,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                             }
                         )
                         continue
-                    normalized = normalize_watchlist_item("local", row)
                     lookup[item_id] = normalized
                     title = str(normalized.get("title") or "Untitled item")
                     citations.append(
@@ -8691,6 +8700,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     )
                 self._loaded_citations = citations
                 self._citation_item_lookup = lookup
+                self._listening.citation_issues = (id(lookup), issues)
             # Task 4: the toolbar's pickers. One combined `to_thread` hop
             # for both the watchlist's stored settings (the SAME columns
             # `briefing_service._selection_mode` reads) and the full preset
@@ -8955,6 +8965,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         actions that do not apply to it.
         """
         event.stop()
+        self._listening.invalidate_brief()
         self._selected_briefing = event.briefing
         # Task 5: a different briefing means different scripts. Clear the
         # stale selection immediately (synchronously, so nothing renders a
@@ -12286,6 +12297,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             except NoMatches:
                 pass
             self._mark_item_read_on_open(item)
+            self._listening.reader_published()
 
     def _reader_position_text(self) -> str:
         """The reader footer's "N of M" (TASK-3072 plan task 9).
@@ -13667,10 +13679,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             else "space=next-unread"
         )
+        listen_help = " l=listen" if self._listening.reader_key_available() else ""
         self.app_instance.notify(
             "1=Read 2=Sources 3=Runs 4=Rules 5=Notifications 6=Artifacts "
             "7=Overview | n=new d=delete/ignore c=check p=preview ?=help | "
-            f"j/k=move {space_help} m=read/unread s=star o=open "
+            f"j/k=move {space_help} m=read/unread s=star o=open{listen_help} "
             "a=mark-all-read u=undo /=search r=refresh-all | "
             "z=toggle focused side pane Z=Article Focus (Read only) "
             "[=Navigation ]=Inspector | Reader is permanent",
@@ -13871,23 +13884,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if new_index < 0 or new_index >= len(items):
             return
         pane.select_and_reveal(items[new_index])
-
-    def _reader_verb_blocked(self) -> bool:
-        """Whether a Read-tab verb key (`m`/`a`/`u`) must do nothing.
-
-        The same two guards `_navigate_item` applies — see its docstring for
-        the full rationale: typing in an `Input` or editable `TextArea` is
-        typing, not a verb (defensive against a future `priority=True` edit);
-        and read-state writes are scoped to the Read tab, where the affected
-        items are actually visible (off-tab writes would silently rewrite
-        rows the user cannot see).
-        """
-        focused = self.focused
-        if isinstance(focused, Input) or (
-            isinstance(focused, TextArea) and not focused.read_only
-        ):
-            return True
-        return self.active_section != "items" or self.runtime_backend != "local"
 
     def action_toggle_read_selected(self) -> None:
         """`m`: flip the open item between new and reviewed (task-2513 Task 10).

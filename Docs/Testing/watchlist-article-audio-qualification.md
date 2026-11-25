@@ -584,6 +584,41 @@ provider accesses. Private-child cleanup was verified. This smoke declined
 device admission after preparation; it supplies provider/publication/reuse
 evidence, with native playback covered separately above.
 
+### Reader and served controls (2026-11-24)
+
+The normal guarded operator fixture
+`Tests/UI/native_watchlist_article_listening.py` exercised the actual Windows
+CLI at 80×24 and the production serve factory with its real app child. The
+served leg at `d64dac499e` used ordinary numeric-loopback authentication and
+sandboxed Chromium, with a 151×43 terminal. Rendered screenshots and fresh
+terminal output corroborated the following controls against retained synthetic
+tones in a guard-owned private profile, using the installed app's original
+subscriptions database and listening service:
+
+- Paused restoration without autoplay; host-output notice before manual Resume;
+  Playing progress from 0:12 to 0:21 of 0:32, queue advancement and Pause.
+- Two-playable/one-unavailable brief guidance; citation Listen kept the brief
+  visible and its unread count unchanged while showing the suspended queue.
+- Palette Stop from Home paused active output at 0:23 of 0:32. Reader Open
+  hydrated the saved body and performed its ordinary read mark; contextual `l`
+  then started retained audio without another read-state change. Stop preserved
+  foreground 0:11 of 0:32 and the suspended queue.
+
+Normal Quit required confirmation of a fixture-only unsent draft. After that
+confirmation, the browser observed the shipped terminal-ended message. Browser,
+app child, server, Windows jobs and player custody retired; the guarded temporary
+root was removed. The final harness result was one pass with one existing
+dependency warning in 734.65 seconds. An earlier retry also passed its lifecycle
+checks, but its browser connector failed before opening a child; it supplies
+only the separately observed terminal controls.
+
+These checks establish host-local controls and presentation, not new provider,
+acoustic or listener qualification. The Reader eligibility fixes retain
+the guarded Open/read-mark timing and bind availability to each published body;
+their discriminating regressions passed 11 and eight targeted cases respectively.
+The full provider-through-UI, recovery and cross-surface workflow remains
+TASK-41182, and this supplement does not resolve issue #2864.
+
 Tool source and adjacent tests: `tools/evidence/watchlist_article_audio/`.
 Use the verified Python environment with the isolated helper directory on
 `PYTHONPATH`. Run deterministic tests and static checks first:
