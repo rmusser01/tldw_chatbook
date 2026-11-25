@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-24 09:14
-updated_date: 2026-11-24 23:14
+updated_date: 2026-11-25 00:52
 labels:
 - follow-up
 - console
@@ -144,7 +144,7 @@ async def test_llama_stream_failed_then_next(tmp_path, monkeypatch):
 - In exchange the witness checks the tool history directly: every removed tool-loop node must have been appended by a call whose predecessor in the run bore a response (RESPONSE_STARTED or COMPLETE). The factory already refused any append after a failed call at reservation; the witness no longer relies on a response-bearing terminal to stand for that.
 - No call is relabeled and no response link is written (AC#2): the tests compare the failed turn's call rows (state, outcome, `response_started_at`, `settled_at`) and its response links before and after the next send.
 - The fix is in the shared witness, so it covers every route that reaches it: hosted handlers, the llama.cpp stream and its resend, tool history, and a dictionary-transformed turn's restored source. `Tests/Chat/test_console_trace_current_turn_transforms.py::test_next_send_after_failed_transformed_call[error]` (TASK-32032 AC#5, item 1, red on dev with the same `completed_tool_turn_unavailable`) is red at this branch's base and green after; its `[stopped]` case stays red for its own reason (TASK-32032 item 2: the first call persists `error`, not `stopped`).
-- ADR-337 gained "Integration recorded 2026-11-24: a closed run whose calls failed before any response"; the User Guide's semantic-trace-capture page names the case.
+- ADR-337 gained "Amendment recorded 2026-11-24 (owner-approved): a closed run whose calls failed before any response" (the owner approved the relaxation on 2026-11-24), with an inline note on the 2026-09-09 sentence it relaxes; the User Guide's semantic-trace-capture page names the case.
 
 **AC#3: does the block depend on project context?** Not on project context alone. It happens whenever the next request must replace the finished run's suffix, which is either project context (`AGENTS.md`) or tool history from earlier in the run. Probe at the round base 75bac413f5 (temporary file, deleted), real controller, bridge, gateway and trace factory, Capture On:
 
@@ -180,4 +180,21 @@ The test's `no_project` cases pin the same matrix.
   - "Run the admission-sensitive Console P0 regression tests" (`--timeout=300`): 529 passed in 1,524 s;
   - "Run admission-sensitive suites 2" (`--timeout=300`; the refused-stream retry file): 1,529 passed in 876 s;
   - "Run fast PR contract" (`--timeout=180`; the size ratchet): 4,871 passed, 4 skipped in 1,131 s.
+
+**Review round 1 (2026-11-24).**
+- *C1: a restart turned the evidence into INTERRUPTED.* The tool-history recheck counted only RESPONSE_STARTED and COMPLETE predecessors. Startup recovery (`recover_open_calls`) settles an open RESPONSE_STARTED call as INTERRUPTED; such a call did bear a response, so a tool run left open (third call refused), recovered after a restart, then discarded, was refused at the next send (`completed_tool_turn_lineage`) where dev sends it. `bore_response` (`Chat/console_trace_continuation.py`) now also accepts INTERRUPTED with a response start. Verified in code: `_PERMITTED_CALL_TRANSITIONS` and the `console_trace_calls_lifecycle_guard` trigger allow INTERRUPTED only from RESPONSE_STARTED; the one other way to an INTERRUPTED row is a promoted voice import's insert (`console_trace_calls_insert_reserved`, v72), which is why the state also needs `response_started_at`. The answering-resend check uses the same rule. Test: `test_a_tool_run_interrupted_by_a_restart_and_discarded_still_closes` (project and no project), red before (`assert ['unsupported...turn_lineage'] == ['unsupported_surface_change']`), green after, green at base 75bac413f5.
+- *I2: AC#1 was not met for a streamed llama.cpp run with tool history and no project context.* Two new runs in `test_the_message_after_a_captured_run_that_failed_is_sent`: `llama_stream_tool_then_exhausted` (a streamed tool call, then stream and resend 503 for three rounds) and `llama_resend_tool_then_exhausted` (TASK-42530's shape: the resend answers with the tool call, then every call fails). With `NOTES.md` both were refused with `surface_replacement_checkpoint_unavailable`: the factory took the witness origin from the latest call's run, the last resend's own run, so the replacement range never started where the turn's run did, and the validator's resend remap ran only under project context and required the origin to be the resend. Fix: the factory builds the witness from the run origin of the call the resend repeated (`failed_stream_fallback_parent(..., answered=True)`); the validator remaps a resend terminal with or without project context and requires the witness origin to be that call's run origin (it now uses `adjacent_call` instead of its own boundary query). `test_console_trace_project_turn_service.py::test_project_fallback_requires_the_exact_preceding_failed_stream` built its witness with the resend as origin; its `valid` case now names the stream's run origin, and a new `fallback_origin` case (the old shape) is refused.
+- *Earlier overclaim, corrected.* The first notes' AC#3 table and test list did not cover a streamed llama.cpp tool run; the next-send test now has 7 runs (14 cases), and the matrix above holds for all of them.
+- Red/green and mutations for this round, all three tasks: see TASK-42530's review notes.
+
+**Runs (review round 1, all three tasks; other agents ran beside these, load 7-15).**
+- *Soak*, the touched file plus `test_console_trace_project_turn_service.py::test_project_fallback_requires_the_exact_preceding_failed_stream` at `-n 4`: 20/20 rounds, 2,260/2,260 passed (113 each), load 9.3-15.0.
+- *Lane cost.* The touched file serially with the Dreams step's flags: 107 passed in 171 s at load 10-13, with the soak and two lane steps running beside it (92 in 106 s at load 9 in the first round). The project-fallback function: 6 passed in 3.8 s at load 7. The `RecoveryRequired.__init__` recorder: `RR-HITS 0` for both.
+- *Covering*, `-n 4`, the same file set as the first round: 1,646 passed, 33 failed, the same 33 ids as the first round (TASK-42513's 32 plus TASK-32032's `[stopped]`), all red at 75bac413f5.
+- `Tests/CI` `-n 4`: 1,946 passed, 2 skipped. `Tests/Architecture`, serial: 1,507 passed, 5 skipped. `preflight.sh`: all checks passed. `ruff check tldw_chatbook --select F`: clean. `Tests/lint/ruff_gate.py`: ratchet OK.
+- *Lane steps*, via `r19-step.sh`, serially with each step's flags:
+  - "Run the Dreams tracking tests and unlaned riders" (changed: one new target): 1,579 passed, 6 skipped in 1,066 s;
+  - "Run the admission-sensitive Console P0 regression tests": 529 passed in 1,537 s;
+  - "Run fast PR contract" (the size ratchet): 4,871 passed, 4 skipped in 1,182 s.
+- *Size row.* `console_trace_service.py` 6,809 -> 6,829 (+20), exact measurement, dated comment.
 <!-- SECTION:NOTES:END -->

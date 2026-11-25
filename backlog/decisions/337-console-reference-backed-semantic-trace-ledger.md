@@ -613,7 +613,14 @@ Discard contract and its existing descriptor representation. When a completed
 uncaptured follow-up requires the closed representation, re-read the original
 owner's durable Discard state at every validation, including final binding, before
 allowing its existing RESPONSE_STARTED evidence. Failed-empty owners still require
-settled response-bearing calls.
+settled response-bearing calls. (Relaxed 2026-11-24 by TASK-42534, owner-approved:
+the terminal call may instead be a settled ERROR that never started a response;
+every removed tool-loop node must then follow a predecessor in the same run that
+bore a response (RESPONSE_STARTED, COMPLETE, INTERRUPTED with a response start,
+or a failed stream whose llama.cpp resend bore one); nothing is relabeled; and
+the failed turn is cut from the next request, not sent. See "Amendment recorded
+2026-11-24 (owner-approved): a closed run whose calls failed before any
+response".)
 
 Recheck the full closure and chain at final dispatch binding, along with the existing
 attached owner, latest settled call, exact source, unchanged prefix and tail, matching
@@ -664,7 +671,9 @@ or unsaved settlement remains ineligible. Each retry reserves a distinct ordered
 call; it never rewrites the failed call or relabels it as a tool response.
 
 
-### Integration recorded 2026-11-24: a closed run whose calls failed before any response (TASK-42534)
+### Amendment recorded 2026-11-24 (owner-approved): a closed run whose calls failed before any response (TASK-42534)
+
+The owner approved this relaxation on 2026-11-24.
 
 The 2026-10-04 integration lets a run retry a call that failed with no
 captured response. When the retries fail too, the run's assistant settles
@@ -676,29 +685,41 @@ history from earlier in the run. A failed call authorizes an unchanged retry,
 never tool history, so it adds nothing the witness must vouch for, and the
 witness may close the turn on it. In exchange, the witness now checks directly
 that every removed tool-loop node was appended by a call whose predecessor in
-the run bore a response (RESPONSE_STARTED or COMPLETE). A closed terminal that
-completed or stopped without a response, and every check above, are unchanged.
-No call is relabeled as response-bearing and no response link is created.
+the run bore a response: RESPONSE_STARTED, COMPLETE, or INTERRUPTED with a
+response start (startup recovery settles an open response as INTERRUPTED, the
+only way an existing call reaches that state), or a failed stream whose resend
+bore one. A closed terminal that completed or stopped without a response, and
+every check above, are unchanged. No call is relabeled as response-bearing and
+no response link is created. The failed turn's empty assistant is cut from the
+next request, as for any closed turn; it is not sent.
 
 ### Integration recorded 2026-11-24: stream resends inside a run (TASK-42530, TASK-42532)
 
 A llama.cpp stream that returns no content is resent without streaming on
-its own `llama_fallback` run (task-19324). TASK-42472 let a failed resend
-stand aside for the agent's unchanged retry of the streamed call. A resend
-that bore a response is that call's answer instead: the next TOOL_LOOP call
-of the run is admitted after it as the step that carries its reply and tool
-results, and is refused if it appends nothing. A resend of a tool-loop call
-takes the loop's turn from the request, and is admitted only directly after
-the settled failed tool-loop call it repeats, with nothing appended. The
-completed-turn witness counts a failed or answering resend directly after a
-call of the run as part of that run.
+its own `llama_fallback` run (task-19324). That resend is compared at dispatch
+binding like a retry, with the call whose boundary directly precedes its own
+(same owner, segment, turn, policy and surface, in ERROR): provider, model,
+endpoint, generation settings, response format, reasoning controls, system
+composition, rendered system parts, tool schemas and literal envelope must
+match, except the overlay-proven streaming flip, which the envelope's `stream`
+key carries too. TASK-42472 let a failed resend stand aside for the agent's
+unchanged retry of the streamed call. A resend that bore a response is that
+call's answer instead: the next TOOL_LOOP call of the run is admitted after it
+as the step that carries its reply and tool results, and is refused if it
+appends nothing. A resend of a tool-loop call takes the loop's turn from the
+request, and is admitted only directly after the settled failed tool-loop call
+it repeats, with nothing appended. The completed-turn witness counts a failed
+or answering resend directly after a call of the run as part of that run, and
+a resend that ends the turn is witnessed from the run origin of the call it
+resent, with or without project context.
 
 A self-hosted or Custom endpoint's refused stream, and a llama.cpp stream
 with tools in the request, are resent as the run's next TOOL_LOOP call. When
 that resend fails, an in-place retry that streams again is compared with the
-streamed call the resend repeated (the resend having been admitted only as
-its verified True -> False flip), not with the resend. Every other target,
-setting and surface change remains refused.
+streamed call the resend repeated, not with the resend, when that call failed
+before any response and its stored settings equal the resend's apart from the
+streaming flag (the resend was admitted only as that verified True -> False
+flip). Every other target, setting and surface change remains refused.
 
 ## Current-owner integration amendment (2026-10-13)
 

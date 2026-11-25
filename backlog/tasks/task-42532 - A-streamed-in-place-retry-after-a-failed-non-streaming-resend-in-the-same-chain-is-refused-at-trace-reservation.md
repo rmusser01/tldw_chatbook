@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-24 09:14
-updated_date: 2026-11-24 23:14
+updated_date: 2026-11-25 00:52
 labels:
 - follow-up
 - console
@@ -61,11 +61,17 @@ TASK-42472 AC#8 covered only the no-tools llama.cpp resend, which has its own ru
   - `recovered`: the first resend fails with 503, the retried stream's resend answers; the run completes, lineage `agent_first` error then `tool_loop` error, error, complete;
   - `exhausted`: every resend fails; three rounds (two retries), and the run ends `failed` on the provider's own 503 copy, not the trace card, with no dispatch recovery (AC#2).
 - Red before (the service file at the TASK-42530 commit): 4 failed, both `valid` gateway cases (`TraceCallPersistenceError`) and both run cases (`assert ConsoleDispatchRecoveryState(kind=DISPATCH_STARTED ...) is None`, `trace_tool_chain_unavailable` at `trace_dispatch_commit`). Green after.
-- Not pinned: the generation-settings equality that proves the previous call was the streamed call's flip. Through the gateway a non-streaming call after a failed streamed call inside one run is only ever that resend, so no test can reach the other case; the check states the proof and stays as defence in depth.
+- (Corrected in review round 1, below: the generation-settings equality is now pinned by `forged_stream_settings`; the first notes said no test could reach it.)
 
 **Size row.** `console_trace_service.py` 6,774 -> 6,809 (+35), exact measurement, with a dated comment in `Tests/Architecture/test_module_size_ratchet.py`.
 
 **Files.** `tldw_chatbook/Chat/console_trace_service.py`; `Tests/Chat/test_console_failed_call_retry_ownership.py`; `Tests/Architecture/test_module_size_ratchet.py`; ADR-337.
 
 **Runs.** Same branch and runs as TASK-42534's notes.
+
+**Review round 1 (2026-11-24).**
+- *M6.* The swap to the streamed call's header now also requires that call never started a response (`response_started_at` is None): a resend is only sent when nothing arrived, so only then did the resend's own admission compare it with the stream.
+- *The settings-equality check is now pinned*, correcting the first notes' claim that no test could reach it: `forged_stream_settings` (both paths) makes the stored stream's header read `"temp": 0.25` and retries with `temperature=0.25`. With the check, the resend is no longer that stream's verified flip, the retry is compared with the resend, and it is refused; with the check removed it is admitted. The `response_started_at` condition is not pinned: through the gateway an in-chain resend is only sent after a stream that delivered nothing.
+- ADR-337's note now states both conditions.
+- Runs for this round: TASK-42534's review notes.
 <!-- SECTION:NOTES:END -->

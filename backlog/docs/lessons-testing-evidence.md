@@ -1982,6 +1982,7 @@ Separately, a diagnostic wrapper on `ChatScreen._sync_native_console_chat_ui` ma
 
 **What to do.**
 - For a test that never passed, the first fix is not the last. Rerun the whole file, then repeat it under load, before calling it green or adding it to a lane.
+- The same holds for a filed product refusal (TASK-42530, 2026-11-24). A Console trace refusal stops the run at the first refused call, so the next one never runs. TASK-42530's filing named one refusal (`trace_tool_chain_unavailable` after a llama.cpp resend answered with a tool call). After that fix, a narrower variant (only the first stream empty) passed end to end, but the filed probe shape (every stream empty) still ended `blocked` one call later on `trace_turn_unavailable`: a resend of a tool-loop call had never been admitted. Re-run the exact probe shape the task recorded, through the end of the run and the next message, not a variant that is easier to build.
 - In a call census, warm every read that the burst's own timers will make, not only the reads that are in flight. Then force each timer to fire mid-burst in a probe, so the warm is shown to cover it.
 - To diagnose Console timing, wrap a seam that no source-identity check records. Grep for `getattr_static`/`__code__ is` records of the method first.
 

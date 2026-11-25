@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-24 09:14
-updated_date: 2026-11-24 23:14
+updated_date: 2026-11-25 00:52
 labels:
 - follow-up
 - console
@@ -62,7 +62,7 @@ TASK-42472 AC#8's shared helper (`Chat/console_trace_continuation.py::failed_str
 - Factory, tool loop: when the latest call is the answering resend of `previous`, the call is admitted as that reply's next step, not as a failed-call retry, and refused if it appends nothing (AC#3: never an unchanged retry).
 - Factory, resend of a tool-loop call: it takes the loop's turn (the request's last saved revision, as a tool-loop call does) and is admitted only directly after the settled failed tool-loop call it repeats (same owner, turn and policy, on the segment's surface tail), with nothing appended.
 - Next message (AC#2): the completed-turn witness counts an answering resend as part of the run (the foreign-call check), and TASK-42534's tool-history recheck accepts history appended after a failed call whose resend answered.
-- `persist_request`'s failed-call header comparison was left alone: dropping it for the step after an answering resend changed nothing measurable, including a probe where `load_tools` changed the system prompt between the two calls.
+- (Superseded in review round 1, below: `persist_request` now compares a resend with the failed call it repeats.)
 - ADR-337 gained "Integration recorded 2026-11-24: stream resends inside a run"; the User Guide's semantic-trace-capture page says the run continues from a resend's reply with capture on.
 
 **Tests** (`Tests/Chat/test_console_failed_call_retry_ownership.py`).
@@ -78,4 +78,21 @@ TASK-42472 AC#8's shared helper (`Chat/console_trace_continuation.py::failed_str
 **Files.** `tldw_chatbook/Chat/console_trace_continuation.py`, `tldw_chatbook/Chat/console_trace_runtime.py`; `Tests/Chat/test_console_failed_call_retry_ownership.py`; ADR-337 and the User Guide page above.
 
 **Runs.** Same branch and runs as TASK-42534's notes.
+
+**Review round 1 (2026-11-24).**
+- *I3: nothing proved an answering resend repeated the failed call.* A `llama_fallback` call is `call_sequence` 0 of its own run, so `persist_request`'s retry header comparison never ran for it, and the factory's resend checks cover owner, turn, policy, surface and state only. `persist_request` now compares a `llama_fallback` call with the call whose boundary directly precedes its own, when that call has the same owner, segment, turn, policy and surface and is in ERROR: provider, model, endpoint, generation settings, response format, reasoning controls, system composition, rendered system parts, tool schemas and literal envelope. Running the existing comparison unchanged refused every llama.cpp resend: its literal envelope is `{"model": ..., "stream": false}` against the stream's `"stream": true` (temporary log, removed). `retry_header_components` (`Chat/console_trace_continuation.py`) therefore compares the envelope without its `stream` key, only for a pair whose generation settings flip True -> False, which `_retry_generation_matches` admits only with the `llama_fallback_retry` overlay. The earlier note that `persist_request` "was left alone" no longer holds. Test: `test_a_llamacpp_resend_is_compared_with_the_call_it_repeats`: a stand-in for the stored stream's header (another model) or its envelope (an extra `top_k`) refuses the resend before it is sent; unforged, it answers.
+- *I4: the "a tool-loop resend appends nothing" guard was unpinned.* `test_a_resend_of_a_tool_loop_call_repeats_its_failed_call` gained `unchanged_after_failed_tool_loop` (a direct factory resend right after a failed, non-streamed tool-loop call: admitted) and `appended_after_failed_tool_loop` (the same request plus a tool result: refused with `trace_tool_chain_unavailable`).
+- *I5: a tool-loop resend in a turn with a chat-dictionary transform was refused* (`trace_current_transform_owner`): the transform-owner check let only a tool-loop call carry the transformed user row before its tail. A tool-loop resend takes the loop's turn, so it is treated the same. Test: `every_transformed` in `test_a_llamacpp_tool_call_on_the_stream_resend_runs_the_tool` (project and no project), red before with `['trace_curre...nsform_owner']`.
+- *Red evidence this round* (each temporary edit reverted; the touched file plus the project-fallback function, `-n 4`):
+  - without INTERRUPTED in `bore_response`: both restart-and-discard cases fail (`completed_tool_turn_lineage`);
+  - witness origin from the resend's own run: 7 fail, the four new llama.cpp tool runs, `llama_stream_exhausted-project`, `every-project`, `every_transformed-project`;
+  - the validator's resend remap gated on project context again: 4 fail, the no-project llama.cpp tool runs and `every`/`every_transformed` without project;
+  - the validator's old origin check (`origin != terminal`): `test_project_fallback_requires_the_exact_preceding_failed_stream[valid]` and `[fallback_origin]` fail;
+  - no resend comparison: `[model]` and `[envelope]` forgeries are admitted;
+  - the envelope compared with its `stream` key: every llama.cpp resend is refused (18 or more fail);
+  - no append guard: `appended_after_failed_tool_loop` is admitted;
+  - the transform-owner check as before: both `every_transformed` cases fail (`trace_current_transform_owner`);
+  - (TASK-42532) no settings-equality check: both `forged_stream_settings` cases are admitted.
+  At the round base 75bac413f5, the restart-and-discard cases pass (the send was blocked only on this branch), and the four new llama.cpp tool runs fail during the first run (`trace_turn_unavailable` or `trace_tool_chain_unavailable`).
+- Runs for this round: TASK-42534's review notes.
 <!-- SECTION:NOTES:END -->
