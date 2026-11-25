@@ -1987,6 +1987,10 @@ def test_the_first_run_message_differs_from_later_presses(monkeypatch):
     controller.start()
     controller.stop()
     first = [e for e in events if isinstance(e, cvi.VoiceModelPreparing)][0]
+    # One preparation at a time: the next press is refused until the first
+    # attempt's daemon releases admission (da28a28595), so wait for that
+    # release, the product's own event, before pressing again (TASK-33621.197).
+    assert controller._model_preparation.done.wait(2), "native disposal did not finish"
 
     events.clear()
     controller.start()
@@ -2996,6 +3000,10 @@ def test_a_failed_warm_up_is_still_a_first_run_next_time(monkeypatch):
 
     controller.start()
     controller.stop()
+    # One preparation at a time: the next press is refused until the first
+    # attempt's daemon releases admission (da28a28595), so wait for that
+    # release, the product's own event, before pressing again (TASK-33621.197).
+    assert controller._model_preparation.done.wait(2), "native disposal did not finish"
     events.clear()
     controller.start()
 

@@ -282,6 +282,9 @@ def test_the_three_empty_capture_messages_are_all_different(monkeypatch):
         with pytest.raises(RuntimeError) as excinfo:
             session.stop_and_transcribe()
         messages.append(str(excinfo.value))
+        # One preparation at a time (da28a28595): the next session's press is
+        # refused until this one's daemon releases admission (TASK-33621.197).
+        assert session._controller._model_preparation.done.wait(3)
 
     assert len(set(messages)) == 3
 
@@ -308,6 +311,9 @@ def test_a_service_reporting_nothing_falls_back_to_the_recognizer_flag(monkeypat
     silent.start()
     with pytest.raises(RuntimeError) as silent_error:
         silent.stop_and_transcribe()
+    # One preparation at a time (da28a28595): the next session's press is
+    # refused until this one's daemon releases admission (TASK-33621.197).
+    assert silent._controller._model_preparation.done.wait(3)
 
     heard = _WarmableDictationService(stop_result=None)
     heard_session = _session(heard)
