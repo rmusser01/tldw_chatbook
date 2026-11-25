@@ -1764,19 +1764,27 @@ class ConsoleTraceService:
         rendered_system_slot = (
             None if child_state is None else child_state.rendered_system_slot
         )
+        # A slot planned after the tail is being put back (ADR-337
+        # amendment 2026-11-25); it is rechecked and written with the rows.
+        restoring = (
+            rendered_system_slot is not None
+            and tail is not None
+            and rendered_system_slot.sequence == tail.sequence + 1
+        )
         if rendered_system_slot is not None:
             message_binding = _binding(bundle, "messages_payload")
             if message_binding is None or not message_binding.value:
                 raise ValueError("rendered_system_slot_unavailable")
-            self._validate_rendered_system_slot(
-                cursor,
-                projection.root,
-                rendered_system_slot,
-                message_binding.value[0],
-                current_policy_id=None
-                if reserved_call is None
-                else reserved_call.policy_id,
-            )
+            if not restoring:
+                self._validate_rendered_system_slot(
+                    cursor,
+                    projection.root,
+                    rendered_system_slot,
+                    message_binding.value[0],
+                    current_policy_id=None
+                    if reserved_call is None
+                    else reserved_call.policy_id,
+                )
         delta_items = (
             ((replacement.item,) + surface_delta.items)
             if replacement is not None
@@ -2042,6 +2050,23 @@ class ConsoleTraceService:
         stored_replacement: SurfaceReplacementRecord | None = None
         chain_nodes: tuple[SurfaceNodeRecord, ...] = ()
         chain_replacements: tuple[SurfaceReplacementRecord, ...] = ()
+        restored_node = None
+        if restoring:
+            # First, so the call's other rows take the sequences planned.
+            restored_node = tail = _slot_restore().write_restored_slot(
+                self,
+                cursor,
+                owner_id=owner_id,
+                segment_id=segment_id,
+                tail=tail,
+                projection=projection,
+                slot=rendered_system_slot,
+                value=message_binding.value[0],
+                route_identity=_route(provenance),
+                reserved_call=reserved_call,
+            )
+            if replacement is not None:
+                replacement = replace(replacement, predecessor_head_id=tail.node_id)
         if replacement is not None:
             span = replacement.end_sequence - replacement.start_sequence + 1
             if span > MAX_SURFACE_REPLACEMENT_SPAN and not replacement.chain:
@@ -2271,6 +2296,8 @@ class ConsoleTraceService:
                 replacement if stored_replacement is not None else None,
             )
             root = _ProjectionRoot(None, base=updated_entries)
+        if restored_node is not None:
+            root = _slot_restore().with_slot_first(self, root, restored_node)
         descriptor_root = (
             child_state.descriptors
             if child_state is not None
@@ -2310,6 +2337,10 @@ class ConsoleTraceService:
                 lineage_domains[node.sequence] = _surface_reference_domain(
                     self._node_reference_key(node)
                 )
+        if restored_node is not None:
+            lineage_domains[restored_node.sequence] = "messages_payload"
+            if active_domains is not None:
+                active_domains[restored_node.sequence] = "messages_payload"
         for node in (*chain_nodes, *(() if removal_node is None else (removal_node,))):
             # Placeholders stay in the lineage, as the cold reader counts them.
             lineage_domains[node.sequence] = _surface_reference_domain(
@@ -2362,7 +2393,7 @@ class ConsoleTraceService:
         return PersistedTraceRequest(
             surface_head_id=tail.node_id,
             header=header,
-            appended_nodes=tuple(appended),
+            appended_nodes=(*((restored_node,) if restored_node else ()), *appended),
             replacement=stored_replacement,
             checkpoint=checkpoint,
             chain_nodes=chain_nodes,
@@ -2492,6 +2523,24 @@ class ConsoleTraceService:
         ) * len(provenance.continuations)
         tail = self._effective_surface_tail(cursor, segment_id)
         projection = self._surface_projection(cursor, segment_id, tail)
+        # ADR-337 amendment 2026-11-25 (TASK-42525): a new turn's first call
+        # may put the leading slot back; plan as if it already led.
+        restored = (
+            None
+            if live_native_custody is not None or fallback_parent is not None
+            else _slot_restore().restored_slot_projection(
+                self,
+                cursor,
+                owner_id=owner_id,
+                route_identity=route_identity,
+                tail=tail,
+                projection=projection,
+                descriptors=descriptors,
+                values=values,
+                message_count=len(provenance.messages_payload),
+            )
+        )
+        projection = restored or projection
         physical_active = projection.entries
         # Surface nodes stay physically append-only, so later messages can
         # follow older continuation nodes. Compare in provider domain order
@@ -3043,9 +3092,14 @@ class ConsoleTraceService:
                 checkpoint = None
         bootstrap = checkpoint is None and predecessor is not None
         if (
-            compound
-            and (bootstrap or completed_tool_turn.project_context_count is not None)
-        ) or (rewritten is not None and bootstrap):
+            (
+                compound
+                and (bootstrap or completed_tool_turn.project_context_count is not None)
+            )
+            or (rewritten is not None and bootstrap)
+            # The live checkpoint has no slot (ADR-337 amendment 2026-11-25).
+            or restored is not None
+        ):
             # A cold parent is built entirely from committed references.
             assert tail is not None and current_policy_id is not None
             if compound:
@@ -3058,7 +3112,7 @@ class ConsoleTraceService:
                 cursor,
                 owner_id=owner_id,
                 segment_id=segment_id,
-                tail=tail,
+                tail=tail if restored is None else _slot_restore().planned_tail(tail),
                 projection=projection,
                 route=route_identity,
                 policy_id=current_policy_id,
@@ -4886,7 +4940,12 @@ class ConsoleTraceService:
                 node.sequence,
                 self._node_reference_key(node),
             )
-            root_node = _sequence_merge(root_node, sequence_node)
+            # A slot put back after the tail still leads (ADR-337, 2026-11-25).
+            root_node = (
+                _sequence_insert(root_node, 0, sequence_node)
+                if node.component_kind == "rendered_system"
+                else _sequence_merge(root_node, sequence_node)
+            )
             active[node.sequence] = sequence_node
         by_id = {node.node_id: node for node in nodes}
         for record in replacements:
@@ -6672,6 +6731,13 @@ def _domain_appends():
 #: Component of the content-free node a removal-only replacement points at
 #: (ADR-337 amendment 2026-11-24, TASK-42525). Projections drop it.
 SURFACE_REMOVAL_COMPONENT = "surface_removal"
+
+
+def _slot_restore():
+    """Load the slot restore only when a send needs it (TASK-42525)."""
+    from tldw_chatbook.Chat import console_trace_slot_restore
+
+    return console_trace_slot_restore
 
 
 def _rewritten_tails():

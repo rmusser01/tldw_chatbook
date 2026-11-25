@@ -869,11 +869,12 @@ message, and the surface had no slot for it.
 2. **Which shape.** The surface has no active rendered-system row: it never
    had one (the turn's earlier calls went to a provider that takes the system
    prompt outside the message list), or a fallback's removal marker removed
-   it. The request's first row is a rendered-system row and no other row is
-   one. Every other row is planned by the existing rules, unchanged, as if the
-   slot were already in place: retained rows must match, and an append, a
-   completed-turn replacement or project context follows its own rules.
-   Nothing else is relaxed.
+   it. The request's first row is a rendered-system row. Every other row is
+   planned by the existing rules, unchanged, as if the slot were already in
+   place: retained rows must match, and an append, a completed-turn
+   replacement or project context follows its own rules. So a second system
+   row is a changed row those rules refuse, and the request builder carries
+   none after a message. Nothing else is relaxed.
 3. **Recording.** Before its other writes, the call appends one
    rendered-system node directly after the surface tail, holding the
    request's system row as a first call's slot does. The surface projection
@@ -882,11 +883,12 @@ message, and the surface had no slot for it.
    call's header does (`rendered_system_row`), so the reader rebuilds the
    request exactly. Nothing is removed; earlier calls, heads and bytes stay as
    they were.
-4. **Recheck.** The planner proves the shape in the reservation transaction.
-   The dispatch-binding transaction checks it again before writing: the call
-   is still its turn's first and the surface still has no slot. From then on
-   the slot is an ordinary leading slot, which the run's tool-loop calls and
-   the next send match under the existing rules.
+4. **Recheck.** The planner proves the shape in the reservation transaction
+   and checks the slot like any leading slot (a system row, under the call's
+   frozen policy). The dispatch-binding transaction checks the shape again
+   before writing: the call is still its turn's first and the surface still
+   has no slot. From then on the slot is an ordinary leading slot, which the
+   run's tool-loop calls and the next send match under the existing rules.
 
 Still refused: a slot put back by any other call; a system row anywhere but
 first; a request with two system rows; a second slot over a surface that

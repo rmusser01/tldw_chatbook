@@ -2382,15 +2382,23 @@ async def test_the_message_after_a_rewritten_run_that_did_not_complete_is_sent(
 
 @asynccontextmanager
 async def _llamacpp_falls_back(
-    tmp_path, monkeypatch, *, tool_first, project, groq_replies=()
+    tmp_path,
+    monkeypatch,
+    *,
+    tool_first,
+    project,
+    groq_replies=(),
+    busy=3,
+    next_steps=(),
 ):
     """A captured llama.cpp run that falls back to groq (TASK-42472's path).
 
     llama.cpp answers with a text tool call first when ``tool_first``, then
-    is busy until its in-place retries are spent. groq takes each of
+    is busy ``busy`` times, until its in-place retries are spent; its next
+    requests take ``next_steps``, then the fixture reply. groq takes each of
     ``groq_replies`` in turn, then answers. Yields the app, each groq
-    request's messages, and ``switch``: after it, the session's sends go to a
-    hosted provider (groq's endpoint) instead of llama.cpp.
+    request's messages, and ``hosted``: while it is non-empty, the session's
+    sends go to a hosted provider (groq's endpoint) instead of llama.cpp.
     """
     from Tests.Chat.test_console_project_instruction_traces import _project_console
     from tldw_chatbook.Chat import (
@@ -2403,7 +2411,7 @@ async def _llamacpp_falls_back(
         ConsoleResolvedDestination,
     )
 
-    steps = ("tool",) * tool_first + ("busy",) * 3
+    steps = ("tool",) * tool_first + ("busy",) * busy + tuple(next_steps)
     async with _project_console(
         tmp_path,
         monkeypatch,
@@ -2448,7 +2456,7 @@ async def _llamacpp_falls_back(
         monkeypatch.setattr(
             provider_readiness, "configured_provider_is_ready", lambda _p: True
         )
-        yield app, groq, lambda: switched.append(True)
+        yield app, groq, switched
 
 
 @pytest.mark.usefixtures("shut_down_console_controllers")
@@ -2473,7 +2481,7 @@ async def test_after_a_llamacpp_fallback_the_next_message_to_a_hosted_provider_i
         tool_first=tool_first,
         project=True,
         groq_replies=[_NATIVE_TOOL_CALL],
-    ) as (app, groq, switch):
+    ) as (app, groq, hosted):
         result = await app.controller.submit_draft(
             "Use calculator once", session_id=app.session.id
         )
@@ -2490,7 +2498,7 @@ async def test_after_a_llamacpp_fallback_the_next_message_to_a_hosted_provider_i
         ]
         if misread:
             _misread_as_failed(monkeypatch, app, turn_id, _GQ, 0)
-        switch()
+        hosted.append(True)
         sent = len(groq)
 
         follow_up = await app.controller.submit_draft(
@@ -2510,13 +2518,38 @@ async def test_after_a_llamacpp_fallback_the_next_message_to_a_hosted_provider_i
         assert _chain_calls(app, turn_id) == before
 
 
+def _assert_slot_first(app, follow_up, calls):
+    """The turn's llama.cpp calls each led with the system prompt, as traced."""
+    from tldw_chatbook.Chat.console_trace_native_reader import (
+        ConsoleTraceNativeReader,
+    )
+
+    turn = app.store.get_message(follow_up.user_message_id).persisted_message_id
+    traced = ConsoleTraceNativeReader(app.db).read_calls(turn)
+    wire = json.loads(app.attempts[-1].content)["messages"]
+    assert [call.capture.status for call in traced] == ["complete"] * calls
+    rows = traced[-1].capture.request["messages_payload"]
+    assert rows[0]["role"] == wire[0]["role"] == "system"
+    assert rows[0]["content"] == wire[0]["content"]
+    assert _roles(rows) == _roles(wire)
+
+
 @pytest.mark.usefixtures("shut_down_console_controllers")
-@pytest.mark.parametrize("project", [True, False], ids=["project", "no_project"])
-@pytest.mark.parametrize("tool_first", [False, True], ids=["no_tools", "tool_first"])
+@pytest.mark.parametrize(
+    ("tool_first", "project", "next_tools"),
+    [
+        pytest.param(False, False, False, id="no_tools-no_project"),
+        pytest.param(False, True, False, id="no_tools-project"),
+        pytest.param(True, False, False, id="tool_first-no_project"),
+        pytest.param(True, True, False, id="tool_first-project"),
+        pytest.param(False, False, True, id="no_tools-no_project-next_tools"),
+        pytest.param(True, True, True, id="tool_first-project-next_tools"),
+    ],
+)
 async def test_a_captured_llamacpp_run_falls_back_to_a_hosted_provider(
-    tmp_path, monkeypatch, tool_first, project
+    tmp_path, monkeypatch, tool_first, project, next_tools
 ):
-    """TASK-42525 on TASK-42472's path, second owner decision.
+    """TASK-42525 on TASK-42472's path, second and third owner decisions.
 
     llama.cpp HTTP failures are transient, so a llama.cpp run reaches its
     fallback once the in-place retries are spent. llama.cpp is sent the
@@ -2526,50 +2559,23 @@ async def test_a_captured_llamacpp_run_falls_back_to_a_hosted_provider(
     those rows: the run completes, and the trace keeps the llama.cpp calls
     with their system row and records groq's call without it.
 
-    The next message goes back to llama.cpp and needs the slot back. Putting
-    a leading system row back is the refusal any hosted -> llama.cpp switch
-    meets under capture (`unsupported_surface_change`), which the owner's
-    decision did not grant; it stays refused, and Send without capture
-    sends it.
+    The next message goes back to llama.cpp and needs the slot back. It was
+    refused (`unsupported_surface_change`); the new turn's first call now
+    puts the slot back (ADR-337 amendment 2026-11-25). With `next_tools`
+    llama.cpp answers that message with a tool call, so the run's tool-loop
+    call matches the restored slot.
     """
-    import functools
-
-    from Tests.Chat.test_console_project_instruction_traces import _project_console
-    from tldw_chatbook.Chat import (
-        Chat_Functions,
-        console_agent_bridge,
-        provider_readiness,
-    )
     from tldw_chatbook.Chat.console_trace_native_reader import (
         ConsoleTraceNativeReader,
     )
 
-    steps = ("tool",) * tool_first + ("busy",) * 3
-    async with _project_console(
+    async with _llamacpp_falls_back(
         tmp_path,
         monkeypatch,
-        source_name="AGENTS.md" if project else "NOTES.md",
-        first_failure=_llama_script(*steps),
-        failures=len(steps),
-    ) as app:
-        llama, groq = app.gateway.resolve_for_send, []
-
-        async def resolve(selection):
-            return _GROQ if selection.provider == _GQ else await llama(selection)
-
-        @functools.wraps(Chat_Functions.chat_api_call)
-        def handler(*_args, **kwargs):
-            groq.append(kwargs["messages_payload"])
-            return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
-
-        monkeypatch.setattr(app.gateway, "resolve_for_send", resolve)
-        monkeypatch.setattr(app.gateway, "_chat_api_call_fn", handler)
-        monkeypatch.setattr(
-            console_agent_bridge, "console_fallback_providers", lambda: (_GQ,)
-        )
-        monkeypatch.setattr(
-            provider_readiness, "configured_provider_is_ready", lambda _p: True
-        )
+        tool_first=tool_first,
+        project=project,
+        next_steps=("tool",) * next_tools,
+    ) as (app, groq, _hosted):
         result = await app.controller.submit_draft(
             "Use calculator once" if tool_first else "Hello",
             session_id=app.session.id,
@@ -2598,13 +2604,75 @@ async def test_a_captured_llamacpp_run_falls_back_to_a_hosted_provider(
         )
 
         assert follow_up.accepted
-        assert app.reservation_errors == ["unsupported_surface_change"]
-        assert app.controller.run_state.status.value == "blocked"
-        assert _chain_calls(app, turn_id) == before
-        paused = app.store.preparation_for_session(app.session.id)
-        resent = await app.controller.send_without_capture(paused.preparation_id)
-        assert resent.accepted, resent.visible_copy
+        assert app.reservation_errors == []
         assert app.controller.run_state.status.value == "completed"
+        assert len(groq) == 1  # back on llama.cpp
+        assert _chain_calls(app, turn_id) == before
+        _assert_slot_first(app, follow_up, 1 + next_tools)
+        if next_tools:
+            # The next message proves that run, on the restored slot.
+            again = await app.controller.submit_draft(
+                "Once more?", session_id=app.session.id
+            )
+            assert again.accepted
+            assert app.reservation_errors == []
+            assert app.controller.run_state.status.value == "completed"
+            _assert_slot_first(app, again, 1)
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize(
+    ("project", "next_tools"),
+    [
+        pytest.param(False, False, id="no_project"),
+        pytest.param(True, False, id="project"),
+        pytest.param(True, True, id="project-next_tools"),
+    ],
+)
+async def test_a_captured_switch_from_a_hosted_provider_to_llamacpp_is_sent(
+    tmp_path, monkeypatch, project, next_tools
+):
+    """TASK-42525, third owner decision: the plain manual switch.
+
+    The session's first message went to a hosted provider, whose system
+    prompt travels outside the message list, so the trace surface has no
+    system slot. The user switches to llama.cpp, which sends the system
+    prompt as the first message. Under capture that send was refused
+    (`unsupported_surface_change`); the new turn's first call now puts the
+    slot back, and the message is sent and traced.
+    """
+    async with _llamacpp_falls_back(
+        tmp_path,
+        monkeypatch,
+        tool_first=False,
+        project=project,
+        busy=0,
+        next_steps=("tool",) * next_tools,
+    ) as (app, groq, hosted):
+        hosted.append(True)
+        await app.controller.submit_draft("Hello", session_id=app.session.id)
+        assert app.controller.run_state.status.value == "completed"
+        (sent,) = groq
+        assert sent[0]["role"] != "system"
+        hosted.clear()
+
+        follow_up = await app.controller.submit_draft(
+            "And now?", session_id=app.session.id
+        )
+
+        assert follow_up.accepted
+        assert app.reservation_errors == []
+        assert app.controller.run_state.status.value == "completed"
+        assert len(groq) == 1
+        _assert_slot_first(app, follow_up, 1 + next_tools)
+        if next_tools:
+            again = await app.controller.submit_draft(
+                "Once more?", session_id=app.session.id
+            )
+            assert again.accepted
+            assert app.reservation_errors == []
+            assert app.controller.run_state.status.value == "completed"
+            _assert_slot_first(app, again, 1)
 
 
 def _recording(factory):
@@ -3078,3 +3146,270 @@ async def test_a_rewrites_bookkeeping_reads_only_its_own_rows(
         assert min(rows) == origin_head + 1
         assert extend(terminal_call_id=groq_call) == min(rows)
         assert extend(terminal_call_id=failed.call_id) == max(rows) + 1
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "valid",
+        "valid_fresh",
+        "existing_slot_differs",
+        "tool_loop",
+        "retry",
+        "fallback",
+        "not_first",
+        "two_system",
+        "over_a_slot",
+        "bundled",
+        "binding_has_slot",
+        "binding_not_first",
+    ],
+)
+async def test_a_system_slot_comes_back_only_on_a_new_turns_first_call(
+    tmp_path, make_database, make_gateway, monkeypatch, scenario
+):
+    """TASK-42525, third owner decision (ADR-337 amendment 2026-11-25).
+
+    The first turn went to a provider that takes the system prompt outside
+    the message list, so the surface has no slot. The next turn's first call
+    (AGENT_FIRST or FRESH) may lead with a system prompt again. Each other
+    shape is refused before anything is reserved, with its own code: the
+    slot back on a tool-loop call, a retry or a fallback; a system row
+    anywhere but first; two system rows; a second slot over one the surface
+    already has; and the slot together with a change the rules refuse.
+    `existing_slot_differs` is the existing header-owned rule, unchanged: a
+    surface with a slot takes another system prompt in it. The `binding_*`
+    scenarios forge, at dispatch binding only, a surface with a slot or a
+    call that is not its turn's first: the binding transaction refuses to
+    write the slot.
+    """
+    from tldw_chatbook.Chat.console_trace_native_reader import (
+        ConsoleTraceNativeReader,
+    )
+
+    database = make_database(tmp_path / "slot.sqlite", "slot")
+    conversation = database.add_conversation({"title": "slot"})
+    _, hello = _saved_message(database, conversation, "hello")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    factory = ConsoleTraceBoundaryFactory(database)
+    boundary, refusals = _recording(factory)
+    asked = []
+    first_fails = scenario in {"retry", "fallback"}
+
+    def provider(**kwargs):
+        asked.append(kwargs["api_endpoint"])
+        if first_fails and len(asked) == 1:
+            raise ChatRateLimitError("fixture", provider=kwargs["api_endpoint"])
+        return {"choices": [{"message": {"content": "answered"}}]}
+
+    gateway = make_gateway(
+        chat_api_call_fn=provider,
+        trace_call_boundary_factory=boundary,
+        safe_error_copy=lambda _provider, _exc: "fixture provider failure",
+    )
+    prepare = gateway.prepare_chat_request
+
+    def distinct_roles(*args, **kwargs):
+        # llama.cpp's shape: the system prompt is the first message.
+        prepared = prepare(*args, **kwargs)
+        return prepare_provider_request(
+            prepared.semantic,
+            wire_style="distinct_roles",
+            provider=prepared.provider,
+            model=prepared.model,
+            capacity=prepared.capacity,
+        )
+
+    monkeypatch.setattr(gateway, "prepare_chat_request", distinct_roles)
+    deepseek = ConsoleProviderResolution(
+        ready=True,
+        provider="deepseek",
+        execution_key="deepseek",
+        model="deepseek-chat",
+        base_url="https://api.deepseek.com",
+        api_key="fixture",
+        streaming=False,
+    )
+
+    def system(content="Text tool protocol"):
+        return {"role": "system", "content": content}, ProviderArtifactTraceProvenance(
+            TraceProvenanceSource.RENDERED_SYSTEM, policy
+        )
+
+    async def send(resolution, route, messages, descriptors, actor=None, chain=None):
+        request = _semantic_request(
+            [row for row, _ in zip(messages, descriptors)],
+            descriptors,
+            policy,
+            route=route,
+            actor_id=actor,
+            chain_id=chain,
+        )
+        return [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                request,
+                route=route,
+                route_actor_id=actor,
+                route_chain_id=chain,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ]
+
+    first = [({"role": "user", "content": "hello"}, hello)]
+    if scenario in {"over_a_slot", "existing_slot_differs"}:
+        first.insert(0, system())  # the first turn went to llama.cpp
+    actor, chain = new_opaque_id(), new_opaque_id()
+    rows, descriptors = [row for row, _ in first], [item for _, item in first]
+    if first_fails:
+        with pytest.raises(ChatRateLimitError):
+            await send(deepseek, ConsoleRequestRoute.AGENT_FIRST, rows, descriptors, actor, chain)
+    else:
+        assert await send(
+            deepseek, ConsoleRequestRoute.AGENT_FIRST, rows, descriptors, actor, chain
+        ) == ["answered"]
+    _, answered = _saved_message(database, conversation, "answered", sender="assistant")
+    again_id, again = _saved_message(database, conversation, "again")
+    history = [
+        ({"role": "user", "content": "hello"}, hello),
+        ({"role": "assistant", "content": "answered"}, answered),
+        ({"role": "user", "content": "again"}, again),
+    ]
+    route, target, actor_id, chain_id = (
+        ConsoleRequestRoute.AGENT_FIRST,
+        deepseek,
+        new_opaque_id(),
+        new_opaque_id(),
+    )
+    turn = [system(), *history]
+    if scenario == "valid_fresh":
+        route, actor_id, chain_id = ConsoleRequestRoute.FRESH, None, None
+    elif scenario == "existing_slot_differs":
+        turn = [system("Native tool protocol"), *history]
+    elif scenario in {"tool_loop", "retry"}:
+        # The turn's next call on its own chain, after an answer or a failure.
+        tools, tool_descriptors = _tool_rows(policy, "tool", 2)
+        turn = [system(), first[-1], *zip(tools, tool_descriptors)]
+        route, actor_id, chain_id = ConsoleRequestRoute.TOOL_LOOP, actor, chain
+        if scenario == "retry":
+            turn = [system(), first[-1]]
+    elif scenario == "fallback":
+        turn = [system(), first[-1]]
+        route, target, actor_id = ConsoleRequestRoute.TOOL_LOOP, _GROQ, actor
+    elif scenario == "not_first":
+        turn = [history[0], system(), *history[1:]]
+    elif scenario == "two_system":
+        turn = [system(), system("Again"), *history]
+    elif scenario == "over_a_slot":
+        turn = [system("Native tool protocol"), system(), *history]
+    elif scenario == "bundled":
+        _, changed = _saved_message(database, conversation, "changed")
+        turn = [system(), ({"role": "user", "content": "changed"}, changed), *history[1:]]
+    rows, descriptors = [row for row, _ in turn], [item for _, item in turn]
+    before = list(asked)
+    if scenario.startswith("binding"):
+        # The dispatch-binding transaction rechecks the shape it was planned
+        # with: forge, at binding only, a surface that has a slot or a call
+        # that is not its turn's first.
+        from tldw_chatbook.Chat import console_trace_service as trace
+
+        service_type = trace.ConsoleTraceService
+        persist, projection_of, binding = (
+            service_type.persist_request,
+            service_type._surface_projection,
+            [],
+        )
+
+        def forged(self, cursor, segment_id, tail):
+            projection = projection_of(self, cursor, segment_id, tail)
+            if binding and scenario == "binding_has_slot":
+                return trace._SurfaceProjection(
+                    projection.head_id,
+                    trace._ProjectionRoot(
+                        None,
+                        base=(
+                            (0, ("rendered_system", "artifact", new_opaque_id())),
+                            *projection.entries,
+                        ),
+                    ),
+                    lineage_domains=projection.lineage_domains,
+                )
+            return projection
+
+        def bound(self, *args, **kwargs):
+            binding.append(True)
+            if scenario == "binding_not_first":
+                kwargs["reserved_call"] = replace(
+                    kwargs["reserved_call"], call_sequence=1
+                )
+            try:
+                return persist(self, *args, **kwargs)
+            except Exception as exc:
+                refusals.append(str(exc))
+                raise
+            finally:
+                binding.clear()
+
+        monkeypatch.setattr(service_type, "_surface_projection", forged)
+        monkeypatch.setattr(service_type, "persist_request", bound)
+        with pytest.raises(TraceCallPersistenceError):
+            await send(target, route, rows, descriptors, actor_id, chain_id)
+        assert asked == before
+        assert refusals == ["rendered_system_slot_unavailable"]
+        with database.transaction() as cursor:
+            assert cursor.execute(
+                "SELECT COUNT(*) FROM console_trace_surface_nodes "
+                "WHERE component_kind = 'rendered_system'"
+            ).fetchone()[0] == 0
+        # Like any refusal at binding, the call stays reserved for the
+        # user's Retry capture, Send without capture or Cancel.
+        assert _reserved(database) == 1
+        return
+    if scenario.startswith("valid") or scenario == "existing_slot_differs":
+        assert await send(target, route, rows, descriptors, actor_id, chain_id) == [
+            "answered"
+        ]
+        assert asked == before + [target.execution_key]
+        assert refusals == []
+        (call,) = ConsoleTraceNativeReader(database).read_calls(again_id)
+        assert call.capture.request["messages_payload"][0] == rows[0]
+        # The checkpoint the turn's next call builds on names each row at the
+        # sequence it was written: the slot first, the call's rows after it.
+        service = factory.service
+        with database.transaction() as cursor:
+            (segment_id,) = cursor.execute(
+                "SELECT segment_id FROM console_trace_calls LIMIT 1"
+            ).fetchone()
+            tail = factory.repository.get_surface_tail(cursor, segment_id)
+            entries = service._surface_projection(cursor, segment_id, tail).entries
+        assert entries[0][1][0] == "rendered_system"
+        checkpoint = service.current_surface_checkpoint(
+            segment_id, expected_head_id=tail.node_id
+        )
+        parent = service._parent_capabilities[id(checkpoint)]
+        assert [s for s, _ in parent.root.iter_entries()] == [s for s, _ in entries]
+        assert [s for s, _ in parent.descriptors.iter_entries()] == [
+            s for s, _ in entries
+        ]
+    elif scenario == "not_first":
+        # The request itself cannot carry a system row after a message.
+        from tldw_chatbook.Chat.console_trace_provenance import (
+            TraceProvenanceAlignmentError,
+        )
+
+        with pytest.raises(TraceProvenanceAlignmentError):
+            await send(target, route, rows, descriptors, actor_id, chain_id)
+        assert (asked, refusals) == (before, [])
+    else:
+        with pytest.raises(TraceCallPersistenceError):
+            await send(target, route, rows, descriptors, actor_id, chain_id)
+        assert asked == before
+        assert refusals == [
+            {
+                "fallback": "trace_fallback_rewrite_unavailable",
+                # A retry is planned against the failed call's own surface.
+                "retry": "surface_prefix_mismatch",
+            }.get(scenario, "unsupported_surface_change")
+        ]
+    assert _reserved(database) == 0

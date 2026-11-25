@@ -1424,7 +1424,13 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-25, TASK-42525 review finding I2 (same rule): 6926 -> 6938
     # (+12), exact measurement. A completed-turn range starts over the run's
     # dead rows (helper in console_trace_fallback_rewrite.py).
-    "tldw_chatbook/Chat/console_trace_service.py": 6938,
+    # 2026-11-25, TASK-42525 (owner decision 2026-11-25, a new turn's first
+    # call may put the system slot back; same rule): 6938 -> 7004 (+66),
+    # exact measurement. Planning and the binding write live in
+    # console_trace_slot_restore.py; here, the planner's slot-first
+    # projection, the slot-first write and roots, and the projection rule
+    # that puts a rendered-system node first.
+    "tldw_chatbook/Chat/console_trace_service.py": 7004,
     # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
     # approved child trace segments (ADR-337 amendment 2026-11-17): create and
