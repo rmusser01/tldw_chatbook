@@ -166,10 +166,11 @@ def test_a_phase_running_when_the_marker_is_set_fails_at_its_next_wave_boundary(
     tmp_path,
 ):
     """Owner decision 2026-11-25 (TASK-41946, ADR-285): a phase already running
-    when the unproven-read marker is set does not keep running. The task in
-    flight finishes, the wave boundary's publication is refused, the phase
-    settles `failed`, the next task never runs, and the chat stays held until
-    restart (the TASK-40716 rule for an unproven return)."""
+    when the unproven-read marker is set does not keep running past its next
+    publication. The wave in flight finishes, its publication is refused, the
+    phase settles `failed` there, no later wave runs, and the chat stays held
+    until restart (TASK-41320: an unproven metadata read is released only by a
+    restart; consistent with TASK-40716)."""
     _run(
         tmp_path,
         "phase_running_under_unproven_read",
@@ -1233,15 +1234,23 @@ async def phase_running_under_unproven_read(tmp_path):
         assert outcomes == ["failed"], outcomes
         stored = await service.call(service.get, rig.workflow.id)
         assert [result.status for result in stored.results] == ["completed"]
-        # Its terminal publication is refused too: the chat stays held.
+        # Its terminal publication is refused too: this run is retained, its
+        # chat stays held, and only a restart releases it (TASK-41320).
         assert rig.coordinator._runs.get(rig.workflow.id) is run
-        assert not (
-            await rig.controller.submit_draft(
-                "Still held", session_id="workflow-test-chat"
-            )
-        ).accepted
+        assert run.status == "recovery_required"
+        _restart_only(
+            await _refused(rig, "workflow_return_unproven", "reconcile-boundary")
+        )
+        assert rig.coordinator._runs.get(rig.workflow.id) is run
+        held = await rig.controller.submit_draft(
+            "Still held", session_id="workflow-test-chat"
+        )
+        assert not held.accepted
+        # The run keeps the chat's intake claim.
+        assert held.visible_copy == "A turn is already preparing.", held.visible_copy
     finally:
         rig.provider.released.set()
+        # The other chat's marker alone makes shutdown report unresolved.
         await _close_unresolved(rig, "workflow_original_metadata_shutdown_unresolved")
 
 
