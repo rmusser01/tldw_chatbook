@@ -212,15 +212,15 @@ def _readers(
     path: str,
     corpus: dict[str, str],
     index: dict[str, list[str]],
-    common: bool | None = None,
+    common: bool = False,
 ) -> list[str]:
     """Files that name `path`, in corpus order: by its file name as a whole
     word, or for a `.py` by module name too (data a test reads; a helper a test
     runs by path or -m). A `.py` helper's precise readers (_names_path) win
-    when it has any. Otherwise a `common` file name (one other files under
-    Tests/ share; for a `.py`, None means count the corpus) needs its folder
-    named on the same line, or as a quoted literal of its own. A Tests/CI file
-    counts only if precise: its synthetic fixtures reuse real names.
+    when it has any. Otherwise a `common` file name (one other tracked files
+    under Tests/ share) needs its folder right before the name, or the folder
+    as a quoted literal of its own with its parent folder also named. A
+    Tests/CI file counts only if precise: its synthetic fixtures reuse names.
     """
     target = Path(path)
     names = [target.name]
@@ -237,22 +237,24 @@ def _readers(
         if f != path and any(pattern.search(corpus[f]) for pattern in patterns)
     ]
     precise = [f for f in readers if _names_path(f, corpus[f], path)]
-    if common is None:
-        common = sum(Path(f).name == target.name for f in corpus) > 1
     if path.endswith(".py") and precise:
         readers = precise
     elif common:
-        # The folder on the same line as the name, or as a quoted literal of its
-        # own (a list of fixture folders); not merely inside a longer path.
-        folder = _word(target.parent.name)
-        listed = re.compile(rf"""["']{re.escape(target.parent.name)}["']""")
+        # `age_v1/README.md` or `"age_v1" / "README.md"`; or a list of fixture
+        # folders (`"executing-plans"`) in a file naming their parent folder too.
+        folder, parent = target.parent.name, target.parent.parent.name
+        beside = re.compile(
+            rf"""(?<![\w-]){re.escape(folder)}[\s'"/,)(]+{re.escape(target.name)}(?![\w-])"""
+        )
+        listed = re.compile(rf"""["']{re.escape(folder)}["']""")
         readers = [
             f
             for f in readers
-            if listed.search(corpus[f])
-            or any(
-                folder.search(line) and any(p.search(line) for p in patterns)
-                for line in corpus[f].splitlines()
+            if beside.search(corpus[f])
+            or (
+                listed.search(corpus[f])
+                and parent not in ("", "Tests")
+                and bool(_word(parent).search(corpus[f]))
             )
         ]
     return [f for f in readers if not f.startswith("Tests/CI/") or f in precise]
@@ -280,14 +282,19 @@ def _importers(
     counts=_is_test_file,
     first: list[str] | None = None,
     index: dict[str, list[str]] | None = None,
+    shared: collections.Counter[str] | None = None,
 ) -> list[str]:
     """Files under Tests/ that load `path`, transitively, breadth first in corpus
     order: direct importers (or `first`, such as a data file's readers) before
     theirs. Every file is followed, but the search stops once IMPORTER_CAP + 1
     of them satisfy `counts`. A file that does not parse counts as an
-    importer, which errs toward more tests. `index` is _token_index(corpus).
+    importer, which errs toward more tests. `index` is _token_index(corpus);
+    `shared` counts each file name among the tracked files (see select_changes),
+    for the common-name rule of a helper met on the way.
     """
     index = _token_index(corpus) if index is None else index
+    if shared is None:
+        shared = collections.Counter(Path(name).name for name in corpus)
     found: list[str] = []
     seen = {path}
     count = 0
@@ -312,7 +319,9 @@ def _importers(
                 level = (
                     itertools.chain([lead], level)
                     if lead
-                    else iter(_readers(current, corpus, index))
+                    else iter(
+                        _readers(current, corpus, index, shared[Path(current).name] > 1)
+                    )
                 )
         for name in level:
             if name in seen:
@@ -493,14 +502,25 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
 
     def name_counts() -> collections.Counter[str]:
         """How many tracked files under Tests/ share each file name (LICENSE,
-        SKILL.md). Outside a git checkout, the files on disk."""
+        SKILL.md), once per plan. Outside a git checkout, when git lists no
+        Tests files (a root inside another repository), or with no git binary,
+        the files on disk."""
         if not counts:
-            listed = subprocess.run(
-                ["git", "-C", str(root), "ls-files", "-z", "--", "Tests"],
-                capture_output=True,
-            )
-            names = [Path(n).name for n in listed.stdout.decode().split("\0") if n]
-            if listed.returncode or not names:  # not a git checkout: what is on disk
+            try:
+                listed = subprocess.run(
+                    ["git", "-C", str(root), "ls-files", "-z", "--", "Tests"],
+                    capture_output=True,
+                )
+                output = (
+                    listed.stdout.decode(errors="replace")
+                    if not listed.returncode
+                    else ""
+                )
+            except OSError:  # no git binary
+                output = ""
+            names = [Path(n).name for n in output.split("\0") if n]
+            # Outside a git checkout, or git lists no Tests files: what is on disk.
+            if not names:
                 names = [
                     f.name
                     for f in (root / "Tests").rglob("*")
@@ -555,7 +575,9 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
         first = None
         found = []
         if path.endswith(".py"):
-            found = _importers(path, tests_corpus(), sampleable, None, token_index())
+            found = _importers(
+                path, tests_corpus(), sampleable, None, token_index(), name_counts()
+            )
         if not found and not _is_test_file(path):
             # Test data, or a helper nothing imports (a child process or a
             # spec-loaded file): the files that name it read or run it.
@@ -575,7 +597,12 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
                 return broad(f"Named at conftest time by {loading}: {path}")
             if first:
                 found = _importers(
-                    path, tests_corpus(), sampleable, first, token_index()
+                    path,
+                    tests_corpus(),
+                    sampleable,
+                    first,
+                    token_index(),
+                    name_counts(),
                 )
         # Run the files that depend on it. With more runnable ones than
         # IMPORTER_CAP, sample only those a PR lane runs (a subset of the full

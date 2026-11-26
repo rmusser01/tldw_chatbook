@@ -1627,8 +1627,14 @@ def test_a_common_name_needs_its_folder_on_the_same_line(tmp_path):
             'SHIPPED = ["README.md"]\n'
         ),
         "Tests/Pkg/test_readme.py": 'R = FIXTURES / "age_v1" / "README.md"\n',
-        # A list of fixture folders, with the file name built elsewhere.
-        "Tests/Pkg/test_listed.py": 'FOLDERS = [\n    "age_v1",\n]\nNAME = "README.md"\n',
+        # A list of fixture folders under a named parent, the name built elsewhere.
+        "Tests/Pkg/test_listed.py": (
+            'ROOT = HERE / "fixtures"\nFOLDERS = [\n    "age_v1",\n]\nNAME = "README.md"\n'
+        ),
+        # The same list with the parent folder only inside a longer name.
+        "Tests/Pkg/test_generic.py": (
+            'ROOT = "fixtures-old"\nFOLDERS = [\n    "age_v1",\n]\nNAME = "README.md"\n'
+        ),
     }
     root = _tree(tmp_path, files)
     plan = policy.select_changes([("M", readme)], root)
@@ -1717,6 +1723,66 @@ def test_name_counts_come_from_tracked_files(tmp_path):
     git("add", "Tests/P/x/LICENSE", "Tests/P/test_any.py", *policy.BASE_TESTS)
     plan = policy.select_changes([("M", "Tests/P/x/LICENSE")], root)
     assert _sampled(plan) == {"Tests/P/test_any.py"}
+
+
+def test_a_common_name_needs_its_folder_right_before_it(tmp_path):
+    """Round 7 (m1): `superpowers_skills/README.md` is not `Tests/README.md`."""
+    files = {
+        "Tests/README.md": "",
+        "Tests/fixtures/sp/README.md": "",
+        "Tests/Pkg/test_nested.py": 'P = "Tests/fixtures/sp/README.md"\n',
+        "Tests/Pkg/test_top.py": 'P = ROOT / "Tests" / "README.md"\n',
+        # A generic folder literal with no parent folder named is no reader either.
+        "Tests/Pkg/test_review.py": 'KIND = "Tests"\nNAME = "README.md"\n',
+    }
+    root = _tree(tmp_path, files)
+    assert _sampled(policy.select_changes([("M", "Tests/README.md")], root)) == {
+        "Tests/Pkg/test_top.py"
+    }
+
+
+def test_a_same_named_helper_met_in_the_search_needs_its_folder(tmp_path):
+    """Round 7 (m2 T4): lib.py <- alpha/guard.py, read by `"alpha" / "guard.py"`."""
+    files = {
+        "Tests/Z/lib.py": "",
+        "Tests/Pl/fixtures/alpha/guard.py": "from Tests.Z.lib import go\n",
+        "Tests/Pl/fixtures/beta/guard.py": "",
+        "Tests/Pl/test_alpha.py": 'A = FIXTURES / "alpha" / "guard.py"\n',
+        "Tests/Pl/test_beta.py": 'B = FIXTURES / "beta" / "guard.py"\n',
+    }
+    root = _tree(tmp_path, files)
+    assert _sampled(policy.select_changes([("M", "Tests/Z/lib.py")], root)) == {
+        "Tests/Pl/test_alpha.py"
+    }
+
+
+def _license_twins(tmp_path):
+    files = {
+        "Tests/P/x/LICENSE": "x",
+        "Tests/P/y/LICENSE": "y",
+        "Tests/P/test_any.py": "NAME = 'LICENSE'\n",
+    }
+    return _tree(tmp_path, files)
+
+
+def test_name_counts_fall_back_to_disk_when_git_lists_no_tests(tmp_path):
+    """Round 7 (m2 T8): a root inside another repository, Tests untracked."""
+    root = _license_twins(tmp_path)
+    subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
+    plan = policy.select_changes([("M", "Tests/P/x/LICENSE")], root)
+    assert not plan["full"] and _sampled(plan) == set()  # common: needs its folder
+
+
+def test_name_counts_fall_back_to_disk_without_a_git_binary(tmp_path, monkeypatch):
+    """Round 7 (nit): no git binary must not break the plan."""
+    root = _license_twins(tmp_path)
+
+    def no_git(*_args, **_kwargs):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(policy.subprocess, "run", no_git)
+    plan = policy.select_changes([("M", "Tests/P/x/LICENSE")], root)
+    assert not plan["full"] and _sampled(plan) == set()
 
 
 def _lane_workflow(root, lanes, other=""):
