@@ -858,6 +858,10 @@ RECOVERED_SUITES_TARGETS = (
     "Tests/MCP/test_catalog_fingerprint.py",
     "Tests/Chat/test_console_run_start_anchor.py",
     "Tests/MCP/test_run_catalog_fingerprint_off_loop.py",
+    # TASK-42552: the request-provenance route census, red in no PR lane
+    # before. Sandboxed and reads no config (a RecoveryRequired recorder
+    # counted none), so it ends the sandboxed block.
+    "Tests/Chat/test_console_request_provenance_routes.py",
     # TASK-39142: bootstrap_profile since TASK-38111. TASK-39049's keyword-leg
     # pool retirement file runs beside its four siblings.
     "Tests/Prompt_Management/test_prompt_improvement_service.py",
@@ -911,6 +915,11 @@ RECOVERED_SUITES_TARGETS = (
     # tests), which pins that a failed regenerate keeps the prior answer and
     # ran on no lane.
     "Tests/Chat/test_console_variant_stream.py",
+    # TASK-42552: the continuation-merge, named-agent and redirect-cut files
+    # (bootstrap_profile), red in no PR lane before.
+    "Tests/Chat/test_console_continuation_group_merge.py",
+    "Tests/Chat/test_console_named_agent_model.py",
+    "Tests/Chat/test_console_redirect_stream_cut.py",
     # TASK-40323: the green held-pointer case and stock skill-trust cases
     # (bootstrap_profile, private subprocesses), which ran on no lane.
     "Tests/Performance/test_app_wiring_held_pointer_currentness.py::test_actual_stock_held_pointer_refuses_before_foreign_access[collections]",

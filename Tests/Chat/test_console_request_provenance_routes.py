@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -25,11 +26,15 @@ from tldw_chatbook.Chat.console_trace_provenance import (
 
 REPOSITORY_ROOT = Path(__file__).parents[2]
 
+# TASK-42552: both censuses are keyed by function, not line number. Their line
+# pins were stale from the day they landed (c78f641adf), and any edit above a
+# pinned line broke them, so no merge-blocking lane could run this file.
+
 
 class _GatewayCallVisitor(ast.NodeVisitor):
     def __init__(self) -> None:
         self.function_stack: list[str] = []
-        self.calls: list[tuple[str, str, int, str | None]] = []
+        self.calls: list[tuple[str, str, str]] = []
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self.function_stack.append(node.name)
@@ -47,30 +52,36 @@ class _GatewayCallVisitor(ast.NodeVisitor):
             and node.func.attr in {"stream_chat", "complete_auxiliary"}
             and self.function_stack
         ):
+            # ``route=`` wins; a ``**splat`` forwards it; "" binds none.
             route = next(
                 (
                     ast.unparse(keyword.value)
                     for keyword in node.keywords
                     if keyword.arg == "route"
                 ),
-                None,
+                next(
+                    (
+                        "**" + ast.unparse(keyword.value)
+                        for keyword in node.keywords
+                        if keyword.arg is None
+                    ),
+                    "",
+                ),
             )
-            self.calls.append(
-                (self.function_stack[-1], node.func.attr, node.lineno, route)
-            )
+            self.calls.append((self.function_stack[-1], node.func.attr, route))
         self.generic_visit(node)
 
 
-def _discover_gateway_callsites() -> set[tuple[str, str, str, int, str | None]]:
-    discovered: set[tuple[str, str, str, int, str | None]] = set()
+def _discover_gateway_callsites() -> Counter[tuple[str, str, str, str]]:
+    discovered: Counter[tuple[str, str, str, str]] = Counter()
     source_root = REPOSITORY_ROOT / "tldw_chatbook"
     for path in source_root.rglob("*.py"):
         visitor = _GatewayCallVisitor()
         visitor.visit(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
         module = path.relative_to(REPOSITORY_ROOT).as_posix()
         discovered.update(
-            (module, function, gateway, line, route)
-            for function, gateway, line, route in visitor.calls
+            (module, function, gateway, route)
+            for function, gateway, route in visitor.calls
         )
     return discovered
 
@@ -103,10 +114,22 @@ def test_logical_route_census_is_closed_complete_and_actor_aware() -> None:
         ).capture
         is ConsoleRouteCaptureDisposition.CAPTURE_OFF
     )
+    # Manual summary shares automatic compaction's auxiliary call, which is
+    # Capture Off (`_complete_auxiliary` refuses any other route); it has never
+    # dispatched through a traced route (TASK-42552).
+    capture_off_routes = {
+        ConsoleRequestRoute.AUTO_COMPACTION,
+        ConsoleRequestRoute.MANUAL_SUMMARY,
+    }
+    assert all(
+        item.capture is ConsoleRouteCaptureDisposition.CAPTURE_OFF
+        for item in CONSOLE_REQUEST_ROUTE_CENSUS
+        if item.route in capture_off_routes
+    )
     assert all(
         item.capture is ConsoleRouteCaptureDisposition.CONVERSATION_TRACE
         for item in CONSOLE_REQUEST_ROUTE_CENSUS
-        if item.route is not ConsoleRequestRoute.AUTO_COMPACTION
+        if item.route not in capture_off_routes
     )
     assert all(
         item.source_marker and item.predicate for item in CONSOLE_REQUEST_ROUTE_CENSUS
@@ -116,29 +139,25 @@ def test_logical_route_census_is_closed_complete_and_actor_aware() -> None:
     )
     for item in CONSOLE_REQUEST_ROUTE_CENSUS:
         path = REPOSITORY_ROOT / item.source_module
-        source_lines = path.read_text(encoding="utf-8").splitlines()
-        assert source_lines[item.source_line - 1].strip() == item.source_marker
-        tree = ast.parse("\n".join(source_lines), filename=str(path))
-        owning_functions = {
-            node.name
+        source = path.read_text(encoding="utf-8")
+        source_lines = source.splitlines()
+        tree = ast.parse(source, filename=str(path))
+        marker_lines = [
+            line
             for node in ast.walk(tree)
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.lineno <= item.source_line <= (node.end_lineno or node.lineno)
-        }
-        assert item.source_function in owning_functions
+            and node.name == item.source_function
+            for line in source_lines[node.lineno - 1 : node.end_lineno]
+            if line.strip() == item.source_marker
+        ]
+        assert marker_lines, (item.route, item.source_function)
 
 
 def test_gateway_callsite_census_matches_ast_discovery_bidirectionally() -> None:
-    documented = {
-        (
-            item.module,
-            item.function,
-            item.gateway,
-            item.source_line,
-            item.route_binding,
-        )
+    documented = Counter(
+        (item.module, item.function, item.gateway, item.route_binding)
         for item in CONSOLE_GATEWAY_CALLSITE_CENSUS
-    }
+    )
     assert documented == _discover_gateway_callsites()
     excluded = {
         item.module
@@ -151,12 +170,18 @@ def test_gateway_callsite_census_matches_ast_discovery_bidirectionally() -> None
         "tldw_chatbook/Prompt_Management/prompt_improvement_service.py",
     } <= excluded
     identities = [
-        (item.module, item.function, item.gateway, item.source_line)
+        (item.module, item.function, item.gateway, item.route_binding)
         for item in CONSOLE_GATEWAY_CALLSITE_CENSUS
     ]
     assert len(identities) == len(set(identities))
     assert all(
         item.route_binding is not None for item in CONSOLE_GATEWAY_CALLSITE_CENSUS
+    )
+    # A traced callsite must bind a route; only an untraced one may bind none.
+    assert all(
+        item.route_binding not in {"", "None"}
+        for item in CONSOLE_GATEWAY_CALLSITE_CENSUS
+        if item.owner == ConsoleRouteCaptureDisposition.CONVERSATION_TRACE.value
     )
     assert all(
         bool(item.routes)
@@ -168,7 +193,11 @@ def test_gateway_callsite_census_matches_ast_discovery_bidirectionally() -> None
         route for item in CONSOLE_GATEWAY_CALLSITE_CENSUS for route in item.routes
     ]
     assert set(routed) == set(ConsoleRequestRoute)
-    assert len(routed) == len(set(routed))
+    # Speculative duplex voice (b7dd8e53f2) dispatches a Capture-On fresh turn
+    # from its own callsite; every other route has exactly one.
+    assert [
+        route for route, count in Counter(routed).items() if count > 1
+    ] == [ConsoleRequestRoute.FRESH]
 
 
 def test_route_provenance_carries_predicate_and_required_actor_chain() -> None:

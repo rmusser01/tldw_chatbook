@@ -8,6 +8,8 @@ from __future__ import annotations
 import asyncio
 import threading
 
+import pytest
+
 from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT
 from tldw_chatbook.Chat.console_agent_bridge import _StreamingModelAdapter
 from tldw_chatbook.Chat.console_provider_gateway import (
@@ -16,6 +18,11 @@ from tldw_chatbook.Chat.console_provider_gateway import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+# Every call asks `_is_subagent`, which resolves the `agents.subagent_system`
+# internal prompt through `get_cli_setting`; under the per-test config sandbox
+# that read raises RecoveryRequired(raw_source_selection_changed) (TASK-42552).
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def _adapter_harness(abort, chunks=("Looking at ", "the JSON parser", ", the rest")):

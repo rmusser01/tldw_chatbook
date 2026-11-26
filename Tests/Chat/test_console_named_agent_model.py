@@ -2,6 +2,9 @@
 
 import asyncio
 import threading
+from types import SimpleNamespace
+
+import pytest
 
 import tldw_chatbook.Chat.console_agent_bridge as bridge_module
 from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT
@@ -20,10 +23,16 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     ConsoleRequestRoute,
     ConsoleTraceCaptureMode,
     ProviderArtifactTraceProvenance,
+    SavedRevisionTraceProvenance,
     TraceProvenanceSource,
     request_route_provenance,
 )
 from tldw_chatbook.Chat.provider_continuation import ContinuationRestoreTarget
+
+# Every call asks `_is_subagent`, which resolves the `agents.subagent_system`
+# internal prompt through `get_cli_setting`; under the per-test config sandbox
+# that read raises RecoveryRequired(raw_source_selection_changed) (TASK-42552).
+pytestmark = pytest.mark.bootstrap_profile
 
 
 class _ConcurrentRecordingGateway:
@@ -83,6 +92,9 @@ def test_concurrent_worker_override_is_call_local_and_keeps_parent_continuation(
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
+    # The primary filters its constructor sidecar by owner before preparing
+    # (bf1886c95c), so the double carries one; no request row selects it.
+    parent_sidecar = SimpleNamespace(owner_message_id="parent-owner")
     adapter = _StreamingModelAdapter(
         store=store,
         provider_gateway=gateway,
@@ -91,7 +103,7 @@ def test_concurrent_worker_override_is_call_local_and_keeps_parent_continuation(
         should_cancel=lambda: False,
         loop=loop,
         native_tools=False,
-        continuation_sidecar=("parent-sidecar",),
+        continuation_sidecar=(parent_sidecar,),
         continuation_target=ContinuationRestoreTarget(
             provider="openai",
             model="parent-model",
@@ -153,7 +165,7 @@ def test_concurrent_worker_override_is_call_local_and_keeps_parent_continuation(
     assert worker_resolution.provider == parent_resolution.provider
     assert worker_resolution.base_url == parent_resolution.base_url
     assert adapter._resolution is parent_resolution
-    assert gateway.prepared == [(parent_resolution, ("parent-sidecar",))]
+    assert gateway.prepared == [(parent_resolution, (parent_sidecar,))]
     assert by_model["parent-model"][1]["prepared_for"] == "parent-model"
     assert isinstance(by_model["budget-reader-model"][1], list)
     assert sorted(usage_identities) == [
@@ -192,9 +204,9 @@ def test_capture_on_worker_uses_its_model_and_keeps_parent_private_history(monke
                 ProviderArtifactTraceProvenance(
                     TraceProvenanceSource.RENDERED_SYSTEM, policy
                 ),
-                ProviderArtifactTraceProvenance(
-                    TraceProvenanceSource.ACTIVE_REQUEST, policy
-                ),
+                # A child's route names the spawning turn's saved user
+                # revision (TASK-41310 B, 45b4494127); a parent turn has one.
+                SavedRevisionTraceProvenance(new_opaque_id()),
             ),
             memory_provenance=(),
             mandatory_provenance=(),

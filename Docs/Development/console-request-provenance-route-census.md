@@ -5,19 +5,27 @@ adapter-entry sealing and execution-time verification. The frozen executable
 census is `CONSOLE_REQUEST_ROUTE_CENSUS` and `CONSOLE_GATEWAY_CALLSITE_CENSUS`
 in `Chat/console_trace_provenance.py`; its AST test is intentionally
 bidirectional so a newly added or removed direct gateway call cannot silently
-escape classification.
+escape classification. Rows are keyed by module and function, never by line
+number: a route row names a marker line inside its function, and a callsite
+row names its `route=` binding (`**name` when the route travels in a keyword
+splat, empty when the call binds none). A traced callsite must bind a route.
 
 Conversation-owned logical routes are fresh send, retry, continue,
 regenerate, edit/resend, direct prefill, agent first call, agent tool loop,
 citation repair, manual summary, impersonation, automatic compaction, and the
 llama fallback. Agent-first and tool-loop calls require actor/chain metadata at
 the later execution-sealing boundary. Automatic compaction is conversation
-owned even though its auxiliary result has no visible assistant owner.
+owned even though its auxiliary result has no visible assistant owner. Manual
+summary and automatic compaction share one auxiliary call, so both are
+Capture Off. Fresh send has a second callsite: speculative duplex voice
+dispatches a Capture-On fresh turn from `console_voice_attempts.py`. Response
+rules' helper calls are Console-owned and Capture Off.
 
 The explicitly excluded preparation owners are Console side chat, visual
 evaluation, and prompt improvement. Persona preview and character generation
 are also classified as excluded because the AST census finds their use of the
-same gateway API outside a Console conversation.
+same gateway API outside a Console conversation, as is the Conversation
+settings generation probe.
 
 Fresh requests record either a RAG source descriptor or
 `fresh_rag_not_selected`. Retry/continue/regenerate/edit requests do not
