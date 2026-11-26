@@ -1016,6 +1016,126 @@ that is not the rendered-system slot; dropping the slot from a request that
 still leads with a system row; and a change to any other row that the
 existing rules refuse.
 
+### Amendment recorded 2026-11-26 (owner-approved): Edit & resend, Regenerate and Continue are traced (TASK-42560)
+
+The owner decided this on 2026-11-26. The question asked was: "TASK-42560: in
+a captured chat with AGENTS.md, after Edit & resend, Continue or Regenerate
+(and Retry, the same family), the next message is refused with 'Trace capture
+could not start'. It happens even when the provider never changes. Those
+replies go out with capture off (per the 2026-10-27 ruling), and the rule that
+admits the next send after them (the rewritten-tail rule) refuses
+project-instruction rows. Without AGENTS.md the next send works. What should
+happen?" The owner chose "Capture those actions": "Reverse the 2026-10-27
+ruling: Edit & resend, Continue and Regenerate are traced themselves, as Retry
+will be (TASK-42555). This is larger work, and it overlaps #3717."
+
+This supersedes the 2026-10-27 sentence "Edit & resend and Regenerate
+themselves remain uncaptured". Retry, Impersonate and citation repair are
+unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
+
+1. **Capture mode.** Each action freezes the Capture-On request a manual
+   send of the chat would: the chat's effective capture policy (global,
+   conversation and the one-time next-send choice, which stays armed for the
+   next send), the saved rows it read before any per-send transform, and its
+   prompt mix-ins composed into the request. Under Capture Off it sends as
+   before. A temporary chat with Capture On refuses the action before any
+   row is created ("Capture On needs a saved chat. Save the chat or turn
+   Capture off, then try again."), as decision 15 allows no durable call
+   before Save. Resend of a broken turn that re-runs from its user message
+   uses Continue's body and route, so it is traced the same way; its
+   in-place Retry of a failed reply is Retry's.
+
+2. **Which call is the action's.** On the plain provider path the call's
+   route names it (EDIT, REGENERATE, CONTINUE). On the agent path the run's
+   first call is AGENT_FIRST, and every call of the run carries the action in
+   its route descriptor, copied from the request the action froze; a
+   llama.cpp resend of one of its calls keeps it. The descriptor is
+   content-free, is not stored, and grants nothing by itself: only the rules
+   below read it. A plain-path action call counts as its turn's first call
+   for the leading system slot (the 2026-11-25 and 2026-11-26 slot
+   amendments), and an unresolved earlier call of its turn refuses it, as
+   for a FRESH call.
+
+3. **The call's turn.** Edit & resend: the edited user, a new turn.
+   Regenerate and Continue: the saved user that the replaced or continued
+   reply answers. A Continue's request ends with a provider-only
+   continuation instruction (a user-role `active_request` artifact) after the
+   saved reply it extends, then the turn's project context. The call belongs
+   to the saved user before that reply: the planner steps back over the
+   instruction and one or more saved assistant replies, which must lead
+   directly to a saved user row. A Regenerate of a continued reply has the
+   same shape. A later call of the run (a tool loop, a resend) takes its turn
+   from its last saved user row, and the existing origin checks then apply.
+
+4. **The action's call re-records its turn.** The call replaces the recorded
+   surface's tail from its turn's user row, even when that row matches the
+   recorded one, so that afterwards every row of the turn was written by this
+   call, the shape a normal send of that turn leaves. Nothing after the user
+   row is retained; the completed-turn transition, the both-domains append and
+   a retained suffix do not apply to this call. The replacement rows are, in
+   order:
+   - saved history before the user, only when the matched prefix stops
+     earlier, under the rewritten tail's rules (2026-10-27);
+   - the user (its saved revision or its admitted current-turn transform);
+   - for a Continue, its saved replies and then its instruction;
+   - the turn's project context (`project_instruction` artifacts).
+
+   The proof is the rewritten tail's: every saved row's message is the direct
+   parent of the next; the user is the call's own turn; a Continue's replies
+   are saved assistant revisions; the oldest row hangs off the last retained
+   saved row, an active memory's boundary, or the root. The instruction and
+   the project rows are provider artifacts under the call's frozen policy.
+   The replaced span keeps the 256-sequence and 256-link bounds (2026-11-06),
+   and incoming rows count toward the 256-row bound. The planner proves it
+   in the reservation transaction; the dispatch-binding transaction rechecks
+   the chain and anchor, as for any rewritten tail.
+
+5. **The send after an action's run.** A normal FRESH or AGENT_FIRST send
+   whose segment's latest call belongs to a run that re-recorded its turn
+   is planned by the rewritten tail instead of the completed-turn transition.
+   The run is recognised from the ledger: its first call (sequence 0, AGENT_FIRST
+   or an action route) wrote its pinned user row as the first row of a
+   replacement that started at a user row (or at a chain's placeholders),
+   which a normal send's own call never does; every call after it belongs to
+   the run (or is a llama.cpp resend of one of its calls); the latest call is
+   settled. The replacement then:
+   - removes only rows the run wrote after its user row, or from that row
+     when it is a transform, whose saved source then leads the replacement;
+   - carries, before the new user, the latest call's verified saved
+     response when the run bore one (complete or stopped); when the run bore
+     none (it failed before any response), nothing, or the reply an earlier
+     call of the same turn bore with a verified link (a failed Regenerate
+     leaves the original reply on the path);
+   - ends with the new user and its project context;
+   - may hang off the run's own failed reply when that reply is empty and its
+     parent is the last retained row (a failed Continue or Edit & resend;
+     the next request skips it), and only when the run bore no response.
+   A reply the run did not bear, such as one a later Capture Off Retry wrote,
+   is refused here: Retry is TASK-42555's. The dispatch-binding transaction
+   recomputes the run from the call directly before the reserved one and
+   rechecks every point.
+
+6. **What the trace shows.** Historical calls and heads stay as they were
+   (decision 10): a Regenerate's or Edit & resend's earlier call keeps its
+   request and response, and the action's call is a new call of its turn
+   with the new reply, so the turn lists both. A Continue's continued reply
+   is found through its response link. A Regenerate on a provider other than
+   the replaced reply's is admitted under the rules for a turn's first call,
+   like any send.
+
+7. **Refusal.** A shape outside these rules is refused before the provider is
+   contacted. On the agent path the run fails as for any refused captured
+   call ("trace capture could not be saved, so this request was not sent");
+   on the plain path the reply fails with "Trace capture could not be saved,
+   so this request was not sent." Its Retry is Retry's (TASK-42555).
+
+Still refused: an action call over provider continuations in the replaced
+range (as for any rewritten tail); an action with a pinned response prefill
+(DIRECT_PREFILL carries no action; its call is planned as before); a re-record
+whose matched prefix stops before history the rewritten tail cannot prove;
+project context in a rewritten tail of any other send; and every shape the
+rules above do not name. Out of scope: citation repair (a follow-up).
+
 ## Current-owner integration amendment (2026-10-13)
 
 Canonical message/revision identity and predecessor ancestry remain reachable independently of archived payload. The existing admitted checkpoint roots and graph-epoch invalidation remain authoritative before reservation; metadata roots cannot retain deleted payload through another call sharing a policy. Retry capture compares canonical JSON bytes (including boolean/integer/float identity), and frozen arrays thaw only when forming PersistRequest fields.
@@ -1244,6 +1364,11 @@ Historical calls and heads stay immutable. No schema, retention change or durabl
 registry is added; the proof is a bounded transient witness, like the completed
 tool-turn witness. Edit & resend and Regenerate themselves remain uncaptured: the
 edited branch enters the trace at the next captured send, not at the edit.
+(Superseded on 2026-11-26 by TASK-42560, owner-approved: Edit & resend,
+Regenerate and Continue are traced themselves. See "Amendment recorded
+2026-11-26 (owner-approved): Edit & resend, Regenerate and Continue are
+traced". The rewritten tail itself, for Compact now and for a Capture Off
+edit followed by a captured send, is unchanged.)
 
 Known limit (review, 2026-10-29). A rewritten tail wider than 256 stored sequences
 stays refused, so Compact now in a chat of more than about 128 recorded exchanges, or
