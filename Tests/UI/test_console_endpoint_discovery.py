@@ -1043,6 +1043,10 @@ async def test_shared_evidence_change_refreshes_the_console_once(request):
     from Tests.UI.test_console_provider_apply_defaults_flow import (
         _ConsoleFlowHarness,
     )
+    from Tests.UI.test_console_workspace_context_rail import (
+        _wait_for_condition,
+        _wait_for_console_startup_settled,
+    )
     from Tests.UI.test_destination_shells import _wait_for_selector
     from tldw_chatbook.Chat.provider_endpoint_contract import (
         canonical_connection_identity,
@@ -1056,8 +1060,10 @@ async def test_shared_evidence_change_refreshes_the_console_once(request):
     async with harness.run_test(size=(211, 44)) as pilot:
         console = harness.screen
         await _wait_for_selector(console, pilot, "#console-settings-summary")
+        # The summary mounts before attach reconciliation can admit the poll.
+        # Leave the real timer running until its first pass has settled.
+        await _wait_for_console_startup_settled(console, pilot)
         console._stop_console_credential_poll_timer()
-        console._poll_console_credential_readiness()
         refreshes = []
         real_sync = console._sync_console_settings_summary
         console._sync_console_settings_summary = lambda: (
@@ -1066,6 +1072,7 @@ async def test_shared_evidence_change_refreshes_the_console_once(request):
         )
 
         snapshot = console._console_credential_snapshot
+        assert snapshot is not None
         console._console_sync_maintenance_close_admission()
         store = ProviderTestEvidenceStore(lambda: harness)
         store.settle(
@@ -1087,9 +1094,18 @@ async def test_shared_evidence_change_refreshes_the_console_once(request):
         assert not refreshes
         assert console._console_credential_snapshot == snapshot
         console._console_sync_maintenance_resume()
+        evidence_version = provider_connection_evidence(harness).version
+        assert evidence_version > snapshot[2]
+
+        def poll_published_evidence() -> bool:
+            console._poll_console_credential_readiness()
+            return console._console_credential_snapshot[2] == evidence_version
+
+        # A contended pass can defer without consuming the evidence version.
+        await _wait_for_condition(pilot, poll_published_evidence, timeout=5.0)
         for _ in range(3):
             console._poll_console_credential_readiness()
-        assert len(refreshes) == 1  # Counted before any other tick can run.
+        assert len(refreshes) == 1
 
         await pilot.pause()
         assert _rail_text(console, "#console-settings-readiness-row") == (
