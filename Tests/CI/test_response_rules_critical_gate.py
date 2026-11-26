@@ -39,6 +39,9 @@ SELECTION = {
         "Tests/UI/test_response_rules_modal.py::test_manager_reload_preserves_edits_made_while_db_is_pending",
         "Tests/Chat/test_response_rules_builder.py::test_new_learning_timestamps_are_canonical_and_old_offsets_still_parse",
     ],
+    # TASK-42533 (round 26): the admission-sensitive step's tail runs in its
+    # own profile; it carries no response-rule target, only inherited ones.
+    "admission-sensitive 2": [],
 }
 INHERITED = {
     "Run the restore Console P0 regression tests": [
@@ -113,6 +116,13 @@ INHERITED = {
         "Tests/UI/test_console_received_route_wrapped_collaborators.py",
         "Tests/UI/test_console_skill_discovery_wrapped_collaborators.py",
         "Tests/UI/test_console_queue_subclass_controller.py",
+        "--timeout=300",
+        "--tb=short",
+    ],
+    # TASK-42533 (round 26, 2026-11-24): the admission-sensitive step's tail,
+    # moved whole and in order into its own matrix profile.
+    "Run the admission-sensitive 2 Console P0 regression tests": [
+        "pytest",
         # Round 16 (TASK-41508, TASK-41511): trace files and the capture file.
         "Tests/Chat/test_console_project_instruction_traces.py",
         # TASK-42472 (round 24, 2026-11-24): dev's captured-retry contract, on
@@ -214,6 +224,7 @@ STEP_JOBS = {
     "Run the restore Console P0 regression tests": "console-p0-gate",
     "Run the sandboxed Console P0 regression tests": "console-p0-gate",
     "Run the admission-sensitive Console P0 regression tests": "console-p0-gate",
+    "Run the admission-sensitive 2 Console P0 regression tests": "console-p0-gate",
     "Run Dreams and Guardian boundary contracts": "dreams-boundary",
     "Run Dreams admission-sensitive contracts": "dreams-boundary",
 }
@@ -225,7 +236,7 @@ def validate(document):
     for job_name in sorted(set(STEP_JOBS.values())):
         job = jobs[job_name]
         assert job["timeout-minutes"] == 35
-        assert len(job["steps"]) == (6 if job_name == "console-p0-gate" else 5)
+        assert len(job["steps"]) == (7 if job_name == "console-p0-gate" else 5)
         assert (
             job["if"]
             == "needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))"
@@ -264,18 +275,33 @@ def test_rule_critical_targets_execute_without_altering_inherited_processes():
     validate(yaml.safe_load(WORKFLOW.read_text()))
 
 
+def _executable_targets(step):
+    tokens = shlex.split(step["run"].replace("\\\n", " "), comments=True)
+    return [token for token in tokens if token.startswith("Tests/")]
+
+
+_ADMISSION_2 = "Run the admission-sensitive 2 Console P0 regression tests"
+
+
 @pytest.mark.parametrize(
-    "label,target",
-    [(label, target) for label, targets in SELECTION.items() for target in targets],
+    "name,target",
+    [
+        (f"Run the {label} Console P0 regression tests", target)
+        for label, targets in SELECTION.items()
+        for target in targets
+    ]
+    # TASK-42533: the split-off tail is pinned token by token in INHERITED.
+    + [(_ADMISSION_2, t) for t in INHERITED[_ADMISSION_2] if t.startswith("Tests/")],
 )
 @pytest.mark.parametrize("damage", ["remove", "comment"])
-def test_missing_or_comment_only_rule_target_is_rejected(label, target, damage):
+def test_missing_or_comment_only_rule_target_is_rejected(name, target, damage):
     document = yaml.safe_load(WORKFLOW.read_text())
     step = next(
         s
         for s in document["jobs"]["console-p0-gate"]["steps"]
-        if s.get("name") == "Run the " + label + " Console P0 regression tests"
+        if s.get("name") == name
     )
+    assert target in _executable_targets(step)
     lines = step["run"].splitlines()
     step["run"] = "\n".join(
         ("# " + line if damage == "comment" else "") if target in line else line
@@ -298,18 +324,19 @@ def test_missing_or_comment_only_rule_target_is_rejected(label, target, damage):
         "aggregate",
     ],
 )
-def test_suppressed_or_weakened_critical_process_is_rejected(damage):
+@pytest.mark.parametrize("label", ["admission-sensitive", "admission-sensitive 2"])
+def test_suppressed_or_weakened_critical_process_is_rejected(damage, label):
     document = yaml.safe_load(WORKFLOW.read_text())
     job = document["jobs"]["console-p0-gate"]
     step = next(
         s
         for s in job["steps"]
-        if s.get("name") == "Run the admission-sensitive Console P0 regression tests"
+        if s.get("name") == f"Run the {label} Console P0 regression tests"
     )
     if damage in {"filter", "deselect", "ignore", "collect"}:
         step["run"] += {
             "filter": " -k never",
-            "deselect": " --deselect=" + SELECTION["admission-sensitive"][0],
+            "deselect": " --deselect=" + _executable_targets(step)[0],
             "ignore": " --ignore=Tests/Chat",
             "collect": " --collect-only",
         }[damage]

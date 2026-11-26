@@ -1899,26 +1899,39 @@ def test_fast_lane_is_one_serial_minimal_python_312_job(
     assert all_commands.count("pip install") == 1
 
 
-def test_console_p0_gate_runs_three_serial_minimal_python_312_profiles() -> None:
-    """TASK-40724: each unchanged invocation has its own bounded runner."""
+def test_console_p0_gate_runs_four_serial_minimal_python_312_profiles() -> None:
+    """TASK-40724: each unchanged invocation has its own bounded runner.
+
+    TASK-42533: the admission-sensitive invocation ran 27-34 of its 35 min,
+    so its tail is a fourth profile with the same flags.
+    """
     p0 = _workflow("derived-artifacts.yml")["jobs"]["console-p0-gate"]
 
     assert p0["name"] == "Console P0 regression gate (${{ matrix.profile }})"
     assert p0["if"] == LANES
     assert p0["runs-on"] == PR_TEST_RUNNER
     assert p0["timeout-minutes"] == 35
-    # checkout, setup-python, install, sandboxed, admission-sensitive.
+    # checkout, setup-python, install, sandboxed, restore, admission-sensitive,
+    # admission-sensitive 2.
     # TASK-34986 moved PR2921's two Dreams/Guardian steps to dreams-boundary
     # (with them this job measured max 18.7 min of 20 over 76 PR runs).
-    assert len(p0["steps"]) == 6
-    assert [step.get("name") for step in p0["steps"][-3:]] == [
+    assert len(p0["steps"]) == 7
+    assert [step.get("name") for step in p0["steps"][-4:]] == [
         "Run the sandboxed Console P0 regression tests",
         "Run the restore Console P0 regression tests",
         "Run the admission-sensitive Console P0 regression tests",
+        "Run the admission-sensitive 2 Console P0 regression tests",
     ]
     assert p0["strategy"] == {
         "fail-fast": False,
-        "matrix": {"profile": ["sandboxed", "restore", "admission-sensitive"]},
+        "matrix": {
+            "profile": [
+                "sandboxed",
+                "restore",
+                "admission-sensitive",
+                "admission-sensitive 2",
+            ]
+        },
     }
     setup = next(
         step for step in p0["steps"] if step.get("uses") == "actions/setup-python@v5"
@@ -1947,10 +1960,20 @@ def test_console_p0_gate_runs_three_serial_minimal_python_312_profiles() -> None
     admission = _named_step(
         p0, "Run the admission-sensitive Console P0 regression tests"
     )
+    admission_2 = _named_step(
+        p0, "Run the admission-sensitive 2 Console P0 regression tests"
+    )
     # One red step must not hide the other; a cancelled run stops (round 4).
     assert sandboxed["if"] == "${{ !cancelled() && matrix.profile == 'sandboxed' }}"
     assert admission["if"] == "${{ !cancelled() && matrix.profile == 'admission-sensitive' }}"
-    for step, timeout in ((sandboxed, "--timeout=180"), (admission, "--timeout=300")):
+    assert admission_2["if"] == (
+        "${{ !cancelled() && matrix.profile == 'admission-sensitive 2' }}"
+    )
+    for step, timeout in (
+        (sandboxed, "--timeout=180"),
+        (admission, "--timeout=300"),
+        (admission_2, "--timeout=300"),
+    ):
         tokens = shlex.split(step["run"].replace("\\\n", " "), comments=True)
         assert tokens[0] == "pytest"
         assert tokens[-2:] == [timeout, "--tb=short"]
@@ -1969,6 +1992,10 @@ def test_console_p0_gate_runs_three_serial_minimal_python_312_profiles() -> None
         )
     }
     assert not fast_targets & set(_pytest_targets(admission["run"]))
+    assert not fast_targets & set(_pytest_targets(admission_2["run"]))
+    assert not set(_pytest_targets(admission["run"])) & set(
+        _pytest_targets(admission_2["run"])
+    )
 
 
 def test_architecture_review_lane_is_one_serial_minimal_python_312_job() -> None:
@@ -2608,6 +2635,7 @@ def test_required_aggregation_contract_rejects_a_dropped_admission_lane(lane: st
         ("derived-artifacts", "Require successful PR lane (recovered suites)"),
         ("console-p0-gate", None),
         ("console-p0-gate", "Run the admission-sensitive Console P0 regression tests"),
+        ("console-p0-gate", "Run the admission-sensitive 2 Console P0 regression tests"),
         ("dreams-boundary", None),
         ("dreams-boundary", "Run Dreams admission-sensitive contracts"),
         ("derived-artifacts", "Require successful Dreams and Guardian boundary contracts"),

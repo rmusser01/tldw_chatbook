@@ -524,6 +524,7 @@ def test_every_pr_lane_pytest_step_has_disjoint_targets():
         "console-p0-gate: Run the sandboxed Console P0 regression tests",
         "console-p0-gate: Run the restore Console P0 regression tests",
         "console-p0-gate: Run the admission-sensitive Console P0 regression tests",
+        "console-p0-gate: Run the admission-sensitive 2 Console P0 regression tests",
         "dreams-boundary: Run Dreams and Guardian boundary contracts",
         "dreams-boundary: Run Dreams admission-sensitive contracts",
         "dreams-tracking: Run the Dreams tracking tests and unlaned riders",
@@ -602,8 +603,10 @@ _PR3023_CRITICAL_TARGETS = (
     "Tests/UI/test_console_final_poll_completion.py::test_idle_final_poll_waits_for_original_full_refresh",
     "Tests/Performance/test_collections_extraction_shutdown.py::test_collections_shutdown_retains_real_interrupted_settlement[all_created]",
 )
+# TASK-42533 (round 26): they moved, still last, with the admission-sensitive
+# step's tail into its own matrix profile.
 _PR3023_STEP = (
-    "console-p0-gate: Run the admission-sensitive Console P0 regression tests"
+    "console-p0-gate: Run the admission-sensitive 2 Console P0 regression tests"
 )
 
 

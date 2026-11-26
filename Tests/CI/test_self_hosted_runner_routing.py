@@ -99,7 +99,15 @@ def test_p0_profiles_each_run_once_without_fail_fast(workflows):
     p0 = jobs["console-p0-gate"]
     assert p0["strategy"] == {
         "fail-fast": False,
-        "matrix": {"profile": ["sandboxed", "restore", "admission-sensitive"]},
+        # TASK-42533: the admission-sensitive step's tail is a fourth profile.
+        "matrix": {
+            "profile": [
+                "sandboxed",
+                "restore",
+                "admission-sensitive",
+                "admission-sensitive 2",
+            ]
+        },
     }
     tests = [
         step
@@ -115,7 +123,7 @@ def test_p0_profiles_each_run_once_without_fail_fast(workflows):
         ]
         assert len(selected) == 1
         assert selected[0]["name"] == f"Run the {profile} Console P0 regression tests"
-    assert len(tests) == 3
+    assert len(tests) == 4
     assert p0["timeout-minutes"] == 35
     assert jobs["dreams-boundary"]["timeout-minutes"] == 35
     assert {"console-p0-gate", "dreams-boundary"} <= set(

@@ -49,7 +49,8 @@ def _counts() -> dict[str, int]:
 
     Eligible application jobs exclude the serialized preflight. Peak runners
     apply the UI matrix's max-parallel ceiling after preflight succeeds.
-    Console P0 has three profile jobs since TASK-40724; other non-UI lanes
+    Console P0 has four profile jobs since TASK-42533 (three since
+    TASK-40724); other non-UI lanes
     remain single jobs. Count both matrices and reject unknown matrices.
     """
     jobs = _jobs(WORKFLOW)
@@ -95,7 +96,7 @@ def _jobs(workflow: str) -> dict:
     ],
 )
 @pytest.mark.parametrize("preflight", [False, True])
-@pytest.mark.parametrize("p0_profiles", [1, 2, 3])
+@pytest.mark.parametrize("p0_profiles", [1, 2, 3, 4])
 def test_counts_distinguish_eligible_jobs_from_parallel_runners(
     monkeypatch, shards, limit, eligible, parallel, preflight, p0_profiles
 ):
@@ -108,7 +109,12 @@ def test_counts_distinguish_eligible_jobs_from_parallel_runners(
     if p0_profiles > 1:
         jobs["console-p0-gate"]["strategy"] = {
             "matrix": {
-                "profile": ["sandboxed", "admission-sensitive", "restore"][:p0_profiles]
+                "profile": [
+                    "sandboxed",
+                    "admission-sensitive",
+                    "restore",
+                    "admission-sensitive 2",
+                ][:p0_profiles]
             }
         }
     eligible += p0_profiles - 1
