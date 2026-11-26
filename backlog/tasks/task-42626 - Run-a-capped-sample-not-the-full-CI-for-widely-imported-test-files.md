@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-26 15:30'
-updated_date: '2026-11-27 00:30'
+updated_date: '2026-11-27 03:30'
 labels:
   - ci
 dependencies:
@@ -37,7 +37,9 @@ These cases should run the light tier with a capped, deterministic sample of the
 - [x] #11 Importers are resolved by module path, so a same-named module in another package or a mention in prose is not an importer
 - [x] #12 Over the cap, a sample holds only dependents a PR lane runs. The full run is kept only for a laned dependent the light job cannot run when nothing laned would run in its place. With no laned dependent, the plan stays light and says so.
 - [x] #13 The PR's own changed test files and the under-the-cap dependents share the 20 slots, and sampled files take at most 8 in all, handed out in turn. The reason names what was sampled, skipped or cut, including the PR's own files it left out.
-- [x] #14 The light runner's wall time on the worst realistic selection under the final caps is measured against the job's 30-minute cap
+- [x] #14 The light runner's wall time on the worst realistic selection under the final caps is measured against the job's 30-minute cap, alongside the hosted dev-light jobs' durations and selection sizes
+- [x] #15 A helper nothing imports has the files that name it, by file name or module name, as dependents. It goes broad when a conftest-time file names it precisely. A change nothing imports or names says so.
+- [x] #16 The plan does not depend on the order of the changes, every cheap reason for the full run is found before any search, and a cut or budget that leaves a blocked change with nothing laned sends the plan broad
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -52,6 +54,7 @@ These cases should run the light tier with a capped, deterministic sample of the
 7. Fix round 1 (coordinator review): derive the conftest-loaded set instead of the profile-harness list; narrow `user_version` to the PRAGMA form; bring the README up to date; re-run the replays and verification.
 8. Fix round 2 (independent review I1, I2, M1-M4, N1-N3): resolve imports with `ast` for both the importer search and the conftest set; count only runnable files and go broad when none can run; share the cap in turn and write the notes after the cut; kill the reviewer's mutations; measure the light runner.
 9. Fix round 3 (coordinator): sample only dependents a PR lane runs, keep the full run only where it reaches what light cannot, and cap sampled files at 8 per PR; re-measure the light runner on the worst selection.
+10. Fix round 4 (independent re-review I-A, M-A to M-E, nits): read unimported helpers by name; check blocked dependents after the cuts; cheap reasons first with a word index; kill the reviewer's mutations; precise conftest naming; honest timing evidence; docstrings, sorting, `Tests/CI` note and reason length.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -63,19 +66,24 @@ These cases should run the light tier with a capped, deterministic sample of the
   - **Under the cap:** with at most `IMPORTER_CAP` (8) runnable dependents, all of them run, laned or not, as dev's rule did.
   - **Over the cap:** the change is sampled. Only dependents a PR lane runs are eligible (whole, by node, through a lane directory, or in the UI census), up to 8, which is a subset of what the full run would run. Unlaned dependents are skipped and noted as `skipping N no PR lane runs`. The nightly runs the same lanes, so they run only at release.
   - A PR samples at most 8 files in all, handed out in turn. Its own changed test files, then the under-the-cap dependents, take the 20 slots (`LIGHT_FILE_CAP`) first. The total never exceeds 20.
-- **The full run only where it reaches what light cannot (round 3).**
-  - A change goes broad when a dependent that a PR lane (or a push or nightly job) runs is one the light job cannot run (heavy, deselected, split, push-only), and nothing laned would run in its place: `Only the full run reaches the laned dependents of <path>: ...`.
+- **The full run only where it reaches what light cannot (rounds 3 and 4).**
+  - A change goes broad when a dependent that a PR lane (or a push or nightly job) runs is one the light job cannot run (heavy, deselected, split, push-only), and nothing laned of it runs once the slots are handed out: `Only the full run reaches the laned dependents of <path>: ...`.
+  - Round 4 (M-A) runs the check after the 20-file cut and the 8-file budget, and lets changes with blocked dependents pick slots first.
+  - A `Tests/CI` dependent covers the change, and the note says `Tests/CI covers <path>`.
   - When no PR lane runs any dependent, the plan stays light and says so: `no PR lane runs a dependent of <path>; only the release run covers its N test files`.
-- **Import resolution (round 2).**
+- **Import resolution (rounds 2 and 4).**
   - `_imports(name, text)` resolves a file's imports with `ast`, as pytest's prepend import mode loads them: `Tests.*` absolute imports, `from pkg import mod`, relative imports, bare imports of a module beside the importer, and nested imports.
   - Package `__init__.py` files count: the importer's own and every one on the way.
-  - It also reads child scripts a test embeds as a string; a template that does not parse whole has its `import`/`from` lines parsed one by one.
+  - It also reads child scripts a test embeds as a string, but not docstrings (round 4). A template that does not parse whole has its `import`/`from` lines parsed one by one.
+  - A bare `import mod` counts as the module beside the importer. pyproject runs pytest with `--import-mode=importlib`, so this over-approximates toward more tests; the docstring says so (round 4).
   - Paths no file has are kept, so a deletion counts. A file that does not parse counts as an importer.
   - `stem in text` is only a prefilter.
-- **The search.** `_importers` runs breadth first in sorted corpus order and follows every dependent. It stops once it has IMPORTER_CAP + 1 files that count: runnable files a PR lane runs. The depth sort is gone, because BFS order already puts direct importers first.
+- **Helpers nothing imports (round 4, I-A).** A changed or deleted helper with no resolved importers, such as a child process run by path or with `-m`, or a file a conftest loads with `spec_from_file_location`, is read like data. `_readers` lists the files naming it, by file name or module name, as its dependents. A conftest or conftest-loaded file that names it, or a data file, precisely goes broad: `Named at conftest time by <file>: <path>`. Precisely means with its parent directory, by module name, or by file name from beside it (`_names_path`), so a common name such as a zip member `README.md` does not count (M-D). A change nothing imports or names gets the note `nothing imports or names <path>`.
+- **The search.** `_importers` runs breadth first in sorted corpus order and follows every dependent. It stops once it has IMPORTER_CAP + 1 files that count: runnable files a PR lane runs. The depth sort is gone, because BFS order already puts direct importers first. Candidates come from a word index of the Tests tree (`_token_index`), built once per plan, instead of a substring scan per step (round 4, M-B).
+- **Order and cost (round 4, M-B).** The changes are sorted by path. Every cheap reason for the full run is checked across all changes before any search: `_full_reason`, conftest-loaded, the PR's own lane reasons and schema code.
 - **The conftest-loaded set.** `_conftest_loaded` follows every `Tests/**/conftest.py`'s imports through the same resolver. A changed or deleted member goes broad (`Loaded by conftest.py: <path>`), and so does a data file a member reads. `PROFILE_HARNESS` is gone.
 - **Schema code.** `SCHEMA_TEXT` matches `PRAGMA user_version`, not any `user_version`. All 54 occurrences in `tldw_chatbook/` (reads, writes and docstrings) are written that way. On dev the narrowing drops exactly one file, `Chat/console_dispatch_repository.py`, which has no DDL.
-- **The reason.** Notes are written after the cut. Each sampled, cut or skipped module or data file gets `sampled <ran> of <found>[+] importers|readers of <path>[ a PR lane runs][, skipping N no PR lane runs][, skipping N the light job cannot run]`. When a cap applied, the reason also says `8 sampled files in all`, or `cut to 20 test files[, not running the PR's own <files>]`.
+- **The reason.** Notes are written after the cut. Each sampled, cut or skipped module or data file gets `sampled <ran> of <found>[+] importers|readers of <path>[ a PR lane runs][, skipping N no PR lane runs][, skipping N the light job cannot run]`. When a cap applied, the reason also says `8 sampled files in all`, or `cut to 20 test files[, not running the PR's own <files>]`. Long lists are shortened: five of the PR's own dropped files, three blocked files, ten notes, then `... and N more` (round 4).
 
 **Other files:**
 - **`Tests/CI/test_tiered_ci.py`.**
@@ -92,10 +100,24 @@ These cases should run the light tier with a capped, deterministic sample of the
     - light with the "no PR lane" note when nothing laned depends;
     - the 8-file sample budget, with an under-the-cap module outside it;
     - a `Tests/CI` importer, with `Tests/CI` laned, not counted toward the nine.
+  - Round 4 adds:
+    - helpers run by path or `-m` read by the files naming them;
+    - a spec-loaded conftest helper going broad (synthetic, and the real `Tests/Performance/boot_budget_ratchet.py`);
+    - a common name in a conftest not sending a fixture broad, while a directory-qualified one does;
+    - data read by a conftest-loaded helper going broad (N6);
+    - a package `__init__.py` having the package's own files as dependents (N7, N8);
+    - 8 runnable plus 1 unrunnable staying under the cap (N10);
+    - the budget never passing 20 (N16);
+    - a cut that removes a blocked change's laned sample going broad, with blocked changes picking first;
+    - input order not mattering;
+    - cheap reasons found before any search;
+    - docstrings not counting as child scripts;
+    - long reasons shortened.
 - **ADR-366.**
   - The Status line says "amended by TASK-42521 and TASK-42626".
   - The amendment names the three 2026-11-23 bullets it replaces and says what is counted.
-  - It covers the two modes and the budget (with the 1,131 / 4,707 lane counts and the 37 min measurement as the reason), when the full run is kept, the conftest rule, the PRAGMA narrowing and the reason format.
+  - It covers the two modes, and the budget with the 1,131 / 4,707 lane counts. For timing it cites the local 20 min 14 s re-measure (the 37-minute reading is void) and the hosted dev-light jobs.
+  - It also covers when the full run is kept (after the cuts), unimported helpers, the precise conftest naming rule, the import-mode rationale, the PRAGMA narrowing and the reason format.
 - **`scripts/ci/README.md`:** active-policy header, event table, the selection section as the code runs it, and a note on the rollout section.
 
 **Evidence (2026-11-26, branch `ci/42626-tier-sample` from dev 52351c4e0b):**
@@ -104,46 +126,67 @@ These cases should run the light tier with a capped, deterministic sample of the
   - The 9 round-1 cases fail on f8b476384b.
   - 7 round-2 tests, and the 2 whose reason wording changed, fail on 5c83750feb.
   - The 3 new round-3 tests, and the 6 updated for lanes or reason wording, fail on 280dc7b24f.
+  - 10 round-4 tests fail on 58421663. Three more pass on it by design: they pin behaviour that already existed, to kill the reviewer's mutations N7/N8, N10 and N16.
   - The determinism test also fails when only the corpus `sorted(` is removed.
-- **Mutations: all 13 killed on the final policy.**
+- **Mutations: all 25 killed on the final policy.**
   - a: no runnable filter.
   - b: cap before the runnable filter.
   - b2: the search counts every file.
   - c: no `Tests/CI` exclusion.
   - d: DFS.
   - f: name-only matching.
-  - g: never broad for laned dependents the light job cannot run.
+  - g: never broad for blocked dependents.
   - h: notes before the cut.
   - i: no child-script imports.
   - j: sample unlaned files too.
-  - k: no 8-file sample budget.
+  - k: no 8-file budget.
   - l: the search stops on runnable rather than laned files.
   - m: laned-only under the cap too.
+  - The reviewer's N6 (no broad for data read at conftest time), N7 (no `add(here)`), N8 (no package-prefix match), N10 (sampling by `len(tests)`) and N16 (no `min(20, ...)`).
+  - n: no name fallback for helpers.
+  - o: conftest check by file name only.
+  - p: blocked check before the cut.
+  - q: blocked changes do not pick first.
+  - r: changes not sorted.
+  - t: docstrings counted as child scripts.
+  - u: reason not shortened.
   - For e, the depth sort was deleted.
+  - Mutation i survived the first round-4 run, because the name fallback finds child-script importers by their module name. The child-script test now has a plain importer as well, so the fallback never runs.
 - **Precision and recall,** checked on the round-2 resolver against the reviewer's ground-truth regex (extended with the `from Tests.pkg import mod` form) over all 6,135 Tests files:
   - Every file parses.
   - **Recall:** 0 import lines the regex confirms are missed.
   - **Precision:** 15 of the 7,863 resolver edges are not confirmed by the line-anchored regex. Spot checks show they are real child-script imports: quoted `"from Tests.x import y\n"` fragments and `;`-joined statements.
 - **All 235 helpers on the final policy:**
-  - 123 run all their dependents;
-  - 60 are sampled;
-  - 16 stay light with the "no PR lane" note;
-  - 4 go broad because only the full run reaches their laned dependents (`Tests/Backup_Recovery` diagnostics helpers);
-  - 32 go broad as conftest-loaded.
+  - 94 run all their dependents;
+  - 67 are sampled;
+  - 19 stay light with the "no PR lane" note;
+  - 18 stay light with "nothing imports or names it";
+  - 32 go broad as conftest-loaded;
+  - 1 goes broad as named at conftest time (`Tests/Performance/boot_budget_ratchet.py`);
+  - 4 go broad because only the full run reaches their laned dependents.
 
-  Deciding takes 0.34 s median and at most 10.7 s per helper (147 s for all 235), including searches that exhaust a closure.
+  None is light, silent and empty. This corrects round 3's "123 run all their dependents": that count included helpers with no dependents at all. 18 have none and now say so; others gained the files that name them as dependents.
+- **The reviewer's sweep of 1,217 real single-file changes, re-run (round 4).**
+  - 0 end light with nothing related and no note (55 before). Of the reviewer's 55: 28 now carry a note, 26 run related files, and 1 goes broad.
+  - Deciding takes 2.2 s median and at most 3.8 s per change, mostly the one-off word index (2.2 s) per plan.
+- **Several changes at once (round 4, M-B),** cold, reviewer's `multi3`:
+  - 30, 100 and 400 of the sweep's light rows took 7.1, 8.4 and 12.5 s, against 20, 55 and 134 s before. They end broad by the after-the-cut check, which runs after every search.
+  - Light-ending sets of 100 and 400 took 3.7 and 8.3 s, with a reason of about 1.1 KB.
+- **Conftest naming (round 4, M-D).** Of the 280 tracked data files under `Tests/` (guard data excluded), conftest-time files name 11 precisely, against 51 by file name only. The 11 are 10 `SKILL.md` fixtures, which `Tests/Plugins/conftest.py` matches through `skills/review/SKILL.md` (a known conservative over-match), and one other.
+- **Hosted dev-light timing (round 4, M-E).** 33 successful "Dev smoke and affected contracts" jobs on PRs from 2026-11-24 to 2026-11-26 took 4.4 to 25.0 min (median 8.1). The largest selection was 12 files (90 targets, run 45435066859) in 9.9 min. The longest job was 25.0 min for 8 files (34 targets, run 45462985645). No hosted run has selected 20 files yet.
 - **Verification:**
-  - `Tests/CI/test_tiered_ci.py`: 114 passed.
-  - `Tests/CI -n 4`: 2031 passed, 2 skipped. The first run had one timing failure, in `Tests/CI/test_bootstrap_root_cleanup.py::test_owned_root_is_removed[fork-child-terminated]` (the child not yet reaped). That test passed 3 of 3 alone and in the re-run.
+  - `Tests/CI/test_tiered_ci.py`: 126 passed.
+  - `Tests/CI -n 4`: 2043 passed, 2 skipped.
   - `./scripts/preflight.sh` under a scratch HOME with `PYTHON=.venv/bin/python` (3.12.11): all derived-artifact checks passed.
   - These all pass: `ruff check tldw_chatbook --select F`; `ruff check scripts/ci Tests/CI/test_tiered_ci.py --select F`; `ruff format --check`; `Tests/lint/ruff_gate.py`.
 - **PR #3769** (base 434eb71f95, head 7a453d4d36, root = a detached worktree of the head) still runs **broad**, for one reason: `Schema input: tldw_chatbook/DB/assistant_generation_state.py`. With that file dropped, it runs light: 22 targets, 18 files. The reason is `8 sampled files in all; sampled 4 of 9+ importers of Tests/Chat/test_console_dispatch_recovery.py a PR lane runs, skipping 32+ no PR lane runs; sampled 4 of 9+ importers of Tests/UI/test_console_prompt_queue.py a PR lane runs, skipping 18+ no PR lane runs, skipping 1 the light job cannot run`. The UI `test_console_dispatch_recovery.py` runs both of its importers, under the cap.
-- **Last 60 first-parent dev merges** (through 5dcba48401), replayed against one tree (the #3769 head, so approximate): 26 run light under dev's policy and 35 under the final one. The remaining 25 broad runs: 21 change CI, build or test configuration, 2 their own HEAVY files, 1 its own file split across lane steps, and 1 its own deselected file. None changed class between rounds 1, 2 and 3; only the samples and reasons changed.
+- **Last 60 first-parent dev merges** (through 5dcba48401), replayed against one tree (the #3769 head, so approximate): 26 run light under dev's policy, 35 under round 3's, and 34 under the final one. The one that moved is 9fa2bf1b1d. Its own changed files overflow the 20-file cut, which removed the laned sample of `Tests/UI/test_console_hook_review_send_freeze.py`, whose dependent `Tests/UI/test_console_received_intent_feedback.py` only the full run reaches. That case goes broad under round 4's after-the-cut check (M-A). The 26 broad runs: 21 change CI, build or test configuration, 2 their own HEAVY files, 1 its own file split across lane steps, 1 its own deselected file, and 9fa2bf1b1d.
 - **Light runner, re-measured (round 3).** `scripts/ci/run_light.py` ran as the dev-light job runs it: `CI_TEST_TARGETS=<json> python scripts/ci/run_light.py`, Python 3.12.11, a scratch HOME/XDG/TMPDIR, on this 18-core Mac. The selection was the largest light plan of the 60 merges under the final caps: merge 1b9e3f8a55, 68 targets, 25 files, 26 pytest processes with `Tests/CI`.
   - None of my jobs ran alongside it. Another session's pytest runs were on the machine (load average 6.1 before, 11.5 after).
   - It took **20 min 14 s wall** (1,214 s), inside the job's 30-minute cap.
   - `Tests/CI` took 3 min 1 s, 15 % of the total. The 25 selection processes took 16 min 17 s, and process start-up the remaining ~56 s.
-  - Round 2's 37 min 19 s for the same merge had my mutation, recall and probe jobs running alongside (`Tests/CI` alone then took 10 min 21 s), so that figure was inflated.
+  - Round 2's 37 min 19 s for the same merge had my mutation, recall and probe jobs running alongside (`Tests/CI` alone then took 10 min 21 s), so that figure is void.
+  - Round 4 does not change the caps, and that merge's plan is still the largest of the 60.
 
 **Observation (no fix here).** These four unlaned UI files fail on macOS on dev's code (Python 3.12.11, isolated profile), each run alone:
 - `Tests/UI/test_console_rewind_restore.py`: 42 failed, 41 of them `RecoveryRequired: raw_source_selection_changed`;

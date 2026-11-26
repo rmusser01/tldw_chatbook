@@ -9,7 +9,7 @@ runners. The owner canceled the entire self-hosted CI effort and benchmark on
 | --- | --- | --- |
 | PR into dev, opt-in unset | Existing artifact preflight and broad PR regression census | Existing Derived artifacts context |
 | PR into dev, opt-in true | Preflight, CI contracts, core smoke, the PR's changed test files with a capped sample of their importers, and smoke nodes for changed Chat/UI/Widgets/Notes/CSS sources | Same context, fail-closed |
-| Dev PR changing CI, build, pytest-config, conftest-loaded or schema inputs, or labelled `ci:full` | Existing broad census; no test command removed | Same context |
+| Dev PR matching a broad rule under "Selection and failure behavior" below, or labelled `ci:full` | Existing broad census; no test command removed | Same context |
 | Protected dev push, opt-in true | Preflight, CI contracts and core smoke on the merged tree | Push result; does not rerun every PR matrix |
 | Nightly, changed dev | Existing broad census, all smoke selections, Library shell matrix and Backup_Recovery owner suites | Nightly regression **workflow conclusion**, including Library shell |
 | PR into main | Broad regression, comprehensive core/UI suite, native lease contracts, package build and installed-distribution checks | Stable Derived context and release-only qualification verdict |
@@ -36,7 +36,8 @@ changes:
   `pyproject.toml`, `requirements*.txt`, and `conftest.py` or `pytest.ini` at any
   depth;
 - anything a `conftest.py` loads, transitively, such as the profile harness and
-  the shared doubles;
+  the shared doubles, and any data file or unimported helper a conftest (or a
+  file it loads) names with its directory, by module name, or from beside it;
 - schema inputs (`DB`, `db` or `migrations` directories) or application code with
   uppercase DDL or `PRAGMA user_version`;
 - guard and budget data under `Tests/Architecture/` or `Tests/Performance/`;
@@ -44,7 +45,7 @@ changes:
   from, splits across steps or runs only on push or nightly;
 - a test module, helper or data file with a dependent that a PR lane (or a push or
   nightly job) runs but the light job cannot (heavy, deselected, split or
-  push-only), when nothing laned would run in its place;
+  push-only), when nothing laned of it runs after the caps;
 - a removed or moved application file, or a type-changed or unmerged path;
 - or when it carries `ci:full`.
 
@@ -52,7 +53,9 @@ Everything else runs light:
 - preflight, `Tests/CI`, the smoke set and a touched subsystem's smoke nodes;
 - the PR's changed test files;
 - the test files that import or read what changed. Imports are resolved by
-  module path, and the search runs breadth first through helpers. With at most 8
+  module path, and the search runs breadth first through helpers. A helper
+  nothing imports (a child process, a spec-loaded file) is read like data: the
+  files that name it are its dependents. With at most 8
   runnable dependents, all of them run. With more, the change is sampled: only
   dependents a PR lane runs, since 4,707 of the 5,872 test files are in no lane
   and run only at release. A PR samples at most 8 files in all, and runs at most
