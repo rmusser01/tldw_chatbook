@@ -1,11 +1,11 @@
 ---
 id: TASK-41061
 title: "Native MCP event tests are red on dev, and the file does not finish at -n 4"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-15 02:03
-updated_date: '2026-11-26 05:18'
+updated_date: '2026-11-26 07:05'
 labels:
 - follow-up
 - architecture-review-2026-10-25
@@ -32,9 +32,9 @@ The architecture-review fleet runs on dev beab5c1e4e (2026-11-13) saw the first 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The task notes say for each node whether the product or the test is wrong, and name the commit
-- [ ] #2 A pytest run of Tests/Chat/test_native_v2_mcp_events.py alone, serially and at `-n 4`, runs to completion and the pytest process exits on its own within the run's timeout
-- [ ] #3 Every node of Tests/Chat/test_native_v2_mcp_events.py passes on dev at `-n 4` (a node may first be deleted or retargeted, with its reason in the task notes); a fixed product defect is shown red first
+- [x] #1 The task notes say for each node whether the product or the test is wrong, and name the commit
+- [x] #2 A pytest run of Tests/Chat/test_native_v2_mcp_events.py alone, serially and at `-n 4`, runs to completion and the pytest process exits on its own within the run's timeout
+- [x] #3 Every node of Tests/Chat/test_native_v2_mcp_events.py passes on dev at `-n 4` (a node may first be deleted or retargeted, with its reason in the task notes); a fixed product defect is shown red first
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -45,3 +45,27 @@ The architecture-review fleet runs on dev beab5c1e4e (2026-11-13) saw the first 
 3. Find what keeps the process alive after its summary (a non-daemon thread or an un-awaited task) and make the file exit on its own, serially and at `-n 4`.
 4. Lane the file in the recovered-suites step, timed with the step's flags.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Base dev 6e41919880. The file came with #3480 (e10ce63fe8) and was red there; most nodes were written before 11d71e5db5 (ordinary Console physical ownership), which landed later on the same branch. Serially at base 5 nodes were red; `session_end_nested` and `distinct_actual_nested` (red in round 26 on dev 692acb43dc) failed only under load.
+
+**Per node (AC #1):**
+- `unqualified_ordinary_mcp_keeps_real_existing_dispatch`: **product.** 11d71e5db5 left a managed send's MCP capture pending when its metadata is not closed, and only the ordinary tree resolves it. `admit_ordinary_turn` admits no tree where native process groups are missing (Windows), so the turn's MCP maximum stayed empty, the hook's tool could not be resolved (`hook_mcp_tool_unavailable`), and the send was refused: "Required hook initialization failed.". **Fix:** `MCP/console_snapshot._capture_stays_pending`, which both capture functions share: the capture stays pending only where `supports_native_process_groups()`. Red at base, green after.
+- `accepted_context..._without_reviving_dispatch[negative_drain]`: **product.** In `_CommandEvent._returned_context` (11d71e5db5), a borrowed ordinary-tree owner counted as returned even after it drained unproven, so accepted context outlived its registration (`check_memory` did not raise). **Fix:** that branch also requires `_drain_outcome is not False`; a live (None) tree owner still qualifies. Red at base (DID NOT RAISE), green after.
+- `distinct_actual_nested_mcp_worker_and_command_share_one_original_event`: **product, then load timing.** Under 4 runs at once (load ~45), 11 of 12 failed "Required hook initialization failed.". A probe showed the outer MCP job's policy refusing with `hook_mcp_original_permission_changed`. The outer job checks every plan's permission, and the nested MCP job's `MCPHookPermission.refresh()` set the token to None before re-reading the store (37273cff7b). **Fix:** the token stays until the refresh succeeds or fails; a changed publication still fails other checks. New test `test_mcp_hook_permission_stays_current_to_other_jobs_while_it_refreshes` (`Tests/Agents/test_hooks_v2_execution.py`): red on base code with that PermissionError, green after. 7 of 20 then still failed, now with `handler_deadline`: the nested job and its leaf command (a private-profile interpreter) outlasted the default 10 s handler timeout. The test's three handlers now take the 60 s maximum. **24 of 24** after (6 at once, load 40-49).
+- `session_end_nested_workers_consume_original_holds_after_capacity_close`: **load timing.** At `-n 4` and in serial runs at load ~50 it failed with `event_deadline`. A timeline probe (load 53) showed the MCP worker invoked 0.19 s after the seal, its nested PreToolUse command starting at 2.14 s and the deadline at 3.03 s: the 3 s SessionEnd allowance. A forced 3.5 s delay in the held worker reproduced it every time with 3 s and passed with 30 s. With 4 runs at once, `handler_deadline` (the default 10 s) and the 8 s cleanup wait failed next (12 of 12 with the 8 s wait). **Fix:** the engine's allowance is now named (`TEARDOWN_SECONDS`, `TEARDOWN_CLEANUP_SECONDS`; values unchanged), and the test sets it to 30 s, gives its handlers 60 s and waits up to 45 s for cleanup. **20 of 20** after (4 at once, load 45-52). In round 26 this node's failure also left an executor thread blocked, so the process could not exit (below).
+- `selected_deny_never_reserves_a_native_mcp_worker`: **test.** The class-wide `reserve_tool` count caught the ordinary tree's admission (`console_ordinary_tree.py:285`) and MCP composition (`console_provider_composition.py:163`) reservations. 11d71e5db5 added both, and both return at once. Neither is a worker for the denied MCP hook. The count now takes only reservations made by `_CommandEvent._select`, the one place a native event reserves workers.
+- `real_mcp_lifecycle_publish_and_operation_finish_return_are_joined`: **test.** The class-wide `OwnedOperation.finish` hold caught the tree admission's own finish (`console_ordinary_tree.py:351`) first and blocked the loop for 8 s. It now holds only the event's own operations (recorded at `_select`).
+- `revocation_during_actual_nested_capture_discards_without_host_leak`: **test.** Its `conversation_binding_revision` bump also invalidates the send's prompt mix-in capture (7970fbcada, on dev before #3480). The mix-in check after hook preparation raises `MixinSourceChangedError("mixin_session_changed")` before the hook refusal returns, and `submit_draft` re-raises it by design. The node expects that raise; capture, no-MCP-call, cleanup, opaque and worker assertions are unchanged.
+- No node was deleted or retargeted.
+
+**The hang (AC #2).** Round 26's run (log `bootcmp/serial-dev.log`) dumped thread `asyncio_1`, the default-executor worker, blocked in `_EventCustodyRegistry.wait_closed`. That is an untimed `Condition.wait_for`, awaited by `HookEngine._drain` through `asyncio.to_thread` (2665a17673, `wait_closed` from 89ba88b61d). `session_end_nested` had failed with an event custody still open, and pytest-timeout cancelled its three teardown awaits after 300 s each. A cancelled `to_thread` await leaves its thread running, and pytest-asyncio's runner close (`shutdown_default_executor`, thread `_do_shutdown` in the dump) and then interpreter exit join it. **Fix:** `_EventCustodyRegistry.join_closed()` waits in 0.25 s slices, used by the engine drain and the legacy hook source drain (`ConsoleRuntime._drain_legacy_hooks`). The app's close no longer leaves a thread that keeps the process from exiting. New test `test_cancelled_close_leaves_no_thread_waiting_for_native_custody`: red with the untimed join (loop shutdown still waiting at 5 s), green after. On the merge tree `negative_drain`'s teardown also never ended (0% CPU in kqueue, killed after 7 min); pytest-timeout there still dropped its timer after a failed call, which TASK-41135 fixed.
+
+**Runs.** The file at `-n 4` (with the hook, poll and hook-execution files): 139 passed twice in a row (241 s, load 44-50; 200 s, load 28-43), each process exiting 4-6 s after its summary. It also passed 43 of 43 alone at `-n 4` (131 s). Serially in the macOS step run: 43 passed, 461 s, load 27-46, exiting on its own.
+
+**Lane.** The file runs on no Linux lane (`native_console` calls `require_managed_runtime()`, Darwin only). It joins the macOS `plugins-recovery-ui` job's new step with the hook file, plus a check that both executed. With the step's flags (serial, `--timeout=300`) at load 27-46 the step took 600 s, this file 461 s of it. The job's last run took 1m49s against its 15-min cap.
+
+Files: `tldw_chatbook/MCP/console_snapshot.py`, `tldw_chatbook/Chat/console_configuration_capture.py`, `tldw_chatbook/Agents/hooks_v2/native_commands.py`, `tldw_chatbook/Agents/hooks_v2/mcp_executor.py`, `tldw_chatbook/Agents/hooks_v2/engine.py`, `tldw_chatbook/Agents/legacy_hook_ownership.py`, `tldw_chatbook/Chat/console_runtime.py`, `Tests/Chat/test_native_v2_mcp_events.py`, `Tests/Agents/test_hooks_v2_execution.py`, the lane files listed in TASK-42553, `backlog/docs/lessons-testing-evidence.md`.
+<!-- SECTION:NOTES:END -->
