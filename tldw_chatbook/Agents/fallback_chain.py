@@ -64,6 +64,9 @@ class FallbackRuntime:
     build: Callable[[str | FallbackCandidate], Callable | None]
     pre_tool_only: bool = False
     select: Callable[[FallbackCandidate], None] | None = None
+    #: Why a READY candidate may not run now ("" when it may); a refused one
+    #: is skipped visibly, like an unready one (TASK-42556, TASK-42564).
+    refuse: Callable[[FallbackCandidate], str] | None = None
 
 
 def is_credit_terminal(exc: BaseException) -> bool:

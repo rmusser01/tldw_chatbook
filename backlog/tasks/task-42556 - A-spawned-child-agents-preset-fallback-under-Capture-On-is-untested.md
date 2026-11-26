@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-26 04:50
-updated_date: 2026-11-26 07:05
+updated_date: 2026-11-26 08:39
 labels:
 - follow-up
 - console
@@ -70,7 +70,9 @@ This covers every preset alternate a captured run's children carry, including co
 
 **Red/green.** With the source fix reverted, `test_a_spawned_childs_preset_fallback[capture_on]` fails at `assert switched == []` (the child switched); `[capture_off]` passes. Both pass with the fix.
 
-**Owner question (not implemented).** May a spawned child's preset fallback under Capture On start a new chain in the child's own segment, as a primary's provider fallback does since TASK-42525? Recommendation: yes, mirroring amendment 1 for children:
+**Review fixes and follow-up (2026-11-26).** The owner answered the question below ("Yes, new chain (Recommended)"); TASK-42564 builds it. Under Capture On the child's fallback is now sent and traced, and the visible skip stays only for an alternate that keeps the child's target. The review's minors were applied there: the skip no longer overwrites an unready alternate's own reason, and the copy is shortened to fit the 200-character step summary ("same target, not traceable while Capture is on; turn Capture off to allow it").
+
+**Owner question (answered, see above).** May a spawned child's preset fallback under Capture On start a new chain in the child's own segment, as a primary's provider fallback does since TASK-42525? Recommendation: yes, mirroring amendment 1 for children:
 - the child keeps its actor and segment;
 - only the child's adapter mints the chain, for the next frozen preset target;
 - the chain's first call is a TOOL_LOOP at sequence 0, linked to the failed child call.

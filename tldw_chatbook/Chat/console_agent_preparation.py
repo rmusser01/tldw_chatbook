@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from . import console_agent_bridge as native_host
 
-# ADR-337 records no fallback call for a spawned child, which keeps one chain
-# and segment, so under Capture On each preset alternate is a visible skip
-# (TASK-42556) instead of a call the trace refuses once it is reserved.
+# Under Capture On a spawned child's preset fallback is a new chain of its
+# segment (ADR-337 amendment 2026-11-26, TASK-42564). An alternate that keeps
+# the target cannot be one, so it is a visible skip before any call
+# (TASK-42556), kept short for the 200-character step summary.
 PRESET_FALLBACK_NOT_CAPTURED = (
-    "Capture is on, and a sub-agent's fallback cannot be traced; turn Capture "
-    "off for this chat to let sub-agents fall back"
+    "same target, not traceable while Capture is on; turn Capture off to allow it"
 )
 
 
@@ -1215,6 +1215,7 @@ def _prepare_native_reply(
         capture_mode=capture_mode,
         trace_request=trace_request,
         fallback_providers=tuple(config.fallback_providers or ()),
+        preset_fallback_state=self._db.get_run_fallback_state,
     )
 
     # PR3a-1 Task 6b (audit F1): this turn's own key into

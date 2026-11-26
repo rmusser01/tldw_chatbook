@@ -3404,10 +3404,13 @@ class _StreamingModelAdapter:
         trace_request: PreparedConsoleRequest | None = None,
         live_usage_sink: Callable[[AgentLiveUsageEvent], None] | None = None,
         fallback_providers: tuple[str, ...] = (),
+        preset_fallback_state: Callable[[str], dict | None] | None = None,
     ):
         self._store = store
-        # The run's configured provider fallback list (TASK-42525).
+        # The run's configured provider fallback list (TASK-42525), and a
+        # child run's durable preset fallback selection (TASK-42564).
         self._fallback_providers = fallback_providers
+        self._preset_fallback_state = preset_fallback_state
         self._gateway = provider_gateway
         self._resolution = resolution
         self._assistant_message_id = assistant_message_id

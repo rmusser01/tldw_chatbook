@@ -175,22 +175,48 @@ def chat_call_impl(
             route_actor_id, route_chain_id = recovered
         self._thread_loop.route_actor_id = route_actor_id
         self._thread_loop.route_chain_id = route_chain_id
-    if self._trace_request_factory is not None and not is_subagent:
+    if self._trace_request_factory is not None:
         # TASK-42525: a captured run's provider fallback names another target.
         # It starts a new chain of this run, and only for a later unused
-        # entry of the run's configured fallback list, in list order.
+        # entry of the run's configured fallback list, in list order. A
+        # child's preset fallback (TASK-42564) must be the child's durably
+        # selected target, at a later index (ADR-200 persists it first).
         target = (requested_endpoint, str(model or ""))
         if target != getattr(self._thread_loop, "route_target", target):
-            configured = [name.strip().lower() for name in self._fallback_providers]
             position = getattr(self._thread_loop, "fallback_position", 0)
-            try:
-                self._thread_loop.fallback_position = (
-                    configured.index(requested_endpoint.lower(), position) + 1
+            if is_subagent:
+                state = (
+                    self._preset_fallback_state(attributed[0])
+                    if attributed is not None and self._preset_fallback_state
+                    else None
                 )
-            except ValueError:
-                raise bridge.TraceProvenanceAlignmentError(
-                    "the run's configured fallback list does not name this target"
-                ) from None
+                selected = (state or {}).get("active_target") or {}
+                index = (state or {}).get("active_index", 0)
+                if index <= position or (
+                    selected.get("provider"),
+                    selected.get("model"),
+                ) != target:
+                    raise bridge.TraceProvenanceAlignmentError(
+                        "the sub-agent's preset fallback did not select this target"
+                    )
+                self._thread_loop.fallback_position = index
+                # The new chain opens a child segment of its own: its first
+                # call is that chain's AGENT_FIRST (schema v87 ties a child
+                # segment's calls to one run identity).
+                route = bridge.ConsoleRequestRoute.AGENT_FIRST
+                self._thread_loop.request_count = 1
+            else:
+                configured = [
+                    name.strip().lower() for name in self._fallback_providers
+                ]
+                try:
+                    self._thread_loop.fallback_position = (
+                        configured.index(requested_endpoint.lower(), position) + 1
+                    )
+                except ValueError:
+                    raise bridge.TraceProvenanceAlignmentError(
+                        "the run's configured fallback list does not name this target"
+                    ) from None
             route_chain_id = bridge.new_opaque_id()
             self._thread_loop.route_chain_id = route_chain_id
         self._thread_loop.route_target = target

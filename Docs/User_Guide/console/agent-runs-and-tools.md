@@ -2372,9 +2372,9 @@ may switch on typed rate-limit, overload, timeout, or unavailable-model
 failures before any proposed tool batch, including a refused batch. Authentication
 errors, arbitrary HTTP 400/404 responses, and diagnostic text do not authorize a
 switch. Attempts share the child's existing token, model-call, wall-time and
-automatic-work budgets and fleet slot. While Capture is on for the chat, a
-sub-agent does not fall back: each alternate is shown as skipped in its steps
-(see [Sub-agent calls](semantic-trace-capture.md#sub-agent-calls)).
+automatic-work budgets and fleet slot. With Capture on, the fallback is traced
+as the same sub-agent's calls (see
+[Sub-agent calls](semantic-trace-capture.md#sub-agent-calls)).
 
 **Resume pins the target.** Preset fallback freezes each target's provider,
 model, configured/default base URL, execution family and merged params before

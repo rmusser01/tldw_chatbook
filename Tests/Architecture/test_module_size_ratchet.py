@@ -1161,7 +1161,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-25, TASK-42525 (round 26): `captured_fallback_providers` is
     # deleted (-25) and the streaming adapter keeps the run's configured
     # fallback list (+3), 10,142 -> 10,120, exact measurement.
-    "tldw_chatbook/Chat/console_agent_bridge.py": 10120,
+    # 2026-11-26, TASK-42564: the streaming adapter takes a child run's
+    # durable preset fallback state (+3), 10,120 -> 10,123.
+    "tldw_chatbook/Chat/console_agent_bridge.py": 10123,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # TASK-36944.2, 2026-11-03: +6 for the public `setting` Console reads.
@@ -1190,7 +1192,9 @@ _BUDGETS: dict[str, int] = {
     # fallback alternates are visible skips (preset_fallback_refusal);
     # 7698 -> 7705 (+7); 2026-11-26, ported onto dev 9926834bc8 (round 27):
     # dev's 7,745 plus 7, exact measurement 7,752.
-    "tldw_chatbook/Agents/agent_service.py": 7752,
+    # 2026-11-26, TASK-42564: the captured skip applies only to a ready
+    # alternate that keeps the child's target (+9), 7752 -> 7761.
+    "tldw_chatbook/Agents/agent_service.py": 7761,
     # 2026-10-31, PR #3259: explicit user size-limit waiver. Pin the
     # actual current-base N-32 file-body F6 integration at 9,541 lines.
     # TASK-36513, 2026-11-03 (size waiver per the burn-down brief: re-pin at
@@ -1496,7 +1500,10 @@ _BUDGETS: dict[str, int] = {
     # (+3), exact measurement. The dispatch read-back checks each replacement
     # row against the node written before its own, so a drop's or restore's
     # first write reads back as durable.
-    "tldw_chatbook/Chat/console_trace_service.py": 7059,
+    # 2026-11-26, TASK-42564: dispatch binding rechecks a spawned child's
+    # fallback chain (+4); stacked on TASK-42550's 7059: 7059 -> 7063, exact
+    # measurement.
+    "tldw_chatbook/Chat/console_trace_service.py": 7063,
     # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
     # approved child trace segments (ADR-337 amendment 2026-11-17): create and
@@ -1522,7 +1529,10 @@ _BUDGETS: dict[str, int] = {
     # runs' emergency-stop termination reason.
     # 2026-11-24, TASK-33620.1.12 review 2 (same rule): 4172 -> 4175 (+3), the
     # raising-probe hold reports through the shared fail-safe notifier.
-    "tldw_chatbook/Agents/agent_runtime.py": 4175,
+    # 2026-11-26, TASK-42564: a ready preset alternate the fallback runtime's
+    # refuse hook declines is skipped visibly, like an unready one (+3),
+    # 4175 -> 4178 (round 27, on dev 9926834bc8).
+    "tldw_chatbook/Agents/agent_runtime.py": 4178,
     # 2026-11-20, TASK-42014 (owner rule: raise by the change's own lines):
     # 6108 -> 6110 (+2) -- the credential buttons carry the class their
     # press handler selects, so a press a recompose forwards still runs it.

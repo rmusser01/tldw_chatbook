@@ -748,7 +748,8 @@ of the same run. The retry rule inside a chain is unchanged.
    runtime skips an entry that is not ready, and an entry passed over is spent.
    Each entry is used at most once, and the list is never walked back. Any
    other target change is refused before preparation, so nothing is reserved.
-   Spawned children keep their single chain and segment. (Reworded
+   A spawned child's preset fallback follows the 2026-11-26 amendment
+   below. (Reworded
    2026-11-25 to match the adapter; the rule is unchanged.)
 3. **Admitting the chain's first call** (in the reservation transaction, so a
    refusal rolls back and leaves no reserved call). The call whose boundary
@@ -790,7 +791,61 @@ Still refused:
   (llama.cpp sends it as the first message, a hosted provider does not). The
   new call does not continue the surface even before any tool call. (Granted
   by the next amendment.)
-- A spawned child's preset fallback.
+- A spawned child's preset fallback. (Granted by the 2026-11-26 amendment
+  "a spawned child's preset fallback starts a new chain" below.)
+
+### Amendment recorded 2026-11-26 (owner-approved): a spawned child's preset fallback starts a new chain (TASK-42564)
+
+The owner approved this on 2026-11-26 ("Yes, new chain (Recommended)"):
+"New ADR-337 amendment. The sub-agent's fallback is sent and traced as a new
+chain. It only happens before any tool call, so no history rewrite is
+needed." A spawned child's preset fallback (ADR-200) switches to the
+preset's next `fallback_models` target before the child's first tool batch.
+The amendment above refused it, and TASK-42556 made that refusal a visible
+skip before any call. Under Capture On it now starts a new chain of the
+child's run. The child amendment (2026-11-17) and the primary rules above
+apply, with these differences:
+
+1. **Identity and segment.** A child's chains share its actor. The fallback
+   mints a new chain, so its calls are run `actor:new_chain`. The schema
+   (v87) ties a child segment to the calls of one run identity, so the new
+   chain opens a child segment of its own. It is linked, like the first
+   one, to the same owner and spawning turn. The shared actor is the link
+   between the chains. No schema change.
+2. **Who mints a chain.** Only the Console agent adapter, for a child's call
+   that names a target other than its chain's. The child's run must have
+   durably selected that target as its active preset fallback: ADR-200
+   persists the selected index before dispatch, and the index only rises.
+   The index must also be later than the one the child's current chain uses.
+   So only the preset's `fallback_models` entries qualify, once each, in list
+   order. Any other target change is refused before preparation, so nothing
+   is reserved. The new chain's first call is its segment's AGENT_FIRST, at
+   sequence 0.
+3. **Admitting the chain's first call** (in the reservation transaction, so
+   a refusal rolls back and nothing is reserved). Every other chain of the
+   child's actor must:
+   - belong to the same owner and turn;
+   - have no call that started a response (so no tool call came first, and
+     no rewrite is needed);
+   - end on its latest call, a settled ERROR with the same frozen policy, to
+     another provider or model than the new call.
+4. **Rechecked at dispatch binding.** The binding transaction repeats point
+   3 for a child chain's AGENT_FIRST call. A failure there is an ordinary
+   binding refusal.
+5. **Later calls** of the new chain are ordinary TOOL_LOOP calls of its own
+   segment, under the unchanged retry rule.
+6. **Fail closed, visibly.** Under Capture On, a preset alternate that would
+   not change the (execution provider, model) target is a visible skip
+   before any call, with TASK-42556's copy (an unready alternate keeps its
+   own reason). ADR-200 already keeps the switch before the first tool batch
+   and walks the list once, so a fallback after a tool call or beyond the
+   list is never attempted.
+7. **The parent is unaffected.** The child's chains stay in child segments.
+   They never append to, replace in, or get judged against the parent's
+   surface, and the parent's next message is witnessed as before.
+
+The Trace view numbers a child's calls by actor, so its fallback chain reads
+as the same sub-agent (`sub-agent 1 · call 2 · agent first`).
 
 ### Amendment recorded 2026-11-24 (owner-approved): a fallback chain's first call may rewrite the run's tail (TASK-42525)
 
@@ -1486,7 +1541,9 @@ and surface. Every sub-agent failed under Capture On, the shipped default.
 1. A child's provider calls belong to the parent's owner and to the spawning
    turn, under the child's own run identity (its actor and chain).
 2. Each child run has one root-less segment of its own, linked to that owner and
-   turn by its run identity (`console_trace_child_segments`, schema v87). The
+   turn by its run identity (`console_trace_child_segments`, schema v87). (A
+   child's preset fallback chain opens one more, under the same actor:
+   amendment 2026-11-26, TASK-42564.) The
    child's surface fence compares only against that segment. Nothing a child
    sends can append to, replace in, or be judged against the parent's surface,
    and the parent's own refusals are unchanged.

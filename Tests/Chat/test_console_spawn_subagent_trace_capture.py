@@ -117,13 +117,16 @@ async def _spawn_turn(
     parent_openai=False,
     trace_view=False,
     preset_fallback=False,
+    follow_up=False,
 ) -> SimpleNamespace:
     """Send one turn (Capture On unless ``capture`` says otherwise) whose model
     spawns a child; return the facts.
 
     ``preset_fallback``: the child runs the ``worker`` preset, whose own
     model is unavailable (404 ``model_not_found``) and whose
-    ``fallback_models`` names FALLBACK_MODEL (ADR-200, TASK-42556)."""
+    ``fallback_models`` names FALLBACK_MODEL (ADR-200, TASK-42556), or names
+    MODEL itself when ``"same"``. ``follow_up``: once every run has settled,
+    send the parent's next message (``facts.follow_up``)."""
     import httpx
     import urllib3
 
@@ -396,7 +399,12 @@ async def _spawn_turn(
                 provider="custom-ep:spawntrace",
                 model=MODEL,
                 fallback_models=(
-                    (("custom-ep:spawntrace", FALLBACK_MODEL),)
+                    (
+                        (
+                            "custom-ep:spawntrace",
+                            MODEL if preset_fallback == "same" else FALLBACK_MODEL,
+                        ),
+                    )
                     if preset_fallback
                     else ()
                 ),
@@ -425,6 +433,11 @@ async def _spawn_turn(
                 ) and all(status != "running" for _, status in facts.runs):
                     break
                 await asyncio.sleep(0.05)
+            if follow_up:
+                facts.follow_up = await controller.submit_draft(
+                    "And now?", session_id=session.id
+                )
+                facts.follow_up_state = controller.run_state.status.value
         facts.child_steps = [
             (step.get("kind"), step.get("summary"))
             for row in runs.list_runs(session.persisted_conversation_id)

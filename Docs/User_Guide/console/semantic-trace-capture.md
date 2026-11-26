@@ -313,12 +313,14 @@ The **Agent** filter lists each run once; choosing a sub-agent there shows its
 **Agent run** row and steps, but not its Child call rows, which the trace does
 not tie to a run.
 
-A sub-agent preset's **Fallback models** are not used while Capture is on: the
-trace keeps one call chain per sub-agent, so a fallback call could not be
-recorded. Each alternate is listed as skipped in the sub-agent's steps
-("Provider fallback skipped: ... (Capture is on, ...)"), nothing is sent to
-it, and the sub-agent ends on its own model's error. Turn Capture off for the
-chat to let sub-agents fall back.
+When a sub-agent's preset model fails and the preset lists **Fallback
+models**, the sub-agent falls back with Capture on too. The trace records the
+fallback's calls as the same sub-agent's, after the failed call, for example
+`sub-agent 1 · call 2 · agent first` on the fallback model. An alternate that
+names the sub-agent's current provider and model would only repeat the failed
+call, so with Capture on it is listed as skipped in the sub-agent's steps
+("Provider fallback skipped: ... (same target, not traceable while Capture is
+on; turn Capture off to allow it)") and nothing is sent to it.
 
 An unfinished sub-agent call never holds up its parent's turn. Child calls of a
 turn that is no longer shown (deleted, or replaced by Edit & resend) are left
