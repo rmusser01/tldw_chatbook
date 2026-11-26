@@ -12,12 +12,16 @@ over the light job's cap, runs a capped, deterministic sample instead
 
 from __future__ import annotations
 
+import ast
+import functools
 import json
 import os
 import re
 import shlex
 from pathlib import Path
 import subprocess
+import textwrap
+import warnings
 
 # Representative subsystem checks; broader integration feedback moves to nightly.
 SUBSYSTEM_TESTS = {
@@ -51,11 +55,12 @@ HEAVY_TEST_FILES = {
     "Tests/UI/test_library_shell.py",
     "Tests/Backup_Recovery/test_response_rules_restore.py",
 }
-# At most this many importers of one changed test module or helper run on the
-# PR (direct before transitive, then by path); nightly and release run the rest.
+# At most this many runnable test files that import (or read) one changed
+# module (or data file) run on the PR, breadth first; nightly and release run
+# the rest.
 IMPORTER_CAP = 8
-# The PR's own selected files (changed tests, then sampled importers and data
-# readers): more would not fit the light job's 30-minute cap run one by one.
+# The PR's own selected files (its changed tests first, then the samples in
+# turn): more would not fit the light job's 30-minute cap run one by one.
 LIGHT_FILE_CAP = 20
 # Application code that creates, alters or versions its own SQLite schema
 # (uppercase DDL and PRAGMA, as this codebase writes them; case-sensitive to
@@ -63,12 +68,6 @@ LIGHT_FILE_CAP = 20
 SCHEMA_TEXT = re.compile(
     r"\b(?:ALTER TABLE|CREATE (?:TABLE|UNIQUE INDEX|INDEX|TRIGGER|VIEW|VIRTUAL TABLE))\b"
     r"|\bPRAGMA[ \t]+user_version\b"
-)
-# `from Tests.x import a, (b)` and `import Tests.x`, at any indent.
-TESTS_IMPORT = re.compile(
-    r"^[ \t]*(?:from[ \t]+(Tests(?:\.\w+)*)[ \t]+import[ \t]+(\([^)]*\)|[^\n]*)"
-    r"|import[ \t]+(Tests(?:\.\w+)*))",
-    re.M,
 )
 # The PR lanes: the jobs the required check needs, and the UI lane's census.
 LANE_WORKFLOW = ".github/workflows/derived-artifacts.yml"
@@ -112,64 +111,132 @@ def _full_reason(status: str, path: str) -> str | None:
     return None
 
 
-def _import_pattern(stem: str) -> re.Pattern[str]:
-    """Import lines naming `stem`: one-line forms and parenthesized lists."""
-    s = re.escape(stem)
-    return re.compile(
-        rf"^[ \t]*(?:from|import)[ \t][^\n]*\b{s}\b"
-        rf"|^[ \t]*from[ \t][^\n(]*\([^)]*\b{s}\b",
-        re.M,
-    )
+@functools.lru_cache(maxsize=None)
+def _imports(name: str, text: str) -> frozenset[str] | None:
+    """Paths that loading the file `name` loads, as pytest's prepend import mode
+    resolves its imports, or None when it does not parse.
 
-
-def _importers(path: str, corpus: dict[str, str]) -> dict[str, int]:
-    """Files under Tests/ importing this module, transitively, with their depth
-    (1 = direct); breadth first in corpus order, stopping past IMPORTER_CAP.
-
-    An over-approximation by module name, which errs toward more tests.
+    Covers the importer's own package `__init__.py` files, `Tests.*` absolute
+    imports, relative imports, and bare imports of a module in the importer's
+    own directory. Nested imports count, and so do the imports of a child
+    script embedded as a string. Every package `__init__.py` on the way counts
+    too. Paths no file has are kept, so a deleted module still counts.
     """
-    found: dict[str, int] = {}
-    frontier = [(path, 0)]
-    while frontier:
-        current, depth = frontier.pop(0)
-        stem = Path(current).stem
-        pattern = _import_pattern(stem)
-        for name, text in corpus.items():
-            if name == path or name in found or stem not in text:
+    tree = _parse(text)
+    if tree is None:
+        return None
+    here = list(Path(name).parent.parts)
+    paths: set[str] = set()
+
+    def add(parts: list[str]) -> None:
+        for end in range(1, len(parts) + 1):
+            base = "/".join(parts[:end])
+            paths.update((f"{base}.py", f"{base}/__init__.py"))
+
+    add(here)
+    trees = [tree]
+    for node in (node for tree in trees for node in ast.walk(tree)):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if "import" in node.value:  # a child script the test runs
+                script = textwrap.dedent(node.value)
+                child = _parse(script)
+                # A template with placeholders: its import lines, one by one.
+                lines = [] if child else script.splitlines()
+                imports = [line.strip() for line in lines]
+                imports = [
+                    line for line in imports if line.startswith(("import ", "from "))
+                ]
+                for sub in [child, *map(_parse, imports)]:
+                    if sub is not None:
+                        trees.append(sub)
+            continue
+        if isinstance(node, ast.Import):
+            specs = [(0, alias.name, []) for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            specs = [(node.level, node.module or "", [a.name for a in node.names])]
+        else:
+            continue
+        for level, module, names in specs:
+            dotted = module.split(".") if module else []
+            if level:
+                base = here[: len(here) - level + 1] + dotted
+            elif dotted[:1] == ["Tests"]:
+                base = dotted
+            else:
+                base = here + dotted  # a bare import of a module beside the importer
+            add(base)
+            for alias in names:
+                add([*base, alias])  # `from pkg import mod` loads pkg/mod.py
+    return frozenset(paths)
+
+
+def _parse(text: str) -> ast.Module | None:
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")  # invalid escapes in test strings
+            return ast.parse(text)
+    except (SyntaxError, ValueError):
+        return None
+
+
+def _importers(
+    path: str,
+    corpus: dict[str, str],
+    runnable=_is_test_file,
+    first: list[str] | None = None,
+) -> list[str]:
+    """Files under Tests/ that load `path`, transitively, breadth first in corpus
+    order: direct importers (or `first`, such as a data file's readers) before
+    theirs. Unrunnable files are followed but not counted; the search stops
+    once it has IMPORTER_CAP + 1 runnable ones. A file that does not parse
+    counts as an importer, which errs toward more tests.
+    """
+    found: list[str] = []
+    seen = {path}
+    count = 0
+    queue = [path]
+    for current in queue:  # appended to while iterating: breadth first
+        init = Path(current).name == "__init__.py"
+        token = Path(current).parent.name if init else Path(current).stem
+        package = f"{Path(current).parent}/"
+        level = (
+            first
+            if current == path and first is not None
+            else (
+                name
+                for name, text in corpus.items()
+                if (token in text or (init and name.startswith(package)))
+                and _loads(name, text, current)
+            )
+        )
+        for name in level:
+            if name in seen:
                 continue
-            if pattern.search(text):
-                found[name] = depth + 1
-                frontier.append((name, depth + 1))
-                if len(found) > IMPORTER_CAP:
-                    return found
+            seen.add(name)
+            found.append(name)
+            queue.append(name)
+            count += bool(runnable(name))
+            if count > IMPORTER_CAP:
+                return found
     return found
 
 
-def _conftest_loaded(corpus: dict[str, str]) -> set[str]:
-    """Paths a conftest.py loads, transitively through its `Tests.*` imports.
+def _loads(name: str, text: str, target: str) -> bool:
+    imported = _imports(name, text)
+    return imported is None or target in imported
 
-    They run at the start of every suite below that conftest, as it does. The
-    set includes missing paths, so deleting one the conftest still loads counts.
-    Names after `import` that are not modules add paths no file has; harmless.
-    """
-    # ponytail: relative imports are not followed; no conftest-loaded module
-    # uses one (2026-11-26). Resolve `from .x import y` here if one ever does.
+
+def _conftest_loaded(corpus: dict[str, str]) -> set[str]:
+    """Paths a conftest.py loads, transitively: they run at the start of every
+    suite below that conftest, as it does. Missing paths count (see _imports)."""
     loaded: set[str] = set()
-    frontier = [name for name in corpus if Path(name).name == "conftest.py"]
-    while frontier:
-        for module, names, plain in TESTS_IMPORT.findall(corpus[frontier.pop()]):
-            for dotted in [
-                plain or module,
-                *(f"{module}.{n}" for n in re.findall(r"\w+", names)),
-            ]:
-                parts = dotted.split(".")
-                for end in range(1, len(parts) + 1):
-                    base = "/".join(parts[:end])
-                    for path in (f"{base}.py", f"{base}/__init__.py"):
-                        if path not in loaded:
-                            loaded.add(path)
-                            if path in corpus:
-                                frontier.append(path)
+    queue = [name for name in corpus if Path(name).name == "conftest.py"]
+    for name in queue:  # appended to while iterating
+        for path in _imports(name, corpus[name]) or ():
+            if path not in loaded:
+                loaded.add(path)
+                if path in corpus:
+                    queue.append(path)
     return loaded
 
 
@@ -264,6 +331,7 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
         return loaded
 
     steps, deselected, other = _lanes(root)
+    step_set = set(steps)
     lane_dirs = {
         t
         for t in steps
@@ -272,7 +340,7 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
 
     def lane_nodes(path: str) -> set[str]:
         """The node ids the PR lanes run this file by; empty means run it whole."""
-        named = _names(path, set(steps))
+        named = _names(path, step_set)
         if path in named or any(
             path.startswith(d.rstrip("/") + "/") for d in lane_dirs
         ):
@@ -283,12 +351,13 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
         """Why the light job cannot run this test file as the PR lanes do, or None."""
         if _names(path, deselected):
             return f"Test file a PR lane runs with deselected nodes: {path}"
-        if not _names(path, set(steps)) and _names(path, other):
+        if not _names(path, step_set) and _names(path, other):
             return f"Test file only push or nightly jobs run: {path}"
         if len(set().union(*(steps[t] for t in lane_nodes(path)))) > 1:
             return f"Test file split across PR lane steps: {path}"
         return None
 
+    @functools.cache
     def runnable(path: str) -> bool:
         """A related file the light job can run; Tests/CI runs whole anyway."""
         return (
@@ -300,41 +369,54 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
 
     targets = set(BASE_TESTS)
     changed: list[str] = []  # the PR's own changed test files, kept first
-    related: list[str] = []  # sampled importers and data readers, in order
-    notes: list[str] = []
+    # Per changed module or data file: path, kind, sample, runnable found, skipped.
+    samples: list[tuple[str, str, list[str], int, int]] = []
     for status, path in changes:
         reason = _full_reason(status, path)
         if reason:
             return broad(reason)
-        if path.startswith("Tests/") and path.endswith(".py"):
-            if path in conftest_loaded():
-                return broad(f"Loaded by conftest.py: {path}")
-            # A test module or shared helper, changed or deleted: sample the files
-            # importing it. One the light job cannot run is skipped, not broad.
-            if (
-                _is_test_file(path)
-                and status != "D"
-                and not path.startswith("Tests/CI/")
-            ):
-                reason = lane_reason(path)
-                if reason:
-                    return broad(reason)
-                changed.append(path)
-            found = _importers(path, tests_corpus())
-            ordered = [f for _, f in sorted((d, f) for f, d in found.items())]
-            sample = [f for f in ordered if runnable(f)][:IMPORTER_CAP]
-            if len(sample) < len(found):
-                more = "+" if len(found) > IMPORTER_CAP else ""
-                notes.append(
-                    f"sampled {len(sample)} of {len(found)}{more} importers of {path}"
+        if path.startswith("Tests/"):
+            first = None
+            if path.endswith(".py"):
+                if path in conftest_loaded():
+                    return broad(f"Loaded by conftest.py: {path}")
+                if (
+                    _is_test_file(path)
+                    and status != "D"
+                    and not path.startswith("Tests/CI/")
+                ):
+                    reason = lane_reason(path)
+                    if reason:
+                        return broad(reason)
+                    changed.append(path)
+            else:
+                # Test data, changed or deleted: the files that name it read it, and
+                # a helper among them passes it on to the files importing it.
+                name = Path(path).name
+                first = [f for f, text in tests_corpus().items() if name in text]
+                loading = next(
+                    (
+                        f
+                        for f in first
+                        if f in conftest_loaded() or Path(f).name == "conftest.py"
+                    ),
+                    None,
                 )
-            related += sample
-        elif path.startswith("Tests/"):
-            # Test data, changed or deleted: the test files that name it read it.
-            name = Path(path).name
-            related += [
-                f for f, text in tests_corpus().items() if name in text and runnable(f)
-            ]
+                if loading:
+                    return broad(f"Read by {loading}, which conftest.py loads: {path}")
+            # Sample the files that depend on it. One the light job cannot run is
+            # skipped (and noted), but something must run.
+            found = _importers(path, tests_corpus(), runnable, first)
+            tests = [f for f in found if runnable(f)]
+            covered = any(_is_test_file(f) and f.startswith("Tests/CI/") for f in found)
+            if found and not tests and not covered:
+                return broad(f"No test file the light job can run depends on: {path}")
+            skipped = sum(
+                _is_test_file(f) and not f.startswith("Tests/CI/") and not runnable(f)
+                for f in found
+            )
+            kind = "importers" if first is None else "readers"
+            samples.append((path, kind, tests[:IMPORTER_CAP], len(tests), skipped))
         elif status == "D":
             continue
         elif path.startswith("tldw_chatbook/") and path.endswith(".py"):
@@ -347,10 +429,26 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
         if subsystem and Path(path).suffix in {".py", ".tcss"}:
             targets.update(SUBSYSTEM_TESTS[subsystem])
         # Docs, backlog, census files and other sources: preflight + smoke only.
-    own = list(dict.fromkeys(sorted(changed) + related))
-    if len(own) > LIGHT_FILE_CAP:
-        notes.append(f"sampled {LIGHT_FILE_CAP} of {len(own)} test files")
-        own = own[:LIGHT_FILE_CAP]
+    changed.sort()
+    own = changed[:LIGHT_FILE_CAP]
+    for rank in range(IMPORTER_CAP):  # the slots left, shared out in turn
+        for _, _, sample, _, _ in samples:
+            if rank < len(sample) and sample[rank] not in own:
+                if len(own) < LIGHT_FILE_CAP:
+                    own.append(sample[rank])
+    notes = []
+    for path, kind, sample, total, skipped in samples:
+        ran = sum(f in own for f in sample)
+        if ran < len(sample) or total > IMPORTER_CAP or skipped:
+            more = "+" if total > IMPORTER_CAP else ""
+            note = f"sampled {ran} of {total}{more} {kind} of {path}"
+            if skipped:
+                note += f", skipping {skipped} the light job cannot run"
+            notes.append(note)
+    cut = changed[LIGHT_FILE_CAP:]
+    if cut or any(f not in own for _, _, sample, _, _ in samples for f in sample):
+        unrun = f", not running the PR's own {', '.join(cut)}" if cut else ""
+        notes.insert(0, f"cut to {LIGHT_FILE_CAP} test files{unrun}")
     whole: set[str] = set()
     for path in own:
         nodes = lane_nodes(path)
@@ -365,7 +463,7 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
     for target in targets:
         if not (root / target.split("::", 1)[0]).is_file():
             raise ValueError(f"Selected test does not exist: {target}")
-    sampled = "".join(f"{note}; " for note in notes)
+    sampled = "".join(f"{note}; " for note in notes)  # what ran, skipped or was cut
     return {
         "full": False,
         "targets": sorted(targets),

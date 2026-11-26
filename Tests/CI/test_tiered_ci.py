@@ -201,13 +201,19 @@ def test_the_file_cap_keeps_the_prs_own_changed_files_first(tmp_path):
     root = _tree(tmp_path, files)
     plan = policy.select_changes([("M", f) for f in [*own, shared]], root)
     assert _sampled(plan) == {*own, shared, *users[:3]}
-    assert "sampled 20 of 25 test files" in plan["reason"]
+    assert (
+        "cut to 20 test files; sampled 3 of 8 importers of Tests/Zeta/test_shared.py"
+        in (plan["reason"])
+    )
     # The PR's own files alone over the cap: the first LIGHT_FILE_CAP by path.
     many = [f"Tests/UI/test_f{n:02d}.py" for n in range(policy.LIGHT_FILE_CAP + 1)]
     root = _tree(tmp_path, many)
     plan = policy.select_changes([("M", f) for f in reversed(many)], root)
     assert _sampled(plan) == set(many[:-1])
-    assert "sampled 20 of 21 test files" in plan["reason"]
+    assert (
+        "cut to 20 test files, not running the PR's own Tests/UI/test_f20.py"
+        in (plan["reason"])
+    )
 
 
 def test_an_importer_the_light_job_cannot_run_is_skipped_not_broad(tmp_path):
@@ -241,7 +247,10 @@ def test_an_importer_the_light_job_cannot_run_is_skipped_not_broad(tmp_path):
         "Tests/UI/test_ok.py",
         "Tests/UI/test_via_harness.py",
     }
-    assert "sampled 2 of 7 importers of Tests/UI/test_base.py" in plan["reason"]
+    assert (
+        "sampled 2 of 2 importers of Tests/UI/test_base.py,"
+        " skipping 4 the light job cannot run" in plan["reason"]
+    )
     # The same files changed by the PR itself still go broad.
     for path in skipped[1:]:
         assert policy.select_changes([("M", path)], root)["full"], path
@@ -825,6 +834,202 @@ def test_importers_are_found_through_parentheses_and_transitively(tmp_path):
         "Tests/Chat/test_rig.py",
         "Tests/Chat/test_caller.py",
     } <= set(plan["targets"])
+
+
+def test_importers_are_resolved_by_module_path_not_by_name(tmp_path):
+    """Review I1: a same-named module elsewhere, and prose, are not importers."""
+    target = "Tests/UI/test_dup.py"
+    files = {target: "", "Tests/Chat/test_dup.py": ""}
+    # The Chat module's importers sort first and name the same stem.
+    for n in range(policy.IMPORTER_CAP + 1):
+        files[f"Tests/Chat/test_c{n}.py"] = "from Tests.Chat.test_dup import X\n"
+    importers = {
+        "Tests/UI/test_abs.py": "import Tests.UI.test_dup\n",
+        "Tests/UI/test_from_pkg.py": "from Tests.UI import (\n    other,\n    test_dup,\n)\n",
+        "Tests/UI/test_from_mod.py": "def f():\n    from Tests.UI.test_dup import Y\n",
+        "Tests/UI/test_rel.py": "from .test_dup import Z\n",
+        "Tests/UI/test_rel_pkg.py": "from . import test_dup\n",
+        "Tests/UI/test_bare.py": "from test_dup import W\n",  # beside it
+        "Tests/UI/test_broken.py": "def (:\n    test_dup\n",  # does not parse: counts
+    }
+    files.update(importers)
+    files["Tests/UI/test_prose.py"] = '"""Mirrors test_dup."""\nimport test_dup_extra\n'
+    files["Tests/Other/test_bare.py"] = "from test_dup import W\n"  # not beside it
+    root = _tree(tmp_path, files)
+    plan = policy.select_changes([("M", target)], root)
+    assert _sampled(plan, target) == set(importers)
+    assert plan["reason"] == (
+        "Sanity checks; nightly and release runs are the broad gates"
+    )
+
+
+def test_a_child_script_embedded_as_a_string_imports_too(tmp_path):
+    """Round 2: tests that run a child script load what the script imports."""
+    rig = "Tests/fixture_runner.py"
+    importers = {
+        "Tests/UI/test_child.py": (
+            "SCRIPT = '''\nimport sys\nfrom Tests.fixture_runner import owner\n'''\n"
+        ),
+        # A template with placeholders does not parse whole: its import lines count.
+        "Tests/UI/test_template.py": (
+            'CHILD = """\nsys.path.insert(0, {repo!r})\n'
+            'from Tests.fixture_runner import owner\n"""\n'
+        ),
+        "Tests/UI/test_fragments.py": (
+            'CODE = "import os; " "from Tests.fixture_runner import owner; owner()"\n'
+        ),
+    }
+    files = {rig: "", **importers}
+    files["Tests/UI/test_prose.py"] = (
+        '"""From the fixture_runner docs: import none."""\n'
+    )
+    root = _tree(tmp_path, files)
+    assert _sampled(policy.select_changes([("M", rig)], root)) == set(importers)
+
+
+def test_an_unrunnable_or_helper_importer_takes_no_sample_slot(tmp_path):
+    """Review I2/M3(b): the search counts runnable test files only."""
+    base = "Tests/Chat/test_base.py"
+    imports = "from Tests.Chat.test_base import X\n"
+    users = [f"Tests/Chat/test_u{n}.py" for n in range(policy.IMPORTER_CAP + 1)]
+    root = _tree(
+        tmp_path,
+        {
+            base: "",
+            "Tests/Chat/test_deselected.py": imports,
+            **dict.fromkeys(users, imports),
+        },
+    )
+    _lane_workflow(
+        root,
+        {
+            "pr-fast-lane": [
+                "pytest Tests/Chat/test_deselected.py "
+                '"--deselect=Tests/Chat/test_deselected.py::test_known_red"'
+            ]
+        },
+    )
+    plan = policy.select_changes([("M", base)], root)
+    assert _sampled(plan, base) == set(users[: policy.IMPORTER_CAP])
+    assert (
+        f"sampled 8 of 9+ importers of {base}, skipping 1 the light job cannot run"
+        in plan["reason"]
+    )
+    # Nine helpers that sort first: their importers fill the sample instead.
+    rig = "Tests/Core/base_rig.py"
+    files = {rig: ""}
+    for n in range(policy.IMPORTER_CAP + 1):
+        files[f"Tests/Core/a_rig_{n}.py"] = "from Tests.Core.base_rig import X\n"
+        files[f"Tests/Core/test_user_{n}.py"] = f"from Tests.Core.a_rig_{n} import X\n"
+    root = _tree(tmp_path / "helpers", files)
+    plan = policy.select_changes([("M", rig)], root)
+    assert len(_sampled(plan)) == policy.IMPORTER_CAP
+
+
+def test_a_tests_ci_importer_runs_anyway_and_is_not_counted(tmp_path):
+    """Review M3(c): Tests/CI runs whole, so it takes no slot from the sample."""
+    base = "Tests/UI/test_base.py"
+    imports = "from Tests.UI.test_base import X\n"
+    users = [f"Tests/UI/test_u{n}.py" for n in range(policy.IMPORTER_CAP)]
+    only_ci = "Tests/UI/test_only_ci.py"
+    files = {base: "", only_ci: "", "Tests/CI/test_ci_user.py": imports}
+    files.update(dict.fromkeys(users, imports))
+    files["Tests/CI/test_ci_only_user.py"] = "from Tests.UI.test_only_ci import X\n"
+    root = _tree(tmp_path, files)
+    plan = policy.select_changes([("M", base)], root)
+    assert _sampled(plan, base) == set(users)
+    assert (
+        plan["reason"] == "Sanity checks; nightly and release runs are the broad gates"
+    )
+    assert not policy.select_changes([("M", only_ci)], root)["full"]
+
+
+def test_the_search_is_breadth_first(tmp_path):
+    """Review M3(d): the first helper's importers come before the second's."""
+    rig = "Tests/Core/base_rig.py"
+    imports = "from Tests.Core.base_rig import X\n"
+    direct = [f"Tests/Core/test_d{n}.py" for n in range(4)]
+    files = {rig: "", "Tests/Core/a_rig.py": imports, "Tests/Core/b_rig.py": imports}
+    files.update(dict.fromkeys(direct, imports))
+    for helper in ("a", "b"):
+        for n in range(policy.IMPORTER_CAP):
+            files[f"Tests/Core/test_v{helper}{n}.py"] = (
+                f"from Tests.Core.{helper}_rig import X\n"
+            )
+    root = _tree(tmp_path, files)
+    plan = policy.select_changes([("M", rig)], root)
+    assert _sampled(plan) == {*direct, *(f"Tests/Core/test_va{n}.py" for n in range(4))}
+
+
+def test_a_data_file_samples_its_readers_and_a_reading_helpers_importers(tmp_path):
+    """Review I2/M3(a): heavy readers are skipped and noted; something must run."""
+    data = "Tests/UI/golden.json"
+    reads = 'DATA = "golden.json"\n'
+    files = {
+        data: "{}",
+        "Tests/UI/loader.py": reads,
+        "Tests/UI/test_library_shell.py": reads,
+        "Tests/UI/test_reader.py": reads,
+        "Tests/Chat/test_uses_loader.py": "from Tests.UI.loader import DATA\n",
+        "Tests/UI/heavy_only.tsv": "",
+        "Tests/UI/orphan.tsv": "",
+        "Tests/UI/orphan_rig.py": 'DATA = "orphan.tsv"\n',
+    }
+    files["Tests/UI/test_library_shell.py"] += 'MORE = "heavy_only.tsv"\n'
+    root = _tree(tmp_path, files)
+    plan = policy.select_changes([("M", data)], root)
+    assert _sampled(plan) == {
+        "Tests/UI/test_reader.py",
+        "Tests/Chat/test_uses_loader.py",
+    }
+    assert (
+        f"sampled 2 of 2 readers of {data}, skipping 1 the light job cannot run"
+        in plan["reason"]
+    )
+    for path in ("Tests/UI/heavy_only.tsv", "Tests/UI/orphan.tsv"):
+        plan = policy.select_changes([("M", path)], root)
+        assert plan["full"] and plan["reason"] == (
+            f"No test file the light job can run depends on: {path}"
+        )
+
+
+def test_the_cap_is_shared_in_turn_and_the_notes_follow_the_cut(tmp_path):
+    """Review M1: per-module notes after the 20-file cut; readers capped per file."""
+    files = {}
+    for m in "abc":
+        files[f"Tests/M{m}/test_shared.py"] = ""
+        for n in range(policy.IMPORTER_CAP + 1):
+            files[f"Tests/M{m}/test_user_{n}.py"] = (
+                f"from Tests.M{m}.test_shared import X\n"
+            )
+    root = _tree(tmp_path, files)
+    changes = [("M", f"Tests/M{m}/test_shared.py") for m in "abc"]
+    plan = policy.select_changes(changes, root)
+    assert plan["reason"] == (
+        "Sanity checks; cut to 20 test files;"
+        " sampled 6 of 9+ importers of Tests/Ma/test_shared.py;"
+        " sampled 6 of 9+ importers of Tests/Mb/test_shared.py;"
+        " sampled 5 of 9+ importers of Tests/Mc/test_shared.py;"
+        " nightly and release runs are the broad gates"
+    )
+    readers = {
+        f"Tests/A/test_reader_{n:02d}.py": 'P = "common.json"\n' for n in range(25)
+    }
+    users = {
+        f"Tests/Z/test_user_{n}.py": "from Tests.Z.test_shared import X\n"
+        for n in range(3)
+    }
+    root = _tree(
+        tmp_path / "data",
+        {"Tests/A/common.json": "{}", "Tests/Z/test_shared.py": "", **readers, **users},
+    )
+    plan = policy.select_changes(
+        [("M", "Tests/A/common.json"), ("M", "Tests/Z/test_shared.py")], root
+    )
+    assert _sampled(plan, "Tests/Z/test_shared.py") == {
+        *sorted(readers)[: policy.IMPORTER_CAP],
+        *users,
+    }
 
 
 def _lane_workflow(root, lanes, other=""):

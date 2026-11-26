@@ -1,6 +1,6 @@
 # ADR-366: Tiered development and release CI
 
-Status: Accepted; activated by the owner on 2026-11-23 (`CI_TIERED_ENABLED=true`), selection amended by TASK-42521
+Status: Accepted; activated by the owner on 2026-11-23 (`CI_TIERED_ENABLED=true`), selection amended by TASK-42521 and TASK-42626
 Date: 2026-11-13
 Task: TASK-41564
 Amends: ADR-103
@@ -74,12 +74,31 @@ Sensitive path names (security, storage, recovery, instructions and the rest) no
 
 **Why.** Under the amendment above, a dev PR still ran the full CI (about 63 jobs, 42 of them UI shards) when it touched a widely imported test file. PR #3769's preflight gave `Shared test module (9+ importers): Tests/Chat/test_console_dispatch_recovery.py`. Its full run took 3 h 26 min, because jobs waited up to about 2 h 50 min for runners on the account pool shared with tldw_server. The one-at-a-time merge queue (`scripts/merge_queue.py`) held every armed PR behind it for 4.5 h. A light-tier PR (#3518) went from rebase to merge in 21 minutes. #3769 itself would still run broad under this amendment, because it also changes schema inputs (`tldw_chatbook/DB/assistant_generation_state.py`).
 
-**Decision.** Three cases that used to take the full run now run the light tier with a capped sample of the affected test files:
-- a changed or deleted `test_*.py` module imported, directly or transitively, by more than 8 test files;
-- a changed or deleted non-`test_*.py` Python file under `Tests/`, such as a shared rig or helper (its importers are sampled the same way);
-- more than 20 of the PR's own selected test files.
+**Decision.** This replaces three bullets in the broad list of the 2026-11-23 amendment above:
+- "any non-`test_*.py` Python file under `Tests/`, such as the profile harness or shared rigs";
+- "a test module imported, directly or transitively, by more than 8 other test files, or a deleted one that any test imports";
+- "more than 20 test files of the PR's own (changed, importing or data-reading) ...".
 
-The sample is deterministic: the same diff and tree give the same targets on every machine. The Tests tree is read in sorted order. Each changed module contributes at most 8 importers, direct importers before transitive ones, then by path. The PR's selection holds at most 20 files: its own changed test files first, by path, then the sampled importers and data readers. An importer or data reader the light job cannot run is skipped, not a reason for the full run. That covers a helper, a file no PR lane runs whole, one a lane runs with deselected nodes, one split across lane steps, and one only push or nightly jobs run. The plan's reason says what it sampled, for example `sampled 8 of 9+ importers of <path>`. The importer count is a lower bound, because the search stops once it finds more than 8.
+Those cases now run the light tier with a capped sample of the files that depend on the change:
+- a changed or deleted test module or helper under `Tests/` runs up to 8 runnable test files that import it, directly or through other modules;
+- a changed or deleted data file under `Tests/` runs up to 8 runnable test files that read it, or that import a helper that reads it;
+- the whole selection holds at most 20 test files.
+
+What counts as an importer:
+- Imports are resolved by module path with `ast`, as pytest's prepend import mode loads them: `import Tests.a.mod`, `from Tests.a import mod`, `from Tests.a.mod import X`, relative imports, and bare imports of a module in the importer's own directory. Imports inside functions count, and so do the imports of a child script that a test embeds as a string. When such a script is a template that does not parse as a whole, its import lines are parsed one by one.
+- A file that imports anything in a package, or lives in it, loads the package's `__init__.py`.
+- A file that does not parse counts as an importer, which errs toward more tests.
+- A data file's readers are the files that name it.
+
+How the sample is drawn:
+- The search runs breadth first over the Tests tree in sorted path order, so direct importers come first and the same diff and tree give the same targets on every machine.
+- It passes through helpers and unrunnable test files without counting them, and stops at the ninth test file the light job can run.
+- Only those count toward the 8. Helpers do not count, and neither does `Tests/CI`, which runs whole anyway. Nor do files the light job cannot run: a file no PR lane runs whole, one a lane runs with deselected nodes, one split across lane steps, or one only push or nightly jobs run.
+- The PR's own changed test files take the first of the 20 slots, by path. The samples share the rest in turn: the first file of each, then the second, so no single module takes them all.
+
+Something related must run. A change whose dependents include none the light job can run (and none in `Tests/CI`) goes broad: `No test file the light job can run depends on: <path>`.
+
+The plan's reason says, for each module or data file that was capped, cut or skipped, how many test files ran of how many were found, for example `sampled 6 of 9+ importers of <path>`. The `+` means the search stopped at the cap. It also says how many dependents the light job could not run, and whether the 20-file cut applied (`cut to 20 test files`), naming any of the PR's own test files the cut left out.
 
 These stay broad, unchanged:
 - `.github/`, `scripts/ci/`, `packages/` and the build files;
@@ -89,7 +108,7 @@ These stay broad, unchanged:
 - the PR's own changed test files that no lane runs whole, or that a lane deselects nodes from, splits across steps or runs only on push or nightly;
 - removed application files, structural statuses, an empty change range and `ci:full`.
 
-Anything a `conftest.py` loads also stays broad (`Loaded by conftest.py: <path>`). It runs at the start of every suite below that conftest, exactly as an edit to the conftest would. The set is derived, not listed by hand: the `Tests.*` imports of every `Tests/**/conftest.py`, followed transitively through the modules they reach. Module-level imports and imports indented inside functions both count. It includes the profile isolation harness (`Tests/private_profile.py`, `Tests/real_profile_guard.py`), `Tests/network_guard.py`, the shared doubles and Textual harness, and `Tests/Chat/test_console_skill_substitution.py`, a test module a conftest imports. Deleting a path a conftest still loads goes broad too.
+Anything a `conftest.py` loads also stays broad (`Loaded by conftest.py: <path>`). It runs at the start of every suite below that conftest, exactly as an edit to the conftest would. The set is derived, not listed by hand: the imports of every `Tests/**/conftest.py`, resolved as above and followed transitively. It includes the profile isolation harness (`Tests/private_profile.py`, `Tests/real_profile_guard.py`), `Tests/network_guard.py`, the shared doubles and Textual harness, the `__init__.py` of every package with a conftest, and `Tests/Chat/test_console_skill_substitution.py`, a test module a conftest imports. Deleting a path a conftest still loads goes broad too, and so does a data file that a conftest or a file it loads reads.
 
 Schema code is narrowed: `user_version` counts only in the `PRAGMA user_version` form, as every real use in `tldw_chatbook/` writes it. A Python name `user_version` no longer sends a module broad. The old pattern did that to `tldw_chatbook/Chat/console_dispatch_repository.py` in #3769, which has no DDL.
 

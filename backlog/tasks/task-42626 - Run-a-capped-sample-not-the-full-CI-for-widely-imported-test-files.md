@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-26 15:30'
-updated_date: '2026-11-26 18:30'
+updated_date: '2026-11-26 21:30'
 labels:
   - ci
 dependencies:
@@ -34,6 +34,9 @@ These cases should run the light tier with a capped, deterministic sample of the
 - [x] #8 A changed or deleted path that any `conftest.py` loads, directly or through other `Tests` modules and including imports inside functions, takes the full run; no hand-kept list decides it
 - [x] #9 Application code versions its schema only through `PRAGMA user_version`; a Python name `user_version` no longer sends a module broad
 - [x] #10 `scripts/ci/README.md` describes the policy as it now runs
+- [x] #11 Importers are resolved by module path, so a same-named module in another package or a mention in prose is not an importer
+- [x] #12 Only test files the light job can run count toward a sample, and a change whose dependents the light job cannot run at all takes the full run
+- [x] #13 The 20 slots go to the PR's own changed test files first, then to each sample in turn, and the reason names what was sampled, skipped or cut, including the PR's own files it left out
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -46,53 +49,80 @@ These cases should run the light tier with a capped, deterministic sample of the
 5. Append the ADR-366 amendment and update `scripts/ci/README.md`.
 6. Replay #3769 and recent dev merges offline.
 7. Fix round 1 (coordinator review): derive the conftest-loaded set instead of the profile-harness list; narrow `user_version` to the PRAGMA form; bring the README up to date; re-run the replays and verification.
+8. Fix round 2 (independent review I1, I2, M1-M4, N1-N3): resolve imports with `ast` for both the importer search and the conftest set; count only runnable files and go broad when none can run; share the cap in turn and write the notes after the cut; kill the reviewer's mutations; measure the light runner.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-**What changed:**
-- **`scripts/ci/tier_policy.py`:**
-  - The Tests corpus is read in sorted order.
-  - `_importers` searches breadth first and returns each file's depth, still stopping past `IMPORTER_CAP`.
-  - A changed or deleted `.py` under `Tests/` samples its importers. The sample takes at most `IMPORTER_CAP` (8) runnable files, by (depth, path).
-  - The total keeps the PR's own changed test files first, by path, then the samples in change order. It is cut at `LIGHT_FILE_CAP` (20).
-  - Importers and data readers that `_full_reason` or the lane checks flag (helpers, HEAVY, deselected, split, push-only) are skipped. The PR's own changed files of those kinds still go broad.
-  - The lane checks moved into the `lane_nodes`/`lane_reason` closures, so both paths use them.
-  - The reason lists each sample, for example `sampled 8 of 9+ importers of <path>`.
-  - **Fix round 1:** the old "Shared test infrastructure" rule is replaced by `_conftest_loaded`, which needs no hand-kept list.
-    - It follows the `Tests.*` imports of every `Tests/**/conftest.py` transitively (`TESTS_IMPORT`: `from Tests.x import a, (b)` and `import Tests.x`, at any indent, so imports inside functions count).
-    - It resolves each prefix to `<path>.py` or `<path>/__init__.py`, and keeps missing paths so a deletion counts.
-    - On this tree it holds 24 files: the profile harness, `network_guard.py`, the Textual harness and doubles, `Backup_Recovery/config_test_support.py`, `Tests/Chat/test_console_skill_substitution.py`, `Tests/Skills/test_canvas_skill.py` (which that module imports), and the package `__init__.py` files.
-    - A changed or deleted member goes broad with `Loaded by conftest.py: <path>`.
-    - `PROFILE_HARNESS` is gone; the closure holds both of its files.
-  - **Fix round 1:** `SCHEMA_TEXT` matches `PRAGMA user_version`, not any `user_version`. All 54 occurrences in `tldw_chatbook/` (reads, writes and docstrings) are written `PRAGMA user_version`, uppercase with one space. On dev the narrowing drops exactly one file, `tldw_chatbook/Chat/console_dispatch_repository.py`, which has no DDL.
-- **`Tests/CI/test_tiered_ci.py`:** four tests that pinned the broad behaviour are replaced, and `hooks_v2_owned_rig.py` leaves the broad list. New tests cover:
-  - the cap with direct before transitive importers, and a deleted module;
-  - determinism over six shuffled `rglob` orders;
-  - own changed files first under the total cap;
-  - unrunnable importers skipped (the same files changed by the PR still go broad);
-  - a helper sampling its importers;
-  - seven synthetic paths a conftest loads, each changed and deleted: `from Tests import a as b, c`, a parenthesized list, a helper reached only through two others, an import indented in a hook, a nested conftest's helper, and a test module a conftest imports. A helper named like a non-`Tests` conftest import stays light;
-  - the real conftests' set: `network_guard.py` broad end to end, and the profile harness, Textual harness, doubles and config support in the set;
-  - a `user_version` parameter staying light while `PRAGMA user_version = 3` goes broad;
-  - `conftest.py` still broad.
-- **ADR-366:** a new amendment section (the conftest-loaded rule and the PRAGMA narrowing included).
-- **`scripts/ci/README.md`:** the header says the policy is active, the event table and the selection section match the current rule, and the rollout section is marked as the activation record.
+**What changed (`scripts/ci/tier_policy.py`):**
+- **Sampling.**
+  - A changed or deleted test module or helper under `Tests/` samples the runnable test files that import it. A data file under `Tests/` samples the runnable files that read it, or that import a helper that reads it.
+  - Each sample holds at most `IMPORTER_CAP` (8). The selection holds at most `LIGHT_FILE_CAP` (20): the PR's own changed test files first, by path, then each sample in turn, one file per round.
+  - Unrunnable dependents are skipped and noted: helpers, HEAVY, deselected, split and push-only files. `Tests/CI` runs whole, so it is not counted.
+  - The PR's own changed files of those unrunnable kinds still go broad.
+- **Import resolution (fix round 2, review I1).**
+  - `_imports(name, text)` resolves a file's imports with `ast`, as pytest's prepend import mode loads them: `import Tests.a.mod`, `from Tests.a import mod`, `from Tests.a.mod import X`, relative imports, and bare imports of a module in the importer's own directory. Nested imports count. So do the imports of a child script a test embeds as a string: a template that does not parse whole has its `import`/`from` lines parsed one by one. Results are cached by (name, text).
+  - Every package `__init__.py` on the way counts, including the importer's own packages. Paths no file has are kept, so a deletion counts.
+  - A file that does not parse counts as an importer.
+  - `_importers` uses `stem in text` only as a prefilter; for `__init__.py` the prefilter is the package name, or a file inside the package.
+  - The old name-only `_import_pattern` is gone.
+- **The search (review I2, M3).** `_importers` runs breadth first in sorted corpus order. It follows helpers and unrunnable files without counting them, and stops at the ninth runnable test file. The depth sort is gone, because BFS order already puts direct importers first.
+- **Something must run (review I2).** A change with dependents but none the light job can run (and none in `Tests/CI`) goes broad: `No test file the light job can run depends on: <path>`.
+- **The conftest-loaded set (fix rounds 1 and 2).** `_conftest_loaded` follows every `Tests/**/conftest.py`'s imports transitively through the same resolver. A changed or deleted member goes broad with `Loaded by conftest.py: <path>`, and so does a data file a member reads. `PROFILE_HARNESS` is gone.
+- **Schema code (fix round 1).** `SCHEMA_TEXT` matches `PRAGMA user_version`, not any `user_version`. All 54 occurrences in `tldw_chatbook/` (reads, writes and docstrings) are written that way. On dev the narrowing drops exactly one file, `Chat/console_dispatch_repository.py`, which has no DDL.
+- **The reason (review M1, M2, N3).** Notes are written after the 20-file cut. Each capped, cut or skipped module or data file gets `sampled <ran> of <found>[+] importers|readers of <path>[, skipping N the light job cannot run]`. A cut adds `cut to 20 test files[, not running the PR's own <files>]`.
+
+**Other files:**
+- **`Tests/CI/test_tiered_ci.py`:**
+  - Earlier rounds: the cap and determinism, own files first, unrunnable importers skipped, a helper sampling its importers, the conftest-loaded set (synthetic and real), the PRAGMA narrowing, and `conftest.py` still broad.
+  - Round 2: two same-named modules plus prose and every import form; child scripts embedded as strings (plain, a template, `;`-joined fragments); unrunnable and helper importers taking no slot; a `Tests/CI` importer not counted; breadth first; a data file read by a helper, a heavy file and a normal file, plus heavy-only and helper-only data going broad; the cap shared in turn with notes after the cut; readers capped per file.
+- **ADR-366:**
+  - The Status line says "amended by TASK-42521 and TASK-42626".
+  - The amendment names the three 2026-11-23 bullets it replaces and says what is counted.
+  - It covers the conftest-loaded rule, the PRAGMA narrowing, the something-must-run rule and the reason format.
+- **`scripts/ci/README.md`:** active-policy header, event table, the selection section as the code runs it, and a note on the rollout section.
 
 **Evidence (2026-11-26, branch `ci/42626-tier-sample` from dev 52351c4e0b):**
-- All seven first-round test cases fail on dev's `tier_policy.py`. The determinism test also fails when only the corpus `sorted(` is removed. All nine fix-round cases fail on the first round's policy (f8b476384b).
-- `Tests/CI/test_tiered_ci.py`: 104 passed. `Tests/CI -n 4`: 2021 passed, 2 skipped.
-- `./scripts/preflight.sh` under a scratch HOME with `PYTHON=.venv/bin/python` (3.12.11): all derived-artifact checks passed. Left to pick its own interpreter, it chose python3.14. The Mermaid check then refused it with "use the pinned Python build version", because it pins 3.12.11.
-- These all pass:
-  - `ruff check tldw_chatbook --select F` (the CI gate);
-  - `ruff check scripts/ci Tests/CI/test_tiered_ci.py --select F`;
-  - `Tests/lint/ruff_gate.py`.
-- **PR #3769** (base 434eb71f95, head 7a453d4d36, root = a detached worktree of the head) still runs **broad** under the final policy: `Schema input: tldw_chatbook/DB/assistant_generation_state.py`. The `console_dispatch_repository.py` false positive is gone. With the `DB/` file dropped, it runs light with 26 targets: `sampled 8 of 9+ importers` of each of its three changed test modules, plus the Chat smoke nodes. Dev's policy sends that subset broad.
-- Over the last 60 first-parent dev merges (through 5dcba48401), replayed against one tree (the #3769 head, so approximate), 26 run light under dev's policy and 35 under the final one. The remaining 25 broad runs: 21 change CI, build or test configuration, 2 their own HEAVY files, 1 its own file split across lane steps, and 1 its own deselected file. None hits the conftest-loaded rule. 59 of these merges overlap the first round's window, and none of them changed class between the first round's policy and the final one.
+- **Fail on old:**
+  - The 7 first-round test cases fail on dev's `tier_policy.py`.
+  - The 9 fix-round-1 cases fail on f8b476384b.
+  - The 7 new round-2 tests, and the 2 whose reason wording changed, fail on 5c83750feb.
+  - The child-script test also fails on the round-2 resolver before string scanning.
+  - The determinism test also fails when only the corpus `sorted(` is removed.
+- **Mutations (all 9 killed on the final policy):** a (no runnable filter), b (cap before the runnable filter), b2 (count every file), c (no `Tests/CI` exclusion), d (DFS), f (name-only matching), g (light with nothing runnable), h (notes counting the sample rather than what ran), and i (no child-script imports). For e, the depth sort was deleted.
+- **Precision and recall,** checked on the final resolver against the reviewer's ground-truth regex (extended with the `from Tests.pkg import mod` form), over all 6,135 Tests files:
+  - No file fails to parse.
+  - **Recall:** 0 import lines the regex confirms are missed. An earlier cut missed child scripts, for example the UI tests that import `Tests/windows_private_fixture_runner.py` inside a script string. That led to the string scanning.
+  - **Precision:** 15 of the 7,863 resolver edges are not confirmed by the line-anchored regex. Spot checks show they are real child-script imports the regex cannot see (quoted `"from Tests.x import y\n"` fragments, `;`-joined statements).
+- **The reviewer's probes P1-P11 now give these results:**
+  - broad for a helper only a conftest imports, for a conftest-imported test module, and for heavy-only data;
+  - 8 runnable importers when 9 helpers sort first;
+  - 6, 6 and 5 for three shared modules, with notes after the cut;
+  - readers capped at 8;
+  - the dropped own files named.
+- **Real-tree probes:**
+  - `Tests/UI/test_console_dispatch_recovery.py` runs its 2 real UI importers.
+  - `Tests/UI/response_rules_fixtures.py` runs its 3 real importers' lane nodes.
+  - `thread_diagnostics.py` reports `sampled 8 of 9+ ..., skipping 1`.
+  - `required_doubles.py` and `Tests/Agents/__init__.py` are conftest-loaded, so broad.
+- **All 235 helpers:** 203 run light and 32 are broad, all as conftest-loaded. None goes broad for having no runnable dependents.
+- **Verification:**
+  - `Tests/CI/test_tiered_ci.py`: 111 passed.
+  - `Tests/CI -n 4`: 2028 passed, 2 skipped.
+  - `./scripts/preflight.sh` under a scratch HOME with `PYTHON=.venv/bin/python` (3.12.11): all derived-artifact checks passed.
+  - These all pass: `ruff check tldw_chatbook --select F`; `ruff check scripts/ci Tests/CI/test_tiered_ci.py --select F`; `ruff format --check` on both files; `Tests/lint/ruff_gate.py`.
+- **PR #3769** (base 434eb71f95, head 7a453d4d36, root = a detached worktree of the head) still runs **broad** under the final policy, for one reason only: `Schema input: tldw_chatbook/DB/assistant_generation_state.py`. With that `DB/` file dropped, it runs light: 26 targets, 24 files. The reason is `cut to 20 test files; sampled 8 of 9+ importers of Tests/Chat/test_console_dispatch_recovery.py; sampled 7 of 9+ importers of Tests/UI/test_console_prompt_queue.py`. The UI `test_console_dispatch_recovery.py` now runs its two real importers rather than eight same-named Chat ones. Dev's policy sends that subset broad.
+- **Last 60 first-parent dev merges** (through 5dcba48401), replayed against one tree (the #3769 head, so approximate): 26 run light under dev's policy and 35 under the final one. The remaining 25 broad runs: 21 change CI, build or test configuration, 2 their own HEAVY files, 1 its own file split across lane steps, and 1 its own deselected file. None changed class between round 1 and round 2.
+- **Light runner timing.** `scripts/ci/run_light.py` ran as the dev-light job runs it: `CI_TEST_TARGETS=<json> python scripts/ci/run_light.py`, Python 3.12.11, a scratch HOME/XDG/TMPDIR, on this 18-core Mac. The selection was merge 1b9e3f8a55's real capped plan: 63 targets, the 20-file cap plus 2 subsystem smoke files and the smoke set, 26 pytest processes with `Tests/CI`.
+  - It took **37 min 19 s wall**, over the job's 30-minute cap.
+  - `Tests/CI` alone took 10 min 21 s, run serially in one process. The 25 selection processes took 25 min 4 s.
+  - My mutation, recall and probe runs overlapped part of it, so this is an upper bound, but the margin is not there.
+  - Four files failed in that run: `test_console_rewind_restore.py` (41 `RecoveryRequired: raw_source_selection_changed`), `test_console_custom_capture_worker_feedback.py` (3 event-wait timeouts), and 2 each in `test_console_workflow_controls.py` and `test_console_workflow_navigation.py`. Each file fails again when run alone through the isolated pytest wrapper with a fresh profile (42, 3, 2 and 1 failures). So they fail on this macOS checkout of dev's code; this branch changes only the CI policy, its tests and docs.
 
 **Trade-offs:**
-- The importer count in the reason is a lower bound, because `_importers` still stops past the cap.
-- A sample drawn from those first 9 can be smaller than 8 when some are helpers.
-- `_conftest_loaded` does not follow relative imports. No conftest-loaded module uses one today; a `ponytail:` comment marks the spot.
+- The `+` in `of 9+` means the search stopped at the cap; the true count is unknown.
+- A file inside a package counts as loading its `__init__.py`, as pytest imports it, so an `__init__.py` change samples the package's own tests.
+- Bare imports resolve only to a module beside the importer, as the review asked. A rootless directory that relies on another `sys.path` entry is not followed.
+- A full 20-file selection measured 37 min locally against the job's 30-minute cap, and `Tests/CI` alone took 10 min serially. The cap (or how `Tests/CI` runs in the light job) needs revisiting. This task does not change it.
 <!-- SECTION:NOTES:END -->
