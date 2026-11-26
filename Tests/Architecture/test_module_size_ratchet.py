@@ -1137,7 +1137,10 @@ _BUDGETS: dict[str, int] = {
     # +60, exact: 10,170.
     # 2026-11-24, TASK-42472 AC#9 (round-24 stack): `captured_run_budget` is
     # deleted, 10,170 -> 10,142, exact measurement.
-    "tldw_chatbook/Chat/console_agent_bridge.py": 10142,
+    # 2026-11-25, TASK-42525 (round 26): `captured_fallback_providers` is
+    # deleted (-25) and the streaming adapter keeps the run's configured
+    # fallback list (+3), 10,142 -> 10,120, exact measurement.
+    "tldw_chatbook/Chat/console_agent_bridge.py": 10120,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # TASK-36944.2, 2026-11-03: +6 for the public `setting` Console reads.
@@ -1417,7 +1420,28 @@ _BUDGETS: dict[str, int] = {
     # repeats (literal envelope modulo the verified stream flip).
     # 2026-11-24, TASK-42534 re-review: 6829 -> 6826 (-3), exact measurement;
     # the header-part comparison moved into one pairwise helper.
-    "tldw_chatbook/Chat/console_trace_service.py": 6826,
+    # 2026-11-25, TASK-42525 (owner decision 2026-11-24, a fallback chain's
+    # first call may rewrite the run's tail; same rule): 6826 -> 6926 (+100),
+    # exact measurement. The rewrite's planning and recheck live in
+    # console_trace_fallback_rewrite.py; here, its threading through the
+    # delta, the binding recheck, the removal marker and its projection.
+    # 2026-11-25, TASK-42525 review finding I2 (same rule): 6926 -> 6938
+    # (+12), exact measurement. A completed-turn range starts over the run's
+    # dead rows (helper in console_trace_fallback_rewrite.py).
+    # 2026-11-25, TASK-42525 (owner decision 2026-11-25, a new turn's first
+    # call may put the system slot back; same rule): 6938 -> 7004 (+66),
+    # exact measurement. Planning and the binding write live in
+    # console_trace_slot_restore.py; here, the planner's slot-first
+    # projection, the slot-first write and roots, and the projection rule
+    # that puts a rendered-system node first.
+    # 2026-11-25, TASK-42525 round-4 re-review (findings 1 and 2; same
+    # rule): 7004 -> 7042 (+38), exact measurement. A rewritten tail's links
+    # skip a restored slot (planner, binding check, roots by stored ranges),
+    # and slots move first after the replacements.
+    # 2026-11-25, TASK-42525 round 5 (same rule): 7042 -> 7037 (-5), exact
+    # measurement; the single-range shim in _without_ranges is gone (the one
+    # test that built a bare range now passes stored ranges).
+    "tldw_chatbook/Chat/console_trace_service.py": 7037,
     # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
     # approved child trace segments (ADR-337 amendment 2026-11-17): create and

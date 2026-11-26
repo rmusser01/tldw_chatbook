@@ -175,6 +175,25 @@ def chat_call_impl(
             route_actor_id, route_chain_id = recovered
         self._thread_loop.route_actor_id = route_actor_id
         self._thread_loop.route_chain_id = route_chain_id
+    if self._trace_request_factory is not None and not is_subagent:
+        # TASK-42525: a captured run's provider fallback names another target.
+        # It starts a new chain of this run, and only for a later unused
+        # entry of the run's configured fallback list, in list order.
+        target = (requested_endpoint, str(model or ""))
+        if target != getattr(self._thread_loop, "route_target", target):
+            configured = [name.strip().lower() for name in self._fallback_providers]
+            position = getattr(self._thread_loop, "fallback_position", 0)
+            try:
+                self._thread_loop.fallback_position = (
+                    configured.index(requested_endpoint.lower(), position) + 1
+                )
+            except ValueError:
+                raise bridge.TraceProvenanceAlignmentError(
+                    "the run's configured fallback list does not name this target"
+                ) from None
+            route_chain_id = bridge.new_opaque_id()
+            self._thread_loop.route_chain_id = route_chain_id
+        self._thread_loop.route_target = target
     # Named definitions can override the model while staying on the
     # parent's provider endpoint. The adapter is shared by concurrent
     # parent/child turns, so keep that override immutable and call-local.

@@ -727,6 +727,151 @@ def answering_stream_fallback(
     return fallback
 
 
+#: More chains than a run could have: its own, plus one per configured fallback.
+_MAX_RUN_CHAINS = 64
+
+
+def fallback_parent(
+    repository: ConsoleTraceRepository,
+    cursor: sqlite3.Cursor,
+    before: TraceCallRecord | None,
+    *,
+    run_id: str,
+) -> TraceCallRecord | None:
+    """Return the call a provider fallback's new chain follows (TASK-42525).
+
+    A fallback keeps its run's actor and starts a new chain (``run_id`` is
+    ``actor:chain``). The chain's first call directly follows the failed call
+    of the chain before it, or that call's failed llama.cpp resend.
+
+    Args:
+        repository: The trace repository.
+        cursor: Cursor for the caller-owned transaction.
+        before: The call whose boundary directly precedes the chain's first.
+        run_id: The new chain's run identity.
+
+    Returns:
+        That failed call when it belongs to another chain of the same actor,
+        else ``None``. Its state and ownership are the caller's to check.
+    """
+    if before is None:
+        return None
+    failed = failed_stream_fallback_parent(repository, cursor, before.call_id) or before
+    actor, _, chain = run_id.partition(":")
+    failed_actor, _, failed_chain = failed.run_id.partition(":")
+    if not chain or failed_actor != actor or failed_chain in {"", chain}:
+        return None
+    return failed
+
+
+def falls_back_from(failed: TraceCallRecord, provider: str, model: str) -> bool:
+    """Whether a new chain to ``provider``/``model`` may follow ``failed``.
+
+    The failed call must be a (settled) ERROR that never started a response,
+    and the new chain must change the provider or model: a call to the same
+    target is a retry, which stays in its chain (TASK-42525).
+    """
+    from tldw_chatbook.Chat.console_trace_models import TraceCallState
+
+    return (
+        failed.state is TraceCallState.ERROR
+        and failed.response_started_at is None
+        and (failed.provider_name, failed.model_name) != (provider, model)
+    )
+
+
+def _rewrites_from(
+    repository: ConsoleTraceRepository,
+    cursor: sqlite3.Cursor,
+    root: TraceCallRecord,
+    head_id: str | None,
+) -> bool:
+    """Whether a fallback chain's first call rewrote the surface at ``head_id``."""
+    row = cursor.execute(
+        """SELECT 1 FROM console_trace_events e
+             JOIN console_trace_surface_replacements r
+               ON r.replacement_id = e.surface_replacement_id
+            WHERE e.segment_id = ? AND e.event_type = 'surface_replace'
+              AND r.predecessor_head_id = ?
+              AND e.sequence > (SELECT b.sequence FROM console_trace_events b
+                                 WHERE b.segment_id = ? AND b.call_id = ?
+                                   AND b.event_type = 'call_boundary')
+              AND NOT EXISTS (SELECT 1 FROM console_trace_events later
+                               WHERE later.segment_id = e.segment_id
+                                 AND later.event_type = 'call_boundary'
+                                 AND later.sequence > (
+                                     SELECT b.sequence FROM console_trace_events b
+                                      WHERE b.segment_id = ? AND b.call_id = ?
+                                        AND b.event_type = 'call_boundary')
+                                 AND later.sequence < e.sequence)
+            LIMIT 1""",
+        (
+            root.segment_id,
+            head_id,
+            root.segment_id,
+            root.call_id,
+            root.segment_id,
+            root.call_id,
+        ),
+    ).fetchone()
+    return row is not None
+
+
+def run_chains(
+    repository: ConsoleTraceRepository, cursor: sqlite3.Cursor, run_id: str
+) -> tuple[TraceCallRecord | None, frozenset[str]]:
+    """Return a run's AGENT_FIRST call and the ids of its chains (TASK-42525).
+
+    A chain that starts with a TOOL_LOOP call is a provider fallback's; it is
+    followed back to the chain it replaced, which must hold the same owner,
+    segment, turn, policy and surface. A llama.cpp resend runs on its own run
+    id; it is followed to the call it resent (TASK-42472, TASK-42530).
+
+    Args:
+        repository: The trace repository.
+        cursor: Cursor for the caller-owned transaction.
+        run_id: Any chain of the run.
+
+    Returns:
+        The run's origin and every chain from it to ``run_id``; ``(None,
+        frozenset())`` when a chain is missing or a link does not hold.
+    """
+    chains = [run_id]
+    for _ in range(_MAX_RUN_CHAINS):
+        origin = repository.get_run_origin(cursor, chains[-1])
+        if origin is not None and origin.route_identity == "llama_fallback":
+            resent = failed_stream_fallback_parent(
+                repository, cursor, origin.call_id, answered=True
+            )
+            if resent is not None:
+                chains.append(resent.run_id)
+                continue
+        if origin is None or origin.route_identity != "tool_loop":
+            return origin, frozenset(chains if origin is not None else ())
+        failed = fallback_parent(
+            repository,
+            cursor,
+            adjacent_call(repository, cursor, origin, later=False),
+            run_id=origin.run_id,
+        )
+        if (
+            failed is None
+            or not falls_back_from(
+                failed, origin.provider_name or "", origin.model_name or ""
+            )
+            or (failed.owner_id, failed.segment_id, failed.turn_id, failed.policy_id)
+            != (origin.owner_id, origin.segment_id, origin.turn_id, origin.policy_id)
+            # It continued the failed call's surface, or rewrote it from there
+            # (ADR-337 amendment 2026-11-24); the rewrite is rechecked by
+            # whoever relies on its rows.
+            or failed.surface_node_id != origin.surface_node_id
+            and not _rewrites_from(repository, cursor, origin, failed.surface_node_id)
+        ):
+            return None, frozenset()
+        chains.append(failed.run_id)
+    return None, frozenset()
+
+
 def validate_completed_tool_turn(
     self,
     cursor: sqlite3.Cursor,
@@ -827,7 +972,7 @@ def validate_completed_tool_turn(
         if (
             terminal.call_sequence != 0
             or chain_terminal is None
-            or origin != self.repository.get_run_origin(cursor, chain_terminal.run_id)
+            or origin != run_chains(self.repository, cursor, chain_terminal.run_id)[0]
             or chain_terminal.state is not trace.TraceCallState.ERROR
             or chain_terminal.route_identity
             not in {"agent_first", "fresh", "tool_loop"}
@@ -851,6 +996,12 @@ def validate_completed_tool_turn(
             )
         ):
             raise ValueError("completed_project_fallback_lineage")
+    # TASK-42525: a run is its AGENT_FIRST chain and its fallback chains.
+    chain_origin, runs = (
+        (None, frozenset())
+        if chain_terminal is None
+        else run_chains(self.repository, cursor, chain_terminal.run_id)
+    )
     if (
         owner is None
         or origin is None
@@ -886,19 +1037,17 @@ def validate_completed_tool_turn(
             else {"agent_first"}
         )
         or origin.call_sequence != 0
-        or self.repository.get_run_origin(cursor, chain_terminal.run_id) != origin
+        or chain_origin != origin
         or (
             origin.owner_id,
             origin.segment_id,
             origin.turn_id,
-            origin.run_id,
             origin.policy_id,
         )
         != (
             chain_terminal.owner_id,
             chain_terminal.segment_id,
             chain_terminal.turn_id,
-            chain_terminal.run_id,
             chain_terminal.policy_id,
         )
         or (terminal.owner_id, terminal.segment_id) != (owner_id, segment_id)
@@ -1226,8 +1375,24 @@ def validate_completed_tool_turn(
         )
         if prior.rounds != complete.rounds:
             raise ValueError("completed_replay_prior_attachment")
+    # TASK-42525: rows a fallback chain's first call of this run rewrote, and
+    # its removal marker, are dead inside the range.
+    from tldw_chatbook.Chat.console_trace_fallback_rewrite import (
+        earned_tool_rows,
+        rewritten_sequences,
+    )
+
+    rewritten_dead = rewritten_sequences(
+        cursor,
+        segment_id=segment_id,
+        runs=runs,
+        start=plan.start_sequence,
+        end=plan.end_sequence,
+    ) - {sequence for sequence, _ in suffix}
     if tuple(
-        sorted({sequence for sequence, _ in suffix} | replay_continuations)
+        sorted(
+            {sequence for sequence, _ in suffix} | replay_continuations | rewritten_dead
+        )
     ) != tuple(range(plan.start_sequence, plan.end_sequence + 1)) or any(
         sequence not in replay_continuations
         and (
@@ -1254,37 +1419,51 @@ def validate_completed_tool_turn(
     # establish that ownership. The output is bounded by the removed span.
     rows = cursor.execute(
         """SELECT n.sequence, c.owner_id, c.segment_id, c.turn_id, c.run_id,
-                      c.policy_id, c.route_identity, c.call_sequence
+                      c.policy_id, c.route_identity, c.call_sequence, e.event_type,
+                      n.component_kind
                  FROM console_trace_surface_nodes n
                  LEFT JOIN console_trace_surface_replacements r ON r.replacement_node_id = n.node_id
                       AND r.segment_id = n.segment_id
                  JOIN console_trace_events e ON e.segment_id = n.segment_id AND (
                       (e.surface_node_id = n.node_id AND e.event_type = 'surface_append')
-                      OR (? AND e.surface_replacement_id = r.replacement_id AND e.event_type = 'surface_replace'))
+                      OR (e.surface_replacement_id = r.replacement_id AND e.event_type = 'surface_replace'))
                  JOIN console_trace_calls c ON c.call_id = (
                      SELECT b.call_id FROM console_trace_events b
                       WHERE b.segment_id = e.segment_id AND b.event_type = 'call_boundary'
                         AND b.sequence < e.sequence ORDER BY b.sequence DESC LIMIT 1)
                 WHERE n.segment_id = ? AND n.sequence BETWEEN ? AND ?
                 ORDER BY n.sequence LIMIT 257""",
-        (
-            bool(witness.replay_row_count),
-            segment_id,
-            plan.start_sequence,
-            plan.end_sequence,
-        ),
+        (segment_id, plan.start_sequence, plan.end_sequence),
     ).fetchall()
+    # TASK-42525: a fallback chain's first call (the only tool-loop call at
+    # sequence 0) may have rewritten the run's tool rows. Its rows stand on the
+    # rows they replaced, rechecked here wherever they are (its marker holds
+    # nothing).
+    rewritten = {
+        row[0] for row in rows if (row[6], row[7]) == ("tool_loop", 0)
+    }
+    rewritten_rows = tuple(
+        row[0]
+        for row in rows
+        if row[0] in rewritten and row[9] != trace.SURFACE_REMOVAL_COMPONENT
+    )
+    if rewritten_rows and not earned_tool_rows(
+        self,
+        cursor,
+        segment_id=segment_id,
+        owner_id=owner_id,
+        turn_id=terminal.turn_id,
+        policy_id=terminal.policy_id,
+        runs=runs,
+        sequences=rewritten_rows,
+    ):
+        raise ValueError("completed_tool_turn_lineage")
     if tuple(row[0] for row in rows) != tuple(
-        sorted({sequence for sequence, _ in suffix} | replay_continuations)
+        sorted({sequence for sequence, _ in suffix} | replay_continuations | rewritten_dead)
     ) or any(
-        tuple(row[1:6])
-        != (
-            owner_id,
-            segment_id,
-            terminal.turn_id,
-            chain_terminal.run_id,
-            terminal.policy_id,
-        )
+        (row[1], row[2], row[3], row[5])
+        != (owner_id, segment_id, terminal.turn_id, terminal.policy_id)
+        or row[4] not in runs
         or (
             (row[6], row[7]) != (origin.route_identity, 0)
             if (
@@ -1294,21 +1473,31 @@ def validate_completed_tool_turn(
                 and row[0] <= origin_surface_head.sequence
             )
             else row[6] != "tool_loop"
-            or not 1 <= row[7] <= chain_terminal.call_sequence
+            or row[7] < 1
+            and row[0] not in rewritten
+            or row[4] == chain_terminal.run_id
+            and row[7] > chain_terminal.call_sequence
         )
+        or row[8] == "surface_replace"
+        and not witness.replay_row_count
+        and row[0] not in rewritten
         for row in rows
     ):
         raise ValueError("completed_tool_turn_lineage")
     # A failed call authorizes an unchanged retry, never tool history
     # (TASK-42534): each tool-loop call that appended a removed node must
     # follow a call of this run that bore a response.
-    for call_sequence in {row[7] for row in rows if row[6] == "tool_loop"}:
+    for run_id, call_sequence in {
+        (row[4], row[7])
+        for row in rows
+        if row[6] == "tool_loop" and row[0] not in rewritten
+    }:
         previous = self.repository.get_call_by_logical_identity(
             cursor,
             owner_id=owner_id,
             segment_id=segment_id,
             turn_id=terminal.turn_id,
-            run_id=chain_terminal.run_id,
+            run_id=run_id,
             call_sequence=call_sequence - 1,
         )
         if previous is None or (
@@ -1318,13 +1507,18 @@ def validate_completed_tool_turn(
         ):
             raise ValueError("completed_tool_turn_lineage")
     foreign = cursor.execute(
-        """SELECT c.call_id FROM console_trace_events e
+        """SELECT c.call_id, c.run_id,
+                      c.owner_id = ? AND c.turn_id = ? AND c.policy_id = ?
+                 FROM console_trace_events e
                  JOIN console_trace_calls c ON c.call_id = e.call_id
                 WHERE e.segment_id = ? AND e.event_type = 'call_boundary'
                   AND e.sequence > ? AND e.sequence <= ?
                   AND (c.owner_id != ? OR c.run_id != ? OR c.turn_id != ? OR c.policy_id != ?)
                 LIMIT 257""",
         (
+            owner_id,
+            terminal.turn_id,
+            terminal.policy_id,
             segment_id,
             origin_event_sequence,
             terminal_event_sequence,
@@ -1335,16 +1529,18 @@ def validate_completed_tool_turn(
         ),
     ).fetchall()
     # TASK-42472: a llama.cpp stream resend has its own run id but is part of
-    # this run, failed or answering (TASK-42530); any other call is foreign.
+    # this run, failed or answering (TASK-42530); so are the run's fallback
+    # chains (TASK-42525). Any other call is foreign.
     if len(foreign) > 256 or any(
-        getattr(
+        not (row[2] and row[1] in runs)
+        and getattr(
             failed_stream_fallback_parent(
                 self.repository, cursor, row[0], answered=True
             ),
             "run_id",
             None,
         )
-        != chain_terminal.run_id
+        not in runs
         for row in foreign
     ):
         raise ValueError("completed_tool_turn_lineage")

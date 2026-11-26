@@ -78,6 +78,9 @@ INHERITED = {
         "Tests/UI/test_console_conversation_action_menu.py::test_unwritable_save_path_shows_an_error_and_keeps_the_app_running",
         "Tests/UI/test_console_conversation_action_menu.py::test_save_prompt_closes_without_writing_and_restores_focus[cancel]",
         "Tests/Dreams/test_query_synthesis.py",  # TASK-42008
+        # TASK-42525 (round 26): the chained-replacement trace file, on no
+        # PR lane before.
+        "Tests/Chat/test_console_trace_chained_replacement.py",
         "--timeout=180",
         "--tb=short",
     ],
@@ -116,6 +119,9 @@ INHERITED = {
         "Tests/UI/test_console_received_route_wrapped_collaborators.py",
         "Tests/UI/test_console_skill_discovery_wrapped_collaborators.py",
         "Tests/UI/test_console_queue_subclass_controller.py",
+        # TASK-42525 (round 26, 2026-11-25): the failed-call retry rule file,
+        # last; it left dreams-boundary for that job's budget.
+        "Tests/Chat/test_console_failed_call_retry_ownership.py",
         "--timeout=300",
         "--tb=short",
     ],

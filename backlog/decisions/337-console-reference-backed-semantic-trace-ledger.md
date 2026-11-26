@@ -666,6 +666,8 @@ system content cannot bypass unchanged-message checks. Provider, model, endpoint
 generation parameters, response format, reasoning controls, tool schemas and
 literal provider envelope must also match the preceding failed attempt. The
 AGENT_FIRST to TOOL_LOOP route transition is allowed; it grants no target change.
+(A provider fallback is not such a retry: it starts a new chain, amendment
+2026-11-24, TASK-42525.)
 An appended or replaced surface, unknown/open dispatch, stale or foreign chain,
 or unsaved settlement remains ineligible. Each retry reserves a distinct ordered
 call; it never rewrites the failed call or relabels it as a tool response.
@@ -721,6 +723,188 @@ streamed call the resend repeated, not with the resend, when that call failed
 before any response and its stored settings equal the resend's apart from the
 streaming flag (the resend was admitted only as that verified True -> False
 flip). Every other target, setting and surface change remains refused.
+
+### Amendment recorded 2026-11-24 (owner-approved): a provider fallback starts a new chain (TASK-42525)
+
+The owner approved this on 2026-11-24 ("2 ok", approving the task's
+recommendation). An agent's provider fallback (ADR-110) goes to another
+provider, model or endpoint, and may re-encode the run's history for that
+provider's tool protocol. It is not a retry, so the 2026-10-04 rule ("a failed
+call authorizes an unchanged retry") refused it at dispatch, and a captured run
+planned no fallback at all. Under Capture On a fallback now starts a new chain
+of the same run. The retry rule inside a chain is unchanged.
+
+1. **Identity.** A run's chains share its actor. The fallback mints a new
+   chain, so its calls are run `actor:new_chain`. Its first call is that
+   chain's sequence 0, on the TOOL_LOOP route: it is the run's next model call
+   and carries the run's history. That shared actor, plus the call boundary
+   order below, is the link to the failed chain. It is content-free and needs
+   no schema.
+2. **Who mints a chain.** Only the Console agent adapter of a primary
+   Capture-On run. It does so when the runtime's call names a target other
+   than its chain's, and only if that target's endpoint is an entry of the
+   run's configured fallback list after the last entry a fallback used. Any
+   such later entry qualifies, in list order, not only the next one: the
+   runtime skips an entry that is not ready, and an entry passed over is spent.
+   Each entry is used at most once, and the list is never walked back. Any
+   other target change is refused before preparation, so nothing is reserved.
+   Spawned children keep their single chain and segment. (Reworded
+   2026-11-25 to match the adapter; the rule is unchanged.)
+3. **Admitting the chain's first call** (in the reservation transaction, so a
+   refusal rolls back and leaves no reserved call). The call whose boundary
+   directly precedes it must be a call of another chain of the same actor. If
+   that call is a failed llama.cpp resend, the streamed call it resent counts
+   instead. That failed call must:
+   - be a settled ERROR that never started a response, with no answering
+     resend;
+   - have the same owner, segment, turn and frozen policy;
+   - still hold the surface tail.
+
+   The new call must append and replace nothing: the run's history on the
+   surface is what its earlier chains earned. Its provider or model must differ
+   from the failed call's, because a call to the same target is a retry and
+   stays in its chain. Its rendered system row, tool schemas and generation
+   settings belong to its own header and are not compared with the failed
+   call's.
+4. **The run's origin** is the AGENT_FIRST call. A fallback chain reaches it
+   through these links, followed back through earlier fallbacks. Every TOOL_LOOP
+   origin check (owner, segment, turn, policy, source pin) applies to it as
+   before. Later calls in the new chain are ordinary TOOL_LOOP calls of that
+   chain: an in-place retry after one of them fails is compared with it, under
+   the unchanged retry rule.
+5. **Completed-turn witness.** A run is its AGENT_FIRST chain plus the fallback
+   chains linked from it. The witness's origin is the AGENT_FIRST call. Every
+   removed node must have been appended by a tool-loop call (sequence 1 or
+   later) of one of those chains, and that call's predecessor in its own chain
+   must have borne a response (TASK-42534). Every call boundary between origin
+   and terminal must belong to one of those chains, or be a llama.cpp resend of
+   one of their calls. A chain's first call appends nothing, so it never vouches
+   for tool history.
+
+Still refused:
+- A fallback whose history projection rewrites rows already on the surface
+  (native and fenced tool protocols, after tool activity). It needs a
+  replacement, which this amendment does not grant. (Granted by the next
+  amendment.)
+- A fallback between providers that place the system prompt differently
+  (llama.cpp sends it as the first message, a hosted provider does not). The
+  new call does not continue the surface even before any tool call. (Granted
+  by the next amendment.)
+- A spawned child's preset fallback.
+
+### Amendment recorded 2026-11-24 (owner-approved): a fallback chain's first call may rewrite the run's tail (TASK-42525)
+
+The owner approved this on 2026-11-24 ("Allow it, do it now"). It grants the
+replacement the previous amendment withheld. It applies to one call only: the
+first call of a provider fallback's new chain, admitted as that amendment
+describes. That call may record one bounded rewrite of the surface.
+
+1. **What it may remove.**
+   - The surface's leading rendered-system slot. This is allowed only when
+     that slot is the first active entry, the failed call's own request
+     header carried it (a `rendered_system_row` component), and the new
+     call's request has no leading system row: a provider that takes the
+     system prompt outside the message list.
+   - The run's own tool rows at the surface's tail, replaced by the new
+     call's rows in the same places. This is ADR-110's re-encoding for the new
+     provider's tool-call format.
+
+   Nothing else is removed. Every other row must match the request unchanged,
+   before and after the removal. That includes user and assistant rows,
+   project context and provider continuations.
+2. **Checks.** The removed tool rows are one contiguous run at the tail.
+   - Every one of them is a tool-call or tool-result artifact.
+   - Each was appended by a tool-loop call of one of the run's chains (same
+     owner, segment, turn and policy) whose predecessor in its own chain bore
+     a response. This is the completed-turn witness's TASK-42534 rule. A row
+     may instead have been written by an earlier fallback rewrite of the run
+     (a second fallback re-encoding the first one's rows), in which case the
+     rows that rewrite removed must pass this check too.
+   - The new rows match them one for one, kind for kind (tool call for tool
+     call, tool result for tool result).
+3. **Bound.** At most 256 rows are replaced, in one replacement with no
+   chained links; more is refused. The removed system slot is one more row.
+4. **Recording.** The slot is removed by a replacement whose node is a
+   content-free removal marker. The service's surface projection, from which
+   every planner, checkpoint and reader takes the active rows, drops it.
+   Readers of raw nodes by sequence (the completed-turn witness's lineage
+   query and the rewrite's own checks) see the marker; they count it as one
+   of the run's dead rows, like the rows the rewrite replaced, and only when a
+   fallback chain's first call of that run wrote it. The tool rows are
+   replaced by an ordinary bounded replacement: the first new row takes the
+   range's place and the rest follow at the end. Historical calls, request
+   heads and the removed rows' bytes stay as they were. (Point 4 reworded
+   2026-11-25: it said "every surface projection drops" the marker, which
+   was not true of the raw readers.)
+5. **Recheck.** The rewrite is rechecked in the dispatch-binding transaction.
+   A later completed-turn witness accepts the rewritten rows only by
+   rechecking, from the ledger, the rows they replaced, wherever those rows
+   are. Its range starts at the run's first row and reaches down over the
+   run's dead rows.
+
+Anything outside this is refused, as before. That covers a rewrite on any
+call other than a fallback chain's first, a removed row of another run,
+actor or turn, a removed row that is not the leading system slot or a tool
+row, and more than 256 rows. Refusal happens before the reservation commits.
+
+Not granted here: putting a leading system row back. After a llama.cpp run
+falls back to a hosted provider, the next captured send to llama.cpp was
+refused, as any captured switch from a hosted provider to llama.cpp already
+was. (Granted by the next amendment.)
+
+### Amendment recorded 2026-11-25 (owner-approved): a new turn's first call may put the leading system slot back (TASK-42525)
+
+The owner approved this on 2026-11-25 ("Allow it, do it now"): "A new turn's
+first call may put the leading system-prompt slot back when the recorded call
+had no system slot and the new request starts with a system prompt; it is the
+mirror of the removal you approved." It covers the send that went back to
+llama.cpp after a llama.cpp run fell back to a hosted provider, and a captured
+manual switch from a hosted provider to llama.cpp. Both were refused
+(`unsupported_surface_change`): llama.cpp sends the system prompt as the first
+message, and the surface had no slot for it.
+
+1. **Which call.** Only a new turn's first call, on the AGENT_FIRST or FRESH
+   route. Never a retry, a fallback chain's call or a tool-loop call; those
+   keep their refusals.
+2. **Which shape.** The surface has no active rendered-system row: it never
+   had one (the turn's earlier calls went to a provider that takes the system
+   prompt outside the message list), or a fallback's removal marker removed
+   it. The request's first row is a rendered-system row. Every other row is
+   planned by the existing rules, unchanged, as if the slot were already in
+   place: retained rows must match, and an append, a completed-turn
+   replacement or project context follows its own rules. So a second system
+   row is a changed row those rules refuse, and the request builder carries
+   none after a message. Nothing else is relaxed.
+3. **Recording.** Before its other writes, the call appends one
+   rendered-system node directly after the surface tail, holding the
+   request's system row as a first call's slot does. After its replacements,
+   the surface projection moves the active rendered-system rows to the front
+   in sequence order, so the slot leads again (and two leading system rows
+   keep their order). The call's header carries the row as every later slot
+   call's header does (`rendered_system_row`), so the reader rebuilds the
+   request exactly. Nothing is removed; earlier calls, heads and bytes stay as
+   they were. (Wording corrected 2026-11-25: it said "at most one is ever
+   active", which a first call with two leading system rows contradicts.)
+4. **Recheck.** The planner proves the shape in the reservation transaction
+   and checks the slot like any leading slot (a system row, under the call's
+   frozen policy). The dispatch-binding transaction checks the shape again
+   before writing: the call is still its turn's first and the surface still
+   has no slot. From then on the slot is an ordinary leading slot, which the
+   run's tool-loop calls and the next send match under the existing rules.
+   Its sequence sits mid-history, so a later Compact now or Edit & resend
+   whose rewritten range starts before it stores that range as links that
+   skip it: the slot stays where it is, and the dispatch-binding check of the
+   chain accepts that one skipped row only as the projection's leading
+   rendered-system row. (Added 2026-11-25 after the round-3 re-review: such
+   a send was refused for a sequence gap.)
+
+Still refused: a slot put back by any other call; a system row anywhere but
+first; a request with two system rows; a second slot over a surface that
+already has one (a different system prompt in an existing slot is the
+existing header-owned rule, unchanged); and a change to any other row that
+the existing rules refuse. Out of scope: a captured manual switch from
+llama.cpp to a hosted provider with project instructions, which needs a slot
+removed outside a fallback (a follow-up).
 
 ## Current-owner integration amendment (2026-10-13)
 

@@ -64,7 +64,7 @@ Raised by the coordinator's review of TASK-42472 (2026-11-24).
 
 **Choice: a split** (the owner's decision above).
 - (c), fixing slow files, was rejected. Halving the largest file would save about 2.5 min, not the 7+ that AC#1 needs.
-- (b), moving files to a step with headroom, was rejected. A bootstrap_profile file can only go to an admission-sensitive invocation. Dreams boundary has about 15 min left (max 19.9 of 35); the PR admission jobs reach 24-29 of 35 and are off limits anyway.
+- (b), moving files to a step with headroom, was rejected. A bootstrap_profile file can only go to an admission-sensitive invocation. Dreams boundary has about 10 min left (successful runs max 25.2 of 35, 2026-11-24..25); the PR admission jobs reach 24-29 of 35 and are off limits anyway.
 - Folding the tail into the restore profile was considered and rejected. It would add no runner, but TASK-40724 gave each invocation its own runner after the restore selectors once took 25m46s under sustained load.
 - So `console-p0-gate` gets a fourth matrix profile, `admission-sensitive 2`. Its step, "Run the admission-sensitive 2 Console P0 regression tests", takes the old step's tail from `test_console_project_instruction_traces.py` on: 24 targets with the same order and flags (`--timeout=300 --tb=short`), and the PR3023 witnesses still last.
 - The old step keeps its first 43 targets. The two lists concatenated equal the old list exactly, no file appears in both, and both are bootstrap-profile invocations, so isolation is unchanged.

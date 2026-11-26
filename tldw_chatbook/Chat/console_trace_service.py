@@ -37,6 +37,7 @@ from tldw_chatbook.Chat.console_trace_custom_pii import (
 from tldw_chatbook.Chat.console_trace_final_values import (
     _SURFACE_VERIFICATION_ISSUER,
     CompletedToolTurnWitness,
+    FallbackRewriteWitness,
     FinalValueBinding,
     RewrittenTailWitness,
     replacement_descriptor_count,
@@ -205,6 +206,10 @@ class PersistedTraceRequest:
     # link held in ``replacement`` (ADR-337 amendment 2026-11-06).
     chain_nodes: tuple[SurfaceNodeRecord, ...] = ()
     chain_replacements: tuple[SurfaceReplacementRecord, ...] = ()
+    # A fallback rewrite's removal marker and its removal-only replacement
+    # (ADR-337 amendment 2026-11-24, TASK-42525).
+    removal_node: SurfaceNodeRecord | None = None
+    removal: SurfaceReplacementRecord | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -601,7 +606,7 @@ class _ProjectionRoot:
     parent: _ProjectionRoot | None
     base: tuple[tuple[int, SurfaceReferenceKey], ...] = ()
     appended: tuple[tuple[int, SurfaceReferenceKey], ...] = ()
-    replacement: tuple[int, int] | None = None
+    replacement: tuple[tuple[int, int], ...] | None = None
     size: int = field(init=False)
     _tree: _PersistentSequenceNode[SurfaceReferenceKey] | None = field(
         init=False,
@@ -624,11 +629,7 @@ class _ProjectionRoot:
                 ((sequence, key, None) for sequence, key in self.appended),
             )
         else:
-            start, end = self.replacement
-            position = _persistent_first_position_in_range(tree, start, end)
-            if position is None:
-                raise ValueError("surface_replacement_target_inactive")
-            tree = _persistent_without_sequence_range(tree, start, end)
+            position, tree = _without_ranges(tree, self.replacement)
             tree = _persistent_insert_entries(
                 tree,
                 position,
@@ -654,6 +655,24 @@ class _ProjectionRoot:
         return _persistent_first_position_in_range(self._tree, start, end)
 
 
+def _without_ranges(
+    tree: _PersistentSequenceNode[_SequenceValue] | None,
+    ranges: tuple[tuple[int, int], ...],
+) -> tuple[int, _PersistentSequenceNode[_SequenceValue] | None]:
+    """Remove a replacement's stored ranges; return the first one's position."""
+    positions = [
+        position
+        for start, end in ranges
+        if (position := _persistent_first_position_in_range(tree, start, end))
+        is not None
+    ]
+    if not positions:
+        raise ValueError("surface_replacement_target_inactive")
+    for start, end in ranges:
+        tree = _persistent_without_sequence_range(tree, start, end)
+    return min(positions), tree
+
+
 @dataclass(frozen=True, slots=True)
 class _DescriptorRoot:
     """Private persistent structural projection; it never carries provider values."""
@@ -661,7 +680,7 @@ class _DescriptorRoot:
     parent: _DescriptorRoot | None
     base: tuple[tuple[int, TraceProvenance], ...] = ()
     appended: tuple[tuple[int, TraceProvenance], ...] = ()
-    replacement: tuple[int, int] | None = None
+    replacement: tuple[tuple[int, int], ...] | None = None
     base_domains: tuple[tuple[int, str], ...] = ()
     appended_domains: tuple[tuple[int, str], ...] = ()
     removed_domain_counts: tuple[tuple[str, int], ...] = ()
@@ -697,11 +716,7 @@ class _DescriptorRoot:
                 ),
             )
         else:
-            start, end = self.replacement
-            position = _persistent_first_position_in_range(tree, start, end)
-            if position is None:
-                raise ValueError("surface_replacement_target_inactive")
-            tree = _persistent_without_sequence_range(tree, start, end)
+            position, tree = _without_ranges(tree, self.replacement)
             appended_domains = dict(self.appended_domains)
             tree = _persistent_insert_entries(
                 tree,
@@ -833,7 +848,7 @@ class _ProjectedProviderValues(Sequence[object]):
         cursor: sqlite3.Cursor,
         parent: _ProjectionRoot,
         appended: tuple[tuple[int, TraceProvenance, object], ...],
-        replacement: tuple[int, int] | None,
+        replacement: tuple[tuple[int, int], ...] | None,
         descriptor_root: _DescriptorRoot,
         owner_id: str,
         domain: str,
@@ -871,11 +886,22 @@ class _ProjectedProviderValues(Sequence[object]):
                 (sequence, key, None) for sequence, key in parent
             ] + [(sequence, None, value) for sequence, value in inserted]
         else:
-            start, end = self._replacement
-            insert_at = self._parent.first_position_in_range(start, end)
+            insert_at = min(
+                (
+                    position
+                    for start, end in self._replacement
+                    if (position := self._parent.first_position_in_range(start, end))
+                    is not None
+                ),
+                default=None,
+            )
             if insert_at is None:
                 raise ValueError("surface_replacement_target_inactive")
-            parent = [entry for entry in parent if not start <= entry[0] <= end]
+            parent = [
+                entry
+                for entry in parent
+                if not any(start <= entry[0] <= end for start, end in self._replacement)
+            ]
             combined = [(sequence, key, None) for sequence, key in parent]
             combined[insert_at:insert_at] = [
                 (sequence, None, value) for sequence, value in inserted[:1]
@@ -1158,6 +1184,7 @@ class _ChildState:
     live_native_ordinal: int | None = None
     live_native_surface: Mapping[str, object] | None = field(default=None, repr=False)
     rewritten_tail: RewrittenTailWitness | None = None
+    fallback_rewrite: FallbackRewriteWitness | None = None
 
 
 class _ParentSurfaceCapability:
@@ -1629,7 +1656,15 @@ class ConsoleTraceService:
                     != persisted.header
                     or any(
                         self.repository.get_surface_node(cursor, node.node_id) != node
-                        for node in (*persisted.chain_nodes, *persisted.appended_nodes)
+                        for node in (
+                            *persisted.chain_nodes,
+                            *persisted.appended_nodes,
+                            *(
+                                ()
+                                if persisted.removal_node is None
+                                else (persisted.removal_node,)
+                            ),
+                        )
                     )
                 ):
                     return "unknown"
@@ -1637,7 +1672,7 @@ class ConsoleTraceService:
                     ()
                     if persisted.replacement is None
                     else (*persisted.chain_replacements, persisted.replacement)
-                )
+                ) + (() if persisted.removal is None else (persisted.removal,))
                 for index, expected in enumerate(records):
                     replacement = expected.replacement
                     row = cursor.execute(
@@ -1750,19 +1785,27 @@ class ConsoleTraceService:
         rendered_system_slot = (
             None if child_state is None else child_state.rendered_system_slot
         )
+        # A slot planned after the tail is being put back (ADR-337
+        # amendment 2026-11-25); it is rechecked and written with the rows.
+        restoring = (
+            rendered_system_slot is not None
+            and tail is not None
+            and rendered_system_slot.sequence == tail.sequence + 1
+        )
         if rendered_system_slot is not None:
             message_binding = _binding(bundle, "messages_payload")
             if message_binding is None or not message_binding.value:
                 raise ValueError("rendered_system_slot_unavailable")
-            self._validate_rendered_system_slot(
-                cursor,
-                projection.root,
-                rendered_system_slot,
-                message_binding.value[0],
-                current_policy_id=None
-                if reserved_call is None
-                else reserved_call.policy_id,
-            )
+            if not restoring:
+                self._validate_rendered_system_slot(
+                    cursor,
+                    projection.root,
+                    rendered_system_slot,
+                    message_binding.value[0],
+                    current_policy_id=None
+                    if reserved_call is None
+                    else reserved_call.policy_id,
+                )
         delta_items = (
             ((replacement.item,) + surface_delta.items)
             if replacement is not None
@@ -1833,6 +1876,24 @@ class ConsoleTraceService:
                 current_policy_id=reserved_call.policy_id,
                 reserved_call=reserved_call,
                 known_credentials=known_credentials,
+            )
+        if surface_delta.fallback_rewrite is not None:
+            # Rechecked in the dispatch-binding transaction (TASK-42525).
+            from tldw_chatbook.Chat.console_trace_fallback_rewrite import (
+                validate_fallback_rewrite,
+            )
+
+            if reserved_call is None or child_state is None:
+                raise ValueError("fallback_rewrite_unavailable")
+            validate_fallback_rewrite(
+                self,
+                cursor,
+                witness=surface_delta.fallback_rewrite,
+                owner_id=owner_id,
+                segment_id=segment_id,
+                plan=replacement,
+                descriptors=descriptors,
+                reserved_call=reserved_call,
             )
         if surface_delta.rewritten_tail is not None:
             if reserved_call is None or replacement is None:
@@ -2010,6 +2071,23 @@ class ConsoleTraceService:
         stored_replacement: SurfaceReplacementRecord | None = None
         chain_nodes: tuple[SurfaceNodeRecord, ...] = ()
         chain_replacements: tuple[SurfaceReplacementRecord, ...] = ()
+        restored_node = None
+        if restoring:
+            # First, so the call's other rows take the sequences planned.
+            restored_node = tail = _slot_restore().write_restored_slot(
+                self,
+                cursor,
+                owner_id=owner_id,
+                segment_id=segment_id,
+                tail=tail,
+                projection=projection,
+                slot=rendered_system_slot,
+                value=message_binding.value[0],
+                route_identity=_route(provenance),
+                reserved_call=reserved_call,
+            )
+            if replacement is not None:
+                replacement = replace(replacement, predecessor_head_id=tail.node_id)
         if replacement is not None:
             span = replacement.end_sequence - replacement.start_sequence + 1
             if span > MAX_SURFACE_REPLACEMENT_SPAN and not replacement.chain:
@@ -2040,6 +2118,7 @@ class ConsoleTraceService:
             or surface_delta.completed_tool_turn is not None
             or surface_delta.live_native is not None
             or surface_delta.rewritten_tail is not None
+            or surface_delta.fallback_rewrite is not None
         ):
             offset = 1 if replacement is not None else 0
             for descriptor, value in zip(
@@ -2068,6 +2147,23 @@ class ConsoleTraceService:
                         event_type="gap",
                         omission_reason_code=tail.omission_reason_code,
                     )
+        removal_node = removal = None
+        removed_slot = (
+            None
+            if surface_delta.fallback_rewrite is None
+            else surface_delta.fallback_rewrite.removed_slot_sequence
+        )
+        if removed_slot is not None:
+            # Written last, so the rewritten tool rows keep their places.
+            assert tail is not None
+            from tldw_chatbook.Chat.console_trace_fallback_rewrite import (
+                remove_surface_slot,
+            )
+
+            removal_node, removal = remove_surface_slot(
+                self, cursor, segment_id=segment_id, tail=tail, sequence=removed_slot
+            )
+            tail = removal_node
 
         if tail is None:
             reason = bundle.omission_reason or TraceOmissionReason.SOURCE_UNAVAILABLE
@@ -2200,12 +2296,16 @@ class ConsoleTraceService:
                 raise ValueError("trace_tool_chain_unavailable")
         if child_state is not None:
             root = _ProjectionRoot(
-                projection.root,
+                projection.root
+                if removed_slot is None
+                else _ProjectionRoot(
+                    projection.root, replacement=((removed_slot, removed_slot),)
+                ),
                 appended=tuple(
                     (node.sequence, self._node_reference_key(node)) for node in appended
                 ),
                 replacement=(
-                    (replacement.start_sequence, replacement.end_sequence)
+                    _replaced_ranges(replacement)
                     if stored_replacement is not None and replacement is not None
                     else None
                 ),
@@ -2217,6 +2317,8 @@ class ConsoleTraceService:
                 replacement if stored_replacement is not None else None,
             )
             root = _ProjectionRoot(None, base=updated_entries)
+        if restored_node is not None:
+            root = _slot_restore().with_slot_first(self, root, restored_node)
         descriptor_root = (
             child_state.descriptors
             if child_state is not None
@@ -2256,7 +2358,11 @@ class ConsoleTraceService:
                 lineage_domains[node.sequence] = _surface_reference_domain(
                     self._node_reference_key(node)
                 )
-        for node in chain_nodes:
+        if restored_node is not None:
+            lineage_domains[restored_node.sequence] = "messages_payload"
+            if active_domains is not None:
+                active_domains[restored_node.sequence] = "messages_payload"
+        for node in (*chain_nodes, *(() if removal_node is None else (removal_node,))):
             # Placeholders stay in the lineage, as the cold reader counts them.
             lineage_domains[node.sequence] = _surface_reference_domain(
                 self._node_reference_key(node)
@@ -2308,11 +2414,13 @@ class ConsoleTraceService:
         return PersistedTraceRequest(
             surface_head_id=tail.node_id,
             header=header,
-            appended_nodes=tuple(appended),
+            appended_nodes=(*((restored_node,) if restored_node else ()), *appended),
             replacement=stored_replacement,
             checkpoint=checkpoint,
             chain_nodes=chain_nodes,
             chain_replacements=chain_replacements,
+            removal_node=removal_node,
+            removal=removal,
         )
 
     @staticmethod
@@ -2389,6 +2497,7 @@ class ConsoleTraceService:
         current_policy_id: str | None = None,
         reserved_call: TraceCallRecord | None = None,
         known_credentials: tuple[str, ...] = (),
+        fallback_parent: TraceCallRecord | None = None,
     ) -> tuple[SurfaceDeltaAdmission, object]:
         """Plan an append, no-op, or one-item bounded surface replacement.
 
@@ -2435,6 +2544,24 @@ class ConsoleTraceService:
         ) * len(provenance.continuations)
         tail = self._effective_surface_tail(cursor, segment_id)
         projection = self._surface_projection(cursor, segment_id, tail)
+        # ADR-337 amendment 2026-11-25 (TASK-42525): a new turn's first call
+        # may put the leading slot back; plan as if it already led.
+        restored = (
+            None
+            if live_native_custody is not None or fallback_parent is not None
+            else _slot_restore().restored_slot_projection(
+                self,
+                cursor,
+                owner_id=owner_id,
+                route_identity=route_identity,
+                tail=tail,
+                projection=projection,
+                descriptors=descriptors,
+                values=values,
+                message_count=len(provenance.messages_payload),
+            )
+        )
+        projection = restored or projection
         physical_active = projection.entries
         # Surface nodes stay physically append-only, so later messages can
         # follow older continuation nodes. Compare in provider domain order
@@ -2672,6 +2799,33 @@ class ConsoleTraceService:
         prefix = 0
         while prefix < min(len(active), len(descriptors)) and matches(prefix, prefix):
             prefix += 1
+        if fallback_parent is not None and not prefix == len(active) == len(descriptors):
+            # A fallback chain's first call may rewrite the run's tail
+            # (ADR-337 amendment 2026-11-24, TASK-42525); nothing else may.
+            from tldw_chatbook.Chat.console_trace_fallback_rewrite import (
+                prepare_fallback_rewrite,
+            )
+
+            return prepare_fallback_rewrite(
+                self,
+                cursor,
+                failed=fallback_parent,
+                owner_id=owner_id,
+                segment_id=segment_id,
+                route_identity=route_identity,
+                preparation_identity=preparation_identity,
+                provenance=provenance,
+                values=values,
+                tail=tail,
+                projection=projection,
+                active=active,
+                matches=matches,
+                retained_artifact_values=retained_artifact_values,
+                rendered_system=lambda: rendered_system,
+                current_policy_id=current_policy_id,
+                reserved_call=reserved_call,
+                known_credentials=known_credentials,
+            )
         # ADR-337 amendment, owner-approved 2026-11-13 (TASK-34100.3): a send
         # growing both domains appends each at its end, ahead of compound rules.
         domain_append = (
@@ -2697,6 +2851,7 @@ class ConsoleTraceService:
 
         replacement_range: VerifiedSurfaceReplacementRange | None = None
         compound = False
+        compound_start = 0
         rewritten: RewrittenTailWitness | None = None
         admitted_from = prefix
         admitted_to = len(descriptors)
@@ -2797,21 +2952,38 @@ class ConsoleTraceService:
                         if origin.surface_node_id is not None
                         else None
                     )
+                if origin_head is not None:
+                    from tldw_chatbook.Chat.console_trace_fallback_rewrite import (
+                        extend_over_rewrites,
+                    )
+
+                    # TASK-42525: from the run's first row, over the dead rows
+                    # its fallback rewrite left; the witness rechecks them.
+                    compound_start = extend_over_rewrites(
+                        self.repository,
+                        cursor,
+                        segment_id=segment_id,
+                        terminal_call_id=completed_tool_turn.terminal_call_id,
+                        start=min(s for _, s, _ in active[prefix : len(active) - suffix]),
+                        floor=origin_head.sequence,
+                    )
                 compound = (
                     origin_head is not None
                     and completed_tool_turn.matches_start_sequence(
-                        min(
-                            sequence
-                            for _, sequence, _ in active[prefix : len(active) - suffix]
-                        ),
-                        origin_head.sequence,
+                        compound_start, origin_head.sequence
                     )
                 )
             # A rewritten tail wider than one replacement is stored as a chain
             # of links (ADR-337 amendment 2026-11-06). Dead sequences an earlier
             # replacement left inside a link count toward its span.
+            # A slot put back after the tail stays where it is: the links
+            # skip it (ADR-337 amendment 2026-11-25).
+            retained_slot = (
+                active[0][1] if prefix and active[0][2][0] == "rendered_system" else None
+            )
             links = _replacement_links(
-                sorted(sequence for _, sequence, _ in active[prefix:])
+                sorted(sequence for _, sequence, _ in active[prefix:]),
+                around=retained_slot,
             )
             rewritten = (
                 _rewritten_tails().build_rewritten_tail_witness(
@@ -2858,11 +3030,12 @@ class ConsoleTraceService:
                 changed_sequences = {
                     sequence for _ordinal, sequence, _key in changed_entries
                 }
-                start_sequence = min(changed_sequences)
+                start_sequence = compound_start if compound else min(changed_sequences)
                 end_sequence = max(changed_sequences)
                 if any(
                     start_sequence <= sequence <= end_sequence
                     and sequence not in changed_sequences
+                    and not (rewritten is not None and sequence == retained_slot)
                     for sequence, _key in physical_active
                 ):
                     record_refusal("sequence_gap")
@@ -2947,9 +3120,14 @@ class ConsoleTraceService:
                 checkpoint = None
         bootstrap = checkpoint is None and predecessor is not None
         if (
-            compound
-            and (bootstrap or completed_tool_turn.project_context_count is not None)
-        ) or (rewritten is not None and bootstrap):
+            (
+                compound
+                and (bootstrap or completed_tool_turn.project_context_count is not None)
+            )
+            or (rewritten is not None and bootstrap)
+            # The live checkpoint has no slot (ADR-337 amendment 2026-11-25).
+            or restored is not None
+        ):
             # A cold parent is built entirely from committed references.
             assert tail is not None and current_policy_id is not None
             if compound:
@@ -2962,7 +3140,7 @@ class ConsoleTraceService:
                 cursor,
                 owner_id=owner_id,
                 segment_id=segment_id,
-                tail=tail,
+                tail=tail if restored is None else _slot_restore().planned_tail(tail),
                 projection=projection,
                 route=route_identity,
                 policy_id=current_policy_id,
@@ -3992,9 +4170,14 @@ class ConsoleTraceService:
                 known_credentials=known_credentials,
             )
         if replacement_range is not None:
-            replacement_position = parent.root.first_position_in_range(
-                replacement_range.start_sequence,
-                replacement_range.end_sequence,
+            replacement_position = min(
+                (
+                    position
+                    for start, end in _replaced_ranges(replacement_range)
+                    if (position := parent.root.first_position_in_range(start, end))
+                    is not None
+                ),
+                default=None,
             )
             if replacement_position is None:
                 raise ValueError("surface_replacement_target_inactive")
@@ -4118,7 +4301,10 @@ class ConsoleTraceService:
             )
         else:
             if len(admitted) != replacement_descriptor_count(
-                admission.completed_tool_turn, admission.rewritten_tail, admission.live_native
+                admission.completed_tool_turn,
+                admission.rewritten_tail,
+                admission.live_native,
+                admission.fallback_rewrite,
             ):
                 raise ValueError("surface_delta_shape")
             descriptor_root = _DescriptorRoot(
@@ -4131,10 +4317,7 @@ class ConsoleTraceService:
                         else admitted
                     )
                 ),
-                replacement=(
-                    int(getattr(replacement_range, "start_sequence")),
-                    int(getattr(replacement_range, "end_sequence")),
-                ),
+                replacement=_replaced_ranges(replacement_range),
                 appended_domains=tuple(
                     (next_sequence + offset, domain)
                     for offset, domain in enumerate(
@@ -4228,12 +4411,7 @@ class ConsoleTraceService:
             for offset, (descriptor, value) in enumerate(physical_pairs)
         )
         replacement_span = (
-            None
-            if replacement_range is None
-            else (
-                replacement_range.start_sequence,
-                replacement_range.end_sequence,
-            )
+            None if replacement_range is None else _replaced_ranges(replacement_range)
         )
         message_values = _ProjectedProviderValues(
             self,
@@ -4429,6 +4607,8 @@ class ConsoleTraceService:
                 is not None
                 or cast(SurfaceDeltaAdmission, prepared.admission).rewritten_tail
                 is not None
+                or cast(SurfaceDeltaAdmission, prepared.admission).fallback_rewrite
+                is not None
             ):
                 # Removed tool artifacts no longer contribute disclosure policy
                 # or structural metadata to the composed request.
@@ -4551,6 +4731,7 @@ class ConsoleTraceService:
                 else None
             ),
             rewritten_tail=admission.rewritten_tail,
+            fallback_rewrite=admission.fallback_rewrite,
         )
         self._child_capabilities[id(binding)] = state
         self._prepared_capabilities.pop(id(provenance), None)
@@ -4596,6 +4777,7 @@ class ConsoleTraceService:
             or child.live_native_ordinal != delta.live_native_ordinal
             or child.completed_tool_turn != delta.completed_tool_turn
             or child.rewritten_tail != delta.rewritten_tail
+            or child.fallback_rewrite != delta.fallback_rewrite
         ):
             raise ValueError("surface_child_binding")
         return child
@@ -4810,6 +4992,10 @@ class ConsoleTraceService:
                 removed = active.pop(sequence, None)
                 if removed is not None:
                     root_node = _sequence_delete(root_node, removed)
+            if node.component_kind == SURFACE_REMOVAL_COMPONENT:
+                # A fallback rewrite's removal marker leaves nothing in place
+                # of the range (ADR-337 amendment 2026-11-24).
+                continue
             sequence_node = _SequenceNode(
                 node.sequence,
                 self._node_reference_key(node),
@@ -4817,7 +5003,12 @@ class ConsoleTraceService:
             root_node = _sequence_insert(root_node, insert_at, sequence_node)
             active[node.sequence] = sequence_node
         entries = _sequence_entries(root_node)
-        root = _ProjectionRoot(None, base=tuple(entries))
+        # A slot put back after the tail still leads (ADR-337, 2026-11-25):
+        # rendered-system rows first, in sequence order, then the rest.
+        entries = tuple(
+            sorted(entry for entry in entries if entry[1][0] == "rendered_system")
+        ) + tuple(entry for entry in entries if entry[1][0] != "rendered_system")
+        root = _ProjectionRoot(None, base=entries)
         inherited_lineage = (
             () if inherited_projection is None else inherited_projection.lineage_domains
         )
@@ -5995,14 +6186,15 @@ class ConsoleTraceService:
             for sequence in range(first, last + 1)
         }
         covered: set[int] = set()
-        for sequence, _key in self._surface_projection(
-            cursor, segment_id, tail
-        ).root.iter_entries():
+        entries = self._surface_projection(cursor, segment_id, tail).entries
+        for position, (sequence, key) in enumerate(entries):
             if not plan.start_sequence <= sequence <= plan.end_sequence:
                 continue
             index = link_of.get(sequence)
-            if index is None:
+            if index is None and not (position == 0 and key[0] == "rendered_system"):
                 raise ValueError("replacement_chain_gap")
+            if index is None:
+                continue  # the retained leading slot (ADR-337, 2026-11-25)
             covered.add(index)
         if len(covered) != len(plan.chain):
             raise ValueError("replacement_chain_link_inactive")
@@ -6562,6 +6754,18 @@ def _domain_appends():
     return console_trace_domain_append
 
 
+#: Component of the content-free node a removal-only replacement points at
+#: (ADR-337 amendment 2026-11-24, TASK-42525). Projections drop it.
+SURFACE_REMOVAL_COMPONENT = "surface_removal"
+
+
+def _slot_restore():
+    """Load the slot restore only when a send needs it (TASK-42525)."""
+    from tldw_chatbook.Chat import console_trace_slot_restore
+
+    return console_trace_slot_restore
+
+
 def _rewritten_tails():
     """Load the rewritten-tail proof only when a send needs it."""
     from tldw_chatbook.Chat import console_trace_rewritten_tail
@@ -6569,14 +6773,21 @@ def _rewritten_tails():
     return console_trace_rewritten_tail
 
 
-def _replacement_links(sequences: Sequence[int]) -> list[tuple[int, int]]:
+def _replacement_links(
+    sequences: Sequence[int], *, around: int | None = None
+) -> list[tuple[int, int]]:
     """Group sorted live sequences into ranges spanning at most 256 sequences.
 
-    A run of dead sequences between two ranges is not replaced again.
+    A run of dead sequences between two ranges is not replaced again, and no
+    range covers ``around``, a retained slot among them (ADR-337, 2026-11-25).
     """
     links: list[tuple[int, int]] = []
     for sequence in sequences:
-        if links and sequence - links[-1][0] < MAX_SURFACE_REPLACEMENT_SPAN:
+        if (
+            links
+            and sequence - links[-1][0] < MAX_SURFACE_REPLACEMENT_SPAN
+            and not (around is not None and links[-1][1] < around < sequence)
+        ):
             links[-1] = (links[-1][0], sequence)
         else:
             links.append((sequence, sequence))

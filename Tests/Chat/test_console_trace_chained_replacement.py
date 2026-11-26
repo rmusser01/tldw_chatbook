@@ -429,6 +429,100 @@ def test_dispatch_binding_revalidates_every_link(chat_factory):
     }
 
 
+def _row_zero_replaced(chat):
+    """Rows 0-9, rows 0-5 replaced by one row (sequence 10), rows 11-14 after.
+
+    The projection reads 10, 6-9, 11-14: its first row has a newer sequence
+    than the rows after it, and it is not a system slot.
+    """
+    from Tests.Chat.test_console_trace_service import SurfaceReplacementPlan
+
+    rows = chat.chain(10)
+    first = chat.record(rows)
+    edited = chat.add(None, "edited")
+    surface = [edited, *rows[6:]]
+    chat.record(
+        surface,
+        replacement=SurfaceReplacementPlan(
+            predecessor_head_id=first.surface_head_id,
+            start_node_id=first.appended_nodes[0].node_id,
+            end_node_id=first.appended_nodes[5].node_id,
+            start_sequence=0,
+            end_sequence=5,
+            replacement_index=0,
+        ),
+    )
+    later = chat.chain(4, parent=rows[-1], start=10)
+    third = chat.record([*surface, *later], append_from=len(surface))
+    return first, third, edited
+
+
+def test_a_rewrite_never_skips_a_leading_row_that_is_not_a_slot(chat_factory):
+    """TASK-42525 round 5: a rewritten tail's links skip only a system slot.
+
+    A restored system slot leads the projection with a newer sequence than
+    the rows after it, and a rewrite's links skip it (ADR-337 amendment
+    2026-11-25). A replacement row at the front looks the same by sequence;
+    a rewrite from after it must still meet the sequence gap.
+    """
+    chat = chat_factory()
+    _first, _third, edited = _row_zero_replaced(chat)
+    n1 = chat.add(edited, "n1", "assistant")
+    n2 = chat.add(n1, "n2", "user")
+    current = chat.add(n2, "current", "assistant")
+
+    assert chat.refusal([edited, n1, n2, current], current) == ["sequence_gap"]
+
+
+def test_dispatch_binding_skips_only_a_leading_system_slot(chat_factory):
+    """TASK-42525 round 5: binding accepts a skipped row only if it is a slot.
+
+    A chain whose links skip the projection's first row is refused when that
+    row is not a rendered-system slot, as for a call with no slot at all.
+    """
+    from tldw_chatbook.Chat.console_trace_final_values import (
+        SurfaceReplacementLink,
+        VerifiedSurfaceDeltaItem,
+        VerifiedSurfaceReplacement,
+    )
+
+    chat = chat_factory()
+    first, third, edited = _row_zero_replaced(chat)
+    by_sequence = {
+        node.sequence: node for node in (*first.appended_nodes, *third.appended_nodes)
+    }
+    links = tuple(
+        SurfaceReplacementLink(
+            by_sequence[start].node_id, by_sequence[end].node_id, start, end
+        )
+        for start, end in ((6, 9), (11, 14))
+    )
+    plan = VerifiedSurfaceReplacement(
+        predecessor_head_id=third.surface_head_id,
+        start_node_id=links[0].start_node_id,
+        end_node_id=links[-1].end_node_id,
+        start_sequence=6,
+        end_sequence=14,
+        current_ordinal=1,
+        item=VerifiedSurfaceDeltaItem("messages_payload", 1, edited.descriptor),
+        chain=links,
+    )
+    service = ConsoleTraceService(chat.repository)
+    with chat.db.transaction() as cursor:
+        tail = chat.repository.get_surface_node(cursor, third.surface_head_id)
+        assert [sequence for sequence, _ in service._surface_projection(
+            cursor, chat.segment_id, tail
+        ).entries] == [10, 6, 7, 8, 9, 11, 12, 13, 14]
+        with pytest.raises(ValueError, match="^replacement_chain_gap$"):
+            service._validate_replacement_range(
+                cursor,
+                segment_id=chat.segment_id,
+                tail=tail,
+                plan=plan,
+                descriptor_count=1,
+            )
+
+
 def test_dispatch_binding_refuses_a_link_that_covers_no_live_row(
     chat_factory, monkeypatch
 ):
@@ -473,8 +567,8 @@ def test_dispatch_binding_refuses_a_link_that_covers_no_live_row(
     real_links = trace_service_module._replacement_links
     defective = [(0, 0), (1, 130), (131, 255), (256, 260)]
 
-    def defective_links(sequences):
-        assert real_links(sequences) == [(0, 255), (256, 260)]
+    def defective_links(sequences, **options):
+        assert real_links(sequences, **options) == [(0, 255), (256, 260)]
         return defective
 
     real_persist = ConsoleTraceService.persist_request

@@ -245,6 +245,26 @@ transcript:
 - A llama.cpp stream that returns no text is asked once more without
   streaming, as its own call. When that resend answers, including with a tool
   call, the run continues from its reply with capture on.
+- When an agent run switches to a provider from `[console]
+  agent_fallback_providers`, the trace keeps the failed calls and records the
+  fallback provider's calls after them, each with its provider and model. The
+  fallback carries the run's history and tool results. When the fallback
+  provider needs them in another form, its first call records that rewrite:
+  the run's earlier tool calls in its own tool-call format (for example, tool
+  calls a model wrote as text, sent natively), and no system prompt in the
+  message list when it takes the system prompt separately (a llama.cpp server
+  falling back to a hosted provider). The earlier calls keep their requests
+  as they were sent. Only the run's own tool calls and that system prompt can
+  be rewritten this way, at most 256 rows.
+- After a llama.cpp run has fallen back to a hosted provider, your next
+  message to the llama.cpp server is captured: its first call puts the system
+  prompt back as the first message, and the trace records it there. The same
+  holds when you switch a captured chat from a hosted provider to a llama.cpp
+  server. Only a message's first call can do this; a retry, a fallback or a
+  tool call cannot.
+- Switching a captured chat with project instructions (AGENTS.md) from a
+  llama.cpp server to a hosted provider by hand still stops with "Trace
+  capture could not start". **Send without capture** sends it.
 - Edit & resend and Regenerate send their reply with capture off, so that reply
   has no trace call of its own. Your next send in the chat is captured as usual.
   It records the edited branch as one bounded replacement of the earlier trace
