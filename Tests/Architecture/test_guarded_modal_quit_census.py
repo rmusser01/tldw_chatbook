@@ -91,6 +91,8 @@ GUARDED_CLOSE_DECISIONS: dict[str, str] = {
     "PersonalContextReviewModal._perform_safe_cancel": CONFIRM_QUIT,
     "tldw_chatbook/UI/Watchlists_Modules/bulk_sources_modal.py:"
     "BulkSourcesModal.action_cancel": CONFIRM_QUIT,
+    "tldw_chatbook/UI/Research_Workspace_Modules/copy_receipt_view.py:"
+    "ResearchCopyProgress.action_stop": CONFIRM_QUIT,
     "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py:"
     "ConsoleSessionSwitcherModal._perform_safe_cancel": CONFIRM_QUIT,
     # TASK-38747: a goal launch, and a portrait-region save.

@@ -4,6 +4,7 @@ import asyncio
 import re
 from collections.abc import Mapping
 
+from ...app_services import read_research_scope
 from ...Research_Workspace.deep_research_bridge import DeepResearchBridge
 
 from .chat_region import ResearchChatRegion
@@ -11,7 +12,7 @@ from .studio_region import ResearchStudioRegion
 
 
 async def recent_workspace_runs(screen, ref) -> tuple[str, ...]:
-    scope = getattr(screen.app, "research_scope_service", None)
+    scope = read_research_scope(screen.app)
     if scope is None or screen.overlay_store is None:
         return ()
     overlay = await asyncio.to_thread(screen.overlay_store.load, ref)

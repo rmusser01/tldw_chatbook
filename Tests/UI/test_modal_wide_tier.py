@@ -60,6 +60,7 @@ from tldw_chatbook.UI.Library_Modules.skills_trust_modals import (
     SkillRecoveryReviewModal,
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_recovery_review import MCPRecoveryReviewDialog
+from tldw_chatbook.UI.Research_Workspace_Modules.chat_message import ResearchChatMessageEditor
 from tldw_chatbook.UI.Screens.artifacts_dreams_goals_modal import DreamsGoalsModal
 from tldw_chatbook.UI.Screens.artifacts_dreams_modal import DreamsStoryModal
 from tldw_chatbook.UI.Screens.settings_screen import GuardianRuleEditModal
@@ -690,6 +691,7 @@ SPOT_REPRESENTATIVES: dict[str, tuple[int, tuple[int, int | None]]] = {
     "#file-notes-history-dialog": (150, (90, 95)),
     ".workflow-run-dialog": (170, (100, 90)),
     "WorkflowRunSetup .workflow-run-dialog": (170, (100, 90)),
+    ".research-wide-dialog": (120, (76, 90)),
 }
 SPOT_BUILDERS = {
     WIDE_TIER_CAPS[170]: _build_prompts_modal,
@@ -714,6 +716,7 @@ SPOT_BUILDERS = {
     "#file-notes-history-dialog": _build_file_notes_history_modal,
     ".workflow-run-dialog": _build_workflow_run_confirmation_modal,
     "WorkflowRunSetup .workflow-run-dialog": _build_workflow_run_setup_modal,
+    ".research-wide-dialog": lambda _app: ResearchChatMessageEditor("Grounded message"),
 }
 
 #: TASK-38641 / TASK-36522: every spot entry from the portrait dialogs on is

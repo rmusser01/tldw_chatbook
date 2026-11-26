@@ -117,7 +117,7 @@ class ResearchSharingDialog(
         section = self.draft.section if self.draft else "access"
         with Vertical(
             id="research-sharing-dialog",
-            classes="research-transfer-dialog research-transfer-scroll-dialog",
+            classes="research-transfer-dialog research-transfer-scroll-dialog research-wide-dialog",
         ):
             yield Static(
                 "Share settings for this Copy"

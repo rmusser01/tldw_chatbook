@@ -334,8 +334,6 @@ ResearchChatMessageEditor {
 
 #research-chat-citations-dialog,
 #research-chat-edit-dialog {
-    width: $ds-percent-90;
-    max-width: $ds-size-76;
     height: $ds-height-auto;
     max-height: $ds-percent-90;
     padding: $ds-space-inset;
@@ -378,8 +376,6 @@ ResearchStudioOptions, ResearchStudioActions, ResearchStudioEdit, ResearchMoreOu
 
 #research-studio-dialog, #research-studio-actions-dialog, #research-studio-edit-dialog,
 #research-more-outputs-dialog {
-    width: $ds-percent-90;
-    max-width: $ds-size-76;
     height: $ds-percent-90;
     min-height: $ds-size-12;
     padding: $ds-space-1;
@@ -405,9 +401,14 @@ ResearchWorkspaceSplit, ResearchWorkspaceSearchModal, ResearchHelpMenu, Research
     background: $background $ds-opacity-dim;
 }
 
-.research-transfer-dialog {
+/* Review and transfer frames share their base width before the wide tier. */
+.research-transfer-dialog,
+.research-wide-dialog {
     width: $ds-percent-90;
     max-width: $ds-size-76;
+}
+
+.research-transfer-dialog {
     height: auto;
     max-height: $ds-percent-90;
     padding: $ds-space-1;

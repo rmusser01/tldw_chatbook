@@ -11,7 +11,6 @@ from ..runtime_policy.types import PolicyDeniedError
 class ServerSharingClient(Protocol):
     """Client methods ServerSharingService calls (TASK-36953.1)."""
 
-    async def _request(self, *args: Any, **kwargs: Any) -> Any: ...
     async def chat_with_shared_workspace(self, *args: Any, **kwargs: Any) -> Any: ...
     async def clone_shared_workspace(self, *args: Any, **kwargs: Any) -> Any: ...
     async def create_share_token(self, *args: Any, **kwargs: Any) -> Any: ...
@@ -176,9 +175,7 @@ class ServerSharingService:
         client = self._require_client()
         if password is None:
             return self._dump(await client.import_public_share(token))
-        from ..tldw_api.workspace_share_import import import_password_protected_share
-
-        return self._dump(await import_password_protected_share(client, token, password))
+        return self._dump(await client.import_public_share(token, password=password))
 
     async def observe_link_events(
         self,

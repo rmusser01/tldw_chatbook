@@ -15,7 +15,6 @@ if TYPE_CHECKING:
 class ServerStudyClient(Protocol):
     """Client methods ServerStudyService calls (TASK-36953.1)."""
 
-    async def _request(self, *args: Any, **kwargs: Any) -> Any: ...
     async def create_flashcard(self, *args: Any, **kwargs: Any) -> Any: ...
     async def create_flashcard_deck(self, *args: Any, **kwargs: Any) -> Any: ...
     async def create_flashcard_template(self, *args: Any, **kwargs: Any) -> Any: ...
@@ -32,6 +31,7 @@ class ServerStudyClient(Protocol):
         self, *args: Any, **kwargs: Any
     ) -> Any: ...
     async def get_flashcard_asset_content(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_flashcard_deck(self, *args: Any, **kwargs: Any) -> Any: ...
     async def get_flashcard_assistant(self, *args: Any, **kwargs: Any) -> Any: ...
     async def get_flashcard_study_assistant_context(
         self, *args: Any, **kwargs: Any
@@ -248,13 +248,10 @@ class ServerStudyService:
         return [self._model_to_dict(item) for item in list(response or [])]
 
     async def get_deck(self, deck_id: str | int) -> dict[str, Any]:
-        from ..tldw_api.flashcards_schemas import FlashcardDeckResponse
-
         self._enforce(self._deck_action_id("detail"))
-        raw = await self._require_client()._request(
-            "GET", f"/api/v1/flashcards/decks/{self._coerce_deck_id(deck_id)}"
+        return self._model_to_dict(
+            await self._require_client().get_flashcard_deck(self._coerce_deck_id(deck_id))
         )
-        return FlashcardDeckResponse.model_validate(raw).model_dump()
 
     async def create_deck(
         self,

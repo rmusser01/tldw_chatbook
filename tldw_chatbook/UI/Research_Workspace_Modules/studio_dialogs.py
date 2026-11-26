@@ -92,7 +92,7 @@ class ResearchStudioOptions(
         return self.kind in {ResearchOutputKind.FLASHCARDS, ResearchOutputKind.QUIZ}
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll(id="research-studio-dialog"):
+        with VerticalScroll(id="research-studio-dialog", classes="research-wide-dialog"):
             yield Static(output_label(self.kind), classes="research-pane-title")
             yield Static(
                 f"{self.source_count} selected sources · Save to {self.owner}\n{self.route}",
@@ -293,7 +293,7 @@ class ResearchStudioActions(SafeModalDismissMixin, ModalScreen[str | None]):
         self.owner = owner
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="research-studio-actions-dialog"):
+        with Vertical(id="research-studio-actions-dialog", classes="research-wide-dialog"):
             with VerticalScroll(classes="research-studio-action-scroll"):
                 yield Static(
                     self.row.title, classes="research-pane-title", markup=False
@@ -354,7 +354,7 @@ class ResearchStudioEdit(SafeModalDismissMixin, ModalScreen[str | None]):
         self.row = row
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="research-studio-edit-dialog"):
+        with Vertical(id="research-studio-edit-dialog", classes="research-wide-dialog"):
             yield Static(self.row.title, classes="research-pane-title", markup=False)
             yield TextArea(self.row.content, id="research-studio-edit-body")
             yield Button(

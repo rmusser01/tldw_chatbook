@@ -29,6 +29,7 @@ import threading
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from textual.app import App, ComposeResult
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
@@ -78,6 +79,14 @@ from tldw_chatbook.Personal_Context.interview_coordinator import (
 )
 from tldw_chatbook.Prompt_Management.prompt_improvement_models import (
     PromptImprovementOutcome,
+)
+from tldw_chatbook.Research_Workspace.copy_models import ResearchCopyStatus
+from tldw_chatbook.UI.Research_Workspace_Modules.copy_receipt_view import (
+    ResearchCopyProgress,
+    ResearchCopyReceiptView,
+)
+from tldw_chatbook.UI.Research_Workspace_Modules.workspace_transfer_actions import (
+    _run_copy,
 )
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.Console import trace_export_dialog as export_dialog_module
@@ -220,6 +229,78 @@ async def test_a_close_refused_under_the_question_finishes_after_wait():
         assert app.results == ["finished"]
         assert app.screen is base
         assert app._exception is None
+
+
+@pytest.mark.parametrize("approve_quit", (False, True), ids=("wait", "quit-anyway"))
+async def test_research_copy_waits_for_the_quit_answer(approve_quit):
+    app = _Host()
+    release = asyncio.Event()
+    settled = asyncio.Event()
+    receipt = SimpleNamespace(
+        status=ResearchCopyStatus.COMPLETED,
+        manifest=SimpleNamespace(target_name="Copied workspace"),
+        items=(),
+    )
+
+    async def execute_copy(_manifest, _confirmation, *, cancel_event, on_progress):
+        await release.wait()
+        assert cancel_event.is_set()
+        on_progress(receipt)
+        settled.set()
+        return receipt
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        base = app.screen
+        capture = object()
+        base.controller = SimpleNamespace(
+            is_current_request=lambda request: request is capture
+        )
+        base.copy_workspace = SimpleNamespace(
+            service=SimpleNamespace(execute_copy=execute_copy)
+        )
+        copy = app.run_worker(_run_copy(base, capture), exit_on_error=False)
+        await _until(
+            pilot,
+            lambda: isinstance(app.screen, ResearchCopyProgress)
+            and _shown(app.screen, "#research-copy-stop"),
+            "the Copy progress screen",
+        )
+        progress = app.screen
+        await pilot.press("escape")
+        await _until(pilot, progress.cancel.is_set, "the checkpoint stop request")
+        question, quit_worker = await _ask_quit_anyway(app, pilot, progress)
+
+        release.set()
+        await _until(pilot, settled.is_set, "the Copy owner checkpoint")
+        assert app.screen is question
+        assert not any(
+            isinstance(screen, ResearchCopyReceiptView) for screen in app.screen_stack
+        )
+
+        if approve_quit:
+            await pilot.click("#confirm-button")
+            await _until(
+                pilot,
+                lambda: quit_worker.is_finished and copy.is_finished,
+                "Copy and the approved quit decision to settle",
+            )
+            assert quit_worker.error is None and quit_worker.result is True
+            assert copy.error is None
+            assert app.screen is base
+            return
+
+        await _answer_wait(pilot, quit_worker)
+        await _until(
+            pilot,
+            lambda: isinstance(app.screen, ResearchCopyReceiptView),
+            "the completed Copy receipt",
+        )
+        assert progress not in app.screen_stack
+        assert app.screen.receipt is receipt
+        await pilot.press("escape")
+        await _until(pilot, lambda: copy.is_finished, "the Copy worker to finish")
+        assert copy.error is None
+        assert app.screen is base
 
 
 async def test_quit_anyway_still_quits_when_a_close_was_kept():

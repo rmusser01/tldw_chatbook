@@ -152,7 +152,6 @@ css/features/_library_panels.tcss	Button.library-rag-recovery-action:focus	outli
 css/features/_library_panels.tcss	Button.library-rag-recovery-action:focus	outline-right	$ds-focus-accent
 css/features/_research_workspace.tcss	#research-workspace-shell.height-compact .research-workspace-pane:focus	outline	$accent
 css/features/_research_workspace.tcss	.research-workspace-pane:focus	border	$accent
-css/features/_research_workspace.tcss	ResearchPaneHandle .research-pane-handle-button:focus	outline	$accent
 css/features/_tab_dropdown.tcss	#tab-dropdown-select:focus	border	$ds-input-focus-border
 css/features/_tab_dropdown.tcss	#tab-dropdown-select:focus	border-bottom	$ds-input-focus-accent
 css/features/_wizards.tcss	.setup-choice-list:focus	border	$ds-focus-accent

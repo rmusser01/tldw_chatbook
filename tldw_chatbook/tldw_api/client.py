@@ -806,7 +806,6 @@ from .quizzes_schemas import (
     QuizAttemptResponse,
     QuizAttemptSubmitRequest,
     QuizCreateRequest,
-    QuizListResponse,
     QuizQuestionCreateRequest,
     QuizQuestionListResponse,
     QuizQuestionResponse,
@@ -870,6 +869,7 @@ from .chat_documents_schemas import (
     SavePromptConfigRequest,
 )
 from .chat_completion_client import ChatCompletionClientMixin
+from .study_read_client import StudyReadClientMixin
 from .character_persona_schemas import (
     ArchetypePreviewResponse,
     ArchetypeSummary,
@@ -1119,7 +1119,7 @@ def _reject_unsafe_endpoint(endpoint: str) -> str:
         raise APIRequestError(str(exc)) from exc
 
 
-class TLDWAPIClient(ChatCompletionClientMixin):
+class TLDWAPIClient(ChatCompletionClientMixin, StudyReadClientMixin):
     # Ceiling on how long a *connection* may take to establish.
     #
     # `timeout` is the budget for a whole operation, and some are legitimately
@@ -9030,8 +9030,17 @@ class TLDWAPIClient(ChatCompletionClientMixin):
         )
         return VerifyPasswordResponse.model_validate(response)
 
-    async def import_public_share(self, token: str) -> PublicShareImportResponse:
-        response = await self._request("POST", f"/api/v1/sharing/public/{token}/import")
+    async def import_public_share(
+        self, token: str, *, password: str | None = None
+    ) -> PublicShareImportResponse:
+        request = (
+            VerifyPasswordRequest(password=password) if password is not None else None
+        )
+        response = await self._request(
+            "POST",
+            f"/api/v1/sharing/public/{token}/import",
+            json_data=request.model_dump(mode="json") if request is not None else None,
+        )
         return PublicShareImportResponse.model_validate(response)
 
     async def list_sharing_audit_events(
@@ -11435,29 +11444,6 @@ class TLDWAPIClient(ChatCompletionClientMixin):
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return QuizResponse.model_validate(response)
-
-    async def list_quizzes(
-        self,
-        *,
-        q: Optional[str] = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> list[QuizResponse]:
-        response = await self._request(
-            "GET",
-            "/api/v1/quizzes",
-            params={
-                key: value
-                for key, value in {
-                    "q": q,
-                    "limit": limit,
-                    "offset": offset,
-                }.items()
-                if value is not None
-            },
-        )
-        payload = QuizListResponse.model_validate(response)
-        return payload.items
 
     async def get_quiz(self, quiz_id: int | str) -> QuizResponse:
         response = await self._request("GET", f"/api/v1/quizzes/{quiz_id}")

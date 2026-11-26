@@ -3760,6 +3760,8 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Plugins/source_service.py | SourceService.commit_import.operation | open | 1 | qualified | plugins |
 | tldw_chatbook/Plugins/source_service.py | SourceService.commit_import.operation | write | 1 | qualified | plugins |
 | tldw_chatbook/Prompt_Management/prompt_scope_service.py | PromptScopeService.save_prompt | write | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Research_Workspace/local_chat.py | _usage_json | to_json | 1 | memory | In-memory ProviderUsage serialization for db.chachanotes.primary conversation metadata |
+| tldw_chatbook/Research_Workspace/local_studio.py | LocalStudioAdapter._save_study_items | write | 1 | qualified | study.local or quiz.local via a transaction on the injected db.chachanotes.primary service selected by chachanotes_db_path |
 | tldw_chatbook/Research_Workspace/overlay_store.py | ResearchPresentationOverlayStore._read_payload | open_private_binary | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Research_Workspace/overlay_store.py | ResearchPresentationOverlayStore._read_payload | secure_private_directory | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Research_Workspace/overlay_store.py | ResearchPresentationOverlayStore.save | atomic_private_write_text | 1 | unsupported | miscellaneous |
@@ -3768,8 +3770,14 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Research_Workspace/paste_staging.py | ResearchPasteStagingStore._load_index | open_private_binary | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Research_Workspace/paste_staging.py | ResearchPasteStagingStore._write_index | atomic_private_write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Research_Workspace/paste_staging.py | ResearchPasteStagingStore.stage | atomic_private_write_text | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Research_Workspace/workspace_export.py | PreparedWorkspaceExport.bundle_bytes | ZipFile | 1 | memory | ZIP built in BytesIO before the user-selected export writer |
+| tldw_chatbook/Research_Workspace/workspace_import.py | read_workspace_bundle | ZipFile | 1 | external_input | User-selected EnhancedFileOpen Workspace ZIP opened read-only |
 | tldw_chatbook/Scheduling/scheduler_heartbeat.py | write_heartbeat | atomic_write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Scheduling/scheduler_heartbeat.py | write_heartbeat | mkdir | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Sharing_Interop/clone_receipts.py | SharingCloneReceipts._read | open_private_binary | 1 | unsupported | Unregistered durable recipient operation identity at `user_data_dir/sharing-clones/<profile-account hash>/<share id>.json` |
+| tldw_chatbook/Sharing_Interop/clone_receipts.py | SharingCloneReceipts._save | atomic_private_write_text | 1 | unsupported | Unregistered durable recipient operation identity at `user_data_dir/sharing-clones/<profile-account hash>/<share id>.json` |
+| tldw_chatbook/Sharing_Interop/clone_receipts.py | SharingCloneReceipts._save | secure_private_directory | 1 | unsupported | Creates the unregistered private account partition under `user_data_dir/sharing-clones` |
+| tldw_chatbook/Study_Interop/quiz_normalizers.py | _require_mapping | dump | 1 | memory | Pydantic model_dump projection to an in-memory mapping |
 | tldw_chatbook/Terminal/posix_backend.py | _stderr_context | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Tool_Packs/export.py | write_tool_pack_archive | ZipFile | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Tool_Packs/export.py | write_tool_pack_archive | write | 1 | unsupported | miscellaneous |
@@ -3818,6 +3826,10 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/UI/Navigation/buddy_management.py | BuddyManagementCoordinator._review_petdex | write_bytes | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Persona_Modules/portrait_performance.py | PortraitPerformanceController.handle.read | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Persona_Modules/roleplay_import_sniff.py | sniff_import_file | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Research_Workspace_Modules/studio_dialogs.py | play_voice_preview | TemporaryDirectory | 1 | process_artifact | TemporaryDirectory with the research-voice- prefix, scoped to preview playback |
+| tldw_chatbook/UI/Research_Workspace_Modules/studio_dialogs.py | play_voice_preview | write_bytes | 1 | process_artifact | Preview sample in the same process-owned research-voice- temporary directory |
+| tldw_chatbook/UI/Research_Workspace_Modules/workspace_export.py | export_workspace_bibtex | atomic_write_bytes | 1 | external_input | User-selected EnhancedFileSave BibTeX export destination |
+| tldw_chatbook/UI/Research_Workspace_Modules/workspace_export.py | export_workspace_bundle | atomic_write_bytes | 1 | external_input | User-selected EnhancedFileSave Workspace ZIP export destination |
 | tldw_chatbook/UI/Screens/artifacts_dreams_modal.py | DreamsStoryModal.action_export._write_story_export | mkdir | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/artifacts_dreams_modal.py | DreamsStoryModal.action_export._write_story_export | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/artifacts_screen.py | ArtifactsScreen._write_report_export_file | write_text | 1 | unsupported | miscellaneous |
@@ -3829,6 +3841,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/UI/Screens/meetings_screen.py | MeetingsScreen._repaint_log | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._lore_export_worker | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/research_workspace_screen.py | ResearchWorkspaceScreen._download_quick_note | write_text | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Screens/research_workspace_screen.py | ResearchWorkspaceScreen._perform_studio_owner_action | write_bytes | 1 | external_input | User-selected EnhancedFileSave Studio output download path |
 | tldw_chatbook/UI/Screens/watchlists_collections_screen.py | WatchlistsCollectionsScreen._write_briefing_export_file | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/tls_trust.py | _file_digest | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/tls_trust.py | _merged_bundle_path | atomic_write_text | 1 | unsupported | miscellaneous |

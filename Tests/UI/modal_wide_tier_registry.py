@@ -122,6 +122,13 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     # TASK-33620.8.3: the one-time citation-records question, a two-answer
     # ConfirmationDialog that keeps the family's geometry.
     "CitationRecordsQuestionDialog": "tiny-by-design confirm (ConfirmationDialog family, base width 60)",
+    "ResearchCopyProgress": "compact checkpoint status and a single Stop action",
+    "ResearchCopyTargetDialog": "compact destination picker with a single input or select",
+    "ResearchHelpMenu": "compact keyboard command list with fixed button labels",
+    "ResearchWorkspaceName": "single-line name or banner entry",
+    "ResearchWorkspacePicker": "compact workspace select with one open or restore action",
+    "ResearchWorkspaceSplit": "compact layout choices with two checkboxes and one select",
+    "ResearchWorkspaceTemplates": "compact preset list with fixed names and descriptions",
 }
 
 #: Whole modules whose ModalScreen subclasses are all outside the tier:
@@ -506,6 +513,7 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
     ("#dgm-dialog", 120, "UI/Screens/artifacts_dreams_goals_modal.py"),
     ("#dsm-dialog", 120, "UI/Screens/artifacts_dreams_modal.py"),
     ("#grm-dialog", 120, "UI/Screens/settings_screen.py"),
+    (".research-wide-dialog", 120, "UI/Research_Workspace_Modules/chat_message.py"),
     (
         "MCPRecoveryReviewDialog #confirmation-dialog",
         120,

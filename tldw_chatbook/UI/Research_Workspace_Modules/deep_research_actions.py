@@ -11,6 +11,7 @@ from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
 
+from ...app_services import read_pending_handoffs, read_research_scope
 from ...Constants import TAB_RESEARCH
 from ...Research_Interop.research_scope_service import ResearchScopeService
 from ...Research_Interop.server_research_service import ServerResearchService
@@ -47,7 +48,9 @@ class ResearchLaunchDialog(SafeModalDismissMixin, ModalScreen[str | None]):
         self.initial_title = initial_title
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="research-launch-dialog", classes="research-transfer-dialog"):
+        with Vertical(
+            id="research-launch-dialog", classes="research-transfer-dialog research-wide-dialog"
+        ):
             yield Static("Launch Deep Research", classes="research-pane-title")
             yield Static(
                 f"Runs will record the versions of {self.source_count} selected workspace sources.",
@@ -96,7 +99,7 @@ class ResearchReportReview(SafeModalDismissMixin, ModalScreen[str | None]):
     def compose(self) -> ComposeResult:
         with Vertical(
             id="research-report-review",
-            classes="research-transfer-dialog research-transfer-scroll-dialog",
+            classes="research-transfer-dialog research-transfer-scroll-dialog research-wide-dialog",
         ):
             yield Static("Review Deep Research Report", classes="research-pane-title")
             with VerticalScroll(classes="research-transfer-scroll"):
@@ -136,7 +139,7 @@ class ResearchReportReview(SafeModalDismissMixin, ModalScreen[str | None]):
 
 def _bound_bridge(screen, ref, port) -> DeepResearchBridge:
     app = screen.app_instance
-    scope = getattr(app, "research_scope_service", None)
+    scope = read_research_scope(app)
     if scope is None or screen.overlay_store is None:
         raise ValueError("Research Runs or the device workspace store is unavailable")
     if ref.data_source is WorkspaceDataSource.SERVER:
@@ -254,7 +257,7 @@ async def show_research_launch(screen, row=None) -> None:
 
 
 def start_research_return(screen) -> bool:
-    store = getattr(screen.app_instance, "pending_handoffs", None)
+    store = read_pending_handoffs(screen.app_instance)
     if store is not None and (
         claim := store.claim(HandoffChannel.RESEARCH_WORKSPACE_RETURN)
     ):

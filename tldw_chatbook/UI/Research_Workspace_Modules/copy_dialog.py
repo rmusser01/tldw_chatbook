@@ -84,7 +84,7 @@ class ResearchWorkspaceActions(SafeModalDismissMixin, ModalScreen[str | None]):
     def compose(self) -> ComposeResult:
         with Vertical(
             id="research-workspace-actions-dialog",
-            classes="research-transfer-dialog research-transfer-scroll-dialog",
+            classes="research-transfer-dialog research-transfer-scroll-dialog research-wide-dialog",
         ):
             yield Static("Workspace actions", classes="research-pane-title")
             yield Static(f"{self.authority.value.title()} data")
@@ -372,7 +372,7 @@ class ResearchCopyPreview(
         has_choices = False
         with Vertical(
             id="research-copy-preview-dialog",
-            classes="research-transfer-dialog research-transfer-scroll-dialog",
+            classes="research-transfer-dialog research-transfer-scroll-dialog research-wide-dialog",
         ):
             yield Static("Review Copy", classes="research-pane-title")
             with VerticalScroll(classes="research-transfer-scroll"):

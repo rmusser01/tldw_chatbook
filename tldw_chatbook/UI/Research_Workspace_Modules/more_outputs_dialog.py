@@ -36,7 +36,7 @@ class ResearchMoreOutputs(
         self.capabilities = dict(capabilities)
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="research-more-outputs-dialog"):
+        with Vertical(id="research-more-outputs-dialog", classes="research-wide-dialog"):
             yield Static("More outputs", classes="research-pane-title")
             yield Static(f"{self.workspace.data_source.value.title()} workspace")
             with VerticalScroll(id="research-more-output-list", name="Studio output choices"):

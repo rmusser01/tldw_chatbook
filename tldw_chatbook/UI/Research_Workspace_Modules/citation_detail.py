@@ -21,7 +21,7 @@ class ResearchCitationDetail(SafeModalDismissMixin, ModalScreen[None]):
         self.context = research_message_context(answer)
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll(id="research-chat-citations-dialog"):
+        with VerticalScroll(id="research-chat-citations-dialog", classes="research-wide-dialog"):
             yield Static("Citations", classes="dialog-title", markup=False)
             citations = context_rows(self.context.get("citations"))
             sources = {

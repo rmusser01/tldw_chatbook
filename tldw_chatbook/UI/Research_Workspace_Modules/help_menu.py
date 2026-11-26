@@ -93,7 +93,7 @@ class ResearchHelpDetail(SafeModalDismissMixin, ModalScreen[bool | None]):
     def compose(self) -> ComposeResult:
         with Vertical(
             id="research-help-detail",
-            classes="research-transfer-dialog research-transfer-scroll-dialog",
+            classes="research-transfer-dialog research-transfer-scroll-dialog research-wide-dialog",
         ):
             yield Static(self.title, classes="research-pane-title")
             with VerticalScroll(classes="research-transfer-scroll"):

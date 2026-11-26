@@ -18,12 +18,16 @@ def copy_status(value: ResearchCopyStatus) -> str:
     return value.value.replace("_", " ").capitalize()
 
 
-class ResearchCopyProgress(ModalScreen[None]):
+class ResearchCopyProgress(SafeModalDismissMixin, ModalScreen[None]):
     BINDINGS = [Binding("escape", "stop", "Stop", show=False)]
 
     def __init__(self, cancel: asyncio.Event) -> None:
         super().__init__()
         self.cancel = cancel
+        self._progress_unmounted = asyncio.Event()
+        self._finished = False
+        self._quit_confirmation = asyncio.Lock()
+        self._quit_approved = False
 
     def compose(self) -> ComposeResult:
         with Vertical(
@@ -42,6 +46,28 @@ class ResearchCopyProgress(ModalScreen[None]):
         self.query_one("#research-copy-progress-status", Static).update(
             "Stopping after the current owner checkpoint."
         )
+
+    async def confirm_quit(self) -> bool:
+        from ...Widgets.quit_while_working import refuse_quit_while_working
+
+        async with self._quit_confirmation:
+            self._quit_approved = self._finished or await refuse_quit_while_working(
+                self, "Research Copy is still working."
+            )
+            return self._quit_approved
+
+    def finish(self) -> None:
+        self._finished = True
+        self.dismiss_safe_once_when_on_top(None)
+
+    async def can_show_receipt_after_close(self) -> bool:
+        """Wait for the progress view and any covering quit question to settle."""
+        await self._progress_unmounted.wait()
+        async with self._quit_confirmation:
+            return not self._quit_approved
+
+    def on_unmount(self) -> None:
+        self._progress_unmounted.set()
 
     def update_receipt(self, receipt: ResearchCopyReceipt) -> None:
         if self.is_mounted and not self.cancel.is_set():
@@ -65,7 +91,7 @@ class ResearchCopyReceiptView(SafeModalDismissMixin, ModalScreen[str | None]):
         receipt = self.receipt
         with Vertical(
             id="research-copy-receipt-dialog",
-            classes="research-transfer-dialog research-transfer-scroll-dialog",
+            classes="research-transfer-dialog research-transfer-scroll-dialog research-wide-dialog",
         ):
             yield Static("Copy receipts", classes="research-pane-title")
             with VerticalScroll(classes="research-transfer-scroll"):

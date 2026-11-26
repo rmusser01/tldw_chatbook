@@ -13,6 +13,7 @@ from textual.events import DescendantFocus
 from textual.message import Message
 from textual.widgets import Button, Input, Select, Static
 
+from ...app_services import read_research_scope
 from ...Research_Workspace.action_registry import (
     ResearchActionContext,
     ResearchActionProbes,
@@ -288,7 +289,7 @@ class ResearchStudioRegion(VerticalScroll):
                 logger.debug("Studio native capability unavailable ({})", type(exc).__name__)
         research_available = (
             self.overlay_store is not None
-            and getattr(self.app, "research_scope_service", None) is not None
+            and read_research_scope(self.app) is not None
             and any(source.ready_modes for source in sources or ())
         )
         if research_available and capture.ref.data_source.value == "server":

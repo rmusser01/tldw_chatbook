@@ -6,6 +6,7 @@ import asyncio
 
 from loguru import logger
 
+from ...app_services import read_sharing_scope
 from ...Research_Workspace.contracts import CapabilityUnavailableError, WorkspaceDataSource
 from ...Research_Workspace.copy_manifest import ResearchCopyCandidate
 from ...Research_Workspace.copy_models import (
@@ -70,7 +71,7 @@ async def show_workspace_actions(screen, capture) -> None:
                 catalog_ready=catalog_ready,
                 capabilities=capabilities,
                 can_copy=workspace is not None,
-                can_share=getattr(screen.app_instance, "sharing_scope_service", None)
+                can_share=read_sharing_scope(screen.app_instance)
                 is not None,
                 presentation_available=presentation_available,
                 pinned=bool(overlay and overlay.workspace_presentation.pinned),
@@ -239,9 +240,8 @@ async def _run_copy(
                 on_progress=progress.update_receipt,
             )
     finally:
-        if screen.app.screen is progress:
-            await screen.app.pop_screen()
-    if not current():
+        progress.finish()
+    if not await progress.can_show_receipt_after_close() or not current():
         return
     if (
         share

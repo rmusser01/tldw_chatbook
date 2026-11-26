@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ...app_services import read_workspace_registry
+
 if TYPE_CHECKING:
     from ..Screens.chat_screen import ChatScreen
 
@@ -38,7 +40,7 @@ def consume_workspace_handoff(screen: ChatScreen) -> None:
         return
     screen._pending_research_console_workspace = None
     workspace_id, create_chat = pending
-    registry = getattr(screen.app_instance, "workspace_registry_service", None)
+    registry = read_workspace_registry(screen.app_instance)
     record = registry.get_workspace(workspace_id) if registry is not None else None
     if record is None or record.archived:
         screen.app_instance.notify(

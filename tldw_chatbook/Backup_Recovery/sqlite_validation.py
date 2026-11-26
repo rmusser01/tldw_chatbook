@@ -98,6 +98,22 @@ _EVALS_VERSION_COLUMN_TABLES = frozenset(
 )
 
 
+_WORKSPACE_ALTER_TABLES = {9: "workspace_records", 10: "workspace_memberships"}
+_WORKSPACE_COPY_TABLES = frozenset({"research_copy_operations", "research_copy_items"})
+_WORKSPACE_COPY_EXPLICIT_INDEXES = {
+    "idx_research_copy_destination": "research_copy_operations",
+    "idx_research_copy_source": "research_copy_operations",
+}
+_WORKSPACE_COPY_INDEXES = {
+    **_WORKSPACE_COPY_EXPLICIT_INDEXES,
+    **{
+        f"sqlite_autoindex_{table}_{ordinal}": table
+        for table in _WORKSPACE_COPY_TABLES
+        for ordinal in (1, 2)
+    },
+}
+
+
 class _Restrictions:
     def __init__(self, connection, cancel=None):
         self.cancel = cancel
@@ -118,6 +134,7 @@ class _Restrictions:
         self.dropped_indexes = {}
         self.canvas_sibling_migration = False
         self.portrait_migration = None
+        self.workspace_migration = None
         self.archive_chronology_migration = False
         self.workflow_statistics = ()
         self.dropping_workflow_phase = False
@@ -341,6 +358,10 @@ class _Restrictions:
                     allowed |= {"trim", "sqlite_rename_table"}
                 if self.migration_owner == "db.subscriptions":
                     allowed |= {"json_valid", "json_type", "json_extract", "json_set"}
+                if self.workspace_migration == 10:
+                    allowed |= {"json_valid", "json_type"}
+                if self.workspace_migration == 11:
+                    allowed.add("json_valid")
                 if self.migration_owner == "db.dreams":
                     allowed |= {"sqlite_rename_table", "sqlite_rename_column"}
                 if self.migration_owner == "db.agent_runs":
@@ -405,9 +426,9 @@ class _Restrictions:
             )
             permitted |= (
                 self.migrating
-                and self.migration_owner == "db.workspaces"
+                and self.workspace_migration in _WORKSPACE_ALTER_TABLES
                 and first == "quick_check"
-                and second == "workspace_records"
+                and second == _WORKSPACE_ALTER_TABLES[self.workspace_migration]
             )
             permitted |= (
                 self.migrating and self.migration_owner == "db.guardian"
@@ -819,20 +840,30 @@ class _Restrictions:
                     )
                 )
                 return sqlite3.SQLITE_OK if allowed else sqlite3.SQLITE_DENY
-            if self.migration_owner == "db.workspaces" and source is None:
-                allowed = (
-                    action == sqlite3.SQLITE_ALTER_TABLE
-                    and (first, second, database) == ("main", "workspace_records", None)
-                    or database == "main"
+            if self.workspace_migration is not None and source is None:
+                if action == sqlite3.SQLITE_ALTER_TABLE and (
+                    self.workspace_migration in _WORKSPACE_ALTER_TABLES
+                    and (first, second, database)
+                    == ("main", _WORKSPACE_ALTER_TABLES[self.workspace_migration], None)
+                ):
+                    return sqlite3.SQLITE_OK
+                if database == "main" and (
+                    action == sqlite3.SQLITE_INSERT
+                    and first in {"schema_version", "sqlite_master"}
+                    or action == sqlite3.SQLITE_UPDATE
+                    and first == "sqlite_master"
+                    and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+                    or self.workspace_migration == 11
                     and (
-                        action == sqlite3.SQLITE_INSERT
-                        and first in {"schema_version", "sqlite_master"}
-                        or action == sqlite3.SQLITE_UPDATE
-                        and first == "sqlite_master"
-                        and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+                        action == sqlite3.SQLITE_CREATE_TABLE
+                        and first in _WORKSPACE_COPY_TABLES
+                        or action == sqlite3.SQLITE_CREATE_INDEX
+                        and first in _WORKSPACE_COPY_INDEXES
+                        and second == _WORKSPACE_COPY_INDEXES[first]
+                        or action == sqlite3.SQLITE_REINDEX
+                        and first in _WORKSPACE_COPY_EXPLICIT_INDEXES
                     )
-                )
-                if allowed:
+                ):
                     return sqlite3.SQLITE_OK
             # Fixed Dreams predecessor migrations only; candidate catalog matched
             # before this gate. No writes to story/profile payloads outside copy.
@@ -1785,6 +1816,8 @@ def _validate_candidate(
                                 and version in (82, 83)
                                 else None
                             )
+                            if installed.owner_id == "db.workspaces":
+                                restrictions.workspace_migration = version
                             try:
                                 for statement in statements:
                                     if restrictions.expired():
@@ -1800,6 +1833,7 @@ def _validate_candidate(
                                         restrictions.dropping_workflow_phase = False
                             finally:
                                 restrictions.portrait_migration = None
+                                restrictions.workspace_migration = None
                         restrictions.migrating = False
                         issues, version = _check(
                             connection, installed, policy, restrictions

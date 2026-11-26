@@ -2,6 +2,8 @@
 
 from collections.abc import Mapping
 
+from ...app_services import read_server_context_provider
+
 from ...Research_Workspace.contracts import QualifiedWorkspaceRef, WorkspaceDataSource
 from ...Research_Workspace.deep_research_bridge import DeepResearchBridge
 from ...runtime_policy.server_context import ServerContextError
@@ -9,7 +11,7 @@ from ...runtime_policy.server_event_scope import event_principal_id_from_active_
 
 
 def active_server_identity(app) -> tuple[str, str] | None:
-    provider = getattr(app, "server_context_provider", None)
+    provider = read_server_context_provider(app)
     if provider is None:
         return None
     try:

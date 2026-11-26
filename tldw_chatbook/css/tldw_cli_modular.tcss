@@ -4737,6 +4737,10 @@ App.-wide-viewport MCPRecoveryReviewDialog #confirmation-dialog {
   width: $ds-percent-85;
   max-width: $ds-size-120;
 }
+App.-wide-viewport .research-wide-dialog {
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
+}
 
 
 .deny-reason{min-height:$ds-size-1;margin:$ds-space-0;padding:$ds-space-0;border:none;}
@@ -19377,8 +19381,6 @@ ResearchChatMessageEditor {
 
 #research-chat-citations-dialog,
 #research-chat-edit-dialog {
-    width: $ds-percent-90;
-    max-width: $ds-size-76;
     height: $ds-height-auto;
     max-height: $ds-percent-90;
     padding: $ds-space-inset;
@@ -19421,8 +19423,6 @@ ResearchStudioOptions, ResearchStudioActions, ResearchStudioEdit, ResearchMoreOu
 
 #research-studio-dialog, #research-studio-actions-dialog, #research-studio-edit-dialog,
 #research-more-outputs-dialog {
-    width: $ds-percent-90;
-    max-width: $ds-size-76;
     height: $ds-percent-90;
     min-height: $ds-size-12;
     padding: $ds-space-1;
@@ -19448,9 +19448,14 @@ ResearchWorkspaceSplit, ResearchWorkspaceSearchModal, ResearchHelpMenu, Research
     background: $background $ds-opacity-dim;
 }
 
-.research-transfer-dialog {
+
+.research-transfer-dialog,
+.research-wide-dialog {
     width: $ds-percent-90;
     max-width: $ds-size-76;
+}
+
+.research-transfer-dialog {
     height: auto;
     max-height: $ds-percent-90;
     padding: $ds-space-1;

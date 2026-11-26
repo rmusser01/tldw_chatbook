@@ -228,7 +228,8 @@ class ResearchWorkspaceSearchModal(
 
     def compose(self) -> ComposeResult:
         with Vertical(
-            id="research-global-search-dialog", classes="research-transfer-dialog"
+            id="research-global-search-dialog",
+            classes="research-transfer-dialog research-wide-dialog",
         ):
             yield Static(
                 f"Search {self.controller.selected_data_source.value.title()} workspace data",

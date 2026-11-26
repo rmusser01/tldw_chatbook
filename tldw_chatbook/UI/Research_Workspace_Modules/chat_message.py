@@ -73,7 +73,7 @@ class ResearchChatMessageEditor(SafeModalDismissMixin, ModalScreen[str | None]):
         self.body = body
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="research-chat-edit-dialog", classes="dialog"):
+        with Vertical(id="research-chat-edit-dialog", classes="dialog research-wide-dialog"):
             yield Static("Edit message", classes="dialog-title")
             yield TextArea(self.body, id="research-chat-edit-body")
             yield Static("", id="research-chat-edit-status", markup=False)

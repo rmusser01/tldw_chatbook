@@ -2511,6 +2511,10 @@ App.-wide-viewport MCPRecoveryReviewDialog #confirmation-dialog {
   width: $ds-percent-85;
   max-width: $ds-size-120;
 }
+App.-wide-viewport .research-wide-dialog {
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
+}
 
 /* Optional denial text stays out of the compact card until requested.
    Scoped types preserve one-line keyboard focus; identical row rules above

@@ -9,6 +9,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.widgets import Button, Select
 
+from ...app_services import read_pending_handoffs
 from ...Constants import TAB_RESEARCH_WORKSPACE
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
@@ -51,7 +52,7 @@ class ResearchScreen(BaseAppScreen):
         self.call_after_refresh(self._start_run_handoff)
 
     def _start_run_handoff(self) -> None:
-        store = getattr(self.app_instance, "pending_handoffs", None)
+        store = read_pending_handoffs(self.app_instance)
         if store is None or not self.is_attached:
             return
         if claim := store.claim(HandoffChannel.RESEARCH_RUN_TARGET):
