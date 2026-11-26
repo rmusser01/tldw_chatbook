@@ -2158,9 +2158,14 @@ def test_recovered_suites_lane_is_one_serial_guarded_minimal_python_312_job() ->
     )
     assert setup["with"]["python-version"] == "3.12"
     install = _named_step(job, "Install fast-lane dependencies")["run"]
-    assert shlex.split(install) == shlex.split(
-        _named_step(workflow["jobs"]["pr-fast-lane"], "Install fast-lane dependencies")["run"]
-    )
+    # TASK-42545 (2026-11-26): the installed-restore validation file imports
+    # test_restore_plan's module-level hypothesis (through test_publication_crashes).
+    assert shlex.split(install) == [
+        *shlex.split(
+            _named_step(workflow["jobs"]["pr-fast-lane"], "Install fast-lane dependencies")["run"]
+        ),
+        "hypothesis",
+    ]
     step = _named_step(job, "Run the recovered suites")
     assert "if" not in step
     assert tuple(shlex.split(step["run"].replace("\\\n", " "), comments=True)) == (

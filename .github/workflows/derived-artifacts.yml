@@ -2037,9 +2037,13 @@ jobs:
           python-version: '3.12'
           cache: pip
 
-      # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
+      # pr-fast-lane's line plus hypothesis (TASK-42545, round 27, 2026-11-26):
+      # the installed-restore validation file imports test_publication_crashes,
+      # which imports test_restore_plan's module-level hypothesis, so without it
+      # all 18 of its tests fail at import (found by the round's Linux check
+      # with CI's install line).
       - name: Install fast-lane dependencies
-        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2 hypothesis
 
       # TASK-39043: the Console config-sync lifetime and Home citation
       # retirement suites (~86 s serial each). TASK-38976: the prompt
