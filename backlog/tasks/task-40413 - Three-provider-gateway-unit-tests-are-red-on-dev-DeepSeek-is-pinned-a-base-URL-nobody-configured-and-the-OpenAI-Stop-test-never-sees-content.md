@@ -52,6 +52,8 @@ The three nodes pass, and the file runs whole in its lane. This was test-only; n
   - With no configured URL, the pinned value equals the adapter's own fallback (`builtin_provider_endpoint`), so the wire is unchanged.
   - Leaving it unpinned would mean changing three builders and the verifier, for no change on the wire.
 
+  The `/image` conversation-context call still treated DeepSeek as conditionally pinned, through `CONDITIONAL_BASE_URL_EXECUTION_KEYS`. That was the one place the set still applied to DeepSeek; the gateway and the verifier never reach that branch for it. DeepSeek is now removed from the set (`Chat/console_provider_endpoints.py`), so `/image` pins what a send pins. `test_the_image_context_call_pins_what_a_console_send_pins` (`Tests/Chat/test_local_server_discovery.py`, already laned) compares the image options with the gateway's own kwargs for DeepSeek and OpenAI, each with a builtin and a custom URL. Before the fix it failed only on DeepSeek's builtin case (`None == 'https://api.deepseek.com'`); after it, all 4 pass.
+
   TASK-2117's "nothing is pinned by default" is therefore stale for DeepSeek. `test_console_send_leaves_base_url_unpinned_in_default_case` now expects DeepSeek pinned, beside HuggingFace, and its docstring says why. The DeepSeek case of `test_all_qwencloud_kwargs_paths_forward_pinned_mode_and_base` expects the pin on the primary, prepared and auxiliary paths. Every other assertion in both tests is unchanged.
 - **OpenAI Stop (AC#2): the test was wrong.** c1cad552f4 (TASK-38589) made `chat_with_openai` iterate BYTES with `iter_lines()` and decode UTF-8 itself, because `decode_unicode=True` decodes with the header charset and mangles non-ASCII text. The fake's `iter_lines(self, *, decode_unicode)` required that keyword. The call raised `TypeError` before any content, so nothing was recorded and the 5 s wait expired. The fake now has requests' own signature, yields bytes and asserts `decode_unicode is False`, which pins TASK-38589. The capture, cancel, transport-closed, `stopped` status and `"he"` content assertions are kept.
 - **AC#3:** the whole file at `-n 4` gave 502 passed twice (27.3 s and 47.1 s at load 29-40), plus the soak in TASK-42552's notes: 20 runs at `-n 4`, 20/20 green.
@@ -61,5 +63,6 @@ TASK-41053 tracks the same three nodes and is resolved by this work.
 
 Files:
 - `Tests/Chat/test_console_provider_gateway.py`;
+- `Tests/Chat/test_local_server_discovery.py` and `tldw_chatbook/Chat/console_provider_endpoints.py` (review round);
 - `.github/workflows/derived-artifacts.yml`;
 - `Tests/CI/test_ci_queue_pressure_contract.py`.

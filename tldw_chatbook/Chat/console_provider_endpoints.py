@@ -258,12 +258,12 @@ def builtin_provider_endpoint(
 #: ``api_base_url`` request pin but whose primary Console sends previously
 #: left the kwarg unset (the auxiliary path already pins it). Shared by the
 #: gateway kwargs builders and the trace verifier's independent
-#: reconstruction, so the two can never drift.
+#: reconstruction, so the two can never drift. DeepSeek is not here: it shares
+#: QwenCloud's explicit-mode branch, which always pins (TASK-40413).
 CONDITIONAL_BASE_URL_EXECUTION_KEYS = frozenset(
     {
         "openai",
         "cohere",
-        "deepseek",
         "google",
         "groq",
         "huggingface",
