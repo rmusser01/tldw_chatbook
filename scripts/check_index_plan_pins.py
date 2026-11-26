@@ -46,13 +46,18 @@ each one to appear in ``scripts/index_plan_pin_census.tsv`` as one of:
     A historical migration still creates it, but a later one drops it, so no
     plan is claimed (TASK-42544: v56's superseded response-revision index,
     dropped in ChaChaNotes v89). Only versioned migration scripts count
-    (``*_v<from>_to_v<to>*.sql``, ordered by ``<to>``, then by position in
-    the file). The row fails unless some step's ``DROP INDEX`` comes after
-    every step that creates the name, and no other source still creates it:
-    a fresh-schema ``.py`` string or an unversioned ``.sql``. The recovery
-    layer's pinned historical catalogs (``DB/recovery_*.py``) quote shipped
-    declarations and do not count. A drop-and-re-create, such as v81->v82's
-    canvas sequence index, stays live and needs a plan pin.
+    (``<family>_v<from>_to_v<to>*.sql``), and each database family is its
+    own sequence: index names repeat across databases (``idx_sync_log_ts``
+    is in ChaChaNotes, Media and Prompts) and step numbers overlap. Every
+    family that creates the name must drop it later in the same family, by
+    ``<to>``, then by position when the drop and the create share one file;
+    a shared step in two files has no order, so it fails. A drop in a
+    family that never creates the name is ignored. No other source may
+    still create it: a fresh-schema ``.py`` string or an unversioned
+    ``.sql``. The recovery layer's frozen historical catalogs
+    (``_RECOVERY_CATALOGS``, listed by path) quote shipped declarations and
+    do not count. A drop-and-re-create, such as v81->v82's canvas sequence
+    index, stays live and needs a plan pin.
 
 A ``CREATE INDEX`` whose name has no census row fails the check, as does a
 census row naming an index nothing creates any more. Nothing is auto-added:
@@ -119,18 +124,34 @@ _DROP_INDEX = re.compile(
     r"DROP\s+INDEX\s+(?:IF\s+EXISTS\s+)?(?!IF\b)([A-Za-z_][A-Za-z0-9_]*)",
     re.IGNORECASE,
 )
-#: A versioned migration script: ``<db>_v<from>_to_v<to>[_<what>].sql``.
-_MIGRATION_STEP = re.compile(r"_v(\d+)_to_v(\d+)(?=[_.])")
-#: The recovery layer's exact historical catalogs (not live schema).
-_RECOVERY_CATALOG = re.compile(r"recovery_\w*\.py")
+#: A versioned migration script: ``<family>_v<from>_to_v<to>[_<what>].sql``.
+_MIGRATION_STEP = re.compile(r"^(.*?)_v(\d+)_to_v(\d+)(?=[_.])")
+#: The recovery layer's frozen historical catalogs (not live schema), by
+#: repository path. A new module is live until it is listed here on review.
+_RECOVERY_CATALOGS = frozenset(
+    f"tldw_chatbook/DB/{name}.py"
+    for name in (
+        "recovery_core",
+        "recovery_core_schema",
+        "recovery_dreams_guardian",
+        "recovery_goal_schema",
+        "recovery_operations",
+        "recovery_response_rules",
+        "recovery_review_boundary_schema",
+        "recovery_sqlite",
+        "recovery_workflow_schema",
+    )
+)
 _INDEX_IDENTIFIER = re.compile(r"\b(?:idx|uq)_[A-Za-z0-9_]+\b")
 
 #: The two halves that together make a plan assertion trustworthy.
 _PLAN_CALL = "EXPLAIN QUERY PLAN"
 _NO_STATS = "sqlite_stat1"
 
-_SQL_LINE_COMMENT = re.compile(r"--[^\n]*")
-_SQL_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+# One left-to-right pass: a ``/*----`` banner is a block comment, not a
+# ``--`` line comment that eats its ``----*/`` close (and with it the code up
+# to the next ``*/``; that hid three ChaChaNotes_DB.py creations).
+_SQL_COMMENT = re.compile(r"--[^\n]*|/\*.*?\*/", re.DOTALL)
 
 
 def _strip_sql_comments(text: str) -> str:
@@ -140,7 +161,7 @@ def _strip_sql_comments(text: str) -> str:
     ``-- Create index for feedback queries`` inside a schema string, and the
     first draft of this checker duly reported an index named ``for``.
     """
-    return _SQL_BLOCK_COMMENT.sub(" ", _SQL_LINE_COMMENT.sub(" ", text))
+    return _SQL_COMMENT.sub(" ", text)
 
 
 def _sql_texts(path: Path) -> list[str]:
@@ -194,10 +215,10 @@ def declared_indexes(pattern: re.Pattern[str] = _CREATE_INDEX) -> dict[str, set[
     return found
 
 
-def _step(path: Path) -> int | None:
-    """The version a migration script ends at, or None for any other source."""
-    match = _MIGRATION_STEP.search(path.name)
-    return int(match.group(2)) if path.suffix == ".sql" and match else None
+def _step(path: Path) -> tuple[str, int] | None:
+    """``(family, version it ends at)`` for a migration script, else None."""
+    match = _MIGRATION_STEP.match(path.name)
+    return (match[1], int(match[3])) if path.suffix == ".sql" and match else None
 
 
 def undropped_rows(census: dict[str, tuple[str, str]]) -> list[tuple[str, str]]:
@@ -208,36 +229,42 @@ def undropped_rows(census: dict[str, tuple[str, str]]) -> list[tuple[str, str]]:
 
     Returns:
         ``(name, reason)`` for each ``dropped`` row whose index is still live:
-        no versioned step drops it, a step at or after its last drop creates
-        it again, or a non-recovery source outside the versioned steps still
-        creates it.
+        a non-recovery source outside the versioned steps still creates it,
+        no versioned step creates it, or some family that creates it does not
+        drop it after its last create in that same family.
     """
-    creates: dict[str, list[tuple[int | None, int, Path]]] = {}
-    drops: dict[str, list[tuple[int, int]]] = {}
-    for name, path, offset in _statements(_CREATE_INDEX):
-        creates.setdefault(name, []).append((_step(path), offset, path))
-    for name, path, offset in _statements(_DROP_INDEX):
-        step = _step(path)
-        if step is not None:
-            drops.setdefault(name, []).append((step, offset))
+    statements: dict[str, list[tuple[str, tuple[str, int] | None, str, int]]] = {}
+    for kind, pattern in (("create", _CREATE_INDEX), ("drop", _DROP_INDEX)):
+        for name, path, offset in _statements(pattern):
+            rel = str(path.relative_to(REPO_ROOT))
+            statements.setdefault(name, []).append((kind, _step(path), rel, offset))
     failures = []
     for name in sorted(n for n, (status, _note) in census.items() if status == DROPPED):
-        made = creates.get(name, [])
+        rows = statements.get(name, [])
         live = sorted(
             {
-                str(path.relative_to(REPO_ROOT))
-                for step, _offset, path in made
-                if step is None and not _RECOVERY_CATALOG.fullmatch(path.name)
+                rel
+                for kind, step, rel, _offset in rows
+                if kind == "create" and step is None and rel not in _RECOVERY_CATALOGS
             }
         )
-        last_create = max(((s, o) for s, o, _p in made if s is not None), default=None)
-        last_drop = max(drops.get(name, []), default=None)
+        families = sorted({step[0] for kind, step, _rel, _o in rows if kind == "create" and step})
         if live:
             failures.append((name, "still created by " + ", ".join(live)))
-        elif last_drop is None:
-            failures.append((name, "no versioned migration step drops it"))
-        elif last_create is not None and last_drop <= last_create:
-            failures.append((name, f"created again at or after its last drop (v{last_create[0]})"))
+        elif not families:
+            failures.append((name, "no versioned migration step creates it"))
+        for family in families if not live else ():
+            versioned = [(kind, step[1], rel, offset) for kind, step, rel, offset in rows if step and step[0] == family]
+            last_create = max(v for kind, v, _r, _o in versioned if kind == "create")
+            drops = [v for kind, v, _r, _o in versioned if kind == "drop"]
+            if not drops or max(drops) < last_create:
+                failures.append((name, f"{family}: no step drops it after v{last_create}"))
+            elif max(drops) == last_create:
+                same = [(kind, rel, offset) for kind, v, rel, offset in versioned if v == last_create]
+                if len({rel for _k, rel, _o in same}) > 1:
+                    failures.append((name, f"{family}: v{last_create} creates and drops it in different files"))
+                elif max(o for k, _r, o in same if k == "drop") < max(o for k, _r, o in same if k == "create"):
+                    failures.append((name, f"{family}: v{last_create} creates it again after its drop"))
     return failures
 
 

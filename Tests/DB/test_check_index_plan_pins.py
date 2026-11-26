@@ -388,12 +388,86 @@ def test_a_dropped_row_fails_while_anything_still_creates_the_index(repo, capsys
 
 
 def test_a_recovery_catalog_quoting_the_declaration_keeps_it_dropped(repo):
-    """``recovery_*.py`` pins exact historical catalogs; they are not live."""
+    """The listed recovery modules pin exact historical catalogs; not live."""
     repo.write_db(*CREATED_AT_V2)
     repo.write_db("db_v2_to_v3_drop.sql", "DROP INDEX idx_zz_old;\n")
-    repo.write_db("recovery_schema.py", 'V2 = ("CREATE INDEX idx_zz_old ON t(a)",)\n')
+    repo.write_db("recovery_core_schema.py", 'V2 = ("CREATE INDEX idx_zz_old ON t(a)",)\n')
     repo.write_census("idx_zz_old\tdropped\tsuperseded")
     assert repo.module.main() == 0
+
+
+def test_a_new_recovery_module_creating_the_index_is_live(repo, capsys):
+    """Only the listed catalog modules are exempt, not every ``recovery_*.py``."""
+    repo.write_db(*CREATED_AT_V2)
+    repo.write_db("db_v2_to_v3_drop.sql", "DROP INDEX idx_zz_old;\n")
+    repo.write_db("recovery_repair.py", 'REPAIR = "CREATE INDEX idx_zz_old ON t(a)"\n')
+    repo.write_census("idx_zz_old\tdropped\tsuperseded")
+    assert repo.module.main() == 1
+    assert "recovery_repair.py" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        # Case A: another family drops it at the same step number, lower in
+        # its own file.
+        {
+            "aaa_v2_to_v3_add.sql": "CREATE INDEX idx_zz_old ON t(a);\n",
+            "bbb_v2_to_v3_drop.sql": "-- padding\n-- padding\nDROP INDEX idx_zz_old;\n",
+        },
+        # Case B: another family drops it at a later step number.
+        {
+            "chachanotes_v10_to_v11_add.sql": "CREATE INDEX idx_zz_old ON t(a);\n",
+            "workspaces_v11_to_v12_drop.sql": "DROP INDEX idx_zz_old;\n",
+        },
+        # One family drops it; another that also creates it does not.
+        {
+            "aaa_v2_to_v3_add.sql": "CREATE INDEX idx_zz_old ON t(a);\n",
+            "aaa_v3_to_v4_drop.sql": "DROP INDEX idx_zz_old;\n",
+            "bbb_v1_to_v2_add.sql": "CREATE INDEX idx_zz_old ON t(a);\n",
+        },
+        # Same family and step, different files: no order to read, so live.
+        {
+            "aaa_v2_to_v3_add.sql": "CREATE INDEX idx_zz_old ON t(a);\n",
+            "aaa_v2_to_v3_drop.sql": "DROP INDEX idx_zz_old;\n",
+        },
+    ],
+    ids=["other-family-same-step", "other-family-later-step", "one-family-only", "same-step-two-files"],
+)
+def test_a_drop_counts_only_in_the_family_that_creates_the_index(repo, files):
+    for name, body in files.items():
+        repo.write_db(name, body)
+    repo.write_census("idx_zz_old\tdropped\tsuperseded")
+    assert repo.module.main() == 1
+
+
+def test_each_creating_family_dropping_it_later_is_dropped(repo):
+    repo.write_db("aaa_v2_to_v3_add.sql", "CREATE INDEX idx_zz_old ON t(a);\n")
+    repo.write_db("aaa_v3_to_v4_drop.sql", "DROP INDEX idx_zz_old;\n")
+    repo.write_db("bbb_v1_to_v2_add.sql", "CREATE INDEX idx_zz_old ON t(a);\n")
+    repo.write_db("bbb_v5_to_v6_drop.sql", "DROP INDEX idx_zz_old;\n")
+    # A family that never creates it may drop it; that drop is ignored.
+    repo.write_db("ccc_v1_to_v2_drop.sql", "DROP INDEX IF EXISTS idx_zz_old;\n")
+    repo.write_census("idx_zz_old\tdropped\tsuperseded")
+    assert repo.module.main() == 0
+
+
+def test_a_dash_banner_inside_a_block_comment_hides_no_creation(repo, capsys):
+    """Case H: ``/*----`` lost its ``----*/`` to the line pass, and the block
+    pass then swallowed the code up to the next ``*/`` (ChaChaNotes_DB.py's
+    linking-table banners hid three real creations this way)."""
+    repo.write_db(*CREATED_AT_V2)
+    repo.write_db("db_v2_to_v3_drop.sql", "DROP INDEX idx_zz_old;\n")
+    repo.write_census("idx_zz_old\tdropped\tsuperseded")
+    assert repo.module.main() == 0
+    repo.write_db(
+        "Schema_DB.py",
+        'SCHEMA = """\n/*----\n banner\n----*/\nCREATE INDEX idx_zz_old ON t(a);\n'
+        '/* the next section */\n"""\n',
+    )
+    assert "idx_zz_old" in repo.module.declared_indexes()
+    assert repo.module.main() == 1
+    assert "Schema_DB.py" in capsys.readouterr().out
 
 
 def test_drop_index_if_exists_names_no_phantom_if_and_fstring_drops_are_unseen(repo):
