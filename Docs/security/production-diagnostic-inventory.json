@@ -1163,8 +1163,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 369,
-      "diagnostic_digest": "9e84b30ed767a93bb771",
+      "call_count": 371,
+      "diagnostic_digest": "eac8855cb5182f1b5ff9",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1772,8 +1772,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 7,
-      "diagnostic_digest": "8078029252f1273bbfd2",
+      "call_count": 8,
+      "diagnostic_digest": "60e879b7f4aa70a34566",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Library/library_local_rag_search_service.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2129,8 +2129,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 2,
-      "diagnostic_digest": "fd52ab3f664b86181725",
+      "call_count": 3,
+      "diagnostic_digest": "011702946889d0bbd39e",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Notes/notes_scope_service.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2228,7 +2228,7 @@
     },
     {
       "call_count": 47,
-      "diagnostic_digest": "b567c3a13f8559ef5528",
+      "diagnostic_digest": "ef333258e5ecc5bf8184",
       "owner": "TASK-494",
       "path": "tldw_chatbook/RAG_Search/ingestion_indexing.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2784,6 +2784,13 @@
       "diagnostic_digest": "45af7eb4e97d0e9e39a2",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Subscriptions/web_scraping_pipelines.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 2,
+      "diagnostic_digest": "e522e05a98ade6c66f0c",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Sync_Interop/local_first_sync_service.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
