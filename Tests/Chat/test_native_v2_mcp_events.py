@@ -21,7 +21,6 @@ from Tests.Chat.test_native_v2_command_events import (
 )
 from Tests.Chat.test_native_v2_command_events import (
     opaque_busy,
-    until,
 )
 from Tests.MCP.test_typed_tool_results import (
     controlled_service,
@@ -44,6 +43,18 @@ pytestmark = [
         not native_workflow_qualified(), reason="native platform required"
     ),
 ]
+
+
+async def until(probe):
+    """Wait for ``probe``; costs nothing once it holds.
+
+    The shared helper's 8 s ran out at load ~60 while these MCP workers and
+    their private-profile children were still making progress (TASK-41061
+    review).
+    """
+    async with asyncio.timeout(30):
+        while not probe():
+            await asyncio.sleep(0.005)
 
 
 def is_event_worker_reservation(frame):

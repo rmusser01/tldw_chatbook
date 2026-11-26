@@ -687,11 +687,13 @@ async def test_full_request_during_poll_await_replays_with_current_owner(
                 # held left unrelated demand behind it. Either is a setup
                 # race, not the behaviour under test, so let that pass finish
                 # and hold the next natural poll instead (at most 3 tries).
-                for _attempt in range(3):
+                for attempt in range(3):
                     if (
                         await _until(lambda: bool(held), 5)
                         and not console._console_sync_requested
-                    ):
+                    ) or attempt == 2:
+                        # The last try keeps its hold, so the checks below
+                        # report the race that is still there.
                         break
                     held.clear()
                     publications.clear()

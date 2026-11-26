@@ -1246,7 +1246,9 @@ def test_cancelled_close_leaves_no_thread_waiting_for_native_custody():
 
     registry = _EventCustodyRegistry()
     registry._admissions = 1  # an admission whose custody never returns
-    runner = asyncio.Runner()
+    # A loop factory keeps the Runner from setting this thread's loop, which
+    # runner.close() on the shutdown thread could not unset.
+    runner = asyncio.Runner(loop_factory=asyncio.new_event_loop)
 
     async def start_close():
         engine = HookEngine((), lambda *_: True, HookBudgetOwner())
