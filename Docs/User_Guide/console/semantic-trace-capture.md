@@ -277,16 +277,28 @@ transcript:
   Continue's call also records the reply it extends and Console's "Continue
   and extend the selected message." instruction after it. Earlier calls keep
   their requests and replies, so a regenerated turn lists both calls. Your next
-  message is captured as usual, also when the action's own reply failed.
-  **Resend** of a broken turn that starts again from your message is captured
-  the same way. An action follows the one-time **Next send** choice and uses
-  it up, as a send does.
-- In a temporary chat with Capture On, these actions ask you to save the chat
-  or turn Capture off first. In a chat with a pinned response prefill, or
-  with a provider that replays its own reasoning checkpoints (Kimi), they
-  still send with capture off. **Retry** of a failed reply also still sends
-  with capture off; if it rewrote a reply that a captured action left failed,
-  your next message stops at **Trace capture could not start** (TASK-42555).
+  message is captured as usual, also when the action's own reply failed. If
+  the trace refuses the action itself ("Trace capture could not be saved, so
+  this request was not sent."), each later message in that chat pauses at
+  **Trace capture could not start**, and **Send without capture** sends it.
+  **Resend** of a broken turn that starts again from your message is
+  captured the same way. An action that follows the chat's Capture setting,
+  captured or not, uses up the one-time **Next send** choice as a send does.
+- Some actions still send with capture off, whatever the Capture setting:
+  Edit & resend, Regenerate and Resend in a chat with a pinned response
+  prefill (they send the prefill; a plain Continue sends none and is
+  captured), any action in a chat whose provider replays its own reasoning
+  checkpoints (Kimi), and Continue of a message that has later messages
+  after it (its reply is added at the end of the chat; with project
+  instructions your next message then stops at **Trace capture could not
+  start**, as before, TASK-42586). These leave a one-time **Next send**
+  choice of Capture on for your next send. In a
+  temporary chat with Capture On, an action that would be captured asks you
+  to save the chat or turn Capture off first.
+- **Retry** of a failed reply also still sends with capture off. With project
+  instructions (AGENTS.md), your next message after any Retry of a failed
+  reply stops at **Trace capture could not start**; a captured Retry is
+  planned in TASK-42555.
 - **Impersonate** sends with capture off, so the trace has no call for it. A
   citation repair ("Citations repaired") is sent with capture off too; the
   reply it repairs keeps its own trace call. Your next send in the chat is

@@ -1177,11 +1177,11 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
 Still refused: an action call over provider continuations in the replaced
 range (as for any rewritten tail); a re-record whose matched prefix stops
 before history the rewritten tail cannot prove; project context in a
-rewritten tail of any other send; the send after an action the trace
-refused before dispatch, whose user hangs off the action's failed, empty
-reply (it pauses at "Trace capture could not start", and Send without
-capture sends it); and every shape the rules above do not name. Out of
-scope: citation repair (TASK-42585).
+rewritten tail of any other send; every captured send after an action the
+trace refused before dispatch, whose history runs through the action's
+failed, empty reply (each pauses at "Trace capture could not start", and
+Send without capture sends it); and every shape the rules above do not
+name. Out of scope: citation repair (TASK-42585).
 
 ## Current-owner integration amendment (2026-10-13)
 
