@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-26 04:50
-updated_date: 2026-11-26 08:39
+updated_date: 2026-11-26 17:09
 labels:
 - follow-up
 - console
@@ -77,7 +77,7 @@ This covers every preset alternate a captured run's children carry, including co
 - only the child's adapter mints the chain, for the next frozen preset target;
 - the chain's first call is a TOOL_LOOP at sequence 0, linked to the failed child call.
 
-Because ADR-200 allows a switch only before any tool batch, the child's history at that point is its system prompt and task, so no history rewrite (amendment 2) is needed. Until then the visible skip stands.
+Because ADR-200 allows a switch only before any tool batch, the child's history at that point is its system prompt and task, so no history rewrite (amendment 2) is needed. Until then the visible skip stands. (TASK-42564 built it differently in one respect: the v87 schema ties a child segment to one run identity, so the new chain opens a child segment of its own, and its first call is that segment's AGENT_FIRST; see its notes.)
 
 **Lane.** The new file is appended to recovered-suites ("Run the recovered suites"; bootstrap_profile, so after the sandboxed suites), with the workflow comment and `RECOVERED_SUITES_TARGETS` in `Tests/CI/test_ci_queue_pressure_contract.py`. With the step's flags (`-p no:xdist --storage-lease-guard --timeout=180`) at load 40-44 it takes 14.3 s: 2 passed, calls of 7.3 s and 4.5 s.
 

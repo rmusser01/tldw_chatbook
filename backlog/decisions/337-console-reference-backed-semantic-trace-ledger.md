@@ -826,9 +826,13 @@ apply, with these differences:
    child's actor must:
    - belong to the same owner and turn;
    - have no call that started a response (so no tool call came first, and
-     no rewrite is needed);
-   - end on its latest call, a settled ERROR with the same frozen policy, to
-     another provider or model than the new call.
+     no rewrite is needed).
+
+   The latest of those calls, in insertion order, must be a settled ERROR
+   with the same frozen policy, to another provider or model than the new
+   call. Only that call is compared with the new target, as for a primary
+   fallback: an earlier chain may have used it, so a preset `[B, A]` on
+   primary A goes A, then B, then A. (Clarified 2026-11-26 after review.)
 4. **Rechecked at dispatch binding.** The binding transaction repeats point
    3 for a child chain's AGENT_FIRST call. A failure there is an ordinary
    binding refusal.

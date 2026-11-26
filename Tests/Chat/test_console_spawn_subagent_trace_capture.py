@@ -461,7 +461,8 @@ async def _spawn_turn(
             tuple(row)
             for row in chat.get_connection().execute(
                 "SELECT route_identity, state, omission_reason_code "
-                "FROM console_trace_calls ORDER BY created_at, call_sequence"
+                # created_at has one-second resolution; rowid is insertion order.
+                "FROM console_trace_calls ORDER BY rowid"
             )
         ]
         # (on the owner's root segment, owner, turn, run, route, state)
@@ -472,7 +473,7 @@ async def _spawn_turn(
                 " call.turn_id, call.run_id, call.route_identity, call.state"
                 " FROM console_trace_calls AS call JOIN console_trace_owners AS owner"
                 " ON owner.owner_id = call.owner_id"
-                " ORDER BY call.created_at, call.call_sequence"
+                " ORDER BY call.rowid"
             )
         ]
         facts.links = [

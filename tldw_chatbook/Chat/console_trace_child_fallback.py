@@ -51,8 +51,9 @@ def child_fallback_admits(
         ``None`` when the actor has no other chain (an ordinary first call).
         Otherwise ``True`` only when every other chain of the actor is under
         the same owner and turn, none of their calls started a response (so
-        no tool call came first), and the latest of them is a settled ERROR
-        with the same policy, to another provider or model.
+        no tool call came first), and the latest of those calls (insertion
+        order) is a settled ERROR with the same policy, to another provider
+        or model than the new call.
     """
     actor, _, chain = run_id.partition(":")
     if not actor or not chain:
@@ -75,7 +76,7 @@ def child_fallback_admits(
     ).fetchone()
     latest = cursor.execute(
         f"SELECT call_id FROM console_trace_calls WHERE segment_id IN ({marks}) "  # noqa: S608 - placeholders only
-        "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+        "ORDER BY rowid DESC LIMIT 1",
         segments,
     ).fetchone()
     failed = None if latest is None else repository.get_call(cursor, latest[0])

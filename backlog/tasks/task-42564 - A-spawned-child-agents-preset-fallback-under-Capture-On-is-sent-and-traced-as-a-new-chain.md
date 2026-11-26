@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-26 07:39
-updated_date: 2026-11-26 08:39
+updated_date: 2026-11-26 17:09
 labels:
 - follow-up
 - console
@@ -82,6 +82,7 @@ Follow-up of TASK-42556 (round 27, 2026-11-26). Under Capture On, a spawned chil
 
   In every case the fallback model is never asked. A settled call cannot be edited (trigger "terminal provider call settlement is immutable"), so the ledger's read is forged by patching `falls_back_from` in the helper module.
 - `test_a_refusal_never_replaces_an_unready_alternates_own_reason` runs at runtime level, for review minor 1.
+- The admission-clause cases (10, see "Re-review fixes").
 
 **A flake in the new tests, found by the soak and fixed.** In soak rounds 2 and 3, `[capture_on]` of the sent-and-traced test and `[binding]` failed with `At index 0 diff: ('agent_first', 'complete') != ('agent_first', 'error')`. `console_trace_calls.created_at` is `CURRENT_TIMESTAMP`, so it only has one-second resolution, and both chains' first calls have `call_sequence` 0. The harness's `ORDER BY created_at, call_sequence` therefore orders them arbitrarily within a second. The tests now find each chain by its state, and their assertions are unchanged. The ledger's own "latest earlier call" in `child_fallback_admits` orders by `created_at DESC, rowid DESC`, so the insertion order breaks a tie.
 
@@ -102,7 +103,21 @@ All 8 pass with the change.
 - actor numbering in the Trace view: the sent-and-traced test;
 - the runtime's ready-only refuse: the unit test.
 
-The "no response in the earlier chains" clause has no test of its own. A child call that starts a response either proposes a tool batch, after which ADR-200 never falls back, or ends the run. The same state on the failed call is also refused by `falls_back_from`.
+**Re-review fixes (2026-11-26).**
+- *Each admission clause now has its own test.* `test_a_child_chain_is_admitted_only_after_the_childs_failed_call` calls `child_fallback_admits` over the two tables it reads (in-memory SQLite, stand-in repository), with 10 cases: `valid`, `first_chain` (returns None), `other_owner`, `other_turn`, `earlier_response`, `not_error`, `unsettled`, `other_policy`, `same_target` and `back_to_an_earlier_target`. Each clause removed alone turns its case red:
+  - the owner/turn check: `other_owner`, `other_turn`;
+  - "no response": `earlier_response`;
+  - `outcome == ERROR`: `not_error`;
+  - `settled_at`: `unsettled`;
+  - `policy_id`: `other_policy`;
+  - the latest call by rowid (ASC instead of DESC): `back_to_an_earlier_target`.
+- *ADR point 3* is reworded to what the code checks, and the code is unchanged. Only the latest earlier call (insertion order) is compared with the new target, as for a primary fallback, so a preset `[B, A]` on primary A goes A, then B, then A. `back_to_an_earlier_target` pins it.
+- *Ordering.* The ledger's "latest" is `ORDER BY rowid DESC`, with no wall clock. The harness's `facts.calls` and `facts.owned_calls` now order by `rowid` too; `created_at` has one-second resolution.
+- *Copy.* The trace compares the engine (execution key) and model, so `custom-ep:box-a/qwen` falling back to `custom-ep:box-b/qwen` is skipped. The copy and the User Guide now say "same engine and model".
+- *Correction: the "no response" clause is reachable.* A transient mid-stream failure after partial output, then failed in-place retries, then the ADR-200 fallback, reaches it. The ledger then refuses in the reservation transaction (rolled back, nothing reserved), but the child ends on the generic "trace capture could not be saved, so this request was not sent". A visible, specific skip before the reservation needs three things:
+  - the fallback runtime's refuse hook must know that a child call started a response, which it does not see for a failed call (the adapter would have to record it per child thread, and the Console's refusal would become a callable);
+  - the harness lacks a fixture for a transient mid-stream failure through the real controller;
+  - it is not a small change, so it is filed as TASK-42567.
 
 **Runs** (load 10-35):
 - Soak: the new file, `test_console_spawn_subagent_trace_capture.py` and `test_trajectory_projection.py`, 20 rounds at `-n 4` after the flake fix: 92 passed in every round, at load 10.6-13.7.
@@ -113,7 +128,16 @@ The "no response in the earlier chains" clause has no test of its own. A child c
 - `./scripts/preflight.sh` passed. `ruff check tldw_chatbook --select F` is clean, and `Tests/lint/ruff_gate.py` exits 0.
 - The recovered-suites step via `r19-step.sh` (`-p no:xdist --storage-lease-guard --timeout=180`): 2030 passed, 1 skipped, 1 deselected, in 818.8 s at load 6-12.
 
-**Lane.** The file was already the last target of recovered-suites (TASK-42556). With the step's flags (`-p no:xdist --storage-lease-guard --timeout=180`) at load 12.7-16.2 it takes 20.7 s for 8 tests (was 14.3 s for 2).
+**Re-review runs** (tree after the re-review fixes, load 30-60 from other agents):
+- The new file, the spawn-trace file and `test_trajectory_projection.py` soaked 20 rounds at `-n 4`: 102 passed in every round, at load 31-60.
+- Covering files (the new file, spawn-trace, trajectory projection, `test_console_failed_call_retry_ownership.py`, `test_console_trace_runtime.py`, `test_preset_fallback.py`, `test_fallback_chain.py`) at `-n 4`: 468 passed.
+- Mutations: the 7 earlier ones plus the 6 clause ones, all red, with the tree checked unchanged afterwards.
+- `Tests/CI` at `-n 4`: 2009 passed, 2 skipped.
+- `./scripts/preflight.sh` passed. `ruff check tldw_chatbook --select F` is clean, and `Tests/lint/ruff_gate.py` exits 0.
+- `Tests/Architecture` serially: 1506 passed, 5 skipped, 1 failed. The failure is `test_persistent_diagnostic_inventory.py::test_task_15103_review_ledger_canonical_schema_and_arithmetic`, which hit the 300 s timeout at load about 50. It also timed out alone. With `--timeout=1500`, run at the same time at load 40-53, it passes in 222.2 s on this branch and 219.3 s on dev 6e41919880. So it is load, not this change, and it passed in the previous full run.
+- The recovered-suites step via `r19-step.sh` (`-p no:xdist --storage-lease-guard --timeout=180`): 2040 passed, 1 skipped, 1 deselected, in 2523.4 s at load 30-55.
+
+**Lane.** The file was already the last target of recovered-suites (TASK-42556). With the step's flags (`-p no:xdist --storage-lease-guard --timeout=180`) it takes 20.7 s for 8 tests at load 12.7-16.2 (was 14.3 s for 2). After the re-review it has 18 tests and takes 34.0 s at load 31-41.
 
 **Files.**
 - `Agents/agent_runtime.py` (size row 4069 → 4072), `Agents/fallback_chain.py`, `Agents/agent_service.py` (7705 → 7714).

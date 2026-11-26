@@ -9,6 +9,9 @@ is unavailable and whose ``fallback_models`` names FALLBACK_MODEL.
 """
 
 
+import sqlite3
+from types import SimpleNamespace
+
 import pytest
 
 from Tests.Chat.test_console_spawn_subagent_trace_capture import (
@@ -19,9 +22,11 @@ from Tests.Chat.test_console_spawn_subagent_trace_capture import (
 from tldw_chatbook.Agents.agent_models import AgentConfig, ModelTurn, RunBudget, ToolResult
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
 from tldw_chatbook.Agents.fallback_chain import FallbackCandidate, FallbackRuntime
-from tldw_chatbook.Chat.Chat_Deps import ChatModelUnavailableError
 from tldw_chatbook.Chat.console_agent_preparation import PRESET_FALLBACK_NOT_CAPTURED
+from tldw_chatbook.Chat.console_trace_child_fallback import child_fallback_admits
+from tldw_chatbook.Chat.console_trace_models import TraceCallState
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Provider_Contract import ChatModelUnavailableError
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.owned_http_client]
 
@@ -185,6 +190,7 @@ async def test_a_child_fallback_the_rule_does_not_admit_is_never_sent(
         assert states == ["error"], why
         assert facts.boundary_errors[-1][0] == "subagent", why
     else:
+        # TASK-42565: a refusal at dispatch binding leaves the call reserved.
         assert states == ["error", "reserved"], why
 
 
@@ -239,3 +245,96 @@ def test_a_refusal_never_replaces_an_unready_alternates_own_reason():
         f"{SKIPPED}: openai/alt-1 (not configured)",
         f"{SKIPPED}: openai/alt-2 (refused)",
     ]
+
+
+def _ledger(chains):
+    """The two tables ``child_fallback_admits`` reads, with a stand-in repository.
+
+    ``chains`` holds (run_id, owner_id, turn_id, calls), in insertion order.
+    """
+    database = sqlite3.connect(":memory:")
+    database.execute(
+        "CREATE TABLE console_trace_child_segments "
+        "(segment_id TEXT, owner_id TEXT, turn_id TEXT, run_id TEXT)"
+    )
+    database.execute(
+        "CREATE TABLE console_trace_calls "
+        "(call_id TEXT, segment_id TEXT, response_started_at TEXT)"
+    )
+    records = {}
+    for index, (run_id, owner_id, turn_id, calls) in enumerate(chains):
+        segment = f"segment-{index}"
+        database.execute(
+            "INSERT INTO console_trace_child_segments VALUES (?, ?, ?, ?)",
+            (segment, owner_id, turn_id, run_id),
+        )
+        for call in calls:
+            call_id = f"call-{len(records)}"
+            database.execute(
+                "INSERT INTO console_trace_calls VALUES (?, ?, ?)",
+                (call_id, segment, call.response_started_at),
+            )
+            records[call_id] = call
+    return database.cursor(), SimpleNamespace(get_call=lambda _cursor, key: records[key])
+
+
+def _failed(**changes):
+    return SimpleNamespace(
+        **{
+            "state": TraceCallState.ERROR,
+            "outcome": TraceCallState.ERROR.value,
+            "settled_at": "2026-11-26T00:00:00Z",
+            "policy_id": "policy",
+            "response_started_at": None,
+            "provider_name": "engine",
+            "model_name": "model-a",
+            **changes,
+        }
+    )
+
+
+_CHAIN = ("actor:one", "owner", "turn")
+_ADMISSION_CASES = {
+    "valid": ([(*_CHAIN, [_failed()])], True),
+    "first_chain": ([("other-actor:one", "owner", "turn", [_failed()])], None),
+    "other_owner": ([("actor:one", "another owner", "turn", [_failed()])], False),
+    "other_turn": ([("actor:one", "owner", "another turn", [_failed()])], False),
+    "earlier_response": (
+        [(*_CHAIN, [_failed(response_started_at="2026-11-26T00:00:00Z"), _failed()])],
+        False,
+    ),
+    "not_error": ([(*_CHAIN, [_failed(outcome="complete")])], False),
+    "unsettled": ([(*_CHAIN, [_failed(settled_at=None)])], False),
+    "other_policy": ([(*_CHAIN, [_failed(policy_id="another policy")])], False),
+    "same_target": ([(*_CHAIN, [_failed(model_name="model-b")])], False),
+    # ADR-337 2026-11-26 point 3: only the latest earlier call is compared,
+    # so a preset [B, A] on primary A may go A -> B -> A.
+    "back_to_an_earlier_target": (
+        [
+            (*_CHAIN, [_failed(model_name="model-b")]),
+            ("actor:two", "owner", "turn", [_failed(model_name="model-c")]),
+        ],
+        True,
+    ),
+}
+
+
+@pytest.mark.parametrize("case", list(_ADMISSION_CASES))
+def test_a_child_chain_is_admitted_only_after_the_childs_failed_call(case):
+    """Each clause of the ledger's admission, alone (TASK-42564 re-review)."""
+    chains, expected = _ADMISSION_CASES[case]
+    cursor, repository = _ledger(chains)
+
+    admitted = child_fallback_admits(
+        cursor,
+        repository,
+        run_id="actor:new",
+        owner_id="owner",
+        turn_id="turn",
+        policy_id="policy",
+        provider="engine",
+        model="model-b",
+    )
+
+    assert admitted is expected
+
