@@ -1067,7 +1067,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-24, rebased onto dev 9fa2bf1b1d: 22855 -> 22877 (dev measures
     # 22566; polish-1b's own +311; same owner decision: expand limits,
     # don't contort code).
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22877,
+    # 2026-11-26, rebased onto dev 6e41919880: 22877 -> 22884 (dev measures
+    # 22573 after TASK-42517; polish-1b's own +311; same owner decision:
+    # expand limits, don't contort code).
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22884,
     # TASK-39147: the rebased report reader and workflow migrations cross 4000.
     # 2026-11-12, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +2, the store's @declare_store backup-participant declaration and import.
