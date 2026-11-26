@@ -541,6 +541,10 @@ class RewrittenTailWitness:
             call; its rows after the re-recorded user are the range.
         unanswered_anchor: True when ``anchor_message_id`` is that run's own
             failed, empty reply, whose parent is the last retained row.
+        skipped_reply_id: For the send after an action's run that bore
+            nothing, the run's failed, empty reply between its restored user
+            (the one history row) and the current user, which hangs off it;
+            the request skips it (ADR-337 amendment 2026-11-26).
 
     Raises:
         ValueError: If an identity is not a canonical UUIDv4 string, a history
@@ -557,11 +561,14 @@ class RewrittenTailWitness:
     project_context_count: int = field(default=0, kw_only=True)
     after_call_id: str | None = field(default=None, kw_only=True)
     unanswered_anchor: bool = field(default=False, kw_only=True)
+    skipped_reply_id: str | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         SemanticRevisionRef(self.user_revision_id)
         if self.anchor_message_id is not None:
             SemanticRevisionRef(self.anchor_message_id)
+        if self.skipped_reply_id is not None:
+            SemanticRevisionRef(self.skipped_reply_id)
         if self.after_call_id is not None:
             _validate_stable_opaque_id(self.after_call_id, "after_call_id")
         if (
@@ -595,6 +602,15 @@ class RewrittenTailWitness:
             )
             or type(self.memory_anchor) is not bool
             or (self.memory_anchor and self.anchor_message_id is None)
+            or (
+                self.skipped_reply_id is not None
+                and (
+                    self.after_call_id is None
+                    or len(self.history) != 1
+                    or self.reply
+                    or self.unanswered_anchor
+                )
+            )
         ):
             raise ValueError("rewritten_tail_shape")
 

@@ -350,7 +350,12 @@ _BUDGETS: dict[str, int] = {
     # resend, Regenerate and Continue snapshots its saved rows, refuses a
     # temporary Capture-On chat and streams through
     # Chat/console_action_capture.py.
-    "tldw_chatbook/Chat/console_chat_controller.py": 28848,
+    # 2026-11-26, TASK-42560 review (same rule): 28,804 -> 28,810 (+6), exact
+    # measurement. Continue passes its prefill and whether it continues an
+    # earlier message to the refusal and the stream, which keep those Capture
+    # Off; Regenerate and Edit pass their prefill to the refusal.
+    # Round 27 port onto dev 9926834bc8: 28848 -> 28854, exact measurement.
+    "tldw_chatbook/Chat/console_chat_controller.py": 28854,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     # TASK-41637, 2026-11-18: +9, a round armed with no running app and no
     # answerable view fails closed instead of waiting forever (dev's row +

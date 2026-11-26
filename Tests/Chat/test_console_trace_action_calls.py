@@ -180,6 +180,36 @@ async def _send(app, text):
     return result
 
 
+def _one_time_capture(app, enabled):
+    """Arm the one-time Next send capture choice."""
+    controller, session = app.controller, app.session.id
+    controller.set_next_trace_privacy(
+        session,
+        capture_enabled=enabled,
+        pii_redaction_enabled=None,
+        expected_policy_revision=controller.capture_policy_snapshot(
+            session
+        ).policy_revision,
+    )
+
+
+def _chat_capture_off(app):
+    """Turn this chat's own Capture choice off."""
+    controller, session = app.controller, app.session.id
+    app.store.replace_session_trace_privacy_override(
+        session,
+        capture_enabled=False,
+        pii_redaction_enabled=None,
+        expected_policy_revision=controller.capture_policy_snapshot(
+            session
+        ).policy_revision,
+    )
+
+
+def _next_capture(app):
+    return app.controller.capture_policy_snapshot(app.session.id).next_capture_enabled
+
+
 def _assert_traced_as_sent(app, *, every_request=True):
     """The latest call rebuilds the last request; with ``every_request``,
     each request the provider received has its own trace call."""
@@ -324,6 +354,87 @@ async def test_an_action_on_an_earlier_message(tmp_path, monkeypatch):
 
 
 @pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("project", [False, True], ids=["plain", "agents_md"])
+async def test_an_edit_and_resend_of_an_earlier_message(tmp_path, monkeypatch, project):
+    """An Edit & resend of the first message answers on a new branch off the
+    first turn; its call re-records the turn, and the next message is sent."""
+    async with _console(tmp_path, monkeypatch, project=project) as app:
+        await _send(app, "Hello")
+        await _send(app, "And now?")
+        before = _calls(app)
+
+        await _act(app, "edit", first=True)
+
+        assert [call[:2] for call in _calls(app)[len(before) :]] == [
+            ("agent_first", "complete")
+        ]
+        _assert_traced_as_sent(app)
+        assert sum("And now?" in json.dumps(row) for row in app.wire()) == 0
+        await _send(app, "One more?")
+        _assert_traced_as_sent(app)
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("project", [False, True], ids=["plain", "agents_md"])
+@pytest.mark.parametrize("target", ["reply", "user"])
+async def test_a_continue_of_an_earlier_message_keeps_capture_off(
+    tmp_path, monkeypatch, target, project
+):
+    """A Continue of an earlier message sends only the rows through it, but
+    its reply is appended at the end of the chat, so it keeps Capture Off and
+    the next message is as before this change: sent without project
+    instructions, refused with them (TASK-42586)."""
+    async with _console(tmp_path, monkeypatch, project=project) as app:
+        await _send(app, "Hello")
+        await _send(app, "And now?")
+        role = "assistant" if target == "reply" else "user"
+        message = next(
+            row
+            for row in app.store.messages_for_session(app.session.id)
+            if row.role.value == role
+        )
+        before, sent = _calls(app), len(app.sent)
+
+        result = await app.controller.continue_from_message(message.id)
+
+        assert result.accepted
+        assert len(app.sent) == sent + 1
+        assert _calls(app) == before
+        await app.controller.submit_draft("One more?", session_id=app.session.id)
+        if project:
+            assert app.reservation_errors == ["unsupported_surface_change"]
+        else:
+            _assert_traced_as_sent(app, every_request=False)
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+async def test_a_continue_of_an_earlier_message_with_mixins_leaves_no_run_open(
+    tmp_path, monkeypatch
+):
+    """The mix-ins have no anchor for a Continue of an earlier user message;
+    the reply path refuses it as before, and the chat can still send."""
+    from tldw_chatbook.Chat.console_action_capture import MIXIN_UNAVAILABLE_COPY
+
+    async with _console(tmp_path, monkeypatch, project=False, mixins=True) as app:
+        await _send(app, "Hello")
+        await _send(app, "And now?")
+        first = next(
+            row
+            for row in app.store.messages_for_session(app.session.id)
+            if row.role.value == "user"
+        )
+        sent = len(app.sent)
+
+        result = await app.controller.continue_from_message(first.id)
+
+        assert result.visible_copy == MIXIN_UNAVAILABLE_COPY
+        assert len(app.sent) == sent
+        assert app.controller.run_state.status.value == "blocked"
+        await _send(app, "One more?")
+        _assert_traced_as_sent(app, every_request=False)
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
 async def test_resend_of_a_turn_without_a_reply_is_traced(tmp_path, monkeypatch):
     """Resend re-runs a broken turn from its user message through Continue's
     body, so its call is traced like a Continue of that user; Resend of a
@@ -397,22 +508,29 @@ async def test_an_action_that_calls_a_tool(tmp_path, monkeypatch):
 
 
 @pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("mixins", [False, True], ids=["", "mixins"])
 @pytest.mark.parametrize("plain_path", [False, True], ids=["agent", "plain_path"])
 @pytest.mark.parametrize("action", ACTIONS)
 async def test_after_a_failed_action_the_next_message_is_sent(
-    tmp_path, monkeypatch, action, plain_path
+    tmp_path, monkeypatch, action, plain_path, mixins
 ):
     """The provider fails the action's reply; the next message still goes out.
 
     A failed Regenerate leaves the original reply on the path, and a failed
     Continue or Edit & resend leaves its empty failed reply, which the next
-    request skips.
+    request skips. With mix-ins the action's user was a transform, so the
+    next request restores its saved source, then skips the failed reply.
     """
     from tldw_chatbook.Provider_Contract import ChatProviderError
 
     replies = []
     async with _console(
-        tmp_path, monkeypatch, hosted=True, plain_path=plain_path, replies=replies
+        tmp_path,
+        monkeypatch,
+        hosted=True,
+        plain_path=plain_path,
+        mixins=mixins,
+        replies=replies,
     ) as app:
         await _send(app, "Hello")
         await _send(app, "And now?")
@@ -437,27 +555,19 @@ async def test_after_a_failed_action_the_next_message_is_sent(
 
 @pytest.mark.usefixtures("shut_down_console_controllers")
 async def test_capture_off_actions_stay_untraced(tmp_path, monkeypatch):
-    """Under Capture Off nothing changes: the actions send without a call."""
+    """In a chat with Capture off nothing changes: the actions send without a
+    call."""
     async with _console(tmp_path, monkeypatch) as app:
+        _chat_capture_off(app)
+        _one_time_capture(app, None)  # the harness arms Capture On for one send
         await _send(app, "Hello")
         await _send(app, "And now?")
-        before = _calls(app)
-        from tldw_chatbook.Chat import console_action_capture
-        from tldw_chatbook.Chat.console_trace_provenance import (
-            ConsoleTraceCaptureMode,
-        )
-
-        monkeypatch.setattr(
-            console_action_capture,
-            "_capture_mode",
-            lambda *_args: (ConsoleTraceCaptureMode.CAPTURE_OFF, None),
-        )
         sent = len(app.sent)
         for action in ACTIONS:
             result = await _act(app, action)
             assert result.accepted
         assert len(app.sent) == sent + 3
-        assert _calls(app) == before
+        assert _calls(app) == []
 
 
 @pytest.mark.usefixtures("shut_down_console_controllers")
@@ -471,25 +581,104 @@ async def test_an_action_uses_up_the_one_time_capture_choice(
     async with _console(tmp_path, monkeypatch, project=False) as app:
         await _send(app, "Hello")
         await _send(app, "And now?")
-        controller, session = app.controller, app.session.id
-        controller.set_next_trace_privacy(
-            session,
-            capture_enabled=False,
-            pii_redaction_enabled=None,
-            expected_policy_revision=controller.capture_policy_snapshot(
-                session
-            ).policy_revision,
-        )
+        _one_time_capture(app, False)
         before = _calls(app)
 
         await _act(app, action)
 
         assert _calls(app) == before, "the one-time choice (Off) was honoured"
-        assert controller.capture_policy_snapshot(session).next_capture_enabled is None
+        assert _next_capture(app) is None
         await _send(app, "One more?")
         assert [call[:2] for call in _calls(app)[len(before) :]] == [
             ("agent_first", "complete")
         ]
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("action", ACTIONS)
+async def test_a_one_time_capture_on_choice_traces_an_action_in_a_capture_off_chat(
+    tmp_path, monkeypatch, action
+):
+    """In a chat with Capture off, a one-time Capture On traces the action and
+    is used up; the next send is not traced."""
+    async with _console(tmp_path, monkeypatch) as app:
+        await _send(app, "Hello")
+        await _send(app, "And now?")
+        _chat_capture_off(app)
+        _one_time_capture(app, True)
+        before = _calls(app)
+
+        await _act(app, action)
+
+        assert [call[:2] for call in _calls(app)[len(before) :]] == [
+            ("agent_first", "complete")
+        ]
+        assert _next_capture(app) is None
+        traced = _calls(app)
+        await _send(app, "One more?")
+        assert _calls(app) == traced
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("action", ["edit", "regenerate"])
+async def test_an_action_sent_with_capture_off_leaves_a_one_time_capture_on_choice(
+    tmp_path, monkeypatch, action
+):
+    """An action that sends the pinned prefill keeps Capture Off whatever the
+    choice (TASK-42583), so a one-time Capture On waits for the next send."""
+    async with _console(tmp_path, monkeypatch, project=False) as app:
+        await _send(app, "Hello")
+        await _send(app, "And now?")
+        app.store.set_session_pinned_prefill(app.session.id, "Sure:")
+        _chat_capture_off(app)
+        _one_time_capture(app, True)
+        before, sent = _calls(app), len(app.sent)
+
+        await _act(app, action)
+
+        assert len(app.sent) == sent + 1
+        assert _calls(app) == before
+        assert _next_capture(app) is True
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("action", ACTIONS)
+async def test_a_capture_off_edit_after_a_traced_action_keeps_the_next_sends(
+    tmp_path, monkeypatch, action
+):
+    """ADR-337: a Capture Off Edit & resend, then a captured send, is
+    unchanged. Here the Edit replaces the user row a traced action
+    re-recorded, so the next sends prove an ordinary rewritten tail."""
+    async with _console(tmp_path, monkeypatch, project=False) as app:
+        await _send(app, "Hello")
+        await _send(app, "And now?")
+        await _act(app, action)
+        _one_time_capture(app, False)
+        before = _calls(app)
+
+        await _act(app, "edit")
+
+        assert _calls(app) == before
+        for text in ("One more?", "And again?"):
+            await _send(app, text)
+            _assert_traced_as_sent(app, every_request=False)
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+async def test_a_send_after_switching_back_from_a_traced_edit(tmp_path, monkeypatch):
+    """Back on the message the Edit & resend replaced, the next send's
+    history is the earlier branch: an ordinary rewritten tail."""
+    async with _console(tmp_path, monkeypatch, project=False) as app:
+        await _send(app, "Hello")
+        await _send(app, "And now?")
+        original = _last(app, "assistant")
+        await _act(app, "edit")
+
+        app.store.set_active_leaf(app.session.id, original.id)
+
+        await _send(app, "One more?")
+        _assert_traced_as_sent(app, every_request=False)
+        assert "And now?" in json.dumps(app.wire())
 
 
 @pytest.mark.usefixtures("shut_down_console_controllers")
@@ -527,34 +716,127 @@ async def test_a_temporary_chat_with_capture_on_refuses_before_any_row(
 
 
 @pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("action", ["edit", "regenerate", "continue_earlier"])
+async def test_a_temporary_chat_sends_an_action_that_keeps_capture_off(
+    tmp_path, monkeypatch, action
+):
+    """Only an action that would be traced asks for a saved chat: one that
+    sends the pinned prefill, or a Continue of an earlier message, sends with
+    capture off as before."""
+    async with _console(tmp_path, monkeypatch, project=False) as app:
+        await _send(app, "Hello")
+        await _send(app, "And now?")
+        app.store.set_session_pinned_prefill(app.session.id, "Sure:")
+        monkeypatch.setattr(
+            app.store, "session_is_ephemeral", lambda _session_id: True
+        )
+        before, sent = _calls(app), len(app.sent)
+
+        if action == "continue_earlier":
+            first = next(
+                row
+                for row in app.store.messages_for_session(app.session.id)
+                if row.role.value == "assistant"
+            )
+            result = await app.controller.continue_from_message(first.id)
+        else:
+            result = await _act(app, action)
+
+        assert result.accepted
+        assert len(app.sent) == sent + 1
+        assert _calls(app) == before
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
 async def test_a_refused_plain_path_action_fails_its_reply(tmp_path, monkeypatch):
-    """A refusal before dispatch reaches no provider; the reply fails with
-    copy that says why, and the chat can still send."""
+    """The trace refuses the action's reservation before dispatch: no
+    provider is asked, and the reply fails with copy that says why."""
     from tldw_chatbook.Chat.console_action_capture import TRACE_REFUSED_COPY
-    from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
+    from tldw_chatbook.Chat.console_trace_service import ConsoleTraceService
 
     async with _console(tmp_path, monkeypatch, plain_path=True) as app:
         await _send(app, "Hello")
         await _send(app, "And now?")
         sent = len(app.sent)
-        stream = app.controller._stream_assistant_response
+        prepare = ConsoleTraceService.prepare_current_surface_delta
 
-        async def refuse(**kwargs):
-            if kwargs.get("trace_request") is not None:
-                raise TraceCallPersistenceError(reservation_status="not_established")
-            return await stream(**kwargs)
+        def refuse(self, *args, **kwargs):
+            monkeypatch.setattr(
+                ConsoleTraceService, "prepare_current_surface_delta", prepare
+            )
+            raise ValueError("unsupported_surface_change")
 
-        monkeypatch.setattr(app.controller, "_stream_assistant_response", refuse)
+        monkeypatch.setattr(ConsoleTraceService, "prepare_current_surface_delta", refuse)
 
         result = await _act(app, "edit")
 
+        assert app.reservation_errors == ["unsupported_surface_change"]
         assert result.visible_copy == TRACE_REFUSED_COPY
         assert len(app.sent) == sent
         assert _last(app, "assistant").status == "failed"
         assert app.controller.run_state.status.value == "failed"
-        monkeypatch.setattr(app.controller, "_stream_assistant_response", stream)
+        # ponytail: the next user hangs off that failed, empty reply, which
+        # no rule skips outside an action's run (ADR-337 amendment
+        # 2026-11-26, "Still refused"), so each later captured send pauses;
+        # Send without capture sends it.
         await _send(app, "One more?")
-        assert len(app.sent) == sent + 1
+        assert len(app.sent) == sent
+        preparation = app.controller.trace_call_recovery_preparation()
+        assert preparation is not None
+        sent_off = await app.controller.send_without_capture(
+            preparation.preparation_id
+        )
+        assert sent_off.accepted and len(app.sent) == sent + 1
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("failure", ["mixins", "request"])
+async def test_an_action_whose_request_cannot_be_built_fails_visibly(
+    tmp_path, monkeypatch, failure
+):
+    """Before dispatch the action's mix-ins cannot be composed, or its trace
+    request cannot be frozen: nothing is sent, the reply says why, no run
+    stays open, and the next send goes out."""
+    from tldw_chatbook.Chat import console_action_capture, console_prepared_request
+    from tldw_chatbook.Chat.console_action_capture import (
+        MIXIN_UNAVAILABLE_COPY,
+        TRACE_REFUSED_COPY,
+    )
+    from tldw_chatbook.Chat.console_prompt_mixin_models import (
+        MixinSnapshotUnavailableError,
+    )
+
+    async with _console(tmp_path, monkeypatch, mixins=True) as app:
+        await _send(app, "Hello")
+        module, name, error = (
+            (
+                console_prepared_request,
+                "compose_current_mixin_messages",
+                MixinSnapshotUnavailableError("mixin_anchor_unavailable"),
+            )
+            if failure == "mixins"
+            else (console_action_capture, "_trace_request", ValueError("fixture"))
+        )
+        original = getattr(module, name)
+
+        def fail_once(*_args, **_kwargs):
+            monkeypatch.setattr(module, name, original)
+            raise error
+
+        monkeypatch.setattr(module, name, fail_once)
+        sent = len(app.sent)
+
+        result = await _act(app, "regenerate")
+
+        assert len(app.sent) == sent
+        assert result.visible_copy == (
+            MIXIN_UNAVAILABLE_COPY if failure == "mixins" else TRACE_REFUSED_COPY
+        )
+        assert app.controller.run_state.status.value == (
+            "blocked" if failure == "mixins" else "failed"
+        )
+        await _send(app, "One more?")
+        _assert_traced_as_sent(app, every_request=False)
 
 
 # --- Hard negatives: each new rule refuses what it does not name -----------
@@ -767,6 +1049,68 @@ async def test_a_continue_is_admitted_only_after_its_own_turns_reply(ledger, sha
         await ledger.send(route, rows)
     assert len(ledger.asked) == asked
     assert ledger.calls() == ["fresh"]
+
+
+@pytest.mark.parametrize(
+    ("route", "action", "content", "admitted"),
+    [
+        ("continue", None, None, True),
+        ("regenerate", None, None, True),
+        ("agent_first", "continue", None, True),
+        ("edit", None, None, False),
+        ("agent_first", "edit", None, False),
+        ("continue", None, "A question the user never saved", False),
+        ("agent_first", "continue", "A question the user never saved", False),
+        ("agent_first", "edit", "A question the user never saved", False),
+        ("agent_first", None, "A question the user never saved", False),
+    ],
+    ids=lambda value: str(value),
+)
+async def test_a_continue_step_back_needs_its_action_and_instruction(
+    ledger, route, action, content, admitted
+):
+    """Only a Continue, or a Regenerate of a continued reply, steps back from
+    a trailing instruction to the user its replies answer, and only when that
+    row is Console's instruction. An Edit & resend's rows never end that way,
+    and on the agent path the action the call names grants nothing by
+    itself: an unsaved user row after a saved reply is refused."""
+    from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
+    from tldw_chatbook.Chat.console_trace_provenance import ConsoleRequestRoute
+
+    agent = route == "agent_first"
+    send = ledger.send_agent if agent else ledger.send
+    first = ConsoleRequestRoute.AGENT_FIRST if agent else ConsoleRequestRoute.FRESH
+    hello_id, hello = ledger.message("hello")
+    await send(first, [({"role": "user", "content": "hello"}, hello)])
+    _, reply = ledger.message("partial", sender="assistant", parent=hello_id)
+    rows = [
+        ({"role": "user", "content": "hello"}, hello),
+        ({"role": "assistant", "content": "partial"}, reply),
+        ledger.instruction(content) if content else ledger.instruction(),
+    ]
+    named = None if action is None else ConsoleRequestRoute(action)
+    call = (
+        (lambda: send(first, rows, action=named))
+        if agent
+        else (lambda: send(ConsoleRequestRoute(route), rows))
+    )
+    asked = len(ledger.asked)
+
+    if admitted:
+        assert await call() == ["answered"]
+        return
+    with pytest.raises(TraceCallPersistenceError):
+        await call()
+    assert len(ledger.asked) == asked
+
+
+def test_the_trace_rule_names_the_controllers_continue_instruction():
+    from tldw_chatbook.Chat.console_chat_controller import (
+        CONSOLE_CONTINUE_INSTRUCTION,
+    )
+    from tldw_chatbook.Chat.console_trace_action_calls import CONTINUE_INSTRUCTION
+
+    assert CONTINUE_INSTRUCTION == CONSOLE_CONTINUE_INSTRUCTION
 
 
 @pytest.mark.parametrize("agent", [False, True], ids=["plain_route", "agent_run"])

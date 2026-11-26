@@ -33,6 +33,8 @@ TEMPORARY_CAPTURE_COPY = (
 )
 #: The reply's failure copy when its call could not be traced.
 TRACE_REFUSED_COPY = "Trace capture could not be saved, so this request was not sent."
+#: The reply path's own copy when the mix-ins cannot be composed.
+MIXIN_UNAVAILABLE_COPY = "Mix-in attempt could not be saved; response was not sent."
 
 
 def saved_rows(provider_messages: Sequence[Mapping[str, Any]]) -> tuple[dict, ...]:
@@ -50,7 +52,12 @@ def _capture_mode(
     """
     try:
         snapshot = controller.capture_policy_snapshot(session_id)
-    except Exception:  # noqa: BLE001 -- a normal send falls back the same way
+    except Exception as exc:  # noqa: BLE001 -- a normal send falls back the same way
+        from loguru import logger
+
+        logger.bind(error_type=type(exc).__name__).warning(
+            "capture_policy_preparation_failed"
+        )
         return ConsoleTraceCaptureMode.CAPTURE_OFF, None
     if snapshot.effective_capture_enabled and bool(
         getattr(controller.provider_gateway, "supports_durable_capture", False)
@@ -59,14 +66,63 @@ def _capture_mode(
     return ConsoleTraceCaptureMode.CAPTURE_OFF, snapshot
 
 
+def continues_earlier_message(
+    controller: ConsoleChatController, session_id: str, message_id: str
+) -> bool:
+    """Whether a Continue of ``message_id`` leaves later rows out of its request.
+
+    Its request runs through the selected message, but its reply is appended
+    at the end of the chat.
+    """
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    rows = controller.store.messages_for_session(session_id)
+    position = next((i for i, row in enumerate(rows) if row.id == message_id), None)
+    return position is None or any(
+        row.role is not ConsoleMessageRole.SYSTEM for row in rows[position + 1 :]
+    )
+
+
+def _keeps_capture_off(
+    controller: ConsoleChatController,
+    session_id: str,
+    resolution: Any,
+    prefill: str | None,
+    earlier: bool,
+) -> bool:
+    """Whether the action sends with capture off whatever the chat's mode.
+
+    ponytail: each needs its own trace rule first. A captured send with a
+    pinned prefill already stops at the second message
+    (surface_prefix_mismatch, TASK-42583); a chat whose provider replays its
+    own continuations (Kimi reasoning) carries rows the re-record's proof
+    cannot name (TASK-42584); a Continue of an earlier message re-records a
+    turn whose later turns it leaves out (TASK-42586).
+    """
+    return (
+        bool(prefill)
+        or earlier
+        or _replays_provider_continuations(controller, session_id, resolution)
+    )
+
+
 def action_capture_refusal(
-    controller: ConsoleChatController, session_id: str
+    controller: ConsoleChatController,
+    session_id: str,
+    resolution: Any,
+    prefill: str | None = None,
+    *,
+    earlier: bool = False,
 ) -> str | None:
-    """Return refusal copy before the action changes the transcript, if any."""
+    """Return refusal copy before the action changes the transcript, if any.
+
+    Only an action that would be traced is refused.
+    """
     mode, _snapshot = _capture_mode(controller, session_id)
     if (
         mode is ConsoleTraceCaptureMode.CAPTURE_ON
         and controller.store.session_is_ephemeral(session_id)
+        and not _keeps_capture_off(controller, session_id, resolution, prefill, earlier)
     ):
         return TEMPORARY_CAPTURE_COPY
     return None
@@ -177,7 +233,7 @@ def _replays_provider_continuations(
             session_id, resolution
         )
     except Exception:  # noqa: BLE001 -- the stream refuses a conflict itself
-        return False
+        return True
     return bool(sidecars) and target is not None
 
 
@@ -186,6 +242,7 @@ async def stream_action(
     *,
     trace_source_messages: Sequence[Mapping[str, Any]],
     user_id: str,
+    earlier: bool = False,
     **stream: Any,
 ) -> ConsoleSubmitResult:
     """Stream an action's reply, traced under Capture On like a normal send.
@@ -194,34 +251,27 @@ async def stream_action(
         controller: The Console controller dispatching the action.
         trace_source_messages: The saved rows as read, before transforms.
         user_id: Native id of the saved user row that owns the call.
+        earlier: A Continue of a message with later rows after it.
         **stream: The action's ``_stream_assistant_response`` arguments.
 
     Returns:
         The stream's result. A request the trace refuses before dispatch
-        fails the reply with :data:`TRACE_REFUSED_COPY`.
+        fails the reply with :data:`TRACE_REFUSED_COPY`, or blocks it with
+        :data:`MIXIN_UNAVAILABLE_COPY` when its mix-ins cannot be composed.
     """
-    from tldw_chatbook.Chat.console_chat_controller import (
-        ConsoleRunState,
-        ConsoleRunStatus,
-        ConsoleSubmitResult,
-    )
     from tldw_chatbook.Chat.console_prepared_request import (
         compose_current_mixin_messages,
+    )
+    from tldw_chatbook.Chat.console_prompt_mixin_models import (
+        MixinSnapshotUnavailableError,
     )
     from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
 
     turn_context = stream["turn_context"]
     session_id = turn_context.session_id
     mode, snapshot = _capture_mode(controller, session_id)
-    # ponytail: these keep the action Capture Off, as before. A captured send
-    # with a pinned prefill already stops at the second message
-    # (surface_prefix_mismatch), and a chat whose provider replays its own
-    # continuations (Kimi reasoning) carries rows the re-record's proof
-    # cannot name; each needs its own rule first (TASK-42583, TASK-42584).
-    excepted = (
-        controller.store.session_is_ephemeral(session_id)
-        or bool(stream.get("prefill"))
-        or _replays_provider_continuations(controller, session_id, stream["resolution"])
+    excepted = controller.store.session_is_ephemeral(session_id) or _keeps_capture_off(
+        controller, session_id, stream["resolution"], stream.get("prefill"), earlier
     )
     if mode is ConsoleTraceCaptureMode.CAPTURE_OFF or not excepted:
         # The action follows the chat's capture mode, so it uses up a
@@ -249,30 +299,60 @@ async def stream_action(
             trace_source_messages=tuple(trace_source_messages),
             user_id=user_id,
         )
+    except MixinSnapshotUnavailableError:
+        # As the reply path refuses its own composition.
+        return controller._block_context_preflight(
+            session_id=session_id,
+            assistant_message_id=assistant_id,
+            visible_copy=MIXIN_UNAVAILABLE_COPY,
+        )
+    except Exception as exc:  # noqa: BLE001 -- a normal send refuses the same way
+        from loguru import logger
+
+        logger.bind(error_type=type(exc).__name__).warning(
+            "action_trace_request_failed"
+        )
+        return _fail_unsent(controller, session_id, assistant_id)
+    try:
         return await controller._stream_assistant_response(
             **(stream | {"provider_messages": provider_messages}),
             capture_mode_override=mode,
             trace_request=request,
         )
     except (TraceCallPersistenceError, TraceProvenancePersistenceError):
-        # Nothing reached the provider. The agent path settles its run the
-        # same way; the reply fails and keeps Retry.
-        try:
-            controller.store.mark_message_failed(assistant_id)
-        except KeyError:
-            return controller._session_closed_result(session_id=session_id)
-        controller._append_failure_system_row(session_id, TRACE_REFUSED_COPY)
-        controller._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.FAILED, TRACE_REFUSED_COPY),
-            session_id=session_id,
-        )
-        return ConsoleSubmitResult(True, False, TRACE_REFUSED_COPY)
+        return _fail_unsent(controller, session_id, assistant_id)
+
+
+def _fail_unsent(
+    controller: ConsoleChatController, session_id: str, assistant_id: str
+) -> ConsoleSubmitResult:
+    """Fail the reply of a request the trace refused before dispatch."""
+    from tldw_chatbook.Chat.console_chat_controller import (
+        ConsoleRunState,
+        ConsoleRunStatus,
+        ConsoleSubmitResult,
+    )
+
+    # Nothing reached the provider. The agent path settles its run the
+    # same way; the reply fails and keeps Retry.
+    try:
+        controller.store.mark_message_failed(assistant_id)
+    except KeyError:
+        return controller._session_closed_result(session_id=session_id)
+    controller._append_failure_system_row(session_id, TRACE_REFUSED_COPY)
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.FAILED, TRACE_REFUSED_COPY),
+        session_id=session_id,
+    )
+    return ConsoleSubmitResult(True, False, TRACE_REFUSED_COPY)
 
 
 __all__ = [
+    "MIXIN_UNAVAILABLE_COPY",
     "TEMPORARY_CAPTURE_COPY",
     "TRACE_REFUSED_COPY",
     "action_capture_refusal",
+    "continues_earlier_message",
     "saved_rows",
     "stream_action",
     "turn_user_id",

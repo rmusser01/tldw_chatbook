@@ -79,22 +79,39 @@ def _chain_messages(
     revision_ids: Sequence[str],
     current_turn_id: str,
     replies: int = 0,
+    skipped_reply_id: str | None = None,
 ) -> tuple[list[str], dict[str, str | None]] | None:
     """Resolve revisions to one parent-linked message chain through the user.
 
     The user ends the chain, or is followed by ``replies`` saved replies (a
     Continue's, TASK-42560; the planner found them as assistant rows, and
-    binding compares each row with its saved value).
+    binding compares each row with its saved value). With
+    ``skipped_reply_id``, the user hangs off that failed, empty reply, whose
+    parent is the row before the user; the request skips it.
     """
+    from tldw_chatbook.Chat.console_trace_action_calls import unanswered_reply
+
     messages: list[str] = []
     for revision_id in revision_ids:
         revision = repository.get_semantic_revision(cursor, revision_id)
         if revision is None or revision.source_conversation_id != conversation_id:
             return None
         messages.append(revision.source_message_id)
-    if messages[len(messages) - 1 - replies] != current_turn_id:
+    user = len(messages) - 1 - replies
+    if messages[user] != current_turn_id:
         return None
     parents = _message_rows(cursor, conversation_id, messages)
+    if parents is not None and skipped_reply_id is not None:
+        if (
+            user < 1
+            or parents[messages[user]] != skipped_reply_id
+            or unanswered_reply(
+                cursor, conversation_id=conversation_id, message_id=skipped_reply_id
+            )
+            != messages[user - 1]
+        ):
+            return None
+        parents = {**parents, messages[user]: messages[user - 1]}
     if parents is None or any(
         parents[child] != parent for parent, child in zip(messages, messages[1:])
     ):
@@ -215,10 +232,19 @@ def build_rewritten_tail_witness(
     from tldw_chatbook.Chat.console_trace_action_calls import unanswered_reply
 
     if after_action is not None and (
-        removed_start is None or removed_start < after_action.user_sequence
+        removed_start is None
+        or removed_start < after_action.user_sequence
+        or removed_start == after_action.user_sequence
+        and (
+            not incoming
+            or rewritten_history_revision_id(incoming[0])
+            != after_action.pin_revision_id
+        )
     ):
         # The replacement reaches before the run's own rows (Compact now, a
-        # changed earlier row): an ordinary rewritten tail, as before.
+        # changed earlier row), or replaces the run's user row with another
+        # (a Capture Off Edit & resend of it, or a switch back to its
+        # earlier branch): an ordinary rewritten tail, as before.
         after_action = None
     conversation_id = _conversation_id(cursor, repository, owner_id)
     shape = _shape(incoming, user_index)
@@ -260,18 +286,44 @@ def build_rewritten_tail_witness(
     revision_ids = [rewritten_history_revision_id(row) for row in (*history, *reply)]
     if user_revision_id is None or any(item is None for item in revision_ids):
         return None
+    chain_ids = (
+        *revision_ids[: len(history)],
+        user_revision_id,
+        *revision_ids[len(history) :],
+    )
     chain = _chain_messages(
         cursor,
         repository,
         conversation_id=conversation_id,
-        revision_ids=(
-            *revision_ids[: len(history)],
-            user_revision_id,
-            *revision_ids[len(history) :],
-        ),
+        revision_ids=chain_ids,
         current_turn_id=current_turn_id,
         replies=len(reply),
     )
+    skipped_reply_id = None
+    if (
+        chain is None
+        and after_action is not None
+        and after_action.response_revision_id is None
+        and removed_start == after_action.user_sequence
+        and len(history) == 1
+    ):
+        # The run bore nothing and its user was a transform: the request
+        # restores the user's saved source, and the new user hangs off the
+        # run's failed, empty reply after it, which the request skips.
+        parents = _message_rows(cursor, conversation_id, (current_turn_id,))
+        skipped_reply_id = None if parents is None else parents[current_turn_id]
+        chain = (
+            None
+            if skipped_reply_id is None
+            else _chain_messages(
+                cursor,
+                repository,
+                conversation_id=conversation_id,
+                revision_ids=chain_ids,
+                current_turn_id=current_turn_id,
+                skipped_reply_id=skipped_reply_id,
+            )
+        )
     if chain is None:
         return None
     messages, parents = chain
@@ -330,6 +382,7 @@ def build_rewritten_tail_witness(
             project_context_count=project,
             after_call_id=None if after_action is None else after_action.latest_call_id,
             unanswered_anchor=unanswered,
+            skipped_reply_id=skipped_reply_id,
         )
     except ValueError:
         return None
@@ -396,6 +449,8 @@ def validate_rewritten_tail(
                 removed_start=removed_start,
                 segment_id=segment_id,
             )
+            or (witness.unanswered_anchor or witness.skipped_reply_id is not None)
+            and after.response_revision_id is not None
             or witness.unanswered_anchor
             and (
                 after.response_revision_id is not None
@@ -419,6 +474,7 @@ def validate_rewritten_tail(
         ),
         current_turn_id=current_turn_id,
         replies=len(witness.reply),
+        skipped_reply_id=witness.skipped_reply_id,
     )
     if chain is None or chain[1][chain[0][0]] != witness.anchor_message_id:
         raise ValueError("rewritten_tail_unavailable")

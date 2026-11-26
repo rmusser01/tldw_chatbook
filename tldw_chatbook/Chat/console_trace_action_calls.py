@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from tldw_chatbook.Chat.console_trace_provenance import (
     TRACED_ACTION_ROUTES,
+    ConsoleRequestRoute,
     ProviderArtifactTraceProvenance,
     TraceOmissionReason,
     TraceProvenance,
@@ -40,6 +41,14 @@ if TYPE_CHECKING:
 ACTION_ROUTE_IDENTITIES = frozenset(route.value for route in TRACED_ACTION_ROUTES)
 #: Bound on the calls an action's run may hold after its first call.
 _MAX_RUN_CALLS = 256
+#: Console's provider-only continuation instruction; the controller's
+#: ``CONSOLE_CONTINUE_INSTRUCTION`` (a test pins them equal).
+CONTINUE_INSTRUCTION = "Continue and extend the selected message."
+#: The actions whose request ends with that instruction: a Continue, and a
+#: Regenerate of a continued reply.
+_CONTINUING_ACTIONS = frozenset(
+    {ConsoleRequestRoute.CONTINUE, ConsoleRequestRoute.REGENERATE}
+)
 
 
 def _saved_row_revision_id(descriptor: TraceProvenance) -> str | None:
@@ -54,26 +63,33 @@ def continued_turn_index(
     descriptors: Sequence[TraceProvenance],
     rows: Sequence[Mapping[str, Any]],
     index: int,
+    action: ConsoleRequestRoute,
 ) -> int | None:
     """Return the saved user a continuation instruction at ``index`` answers.
 
-    A Continue (and a Regenerate of a continued reply) ends its rows with a
-    provider-only instruction after one or more saved assistant replies; the
-    call belongs to the saved user turn those replies answer.
+    A Continue (and a Regenerate of a continued reply) ends its rows with
+    Console's provider-only instruction after one or more saved assistant
+    replies; the call belongs to the saved user turn those replies answer.
 
     Args:
         descriptors: The request's message descriptors.
         rows: The request's message rows, aligned with ``descriptors``.
         index: The row after which only project context follows.
+        action: The action the call names.
 
     Returns:
         The user's index, or None when the rows have another shape.
     """
     descriptor = descriptors[index]
+    content = rows[index].get("content")
     if not (
-        type(descriptor) is ProviderArtifactTraceProvenance
+        action in _CONTINUING_ACTIONS
+        and type(descriptor) is ProviderArtifactTraceProvenance
         and descriptor.source is TraceProvenanceSource.ACTIVE_REQUEST
         and rows[index].get("role") == "user"
+        # Prompt mix-ins are composed before it.
+        and isinstance(content, str)
+        and content.endswith(CONTINUE_INSTRUCTION)
     ):
         return None
     position = index - 1
@@ -367,6 +383,7 @@ def unanswered_reply(
 
 __all__ = [
     "ACTION_ROUTE_IDENTITIES",
+    "CONTINUE_INSTRUCTION",
     "AfterActionCall",
     "action_turn_revision_id",
     "after_action_call",

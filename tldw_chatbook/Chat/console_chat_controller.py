@@ -294,6 +294,7 @@ from tldw_chatbook.Chat.console_trace_provenance import (
 from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
 from tldw_chatbook.Chat.console_action_capture import (  # TASK-42560
     action_capture_refusal,
+    continues_earlier_message,
     saved_rows,
     stream_action,
     turn_user_id,
@@ -18488,7 +18489,11 @@ class ConsoleChatController:
             return refusal  # TASK-33621.4: before commit, never Failed
         if refusal := self._current_mixin_refusal(session_id, mixin_current):
             return refusal
-        if refusal := action_capture_refusal(self, session_id):
+        prefill = self._pinned_prefill_for_session(session_id) if resend else None
+        earlier = continues_earlier_message(self, session_id, message_id)
+        if refusal := action_capture_refusal(
+            self, session_id, resolution, prefill, earlier=earlier
+        ):
             return self._block(session_id, refusal)
         assistant = self.store.append_message(
             session_id,
@@ -18500,6 +18505,7 @@ class ConsoleChatController:
             self,
             trace_source_messages=trace_source,
             user_id=turn_user_id(self, session_id, assistant.id),
+            earlier=earlier,
             route=ConsoleRequestRoute.CONTINUE,
             mixin_observation_revision=mixin_current.revision if mixin_current is not None else None,
             mixin_anchor_id=mixin_anchor_id,
@@ -18508,7 +18514,7 @@ class ConsoleChatController:
             resolution=resolution,
             provider_messages=provider_messages,
             assistant_message_id=assistant.id,
-            prefill=self._pinned_prefill_for_session(session_id) if resend else None,
+            prefill=prefill,
             skill_bindings=skill_bindings,
             skill_bundle_block=skill_bundle_block,
             turn_context=turn_context,
@@ -18692,7 +18698,7 @@ class ConsoleChatController:
         if refusal := self._current_mixin_refusal(session_id, mixin_current):
             return refusal
         prefill = self._pinned_prefill_for_session(session_id)
-        if refusal := action_capture_refusal(self, session_id):
+        if refusal := action_capture_refusal(self, session_id, resolution, prefill):
             return self._block(session_id, refusal)
         self.clear_original_attempt(message_id)
         new_message = self.store.create_sibling(
@@ -19822,7 +19828,7 @@ class ConsoleChatController:
         if refusal := self._current_mixin_refusal(session_id, mixin_current):
             return refusal
         prefill = self._pinned_prefill_for_session(session_id)
-        if refusal := action_capture_refusal(self, session_id):
+        if refusal := action_capture_refusal(self, session_id, resolution, prefill):
             return self._block(session_id, refusal)
 
         # Every transform succeeded: now (and only now) fork the edited USER

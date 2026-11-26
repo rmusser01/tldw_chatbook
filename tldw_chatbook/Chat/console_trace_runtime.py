@@ -454,6 +454,7 @@ class ConsoleTraceBoundaryFactory:
                 provenance.messages_payload,
                 request.messages_payload,
                 active_descriptor_index,
+                action,
             )
             if continued_user is not None:
                 active_descriptor_index = continued_user
