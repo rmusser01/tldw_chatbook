@@ -30,7 +30,14 @@ class CapacityRefused(RuntimeError):
 
 
 class CleanupUnprovenRefused(CapacityRefused):
-    """The owner's earlier tool cleanup is unproven; its run must end."""
+    """A refusal that only a restart clears; it has two meanings.
+
+    From ``reserve_tool``, the owner's own earlier tool cleanup is unproven,
+    so its run must end (TASK-40716); it carries that retained record. From
+    ``WorktreeActivity.restart_refusal``, another owner's claim is held until
+    restart (TASK-41950); it carries no record and this run must NOT end.
+    Handlers that end the run on this type must only wrap ``reserve_tool``.
+    """
 
     def __init__(self, label: str, retention: UnprovenRetention | None = None) -> None:
         super().__init__("previous_tool_cleanup_unproven")

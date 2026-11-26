@@ -285,13 +285,71 @@ async def test_spawn_refused_by_a_retained_cleanups_claim_names_the_restart(
     seen = str(spawn_payloads[1])
     restart = (
         "spawn_subagent is unavailable: workspace activity is held by a cleanup "
-        "that could not be proven; restart Chatbook to clear it."
+        "that could not be proven; only restarting Chatbook clears it. Continue "
+        "without it."
     )
     busy = "spawn_subagent is unavailable while other workspace activity is running"
     if retained:
         assert restart in seen and busy not in seen, seen
     else:
-        assert busy in seen and "restart Chatbook" not in seen, seen
+        assert busy in seen and "restarting Chatbook" not in seen, seen
+
+
+@pytest.mark.parametrize("resumed", [False, True])
+@pytest.mark.parametrize("held", [False, True])
+async def test_a_refused_child_launch_names_the_tool_the_model_called(
+    ordinary_host, resumed, held
+):
+    """A send_to_agent resume refused at the widen named spawn_subagent
+    (TASK-41950 review). A resume now names send_to_agent, for a busy claim
+    and for one held until restart alike."""
+    from types import MethodType
+
+    from tldw_chatbook.Agents.agent_run_tools import AgentRunTools
+    from tldw_chatbook.Agents.execution_capacity import (
+        CleanupUnprovenRefused,
+        WorkOrigin,
+    )
+
+    refusal = (
+        CleanupUnprovenRefused("workspace activity")
+        if held
+        else CapacityRefused("worktree_activity_busy")
+    )
+
+    class Tree:
+        def attach(self, owner):
+            raise refusal
+
+    finished = []
+    tools = SimpleNamespace(
+        service=SimpleNamespace(
+            _automatic_work=None,
+            runtime_capacity=ordinary_host.runtime.execution_capacity,
+            work_origin=WorkOrigin.MANUAL,
+            _ordinary_tree=Tree(),
+            _finish_execution=lambda owner: (
+                finished.append(owner),
+                owner.finish_root(),
+            ),
+        ),
+        conversation_id="refused-launch",
+        sub_agent_spawns=1,
+    )
+    tools._reserve_child_execution = MethodType(
+        AgentRunTools._reserve_child_execution, tools
+    )
+    handle, failure = AgentRunTools._launch_fleet_child(
+        tools, "task", None, {}, resumed_managed=object() if resumed else None
+    )
+    assert handle is None and len(finished) == 1
+    name = "send_to_agent" if resumed else "spawn_subagent"
+    expected = (
+        f"{name} is unavailable: workspace activity is held by a cleanup"
+        if held
+        else f"{name} is unavailable while other workspace activity is running"
+    )
+    assert failure.error.startswith(expected), failure.error
 
 
 @pytest.mark.parametrize("contended", [False, True])

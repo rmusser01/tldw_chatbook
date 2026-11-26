@@ -374,9 +374,9 @@ class _InitializationSource:
             with activity.prelaunch(footprint=footprint) as claim:
                 if claim is None:
                     # A claim held until restart (TASK-41635, TASK-41950).
-                    raise activity.restart_refusal(
-                        footprint, capacity
-                    ) or CapacityRefused("initialization_activity_busy")
+                    raise activity.restart_refusal(footprint) or CapacityRefused(
+                        "initialization_activity_busy"
+                    )
                 owner = capacity.begin_execution(
                     origin=self.work.origin, conversation_id=""
                 )

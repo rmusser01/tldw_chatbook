@@ -892,6 +892,16 @@ _HELD_COPY = (
 )
 
 
+def _member_of_claim(activity, owner, *, opaque=False):
+    """Whether ``owner`` is a member of a held claim (an opaque one, if asked)."""
+    with activity._lock:
+        return any(
+            member.owner is owner
+            and (not opaque or activity._claims[member.claim_id].footprint.opaque)
+            for member in activity._members.values()
+        )
+
+
 def _console_rig(h, monkeypatch, tmp_path):
     """A real Console controller over the fixture's runtime, with one chat in
     the init workspace and one in another workspace."""
@@ -982,7 +992,7 @@ def test_a_retained_cleanups_claim_refuses_later_console_sends_until_restart(
         return not any(holds_unproven_custody(t) for t in threading.enumerate())
 
     def holds_claim(owner):
-        return activity.holds_conflicting_claim(owner, WorktreeFootprint(opaque=True))
+        return _member_of_claim(activity, owner)
 
     def begin(**kwargs):
         owners.append(capacity.begin_execution(origin=WorkOrigin.MANUAL, **kwargs))
@@ -1037,7 +1047,7 @@ def test_a_retained_cleanups_claim_refuses_later_console_sends_until_restart(
                 assert not capacity.retained()
             else:
                 retention = owner.reserve_tool().retain_unproven("native Git")
-        assert activity.holds_conflicting_claim(owner, WorktreeFootprint())
+        assert _member_of_claim(activity, owner, opaque=True)
 
         assert await send(session, "a later send") == (False, _HELD_COPY)
         # The claim is opaque: a chat in another workspace is refused as well.
@@ -1135,6 +1145,40 @@ def test_a_retained_claim_that_a_send_does_not_need_keeps_the_busy_copy(
         claim.settle(durable=True)
         if live.is_admitted:
             live.finish_root()
+
+
+def test_a_claim_whose_owner_is_marked_unproven_holds_roots_until_restart(
+    native_initializer,
+):
+    """A claim whose owner's cleanup is unproven never retires, even with no
+    retained record to Release (TASK-41950 review): the refused root waits
+    for a restart and is not offered a retry."""
+    h = native_initializer
+    capacity, activity = h.runtime.execution_capacity, h.runtime.worktree_activity
+    owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="t")
+    claim = activity.try_acquire(owner=owner, footprint=WorktreeFootprint(opaque=True))
+    assert claim is not None
+    owner.mark_cleanup_unproven()
+    assert not capacity.retained()
+    try:
+        h.registry.set_change_review_enabled("init-workspace", True)
+        h.service.admit_turn("init-workspace")
+        wait_until(
+            lambda: (
+                h.service.status("init-workspace").roots[0].state
+                is not RootReadinessState.PREPARING
+            )
+        )
+        root = h.service.status("init-workspace").roots[0]
+        assert (root.state, root.reason) == (
+            RootReadinessState.RESTART_REQUIRED,
+            h.service._RESTART_REASON,
+        )
+        assert root.reason == _RESTART_COPY
+        assert h.service.retry_failed_roots("init-workspace") == 0
+    finally:
+        owner.finish_root()
+        claim.settle(durable=True)
 
 
 def test_a_claim_held_without_a_retained_cleanup_stays_retryable(native_initializer):

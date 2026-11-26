@@ -31,7 +31,6 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.execution_capacity import (
         CleanupUnprovenRefused,
         ExecutionOwner,
-        RuntimeCapacity,
     )
 
 
@@ -464,67 +463,43 @@ class WorktreeActivity:
             self._members[claim_id] = member
         owner.on_drained(lambda proven: self.record_drain(claim_id, proven=proven))
 
-    def holds_conflicting_claim(
-        self, owner: ExecutionOwner, footprint: WorktreeFootprint
-    ) -> bool:
-        """Whether ``owner`` is a member of a held claim that conflicts with ``footprint``."""
-        with self._lock:
-            return any(
-                member.owner is owner
-                for state in self._claims.values()
-                if footprint._conflicts(state.footprint)
-                for member in state.members.values()
-            )
-
     def restart_refusal(
         self,
         footprint: WorktreeFootprint,
-        capacity: RuntimeCapacity,
         *,
         excluding: WorktreeActivityClaim | None = None,
     ) -> CleanupUnprovenRefused | None:
-        """The refusal for a conflict that only a restart clears, else ``None``.
+        """The refusal for a conflict held until restart, else ``None``.
 
-        A claim retires only once every member's drain is proven, so a
-        conflicting claim with a member whose drain or cleanup is unproven
-        (TASK-40716) is held until restart (TASK-41950).
+        Covers a conflicting claim with a member whose owner's cleanup is
+        unproven (TASK-40716): its drain can never be proven, so the claim
+        never retires (TASK-41950). A claim held only because a member was
+        settled non-durable (a failed snapshot write, an unproven run-row
+        read) is not covered and keeps the busy refusal (TASK-42605).
 
         Args:
             footprint: The refused footprint.
-            capacity: The runtime capacity holding the retained records.
             excluding: The caller's own claim, when it is widening.
 
         Returns:
-            ``CleanupUnprovenRefused`` carrying a retained record of such a
-            member when one exists, or ``None`` when every conflict can retire.
+            ``CleanupUnprovenRefused`` with no retained record, or ``None``.
         """
         from tldw_chatbook.Agents.execution_capacity import CleanupUnprovenRefused
 
         with self._lock:
-            members = [
-                (member.owner, member.drained)
+            # A member drained unproven always has an unproven owner cleanup
+            # (its drain outcome is ``not _cleanup_unproven``), so the owner's
+            # flag alone decides.
+            owners = [
+                member.owner
                 for key, state in self._claims.items()
                 if (excluding is None or key != excluding.id)
                 and footprint._conflicts(state.footprint)
                 for member in state.members.values()
             ]
-        held = [
-            owner
-            for owner, drained in members
-            if drained is False or owner.cleanup_unproven
-        ]
-        if not held:
-            return None
-        retention = next(
-            (
-                record
-                for record in capacity.retained()
-                if any(record.operation.owner is owner for owner in held)
-            ),
-            None,
-        )
-        label = retention.label if retention is not None else "workspace activity"
-        return CleanupUnprovenRefused(label, retention)
+        if any(owner.cleanup_unproven for owner in owners):
+            return CleanupUnprovenRefused("workspace activity")
+        return None
 
     def validate_claim(
         self,
