@@ -14,7 +14,9 @@ runs cover the rest.
 from __future__ import annotations
 
 import ast
+import collections
 import functools
+import itertools
 import json
 import os
 import re
@@ -200,29 +202,57 @@ def _token_index(corpus: dict[str, str]) -> dict[str, list[str]]:
     return index
 
 
+def _word(name: str) -> re.Pattern[str]:
+    """`name` as a whole word: not inside a longer file, module or folder name
+    (`guard.py` in `focus_guard.py`, `interop` in `interop-password`)."""
+    return re.compile(rf"(?<![\w-]){re.escape(name)}(?![\w-])")
+
+
 def _readers(
-    path: str, corpus: dict[str, str], index: dict[str, list[str]]
+    path: str,
+    corpus: dict[str, str],
+    index: dict[str, list[str]],
+    common: bool = False,
 ) -> list[str]:
-    """Files that name `path`, in corpus order: by file name, or for a `.py` by
-    module name too (data a test reads; a helper a test runs by path or -m)."""
-    names = [Path(path).name]
+    """Files that name `path`, in corpus order: by its file name as a whole
+    word, or for a `.py` by module name too (data a test reads; a helper a test
+    runs by path or -m). A `.py` helper's precise readers (_names_path) win
+    when it has any; a `common` file name also needs its directory named.
+    """
+    target = Path(path)
+    names = [target.name]
     if path.endswith(".py"):
         names.append(path[:-3].replace("/", "."))
     pool: set[str] = set()
     for name in names:  # every word of a name is a word of a file naming it
         words = re.findall(r"\w+", name)
         pool.update(min((index.get(w, []) for w in words), key=len, default=[]))
-    return [f for f in sorted(pool) if f != path and any(n in corpus[f] for n in names)]
+    patterns = [_word(name) for name in names]
+    readers = [
+        f
+        for f in sorted(pool)
+        if f != path and any(pattern.search(corpus[f]) for pattern in patterns)
+    ]
+    if common:
+        readers = [f for f in readers if _word(target.parent.name).search(corpus[f])]
+    if path.endswith(".py"):
+        return [f for f in readers if _names_path(f, corpus[f], path)] or readers
+    return readers
 
 
 def _names_path(reader: str, text: str, path: str) -> bool:
-    """Whether `reader` names `path` precisely: with its directory, by module
-    name, or by file name from beside it (not just a common file name)."""
+    """Whether `reader` names `path` precisely: a quoted literal with a
+    directory that the path ends with, its module name, or its file name from
+    beside it (not just a common file name)."""
     target = Path(path)
-    return (
-        f"{target.parent.name}/{target.name}" in text
-        or (target.suffix == ".py" and path[:-3].replace("/", ".") in text)
-        or (Path(reader).parent == target.parent and target.name in text)
+    name = re.escape(target.name)
+    for literal in re.findall(rf"""["']([^"'\n]*/{name})["']""", text):
+        if f"/{path}".endswith("/" + literal.lstrip("./")):
+            return True
+    if target.suffix == ".py" and _word(path[:-3].replace("/", ".")).search(text):
+        return True
+    return Path(reader).parent == target.parent and bool(
+        _word(target.name).search(text)
     )
 
 
@@ -253,11 +283,19 @@ def _importers(
         named = index.get(token, [])
         if init:
             named = sorted({*named, *(n for n in corpus if n.startswith(package))})
-        level = (
-            first
-            if current == path and first is not None
-            else (name for name in named if _loads(name, corpus[name], current))
-        )
+        if current == path and first is not None:
+            level = iter(first)
+        else:
+            level = (name for name in named if _loads(name, corpus[name], current))
+            if current != path and not _is_test_file(current):
+                # A helper met on the way that nothing imports: the files that
+                # name it run it (a child process, a spec-loaded file).
+                lead = next(level, None)
+                level = (
+                    itertools.chain([lead], level)
+                    if lead
+                    else iter(_readers(current, corpus, index))
+                )
         for name in level:
             if name in seen:
                 continue
@@ -433,6 +471,18 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
             index.update(_token_index(tests_corpus()))
         return index
 
+    counts: collections.Counter[str] = collections.Counter()
+
+    def name_counts() -> collections.Counter[str]:
+        """How many files under Tests/ share each file name (LICENSE, SKILL.md)."""
+        if not counts:
+            counts.update(
+                f.name
+                for f in (root / "Tests").rglob("*")
+                if "__pycache__" not in f.parts and f.is_file()
+            )
+        return counts
+
     def shorten(items: list[str], keep: int) -> str:
         """At most `keep` items, so a large PR's reason stays readable."""
         more = f", ... and {len(items) - keep} more" if len(items) > keep else ""
@@ -483,7 +533,8 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
         if not found and not _is_test_file(path):
             # Test data, or a helper nothing imports (a child process or a
             # spec-loaded file): the files that name it read or run it.
-            first = _readers(path, tests_corpus(), token_index())
+            common = not path.endswith(".py") and name_counts()[Path(path).name] > 1
+            first = _readers(path, tests_corpus(), token_index(), common)
             loading = next(
                 (
                     f
@@ -531,12 +582,20 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
             }
         )
     changed.sort()
-    own = changed[:LIGHT_FILE_CAP]
+    own: list[str] = []
+    # A change with dependents only the full run reaches gets its first laned
+    # dependent first, ahead of the PR's own files, so a cut alone cannot send
+    # the plan broad (see the check below); sampled ones count toward the 8.
+    led = 0
+    for e in samples:
+        lead = next((f for f in e["sample"] if laned(f)), None)
+        if e["blocked"] and lead and lead not in own and len(own) < LIGHT_FILE_CAP:
+            own.append(lead)
+            led += e["sampling"]
+    own += [f for f in changed if f not in own][: LIGHT_FILE_CAP - len(own)]
 
     def share(entries: list[dict], limit: int) -> None:
-        """Add the samples' files in turn: each one's first, then each second.
-        Changes with blocked dependents pick first (see the check below)."""
-        entries = sorted(entries, key=lambda entry: not entry["blocked"])
+        """Add the samples' files in turn: each one's first, then each second."""
         for rank in range(IMPORTER_CAP):
             for entry in entries:
                 sample = entry["sample"]
@@ -544,7 +603,7 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
                     own.append(sample[rank])
 
     share([e for e in samples if not e["sampling"]], LIGHT_FILE_CAP)
-    budget = min(LIGHT_FILE_CAP, len(own) + IMPORTER_CAP)  # 8 sampled files in all
+    budget = min(LIGHT_FILE_CAP, len(own) + IMPORTER_CAP - led)  # 8 sampled in all
     share([e for e in samples if e["sampling"]], budget)
     # After the cuts: blocked dependents and nothing laned that runs in their place.
     for e in samples:
@@ -566,6 +625,8 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
             note = f"nothing imports or names {path}"
         elif not e["sample"] and e["in_ci"]:
             note = f"Tests/CI covers {path}"
+        elif not e["tests"]:
+            note = f"no test file depends on {path}"
         elif not e["sample"]:
             note = f"no PR lane runs a dependent of {path}"
             if e["tests"]:
@@ -584,7 +645,7 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
         if e["skipped"] and e["sample"]:
             note += f", skipping {e['skipped']} the light job cannot run"
         notes.append(note)
-    cut = changed[LIGHT_FILE_CAP:]
+    cut = [f for f in changed if f not in own]
     dropped = {e["sampling"] for e in samples for f in e["sample"] if f not in own}
     if True in dropped and budget < LIGHT_FILE_CAP:
         notes.insert(0, f"{IMPORTER_CAP} sampled files in all")

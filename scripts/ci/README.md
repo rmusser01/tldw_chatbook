@@ -37,7 +37,8 @@ changes:
   depth;
 - anything a `conftest.py` loads, transitively, such as the profile harness and
   the shared doubles, and any data file or unimported helper a conftest (or a
-  file it loads) names with its directory, by module name, or from beside it;
+  file it loads) names by a directory-qualified literal its path ends with, by
+  module name, or from beside it;
 - schema inputs (`DB`, `db` or `migrations` directories) or application code with
   uppercase DDL or `PRAGMA user_version`;
 - guard and budget data under `Tests/Architecture/` or `Tests/Performance/`;
@@ -54,8 +55,9 @@ Everything else runs light:
 - the PR's changed test files;
 - the test files that import or read what changed. Imports are resolved by
   module path, and the search runs breadth first through helpers. A helper
-  nothing imports (a child process, a spec-loaded file) is read like data: the
-  files that name it are its dependents. With at most 8
+  nothing imports (a child process, a spec-loaded file), changed or met on the
+  way, is read like data: the files that name it as a whole word are its
+  dependents. With at most 8
   runnable dependents, all of them run. With more, the change is sampled: only
   dependents a PR lane runs, since 4,707 of the 5,872 test files are in no lane
   and run only at release. A PR samples at most 8 files in all, and runs at most

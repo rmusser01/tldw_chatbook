@@ -1036,7 +1036,7 @@ def test_a_data_file_samples_its_readers_and_a_reading_helpers_importers(tmp_pat
     # A helper nothing imports: nothing runs anywhere, so broad adds nothing.
     plan = policy.select_changes([("M", "Tests/UI/orphan.tsv")], root)
     assert _sampled(plan) == set()
-    assert "no PR lane runs a dependent of Tests/UI/orphan.tsv;" in plan["reason"]
+    assert "no test file depends on Tests/UI/orphan.tsv;" in plan["reason"]
 
 
 def test_the_cap_is_shared_in_turn_and_the_notes_follow_the_cut(tmp_path):
@@ -1293,8 +1293,9 @@ def test_the_sample_budget_never_takes_the_total_past_twenty(tmp_path):
     assert plan["reason"].startswith("Sanity checks; cut to 20 test files;")
 
 
-def test_a_cut_that_removes_the_laned_sample_of_a_blocked_change_goes_broad(tmp_path):
-    """Round 4 (M-A): blocked changes pick first; with no slot left, go broad."""
+def test_a_blocked_change_keeps_a_laned_dependent_ahead_of_the_cut(tmp_path):
+    """Rounds 4-5 (M-A, m5): its first laned dependent goes ahead of the PR's own
+    overflow; only with no slot left at all does the plan go broad."""
     files = {f"Tests/Own/test_f{n:02d}.py": "" for n in range(policy.LIGHT_FILE_CAP)}
     files["Tests/Q/rig.py"] = ""
     files["Tests/Q/test_laned.py"] = "from Tests.Q.rig import X\n"
@@ -1307,9 +1308,43 @@ def test_a_cut_that_removes_the_laned_sample_of_a_blocked_change_goes_broad(tmp_
     )
     own = [("M", f) for f in files if f.startswith("Tests/Own/")]
     plan = policy.select_changes([*own, ("M", "Tests/Q/rig.py")], root)
+    assert not plan["full"] and "Tests/Q/test_laned.py" in plan["targets"]
+    assert "not running the PR's own Tests/Own/test_f19.py" in plan["reason"]
+    # K6: the laned dependent is one of the PR's own files past the cut.
+    files = {
+        f"Tests/Own/test_f{n:02d}.py": "" for n in range(policy.LIGHT_FILE_CAP + 1)
+    }
+    files["Tests/Own/test_f20.py"] = "from Tests.Q.rig import X\n"
+    files["Tests/Q/rig.py"] = ""
+    files["Tests/Q/test_push.py"] = "from Tests.Q.rig import X\n"
+    root = _tree(tmp_path / "k6", files)
+    _lane_workflow(
+        root,
+        {"pr-fast-lane": ["pytest Tests/Own"]},
+        other="pytest Tests/Q/test_push.py",
+    )
+    own = [("M", f) for f in files if f.startswith("Tests/Own/")]
+    plan = policy.select_changes([*own, ("M", "Tests/Q/rig.py")], root)
+    assert not plan["full"] and "Tests/Own/test_f20.py" in plan["targets"]
+    # 21 blocked changes for 20 slots: the last has nothing laned left, so broad.
+    files, laned_files, pushed = {}, [], []
+    for n in range(policy.LIGHT_FILE_CAP + 1):
+        files[f"Tests/B{n:02d}/rig.py"] = ""
+        for kind, bucket in (("laned", laned_files), ("push", pushed)):
+            name = f"Tests/B{n:02d}/test_{kind}.py"
+            files[name] = f"from Tests.B{n:02d}.rig import X\n"
+            bucket.append(name)
+    root = _tree(tmp_path / "many", files)
+    _lane_workflow(
+        root,
+        {"pr-fast-lane": ["pytest " + " ".join(laned_files)]},
+        other="pytest " + " ".join(pushed),
+    )
+    rigs = [("M", f) for f in files if f.endswith("/rig.py")]
+    plan = policy.select_changes(rigs, root)
     assert plan["full"] and plan["reason"] == (
-        "Only the full run reaches the laned dependents of Tests/Q/rig.py:"
-        " Tests/Q/test_push.py"
+        "Only the full run reaches the laned dependents of Tests/B20/rig.py:"
+        " Tests/B20/test_push.py"
     )
     # Nine sampled modules share 8 slots: the one with a blocked dependent picks first.
     files, lane_files = {}, []
@@ -1331,6 +1366,9 @@ def test_a_cut_that_removes_the_laned_sample_of_a_blocked_change_goes_broad(tmp_
         [("M", f"Tests/M{m}/test_shared.py") for m in range(9)], root
     )
     assert not plan["full"] and "Tests/M8/test_user_0.py" in plan["targets"]
+    # The blocked change's lead counts toward the 8 sampled files.
+    shared = [f"Tests/M{m}/test_shared.py" for m in range(9)]
+    assert len(_sampled(plan, *shared)) == policy.IMPORTER_CAP
 
 
 def test_the_input_order_of_changes_does_not_matter(tmp_path):
@@ -1384,6 +1422,134 @@ def test_a_long_reason_is_shortened(tmp_path):
     assert "not running the PR's own Tests/Own/test_f20.py" in reason
     assert ", ... and 2 more" in reason
     assert "... and 3 more notes" in reason
+
+
+def test_a_file_name_inside_a_longer_name_is_not_a_reader(tmp_path):
+    """Round 5 (m1): `guard.py` is not named by `test_focus_guard.py`; a helper's
+    precise readers win over bare-name ones."""
+    guard = "Tests/Plugins/fixtures/cursor/guard.py"
+    files = {
+        guard: "",
+        "Tests/Plugins/test_adapters.py": 'GUARD = FIXTURES / "cursor" / "guard.py"\n',
+        "Tests/UI/test_focus_guard.py": "",
+        # It also has the word "guard", so the word index offers it as a reader.
+        "Tests/UI/test_lists.py": (
+            'FILES = ["test_focus_guard.py", "settings_quit_guard.py"]  # guard\n'
+        ),
+    }
+    root = _tree(tmp_path, files)
+    assert _sampled(policy.select_changes([("M", guard)], root)) == {
+        "Tests/Plugins/test_adapters.py"
+    }
+    (root / "Tests/Plugins/test_precise.py").write_text(
+        'P = "fixtures/cursor/guard.py"\n'
+    )
+    assert _sampled(policy.select_changes([("M", guard)], root)) == {
+        "Tests/Plugins/test_precise.py"
+    }
+
+
+def test_a_conftest_literal_must_end_the_data_path(tmp_path):
+    """Round 5 (m2): `skills/review/SKILL.md` is not every `review/SKILL.md`."""
+    under = "Tests/Pl/fixtures/a/skills/review/SKILL.md"
+    beside = "Tests/Pl/fixtures/b/picked/review/SKILL.md"
+    files = {
+        "Tests/Pl/conftest.py": 'FILE = package / "skills/review/SKILL.md"\n',
+        under: "",
+        beside: "",
+        "Tests/Pl/test_reader.py": 'DATA = "picked/review/SKILL.md"\n',
+    }
+    root = _tree(tmp_path, files)
+    assert policy.select_changes([("M", under)], root)["full"]
+    plan = policy.select_changes([("M", beside)], root)
+    assert not plan["full"] and _sampled(plan) == {"Tests/Pl/test_reader.py"}
+
+
+def test_a_common_data_file_name_needs_its_directory_named(tmp_path):
+    """Round 5 (m3): one of two LICENSE files is read by files naming its folder."""
+    first = "Tests/Pl/fixtures/cursor-a1/LICENSE"
+    files = {
+        first: "",
+        "Tests/Pl/fixtures/arch-b2/LICENSE": "",
+        "Tests/Pl/test_cursor.py": 'P = ROOT / "cursor-a1" / "LICENSE"\n',
+        "Tests/Other/test_any_license.py": 'NAME = "LICENSE"\n',
+        # Names the folder only inside a longer word.
+        "Tests/Other/test_near_miss.py": 'PASSWORD = "cursor-a1-secret"\nNAME = "LICENSE"\n',
+        "Tests/Pl/fixtures/unique_golden.json": "",
+        "Tests/Other/test_golden.py": 'G = "unique_golden.json"\n',
+    }
+    root = _tree(tmp_path, files)
+    assert _sampled(policy.select_changes([("M", first)], root)) == {
+        "Tests/Pl/test_cursor.py"
+    }
+    plan = policy.select_changes([("M", "Tests/Pl/fixtures/unique_golden.json")], root)
+    assert _sampled(plan) == {"Tests/Other/test_golden.py"}
+
+
+def test_a_test_file_nothing_imports_is_not_read_by_name(tmp_path):
+    """Round 5 (m4 R4): a test file runs itself; a list naming it is no reader."""
+    own = "Tests/UI/test_alone.py"
+    files = {own: "", "Tests/Chat/test_lists.py": 'FILES = ["test_alone.py"]\n'}
+    root = _tree(tmp_path, files)
+    plan = policy.select_changes([("M", own)], root)
+    assert _sampled(plan, own) == set()
+    assert (
+        plan["reason"] == "Sanity checks; nightly and release runs are the broad gates"
+    )
+
+
+def test_a_tests_ci_dependent_covers_a_blocked_change(tmp_path):
+    """Round 5 (m4 R5): Tests/CI runs whole, so the change stays light."""
+    files = {
+        "Tests/Z/rig.py": "",
+        "Tests/Z/test_only_push.py": "from Tests.Z.rig import X\n",
+        "Tests/CI/test_contract.py": "from Tests.Z.rig import X\n",
+    }
+    root = _tree(tmp_path, files)
+    _lane_workflow(
+        root,
+        {"pr-fast-lane": ["pytest Tests/CI"]},
+        other="pytest Tests/Z/test_only_push.py",
+    )
+    plan = policy.select_changes([("M", "Tests/Z/rig.py")], root)
+    assert not plan["full"]
+    assert "Tests/CI covers Tests/Z/rig.py" in plan["reason"]
+
+
+def test_the_list_of_files_only_the_full_run_reaches_is_shortened(tmp_path):
+    """Round 5 (m4 R10): five blocked dependents print three and a count."""
+    pushed = [f"Tests/Z/test_push_{n}.py" for n in range(5)]
+    files = {
+        "Tests/Z/rig.py": "",
+        **dict.fromkeys(pushed, "from Tests.Z.rig import X\n"),
+    }
+    root = _tree(tmp_path, files)
+    _lane_workflow(root, {"pr-fast-lane": ["true"]}, other="pytest " + " ".join(pushed))
+    plan = policy.select_changes([("M", "Tests/Z/rig.py")], root)
+    assert plan["full"] and plan["reason"] == (
+        "Only the full run reaches the laned dependents of Tests/Z/rig.py: "
+        + ", ".join(pushed[:3])
+        + ", ... and 2 more"
+    )
+
+
+def test_a_helper_met_in_the_search_is_read_by_name_too(tmp_path):
+    """Round 5 (m6): lib.py <- child_script.py, which a test runs with -m."""
+    files = {
+        "Tests/T/lib.py": "",
+        "Tests/T/child_script.py": "from Tests.T.lib import go\n",
+        "Tests/T/test_spawn.py": (
+            "import subprocess\nsubprocess.run(['python', '-m', 'Tests.T.child_script'])\n"
+        ),
+        "Tests/T/only_helpers.py": "",
+        "Tests/T/probe.py": "from Tests.T.only_helpers import X\n",
+    }
+    root = _tree(tmp_path, files)
+    plan = policy.select_changes([("M", "Tests/T/lib.py")], root)
+    assert _sampled(plan) == {"Tests/T/test_spawn.py"}
+    plan = policy.select_changes([("M", "Tests/T/only_helpers.py")], root)
+    assert _sampled(plan) == set()
+    assert "no test file depends on Tests/T/only_helpers.py" in plan["reason"]
 
 
 def _lane_workflow(root, lanes, other=""):
