@@ -33,9 +33,9 @@ The census's capture column records what a Capture-On chat's call on each
 route does today, and `Tests/Chat/test_console_route_census_capture.py`
 drives each user action through the real controller to check it. Retry,
 Continue, Regenerate, Edit & resend, Impersonate and citation repair carry no
-turn preparation or capture mode, so they dispatch Capture Off (Retry under
-Capture On is TASK-42555: the owner decided on 2026-11-26 to trace it as a new
-run of the same turn, built after PR #3717). A fresh send is traced; the
+turn preparation or capture mode, so they dispatch Capture Off (Retry of a
+failed turn under Capture On is TASK-42555: the owner decided on 2026-11-26 to
+trace it as a new run of the same turn, built after PR #3717). A fresh send is traced; the
 test checks this on the agent and plain paths. The census rows for the agent's
 first call, the tool loop, direct prefill and the llama fallback describe a
 fresh send; each takes the capture mode of the action it serves. On the
