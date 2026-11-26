@@ -3040,10 +3040,15 @@ class ConsoleRuntime:
         if getattr(controller, "store", None) is store and callable(changed):
             changed(session_id)
 
-    from .console_received_dispatch import (
-        require_received_custody_current as _require_received_custody_current,
-        runtime_owns_session as owns_session,
-    )
+    def _require_received_custody_current(self, record, controller) -> None:
+        from .console_received_dispatch import require_received_custody_current
+
+        require_received_custody_current(self, record, controller)
+
+    def owns_session(self, controller: Any, store: Any, session_id: str) -> bool:
+        from .console_received_dispatch import runtime_owns_session
+
+        return runtime_owns_session(self, controller, store, session_id)
 
     def accept_turn(
         self,
