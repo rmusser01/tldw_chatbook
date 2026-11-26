@@ -69,5 +69,7 @@ Base dev 6e41919880. The file came with #3480 (e10ce63fe8) and was red there; mo
 
 **Lane.** The file runs on no Linux lane (`native_console` calls `require_managed_runtime()`, Darwin only). It joins the macOS `plugins-recovery-ui` job's new step with the hook file, plus a check that both executed. With the step's flags (serial, `--timeout=300`) at load 27-46 the step took 600 s, this file 461 s of it. The job's last run took 1m49s against its 15-min cap.
 
+**Owner decision (2026-11-26), verbatim.** Question: "TASK-41061 and TASK-42553: … They only run on macOS (`require_managed_runtime()`), so no Linux lane can cover them. The agent added a step to the macOS job `plugins-recovery-ui`, which has a 15-min cap and last ran in 1m49s. The new step took about 10 min locally under heavy load. Where should they run?" The owner chose "Existing job, cap 25 (Recommended)": keep the step in plugins-recovery-ui and raise the job's cap from 15 to 25 min. Done: the job's `timeout-minutes` is 25, and its lane contract test pins 25.
+
 Files: `tldw_chatbook/MCP/console_snapshot.py`, `tldw_chatbook/Chat/console_configuration_capture.py`, `tldw_chatbook/Agents/hooks_v2/native_commands.py`, `tldw_chatbook/Agents/hooks_v2/mcp_executor.py`, `tldw_chatbook/Agents/hooks_v2/engine.py`, `tldw_chatbook/Agents/legacy_hook_ownership.py`, `tldw_chatbook/Chat/console_runtime.py`, `Tests/Chat/test_native_v2_mcp_events.py`, `Tests/Agents/test_hooks_v2_execution.py`, the lane files listed in TASK-42553, `backlog/docs/lessons-testing-evidence.md`.
 <!-- SECTION:NOTES:END -->
