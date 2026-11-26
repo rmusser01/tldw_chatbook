@@ -20960,27 +20960,20 @@ class ChatScreen(BaseAppScreen):
         self,
         rail_state: Optional[ConsoleRailState] = None,
     ) -> bool:
-        """Refresh Console-owned control labels from current selection state.
-
-        Args:
-            rail_state: Pre-computed rail state (TASK-251: the 0.2s tick
-                computes this once in ``_sync_native_console_chat_ui`` and
-                passes it in here, instead of this method redundantly
-                recomputing it -- which itself rebuilds workspace-context
-                and inspector state). Other callers may omit it; it is
-                computed on demand when not given.
-
-        Returns:
-            True after rendering; False when entry was deferred and a fresh
-            coalesced replay owns the unfinished refresh.
-        """
-        from ..Console_Modules.config_sync import run_console_presentation_sync
+        """Refresh controls with optional rail state. False hands off to replay."""
+        last_native_run = getattr(self, "_last_native_composer_run_owner", None)
+        if (
+            last_native_run is not None
+            and last_native_run == config_sync.terminal_projection_owner(self)
+        ):
+            # The full replay settles the native transcript before Send.
+            return config_sync.replay_whole_console_sync(self)
 
         def sync() -> None:
             with _workspace_build_scope(self), self._console_derivation_scope():
                 self._sync_console_control_bar_under_config(rail_state)
 
-        result = run_console_presentation_sync(self, sync)
+        result = config_sync.run_console_presentation_sync(self, sync)
         if result is False:
             inspector_data._sync_console_pending_display(self)
         return result
@@ -21471,12 +21464,15 @@ class ChatScreen(BaseAppScreen):
         send_blocked = False
         dispatch_recovery_blocked = False
         controller = self._console_chat_controller
+        native_run_owner = None
         queue_presentation = None
         if controller is not None:
             run_state = getattr(controller, "run_state", None)
             run_active = bool(getattr(run_state, "is_stop_allowed", False))
             send_blocked = not bool(getattr(run_state, "is_send_allowed", True))
             active_id = controller.store.active_session_id or ""
+            if run_active and active_id:
+                native_run_owner = (controller.store, active_id)
             run_active = run_active or controller._chat_start.is_accepted(active_id)
             if active_id:
                 queue_presentation = self._prompt_queue.presentation_for(
@@ -21593,6 +21589,7 @@ class ChatScreen(BaseAppScreen):
             # makes the composer name the wake instead.
             wake_turn_active=self._fleet._console_wake_turn_active(active_session_id),
         )
+        self._last_native_composer_run_owner = native_run_owner
         run_controls.sync_stop_affordances(self)
         run_controls.sync_dictation_presentation(self, composer)
         # sync_action_state resets the attach button's tooltip to generic copy

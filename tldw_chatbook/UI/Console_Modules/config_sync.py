@@ -479,14 +479,21 @@ def terminal_projection_owner(screen: Any) -> tuple[Any, str | None] | None:
     """Capture the owner of controls that settle after the terminal transcript."""
     from ...Chat.console_chat_models import ConsoleRunStatus
 
-    if screen._current_console_run_status_value() not in (
+    status = screen._current_console_run_status_value()
+    terminal = status in (
         ConsoleRunStatus.COMPLETED.value,
         ConsoleRunStatus.FAILED.value,
         ConsoleRunStatus.STOPPED.value,
-    ):
+    )
+    last_native_run = None
+    if status == ConsoleRunStatus.IDLE.value:
+        # A settings change can clear the terminal status before it is painted.
+        last_native_run = getattr(screen, "_last_native_composer_run_owner", None)
+    if not terminal and last_native_run is None:
         return None
     store = screen._console_chat_store
-    return store, getattr(store, "active_session_id", None)
+    owner = store, getattr(store, "active_session_id", None)
+    return owner if terminal or owner == last_native_run else None
 
 
 def settle_terminal_projection(
