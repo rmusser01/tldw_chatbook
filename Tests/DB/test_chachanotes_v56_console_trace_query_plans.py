@@ -222,18 +222,20 @@ class _PlanCursor:
 def test_response_revision_queries_keep_the_exact_index_after_v89(
     tmp_path, origin
 ) -> None:
-    """Schema 89 drops v56's partial index; no product plan on the column changes.
+    """Schema 89 drops v56's partial index; no plan on the column changes.
 
-    The three product reads of ``console_trace_response_links.semantic_revision_id``
-    -- the exact locator, the semantic-revision policy join and the
-    voice-promotion locator check -- run their own SQL here, and each still
-    plans through schema 72's exact index with no ``sqlite_stat1``
-    (TASK-42544).
+    Four reads of ``console_trace_response_links.semantic_revision_id`` plan
+    here with no ``sqlite_stat1``: this file's exact locator
+    (``RESPONSE_REVISION_LOCATOR``), and three product reads run through
+    their own methods -- the semantic-revision policy join, the
+    voice-promotion locator check and the completed-replay terminal lookup.
+    Each still plans through schema 72's exact index (TASK-42544).
     """
     from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
     from tldw_chatbook.Chat.console_semantic_revision import (
         SemanticRevisionCoordinator,
     )
+    from tldw_chatbook.Chat.console_trace_service import ConsoleTraceService
 
     path = tmp_path / "response-revision.sqlite"
     if origin == "upgraded_from_v88":
@@ -264,7 +266,10 @@ def test_response_revision_queries_keep_the_exact_index_after_v89(
             locators=frozenset({("console_trace_response_links", "semantic_revision_id")}),
             identifiers=("revision-a", "revision-b"),
         )
-        assert len(cursor.plans) == 3
+        # No row comes back, so the lookup stops at its first statement.
+        with pytest.raises(ValueError, match="completed_replay_terminal"):
+            ConsoleTraceService._completed_replay_values(None, cursor, "owner", "revision")
+        assert len(cursor.plans) == 4
         for plan in cursor.plans:
             assert "idx_console_trace_response_links_semantic_revision_exact" in plan, plan
     finally:

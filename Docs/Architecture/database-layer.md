@@ -149,12 +149,16 @@ ChaChaNotes v89 installs
 `chachanotes_v88_to_v89_drop_superseded_response_revision_index.sql`, which
 drops v56's partial `idx_console_trace_response_revision`. Since v72 the full
 `idx_console_trace_response_links_semantic_revision_exact` on the same column
-wins every product read of `console_trace_response_links.semantic_revision_id`
-without `sqlite_stat1`: the exact locator, the semantic-revision policy join and
-the voice-promotion locator check. The partial index was maintained on every
-response-link write and read by none.
-`Tests/DB/test_chachanotes_v56_console_trace_query_plans.py` runs those three
-statements on a fresh file and on one upgraded from v88. The restore sandbox
+wins the reads of `console_trace_response_links.semantic_revision_id` without
+`sqlite_stat1`. The partial index was maintained on every response-link write
+and read by none.
+`Tests/DB/test_chachanotes_v56_console_trace_query_plans.py` plans four of them
+on a fresh file and on one upgraded from v88: the test's own exact locator
+(`RESPONSE_REVISION_LOCATOR`), the semantic-revision policy join
+(`SemanticRevisionCoordinator._reachable_policy_ids`), the voice-promotion
+locator check (`ChatPersistenceService._voice_promotion_locator_exists`) and the
+completed-replay terminal lookup (`ConsoleTraceService._completed_replay_values`).
+The last three run the product's own SQL. The restore sandbox
 admits only that `DROP INDEX`, on its own table, during the v88-to-v89 step
 (`Tests/Backup_Recovery/test_locator_indexes_sandbox.py`). Its census row is
 `dropped` (`scripts/check_index_plan_pins.py`), because v56's migration still
