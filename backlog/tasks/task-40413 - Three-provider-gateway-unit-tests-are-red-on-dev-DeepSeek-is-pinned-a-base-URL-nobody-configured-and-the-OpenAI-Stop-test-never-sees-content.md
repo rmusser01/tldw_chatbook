@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-12 13:45'
-updated_date: '2026-11-26 06:10'
+updated_date: '2026-11-26 15:43'
 labels:
   - console
   - tests
@@ -43,7 +43,7 @@ Three tests in `Tests/Chat/test_console_provider_gateway.py` fail on dev every t
 
 ## Implementation Notes
 
-The three nodes pass, and the file runs whole in its lane. This was test-only; no product code changed. Base 6e41919880 at `-n 4`: 3 failed, 499 passed.
+The three nodes pass, and the file runs whole in its lane. Fixing the three nodes needed test changes only. The review round's `/image` pin (60c23f17cd) did change product code, `Chat/console_provider_endpoints.py`. Base 6e41919880 at `-n 4`: 3 failed, 499 passed.
 
 - **DeepSeek base URL (AC#1). Decision: pin the builtin base.** With no configured URL, DeepSeek's adapter kwargs pin the endpoint Console resolved, which is the registry's `default_base_url` `https://api.deepseek.com`. The evidence:
   - The pin has been the product since f5a63125ff (2026-10-12, ADR-064's Chat-Completions amendment). That commit put DeepSeek in QwenCloud's branch of all three gateway kwargs builders so the explicit `api_mode` reaches the adapter, and the pin came with it.

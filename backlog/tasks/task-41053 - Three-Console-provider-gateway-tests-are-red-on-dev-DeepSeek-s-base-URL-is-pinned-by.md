@@ -3,7 +3,7 @@ id: TASK-41053
 title: "Three Console provider-gateway tests are red on dev: DeepSeek's base URL is pinned by default, and an OpenAI stop is not recorded"
 status: Done
 created_date: 2026-11-15 02:03
-updated_date: '2026-11-26 07:03'
+updated_date: '2026-11-26 15:43'
 labels:
 - follow-up
 - architecture-review-2026-10-25
@@ -35,7 +35,7 @@ Either DeepSeek now pins a base URL on purpose (the hosted-provider engine, ADR-
 
 ## Implementation Notes
 
-Duplicate of TASK-40413, which fixed these three nodes (round 27, commit f9fe23947e). All three were test drift; no product code changed.
+Duplicate of TASK-40413, which fixed these three nodes (round 27, commit f9fe23947e). All three were test drift; their fix changed test code only. TASK-40413's later `/image` pin (60c23f17cd) changed `Chat/console_provider_endpoints.py`.
 - **The two DeepSeek nodes.** The pin is intended. Since f5a63125ff (ADR-064's 2026-10-12 amendment), DeepSeek has shared QwenCloud's explicit-mode branch in all three kwargs builders, and the trace verifier reconstructs the same pin. Both tests now expect it.
 - **The OpenAI Stop node.** Since c1cad552f4 (TASK-38589), the adapter reads bytes from `iter_lines()` and decodes UTF-8 itself. The fake's required `decode_unicode` keyword raised `TypeError` before any content arrived.
 

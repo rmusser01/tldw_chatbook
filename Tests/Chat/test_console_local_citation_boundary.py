@@ -118,9 +118,11 @@ def _close_citation_persistences():
     # lease guard reports. Drain the worker so no write reopens a handle, then
     # close every registered handle, the worker's included.
     while _OPEN_STORES:
-        _OPEN_STORES.pop()._stream_persistence_executor.submit(lambda: None).result(
-            timeout=5
-        )
+        store = _OPEN_STORES.pop()
+        try:
+            store._stream_persistence_executor.submit(lambda: None).result(timeout=5)
+        except Exception:  # pragma: no cover - cleanup must not mask failures
+            pass
     while _OPEN_PERSISTENCES:
         persistence = _OPEN_PERSISTENCES.pop()
         try:

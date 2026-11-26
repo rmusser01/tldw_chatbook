@@ -171,7 +171,11 @@ class ConsoleRequestRouteRecord:
 #: (``Tests/Chat/test_console_route_census_capture.py`` drives each action).
 #: Retry, Continue, Regenerate, Edit & resend, Impersonate and citation repair
 #: carry no turn preparation or capture mode, so they dispatch Capture Off
-#: (TASK-42552; Retry under Capture On awaits the owner in TASK-42555).
+#: (TASK-42552; Retry under Capture On awaits the owner in TASK-42555). The
+#: AGENT_FIRST, TOOL_LOOP, DIRECT_PREFILL and LLAMA_FALLBACK rows describe a
+#: fresh send; those routes take the capture mode of the action they serve, so
+#: an agent-path Regenerate, Edit, Continue or Retry dispatches AGENT_FIRST
+#: with capture off, and a Regenerate with a pinned prefill DIRECT_PREFILL.
 CONSOLE_REQUEST_ROUTE_CENSUS = (
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.FRESH,

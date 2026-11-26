@@ -35,8 +35,13 @@ drives each user action through the real controller to check it. Retry,
 Continue, Regenerate, Edit & resend, Impersonate and citation repair carry no
 turn preparation or capture mode, so they dispatch Capture Off (Retry under
 Capture On awaits an owner decision, TASK-42555). A fresh send is traced; the
-test checks this on the agent and plain paths. Direct prefill and the llama
-fallback take the capture mode of the send they belong to.
+test checks this on the agent and plain paths. The agent's first call, the
+tool loop, direct prefill and the llama fallback are recorded as a fresh send
+records them, but each takes the capture mode of the action it serves. On the
+agent path every action's provider call carries the agent-first or tool-loop
+route, so an agent-path Regenerate, Edit & resend, Continue or Retry dispatches
+an agent-first call with capture off, and a Regenerate with a pinned prefill
+dispatches direct prefill with capture off.
 
 The explicitly excluded preparation owners are Console side chat, visual
 evaluation, and prompt improvement. Persona preview and character generation

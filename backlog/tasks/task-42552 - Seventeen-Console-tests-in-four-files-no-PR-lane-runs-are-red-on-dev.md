@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-26 04:50
-updated_date: '2026-11-26 06:10'
+updated_date: '2026-11-26 15:43'
 labels:
 - follow-up
 - console
@@ -86,9 +86,15 @@ Census rows corrected in the review round, after a real-controller check:
 - **The cause.** None of the five passes a turn preparation or a capture mode, so `_run_direct_provider_reply`, `_run_agent_reply` and the gateway default to `CAPTURE_OFF`. ADR-337's 2026-10-27 amendment records this for Edit & resend, and the User Guide (`semantic-trace-capture.md`) says it for Edit & resend and Regenerate. The guide was right; the census overstated these routes.
 - **The fix.** RETRY, CONTINUE, REGENERATE, EDIT and IMPERSONATE (and, after the second pass, CITATION_REPAIR) are now Capture Off in the census, and `_collect_summary_completion`, which carries only Impersonate, is a Capture-Off callsite. The rows record what the code does today. Retry under Capture On awaits an owner decision in TASK-42555, so no product behaviour changed. After the fix all 12 cases pass.
 - **The test file's old owner check.** It had required "routes iff traced". It now checks the two tables against each other: an excluded callsite carries no route, a Capture-Off callsite routes only Capture-Off routes, and a traced callsite routes at least one traced route.
-- **Timing.** Serially with the step's flags (`--storage-lease-guard --timeout=180`), the file took 64.1 s for 12 cases at load 50-54, and 41.4 s for all 14 at load 18-32. The shared harness leaves its AgentRunsDB open, and the lease guard reported that as 6 errors, so the file's own fixture closes it.
+- **Timing.** Serially with the step's flags (`--storage-lease-guard --timeout=180`):
+  - 64.1 s for 12 cases at load 50-54;
+  - 41.4 s for all 14 at load 18-32;
+  - 103.8 s for all 14 at load 45-65, after the follow-up send was added. The reviewer measured 58.5 s at load 36-54. The shared harness leaves its AgentRunsDB open, and the lease guard reported that as 6 errors, so the file's own fixture closes it.
 - **Citation repair, second review pass.** A seventh action (one case per path) gives a send a citation contract (`_capture_rag_context` patched to return one) whose reply cites nothing. The controller then makes one repair call after the traced fresh call. Against the census row ("traced") it failed on both paths: the repair call reserved no trace, because its `stream_chat` passes no capture mode. CITATION_REPAIR is now Capture Off, and so is `_select_post_generation_body`, its only callsite. All 14 cases pass.
 - **User Guide.** `Docs/User_Guide/console/semantic-trace-capture.md` now also says that Continue, Retry on a failed reply, Impersonate and a citation repair send with capture off.
+- **Re-review round.**
+  - The test now pins the guide's "your next send is captured as usual": every case ends with one more send and `_assert_captured`, after the citation case's patched `_capture_rag_context` is restored.
+  - The census header comment and the design doc now say that the AGENT_FIRST, TOOL_LOOP, DIRECT_PREFILL and LLAMA_FALLBACK rows describe a fresh send and take the capture mode of the action they serve. So an agent-path Regenerate, Edit, Continue or Retry dispatches AGENT_FIRST with capture off, and a Regenerate with a pinned prefill dispatches DIRECT_PREFILL.
 
 Owner decision (2026-11-26), verbatim. Asked: "Manual summaries (and Summarize as note) have always been sent with capture off, even in captured chats, the same as automatic compaction. The old route census and its design doc wrongly said they were traced, and round 27 corrects them to say capture off. Keep that behaviour?" Answer: "Keep capture off (Recommended)". No product change.
 
@@ -96,6 +102,7 @@ Runs:
 - the four files at `-n 4`, twice: 19 passed each;
 - a soak of 20 runs at `-n 4` (the four files, the provider-gateway file and the CI contract file) at load 35-60: 20/20 green, 678 passed each;
 - `Tests/CI` at `-n 4`: 2009 passed, 2 skipped.
+- **Fresh at the final head (re-review round).** A soak of 20 rounds at `-n 4` gave 20/20 green with 1982 passed each, at load 23.9-69.4 (215-320 s per round). It covered the five TASK-42552 files, the citation boundary, provider gateway and local server discovery files, and the CI contract file. `Tests/CI` at `-n 4` gave 2009 passed, 2 skipped; preflight, Ruff F and ruff_gate passed.
 
 Files:
 - `Tests/Chat/test_console_{continuation_group_merge,named_agent_model,redirect_stream_cut,request_provenance_routes,route_census_capture}.py`;
@@ -103,4 +110,5 @@ Files:
 - `Docs/Development/console-request-provenance-route-census.md`;
 - `.github/workflows/derived-artifacts.yml`;
 - `Tests/CI/test_ci_queue_pressure_contract.py`;
+- `Docs/User_Guide/console/semantic-trace-capture.md`;
 - `backlog/docs/lessons-testing-evidence.md` (the line-keyed census lesson).

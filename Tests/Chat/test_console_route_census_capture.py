@@ -100,6 +100,7 @@ async def test_a_captured_chats_action_is_traced_as_the_route_census_says(
         async def staged_evidence(_draft, turn_context=None, origin=None):
             return contract.evidence_context, None, None, contract
 
+        original_capture = chat.controller._capture_rag_context
         monkeypatch.setattr(chat.controller, "_capture_rag_context", staged_evidence)
     calls, reservations = len(chat.entries), len(chat.boundaries)
 
@@ -119,3 +120,9 @@ async def test_a_captured_chats_action_is_traced_as_the_route_census_says(
     assert len(chat.boundaries) - reservations == before + int(traced), (
         f"{route.value}: census says traced={traced}"
     )
+
+    # The User Guide: after each of these, the next send is captured as usual.
+    if action == "citation_repair":
+        monkeypatch.setattr(chat.controller, "_capture_rag_context", original_capture)
+    after, sent, reserved = await _send(chat, "after")
+    _assert_captured(chat, after, sent, reserved)

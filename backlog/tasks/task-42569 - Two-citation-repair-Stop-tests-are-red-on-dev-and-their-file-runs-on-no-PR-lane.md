@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-26 08:14
-updated_date: '2026-11-26 08:14'
+updated_date: '2026-11-26 16:43'
 labels:
 - follow-up
 - console
@@ -56,7 +56,7 @@ Found in round 27 while running covering tests for TASK-42552 (2026-11-26). `Tes
 **A second red, under the lane's flags only: a storage-lease flake.**
 - **The failure.** `test_agent_replaced_placeholder_does_not_transfer_finalizer` passes at `-n 4`, but under `--storage-lease-guard` it errored in 2 of 3 whole-file serial runs, and alone in 2 of 3 runs (earlier, 3 of 3 alone passed). The error is "left 1 new live storage lease(s) open: SQLite …/boundary.sqlite on thread console-stream-persist_0".
 - **The race.** The test's replacement reply is persisted by `_persist_deferred_message` on the store's single-slot stream-persistence worker (task-33081, 940a2e82b8). Whether that deferred write runs on the worker, and so opens a thread-local handle, before the turn's own terminal persistence inserts the row is timing-dependent. The worker's handle is never closed in the test. In the app, quit close and backup drain close registered handles.
-- **The fix (test only).** The module's autouse teardown now drains every `_persisted_store`'s worker (a no-op submitted and awaited) and calls the database registry's `close_if_idle()`, which closes every registered handle including the worker's. Only then does it close the main-thread connection.
+- **The fix (test only).** The module's autouse teardown now drains every `_persisted_store`'s worker (a no-op submitted and awaited) and calls the database registry's `close_if_idle()`, which closes every registered handle including the worker's. Only then does it close the main-thread connection. Each drain is guarded like the persistence loop, so a failed drain still lets every persistence close (review round).
 - **Evidence.** There is no CI log, since no lane ran the file before. Single runs of the test under the guard, on the final file:
 
   | Variant | Passed |
@@ -69,8 +69,8 @@ Found in round 27 while running covering tests for TASK-42552 (2026-11-26). `Tes
 
 **Whole file.**
 - `-n 4`: 103 passed (2 red before).
-- Serially with recovered-suites' flags (`--storage-lease-guard --timeout=180`): 103 passed in 72.6-76.5 s at load 14-20, before the lease fix.
-- Soak, after both fixes: 20 whole-file runs serially with the lane's flags, 20 of 20 green with 103 passed each, 52-94 s per run. The load was light, 4.6-13.9; the first runs overlapped two `-n 4` runs of the touched files.
+- Serially with recovered-suites' flags (`--storage-lease-guard --timeout=180`): 103 passed in 72.6-76.5 s at load 14-20, before the lease fix. Under load it is 111.7-236.3 s (the loaded soak below), and the reviewer measured 225.7 s at load 36-54, so charge the lane about 4 minutes.
+- Soak, after both fixes: 20 whole-file runs serially with the lane's flags, 20 of 20 green with 103 passed each. A first soak ran at light load, 4.6-13.9, at 52-94 s per run. A second soak ran at realistic load, 24.1-60.4 (other agents plus a concurrent `-n 4` soak of the touched files), at 111.7-236.3 s per run.
 
 **Lane (AC#4).** The file is in recovered-suites' bootstrap block, after `test_console_route_census_capture.py`. It is bootstrap_profile by name in `Tests/conftest.py`. `RECOVERED_SUITES_TARGETS` (`Tests/CI/test_ci_queue_pressure_contract.py`) and the step's note are updated.
 
