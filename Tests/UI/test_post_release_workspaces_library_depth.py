@@ -5,9 +5,11 @@ from __future__ import annotations
 import time
 
 import pytest
+from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
 from Tests.private_profile import private_profile_test
+from Tests.UI.library_quit_guard_support import _until
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     StaticLibraryConversationScopeService,
@@ -792,7 +794,8 @@ async def test_create_workspace_preserves_rail_scroll(request) -> None:
         )
         old_rail.scroll_to(y=old_rail.max_scroll_y, animate=False, force=True)
         await pilot.pause(0.2)
-        assert float(old_rail.scroll_y) > 0
+        scrolled_to = float(old_rail.scroll_y)
+        assert scrolled_to > 0
 
         screen.query_one("#library-create-local-workspace", Button).press()
         await pilot.pause()
@@ -801,24 +804,31 @@ async def test_create_workspace_preserves_rail_scroll(request) -> None:
         await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
         modal.query_one("#workspace-create-confirm", Button).press()
 
-        # TASK-42627: wait for the recompose's new rail, then for the restore
-        # one layout after it. A fixed 0.6 s pause failed on slow runners when
-        # the recompose ended just before it, with the restore milliseconds out.
-        deadline = time.monotonic() + 5
-        while True:
-            # Empty between the old rail's removal and the new one's mount.
-            rail = next(iter(screen.query("#library-rail")), old_rail)
-            if rail is not old_rail and float(rail.scroll_y) > 0:
-                break
-            assert time.monotonic() < deadline, (
-                "rail scroll reset to top after the create-workspace recompose"
-                if rail is not old_rail
-                else "the create-workspace recompose never replaced the rail"
+        def scroll_restored() -> bool:
+            try:
+                replacement = screen.query_one("#library-rail")
+                active = replacement.query_one(
+                    "#library-workspaces-active-workspace", Static
+                )
+            except NoMatches:
+                return False
+            return (
+                replacement is not old_rail
+                and replacement.max_scroll_y > 0
+                and active.renderable.plain == "Active · Workspace 1"
+                and replacement.scroll_y == min(scrolled_to, replacement.max_scroll_y)
             )
-            await pilot.pause(0.05)
+
+        # TASK-42627: layout restores the offset after the replacement mounts.
+        await _until(
+            pilot,
+            scroll_restored,
+            "the recomposed Library rail to show Workspace 1 and restore its scroll",
+            timeout=5.0,
+        )
         await pilot.pause(0.3)
-        assert float(screen.query_one("#library-rail").scroll_y) > 0, (
-            "rail scroll reset to top after the restore"
+        assert scroll_restored(), (
+            "Library rail lost its restored offset or active workspace"
         )
 
 
