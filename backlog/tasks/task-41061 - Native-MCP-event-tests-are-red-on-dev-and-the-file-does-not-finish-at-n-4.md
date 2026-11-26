@@ -1,8 +1,11 @@
 ---
 id: TASK-41061
 title: "Native MCP event tests are red on dev, and the file does not finish at -n 4"
-status: To Do
+status: In Progress
+assignee:
+- '@claude'
 created_date: 2026-11-15 02:03
+updated_date: '2026-11-26 05:18'
 labels:
 - follow-up
 - architecture-review-2026-10-25
@@ -33,3 +36,12 @@ The architecture-review fleet runs on dev beab5c1e4e (2026-11-13) saw the first 
 - [ ] #2 A pytest run of Tests/Chat/test_native_v2_mcp_events.py alone, serially and at `-n 4`, runs to completion and the pytest process exits on its own within the run's timeout
 - [ ] #3 Every node of Tests/Chat/test_native_v2_mcp_events.py passes on dev at `-n 4` (a node may first be deleted or retargeted, with its reason in the task notes); a fixed product defect is shown red first
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Re-run the file at base 6e41919880 and at the #3480 merge (e10ce63fe8) to name each red node's cause and the commit that introduced it (scratch probes only, no product edits).
+2. Decide per node whether the product or the test is wrong; fix a product defect with its test red first, repair a drifted test keeping its assertions, and record any deleted or retargeted node with its reason.
+3. Find what keeps the process alive after its summary (a non-daemon thread or an un-awaited task) and make the file exit on its own, serially and at `-n 4`.
+4. Lane the file in the recovered-suites step, timed with the step's flags.
+<!-- SECTION:PLAN:END -->

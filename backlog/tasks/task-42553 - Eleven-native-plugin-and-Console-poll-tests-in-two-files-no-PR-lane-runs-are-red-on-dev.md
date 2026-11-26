@@ -1,9 +1,11 @@
 ---
 id: TASK-42553
 title: "Eleven native-plugin and Console poll tests in two files no PR lane runs are red on dev"
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+- '@claude'
 created_date: 2026-11-26 04:50
+updated_date: '2026-11-26 05:18'
 labels:
 - follow-up
 - console
@@ -34,3 +36,12 @@ The seven red nodes of `Tests/Chat/test_native_v2_mcp_events.py` in the same run
 - [ ] #3 Both files pass on dev at `-n 4`, twice in a row, and each pytest process exits on its own
 - [ ] #4 Both files run on a PR lane that blocks merges to dev, timed with that lane's flags
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Re-run both files at base 6e41919880, at the #3480 merge (e10ce63fe8) and at the dev commits around each first red, to name each node's cause and the commit that introduced it (scratch probes only, no product edits).
+2. Decide per node whether the product or the test is wrong. Fix a product defect with its test red before and green after; repair a drifted test with every behaviour assertion kept.
+3. Run both files at `-n 4` twice in a row and serially, and check each pytest process exits on its own.
+4. Lane the poll file at the UI census tail (set `MINIMUM_FILES`) and the hook file in the recovered-suites step, timed with each step's flags, and update the lane contract tests.
+<!-- SECTION:PLAN:END -->
