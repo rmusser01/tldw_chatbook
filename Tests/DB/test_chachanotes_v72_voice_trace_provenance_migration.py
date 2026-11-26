@@ -379,14 +379,16 @@ def test_v72_provenance_defaults_and_cross_column_constraints() -> None:
         db.close_connection()
 
 
-@pytest.mark.parametrize("origin", ["fresh", "upgraded_from_v87"])
+@pytest.mark.parametrize("origin", ["fresh", "upgraded_from_v87", "upgraded_from_v88"])
 def test_every_completed_pair_reconciliation_locator_uses_indexed_search(
     tmp_path: Path, origin: str
 ) -> None:
     path = tmp_path / "locators.sqlite"
-    if origin == "upgraded_from_v87":
-        # The v87->v88 step (TASK-42517) must index an existing file too.
-        with chachanotes_db_at_version(path, 87, client_id="v87-locators"):
+    if origin != "fresh":
+        # The v87->v88 step (TASK-42517) must index an existing file too, and
+        # the v88->v89 index drop (TASK-42544) must leave every locator indexed.
+        version = int(origin.removeprefix("upgraded_from_v"))
+        with chachanotes_db_at_version(path, version, client_id=f"v{version}-locators"):
             pass
     db = CharactersRAGDB(
         ":memory:" if origin == "fresh" else path, "v72-index-plans"

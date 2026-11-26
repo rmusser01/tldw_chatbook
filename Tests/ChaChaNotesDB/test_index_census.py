@@ -310,9 +310,6 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
     "idx_console_trace_response_artifact": IndexPin(
         "console_trace_response_links", False, ("artifact_id",)
     ),
-    "idx_console_trace_response_revision": IndexPin(
-        "console_trace_response_links", False, ("semantic_revision_id",)
-    ),
     "idx_console_trace_revision_bindings_artifact": IndexPin(
         "console_trace_revision_bindings", False, ("artifact_id",)
     ),

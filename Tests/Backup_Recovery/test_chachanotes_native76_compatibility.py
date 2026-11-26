@@ -618,11 +618,11 @@ def test_strong_primary_catalog_accepts_historical_stamps(
     with closing(sqlite3.connect(path)) as connection:
         connection.execute("UPDATE db_schema_version SET version=?", (version,))
         connection.commit()
-    from tldw_chatbook.DB.recovery_core_schema import CHACHANOTES_V88_SCHEMAS
+    from tldw_chatbook.DB.recovery_core_schema import CHACHANOTES_V89_SCHEMAS
 
     # The staged upgrade ends at the current lineage's native-76 member (the
     # two repaired-77 catalogs come first).
-    catalog = tuple((sql,) for sql in CHACHANOTES_V88_SCHEMAS[3 if dictionary else 2])
+    catalog = tuple((sql,) for sql in CHACHANOTES_V89_SCHEMAS[3 if dictionary else 2])
     assert validation.validate_candidate(_owner(), path, Event(), migrate=True) == ()
     with closing(sqlite3.connect(path)) as connection:
         assert (

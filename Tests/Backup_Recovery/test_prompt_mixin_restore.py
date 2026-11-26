@@ -59,10 +59,12 @@ def test_recovery_candidate_retains_capture_off_attempt(
 
 
 # 87: the v87->v88 locator-index step runs in the restore sandbox (TASK-42517).
-@pytest.mark.parametrize("version", [81, 85, 87])
+# 88: so does the v88->v89 response-revision index drop (TASK-42544).
+@pytest.mark.parametrize("version", [81, 85, 87, 88])
 def test_historical_candidate_migrates_without_touching_source(tmp_path, version):
     from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
     from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.DB.private_sqlite import copy_private_sqlite
     from tldw_chatbook.DB.recovery_core import core_adapters
 
@@ -81,7 +83,7 @@ def test_historical_candidate_migrates_without_touching_source(tmp_path, version
             connection.execute(
                 "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
             ).fetchone()[0]
-            == 88
+            == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         )
         assert (
             read_attempt(connection.cursor(), cid, attempt_id="legacy").status

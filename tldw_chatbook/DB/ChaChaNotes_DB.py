@@ -741,7 +741,7 @@ class CharactersRAGDB:
     """
 
     _CURRENT_SCHEMA_VERSION = (
-        88  # TASK-42517: indexed voice-promotion message locators.
+        89  # TASK-42544: drop the superseded response-revision partial index.
     )
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
@@ -8134,6 +8134,12 @@ DELETE FROM keywords
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v88_to_v89(self, conn: sqlite3.Connection) -> None:
+        """Drop the response-revision partial index v72's exact index superseded."""
+        self._require_migration_entry_version(conn, 88, "V88→V89")
+        from tldw_chatbook.DB.chachanotes_sql_steps import run_sql_version_step  # migration-only; off the boot import path
+        run_sql_version_step(self, conn, 88, Path(__file__).parent / "migrations" / "chachanotes_v88_to_v89_drop_superseded_response_revision_index.sql")
+
     def _migrate_from_v87_to_v88(self, conn: sqlite3.Connection) -> None:
         """Index the message locators that joined the census after v72."""
         self._require_migration_entry_version(conn, 87, "V87→V88")
@@ -8712,6 +8718,7 @@ DELETE FROM keywords
                     85: self._migrate_from_v85_to_v86,
                     86: self._migrate_from_v86_to_v87,
                     87: self._migrate_from_v87_to_v88,
+                    88: self._migrate_from_v88_to_v89,
                 }
 
                 if current_db_version == 0:

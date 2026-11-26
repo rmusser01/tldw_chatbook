@@ -27,7 +27,7 @@ type='index'`, and neither is reliably visible to timing alone -- 118.8 ->
 
 So this checker makes the decision mechanical rather than remembered. It
 scans the schema-defining SQL for every ``CREATE INDEX`` name and requires
-each one to appear in ``scripts/index_plan_pin_census.tsv`` as either:
+each one to appear in ``scripts/index_plan_pin_census.tsv`` as one of:
 
 ``plan-pinned``
     A test names this index inside a file that also runs
@@ -42,7 +42,13 @@ each one to appear in ``scripts/index_plan_pin_census.tsv`` as either:
     retroactively -- the point is that the NEXT index cannot be added
     without someone typing one of these two words.
 
-A ``CREATE INDEX`` whose name is in neither list fails the check, as does a
+``dropped``
+    A historical migration still creates it, but a later one under ``DB/``
+    drops it with ``DROP INDEX``, so no plan is claimed (TASK-42544: v56's
+    superseded response-revision index, dropped in ChaChaNotes v89). The
+    row fails if nothing drops the name.
+
+A ``CREATE INDEX`` whose name has no census row fails the check, as does a
 census row naming an index nothing creates any more. Nothing is auto-added:
 the script prints the exact lines to paste, and choosing between the two
 statuses is the decision this file exists to force.
@@ -93,12 +99,16 @@ CENSUS = Path(__file__).resolve().parent / "index_plan_pin_census.tsv"
 
 PLAN_PINNED = "plan-pinned"
 PRE_CONVENTION = "pre-convention"
-VALID_STATUSES = {PLAN_PINNED, PRE_CONVENTION}
+DROPPED = "dropped"
+VALID_STATUSES = {PLAN_PINNED, PRE_CONVENTION, DROPPED}
 
 _CREATE_INDEX = re.compile(
     r"CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?"
     r"([A-Za-z_][A-Za-z0-9_]*)",
     re.IGNORECASE,
+)
+_DROP_INDEX = re.compile(
+    r"DROP\s+INDEX\s+(?:IF\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)", re.IGNORECASE
 )
 _INDEX_IDENTIFIER = re.compile(r"\b(?:idx|uq)_[A-Za-z0-9_]+\b")
 
@@ -141,8 +151,11 @@ def _sql_texts(path: Path) -> list[str]:
     ]
 
 
-def declared_indexes() -> dict[str, set[str]]:
+def declared_indexes(pattern: re.Pattern[str] = _CREATE_INDEX) -> dict[str, set[str]]:
     """Find every index the schema sources under ``DB/`` create.
+
+    Args:
+        pattern: The statement to look for; ``_DROP_INDEX`` finds the drops.
 
     Returns:
         Index name -> the repository-relative source paths whose SQL
@@ -159,7 +172,7 @@ def declared_indexes() -> dict[str, set[str]]:
     for path, texts in sources:
         rel = str(path.relative_to(REPO_ROOT))
         for text in texts:
-            for match in _CREATE_INDEX.finditer(_strip_sql_comments(text)):
+            for match in pattern.finditer(_strip_sql_comments(text)):
                 found.setdefault(match.group(1), set()).add(rel)
     return found
 
@@ -312,15 +325,17 @@ def plan_pinning_files() -> dict[str, set[str]]:
 def main() -> int:
     """Check the census against the tree and report every discrepancy.
 
-    Three failure classes are reported together rather than short-circuiting
+    Four failure classes are reported together rather than short-circuiting
     on the first: an index created but absent from the census, a census row
-    naming an index nothing creates any more, and a row recorded
-    ``plan-pinned`` that no test file positively pins.
+    naming an index nothing creates any more, a row recorded
+    ``plan-pinned`` that no test file positively pins, and a row recorded
+    ``dropped`` that nothing drops.
 
     Returns:
         0 when the census covers the tree exactly, 1 otherwise.
     """
     declared = declared_indexes()
+    dropped = declared_indexes(_DROP_INDEX)
     census = read_census()
     pins = plan_pinning_files()
 
@@ -331,6 +346,11 @@ def main() -> int:
         for name, (status, _note) in census.items()
         if status == PLAN_PINNED and name in declared and name not in pins
     )
+    undropped = sorted(
+        name
+        for name, (status, _note) in census.items()
+        if status == DROPPED and name not in dropped
+    )
 
     print(
         f"index plan pins: {len(declared)} index names declared under "
@@ -338,7 +358,7 @@ def main() -> int:
         f"{sum(1 for s, _ in census.values() if s == PLAN_PINNED)} plan-pinned."
     )
 
-    if not (missing or stale or unpinned):
+    if not (missing or stale or unpinned or undropped):
         print("check_index_plan_pins: OK")
         return 0
 
@@ -379,6 +399,14 @@ def main() -> int:
             f"the worked example) or change the row to {PRE_CONVENTION!r} with "
             "a reason."
         )
+
+    if undropped:
+        print(
+            f"\nFAIL: {len(undropped)} index(es) are recorded as {DROPPED!r} but "
+            "no source under tldw_chatbook/DB drops them with DROP INDEX:"
+        )
+        for name in undropped:
+            print(f"    {name}   (recorded note: {census[name][1] or '-'})")
 
     return 1
 

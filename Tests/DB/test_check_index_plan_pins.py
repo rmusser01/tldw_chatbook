@@ -341,6 +341,19 @@ def test_a_plan_pinned_row_backed_by_a_real_pin_passes(repo):
     assert repo.module.main() == 0
 
 
+def test_a_dropped_row_needs_a_later_drop_index(repo, capsys):
+    """TASK-42544: ``dropped`` claims no plan, only that a later step drops it."""
+    _declare(repo, "idx_zz_old")
+    repo.write_census("idx_zz_old\tdropped\tsuperseded")
+    assert repo.module.main() == 1
+    assert "idx_zz_old" in capsys.readouterr().out
+    # A Python comment naming the drop is not a drop.
+    repo.write_db("Other_DB.py", "# DROP INDEX idx_zz_old\n")
+    assert repo.module.main() == 1
+    repo.write_db("step.sql", "-- superseded\nDROP INDEX IF EXISTS idx_zz_old;\n")
+    assert repo.module.main() == 0
+
+
 # ---------------------------------------------------------------------------
 # ...and the same claim against the real tree, not only a synthetic one
 # ---------------------------------------------------------------------------
