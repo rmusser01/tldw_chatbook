@@ -1483,7 +1483,12 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-25, TASK-42525 round 5 (same rule): 7042 -> 7037 (-5), exact
     # measurement; the single-range shim in _without_ranges is gone (the one
     # test that built a bare range now passes stored ranges).
-    "tldw_chatbook/Chat/console_trace_service.py": 7037,
+    # 2026-11-26, TASK-42550 (owner decision 2026-11-26, a new turn's first
+    # call may drop the system slot; same rule): 7037 -> 7056 (+19), exact
+    # measurement. Planning, the binding recheck and the write live in
+    # console_trace_slot_restore.py; here, the planner hook and the binding's
+    # removal-first write.
+    "tldw_chatbook/Chat/console_trace_service.py": 7056,
     # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
     # approved child trace segments (ADR-337 amendment 2026-11-17): create and

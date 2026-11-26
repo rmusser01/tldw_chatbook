@@ -945,11 +945,12 @@ remove the slot (the second 2026-11-24 amendment).
 5. **After a drop.** The surface has no slot, so a later switch back to
    llama.cpp puts it back under the 2026-11-25 amendment. The marker sits
    mid-history: a later Compact now or Edit & resend whose rewritten range
-   starts before it counts it as a dead row of that range, like the dead
-   rows an earlier replacement left, so the range neither skips nor rewrites
-   it. Raw-node readers that count a fallback's marker as one of its run's
-   dead rows (`rewritten_sequences`) are unchanged: this marker belongs to no
-   run.
+   starts before it spans it as a dead sequence, which counts toward the
+   range's 256-sequence bound like the rows an earlier replacement left
+   dead. Because the marker comes before the call's own rows, the next
+   send's completed-turn replacement (project context, the run's tool rows)
+   starts after it, and the raw-node readers that count a fallback's marker
+   as one of its run's dead rows (`rewritten_sequences`) are unchanged.
 
 Still refused: dropping the slot on any other call; dropping a leading row
 that is not the rendered-system slot; dropping the slot from a request that
