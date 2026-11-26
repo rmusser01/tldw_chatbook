@@ -904,7 +904,57 @@ already has one (a different system prompt in an existing slot is the
 existing header-owned rule, unchanged); and a change to any other row that
 the existing rules refuse. Out of scope: a captured manual switch from
 llama.cpp to a hosted provider with project instructions, which needs a slot
-removed outside a fallback (a follow-up).
+removed outside a fallback (a follow-up). (Granted by the next amendment.)
+
+### Amendment recorded 2026-11-26 (owner-approved): a new turn's first call may drop the leading system slot (TASK-42550)
+
+The owner approved this on 2026-11-26. The question asked was: "Should a new
+turn's first call be allowed to drop that leading system slot (the mirror of
+the 2026-11-25 slot-restore amendment, with the same checks and the existing
+removal marker)?" The owner answered "Allow it (Recommended)". It covers a
+captured manual switch from llama.cpp to a hosted provider. With project
+instructions (`AGENTS.md`) the next message was refused
+(`unsupported_surface_change`): llama.cpp sends the system prompt as the
+first message, so the surface leads with a rendered-system slot, and the
+hosted request has no row for it. Only a fallback chain's first call could
+remove the slot (the second 2026-11-24 amendment).
+
+1. **Which call.** Only a new turn's first call, on the AGENT_FIRST or FRESH
+   route, as for putting the slot back. Never a retry, a fallback chain's
+   call or a tool-loop call. A fallback chain's first call keeps its own
+   rule (the second 2026-11-24 amendment); this one does not apply to it.
+2. **Which shape.** The surface's leading active entry is the rendered-system
+   slot, and the request has no leading system row: its first row is neither
+   a rendered-system row nor a system-role message. Only the slot is removed.
+   Every other row is planned by the existing rules, unchanged, as if the
+   slot were already gone: retained rows must match, and an append, a
+   completed-turn replacement, a rewritten tail or project context follows
+   its own rules. Nothing else is relaxed.
+3. **Recording.** Before its other writes, the call removes the slot with the
+   existing content-free removal marker (`surface_removal`,
+   `TraceOmissionReason.SURFACE_SLOT_REMOVED`): a removal-only replacement of
+   the slot's sequence whose node is the marker, directly after the surface
+   tail. The call's other rows follow the marker. The surface projection drops
+   the marker, so nothing takes the slot's place. No schema changes. Earlier
+   calls, their heads and the slot's bytes stay as they were.
+4. **Recheck.** The planner proves the shape in the reservation transaction.
+   The dispatch-binding transaction checks it again before writing: the call
+   is still its turn's first, the slot still leads the surface, and the
+   request still has no leading system row. A refusal there writes nothing
+   and leaves the call reserved, like any binding refusal.
+5. **After a drop.** The surface has no slot, so a later switch back to
+   llama.cpp puts it back under the 2026-11-25 amendment. The marker sits
+   mid-history: a later Compact now or Edit & resend whose rewritten range
+   starts before it counts it as a dead row of that range, like the dead
+   rows an earlier replacement left, so the range neither skips nor rewrites
+   it. Raw-node readers that count a fallback's marker as one of its run's
+   dead rows (`rewritten_sequences`) are unchanged: this marker belongs to no
+   run.
+
+Still refused: dropping the slot on any other call; dropping a leading row
+that is not the rendered-system slot; dropping the slot from a request that
+still leads with a system row; and a change to any other row that the
+existing rules refuse.
 
 ## Current-owner integration amendment (2026-10-13)
 
