@@ -34,6 +34,11 @@ class _Member:
 
 def widen_refusal(tool_name, refused):
     """The tool error the model sees when a turn's claim cannot widen."""
+    if isinstance(refused, CleanupUnprovenRefused):  # TASK-41950
+        return (
+            f"{tool_name} is unavailable: workspace activity is held by a "
+            "cleanup that could not be proven; restart Chatbook to clear it."
+        )
     if str(refused) == "worktree_activity_busy":
         return (
             f"{tool_name} is unavailable while other workspace activity is "
@@ -661,13 +666,10 @@ class OrdinaryTurn:
             raise CapacityRefused("runtime_closed")
         with self.activity.prelaunch(footprint=footprint) as claim:
             if claim is None:
-                for retention in self.capacity.retained():
-                    if self.activity.holds_conflicting_claim(
-                        retention.operation.owner, footprint
-                    ):
-                        # Held until restart (TASK-40716, TASK-41950).
-                        raise CleanupUnprovenRefused(retention.label, retention)
-                raise CapacityRefused("worktree_activity_busy")
+                # A claim held until restart says so (TASK-41950).
+                raise self.activity.restart_refusal(
+                    footprint, self.capacity
+                ) or CapacityRefused("worktree_activity_busy")
             owner = self.capacity.begin_execution(
                 origin=self.origin, conversation_id=self.launch_key
             )
@@ -816,7 +818,12 @@ class OrdinaryTurn:
         except ValueError:
             raise CapacityRefused("ordinary_turn_closed") from None
         if footprint is None:
-            raise CapacityRefused("worktree_activity_busy")
+            from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
+
+            # A claim held until restart says so (TASK-41950).
+            raise self.activity.restart_refusal(
+                WorktreeFootprint(opaque=True), self.capacity, excluding=self.claim
+            ) or CapacityRefused("worktree_activity_busy")
         self.footprint = footprint
 
     def attach(self, owner):

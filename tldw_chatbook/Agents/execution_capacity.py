@@ -333,6 +333,12 @@ class ExecutionOwner:
         with self.capacity._lock:
             return self._run_id
 
+    @property
+    def cleanup_unproven(self) -> bool:
+        """Whether this owner's drain can never be proven (TASK-40716)."""
+        with self.capacity._lock:
+            return self._cleanup_unproven
+
     def reserve_tool(self) -> OwnedOperation:
         return self._reserve("tool")
 

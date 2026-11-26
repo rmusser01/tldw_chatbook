@@ -28,7 +28,11 @@ from tldw_chatbook.Utils.filesystem_identity import (
 )
 
 if TYPE_CHECKING:
-    from tldw_chatbook.Agents.execution_capacity import ExecutionOwner
+    from tldw_chatbook.Agents.execution_capacity import (
+        CleanupUnprovenRefused,
+        ExecutionOwner,
+        RuntimeCapacity,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -471,6 +475,56 @@ class WorktreeActivity:
                 if footprint._conflicts(state.footprint)
                 for member in state.members.values()
             )
+
+    def restart_refusal(
+        self,
+        footprint: WorktreeFootprint,
+        capacity: RuntimeCapacity,
+        *,
+        excluding: WorktreeActivityClaim | None = None,
+    ) -> CleanupUnprovenRefused | None:
+        """The refusal for a conflict that only a restart clears, else ``None``.
+
+        A claim retires only once every member's drain is proven, so a
+        conflicting claim with a member whose drain or cleanup is unproven
+        (TASK-40716) is held until restart (TASK-41950).
+
+        Args:
+            footprint: The refused footprint.
+            capacity: The runtime capacity holding the retained records.
+            excluding: The caller's own claim, when it is widening.
+
+        Returns:
+            ``CleanupUnprovenRefused`` carrying a retained record of such a
+            member when one exists, or ``None`` when every conflict can retire.
+        """
+        from tldw_chatbook.Agents.execution_capacity import CleanupUnprovenRefused
+
+        with self._lock:
+            members = [
+                (member.owner, member.drained)
+                for key, state in self._claims.items()
+                if (excluding is None or key != excluding.id)
+                and footprint._conflicts(state.footprint)
+                for member in state.members.values()
+            ]
+        held = [
+            owner
+            for owner, drained in members
+            if drained is False or owner.cleanup_unproven
+        ]
+        if not held:
+            return None
+        retention = next(
+            (
+                record
+                for record in capacity.retained()
+                if any(record.operation.owner is owner for owner in held)
+            ),
+            None,
+        )
+        label = retention.label if retention is not None else "workspace activity"
+        return CleanupUnprovenRefused(label, retention)
 
     def validate_claim(
         self,

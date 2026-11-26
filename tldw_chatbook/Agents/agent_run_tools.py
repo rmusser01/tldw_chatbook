@@ -79,7 +79,11 @@ from .agent_service import (
     coerce_max_live_subagents,
 )
 from .automatic_work_budget import AutomaticWorkLimits, AutomaticWorkRefused
-from .execution_capacity import CapacityRefused, current_execution_owner
+from .execution_capacity import (
+    CapacityRefused,
+    CleanupUnprovenRefused,
+    current_execution_owner,
+)
 
 if TYPE_CHECKING:
     from .agent_models import AgentConfig
@@ -241,7 +245,9 @@ class AgentRunTools:
                 )
             if not isinstance(exc, CapacityRefused):
                 raise
-            if str(exc) == "worktree_activity_busy":
+            if isinstance(exc, CleanupUnprovenRefused) or (
+                str(exc) == "worktree_activity_busy"
+            ):
                 from .ordinary_tree import widen_refusal
 
                 error = widen_refusal(SPAWN_TOOL_NAME, exc)

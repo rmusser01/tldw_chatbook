@@ -13,7 +13,6 @@ from loguru import logger
 from tldw_chatbook.Agents.activation import execution
 from tldw_chatbook.Agents.execution_capacity import (
     CapacityRefused,
-    CleanupUnprovenRefused,
     WorkOrigin,
 )
 from tldw_chatbook.DB.base_db import operation_owned_connection
@@ -374,13 +373,10 @@ class _InitializationSource:
             footprint = WorktreeFootprint(opaque=True)
             with activity.prelaunch(footprint=footprint) as claim:
                 if claim is None:
-                    for retention in capacity.retained():
-                        if activity.holds_conflicting_claim(
-                            retention.operation.owner, footprint
-                        ):
-                            # Its claim stays held until restart (TASK-41635).
-                            raise CleanupUnprovenRefused(retention.label, retention)
-                    raise CapacityRefused("initialization_activity_busy")
+                    # A claim held until restart (TASK-41635, TASK-41950).
+                    raise activity.restart_refusal(
+                        footprint, capacity
+                    ) or CapacityRefused("initialization_activity_busy")
                 owner = capacity.begin_execution(
                     origin=self.work.origin, conversation_id=""
                 )

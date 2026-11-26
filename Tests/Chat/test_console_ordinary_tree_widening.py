@@ -216,6 +216,84 @@ async def test_spawn_conflicting_with_another_running_turn_is_refused_not_awaite
     assert [row["agent_kind"] for row in rows] == ["primary"]
 
 
+@pytest.mark.parametrize("retained", [False, True])
+async def test_spawn_refused_by_a_retained_cleanups_claim_names_the_restart(
+    ordinary_host, monkeypatch, retained
+):
+    """TASK-41950: a spawn whose widen is refused by a claim held until restart
+    (its owner's tool cleanup is unproven) tells the model that a restart
+    clears it. A live claim keeps the "retry after that activity finishes"
+    text. Both claims are bounded to another folder, so the chat's own Send
+    is admitted and only the spawn's widen conflicts."""
+    from tldw_chatbook.Agents.execution_capacity import WorkOrigin
+    from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+    from tldw_chatbook.Workspaces.worktree_activity import (
+        WorktreeFootprint,
+        WorktreeScope,
+    )
+
+    monkeypatch.setenv("TLDW_AGENTS_AUTOWAKE_ENABLED", "false")
+    h = ordinary_host
+    attached = []
+    attach = OrdinaryTurn.attach
+
+    def guarded_attach(tree, owner):
+        attach(tree, owner)
+        # A child that joined would run; stop it so a regression fails.
+        attached.append(tree.footprint.opaque)
+        raise CapacityRefused("test_stops_child")
+
+    monkeypatch.setattr(OrdinaryTurn, "attach", guarded_attach)
+    spawn_payloads = []
+
+    class Gateway(_RecordingGateway):
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.payloads.append(messages)
+            spawn_payloads.append(messages)
+            if len(spawn_payloads) == 1:
+                yield fence(SPAWN_TOOL_NAME, {"task": "CHILD-TASK read it"})
+                return
+            yield "done without a child"
+
+    _install(h, Gateway())
+    folder = h.tmp_path / "held-folder"
+    folder.mkdir()
+    capacity, activity = h.runtime.execution_capacity, h.runtime.worktree_activity
+    other = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="x")
+    claim = activity.try_acquire(
+        owner=other,
+        footprint=WorktreeFootprint(
+            writes=(WorktreeScope(folder, True, capture_directory_chain(folder)),)
+        ),
+    )
+    assert claim is not None
+    operation = other.reserve_tool()
+    retention = operation.retain_unproven("native Git") if retained else None
+    try:
+        result = await asyncio.wait_for(
+            h.controller.submit_draft("spawn chat", session_id=_chat(h).id), 30
+        )
+        assert result.accepted, result.visible_copy
+    finally:
+        if retention is not None:
+            retention.prove()
+        operation.finish()
+        other.finish_root()
+        claim.settle(durable=True)
+    assert attached == [], "the spawn joined a claim it could not widen"
+    assert len(spawn_payloads) == 2, "the spawning turn did not carry on"
+    seen = str(spawn_payloads[1])
+    restart = (
+        "spawn_subagent is unavailable: workspace activity is held by a cleanup "
+        "that could not be proven; restart Chatbook to clear it."
+    )
+    busy = "spawn_subagent is unavailable while other workspace activity is running"
+    if retained:
+        assert restart in seen and busy not in seen, seen
+    else:
+        assert busy in seen and "restart Chatbook" not in seen, seen
+
+
 @pytest.mark.parametrize("contended", [False, True])
 async def test_review_tool_widens_the_claim_or_is_refused_while_another_turn_runs(
     ordinary_host, monkeypatch, contended

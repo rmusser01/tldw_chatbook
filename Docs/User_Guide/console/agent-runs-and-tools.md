@@ -349,12 +349,15 @@ preparation that held reservation refuses says so in **Settings → Workspaces**
 and in the turn's *change review skipped* note: it waits for an app restart, and
 no retry is offered. Releasing the slot does not lift that for a folder outside
 the turn; a turn that is still running can start preparing other folders again
-after the release. A message whose send needs that held workspace is refused
+after the release. When you quit, the app does not wait for such a tool, and
+everything else still shuts down normally.
+
+On macOS and Linux, a message whose send needs that held workspace is refused
 with *Workspace activity is held by a cleanup that could not be proven; restart
-Chatbook to clear it.* Change Review work outside an agent turn holds the
-workspace activity of every chat, so then every message is refused until you
-restart. When you quit, the app does not
-wait for such a tool, and everything else still shuts down normally.
+Chatbook to clear it.* A tool the agent calls that needs it (a sub-agent, a
+skill install or script, a code review) is refused the same way. Change Review
+work outside an agent turn holds the workspace activity of every chat, so then
+every message is refused until you restart.
 
 Change Review never runs a Git filter program while it prepares a folder or
 records a turn's changes. (Undo restores files with Git's normal checkout.) If
