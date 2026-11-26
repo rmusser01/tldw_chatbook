@@ -16,10 +16,29 @@ citation repair, manual summary, impersonation, automatic compaction, and the
 llama fallback. Agent-first and tool-loop calls require actor/chain metadata at
 the later execution-sealing boundary. Automatic compaction is conversation
 owned even though its auxiliary result has no visible assistant owner. Manual
-summary and automatic compaction share one auxiliary call, so both are
-Capture Off. Fresh send has a second callsite: speculative duplex voice
-dispatches a Capture-On fresh turn from `console_voice_attempts.py`. Response
-rules' helper calls are Console-owned and Capture Off.
+summary, automatic compaction and Summarize-as-note (`summarize_span_as_note`,
+through `summarize_span_to_text`) reach the provider through one auxiliary
+call, `_summary_completion`. All three are Capture Off, because
+`complete_auxiliary()` always admits capture off and refuses any traced
+route. Owner decision (2026-11-26), asked "Manual summaries (and Summarize as
+note) have always been sent with capture off, even in captured chats, the
+same as automatic compaction. The old route census and its design doc wrongly
+said they were traced, and round 27 corrects them to say capture off. Keep
+that behaviour?": "Keep capture off (Recommended)". Fresh send has a second
+callsite: speculative duplex voice dispatches a Capture-On fresh turn from
+`console_voice_attempts.py`. Response rules' helper calls are Console-owned
+and Capture Off.
+
+The census's capture column records what a Capture-On chat's call on each
+route does today, and `Tests/Chat/test_console_route_census_capture.py`
+drives each user action through the real controller to check it. Retry,
+Continue, Regenerate, Edit & resend and Impersonate carry no turn preparation
+or capture mode, so they dispatch Capture Off (Retry under Capture On awaits
+an owner decision, TASK-42555). A fresh send is traced; the test checks this
+on the agent and plain paths. Direct prefill and the llama fallback take the
+capture mode of the send they belong to. Citation repair is recorded as
+traced, but its call passes no capture mode, and that has not yet been
+checked through the controller.
 
 The explicitly excluded preparation owners are Console side chat, visual
 evaluation, and prompt improvement. Persona preview and character generation

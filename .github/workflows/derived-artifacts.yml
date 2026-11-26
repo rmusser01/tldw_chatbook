@@ -2084,8 +2084,9 @@ jobs:
       # Round 27: TASK-42552's four Console files, on no lane before. The
       # request-provenance census (sandboxed, reads no config) ends the
       # sandboxed block; the continuation-merge, named-agent and redirect-cut
-      # files (bootstrap_profile) follow the variant-stream file. Timings in
-      # the task's notes.
+      # files (bootstrap_profile) follow the variant-stream file, then the
+      # route census's capture check through the real controller
+      # (bootstrap_profile). Timings in the task's notes.
       # test_closed_loop_pending_submit_is_emergency_detachment: deselected
       # 2026-11-12: red on dev e0186fa10a (console_send_diagnostic ContextVar
       # token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.
@@ -2164,6 +2165,7 @@ jobs:
             Tests/Chat/test_console_continuation_group_merge.py \
             Tests/Chat/test_console_named_agent_model.py \
             Tests/Chat/test_console_redirect_stream_cut.py \
+            Tests/Chat/test_console_route_census_capture.py \
             "Tests/Performance/test_app_wiring_held_pointer_currentness.py::test_actual_stock_held_pointer_refuses_before_foreign_access[collections]" \
             "Tests/Performance/test_app_wiring_held_pointer_currentness.py::test_actual_stock_held_pointer_refuses_before_foreign_access[skill]" \
             "Tests/Performance/test_app_wiring_held_pointer_currentness.py::test_actual_stock_held_pointer_refuses_before_foreign_access[skill-factory]" \

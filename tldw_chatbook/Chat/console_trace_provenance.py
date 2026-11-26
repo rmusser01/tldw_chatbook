@@ -167,6 +167,11 @@ class ConsoleRequestRouteRecord:
     actor_chain_required: bool = False
 
 
+#: ``capture`` is what a Capture-On chat's call on the route does today
+#: (``Tests/Chat/test_console_route_census_capture.py`` drives each action).
+#: Retry, Continue, Regenerate, Edit & resend and Impersonate carry no turn
+#: preparation or capture mode, so they dispatch Capture Off (TASK-42552;
+#: Retry under Capture On awaits the owner in TASK-42555).
 CONSOLE_REQUEST_ROUTE_CENSUS = (
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.FRESH,
@@ -186,7 +191,7 @@ CONSOLE_REQUEST_ROUTE_CENSUS = (
         "_retry_message_body",
         "route=ConsoleRequestRoute.RETRY,",
         "retry_requested",
-        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
+        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
     ),
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.CONTINUE,
@@ -196,7 +201,7 @@ CONSOLE_REQUEST_ROUTE_CENSUS = (
         "_continue_from_message_body",
         "route=ConsoleRequestRoute.CONTINUE,",
         "continue_requested",
-        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
+        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
     ),
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.REGENERATE,
@@ -206,7 +211,7 @@ CONSOLE_REQUEST_ROUTE_CENSUS = (
         "regenerate_message",
         "route=ConsoleRequestRoute.REGENERATE,",
         "regenerate_requested",
-        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
+        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
     ),
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.EDIT,
@@ -216,7 +221,7 @@ CONSOLE_REQUEST_ROUTE_CENSUS = (
         "edit_and_resend_message",
         "route=ConsoleRequestRoute.EDIT,",
         "edit_and_resend_requested",
-        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
+        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
     ),
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.DIRECT_PREFILL,
@@ -278,7 +283,7 @@ CONSOLE_REQUEST_ROUTE_CENSUS = (
         "impersonate_user_reply",
         "route=ConsoleRequestRoute.IMPERSONATE,",
         "impersonate_requested",
-        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
+        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
     ),
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.AUTO_COMPACTION,
@@ -324,7 +329,7 @@ CONSOLE_GATEWAY_CALLSITE_CENSUS = (
         "tldw_chatbook/Chat/console_chat_controller.py",
         "_collect_summary_completion",
         "stream_chat",
-        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
+        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
         (ConsoleRequestRoute.IMPERSONATE,),
         "route",
     ),
@@ -368,6 +373,10 @@ CONSOLE_GATEWAY_CALLSITE_CENSUS = (
         (ConsoleRequestRoute.FRESH,),
         "**stream_kwargs",
     ),
+    # The one auxiliary summary call: automatic compaction (route bound),
+    # manual summary and the controller's summarize_span_as_note (via
+    # summarize_span_to_text), both with no route. All Capture Off, because
+    # complete_auxiliary always admits capture off and refuses a traced route.
     GatewayCallsiteRecord(
         "tldw_chatbook/Chat/console_context_compaction.py",
         "_summary_completion",
@@ -449,6 +458,7 @@ CONSOLE_GATEWAY_CALLSITE_CENSUS = (
         "",
     ),
 )
+
 
 def rag_provenance_for_route(
     route: ConsoleRequestRoute,

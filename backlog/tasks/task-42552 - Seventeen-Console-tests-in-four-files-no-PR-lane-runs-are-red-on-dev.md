@@ -56,16 +56,16 @@ All 19 nodes in the four files pass. The red set at base 6e41919880 (`-n 4`) was
 
   The fix makes the census describe the shipped code (`Chat/console_trace_provenance.py`):
   - The `source_line` fields are gone; rows are keyed by module and function.
-  - Manual summary is recorded as Capture Off on `_summary_completion`, beside automatic compaction. It has always dispatched there, and `_complete_auxiliary` refuses any route but automatic compaction.
+  - Manual summary is recorded as Capture Off on `_summary_completion`. That auxiliary call also serves automatic compaction and Summarize-as-note (`summarize_span_as_note`, via `summarize_span_to_text`). All three are Capture Off because `complete_auxiliary` always admits capture off and refuses any traced route.
   - Voice is a second FRESH callsite. Response rules are Console-owned and Capture Off; the probe is excluded.
 
   The test (`Tests/Chat/test_console_request_provenance_routes.py`) changes in step:
-  - It compares a Counter of (module, function, gateway, binding).
+  - It compares a Counter of (module, function, gateway, binding). The old record-uniqueness check is dropped, because it would have refused the two rows that two same-shaped calls in one function need; Counter equality already catches a duplicate row.
   - A route's marker must be a line inside its named function.
-  - Discovery records `route=` text, `**name` for a splat, or `""`.
-  - A new assertion requires every traced callsite to bind a route.
+  - Discovery records `route=` text, `**name` for a splat, or `""`. It skips a file before parsing unless the file names `stream_chat` or `complete_auxiliary`.
+  - A new assertion requires every traced callsite to bind a route. Negative control: I temporarily dropped `route=route` from `_collect_summary_completion`'s call and blanked its census binding. Counter equality still held, and the test failed on that assertion (line 181). Both edits were then reverted.
   - Route uniqueness admits exactly FRESH's documented second callsite.
-  - The capture assertion names the two Capture-Off routes.
+  - The capture assertion names the Capture-Off routes: two at first, seven after the review round below.
 
   Every other assertion is kept. Red/green: the repaired test against the base census fails both census tests and passes the other two; with the new census, all 4 pass. `Docs/Development/console-request-provenance-route-census.md` says the same.
 
@@ -73,12 +73,23 @@ Lane (AC#4): all four files go to recovered-suites ("Run the recovered suites").
 
 | File | Time | Tests |
 | --- | --- | --- |
-| request-provenance routes | 30.7 s | 4 (the AST walk of the whole package dominates) |
+| request-provenance routes | 8.2-8.4 s (re-timed twice, load 39-47, after the pre-parse skip; 30.7 s before) | 4 |
 | continuation group merge | 3.6 s | 10 |
 | named agent model | 4.1 s | 2 |
 | redirect stream cut | 3.5 s | 3 |
 
-The whole step, serially with its flags, gave 2041 passed, 1 skipped and 1 deselected in 2978.7 s, at load 26-60 with other runs beside it. The four files took about 59 s of that.
+The whole step, serially with its flags, gave 2041 passed, 1 skipped and 1 deselected in 2978.7 s, at load 26-60 with other runs beside it. The four files took about 59 s of that, before the census file's pre-parse skip.
+
+Census rows corrected in the review round, after a real-controller check:
+- **The check.** `Tests/Chat/test_console_route_census_capture.py` is a new file in recovered-suites, after the three bootstrap files. It drives Fresh, Edit & resend, Regenerate, Continue, Retry (of a failed reply) and Impersonate in a Capture-On chat. It runs on the agent and plain paths, using the real controller, store, gateway preparation and trace runtime of `test_console_trace_rewritten_history.py`'s harness; only the provider adapter is a recorder. It asserts that the action reaches the provider once and reserves a trace call exactly when the census calls its route traced.
+- **Red and green.** Against the round's first census it failed 10 of 12: every non-Fresh action reached the provider with no trace reservation, on both paths. Fresh passed.
+- **The cause.** None of the five passes a turn preparation or a capture mode, so `_run_direct_provider_reply`, `_run_agent_reply` and the gateway default to `CAPTURE_OFF`. ADR-337's 2026-10-27 amendment records this for Edit & resend, and the User Guide (`semantic-trace-capture.md`) says it for Edit & resend and Regenerate. The guide was right; the census overstated these routes.
+- **The fix.** RETRY, CONTINUE, REGENERATE, EDIT and IMPERSONATE are now Capture Off in the census, and `_collect_summary_completion`, which carries only Impersonate, is a Capture-Off callsite. The rows record what the code does today. Retry under Capture On awaits an owner decision in TASK-42555, so no product behaviour changed. After the fix all 12 cases pass.
+- **The test file's old owner check.** It had required "routes iff traced". It now checks the two tables against each other: an excluded callsite carries no route, a Capture-Off callsite routes only Capture-Off routes, and a traced callsite routes at least one traced route.
+- **Timing.** The file takes 64.1 s serially with the step's flags (`--storage-lease-guard --timeout=180`) at load 50-54. The shared harness leaves its AgentRunsDB open, and the lease guard reported that as 6 errors, so the file's own fixture closes it.
+- **Not checked.** CITATION_REPAIR is still recorded as traced, but its `stream_chat` call passes no capture mode. It has not been driven through the controller, so the row is left unchanged.
+
+Owner decision (2026-11-26), verbatim. Asked: "Manual summaries (and Summarize as note) have always been sent with capture off, even in captured chats, the same as automatic compaction. The old route census and its design doc wrongly said they were traced, and round 27 corrects them to say capture off. Keep that behaviour?" Answer: "Keep capture off (Recommended)". No product change.
 
 Runs:
 - the four files at `-n 4`, twice: 19 passed each;
@@ -86,7 +97,7 @@ Runs:
 - `Tests/CI` at `-n 4`: 2009 passed, 2 skipped.
 
 Files:
-- `Tests/Chat/test_console_{continuation_group_merge,named_agent_model,redirect_stream_cut,request_provenance_routes}.py`;
+- `Tests/Chat/test_console_{continuation_group_merge,named_agent_model,redirect_stream_cut,request_provenance_routes,route_census_capture}.py`;
 - `tldw_chatbook/Chat/console_trace_provenance.py`;
 - `Docs/Development/console-request-provenance-route-census.md`;
 - `.github/workflows/derived-artifacts.yml`;

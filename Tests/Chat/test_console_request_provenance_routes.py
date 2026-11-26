@@ -76,8 +76,13 @@ def _discover_gateway_callsites() -> Counter[tuple[str, str, str, str]]:
     discovered: Counter[tuple[str, str, str, str]] = Counter()
     source_root = REPOSITORY_ROOT / "tldw_chatbook"
     for path in source_root.rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        # Only a file naming a gateway method can call one; skipping the rest
+        # before parsing cuts the walk from about 14 s to under 1 s.
+        if "stream_chat" not in source and "complete_auxiliary" not in source:
+            continue
         visitor = _GatewayCallVisitor()
-        visitor.visit(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
+        visitor.visit(ast.parse(source, filename=str(path)))
         module = path.relative_to(REPOSITORY_ROOT).as_posix()
         discovered.update(
             (module, function, gateway, route)
@@ -114,12 +119,19 @@ def test_logical_route_census_is_closed_complete_and_actor_aware() -> None:
         ).capture
         is ConsoleRouteCaptureDisposition.CAPTURE_OFF
     )
-    # Manual summary shares automatic compaction's auxiliary call, which is
-    # Capture Off (`_complete_auxiliary` refuses any other route); it has never
-    # dispatched through a traced route (TASK-42552).
+    # Manual summary goes through complete_auxiliary, like automatic
+    # compaction; it always admits capture off and refuses a traced route, so
+    # manual summary has never been traced. The other five carry no turn
+    # preparation or capture mode, so they dispatch Capture Off today;
+    # test_console_route_census_capture.py drives them (TASK-42552).
     capture_off_routes = {
         ConsoleRequestRoute.AUTO_COMPACTION,
         ConsoleRequestRoute.MANUAL_SUMMARY,
+        ConsoleRequestRoute.RETRY,
+        ConsoleRequestRoute.CONTINUE,
+        ConsoleRequestRoute.REGENERATE,
+        ConsoleRequestRoute.EDIT,
+        ConsoleRequestRoute.IMPERSONATE,
     }
     assert all(
         item.capture is ConsoleRouteCaptureDisposition.CAPTURE_OFF
@@ -169,11 +181,6 @@ def test_gateway_callsite_census_matches_ast_discovery_bidirectionally() -> None
         "tldw_chatbook/Chat/console_visual_evaluation.py",
         "tldw_chatbook/Prompt_Management/prompt_improvement_service.py",
     } <= excluded
-    identities = [
-        (item.module, item.function, item.gateway, item.route_binding)
-        for item in CONSOLE_GATEWAY_CALLSITE_CENSUS
-    ]
-    assert len(identities) == len(set(identities))
     assert all(
         item.route_binding is not None for item in CONSOLE_GATEWAY_CALLSITE_CENSUS
     )
@@ -183,21 +190,26 @@ def test_gateway_callsite_census_matches_ast_discovery_bidirectionally() -> None
         for item in CONSOLE_GATEWAY_CALLSITE_CENSUS
         if item.owner == ConsoleRouteCaptureDisposition.CONVERSATION_TRACE.value
     )
-    assert all(
-        bool(item.routes)
-        == (item.owner == ConsoleRouteCaptureDisposition.CONVERSATION_TRACE.value)
-        for item in CONSOLE_GATEWAY_CALLSITE_CENSUS
-        if ConsoleRequestRoute.AUTO_COMPACTION not in item.routes
-    )
+    # An excluded callsite carries no route; a Capture-Off one only routes the
+    # census calls Capture Off; a traced one carries at least one traced route.
+    route_capture = {item.route: item.capture for item in CONSOLE_REQUEST_ROUTE_CENSUS}
+    for item in CONSOLE_GATEWAY_CALLSITE_CENSUS:
+        captures = {route_capture[route] for route in item.routes}
+        if item.owner == ConsoleRouteCaptureDisposition.EXCLUDED.value:
+            assert not item.routes, item
+        elif item.owner == ConsoleRouteCaptureDisposition.CAPTURE_OFF.value:
+            assert captures <= {ConsoleRouteCaptureDisposition.CAPTURE_OFF}, item
+        else:
+            assert ConsoleRouteCaptureDisposition.CONVERSATION_TRACE in captures, item
     routed = [
         route for item in CONSOLE_GATEWAY_CALLSITE_CENSUS for route in item.routes
     ]
     assert set(routed) == set(ConsoleRequestRoute)
     # Speculative duplex voice (b7dd8e53f2) dispatches a Capture-On fresh turn
     # from its own callsite; every other route has exactly one.
-    assert [
-        route for route, count in Counter(routed).items() if count > 1
-    ] == [ConsoleRequestRoute.FRESH]
+    assert [route for route, count in Counter(routed).items() if count > 1] == [
+        ConsoleRequestRoute.FRESH
+    ]
 
 
 def test_route_provenance_carries_predicate_and_required_actor_chain() -> None:

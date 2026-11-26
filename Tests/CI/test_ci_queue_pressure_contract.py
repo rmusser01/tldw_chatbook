@@ -920,6 +920,9 @@ RECOVERED_SUITES_TARGETS = (
     "Tests/Chat/test_console_continuation_group_merge.py",
     "Tests/Chat/test_console_named_agent_model.py",
     "Tests/Chat/test_console_redirect_stream_cut.py",
+    # TASK-42552 review: the route census's capture column checked against
+    # each action through the real controller (bootstrap_profile).
+    "Tests/Chat/test_console_route_census_capture.py",
     # TASK-40323: the green held-pointer case and stock skill-trust cases
     # (bootstrap_profile, private subprocesses), which ran on no lane.
     "Tests/Performance/test_app_wiring_held_pointer_currentness.py::test_actual_stock_held_pointer_refuses_before_foreign_access[collections]",
