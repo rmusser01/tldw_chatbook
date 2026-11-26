@@ -132,6 +132,17 @@ TASK-42424). The harnesses now mark that `TldwCli` running and route its
 as in the shipped app, where `controller.app` is the running App, so the view
 condition was dropped.
 
+Amended 2026-11-25 (TASK-41947): agent chat-create confirmations
+(`request_chat_create_confirm`) wait in their own loop outside `run_round`.
+With no running App, a confirmation that needs a round is now refused before
+one is armed: no card, park toast, badge or wait, and the call returns
+`{"allow": False, "remember": False}` (a remembered session grant needs no
+round and still applies). Unlike `run_round`, the chat-create bridge has no unresolved outcome.
+Its tool closure (`build_chat_create_tool_closures`) reports every non-Allow
+result, including timeout and cancellation, to the model as "The user
+declined. Do not retry this turn." and counts it as a denial, so this refusal
+reads the same way.
+
 ## Renumbering provenance
 
 Renumbered from ADR-067 to ADR-314 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-067 now refers to 067-library-top-level-pagination-contracts.md.

@@ -234,6 +234,15 @@ def unpark_round_payload(
             _retire_presentation(payload)
 
 
+def _app_cannot_answer(app: Any) -> bool:
+    """ADR-314: a never-run or exited App shows no card and takes no answer (TASK-41637,
+    TASK-41948); a host without ``is_running`` is live. Disposal settles later exits."""
+    try:
+        return not app.is_running
+    except AttributeError:
+        return False
+
+
 @dataclass
 class _DecisionClock:
     """Volatile answerable-time budget; never included in a card payload."""
@@ -1292,17 +1301,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
                 is_head = self.park_round_payload(kind, round_id, payload)
         try:
             app = self.read_controller_app()
-            # TASK-41637: a never-started or exited App can neither show a card nor
-            # deliver an answer, so nobody can answer: fail closed. A covered or
-            # unreconciled view does not matter; Console harnesses mark
-            # controller.app running and route its call_from_thread through their
-            # host (run_on_host, TASK-41948). A host without
-            # is_running (mobile context) is live. An exit mid-wait is runtime
-            # disposal's to settle.
-            try:
-                app_gone = not app.is_running
-            except AttributeError:
-                app_gone = False
+            app_gone = _app_cannot_answer(app)
             park_toast = self.read_controller_park_pending_approval()
             if hard_expired() or app_gone:
                 pass
@@ -3501,7 +3500,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
 
         Returns:
             ``{"allow": bool, "remember": bool}``. Every non-Allow path
-            (deny, cancel, stop, timeout, no wired UI) returns
+            (deny, cancel, stop, timeout, no wired UI or running App) returns
             ``allow=False``.
         """
         from tldw_chatbook.Agents.agent_models import AGENT_KIND_PRIMARY
@@ -3591,6 +3590,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
         if (
             self.read_controller_app() is None
             or self.read_controller_set_pending_chat_create() is None
+            or _app_cannot_answer(self.read_controller_app())  # TASK-41947
         ):
             if record is not None:
                 payload["_creation_token"].close()

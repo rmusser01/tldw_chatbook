@@ -1,8 +1,10 @@
 """Confirm rounds for agent-initiated chat creation (fork_chat / new_chat)."""
+import asyncio
 import threading
 from collections.abc import Callable
 
 import pytest
+from textual.app import App
 
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
@@ -144,6 +146,124 @@ def test_revoking_a_run_denies_its_chat_create_confirm(make_controller):
     assert not t.is_alive(), "the revoked confirm never released its thread"
     assert results["decision"] == {"allow": False, "remember": False}
     assert controller.pending_chat_create_ids() == []  # torn down, not armed
+
+
+# -- TASK-41947: no running app means no one can answer (ADR-314) ------------
+
+
+class _RecordingApp(App):
+    """A real Textual App that records, and drops, callbacks marshalled to it.
+
+    Not forwarding keeps a stray marshal visible to the assertions instead of
+    surfacing as Textual's "App is not running" error.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.marshalled: list = []
+
+    def call_from_thread(self, callback, *args, **kwargs):
+        self.marshalled.append(callback)
+
+
+def _never_run_app():
+    return _RecordingApp()
+
+
+def _exited_app():
+    app = _RecordingApp()
+
+    async def _run_and_exit() -> None:
+        async with app.run_test():
+            pass
+
+    asyncio.run(_run_and_exit())
+    app.marshalled.clear()
+    return app
+
+
+@pytest.mark.parametrize("session_shape", ["parked", "active", "legacy"])
+@pytest.mark.parametrize("make_app", [_never_run_app, _exited_app])
+def test_chat_create_confirm_without_a_running_app_is_refused_promptly(
+    make_controller, make_app, session_shape
+):
+    """The round can show no card and take no answer, so it fails closed.
+
+    ADR-314 arms no deadline by default; before TASK-41947 the parked round
+    waited forever and the mounted ones raised from ``call_from_thread``.
+    Nothing reaches the App: no card, no park toast, no badge.
+    """
+    controller = make_controller()
+    controller.app = make_app()
+    assert not controller.app.is_running
+    toasts, badges = [], []
+    controller.park_pending_approval = toasts.append
+    controller.add_pending_round = lambda *args, **kwargs: badges.append(args)
+    session_id = {
+        "parked": "s1",
+        "active": controller.store.ensure_session().id,
+        "legacy": None,
+    }[session_shape]
+    result = {}
+    t = threading.Thread(
+        target=lambda: result.update(
+            decision=controller.request_chat_create_confirm(
+                _payload(), session_id=session_id
+            )
+        ),
+        daemon=True,
+    )
+    t.start()
+    t.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+    try:
+        assert not t.is_alive(), "the chat-create confirmation is still waiting"
+    finally:
+        # Free a red run's worker instead of leaking a forever-waiting round.
+        for request_id in controller.pending_chat_create_ids():
+            controller.resolve_pending_chat_create(False, False, request_id=request_id)
+        t.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+    assert result["decision"] == {"allow": False, "remember": False}
+    assert controller.pending_chat_create_ids() == []
+    assert controller.pending_chat_create_payloads == []  # no card was shown
+    assert controller.app.marshalled == []
+    assert toasts == [] and badges == []
+
+
+async def test_chat_create_confirm_with_a_running_app_waits_for_its_answer(
+    make_controller,
+):
+    """A running App keeps the round live until the user answers (ADR-314).
+
+    The round is registered only after the no-running-app check passed, so a
+    registered round that is still waiting is the whole proof.
+    """
+    controller = make_controller()
+    app = App()
+    async with app.run_test():
+        controller.app = app
+        result = {}
+        t = threading.Thread(
+            target=lambda: result.update(
+                decision=controller.request_chat_create_confirm(
+                    _payload(), session_id="s1"
+                )
+            ),
+            daemon=True,
+        )
+        t.start()
+        try:
+            await asyncio.to_thread(
+                _wait_until, lambda: bool(controller.pending_chat_create_ids())
+            )
+            assert t.is_alive(), "a running App's chat-create round settled unanswered"
+        finally:
+            for request_id in controller.pending_chat_create_ids():
+                controller.resolve_pending_chat_create(
+                    True, False, request_id=request_id
+                )
+            await asyncio.to_thread(t.join, _CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+    assert not t.is_alive()
+    assert result["decision"] == {"allow": True, "remember": False}
 
 
 # ---------------------------------------------------------------------------
