@@ -2079,8 +2079,8 @@ jobs:
       # Round 21: TASK-33620.15.61's four sandboxed Console MCP catalog files
       # (30 tests, about 18 s in this step, 22 s in CI) join the sandboxed block
       # after the Skills recovery controls file.
-      # Round 27: TASK-42550's slot-drop file (bootstrap_profile, 31 tests;
-      # 174.8 s alone under this step's flags at load 31-55; at 24 tests it
+      # Round 27: TASK-42550's slot-drop file (bootstrap_profile, 35 tests;
+      # 216.9 s alone under this step's flags at load 34-50; at 24 tests it
       # was 148 s of a 51.7-min local run of the whole step), at the tail.
       # test_closed_loop_pending_submit_is_emergency_detachment: deselected
       # 2026-11-12: red on dev e0186fa10a (console_send_diagnostic ContextVar

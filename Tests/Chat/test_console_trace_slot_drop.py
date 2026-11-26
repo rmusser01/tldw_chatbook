@@ -294,6 +294,69 @@ async def test_edit_and_resend_after_a_drop_keeps_the_next_send(
         assert [route for _, route in _markers(app.db)] == markers
 
 
+def _fail_after_commit(monkeypatch, *, when=lambda _persisted: True, forge=None):
+    """Raise once, after the commit, on the first dispatch bind ``when`` names.
+
+    The gateway then reads the write back (`_reconcile_dispatch_write`).
+    Returns the state (``armed`` is False once raised) and, per read-back,
+    (outcome, replacement written, removal written). ``forge`` may rewrite
+    the read-back's keyword arguments.
+    """
+    from contextlib import contextmanager
+
+    from tldw_chatbook.Chat import console_trace_service as trace
+
+    service = trace.ConsoleTraceService
+    state = {"armed": True, "in_bind": False, "persisted": None}
+    outcomes = []
+    policy_of = trace.trace_critical_write_checkpoint_policy
+    bind, persist, reconcile = (
+        service.bind_and_mark_dispatch,
+        service.persist_request,
+        service._reconcile_dispatch_write,
+    )
+
+    @contextmanager
+    def policy(database):
+        with policy_of(database):
+            yield
+        persisted = state["persisted"]
+        if state["armed"] and state["in_bind"] and persisted and when(persisted):
+            state["armed"] = False
+            raise RuntimeError("post-commit failure")
+
+    def binding(self, *args, **kwargs):
+        state["in_bind"], state["persisted"] = True, None
+        try:
+            return bind(self, *args, **kwargs)
+        finally:
+            state["in_bind"] = False
+
+    def persisting(self, *args, **kwargs):
+        state["persisted"] = persist(self, *args, **kwargs)
+        return state["persisted"]
+
+    def reconciled(self, *args, **kwargs):
+        if forge is not None:
+            forge(kwargs)
+        outcome = reconcile(self, *args, **kwargs)
+        persisted = kwargs["persisted"]
+        outcomes.append(
+            (
+                outcome if isinstance(outcome, str) else "durable",
+                persisted.replacement is not None,
+                persisted.removal is not None,
+            )
+        )
+        return outcome
+
+    monkeypatch.setattr(trace, "trace_critical_write_checkpoint_policy", policy)
+    monkeypatch.setattr(service, "bind_and_mark_dispatch", binding)
+    monkeypatch.setattr(service, "persist_request", persisting)
+    monkeypatch.setattr(service, "_reconcile_dispatch_write", reconciled)
+    return state, outcomes
+
+
 @pytest.mark.usefixtures("shut_down_console_controllers")
 @pytest.mark.parametrize(
     ("case", "read_back"),
@@ -327,10 +390,7 @@ async def test_a_committed_slot_change_is_read_back_after_a_post_commit_failure(
     which the ledger's lineage trigger allows), and `forged_head` reads the
     write back against another planned head.
     """
-    from contextlib import contextmanager
     from dataclasses import replace as replaced
-
-    from tldw_chatbook.Chat import console_trace_service as trace
 
     async with _llamacpp_falls_back(
         tmp_path, monkeypatch, tool_first=False, project=case != "drop_no_project", busy=0
@@ -342,27 +402,7 @@ async def test_a_committed_slot_change_is_read_back_after_a_post_commit_failure(
             hosted.clear()
         elif case != "llama":
             hosted.append(True)
-        state = {"armed": True, "in_bind": False}
-        outcomes = []
-        original_policy = trace.trace_critical_write_checkpoint_policy
-        bind = trace.ConsoleTraceService.bind_and_mark_dispatch
-        reconcile = trace.ConsoleTraceService._reconcile_dispatch_write
         append = type(app.factory.repository).append_surface_replacement
-
-        @contextmanager
-        def policy(database):
-            with original_policy(database):
-                yield
-            if state["armed"] and state["in_bind"]:
-                state["armed"] = False
-                raise RuntimeError("post-commit failure")
-
-        def binding(self, *args, **kwargs):
-            state["in_bind"] = True
-            try:
-                return bind(self, *args, **kwargs)
-            finally:
-                state["in_bind"] = False
 
         def appended(self, cursor, *, segment_id, replacement):
             node = self.get_surface_node(cursor, replacement.replacement_node_id)
@@ -373,28 +413,14 @@ async def test_a_committed_slot_change_is_read_back_after_a_post_commit_failure(
                 )
             return append(self, cursor, segment_id=segment_id, replacement=replacement)
 
-        def reconciled(self, *args, **kwargs):
-            persisted = kwargs["persisted"]
+        def forge(kwargs):
             if case == "forged_head":
                 kwargs["surface_delta"] = replaced(
                     kwargs["surface_delta"],
-                    predecessor_surface_head_id=persisted.surface_head_id,
+                    predecessor_surface_head_id=kwargs["persisted"].surface_head_id,
                 )
-            outcome = reconcile(self, *args, **kwargs)
-            outcomes.append(
-                (
-                    outcome if isinstance(outcome, str) else "durable",
-                    persisted.replacement is not None,
-                    persisted.removal is not None,
-                )
-            )
-            return outcome
 
-        monkeypatch.setattr(trace, "trace_critical_write_checkpoint_policy", policy)
-        monkeypatch.setattr(trace.ConsoleTraceService, "bind_and_mark_dispatch", binding)
-        monkeypatch.setattr(
-            trace.ConsoleTraceService, "_reconcile_dispatch_write", reconciled
-        )
+        state, outcomes = _fail_after_commit(monkeypatch, forge=forge)
         monkeypatch.setattr(
             type(app.factory.repository), "append_surface_replacement", appended
         )
@@ -414,6 +440,35 @@ async def test_a_committed_slot_change_is_read_back_after_a_post_commit_failure(
         else:
             assert rows[0]["role"] != "system"
             assert [route for _, route in _markers(app.db)] == ["agent_first"]
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("tool_first", [False, True], ids=["slot_only", "tool_rows"])
+@pytest.mark.parametrize("project", [True, False], ids=["project", "no_project"])
+async def test_a_committed_fallback_rewrite_is_read_back_after_a_post_commit_failure(
+    tmp_path, monkeypatch, tool_first, project
+):
+    """The read-back of TASK-42525's fallback rewrite, after the review fix.
+
+    A llama.cpp run falls back to groq; the fallback chain's first call
+    removes the slot, and with ``tool_first`` also rewrites the run's tool
+    rows. It writes the removal last, after its rows: the read-back's other
+    write order. Its bind commits, then raises; the write reads back durable
+    and the run completes.
+    """
+    async with _llamacpp_falls_back(
+        tmp_path, monkeypatch, tool_first=tool_first, project=project, busy=3
+    ) as (app, groq, hosted):
+        state, outcomes = _fail_after_commit(
+            monkeypatch, when=lambda persisted: persisted.removal is not None
+        )
+
+        await _send(app, "Use calculator once" if tool_first else "Hello")
+
+        assert not state["armed"]
+        assert outcomes == [("durable", tool_first, True)]
+        assert [route for _, route in _markers(app.db)] == ["tool_loop"]
+        assert groq[0][0]["role"] != "system"
 
 
 @pytest.mark.asyncio

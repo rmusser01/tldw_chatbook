@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-25 17:35
-updated_date: 2026-11-26 16:21
+updated_date: 2026-11-26 16:40
 labels:
 - follow-up
 - console
@@ -109,7 +109,9 @@ Found while doing TASK-42525 (round 26, 2026-11-25); the owner's third decision 
 - **Minor 1.** The `drops_the_slot` case of the restored-slot Edit & resend test now says the send drops the slot under the 2026-11-26 amendment, and pins one `surface_removal` marker written by that turn's first call (one assertion; 5 passed).
 - **Minor 2.** `remove_surface_slot`'s docstring names both callers and says only a fallback chain's marker is counted by `rewritten_sequences`.
 - **Minor 3.** A `bundled` gateway scenario (the slot dropped and the first row changed) is refused with `unsupported_surface_change`, with no marker and nothing reserved.
-- **Lane.** The file is now 31 tests: 31 passed serially in 174.8 s under the step's flags at load 31-55, with no lease errors. The workflow comment says so.
+- **Re-review addition.** `test_a_committed_fallback_rewrite_is_read_back_after_a_post_commit_failure` (4 cases, built from the re-reviewer's probe) pins the read-back of TASK-42525's fallback rewrite, which writes its removal last: slot only, and tool rows plus slot, each with and without AGENTS.md. All read back durable and the run completes. Both read-back tests now share one arming helper (`_fail_after_commit`).
+  - Under the mutation `first = persisted.removal_node or min(written, ...)`, which makes the read-back assume every removal is written first (a drop's order), both tool-rows cases fail. The slot-only cases pass under it, since their write is a single removal row with nothing written before it. All 4 pass on head.
+- **Lane.** The file is now 35 tests: 35 passed serially in 216.9 s under the step's flags at load 34-50, with no lease errors, and 35 passed at `-n 4`. The workflow comment says so.
 - **Runs.**
   - The slot-drop, retry, chained-replacement, dispatch-recovery and project-instruction files at `-n 4`: 411 passed (load 47-57).
   - Soak, 20 rounds at `-n 4` (the slot-drop file, the edited retry test and the chain read-back test): 37 passed every round, 63-106 s a round, at load 25.4-61.6.
