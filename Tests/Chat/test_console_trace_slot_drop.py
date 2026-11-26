@@ -294,6 +294,128 @@ async def test_edit_and_resend_after_a_drop_keeps_the_next_send(
         assert [route for _, route in _markers(app.db)] == markers
 
 
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize(
+    ("case", "read_back"),
+    [
+        pytest.param("drop", ("durable", True, True), id="drop-project"),
+        pytest.param("restore", ("durable", True, False), id="restore-project"),
+        pytest.param("drop_no_project", ("durable", False, True), id="drop-no_project"),
+        pytest.param("llama", ("durable", True, False), id="llama-project"),
+        pytest.param("forged_row", ("unknown", True, True), id="forged_row"),
+        pytest.param("forged_head", ("unknown", True, True), id="forged_head"),
+    ],
+)
+async def test_a_committed_slot_change_is_read_back_after_a_post_commit_failure(
+    tmp_path, monkeypatch, case, read_back
+):
+    """TASK-42550 review, Important 1.
+
+    The dispatch-binding transaction commits, then its exit raises. The
+    gateway reads the write back (`_reconcile_dispatch_write`) and must find
+    it durable. The read-back checked the replacement rows in a fallback's
+    write order (replacement first, removal last), so a drop (its removal
+    first, the replacement after the marker) and a restore (the slot first,
+    the replacement after it) read back as unknown, and the run was blocked
+    though its trace was whole. Each case has a replacement (project
+    context); `drop-no_project` (a removal only) and `llama-project` (a
+    replacement only) are controls. ``read_back`` is (outcome, replacement
+    written, removal written).
+
+    The forged cases must still read back as unknown: `forged_row` writes the
+    drop's replacement row against the head before the marker (an ancestor,
+    which the ledger's lineage trigger allows), and `forged_head` reads the
+    write back against another planned head.
+    """
+    from contextlib import contextmanager
+    from dataclasses import replace as replaced
+
+    from tldw_chatbook.Chat import console_trace_service as trace
+
+    async with _llamacpp_falls_back(
+        tmp_path, monkeypatch, tool_first=False, project=case != "drop_no_project", busy=0
+    ) as (app, groq, hosted):
+        if case == "restore":
+            hosted.append(True)
+        await _send(app, "Hello")
+        if case == "restore":
+            hosted.clear()
+        elif case != "llama":
+            hosted.append(True)
+        state = {"armed": True, "in_bind": False}
+        outcomes = []
+        original_policy = trace.trace_critical_write_checkpoint_policy
+        bind = trace.ConsoleTraceService.bind_and_mark_dispatch
+        reconcile = trace.ConsoleTraceService._reconcile_dispatch_write
+        append = type(app.factory.repository).append_surface_replacement
+
+        @contextmanager
+        def policy(database):
+            with original_policy(database):
+                yield
+            if state["armed"] and state["in_bind"]:
+                state["armed"] = False
+                raise RuntimeError("post-commit failure")
+
+        def binding(self, *args, **kwargs):
+            state["in_bind"] = True
+            try:
+                return bind(self, *args, **kwargs)
+            finally:
+                state["in_bind"] = False
+
+        def appended(self, cursor, *, segment_id, replacement):
+            node = self.get_surface_node(cursor, replacement.replacement_node_id)
+            if case == "forged_row" and node.component_kind != "surface_removal":
+                marker = self.get_surface_node(cursor, replacement.predecessor_head_id)
+                replacement = replaced(
+                    replacement, predecessor_head_id=marker.predecessor_node_id
+                )
+            return append(self, cursor, segment_id=segment_id, replacement=replacement)
+
+        def reconciled(self, *args, **kwargs):
+            persisted = kwargs["persisted"]
+            if case == "forged_head":
+                kwargs["surface_delta"] = replaced(
+                    kwargs["surface_delta"],
+                    predecessor_surface_head_id=persisted.surface_head_id,
+                )
+            outcome = reconcile(self, *args, **kwargs)
+            outcomes.append(
+                (
+                    outcome if isinstance(outcome, str) else "durable",
+                    persisted.replacement is not None,
+                    persisted.removal is not None,
+                )
+            )
+            return outcome
+
+        monkeypatch.setattr(trace, "trace_critical_write_checkpoint_policy", policy)
+        monkeypatch.setattr(trace.ConsoleTraceService, "bind_and_mark_dispatch", binding)
+        monkeypatch.setattr(
+            trace.ConsoleTraceService, "_reconcile_dispatch_write", reconciled
+        )
+        monkeypatch.setattr(
+            type(app.factory.repository), "append_surface_replacement", appended
+        )
+
+        if read_back[0] == "unknown":
+            await app.controller.submit_draft("And now?", session_id=app.session.id)
+            assert app.controller.run_state.status.value == "blocked"
+            assert outcomes == [read_back]
+            return
+        result = await _send(app, "And now?")
+
+        assert not state["armed"]  # the failure was injected after the commit
+        assert outcomes == [read_back]
+        _calls, rows = _traced(app, result)
+        if case in {"restore", "llama"}:
+            assert rows[0]["role"] == "system"
+        else:
+            assert rows[0]["role"] != "system"
+            assert [route for _, route in _markers(app.db)] == ["agent_first"]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("harness", ["agent"], indirect=True)
 @pytest.mark.parametrize("restart", [False, True], ids=["warm", "restart"])
@@ -390,6 +512,7 @@ def _markers(database):
         "tool_loop",
         "retry",
         "fallback",
+        "bundled",
         "binding_not_first",
         "binding_no_slot",
         "binding_system_row",
@@ -409,12 +532,13 @@ async def test_the_system_slot_is_dropped_only_by_a_new_turns_first_call(
     with a system row keeps the slot (the existing header-owned rule); a
     leading row that is not a slot is never dropped; a tool-loop call, a
     retry and a fallback are refused before anything is reserved, each with
-    the code it had before this rule (the fallback's is its own rule's). The
-    `binding_*`
-    scenarios forge, at dispatch binding only, a call that is not its turn's
-    first, a surface that no longer leads with the slot, or a request that
-    leads with a system row: the binding transaction refuses to write the
-    removal, and the call stays reserved, as after any binding refusal.
+    the code it had before this rule (the fallback's is its own rule's); and
+    `bundled`, which also changes a row the existing rules refuse, is refused
+    with no marker written. The `binding_*` scenarios forge, at dispatch
+    binding only, a call that is not its turn's first, a surface that no
+    longer leads with the slot, or a request that leads with a system row:
+    the binding transaction refuses to write the removal, and the call stays
+    reserved, as after any binding refusal.
     """
     from tldw_chatbook.Chat import console_trace_service as trace
     from tldw_chatbook.Chat.console_trace_native_reader import (
@@ -535,6 +659,10 @@ async def test_the_system_slot_is_dropped_only_by_a_new_turns_first_call(
     elif scenario == "fallback":
         turn = [first[-1]]
         route, target, actor_id = ConsoleRequestRoute.TOOL_LOOP, _GROQ, actor
+    elif scenario == "bundled":
+        # The slot may go, but a changed row is still the existing rules'.
+        _, changed = _saved_message(database, conversation, "changed")
+        turn = [({"role": "user", "content": "changed"}, changed), *history[1:]]
     before = list(asked)
     if scenario.startswith("binding"):
         service_type = trace.ConsoleTraceService
@@ -590,7 +718,7 @@ async def test_the_system_slot_is_dropped_only_by_a_new_turns_first_call(
         assert _markers(database) == []
         assert _reserved(database) == 1
         return
-    if scenario in {"tool_loop", "retry", "fallback"}:
+    if scenario in {"tool_loop", "retry", "fallback", "bundled"}:
         with pytest.raises(TraceCallPersistenceError):
             await send(target, route, turn, actor_id, chain_id)
         assert asked == before

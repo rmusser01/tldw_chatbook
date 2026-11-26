@@ -1488,7 +1488,11 @@ _BUDGETS: dict[str, int] = {
     # measurement. Planning, the binding recheck and the write live in
     # console_trace_slot_restore.py; here, the planner hook and the binding's
     # removal-first write.
-    "tldw_chatbook/Chat/console_trace_service.py": 7056,
+    # 2026-11-26, TASK-42550 review (Important 1; same rule): 7056 -> 7059
+    # (+3), exact measurement. The dispatch read-back checks each replacement
+    # row against the node written before its own, so a drop's or restore's
+    # first write reads back as durable.
+    "tldw_chatbook/Chat/console_trace_service.py": 7059,
     # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
     # approved child trace segments (ADR-337 amendment 2026-11-17): create and

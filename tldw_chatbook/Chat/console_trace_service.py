@@ -1627,6 +1627,11 @@ class ConsoleTraceService:
         """Read only the exact attempted call and changed boundary material."""
         if reserved_call is None:
             return "unknown"
+        written = () if persisted is None else (
+            *persisted.chain_nodes,
+            *persisted.appended_nodes,
+            *(() if persisted.removal_node is None else (persisted.removal_node,)),
+        )
         try:
             with operation_owned_connection(database), database.transaction() as cursor:  # type: ignore[attr-defined]
                 durable = self.repository.get_call(cursor, reserved_call.call_id)
@@ -1656,15 +1661,7 @@ class ConsoleTraceService:
                     != persisted.header
                     or any(
                         self.repository.get_surface_node(cursor, node.node_id) != node
-                        for node in (
-                            *persisted.chain_nodes,
-                            *persisted.appended_nodes,
-                            *(
-                                ()
-                                if persisted.removal_node is None
-                                else (persisted.removal_node,)
-                            ),
-                        )
+                        for node in written
                     )
                 ):
                     return "unknown"
@@ -1673,7 +1670,12 @@ class ConsoleTraceService:
                     if persisted.replacement is None
                     else (*persisted.chain_replacements, persisted.replacement)
                 ) + (() if persisted.removal is None else (persisted.removal,))
-                for index, expected in enumerate(records):
+                # Each row follows the node written before its own, and the
+                # first node follows the planned head: a slot's restore or
+                # drop is written before the replacement (ADR-337, 2026-11-25/26).
+                predecessors = {node.node_id: node.predecessor_node_id for node in written}
+                first = min(written, key=lambda node: node.sequence, default=None)
+                for expected in records:
                     replacement = expected.replacement
                     row = cursor.execute(
                         """SELECT replacement_id, segment_id, predecessor_head_id,
@@ -1696,9 +1698,10 @@ class ConsoleTraceService:
                             replacement.end_sequence,
                             replacement.replacement_node_id,
                         )
-                        # A chain's later links follow its own placeholders.
-                        or index == 0
-                        and replacement.predecessor_head_id
+                        or replacement.predecessor_head_id
+                        != predecessors.get(replacement.replacement_node_id, "")
+                        or first is None
+                        or first.predecessor_node_id
                         != surface_delta.predecessor_surface_head_id
                     ):
                         return "unknown"
