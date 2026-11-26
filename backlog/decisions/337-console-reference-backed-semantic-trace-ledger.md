@@ -1041,9 +1041,12 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    before. A temporary chat with Capture On refuses the action before any
    row is created ("Capture On needs a saved chat. Save the chat or turn
    Capture off, then try again."), as decision 15 allows no durable call
-   before Save. Resend of a broken turn that re-runs from its user message
-   uses Continue's body and route, so it is traced the same way; its
-   in-place Retry of a failed reply is Retry's.
+   before Save. An action in a chat with a pinned response prefill still
+   sends with Capture Off: a captured send with a pinned prefill already
+   stops at the chat's second message (`surface_prefix_mismatch`), so that
+   route's own rules come first (a follow-up). Resend of a broken turn that
+   re-runs from its user message uses Continue's body and route, so it is
+   traced the same way; its in-place Retry of a failed reply is Retry's.
 
 2. **Which call is the action's.** On the plain provider path the call's
    route names it (EDIT, REGENERATE, CONTINUE). On the agent path the run's
@@ -1083,8 +1086,9 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    The proof is the rewritten tail's: every saved row's message is the direct
    parent of the next; the user is the call's own turn; a Continue's replies
    are saved assistant revisions; the oldest row hangs off the last retained
-   saved row, an active memory's boundary, or the root. The instruction and
-   the project rows are provider artifacts under the call's frozen policy.
+   saved row, an active memory's boundary, or the root; without it the call
+   is refused, even for a one-row replacement. The instruction and the
+   project rows are provider artifacts under the call's frozen policy.
    The replaced span keeps the 256-sequence and 256-link bounds (2026-11-06),
    and incoming rows count toward the 256-row bound. The planner proves it
    in the reservation transaction; the dispatch-binding transaction rechecks
@@ -1113,7 +1117,9 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    A reply the run did not bear, such as one a later Capture Off Retry wrote,
    is refused here: Retry is TASK-42555's. The dispatch-binding transaction
    recomputes the run from the call directly before the reserved one and
-   rechecks every point.
+   rechecks every point. A replacement that starts before the run's user row
+   (after Compact now, say) is an ordinary rewritten tail, as before, with
+   no project context.
 
 6. **What the trace shows.** Historical calls and heads stay as they were
    (decision 10): a Regenerate's or Edit & resend's earlier call keeps its
@@ -1130,11 +1136,10 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    so this request was not sent." Its Retry is Retry's (TASK-42555).
 
 Still refused: an action call over provider continuations in the replaced
-range (as for any rewritten tail); an action with a pinned response prefill
-(DIRECT_PREFILL carries no action; its call is planned as before); a re-record
-whose matched prefix stops before history the rewritten tail cannot prove;
-project context in a rewritten tail of any other send; and every shape the
-rules above do not name. Out of scope: citation repair (a follow-up).
+range (as for any rewritten tail); a re-record whose matched prefix stops
+before history the rewritten tail cannot prove; project context in a
+rewritten tail of any other send; and every shape the rules above do not
+name. Out of scope: citation repair (a follow-up).
 
 ## Current-owner integration amendment (2026-10-13)
 
