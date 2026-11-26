@@ -341,17 +341,77 @@ def test_a_plan_pinned_row_backed_by_a_real_pin_passes(repo):
     assert repo.module.main() == 0
 
 
+CREATED_AT_V2 = ("db_v1_to_v2_add.sql", "CREATE INDEX idx_zz_old ON t(a);\n")
+
+
 def test_a_dropped_row_needs_a_later_drop_index(repo, capsys):
     """TASK-42544: ``dropped`` claims no plan, only that a later step drops it."""
-    _declare(repo, "idx_zz_old")
+    repo.write_db(*CREATED_AT_V2)
     repo.write_census("idx_zz_old\tdropped\tsuperseded")
     assert repo.module.main() == 1
     assert "idx_zz_old" in capsys.readouterr().out
-    # A Python comment naming the drop is not a drop.
-    repo.write_db("Other_DB.py", "# DROP INDEX idx_zz_old\n")
+    # A Python comment or string naming the drop is not a migration step.
+    repo.write_db("Other_DB.py", '# DROP INDEX idx_zz_old\nDOC = "DROP INDEX idx_zz_old"\n')
     assert repo.module.main() == 1
-    repo.write_db("step.sql", "-- superseded\nDROP INDEX IF EXISTS idx_zz_old;\n")
+    repo.write_db("db_v2_to_v3_drop.sql", "-- superseded\nDROP INDEX IF EXISTS idx_zz_old;\n")
     assert repo.module.main() == 0
+
+
+def test_a_dropped_then_recreated_index_is_not_dropped(repo, capsys):
+    """The review's case: a step that drops a name and creates it again is live."""
+    repo.write_db("step.sql", "DROP INDEX idx_zz_old; CREATE INDEX idx_zz_old ON t(a);\n")
+    repo.write_census("idx_zz_old\tdropped\tsuperseded")
+    assert repo.module.main() == 1
+    assert "idx_zz_old" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("name", "body"),
+    [
+        # The same versioned step drops it, then creates it again (v81->v82).
+        ("db_v2_to_v3_rebuild.sql", "DROP INDEX idx_zz_old;\nCREATE INDEX idx_zz_old ON t(b);\n"),
+        # A later step creates it again.
+        ("db_v3_to_v4_readd.sql", "CREATE INDEX idx_zz_old ON t(a);\n"),
+        # A fresh-schema string outside the recovery catalogs still creates it.
+        ("Schema_DB.py", 'SCHEMA = "CREATE INDEX idx_zz_old ON t(a)"\n'),
+    ],
+    ids=["same-step-recreate", "later-step", "fresh-schema"],
+)
+def test_a_dropped_row_fails_while_anything_still_creates_the_index(repo, capsys, name, body):
+    repo.write_db(*CREATED_AT_V2)
+    repo.write_db("db_v2_to_v3_drop.sql", "DROP INDEX idx_zz_old;\n")
+    repo.write_census("idx_zz_old\tdropped\tsuperseded")
+    assert repo.module.main() == 0
+    repo.write_db(name, body)
+    assert repo.module.main() == 1
+    assert "idx_zz_old" in capsys.readouterr().out
+
+
+def test_a_recovery_catalog_quoting_the_declaration_keeps_it_dropped(repo):
+    """``recovery_*.py`` pins exact historical catalogs; they are not live."""
+    repo.write_db(*CREATED_AT_V2)
+    repo.write_db("db_v2_to_v3_drop.sql", "DROP INDEX idx_zz_old;\n")
+    repo.write_db("recovery_schema.py", 'V2 = ("CREATE INDEX idx_zz_old ON t(a)",)\n')
+    repo.write_census("idx_zz_old\tdropped\tsuperseded")
+    assert repo.module.main() == 0
+
+
+def test_drop_index_if_exists_names_no_phantom_if_and_fstring_drops_are_unseen(repo):
+    """``Prompts_DB.py`` drops an f-string name; that once recorded an index ``IF``."""
+    repo.write_db(
+        "Prompts_DB.py",
+        'def drop(self):\n'
+        '    conn.execute(f"DROP INDEX IF EXISTS {self._NAME}")\n'
+        'LITERAL = "DROP INDEX IF EXISTS idx_zz_literal"\n',
+    )
+    assert set(repo.module.declared_indexes(repo.module._DROP_INDEX)) == {"idx_zz_literal"}
+    # An f-string drop names nothing, so it cannot satisfy a ``dropped`` row.
+    repo.write_db(*CREATED_AT_V2)
+    repo.write_db(
+        "Other_DB.py", 'NAME = "idx_zz_old"\nSTEP = f"DROP INDEX IF EXISTS {NAME}"\n'
+    )
+    repo.write_census("idx_zz_old\tdropped\tsuperseded", "idx_zz_literal\tdropped\t-")
+    assert repo.module.main() == 1
 
 
 # ---------------------------------------------------------------------------
@@ -378,3 +438,23 @@ def test_the_real_tree_does_not_pin_an_index_it_asserts_is_absent(checker):
     }
     assert pinned, "the census records no plan-pinned index; this test is vacuous"
     assert pinned <= set(pins), sorted(pinned - set(pins))
+
+
+def test_the_real_tree_keeps_dropped_for_indexes_no_step_creates_again(checker):
+    """Every census name some versioned step drops, marked ``dropped``.
+
+    Only the rows already ``dropped`` may pass; the ones a step re-creates
+    (v67->v68's and v81->v82's canvas indexes) must stay live. Names are read
+    from the tree, not written here, so this file pins none of them.
+    """
+    census = checker.read_census()
+    dropped_somewhere = set(checker.declared_indexes(checker._DROP_INDEX)) & set(census)
+    flagged = {
+        name
+        for name, _reason in checker.undropped_rows(
+            {name: (checker.DROPPED, "") for name in dropped_somewhere}
+        )
+    }
+    already = {name for name in dropped_somewhere if census[name][0] == checker.DROPPED}
+    assert already and len(flagged) >= 2, (already, flagged)
+    assert flagged == dropped_somewhere - already
