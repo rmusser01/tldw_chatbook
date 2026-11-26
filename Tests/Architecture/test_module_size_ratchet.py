@@ -1476,7 +1476,11 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-23, PR #3517's port onto dev b31e3e9241 (round 24; owner decision
     # 2026-10-04, expand limits): dev measures 5,199, plus this branch's
     # +33, exact: 5,232.
-    "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5232,
+    # 2026-11-24, TASK-42529 (owner decision 2026-10-04, expand limits): +7,
+    # OpenAI's stream generator classifies its status error, 5,232 -> 5,239.
+    # 2026-11-25: re-measured after rebasing onto dev 692acb43dc, whose
+    # #3763 removed one line here: 5,239 -> 5,238, exact.
+    "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5238,
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
     "tldw_chatbook/Personal_Context/repository.py": 4997,
     # owner decision 2026-11-06 (expand limits, never contort code): TASK-39040

@@ -30,6 +30,7 @@ from typing import (
     List,
     Literal,
     Mapping,
+    NoReturn,
     Optional,
     Tuple,
     Union,
@@ -1040,6 +1041,94 @@ def safe_endpoint_for_metrics(api_endpoint: Any) -> str:
     return lowered if lowered in API_CALL_HANDLERS else UNRECOGNISED_ENDPOINT_LABEL
 
 
+def raise_for_http_error(
+    endpoint_lower: str, e: requests.exceptions.HTTPError, api_key: Optional[str]
+) -> NoReturn:
+    """Raise the typed chat error for a handler's HTTP status error.
+
+    TASK-42529: one classifier for a status error raised before a handler
+    returns and one a stream raises on its first read (OpenAI's).
+
+    Args:
+        endpoint_lower: The dispatched endpoint key, e.g. ``"openai"``.
+        e: The status error, raised by ``raise_for_status``.
+        api_key: The request's key, hidden in the provider's reason.
+
+    Raises:
+        ChatAPIError: Always; call it while ``e`` is handled, so the raised
+            error's context keeps the response the Console reads a reason from.
+    """
+    status_code = getattr(e.response, "status_code", 500)
+    # A streamed reply's body is first read here; a connection that drops
+    # before it arrives makes it no body, never a status-less error.
+    unreadable = (ValueError, AttributeError, requests.exceptions.RequestException)
+    if status_code in {400, 404}:
+        try:
+            payload = e.response.json()
+        except unreadable:
+            payload = None
+        unavailable = model_unavailable_error(endpoint_lower, status_code, payload)
+        if unavailable is not None:
+            raise unavailable from None
+    try:
+        raw_error_text = getattr(e.response, "text", None)
+    except requests.exceptions.RequestException:
+        raw_error_text = None
+    if raw_error_text is None:
+        raw_error_text = safe_llm_exception_message(e)
+    error_text = str(safe_llm_error_detail(raw_error_text))
+    logger.error(
+        "{} API call failed; status={}; reason=http_error",
+        endpoint_lower,
+        status_code,
+    )
+    if status_code == 401:
+        raise ChatAuthenticationError(
+            provider=endpoint_lower,
+            message=f"Authentication failed for {endpoint_lower}. Check API key. Detail: {error_text[:200]}",
+        )
+    elif status_code == 429:
+        # TASK-25901 AC#2: carry the provider's own Retry-After when it is
+        # a usable number of seconds; the retry backoff honours it.
+        retry_after_header = None
+        try:
+            raw_retry_after = getattr(e.response, "headers", {}).get("Retry-After")
+            if raw_retry_after is not None:
+                retry_after_header = float(str(raw_retry_after).strip())
+        except (TypeError, ValueError):
+            retry_after_header = None
+        from tldw_chatbook.LLM_Calls.provider_reason import rate_limit_reason
+
+        raise ChatRateLimitError(
+            provider=endpoint_lower,
+            message=f"Rate limit exceeded for {endpoint_lower}. Detail: {error_text[:200]}",
+            retry_after=retry_after_header,
+            # TASK-34100.2 AC#18: the provider's own reason, for Console.
+            provider_reason=rate_limit_reason(error_text, secrets=(api_key,)),
+        )
+    elif 400 <= status_code < 500:
+        # Carry the REAL status: 402/403 mean the money or quota is gone,
+        # which the fallback chain treats differently from a malformed
+        # request (TASK-25902 review C3c). Type unchanged for catchers.
+        raise ChatBadRequestError(
+            provider=endpoint_lower,
+            message=f"Bad request to {endpoint_lower} (Status {status_code}). Detail: {error_text[:200]}",
+            status_code=status_code,
+        )
+    elif 500 <= status_code < 600:
+        raise ChatProviderError(
+            provider=endpoint_lower,
+            message=f"Error from {endpoint_lower} server (Status {status_code}). Detail: {error_text[:200]}",
+            status_code=status_code,
+        )
+    else:
+        raise ChatAPIError(
+            provider=endpoint_lower,
+            message=f"Unexpected HTTP status {status_code} from {endpoint_lower}. Detail: {error_text[:200]}",
+            status_code=status_code,
+        )
+
+
 def chat_api_call(
     api_endpoint: str,
     messages_payload: List[Dict[str, Any]],  # CHANGED from input_data, prompt
@@ -1318,69 +1407,7 @@ def chat_api_call(
 
     # --- Exception Mapping (copied from your original, ensure it's still relevant) ---
     except requests.exceptions.HTTPError as e:
-        status_code = getattr(e.response, "status_code", 500)
-        if status_code in {400, 404}:
-            try:
-                payload = e.response.json()
-            except (ValueError, AttributeError):
-                payload = None
-            unavailable = model_unavailable_error(endpoint_lower, status_code, payload)
-            if unavailable is not None:
-                raise unavailable from None
-        raw_error_text = getattr(e.response, "text", None)
-        if raw_error_text is None:
-            raw_error_text = safe_llm_exception_message(e)
-        error_text = str(safe_llm_error_detail(raw_error_text))
-        logger.error(
-            "{} API call failed; status={}; reason=http_error",
-            endpoint_lower,
-            status_code,
-        )
-        if status_code == 401:
-            raise ChatAuthenticationError(
-                provider=endpoint_lower,
-                message=f"Authentication failed for {endpoint_lower}. Check API key. Detail: {error_text[:200]}",
-            )
-        elif status_code == 429:
-            # TASK-25901 AC#2: carry the provider's own Retry-After when it is
-            # a usable number of seconds; the retry backoff honours it.
-            retry_after_header = None
-            try:
-                raw_retry_after = getattr(e.response, "headers", {}).get("Retry-After")
-                if raw_retry_after is not None:
-                    retry_after_header = float(str(raw_retry_after).strip())
-            except (TypeError, ValueError):
-                retry_after_header = None
-            from tldw_chatbook.LLM_Calls.provider_reason import rate_limit_reason
-
-            raise ChatRateLimitError(
-                provider=endpoint_lower,
-                message=f"Rate limit exceeded for {endpoint_lower}. Detail: {error_text[:200]}",
-                retry_after=retry_after_header,
-                # TASK-34100.2 AC#18: the provider's own reason, for Console.
-                provider_reason=rate_limit_reason(error_text, secrets=(api_key,)),
-            )
-        elif 400 <= status_code < 500:
-            # Carry the REAL status: 402/403 mean the money or quota is gone,
-            # which the fallback chain treats differently from a malformed
-            # request (TASK-25902 review C3c). Type unchanged for catchers.
-            raise ChatBadRequestError(
-                provider=endpoint_lower,
-                message=f"Bad request to {endpoint_lower} (Status {status_code}). Detail: {error_text[:200]}",
-                status_code=status_code,
-            )
-        elif 500 <= status_code < 600:
-            raise ChatProviderError(
-                provider=endpoint_lower,
-                message=f"Error from {endpoint_lower} server (Status {status_code}). Detail: {error_text[:200]}",
-                status_code=status_code,
-            )
-        else:
-            raise ChatAPIError(
-                provider=endpoint_lower,
-                message=f"Unexpected HTTP status {status_code} from {endpoint_lower}. Detail: {error_text[:200]}",
-                status_code=status_code,
-            )
+        raise_for_http_error(endpoint_lower, e, api_key)
     except requests.exceptions.RequestException as e:
         # TASK-34100.2 AC#18: every shipped requests-based chat handler now
         # mounts chat_transport_retry (no 429 retry; the last 5xx is

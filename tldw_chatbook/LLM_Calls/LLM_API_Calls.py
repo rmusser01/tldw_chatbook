@@ -912,6 +912,13 @@ def chat_with_openai(
                             provider="openai",
                             model=final_model,
                         )
+                except requests.exceptions.HTTPError as e_status:
+                    # TASK-42529: classified as the non-streaming call's is (it
+                    # reads the body before `finally` closes the response); an
+                    # SSE error line lost the status (429, 5xx) and the reason.
+                    from tldw_chatbook.Chat.Chat_Functions import raise_for_http_error
+
+                    raise_for_http_error("openai", e_status, final_api_key)
                 except requests.exceptions.RequestException as e_request:
                     logger.opt(exception=True).error(
                         f"OpenAI: RequestException during stream: {e_request}"

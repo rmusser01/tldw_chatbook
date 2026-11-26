@@ -32,6 +32,7 @@ import requests
 
 from tldw_chatbook.Chat.Chat_Deps import ChatProviderError, ChatRateLimitError
 from tldw_chatbook.Chat.console_provider_gateway import safe_provider_error_copy
+from tldw_chatbook.Chat.refused_stream import REFUSED_STREAM_ADVICE
 
 # The handler reads its config table through the participant admission, which
 # the per-test redirect refuses; these fake the transport, not the config.
@@ -281,6 +282,109 @@ async def test_a_captured_rate_limit_is_retried_and_ends_on_the_rate_limit(
     assert (run_state.status.value, run_state.visible_copy) == ("failed", copy)
     assert notices == [copy]
     assert recovery is None  # no 'Trace capture blocked' card
+
+
+class _BrokenStream:
+    """A ``requests.Response.raw`` whose connection drops on the first read."""
+
+    def stream(self, *_args: object, **_kwargs: object):
+        from urllib3.exceptions import ProtocolError
+
+        raise ProtocolError("Connection broken: IncompleteRead")
+        yield b""  # pragma: no cover - makes this a generator
+
+    def close(self) -> None:
+        return None
+
+
+async def _streamed_openai_send(tmp_path, monkeypatch, status, body, *, capture):
+    """One streamed Console send over the real controller, gateway, trace
+    factory and OpenAI handler; only ``requests.Session.post`` is faked, and
+    it answers every POST with a real ``requests.Response``."""
+    from Tests.Chat.test_console_project_instruction_traces import _project_console
+
+    posts: list[str] = []
+
+    def post(_session: object, url: str, *_args: object, **_kwargs: object):
+        posts.append(url)
+        response = requests.Response()
+        response.status_code = status
+        response.url = url
+        if body is None:  # the stream opens, then the connection drops
+            response.headers["Content-Type"] = "text/event-stream"
+            response.raw = _BrokenStream()
+        else:
+            response.headers["Content-Type"] = "application/json"
+            response._content = json.dumps(body).encode()
+        return response
+
+    monkeypatch.setattr("requests.Session.post", post)
+    async with _project_console(
+        tmp_path, monkeypatch, hosted=True, response_mode="stream",
+        capture_enabled=capture,
+    ) as app:
+        result = await app.controller.submit_draft("Hello", session_id=app.session.id)
+        notices = [
+            message.content
+            for message in app.store.messages_for_session(app.session.id)
+            if message.role.value == "system"
+        ]
+        run_state = app.controller.run_state
+    assert result.accepted
+    return posts, run_state, notices
+
+
+_OPENAI_400 = {"error": {"message": "Invalid value for 'temperature'."}}
+
+
+@pytest.mark.parametrize(
+    ("status", "capture", "copy"),
+    [
+        (429, True, "rate limit exceeded. Status: 429. OpenAI says: “{}”"),
+        (429, False, "rate limit exceeded. Status: 429. OpenAI says: “{}”"),
+        (503, True, "provider unavailable. Status: 503. OpenAI says: “{}”"),
+        # A cloud refusal is not re-sent; its copy names the Streaming
+        # setting (TASK-37180), as the User Guide's chat-basics page says.
+        (400, True, "bad request. Status: 400. OpenAI says: “{}” " + REFUSED_STREAM_ADVICE),
+    ],
+)
+async def test_a_streamed_openai_failure_keeps_its_status_and_reason(
+    tmp_path, monkeypatch, status, capture, copy
+) -> None:
+    """TASK-42529: the Console streams by default, and OpenAI's stream
+    generator turned the status check's HTTPError into an SSE error line, so a
+    streamed 429 or 5xx read 'unexpected provider error', Capture On or Off.
+    The agent's in-place retry still takes a 429 or 5xx as transient (AC#4)."""
+    from tldw_chatbook.Chat.console_agent_bridge import console_run_budget
+
+    body = {429: _OPENAI_RPM_429, 503: _UNAVAILABLE_503, 400: _OPENAI_400}[status]
+    posts, run_state, notices = await _streamed_openai_send(
+        tmp_path, monkeypatch, status, body, capture=capture
+    )
+
+    expected = "Provider error from OpenAI: " + copy.format(body["error"]["message"])
+    assert (run_state.status.value, run_state.visible_copy) == ("failed", expected)
+    assert notices == [expected]
+    retries = 0 if status == 400 else console_run_budget().max_model_retries
+    assert len(posts) == 1 + retries
+
+
+async def test_a_stream_that_drops_after_it_opened_reads_as_before(
+    tmp_path, monkeypatch
+) -> None:
+    """TASK-42529 negative case: only the status check's error changed. A
+    stream that answered 200 and then lost its connection still reaches the
+    Console as the handler's SSE error line, and reads as it did."""
+    from tldw_chatbook.Chat.console_agent_bridge import console_run_budget
+
+    posts, run_state, notices = await _streamed_openai_send(
+        tmp_path, monkeypatch, 200, None, capture=True
+    )
+
+    expected = "Provider error from OpenAI: unexpected provider error."
+    assert (run_state.status.value, run_state.visible_copy) == ("failed", expected)
+    assert notices == [expected]
+    assert len(posts) == 1 + console_run_budget().max_model_retries
 
 
 def test_an_unclassified_provider_error_keeps_its_plain_copy() -> None:
@@ -603,18 +707,21 @@ def _real_transport():
     return stack
 
 
-def _dispatch(provider: str, base_url: str, model: str) -> BaseException:
+def _dispatch(
+    provider: str, base_url: str, model: str, streaming: bool = False
+) -> BaseException:
     from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 
     with _real_transport(), pytest.raises(Exception) as raised:
-        chat_api_call(
+        reply = chat_api_call(
             provider,
             messages_payload=[{"role": "user", "content": "Say OK"}],
             api_key="sk-test-key-0123456789",
             model=model,
-            streaming=False,
+            streaming=streaming,
             api_base_url=base_url,
         )
+        list(reply)  # a stream may check its status on the first read
     return raised.value
 
 
@@ -645,11 +752,14 @@ _HUGGINGFACE_429 = {
         ),
     ],
 )
+# TASK-42529: streamed too. OpenAI checks a stream's status on its first read
+# and the others before they return it; each must read the same either way.
+@pytest.mark.parametrize("streaming", [False, True])
 def test_a_real_429_through_the_mounted_transport_is_a_rate_limit(
-    provider: str, model: str, body: dict, reason_start: str
+    provider: str, model: str, body: dict, reason_start: str, streaming: bool
 ) -> None:
     with _StubServer(429, body) as stub:
-        error = _dispatch(provider, stub.base_url, model)
+        error = _dispatch(provider, stub.base_url, model, streaming)
 
     assert isinstance(error, ChatRateLimitError), (type(error), str(error))
     assert error.provider_reason.startswith(reason_start)
@@ -682,18 +792,22 @@ def test_an_exhausted_5xx_retry_reports_the_providers_status(
 
 
 @pytest.mark.loopback_network
-def test_a_real_google_429_through_the_mounted_transport_is_a_rate_limit() -> None:
+@pytest.mark.parametrize("streaming", [False, True])  # TASK-42529 AC#3
+def test_a_real_google_429_through_the_mounted_transport_is_a_rate_limit(
+    streaming: bool,
+) -> None:
     from tldw_chatbook.LLM_Calls import LLM_API_Calls
 
     with _StubServer(429, _GOOGLE_429) as stub:
         with _real_transport(), pytest.raises(Exception) as raised:
-            LLM_API_Calls.chat_with_google(
+            reply = LLM_API_Calls.chat_with_google(
                 [{"role": "user", "content": "Say OK"}],
                 model="gemini-flash-latest",
                 api_key="AIza-test-key",
-                streaming=False,
+                streaming=streaming,
                 api_base_url=stub.base_url,
             )
+            list(reply)
 
     assert isinstance(raised.value, ChatRateLimitError), str(raised.value)
     assert raised.value.provider_reason.startswith("You exceeded your current quota")
@@ -791,18 +905,19 @@ def _openai_short_timeout():
     )
 
 
-def _dispatch_openai(base_url: str) -> BaseException:
+def _dispatch_openai(base_url: str, streaming: bool = False) -> BaseException:
     from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 
     with _openai_short_timeout(), pytest.raises(Exception) as raised:
-        chat_api_call(
+        reply = chat_api_call(
             "openai",
             messages_payload=[{"role": "user", "content": "Say OK"}],
             api_key="sk-test-key-0123456789",
             model="gpt-5.6-terra",
-            streaming=False,
+            streaming=streaming,
             api_base_url=base_url,
         )
+        list(reply)  # OpenAI's stream checks its status on the first read
     return raised.value
 
 
@@ -849,13 +964,15 @@ def test_a_dispatched_openai_read_timeout_is_posted_once_and_reads_as_a_timeout(
 
 
 @pytest.mark.loopback_network
-def test_an_openai_429_with_the_shipped_retry_count_is_one_post_and_a_rate_limit() -> (
-    None
-):
+@pytest.mark.parametrize("streaming", [False, True])  # TASK-42529
+def test_an_openai_429_with_the_shipped_retry_count_is_one_post_and_a_rate_limit(
+    streaming: bool,
+) -> None:
     """Nothing in the transport is patched: the 429 reaches
-    ``raise_for_status`` and the dispatcher reads OpenAI's reason."""
+    ``raise_for_status`` and the dispatcher reads OpenAI's reason. Streamed,
+    the body is read before the generator closes the response."""
     with _StubServer(429, _OPENAI_429) as stub:
-        error = _dispatch_openai(stub.base_url)
+        error = _dispatch_openai(stub.base_url, streaming)
 
     assert isinstance(error, ChatRateLimitError), (type(error), str(error))
     assert error.provider_reason.startswith("You exceeded your current quota")
@@ -864,16 +981,61 @@ def test_an_openai_429_with_the_shipped_retry_count_is_one_post_and_a_rate_limit
 
 
 @pytest.mark.loopback_network
-def test_an_openai_5xx_is_posted_once_and_keeps_its_status() -> None:
+@pytest.mark.parametrize("streaming", [False, True])  # TASK-42529
+def test_an_openai_5xx_is_posted_once_and_keeps_its_status(streaming: bool) -> None:
     """Dev's behaviour: no transport retry on the owned session, so the 503
     reaches ``raise_for_status`` with its own status after one POST."""
     with _StubServer(503, _UNAVAILABLE_503) as stub:
-        error = _dispatch_openai(stub.base_url)
+        error = _dispatch_openai(stub.base_url, streaming)
 
     assert isinstance(error, ChatProviderError), (type(error), str(error))
     assert error.status_code == 503
     assert "Network error" not in str(error)
     assert stub.hits == 1
+    assert safe_provider_error_copy("openai", error) == (
+        "Provider error from OpenAI: provider unavailable. Status: 503. "
+        "OpenAI says: “The server is overloaded.”"
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "error_type", "category"),
+    [
+        (429, ChatRateLimitError, "rate limit exceeded"),
+        (503, ChatProviderError, "provider unavailable"),
+    ],
+)
+def test_a_streamed_openai_status_whose_body_never_arrives_keeps_its_status(
+    status: int, error_type: type, category: str
+) -> None:
+    """TASK-42529 review: a streamed reply's error body is first read by the
+    dispatcher's classifier. A connection that drops after the headers made
+    that read raise ChunkedEncodingError, which left with no status and read
+    'unexpected provider error' again. An unreadable body is no body."""
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+    def post(_session: object, url: str, *_args: object, **_kwargs: object):
+        response = requests.Response()
+        response.status_code = status
+        response.url = url
+        response.raw = _BrokenStream()
+        return response
+
+    with patch("requests.Session.post", post), pytest.raises(error_type) as raised:
+        list(
+            chat_api_call(
+                "openai",
+                messages_payload=[{"role": "user", "content": "Say OK"}],
+                api_key="sk-proj-test-key",
+                model="gpt-4o",
+                streaming=True,
+            )
+        )
+
+    assert raised.value.status_code == status
+    assert safe_provider_error_copy("openai", raised.value) == (
+        f"Provider error from OpenAI: {category}. Status: {status}."
+    )
 
 
 # --- The local OpenAI-compatible family and KoboldCpp (review round 2, R3-1) --

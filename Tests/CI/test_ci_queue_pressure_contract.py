@@ -1282,6 +1282,9 @@ ADMISSION_3_TARGETS = (
     # bootstrap_profile nodes (rate limits, OpenRouter replies, the wizard's
     # key check and local streaming), on no lane before.
     "Tests/Chat/test_rate_limit_reads_as_rate_limit.py",
+    # TASK-42529: OpenAI's streamed 400 leaves the stream as a typed error
+    # (one bootstrap_profile node; the rest of its file is sandboxed).
+    "Tests/Chat/test_openai_streaming_usage.py::test_400_not_naming_stream_options_is_passed_through_unretried",
     "Tests/LLM_Calls/test_openrouter_response_extras.py",
     "Tests/Wizards/test_first_run_key_check.py",
     "Tests/Wizards/test_first_run_local_streaming.py",
