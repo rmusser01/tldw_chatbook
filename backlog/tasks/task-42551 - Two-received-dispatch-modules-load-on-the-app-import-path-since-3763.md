@@ -5,6 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-25 22:10
+updated_date: 2026-11-26 00:25
 labels:
 - console
 - performance
@@ -32,6 +33,14 @@ Found by round 26's final gate (2026-11-25). `Tests/Performance/test_app_import_
 - [x] #2 `ConsoleRuntime.owns_session` and `_require_received_custody_current` behave as before for every caller
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Turn the class-body import back into two wrappers that import `console_received_dispatch` when called.
+2. Raise `console_runtime.py`'s size row by its exact growth, with a dated comment.
+3. Run the module-count guard, the boot budget set and the tests that reach the two methods, on dev and with the change.
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
@@ -40,6 +49,6 @@ Found by round 26's final gate (2026-11-25). `Tests/Performance/test_app_import_
 Evidence:
 - **Module diff.** On a scratch probe that reuses the guard's isolated-import helper, dev 4bf5706204 loaded 687 modules and 0704967ec9 loaded 689. The two added modules are exactly `Chat.console_received_dispatch` and `Chat.console_preparation_reads`. An import trace shows `console_runtime.py:3043`, the class-body import, pulling both.
 - **Guard.** The guard is red on dev 692acb43dc and green with this change. The rest of the boot budget set passes (34 passed).
-- **Callers.** The tests that reach `owns_session` or `_require_received_custody_current` (18 files) give 340 passed, 21 failed and 1 error with this change. Run serially on dev 692acb43dc, the same 21 fail, so none of them comes from this change. They are in `test_native_plugin_hook_preparation.py` (8), `test_native_v2_mcp_events.py` (7), `test_console_poll_reconciliation.py` (3) and `test_console_staged_evidence_sessions.py` (3).
+- **Callers.** The tests that reach `owns_session` or `_require_received_custody_current` (18 files) give 340 passed, 21 failed and 1 error with this change. Run serially on dev 692acb43dc, the same 21 fail, and the same node errors at teardown (`test_native_v2_mcp_events.py::test_session_end_nested_workers_consume_original_holds_after_capacity_close`), so none of them comes from this change. They are in `test_native_plugin_hook_preparation.py` (8), `test_native_v2_mcp_events.py` (7), `test_console_poll_reconciliation.py` (3) and `test_console_staged_evidence_sessions.py` (3).
 - **Size row.** `console_runtime.py` measures 7,103 on dev. It is +5 here, so the row goes 7,104 -> 7,108, an exact raise with a dated comment.
 <!-- SECTION:NOTES:END -->
