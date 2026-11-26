@@ -530,6 +530,17 @@ class RewrittenTailWitness:
             boundary, or None when the oldest row starts the conversation.
         memory_anchor: True when ``anchor_message_id`` is the boundary of an
             active conversation memory, which replaced every older row.
+        reply: Saved replies after the current user, each a direct child of
+            the row before it; only a Continue's call carries them (ADR-337
+            amendment 2026-11-26, TASK-42560).
+        instruction: A Continue's provider-only instruction after ``reply``.
+        project_context_count: Project-context rows that end the range, under
+            the call's frozen policy. Only an action's call, or the send
+            after an action's run, carries them.
+        after_call_id: For the send after an action's run, the run's latest
+            call; its rows after the re-recorded user are the range.
+        unanswered_anchor: True when ``anchor_message_id`` is that run's own
+            failed, empty reply, whose parent is the last retained row.
 
     Raises:
         ValueError: If an identity is not a canonical UUIDv4 string, a history
@@ -541,15 +552,47 @@ class RewrittenTailWitness:
     user_revision_id: str
     anchor_message_id: str | None = None
     memory_anchor: bool = False
+    reply: tuple[TraceProvenance, ...] = field(default=(), kw_only=True)
+    instruction: TraceProvenance | None = field(default=None, kw_only=True)
+    project_context_count: int = field(default=0, kw_only=True)
+    after_call_id: str | None = field(default=None, kw_only=True)
+    unanswered_anchor: bool = field(default=False, kw_only=True)
 
     def __post_init__(self) -> None:
         SemanticRevisionRef(self.user_revision_id)
         if self.anchor_message_id is not None:
             SemanticRevisionRef(self.anchor_message_id)
+        if self.after_call_id is not None:
+            _validate_stable_opaque_id(self.after_call_id, "after_call_id")
         if (
             type(self.history) is not tuple
-            or len(self.history) + 1 > MAX_SURFACE_REPLACEMENT_SPAN
-            or any(rewritten_history_revision_id(row) is None for row in self.history)
+            or type(self.reply) is not tuple
+            or type(self.project_context_count) is not int
+            or self.project_context_count < 0
+            or self.descriptor_count > MAX_SURFACE_REPLACEMENT_SPAN
+            or any(
+                rewritten_history_revision_id(row) is None
+                for row in self.history + self.reply
+            )
+            or bool(self.reply) is not (self.instruction is not None)
+            or (
+                self.instruction is not None
+                and (
+                    type(self.instruction) is not ProviderArtifactTraceProvenance
+                    or self.instruction.source
+                    is not TraceProvenanceSource.ACTIVE_REQUEST
+                )
+            )
+            or (self.after_call_id is not None and self.instruction is not None)
+            or type(self.unanswered_anchor) is not bool
+            or (
+                self.unanswered_anchor
+                and (
+                    self.after_call_id is None
+                    or self.anchor_message_id is None
+                    or self.memory_anchor
+                )
+            )
             or type(self.memory_anchor) is not bool
             or (self.memory_anchor and self.anchor_message_id is None)
         ):
@@ -557,16 +600,32 @@ class RewrittenTailWitness:
 
     @property
     def descriptor_count(self) -> int:
-        """Count the saved history rows and the current user."""
-        return len(self.history) + 1
+        """Count the history, the current user, a reply, and project context."""
+        return (
+            len(self.history)
+            + 1
+            + len(self.reply)
+            + int(self.instruction is not None)
+            + self.project_context_count
+        )
 
     def matches_descriptors(self, descriptors: tuple[TraceProvenance, ...]) -> bool:
-        """Match the exact saved history followed by the current user."""
+        """Match the history, the current user, then the call's own rows."""
+        user = len(self.history)
+        reply_end = user + 1 + len(self.reply)
+        context = reply_end + int(self.instruction is not None)
         return (
             len(descriptors) == self.descriptor_count
-            and tuple(descriptors[:-1]) == self.history
-            and current_turn_source_revision_id(descriptors[-1])
+            and tuple(descriptors[:user]) == self.history
+            and current_turn_source_revision_id(descriptors[user])
             == self.user_revision_id
+            and tuple(descriptors[user + 1 : reply_end]) == self.reply
+            and (self.instruction is None or descriptors[reply_end] == self.instruction)
+            and all(
+                type(item) is ProviderArtifactTraceProvenance
+                and item.source is TraceProvenanceSource.PROJECT_INSTRUCTION
+                for item in descriptors[context:]
+            )
         )
 
 
@@ -615,6 +674,10 @@ class FallbackRewriteWitness:
     def matches_descriptors(self, descriptors: tuple[TraceProvenance, ...]) -> bool:
         """Match the exact new tool rows."""
         return tuple(descriptors) == self.descriptors
+
+
+#: A direct-path action call may carry its rewritten tail (TASK-42560).
+_WITNESS_ROUTES = frozenset({"agent_first", "fresh", "edit", "regenerate", "continue"})
 
 
 def replacement_descriptor_count(
@@ -737,7 +800,9 @@ class SurfaceDeltaAdmission:
             if (
                 self.replacement_range is None
                 or self.replacement_range.component_name != "messages_payload"
-                or self.route_identity not in {"agent_first", "fresh"}
+                or self.route_identity not in _WITNESS_ROUTES
+                or type(witness) is CompletedToolTurnWitness
+                and self.route_identity not in {"agent_first", "fresh"}
                 or not witness.matches_descriptors(self.descriptors)
             ):
                 raise ValueError("surface_delta_shape")
@@ -846,7 +911,9 @@ class VerifiedSurfaceDelta:
             if (
                 self.replacement is None
                 or len(self.items) != witness.descriptor_count - 1
-                or self.route_identity not in {"agent_first", "fresh"}
+                or self.route_identity not in _WITNESS_ROUTES
+                or type(witness) is CompletedToolTurnWitness
+                and self.route_identity not in {"agent_first", "fresh"}
                 or self.replacement.item.component_name != "messages_payload"
                 or any(
                     item.component_name != "messages_payload"

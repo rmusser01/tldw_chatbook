@@ -501,6 +501,24 @@ class SavedRevisionTraceProvenance:
         SemanticRevisionRef(self.revision_id)
 
 
+#: Actions traced as their own calls (ADR-337 amendment 2026-11-26).
+TRACED_ACTION_ROUTES = frozenset(
+    {
+        ConsoleRequestRoute.EDIT,
+        ConsoleRequestRoute.REGENERATE,
+        ConsoleRequestRoute.CONTINUE,
+    }
+)
+#: Routes whose descriptor may name the action they belong to.
+_ACTION_CARRIER_ROUTES = frozenset(
+    {
+        ConsoleRequestRoute.AGENT_FIRST,
+        ConsoleRequestRoute.TOOL_LOOP,
+        ConsoleRequestRoute.LLAMA_FALLBACK,
+    }
+)
+
+
 @dataclass(frozen=True, slots=True)
 class RequestRouteTraceProvenance:
     """Content-free logical route annotation outside value-parallel slots."""
@@ -512,10 +530,20 @@ class RequestRouteTraceProvenance:
     # A spawned child's call: the saved user revision of the spawning turn.
     # The child's own rows carry no saved revision (TASK-41310).
     parent_revision_id: str | None = field(default=None, repr=False)
+    # The action whose agent run, or llama.cpp resend, this call belongs to
+    # (ADR-337 amendment 2026-11-26, TASK-42560). A direct call's own route
+    # names its action instead.
+    action: ConsoleRequestRoute | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if type(self.route) is not ConsoleRequestRoute:
             raise ValueError("route must be a ConsoleRequestRoute")
+        if self.action is not None and (
+            self.action not in TRACED_ACTION_ROUTES
+            or self.route not in _ACTION_CARRIER_ROUTES
+            or self.parent_revision_id is not None
+        ):
+            raise TraceProvenanceAlignmentError("action does not match route")
         record = next(
             item for item in CONSOLE_REQUEST_ROUTE_CENSUS if item.route is self.route
         )
@@ -552,6 +580,7 @@ def request_route_provenance(
     actor_id: str | None = None,
     chain_id: str | None = None,
     parent_revision_id: str | None = None,
+    action: ConsoleRequestRoute | None = None,
 ) -> RequestRouteTraceProvenance:
     """Build the structural route descriptor from the closed route census."""
 
@@ -564,7 +593,15 @@ def request_route_provenance(
         actor_id=actor_id,
         chain_id=chain_id,
         parent_revision_id=parent_revision_id,
+        action=action,
     )
+
+
+def route_action(record: RequestRouteTraceProvenance) -> ConsoleRequestRoute | None:
+    """Return the traced action a call belongs to, if any (TASK-42560)."""
+    if record.route in TRACED_ACTION_ROUTES:
+        return record.route
+    return record.action
 
 
 def stream_fallback_route_provenance(
@@ -592,8 +629,11 @@ def stream_fallback_route_provenance(
             actor_id=original.actor_id,
             chain_id=original.chain_id,
             parent_revision_id=original.parent_revision_id,
+            action=original.action,
         )
-    return request_route_provenance(ConsoleRequestRoute.LLAMA_FALLBACK)
+    return request_route_provenance(
+        ConsoleRequestRoute.LLAMA_FALLBACK, action=route_action(original)
+    )
 
 
 @dataclass(frozen=True, slots=True)

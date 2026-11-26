@@ -24,8 +24,8 @@ from collections.abc import Mapping
 from dataclasses import replace
 
 #: Routes of a turn's first call, the only calls that may put the slot back
-#: or drop it.
-RESTORING_ROUTES = frozenset({"agent_first", "fresh"})
+#: or drop it. A direct action call is its turn's first call (TASK-42560).
+RESTORING_ROUTES = frozenset({"agent_first", "fresh", "edit", "regenerate", "continue"})
 
 
 def _has_slot(entries: tuple[tuple[int, tuple[str, str, str]], ...]) -> bool:

@@ -269,17 +269,30 @@ transcript:
   removal. Earlier calls keep the system prompt as they sent it, and
   switching back to llama.cpp puts it back, as above. Here too only a
   message's first call can do this.
-- Edit & resend and Regenerate send their reply with capture off, so that reply
-  has no trace call of its own. Your next send in the chat is captured as usual.
-  It records the edited branch as one bounded replacement of the earlier trace
-  history, and it does not ask you to choose an action.
-- **Continue**, **Retry** on a failed reply, and **Impersonate** also send with
-  capture off, so the trace has no call for them. A citation repair ("Citations
-  repaired") is sent with capture off too; the reply it repairs keeps its own
-  trace call. Your next send in the chat is captured as usual.
+- **Edit & resend**, **Regenerate** and **Continue** are captured as calls of
+  their turn, with or without project instructions (AGENTS.md) and with prompt
+  mix-ins, on the agent path and on the plain provider path. The action's call
+  records its turn again from your message: the edited message for Edit &
+  resend, or the message that the replaced or continued reply answers. A
+  Continue's call also records the reply it extends and Console's "Continue
+  and extend the selected message." instruction after it. Earlier calls keep
+  their requests and replies, so a regenerated turn lists both calls. Your next
+  message is captured as usual, also when the action's own reply failed.
+  **Resend** of a broken turn that starts again from your message is captured
+  the same way.
+- In a temporary chat with Capture On, these actions ask you to save the chat
+  or turn Capture off first. In a chat with a pinned response prefill they
+  still send with capture off. **Retry** of a failed reply also still sends
+  with capture off; if it rewrote a reply that a captured action left failed,
+  your next message stops at **Trace capture could not start** (TASK-42555).
+- **Impersonate** sends with capture off, so the trace has no call for it. A
+  citation repair ("Citations repaired") is sent with capture off too; the
+  reply it repairs keeps its own trace call. Your next send in the chat is
+  captured as usual.
 - After Compact now, the next captured send on the Console's default agent path
-  records the compacted history the same way: the conversation memory replaces
-  the older turns it summarized. On the plain provider path (character chats,
+  records the compacted history as one bounded replacement of the earlier trace
+  history, without asking you to choose an action: the conversation memory
+  replaces the older turns it summarized. On the plain provider path (character chats,
   or `[console] agent_runtime = false`), a captured send still carries every
   older turn and no memory, so there is nothing to replace (TASK-37417).
   Old trace events are never rewritten.

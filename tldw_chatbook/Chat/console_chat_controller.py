@@ -292,6 +292,12 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     frozen_policy_from_provenance,
 )
 from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
+from tldw_chatbook.Chat.console_action_capture import (  # TASK-42560
+    action_capture_refusal,
+    saved_rows,
+    stream_action,
+    turn_user_id,
+)
 from tldw_chatbook.Chat.console_trace_custom_pii import (
     redact_pii_value_for_ruleset_revision,
 )
@@ -18448,6 +18454,7 @@ class ConsoleChatController:
                 session_id,
                 "Nothing to continue before the first message.",
             )
+        trace_source = saved_rows(provider_messages)  # TASK-42560
         (
             provider_messages,
             refuse,
@@ -18481,13 +18488,18 @@ class ConsoleChatController:
             return refusal  # TASK-33621.4: before commit, never Failed
         if refusal := self._current_mixin_refusal(session_id, mixin_current):
             return refusal
+        if refusal := action_capture_refusal(self, session_id):
+            return self._block(session_id, refusal)
         assistant = self.store.append_message(
             session_id,
             role=ConsoleMessageRole.ASSISTANT,
             content="",
             persist=self.store.persistence is not None,
         )
-        return await self._stream_assistant_response(
+        return await stream_action(
+            self,
+            trace_source_messages=trace_source,
+            user_id=turn_user_id(self, session_id, assistant.id),
             route=ConsoleRequestRoute.CONTINUE,
             mixin_observation_revision=mixin_current.revision if mixin_current is not None else None,
             mixin_anchor_id=mixin_anchor_id,
@@ -18646,6 +18658,7 @@ class ConsoleChatController:
                 session_id,
                 "Nothing to regenerate before the first message.",
             )
+        trace_source = saved_rows(provider_messages)  # TASK-42560
         (
             provider_messages,
             refuse,
@@ -18679,6 +18692,8 @@ class ConsoleChatController:
         if refusal := self._current_mixin_refusal(session_id, mixin_current):
             return refusal
         prefill = self._pinned_prefill_for_session(session_id)
+        if refusal := action_capture_refusal(self, session_id):
+            return self._block(session_id, refusal)
         self.clear_original_attempt(message_id)
         new_message = self.store.create_sibling(
             message_id,
@@ -18689,7 +18704,10 @@ class ConsoleChatController:
         existing_message_ids = {
             row.id for row in self.store.all_messages_for_session(session_id)
         }
-        result = await self._stream_assistant_response(
+        result = await stream_action(
+            self,
+            trace_source_messages=trace_source,
+            user_id=turn_user_id(self, session_id, new_message.id),
             route=ConsoleRequestRoute.REGENERATE,
             mixin_observation_revision=mixin_current.revision if mixin_current is not None else None,
             mixin_anchor_id=mixin_anchor_id,
@@ -19770,6 +19788,7 @@ class ConsoleChatController:
         mixin_anchor_id = self._ensure_user_continuation_instruction(
             provider_messages, attempt_id=turn_context.library_authority.attempt_id
         )
+        trace_source = saved_rows(provider_messages)  # TASK-42560
         (
             provider_messages,
             refuse,
@@ -19803,6 +19822,8 @@ class ConsoleChatController:
         if refusal := self._current_mixin_refusal(session_id, mixin_current):
             return refusal
         prefill = self._pinned_prefill_for_session(session_id)
+        if refusal := action_capture_refusal(self, session_id):
+            return self._block(session_id, refusal)
 
         # Every transform succeeded: now (and only now) fork the edited USER
         # sibling and append the empty ASSISTANT node to stream into.
@@ -19835,19 +19856,25 @@ class ConsoleChatController:
             ),
         )
         synthetic_id = ancestors[-1].id
-        provider_messages = [
-            {**row, NATIVE_MESSAGE_ID_KEY: edited_message.id}
-            if row.get(NATIVE_MESSAGE_ID_KEY) == synthetic_id
-            else row
-            for row in provider_messages
-        ]
+        provider_messages, trace_source = (
+            [
+                {**row, NATIVE_MESSAGE_ID_KEY: edited_message.id}
+                if row.get(NATIVE_MESSAGE_ID_KEY) == synthetic_id
+                else row
+                for row in rows
+            ]
+            for rows in (provider_messages, trace_source)
+        )
         assistant = self.store.append_message(
             session_id,
             role=ConsoleMessageRole.ASSISTANT,
             content="",
             persist=self.store.persistence is not None,
         )
-        return await self._stream_assistant_response(
+        return await stream_action(
+            self,
+            trace_source_messages=trace_source,
+            user_id=edited_message.id,
             route=ConsoleRequestRoute.EDIT,
             mixin_observation_revision=mixin_current.revision if mixin_current is not None else None,
             mixin_anchor_id=mixin_anchor_id,

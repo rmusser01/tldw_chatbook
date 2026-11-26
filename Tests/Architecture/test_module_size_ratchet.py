@@ -344,7 +344,13 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-24, TASK-33620.1.12 (owner ruling: run hooks are held by the emergency stop; owner rule: raise by the change's own lines): 28763 -> 28774 (+11), a manual send whose stop landed after the Console gate is refused before its UserPromptSubmit hooks.
     # 2026-11-25: re-measured after rebasing onto dev 692acb43dc (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 28777 -> 28788.
     # 2026-11-25 (TASK-33620.1.12 review round 5): a send cancelled during the stop re-read or the hook-v2 prompt input releases its echo, preparation and run state (owner rule: exact measurement): 28788 -> 28821.
-    "tldw_chatbook/Chat/console_chat_controller.py": 28821,
+    # 2026-11-26, TASK-42560 (owner decision 2026-11-26, the actions are traced;
+    # same rule): 28,777 -> 28,804 (+27), exact measurement; ported onto dev 9926834bc8
+    # (round 27): dev's 28,821 + 27 = 28,848. Each of Edit &
+    # resend, Regenerate and Continue snapshots its saved rows, refuses a
+    # temporary Capture-On chat and streams through
+    # Chat/console_action_capture.py.
+    "tldw_chatbook/Chat/console_chat_controller.py": 28848,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     # TASK-41637, 2026-11-18: +9, a round armed with no running app and no
     # answerable view fails closed instead of waiting forever (dev's row +
@@ -1165,7 +1171,11 @@ _BUDGETS: dict[str, int] = {
     # fallback list (+3), 10,142 -> 10,120, exact measurement.
     # 2026-11-26, TASK-42564: the streaming adapter takes a child run's
     # durable preset fallback state (+3), 10,120 -> 10,123.
-    "tldw_chatbook/Chat/console_agent_bridge.py": 10123,
+    # 2026-11-26, TASK-42560 (owner decision 2026-11-26, the actions are
+    # traced): +21; stacked on TASK-42564's 10,123: 10,123 -> 10,144, exact
+    # measurement. The agent trace
+    # request factory names the action the admitted request was frozen for.
+    "tldw_chatbook/Chat/console_agent_bridge.py": 10144,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # TASK-36944.2, 2026-11-03: +6 for the public `setting` Console reads.
@@ -1288,7 +1298,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-23, PR #3517's port onto dev b31e3e9241 (round 24; owner decision
     # 2026-10-04, expand limits): dev measures 8,376, plus this branch's
     # +53, exact: 8,429.
-    "tldw_chatbook/Chat/console_provider_gateway.py": 8429,
+    # 2026-11-26, TASK-42560 (owner decision 2026-11-26): 8,429 -> 8,432
+    # (+3), exact measurement. The route check ignores the action marker.
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8432,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
@@ -1505,7 +1517,13 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-26, TASK-42564: dispatch binding rechecks a spawned child's
     # fallback chain (+4); stacked on TASK-42550's 7059: 7059 -> 7063, exact
     # measurement.
-    "tldw_chatbook/Chat/console_trace_service.py": 7063,
+    # 2026-11-26, TASK-42560 (owner decision 2026-11-26, the actions are
+    # traced; same rule): +36; stacked on 7063: 7063 -> 7099, exact
+    # measurement. The planner
+    # caps an action's prefix at its user row, skips the suffix and append
+    # rules for it, requires its rewritten-tail proof, and passes the send
+    # after an action's run to that proof (console_trace_action_calls.py).
+    "tldw_chatbook/Chat/console_trace_service.py": 7099,
     # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
     # approved child trace segments (ADR-337 amendment 2026-11-17): create and
