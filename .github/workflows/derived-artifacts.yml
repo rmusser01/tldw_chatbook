@@ -1903,7 +1903,7 @@ jobs:
     #
     # TASK-41136: the Console provider gateway file (bootstrap_profile, so
     # last), on no PR lane before: 494 tests, 4.1 min serially at load ~56.
-    # Its three deselected nodes are red on dev, owned by TASK-41053.
+    # TASK-40413: its three once-deselected nodes pass again and run here.
     #
     # The media body-move series (TASK-36952.3): its Architecture wiring pins
     # (sandboxed, so before the TASK-39114 files), in no PR lane before; 16
@@ -1975,9 +1975,6 @@ jobs:
             Tests/DB/test_chachanotes_v53_safe_capture_trim.py::test_fresh_database_opens_without_the_trimming_port \
             Tests/DB/test_chachanotes_bare_open_self_migration.py::test_a_bare_open_of_a_v52_safe_capture_fails_closed_and_stays_v52 \
             Tests/Chat/test_console_provider_gateway.py \
-            "--deselect=Tests/Chat/test_console_provider_gateway.py::test_all_qwencloud_kwargs_paths_forward_pinned_mode_and_base" \
-            "--deselect=Tests/Chat/test_console_provider_gateway.py::test_console_send_leaves_base_url_unpinned_in_default_case[deepseek]" \
-            "--deselect=Tests/Chat/test_console_provider_gateway.py::TestGatewayExchangeCapture::test_openai_stop_closes_transport_through_gateway_boundary" \
             --timeout=180 \
             --tb=short
 
