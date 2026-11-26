@@ -1,11 +1,11 @@
 ---
 id: TASK-42581
-title: "SQL with numbered ?1 placeholders bound to a sequence raises on Python 3.14"
+title: "get_effective_owner binds ?1 to a sequence (warns on Python 3.12.0-3.12.3); fail tests that bind named placeholders to a sequence"
 status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-26 19:34
-updated_date: 2026-11-26 20:20
+updated_date: 2026-11-26 21:05
 labels:
 - follow-up
 - db
@@ -21,7 +21,7 @@ dependencies: []
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found by the round-27 Linux lane check (ubuntu:24.04, Python 3.12.3, 2026-11-26), on dev 5dcba48401 and on the round-27 stack alike. Some statement binds numbered placeholders (`?1`) with a sequence of parameters. Python 3.12 warns on every such call: `DeprecationWarning: Binding 1 ('?1') is a named parameter, but you supplied a sequence which requires nameless (qmark) placeholders. Starting with Python 3.14 an sqlite3.ProgrammingError will be raised.` The warning is reported at the generic execute site `tldw_chatbook/DB/base_db.py:729` (`result = run(*args)`), so the statement itself is upstream of it. In the recovered-suites step alone it fired about 468 times, mostly from Console trace tests (`test_console_trace_slot_drop.py` 318, `test_console_route_census_capture.py` 94, `test_console_child_preset_fallback_trace.py` 56). On Python 3.14, which the project plans to move to, every such call would raise instead, so the affected Console trace reads and writes would fail.
+Found by the round-27 Linux lane check (ubuntu:24.04, Python 3.12.3, 2026-11-26), on dev 5dcba48401 and on the round-27 stack alike. Some statement binds numbered placeholders (`?1`) with a sequence of parameters. Python 3.12 warns on every such call: `DeprecationWarning: Binding 1 ('?1') is a named parameter, but you supplied a sequence which requires nameless (qmark) placeholders. Starting with Python 3.14 an sqlite3.ProgrammingError will be raised.` The warning is reported at the generic execute site `tldw_chatbook/DB/base_db.py:729` (`result = run(*args)`), so the statement itself is upstream of it. In the recovered-suites step alone it fired about 468 times, mostly from Console trace tests (`test_console_trace_slot_drop.py` 318, `test_console_route_census_capture.py` 94, `test_console_child_preset_fallback_trace.py` 56). On Python 3.14, which the project plans to move to, every such call would raise instead, so the affected Console trace reads and writes would fail (superseded by the Correction below).
 
 **The statement (round-27 review).** It is `ConsoleTraceRepository.get_effective_owner` (`tldw_chatbook/Chat/console_trace_repository.py`), from d3b996afed (TASK-41310 A). Its recursive CTE names the segment twice as `?1` (`WHERE link.segment_id = ?1), ?1)`) and binds the one-item sequence `(segment_id,)`. Its callers are `ConsoleTraceRepository.reserve_call` and `ConsoleTraceService._validate_owner`.
 
@@ -34,10 +34,12 @@ A named placeholder (`:a`) bound to a sequence is the real case: it warns on 3.1
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 Every statement that binds numbered placeholders to a sequence is found (for example by running the suites with `-W error::DeprecationWarning` scoped to that message, or by a static scan), and the list is in the notes
+- [x] #1 Every statement that binds numbered placeholders to a sequence is found (for example by running the suites with `-W error::DeprecationWarning` scoped to that message, or by a static scan), and the list is in the notes; named placeholders (`:x`, `@x`, `$x`) are confirmed to bind mappings
 - [x] #2 Each is changed to qmark placeholders with a sequence, or to named placeholders with a mapping, with no behaviour change
-- [x] #3 A guard fails when a new statement binds numbered placeholders to a sequence (for example a test that turns that DeprecationWarning into an error for the DB layer)
+- [x] #3 A guard fails any test that binds named placeholders (`:x`, `@x`, `$x`) to a sequence on every supported Python, and numbered `?NNN` on 3.12.0-3.12.3 (for example a test-wide filter that turns that DeprecationWarning into an error)
 <!-- AC:END -->
+
+AC#1 and AC#3 amended 2026-11-26 after review, to the corrected premise. CI's Python 3.12.11 (like 3.13 and 3.14) accepts numbered `?NNN` bound to a sequence, so no guard there can fail on a new numbered-placeholder statement. What 3.14 refuses is a named placeholder bound to a sequence, and that is what the guard catches on every version.
 
 ## Implementation Plan
 
@@ -60,8 +62,13 @@ There was one statement. It now binds a named placeholder from a mapping, and a 
 - **Guard (AC#3).** `[tool.pytest.ini_options] filterwarnings = ['error:Binding \d+ .* is a named parameter:DeprecationWarning']`.
   - On every supported Python it fails a test that binds `:name`, `@name` or `$name` to a sequence, the case 3.14 raises on. On 3.12.0-3.12.3 it also fails `?NNN`.
   - `test_a_named_placeholder_bound_to_a_sequence_fails_any_test` pins it: red with the filter overridden on the command line (`DID NOT RAISE`). A scratch probe against the repository config was also red with the entry removed.
-  - A global filter was suitable: the step and the trace files pass with it.
-- **Red/green.** `test_effective_owner_lookup_binds_its_parameters_by_name` (in the dreams-riders-laned `Tests/Chat/test_console_trace_graph_gc.py`) runs `get_effective_owner` and `reserve_call` under `warnings.simplefilter("error", DeprecationWarning)`. On ubuntu:24.04's Python 3.12.3 with the old statement, it and the file's 5 other `reserve_call` tests fail with the `Binding 1 ('?1')` error; with the fix, 23 pass. Locally it is green both ways, since 3.12.11 does not warn (see the Correction).
+  - A global filter was suitable: the step and the trace files pass with it. The review added two checks:
+    - the full dev nightly 45800172946 (78 jobs, CPython 3.12.11) logs no `is a named parameter` line;
+    - a static scan for named placeholders found only mapping bindings: `Client_Media_DB_v2.py` :5043 and :5228, `conversation_archive_queries`, `TTS/profile_repository` :4281, :4762 and :5315, `full_agent_tools_upgrade` :323, and the TTS profile tests.
+- **Review fixes.**
+  - The guard test accepts `(DeprecationWarning, sqlite3.ProgrammingError)`, because 3.14 raises the same `Binding 1 (':segment_id') is a named parameter` message itself (checked on 3.14.7).
+  - The effective-owner test now errors only on that binding warning (`warnings.filterwarnings(..., message=r"Binding \d+ .* is a named parameter")`), not on any DeprecationWarning. Its docstring now says `?1` with a sequence warns only on 3.12.0-3.12.3.
+- **Red/green.** `test_effective_owner_lookup_binds_its_parameters_by_name` (in the dreams-riders-laned `Tests/Chat/test_console_trace_graph_gc.py`) runs `get_effective_owner` and `reserve_call` with the binding warning as an error. On ubuntu:24.04's Python 3.12.3 with the old statement, it and the file's 5 other `reserve_call` tests fail with the `Binding 1 ('?1')` error; with the fix, 23 pass. Locally it is green both ways, since 3.12.11 does not warn (see the Correction).
 
 Files: tldw_chatbook/Chat/console_trace_repository.py, pyproject.toml, Tests/Chat/test_console_trace_graph_gc.py.
 
