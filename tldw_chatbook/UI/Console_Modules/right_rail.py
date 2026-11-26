@@ -329,6 +329,7 @@ class _InspectorOuterBody(VerticalScroll):
         *,
         on_geometry_changed: Callable[[], None],
         on_scrolled: Callable[[], None],
+        layout_settling: Callable[[], bool],
     ) -> None:
         super().__init__(
             id="console-inspector-rail-body",
@@ -337,11 +338,13 @@ class _InspectorOuterBody(VerticalScroll):
         )
         self._on_geometry_changed = on_geometry_changed
         self._on_scrolled = on_scrolled
+        self._layout_settling = layout_settling
         #: TASK-41959: counts the user's gestures inside the body -- focus
         #: moving in, a mouse press, a section collapse toggle. The fleet
         #: reveal stands down for good once it moves. Scrolls of the scroll
         #: areas inside the body post none of these, so the reveal also
-        #: compares their offsets (`inner_scroll_state`).
+        #: compares their offsets (`inner_scroll_state`). A rebuild replaces
+        #: an area with a new widget; the old one keeps its last offset.
         self.user_gestures = 0
 
     def inner_scroll_state(self) -> tuple[tuple[Widget, float], ...]:
@@ -349,22 +352,22 @@ class _InspectorOuterBody(VerticalScroll):
         return tuple((area, area.scroll_y) for area in self.query(ScrollableContainer))
 
     def layout_settling(self) -> bool:
-        """Whether the rail is still re-fitting its bounded sections' caps.
+        """Whether the rail is still re-fitting its sections' caps.
 
         An opening's first layouts shrink a long Sources list to its cap;
         until that settles, any position measured below it moves (TASK-41959).
         """
-        rail = self.parent
-        return bool(getattr(rail, "_outer_reconcile_scheduled", False)) or any(
-            section._reconcile_scheduled
-            for section in self.query(ConsoleBoundedSection)
-        )
+        return self._layout_settling()
 
     def inner_scrolled_since(self, state: tuple[tuple[Widget, float], ...]) -> bool:
         """Whether a scroll area from ``state`` has moved since (a wheel or a
-        scrollbar drag). One a rebuild replaced is a new widget and is skipped.
+        scrollbar drag).
+
+        An area a rebuild replaced is no longer in the DOM and keeps the
+        offset it had (Textual 8.2.8 never clears ``is_mounted`` on removal),
+        so it compares unchanged -- or as moved, if the user scrolled it first.
         """
-        return any(area.is_mounted and area.scroll_y != y for area, y in state)
+        return any(area.scroll_y != y for area, y in state)
 
     def on_descendant_focus(self, _event: DescendantFocus) -> None:
         self.user_gestures += 1
@@ -737,6 +740,16 @@ class ConsoleInspectorRail(Vertical):
         """Coalesce Inspector owner invalidation behind local section demand."""
 
         self._request_outer_reconcile(owner_demand=True)
+
+    def _outer_layout_settling(self) -> bool:
+        """Whether a cap re-fit is still scheduled (TASK-41959's fleet reveal).
+
+        One flag covers the bounded sections too: the outer reconcile stays
+        scheduled while any of them reconciles (`_run_scheduled_outer_reconcile`
+        re-queues itself). Mutating the sections' own check away left every
+        reveal test green; dropping this flag fails them.
+        """
+        return self._outer_reconcile_scheduled
 
     def _request_outer_geometry_reconcile(self) -> None:
         """Reconcile geometry without creating a second logical owner pass."""
@@ -1722,6 +1735,7 @@ class ConsoleInspectorRail(Vertical):
         with _InspectorOuterBody(
             on_geometry_changed=self._request_outer_geometry_reconcile,
             on_scrolled=self._handle_outer_scrolled,
+            layout_settling=self._outer_layout_settling,
         ):
             # task-9: Environment and Tasks sections -- mounted FIRST, ahead
             # of the staged-context tray, per the redesign spec's rail

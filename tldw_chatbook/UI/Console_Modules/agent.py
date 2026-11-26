@@ -255,14 +255,30 @@ CONSOLE_AGENT_FLEET_SECTION_ID = "agent-fleet"
 
 #: TASK-41959: Environment landings this soon after the fleet reveal may redo
 #: it. The window covers the opening's PR-and-checks tier, which lands after
-#: the local one: `gh` was measured at about 12 s (the `_pending_ack_tiers`
-#: note in `environment.py`). A landing that leaves the fleet in view scrolls
-#: nothing and spends nothing; at most this many replays scroll, and nothing
-#: replays after the window.
+#: the local tier: one `gh pr view`, bounded per call by
+#: `Workspaces/environment_status._GH_TIMEOUT_SECONDS` (5.0) but measured at
+#: up to about 12 s end to end (the `_pending_ack_tiers` note in
+#: `environment.py`). Do not shrink it to the 5 s call timeout. A landing that
+#: leaves the fleet in view scrolls nothing and spends nothing; at most this
+#: many replays scroll, and nothing replays after the window.
 FLEET_REVEAL_REPLAY_SECONDS = 15.0
 FLEET_REVEAL_REPLAY_LIMIT = 2
+#: A reveal's layout wait does not count the attempts made while paints are
+#: held, since nothing is laid out then. `hold_paints` ends a hold within 1 s;
+#: past twice that the attempts count again, so a hold that never ends cannot
+#: keep the reveal waiting.
+FLEET_REVEAL_PAINT_HOLD_CAP_SECONDS = 2.0
 #: Read at call time, so a test can move the clock.
 _fleet_reveal_clock = time.monotonic
+
+
+def _paints_held(app: Any) -> bool:
+    """Whether a `batch_update` hold is open on ``app``.
+
+    Textual 8.2.8 keeps the count on the private ``App._batch_count`` and has
+    no public reader; read directly, so a rename fails loudly here.
+    """
+    return app._batch_count > 0
 
 
 @dataclass(frozen=True)
@@ -273,7 +289,8 @@ class _FleetReveal:
     body: Any
     token: int
     gestures: int
-    inner: tuple
+    #: The body's inner scroll areas and their offsets at the opening.
+    inner: tuple[tuple[Any, float], ...]
     offset: float
     deadline: float
     replays_left: int
@@ -2651,7 +2668,6 @@ class ConsoleAgentController:
         return (
             reveal.token == self._fleet_reveal_token
             and self._screen._console_fleet_rows_present
-            and reveal.section.is_mounted
             and reveal.body.user_gestures == reveal.gestures
             and reveal.body.scroll_y == reveal.offset
             and not reveal.body.inner_scrolled_since(reveal.inner)
@@ -2666,19 +2682,18 @@ class ConsoleAgentController:
         """
         section, body = reveal.section, reveal.body
         armed = False
+        hold_cap = time.monotonic() + FLEET_REVEAL_PAINT_HOLD_CAP_SECONDS
 
         def arm(replays_left: int) -> None:
             # Once per reveal: `scroll_to_widget` hands `on_complete` to every
             # scrolling ancestor, and a late duplicate re-armed a replay a
-            # landing had already used.
+            # landing had already used. Nor after a cancel: the opening's
+            # late `on_complete` must not re-arm a stood-down reveal.
             nonlocal armed
-            if not armed:
+            if not armed and reveal.token == self._fleet_reveal_token:
                 armed = True
                 self._fleet_replay = replace(
-                    reveal,
-                    offset=body.scroll_y,
-                    inner=body.inner_scroll_state(),
-                    replays_left=replays_left,
+                    reveal, offset=body.scroll_y, replays_left=replays_left
                 )
 
         def run(attempts: int) -> None:
@@ -2689,13 +2704,19 @@ class ConsoleAgentController:
             # was hidden, since the opening rebuilds inside `batch_update`,
             # where `Screen._on_idle` runs after-refresh callbacks without a
             # layout. While the rail still re-fits its caps, a long Sources
-            # list is about to shrink and move the section up.
+            # list is about to shrink and move the section up. Attempts made
+            # while paints are held (wide windows spent 15 of 20 that way)
+            # do not count, up to `FLEET_REVEAL_PAINT_HOLD_CAP_SECONDS`.
             if (not section.region or body.layout_settling()) and attempts > 1:
-                section.call_after_refresh(run, attempts - 1)
+                held = _paints_held(section.app) and time.monotonic() < hold_cap
+                section.call_after_refresh(run, attempts if held else attempts - 1)
                 return
             if not section.region:
-                return
-            if body.content_region.contains_region(section.region):
+                return  # never laid out (the rail closed again): nothing to show
+            # A section taller than the body is in view once its top part
+            # fills the window: that is all `scroll_visible` would show.
+            window = body.content_region
+            if window.contains_region(section.region.crop_size(window.size)):
                 arm(reveal.replays_left)  # in view: nothing to scroll or spend
                 return
             spent = reveal.replays_left - (1 if reveal.spends else 0)

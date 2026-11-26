@@ -463,10 +463,11 @@ running — this auto-open, or when you close the Context rail in a window too
 narrow for both rails — it scrolls down to the **Agents** section once, right
 after it opens. If the Environment panel's results push Agents back out of
 view in the next 15 seconds or so (pull-request details can take that long
-to arrive), it scrolls there again, at most twice. A refresh that changes
-nothing never scrolls, and nothing scrolls after that window. It never does
-so after you scroll, click, focus or expand anything in the rail, the
-Sources list included. A rail you open yourself keeps its scroll position.
+to arrive), it scrolls there again, at most twice. Refreshes that leave
+Agents in view never scroll or count toward that limit, and nothing scrolls
+after that window. It never does so after you scroll, click, focus or expand
+anything in the rail, the Sources list included. A rail you open yourself
+keeps its scroll position.
 
 **Refreshing.** The panel does no work at all while the rail is closed —
 opening it is what triggers the first fetch. While open it re-reads the

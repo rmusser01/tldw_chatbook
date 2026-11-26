@@ -4,7 +4,7 @@ title: "Console Inspector rail order and workbench contract drift: staged-contex
 status: Done
 assignee: []
 created_date: '2026-11-19 07:30'
-updated_date: '2026-11-25 21:30'
+updated_date: '2026-11-26 00:30'
 labels:
 - follow-up
 - tests
@@ -210,8 +210,8 @@ ADR required: no (owner ruled the order 2026-11-25; one yield moves, the rest is
   - *M3 wording:* the comment, the bound test (now `test_replays_are_bounded_and_end_with_the_window`), these notes and `context-and-rag.md` say "a landing that changes nothing never scrolls; nothing replays after the window".
 - *I2(a):* the region retry runs whenever a landing arrives while the rail is hidden. The comment now says so, and `test_a_landing_while_hidden_is_revealed_once_laid_out` pins it.
 - *I2(b):* `test_rows_and_the_rail_opening_in_one_tick` pins the fleet's own-open exclusion (rows and the rail opening with no pause between).
-- *Found while pinning M1:* with 20 staged sources, the opening shrank the Sources list to its cap after the reveal ran, and the Agents section rose above the top (y=1 and y=-39, body 15-31). The reveal now also waits, within its 20-refresh bound, while `_InspectorOuterBody.layout_settling()` reports the rail's outer reconcile or a bounded section's reconcile pending. Red first on 2bbb2aa2b3: `test_fleet_auto_open_scrolls_the_agents_section_into_view[150x40/20]`.
-- *M1, inner scroll areas:* at the reveal, `_InspectorOuterBody.inner_scroll_state()` snapshots every `ScrollableContainer` in the body, and `inner_scrolled_since()` treats a moved offset as a gesture. A widget that a rebuild replaced is skipped, since it is a new widget.
+- *Found while pinning M1:* with 20 staged sources, the opening shrank the Sources list to its cap after the reveal ran, and the Agents section rose above the top (y=1 and y=-39, body 15-31). The reveal now also waits, within its 20-refresh bound, while `_InspectorOuterBody.layout_settling()` reports a re-fit pending (round 5 narrowed this to the rail's outer reconcile flag). Red first on 2bbb2aa2b3: `test_fleet_auto_open_scrolls_the_agents_section_into_view[150x40/20]`.
+- *M1, inner scroll areas:* at the reveal, `_InspectorOuterBody.inner_scroll_state()` snapshots every `ScrollableContainer` in the body, and `inner_scrolled_since()` treats a moved offset as a gesture. (Round 5: a replaced widget is not skipped. It keeps its frozen last offset, since Textual 8.2.8 never clears `is_mounted`.)
   - Can a rebuild change an inner offset? Only from a non-zero offset (clamping); from 0 it cannot. A surviving area only leaves 0 by being scrolled, which is a gesture.
   - Tests: `test_a_scroll_inside_a_rail_scroll_area_stops_the_reveal` (the capped Sources list scrolled by 1) and `test_a_landing_rebuild_is_not_an_inner_scroll` (no false stand-down). Both use 20 staged sources, so the list scrolls by 20.
 - *M2:* every reveal test takes the `frozen_reveal_clock` fixture; only the bound test moves the clock.
@@ -239,6 +239,47 @@ ADR required: no (owner ruled the order 2026-11-25; one yield moves, the rest is
   - agent_rail 51/51;
   - inspector_navigation 39/40, the shared responsive-reveal red.
   - `chat_screen.py` unchanged this round (24,595).
+
+**Review round 5 (2026-11-26, delta 2bbb2aa2b3..c086cf52b6).**
+- *I-1, a no-op landing spent a replay when Agents is taller than the body:* the in-view check now crops the section to the body's size first, `window.contains_region(section.region.crop_size(window.size))`, which is what `scroll_visible` can show. The test helper `_fleet_section_inside_rail_body` uses the same rule. Red first on c086cf52b6: `test_landings_that_change_nothing_spend_no_replay[150x30]`.
+- *m-1, the settle wait ran out while paints were held:*
+  - The fix: a wait attempt made while `_paints_held(app)` (the one helper reading Textual 8.2.8's private `App._batch_count`) does not count against the 20. That holds up to `FLEET_REVEAL_PAINT_HOLD_CAP_SECONDS = 2.0`, which is twice `hold_paints`' 1 s self-release.
+  - The 190x40/20 case still ended in view on c086 in this environment. What it did fail was "no scroll while still settling", which the auto-open test now asserts for every case. With c086's controller the [190x40/20] case scrolled with the re-fit pending (`[True]`).
+  - `test_a_paint_hold_that_never_ends_cannot_stall_the_reveal` forces a hold that never ends and a layout that never settles, and needs the cap to finish.
+- *m-2:* I mutated each clause of `layout_settling` alone, across 32 reveal tests: outer-only passed and sections-only passed. I kept the outer flag; it stays scheduled while any bounded section reconciles. Returning False fails the 150x40/20 and 190x40/20 auto-opens and both inner-scroll tests.
+- *m-3:*
+  - `inner_scrolled_since` compares every snapshotted area, with no `is_mounted` filter. A replaced area keeps its frozen last offset, which reads as unmoved, or as moved if the user scrolled it before the rebuild. The docstring and class comment say so.
+  - `_fleet_reveal_current` loses its dead `section.is_mounted` check.
+  - There is a new lesson: `is_mounted` stays True after removal in Textual 8.2.8.
+- *m-4:* `test_a_landing_rebuild_is_not_an_inner_scroll` restages the tray. It waits until the capped list is a new widget, then lands, and it fails under the fresh-compare mutation.
+- *m-5:* `context-and-rag.md` now says "Refreshes that leave Agents in view never scroll or count toward that limit."
+- *m-6:* `arm` checks the token. `test_a_cancel_beats_the_openings_late_on_complete` holds the reveal's `on_complete`, cancels, then fires it, and it fails on c086cf52b6.
+- *Nits:*
+  - n-1: the bound-test docstring and message describe the real sequence: rich #0 and lean #1 scroll, rich #2 is not replayed.
+  - n-2: the 15 s comment cites the local tier, `_GH_TIMEOUT_SECONDS` (5.0) and the ~12 s measurement, and says not to shrink it to 5 s.
+  - n-3: `arm` no longer re-snapshots the inner areas. The reveal's own scroll moves only the body, because the section is the body's direct child.
+  - n-4: the rail injects `layout_settling=self._outer_layout_settling` like `on_geometry_changed`; no more `getattr` on the parent.
+  - n-5: `inner` is typed.
+  - n-6: the post-wait `if not section.region: return` is pinned by `test_a_reveal_whose_rail_closed_again_shows_nothing`, where the rail closes in the same tick.
+  - n-7: the scroll-area test runs at 160x70 with 40 sources, so the capped list is on screen. It posts a real `MouseScrollDown` to it.
+- *Mutations, round 5:* 35 mutations, each run across all 32 reveal tests at `-n 4`; every one fails at least one test.
+  - M01-M26 as before; M23b (an in-view landing spends) fails both no-op cases.
+  - M27 (outer flag returns False) -> 5 tests.
+  - M28 (no crop) -> `[150x30]`.
+  - M29 (held attempts count) -> `[190x40/20]`.
+  - M30 (no hold cap) -> the never-ending-hold test.
+  - M31 (no arm token) -> the late `on_complete` test.
+  - M32 (no post-wait region return) -> the closed-again test.
+  - M33 (fresh compare) -> the same-tick and rebuild tests.
+  - M34 (empty opening snapshot) -> the scroll-area test.
+- *Red first on c086cf52b6:* `[150x30]`, the late-`on_complete` test, `[190x40/20]` (with c086's controller) and the never-ending-hold test fail.
+- *Final runs:*
+  - the 32 reveal tests passed 5 of 5 at load 24-29;
+  - right_rail 69/69;
+  - workbench 76/76;
+  - agent_rail 51/51;
+  - inspector_navigation 39/40, the shared responsive-reveal red.
+  - ruff F clean; ruff gate OK; size ratchets 238 passed; `chat_screen.py` unchanged (24,595).
 
 **CI note.** `scripts/ci/tier_policy.py` selects the full lanes for this diff, not the light tier. `test_console_workbench_contract.py` has more than `IMPORTER_CAP` (8) transitive test importers.
 

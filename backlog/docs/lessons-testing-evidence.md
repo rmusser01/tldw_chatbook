@@ -46,11 +46,17 @@
 
 ## `wait_for_refresh` alone does not run a section's queued rebuild, so a "never called" check after it passes too early (TASK-41959 review, 2026-11-25)
 
+## `is_mounted` stays True after a widget is removed in Textual 8.2.8 (TASK-41959 review, 2026-11-25)
+
+**Incident.** The fleet reveal's inner-scroll check skipped scroll areas that a rebuild had replaced, using `area.is_mounted and ...`, and the reveal itself guarded on `reveal.section.is_mounted`. A reviewer's mutations deleted both filters and every test stayed green. In Textual 8.2.8, `MessagePump._is_mounted` is set False in `__init__` and True on mount, and nothing ever resets it, so a removed widget still reports `is_mounted`. The filter did nothing: a replaced area was compared on its frozen last offset all along. That turned out to be the useful behaviour, since it also catches a user scroll followed by a rebuild.
+
+**What to do.** Do not use `is_mounted` to tell a live widget from a removed one. Ask the DOM instead (`widget.is_attached`, or whether `widget.parent` is still set), or design so a removed widget's frozen state is harmless. Then mutate the check away and see a test go red.
+
 ## A scroll into view done before the Inspector's caps settle is undone by the re-fit (TASK-41959 review, 2026-11-25)
 
 **Incident.** The fleet reveal scrolled the Agents section into view on the opened rail's first layout. With 20 staged sources, the rail's outer reconcile then shrank the Sources list to its cap, and the section rose above the body's top (y=1 and y=-39, body 15-31). Six staged sources were too few to show it, so every earlier test had passed.
 
-**What to do.** Measure positions inside the Inspector body only once `_InspectorOuterBody.layout_settling()` is false, meaning no outer reconcile and no bounded-section reconcile is pending. Test with a staged list long enough to hit its cap (`CAPPED_TRAY_ROWS` in `Tests/UI/test_console_right_rail.py`).
+**What to do.** Measure positions inside the Inspector body only once `_InspectorOuterBody.layout_settling()` is false, meaning the rail's outer reconcile is no longer scheduled; it stays scheduled while any bounded section reconciles. Attempts made while paints are held (`App._batch_count > 0`) lay nothing out, so do not count them against a retry budget. Test with a staged list long enough to hit its cap (`CAPPED_TRAY_ROWS` in `Tests/UI/test_console_right_rail.py`).
 
 A related trap: when a guarded action may also be a no-op (here, a reveal whose target is already in view), "it was never called" cannot detect a deleted guard. Assert the state the guard leaves behind instead (`_fleet_replay is None`). The focus and mouse gesture guards passed their mutations until the test did.
 
