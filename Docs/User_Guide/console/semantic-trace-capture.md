@@ -129,6 +129,8 @@ been discarded. Discard does not replay or undo tools from the old run.
 
 A tool run that has already settled as Failed with an empty reply can also be
 followed by a captured send, including after successful Capture Off replies.
+That includes a run whose last model call failed with a provider error before
+any reply arrived, for example a 503 that outlasted the automatic retries.
 Console verifies the saved message chain and the closed run before continuing;
 earlier captures remain unchanged. Active attempts, partial replies, or history
 that cannot be verified still require recovery rather than automatic dispatch.
@@ -240,6 +242,9 @@ transcript:
   once before changing the live message.
 - Retries, failures, stops, and tool-loop calls are separate call boundaries.
   Abandoned variants remain identifiable.
+- A llama.cpp stream that returns no text is asked once more without
+  streaming, as its own call. When that resend answers, including with a tool
+  call, the run continues from its reply with capture on.
 - Edit & resend and Regenerate send their reply with capture off, so that reply
   has no trace call of its own. Your next send in the chat is captured as usual.
   It records the edited branch as one bounded replacement of the earlier trace

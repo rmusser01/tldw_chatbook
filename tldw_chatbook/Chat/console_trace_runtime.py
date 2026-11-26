@@ -14,6 +14,7 @@ from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_trace_continuation import (
     LiveNativeContinuationCustody,
+    answering_stream_fallback,
     failed_stream_fallback_parent,
 )
 from tldw_chatbook.Chat.console_trace_errors import (
@@ -341,6 +342,7 @@ class ConsoleTraceBoundaryFactory:
             raise ValueError("trace_route_unavailable")
         route_identity = route_record.route.value
         requested_route = getattr(route, "value", None)
+        resent_tool_loop = False
         if requested_route is not None and requested_route != route_identity:
             if route is not ConsoleRequestRoute.LLAMA_FALLBACK:
                 raise ValueError("trace_route_mismatch")
@@ -357,6 +359,12 @@ class ConsoleTraceBoundaryFactory:
                     else item
                     for item in provenance.metadata
                 ),
+            )
+            # TASK-42530: a llama.cpp resend of a tool-loop call, on its own
+            # run, keeps the loop's turn; it must repeat the failed call.
+            resent_tool_loop = (
+                route_record.route is ConsoleRequestRoute.TOOL_LOOP
+                and fallback_route.route is ConsoleRequestRoute.LLAMA_FALLBACK
             )
             route_record = fallback_route
             route_identity = fallback_route.route.value
@@ -412,6 +420,7 @@ class ConsoleTraceBoundaryFactory:
         if (
             skipped_project_context
             and route_record.route is not ConsoleRequestRoute.TOOL_LOOP
+            and not resent_tool_loop
         ):
             active_start = len(request.messages_payload) - len(
                 request.semantic.active_request
@@ -426,7 +435,7 @@ class ConsoleTraceBoundaryFactory:
             _saved_revision_ids(provenance.messages_payload[active_descriptor_index])
         )
         tool_loop = route_record.route is ConsoleRequestRoute.TOOL_LOOP
-        if tool_loop or child_turn_revision_id is not None:
+        if tool_loop or resent_tool_loop or child_turn_revision_id is not None:
             # Tool results are provider artifacts, not a new saved user turn.
             # This candidate must match the durable chain origin below; it is
             # never sufficient on its own to admit continuation ownership.
@@ -439,7 +448,10 @@ class ConsoleTraceBoundaryFactory:
             has_current_text_transform |= bool(transformed_sources)
             if transformed_sources and (
                 transformed_sources != active_revision_ids
-                or (not tool_loop and index != active_descriptor_index)
+                or (
+                    not (tool_loop or resent_tool_loop)
+                    and index != active_descriptor_index
+                )
                 or request.messages_payload[index].get("role") != "user"
             ):
                 raise ValueError("trace_current_transform_owner")
@@ -461,6 +473,7 @@ class ConsoleTraceBoundaryFactory:
         call_sequence = 0
         reserved = None
         failed_call_retry = False
+        answer = None
         with (
             nullcontext()
             if request.live_native_custody is None
@@ -607,6 +620,15 @@ class ConsoleTraceBoundaryFactory:
                     latest_call = self.repository.get_latest_call_boundary(
                         cursor, segment_id
                     )
+                    # TASK-42530: the llama.cpp resend that bore the response
+                    # the failed streamed ``previous`` did not.
+                    answer = (
+                        answering_stream_fallback(self.repository, cursor, previous)
+                        if previous is not None
+                        and latest_call is not None
+                        and latest_call.call_id != previous.call_id
+                        else None
+                    )
                     if (
                         previous is None
                         or latest_call is None
@@ -622,6 +644,7 @@ class ConsoleTraceBoundaryFactory:
                                 None,
                             )
                             != previous.call_id
+                            and getattr(answer, "call_id", None) != latest_call.call_id
                         )
                         # Agent response settlement may still be queued when
                         # its next tool call begins; a response-bearing call
@@ -637,10 +660,46 @@ class ConsoleTraceBoundaryFactory:
                         or previous.surface_node_id != tail.node_id
                     ):
                         raise ValueError("trace_tool_chain_unavailable")
-                    failed_call_retry = previous.state is TraceCallState.ERROR
-                    if failed_call_retry and (
+                    failed_call_retry = (
+                        previous.state is TraceCallState.ERROR and answer is None
+                    )
+                    if previous.state is TraceCallState.ERROR and (
                         previous.outcome != TraceCallState.ERROR.value
                         or previous.settled_at is None
+                    ):
+                        raise ValueError("trace_tool_chain_unavailable")
+                if resent_tool_loop:
+                    # The resend repeats the segment's latest call: a settled
+                    # failed tool-loop call of this turn, on the same surface.
+                    latest_boundary = (
+                        None
+                        if segment_id is None
+                        else self.repository.get_latest_call_boundary(
+                            cursor, segment_id
+                        )
+                    )
+                    streamed = (
+                        None
+                        if latest_boundary is None
+                        else self.repository.get_call(cursor, latest_boundary.call_id)
+                    )
+                    tail = (
+                        None
+                        if segment_id is None
+                        else self.repository.get_surface_tail(cursor, segment_id)
+                    )
+                    if (
+                        streamed is None
+                        or owner is None
+                        or tail is None
+                        or streamed.route_identity
+                        != ConsoleRequestRoute.TOOL_LOOP.value
+                        or streamed.state is not TraceCallState.ERROR
+                        or streamed.outcome != TraceCallState.ERROR.value
+                        or streamed.settled_at is None
+                        or (streamed.owner_id, streamed.turn_id, streamed.policy_id)
+                        != (owner.owner_id, turn_id, policy.policy_id)
+                        or streamed.surface_node_id != tail.node_id
                     ):
                         raise ValueError("trace_tool_chain_unavailable")
                 if owner is None:
@@ -708,10 +767,21 @@ class ConsoleTraceBoundaryFactory:
                         if latest is None or latest.call_id is None
                         else self.repository.get_call(cursor, latest.call_id)
                     )
+                    # A llama.cpp resend runs on its own run; the finished
+                    # turn's run is the one of the call it resent.
+                    resent = (
+                        None
+                        if terminal is None
+                        else failed_stream_fallback_parent(
+                            self.repository, cursor, terminal.call_id, answered=True
+                        )
+                    )
                     origin = (
                         None
                         if terminal is None
-                        else self.repository.get_run_origin(cursor, terminal.run_id)
+                        else self.repository.get_run_origin(
+                            cursor, (resent or terminal).run_id
+                        )
                     )
                     if terminal is not None and origin is not None:
                         source_revision_id = None
@@ -862,6 +932,15 @@ class ConsoleTraceBoundaryFactory:
                 ):
                     # ERROR proves a finished attempt, never authority to add
                     # unobserved tool results or replace its request surface.
+                    raise ValueError("trace_tool_chain_unavailable")
+                if resent_tool_loop and (
+                    admission.descriptors or admission.replacement_range is not None
+                ):
+                    raise ValueError("trace_tool_chain_unavailable")
+                if answer is not None and not admission.descriptors:
+                    # TASK-42530: after the resend's reply the run carries that
+                    # reply and its tool results; it never repeats the failed
+                    # streamed call unchanged.
                     raise ValueError("trace_tool_chain_unavailable")
                 if (
                     failed_call_retry

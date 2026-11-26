@@ -231,7 +231,9 @@ async def test_failed_call_retry_requires_exact_durable_chain(
         "valid",
         "second_round",
         "fallback_completed",
+        "fallback_completed_tool_step",
         "other_chain_fallback",
+        "other_chain_answered",
         "other_chain_failure",
         "changed_model",
         "changed_temperature",
@@ -244,7 +246,12 @@ async def test_a_retry_after_a_failed_llama_stream_fallback_is_checked_against_t
     """TASK-42472 AC#8: a failed llama.cpp stream is sent once more without
     streaming on its own LLAMA_FALLBACK call. When both fail, the agent's
     unchanged retry of the streamed call is admitted; the fallback never
-    widens what a failed call authorizes."""
+    widens what a failed call authorizes.
+
+    TASK-42530: when the fallback answered instead, the next call carries its
+    reply and tool result, and is admitted; repeating the failed stream
+    unchanged is still refused, and another chain's answer authorizes
+    nothing here."""
 
     database = make_database(tmp_path / "llama-retry.sqlite", "llama-retry")
     conversation = database.add_conversation({"title": "retry"})
@@ -254,7 +261,9 @@ async def test_a_retry_after_a_failed_llama_stream_fallback_is_checked_against_t
     # One HTTP status per request, in order; the fallback is a second request.
     script = {
         "fallback_completed": [503, 200],
+        "fallback_completed_tool_step": [503, 200],
         "other_chain_fallback": [503, 503, 503, 503],
+        "other_chain_answered": [503, 503, 503, 200],
         "other_chain_failure": [503, 503],
         "second_round": [503, 503, 503, 503],
     }.get(scenario, [503, 503])
@@ -315,7 +324,7 @@ async def test_a_retry_after_a_failed_llama_stream_fallback_is_checked_against_t
         ]
         return "".join(item for item in items if isinstance(item, str))
 
-    if scenario == "fallback_completed":
+    if scenario.startswith("fallback_completed"):
         assert await send(ConsoleRequestRoute.AGENT_FIRST) == "recovered"
     else:
         with pytest.raises(httpx.HTTPStatusError):
@@ -330,6 +339,14 @@ async def test_a_retry_after_a_failed_llama_stream_fallback_is_checked_against_t
             await send(
                 ConsoleRequestRoute.AGENT_FIRST, new_opaque_id(), new_opaque_id()
             )
+    elif scenario == "other_chain_answered":
+        # Another run's failed stream, whose resend answered.
+        assert (
+            await send(
+                ConsoleRequestRoute.AGENT_FIRST, new_opaque_id(), new_opaque_id()
+            )
+            == "recovered"
+        )
     with database.transaction() as cursor:
         routes = cursor.execute(
             "SELECT c.route_identity, c.state FROM console_trace_events e "
@@ -337,10 +354,13 @@ async def test_a_retry_after_a_failed_llama_stream_fallback_is_checked_against_t
             "WHERE e.event_type = 'call_boundary' ORDER BY e.sequence"
         ).fetchall()
     failed = [("agent_first", "error"), ("llama_fallback", "error")]
+    answered = [("agent_first", "error"), ("llama_fallback", "complete")]
     assert [tuple(row) for row in routes] == {
-        "fallback_completed": [("agent_first", "error"), ("llama_fallback", "complete")],
+        "fallback_completed": answered,
+        "fallback_completed_tool_step": answered,
         "second_round": [*failed, ("tool_loop", "error"), ("llama_fallback", "error")],
         "other_chain_fallback": [*failed, *failed],
+        "other_chain_answered": [*failed, *answered],
         "other_chain_failure": [("agent_first", "error")] * 2,
     }.get(scenario, failed)
     sent = len(requests)
@@ -355,7 +375,17 @@ async def test_a_retry_after_a_failed_llama_stream_fallback_is_checked_against_t
         descriptors = descriptors + [
             ProviderArtifactTraceProvenance(TraceProvenanceSource.TOOL_RESULT, policy)
         ]
-    if scenario in {"valid", "second_round"}:
+    elif scenario in {"fallback_completed_tool_step", "other_chain_answered"}:
+        # The resend's reply (a tool call) and the tool's result.
+        messages = messages + [
+            {"role": "assistant", "content": "recovered"},
+            {"role": "user", "content": "Tool result: 42"},
+        ]
+        descriptors = descriptors + [
+            ProviderArtifactTraceProvenance(TraceProvenanceSource.TOOL_CALL, policy),
+            ProviderArtifactTraceProvenance(TraceProvenanceSource.TOOL_RESULT, policy),
+        ]
+    if scenario in {"valid", "second_round", "fallback_completed_tool_step"}:
         assert await send(ConsoleRequestRoute.TOOL_LOOP) == "recovered"
         assert len(requests) == sent + 1
     else:
@@ -441,3 +471,994 @@ def test_only_an_errored_resend_of_an_errored_call_is_its_failed_stream_fallback
     )
 
     assert is_failed_stream_fallback(streamed, fallback) is (which == "none")
+
+
+_TOOL_CALL = (
+    "```tool_call\n"
+    + json.dumps({"name": "calculator", "arguments": {"expression": "6*7"}})
+    + "\n```"
+)
+
+
+def _busy():
+    from tldw_chatbook.Provider_Contract import ChatProviderError
+
+    return ChatProviderError("fixture busy", provider="deepseek", status_code=503)
+
+
+def _hosted_replies(app, monkeypatch, replies):
+    """Send through deepseek's handler seam; each call takes the next reply.
+
+    The stand-in keeps ``chat_api_call``'s signature (the TASK-41310 trap).
+    An exception in ``replies`` is raised; past the script, the call answers.
+    Returns each call's ``messages_payload``, in order.
+    """
+    import functools
+
+    from tldw_chatbook.Chat import Chat_Functions
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+        ConsoleEgressClass,
+        ConsoleResolvedDestination,
+    )
+
+    calls = []
+
+    @functools.wraps(Chat_Functions.chat_api_call)
+    def handler(*_args, **kwargs):
+        reply = replies[len(calls)] if len(calls) < len(replies) else "Fixture reply"
+        calls.append(kwargs["messages_payload"])
+        if isinstance(reply, Exception):
+            raise reply
+        return {"choices": [{"message": {"role": "assistant", "content": reply}}]}
+
+    async def resolve(_selection):
+        return ConsoleProviderResolution(
+            ready=True,
+            provider="deepseek",
+            execution_key="deepseek",
+            model="deepseek-chat",
+            base_url="https://api.deepseek.com",
+            api_key="fixture",
+            streaming=False,
+            resolved_destination=ConsoleResolvedDestination(
+                provider="deepseek",
+                model="deepseek-chat",
+                endpoint_identity="https://api.deepseek.com",
+                egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+            ),
+        )
+
+    monkeypatch.setattr(app.gateway, "resolve_for_send", resolve)
+    monkeypatch.setattr(app.gateway, "_chat_api_call_fn", handler)
+    return calls
+
+
+# Each run: (harness options, hosted script or None, first run's status, lineage).
+def _llama_script(*steps):
+    """A `first_failure` that answers each llama.cpp request with its step.
+
+    `tool` answers with a tool call (streamed or whole, as asked), `empty`
+    with an empty stream, `busy` with a 503.
+    """
+    seen = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        step = steps[len(seen) - 1]
+        if step == "busy":
+            return httpx.Response(503, json={"error": {"message": "busy"}})
+        if json.loads(request.content).get("stream"):
+            text = "" if step == "empty" else _TOOL_CALL
+            body = (
+                "data: "
+                + json.dumps({"choices": [{"delta": {"content": text}}]})
+                + "\n\ndata: [DONE]\n\n"
+                if text
+                else ""
+            )
+            return httpx.Response(
+                200, text=body, headers={"content-type": "text/event-stream"}
+            )
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": _TOOL_CALL}}]}
+        )
+
+    return respond
+
+
+_FAILED = ("tool_loop", "error")
+_RESEND_FAILED = ("llama_fallback", "error")
+_RUNS = {
+    # Every call failed before any response: the in-place retries ran out.
+    "hosted_exhausted": (
+        {},
+        [_busy(), _busy(), _busy()],
+        "failed",
+        [("agent_first", "error"), _FAILED, _FAILED],
+    ),
+    # The first call answered with a tool call; every call after it failed.
+    "hosted_tool_then_exhausted": (
+        {},
+        [_TOOL_CALL, _busy(), _busy(), _busy()],
+        "failed",
+        [("agent_first", "complete"), _FAILED, _FAILED, _FAILED],
+    ),
+    # Each stream and its non-streaming resend failed, three rounds.
+    "llama_stream_exhausted": (
+        {"response_mode": "stream", "failures": 6},
+        None,
+        "failed",
+        [("agent_first", "error"), ("llama_fallback", "error")]
+        + [_FAILED, ("llama_fallback", "error")] * 2,
+    ),
+    # A streamed tool call; then each stream and its resend failed, three
+    # rounds (TASK-42534 review): the terminal call is the last resend.
+    "llama_stream_tool_then_exhausted": (
+        {"response_mode": "stream", "script": ("tool",) + ("busy",) * 6},
+        None,
+        "failed",
+        [("agent_first", "complete")] + [_FAILED, _RESEND_FAILED] * 3,
+    ),
+    # TASK-42530's shape: the first stream is empty and its resend answers
+    # with the tool call; then every stream and resend failed.
+    "llama_resend_tool_then_exhausted": (
+        {"response_mode": "stream", "script": ("empty", "tool") + ("busy",) * 6},
+        None,
+        "failed",
+        [("agent_first", "error"), ("llama_fallback", "complete")]
+        + [_FAILED, _RESEND_FAILED] * 3,
+    ),
+    # Controls: a run that bore a response still closes its turn as before.
+    "hosted_recovered": (
+        {},
+        [_busy()],
+        "completed",
+        [("agent_first", "error"), ("tool_loop", "complete")],
+    ),
+    "hosted_tool_completed": (
+        {},
+        [_TOOL_CALL],
+        "completed",
+        [("agent_first", "complete"), ("tool_loop", "complete")],
+    ),
+}
+
+
+def _turn_calls(app, turn_id):
+    with app.db.transaction() as cursor:
+        calls = cursor.execute(
+            "SELECT call_id, route_identity, state, outcome, response_started_at, "
+            "settled_at FROM console_trace_calls WHERE turn_id = ? "
+            "ORDER BY rowid",
+            (turn_id,),
+        ).fetchall()
+        links = cursor.execute(
+            "SELECT l.call_id FROM console_trace_response_links l "
+            "JOIN console_trace_calls c ON c.call_id = l.call_id "
+            "WHERE c.turn_id = ?",
+            (turn_id,),
+        ).fetchall()
+    return [tuple(row) for row in calls], {row[0] for row in links}
+
+
+async def _first_run(app, monkeypatch, run):
+    options, script, status, lineage = _RUNS[run]
+    calls = (
+        _hosted_replies(app, monkeypatch, script)
+        if script is not None
+        else app.attempts
+    )
+    first = await app.controller.submit_draft(
+        "Use calculator once" if _TOOL_CALL in (script or ()) else "Hello",
+        session_id=app.session.id,
+    )
+    assert first.accepted
+    assert app.controller.run_state.status.value == status, app.reservation_errors
+    assert app.reservation_errors == []
+    turn_id = app.store.get_message(first.user_message_id).persisted_message_id
+    before, links = _turn_calls(app, turn_id)
+    assert [(row[1], row[2]) for row in before] == lineage
+    return calls, turn_id, before, links
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("project", [True, False], ids=["project", "no_project"])
+@pytest.mark.parametrize("run", list(_RUNS))
+async def test_the_message_after_a_captured_run_that_failed_is_sent(
+    tmp_path, monkeypatch, run, project
+):
+    """TASK-42534: a failed call never closes the chat to the next message.
+
+    A Capture-On agent run whose calls failed before any response ends
+    `failed`. The next message's trace proves the finished turn from its
+    terminal call, and refused one that never started a response, so the
+    send ended `blocked` on 'Trace capture could not start' and the provider
+    was never asked. That needs a replaced request suffix: project context
+    (`AGENTS.md`), or tool history earlier in the run. A failed call adds
+    nothing to the run: the next message is sent, and the failed calls are
+    never recorded as having borne a response.
+    """
+    from Tests.Chat.test_console_project_instruction_traces import (
+        GUIDANCE,
+        _llama_failure,
+        _project_console,
+    )
+
+    options = dict(_RUNS[run][0])
+    script = options.pop("script", None)
+    if script is not None:
+        options.update(first_failure=_llama_script(*script), failures=len(script))
+    elif "failures" in options:
+        options.update(first_failure=_llama_failure("http503"))
+    async with _project_console(
+        tmp_path,
+        monkeypatch,
+        source_name="AGENTS.md" if project else "NOTES.md",
+        **options,
+    ) as app:
+        calls, turn_id, before, links = await _first_run(app, monkeypatch, run)
+        failed = [row for row in before if row[2] == "error"]
+        assert all(row[4] is None for row in failed)
+        assert not links & {row[0] for row in failed}
+        sent = len(calls)
+
+        follow_up = await app.controller.submit_draft(
+            "And now?", session_id=app.session.id
+        )
+
+        assert follow_up.accepted
+        assert app.reservation_errors == []
+        assert app.controller.run_state.status.value == "completed"
+        assert len(calls) == sent + 1
+        reply = app.store.get_message(follow_up.assistant_message_id)
+        assert (reply.status, reply.content) == ("complete", "Fixture reply")
+        wire = calls[-1] if _RUNS[run][1] else app.http_payloads[-1]["messages"]
+        assert any(GUIDANCE in str(row.get("content")) for row in wire) is project
+        # AC#2: the failed turn's calls are unchanged; none bore a response.
+        assert _turn_calls(app, turn_id) == (before, links)
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("run", ["hosted_tool_completed", "hosted_tool_then_exhausted"])
+async def test_a_failed_call_never_authorizes_the_tool_history_a_turn_closes(
+    tmp_path, monkeypatch, run
+):
+    """TASK-42534: the next message rechecks who answered with the tool call.
+
+    Its trace may now close a turn on a call that failed before any response,
+    so it must not take a run's tool history on trust. Here the call that
+    answered with the tool call reads as failed: a failed call authorizes an
+    unchanged retry, never tool history, so the next message is refused
+    before the provider is asked, and the earlier trace is left alone.
+    """
+    from Tests.Chat.test_console_project_instruction_traces import _project_console
+    from tldw_chatbook.Chat.console_trace_models import TraceCallState
+
+    async with _project_console(tmp_path, monkeypatch) as app:
+        calls, turn_id, before, links = await _first_run(app, monkeypatch, run)
+        sent = len(calls)
+        repository = app.factory.repository
+        logical = repository.get_call_by_logical_identity
+
+        def answered_by_a_failed_call(cursor, **identity):
+            call = logical(cursor, **identity)
+            if call is not None and (call.turn_id, call.call_sequence) == (turn_id, 0):
+                return replace(call, state=TraceCallState.ERROR, outcome="error")
+            return call
+
+        monkeypatch.setattr(
+            repository, "get_call_by_logical_identity", answered_by_a_failed_call
+        )
+        follow_up = await app.controller.submit_draft(
+            "And now?", session_id=app.session.id
+        )
+
+        assert follow_up.accepted
+        assert app.reservation_errors == ["completed_tool_turn_lineage"]
+        assert app.controller.run_state.status.value == "blocked"
+        assert len(calls) == sent
+        assert _turn_calls(app, turn_id) == (before, links)
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("project", [True, False], ids=["project", "no_project"])
+async def test_a_tool_run_interrupted_by_a_restart_and_discarded_still_closes(
+    tmp_path, monkeypatch, project
+):
+    """TASK-42534 review: startup recovery keeps a call's response.
+
+    A tool run whose third call was refused is left with two calls that bore
+    a response (`response_started`). After a restart, startup recovery
+    settles them as `interrupted`, the user discards the reply, and sends
+    again. Those calls bore the tool call that the removed history carries,
+    so the tool-history check must accept them; it refused the send.
+    """
+    from datetime import datetime, timezone
+
+    from Tests.Chat.test_console_project_instruction_traces import _project_console
+    from Tests.Chat.test_console_trace_discarded_tool_run import _reload_console
+    from tldw_chatbook.Agents import agent_service
+    from tldw_chatbook.Chat.console_trace_settlement import (
+        ConsoleTraceSettlementCoordinator,
+    )
+
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 100_000)
+    monkeypatch.setattr(
+        agent_service, "catalog_schema_tokens", lambda *_a, **_k: 10_001
+    )
+    async with _project_console(
+        tmp_path, monkeypatch, tools=2, discover_tools=True
+    ) as app:
+        app.store.set_session_project_instruction_state(
+            app.session.id,
+            replace(
+                app.session.project_instruction_state,
+                project_instructions_enabled=project,
+            ),
+        )
+        original = type(app.factory.service).prepare_current_surface_delta
+
+        def reject_third(instance, *args, **kwargs):
+            if len(app.http_payloads) == 2:
+                raise ValueError("unsupported_surface_change")
+            return original(instance, *args, **kwargs)
+
+        with monkeypatch.context() as fault:
+            fault.setattr(
+                type(app.factory.service), "prepare_current_surface_delta", reject_third
+            )
+            first = await app.controller.submit_draft(
+                "Find and load the calculator", session_id=app.session.id
+            )
+        assert first.accepted
+        turn_id = app.store.get_message(first.user_message_id).persisted_message_id
+        recovered = ConsoleTraceSettlementCoordinator(
+            app.factory.repository
+        ).recover_open_calls(
+            app.db,
+            occurred_at=datetime.now(timezone.utc).isoformat(),
+            recovery_grace_seconds=0,
+        )
+        assert [call.state.value for call in recovered] == ["interrupted"] * 2
+        before, links = _turn_calls(app, turn_id)
+        assert [row[2] for row in before] == ["interrupted", "interrupted"]
+        await _reload_console(app)
+        assert (await app.controller.discard_dispatch_recovery(app.session.id)).accepted
+        sent = len(app.http_payloads)
+
+        follow_up = await app.controller.submit_draft(
+            "And now?", session_id=app.session.id
+        )
+
+        assert follow_up.accepted
+        assert app.reservation_errors == ["unsupported_surface_change"]
+        assert app.controller.run_state.status.value == "completed"
+        assert len(app.http_payloads) == sent + 1
+        assert _turn_calls(app, turn_id) == (before, links)
+
+
+def _empty_stream(_request):
+    return httpx.Response(200, text="", headers={"content-type": "text/event-stream"})
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("project", [True, False], ids=["project", "no_project"])
+@pytest.mark.parametrize("empty", ["first", "every", "every_transformed"])
+async def test_a_llamacpp_tool_call_on_the_stream_resend_runs_the_tool(
+    tmp_path, monkeypatch, empty, project
+):
+    """TASK-42530: the resend's tool call runs, and the run and chat go on.
+
+    A llama.cpp stream that returns no content is sent once more without
+    streaming, on its own `llama_fallback` call. When that resend answered
+    with a tool call, the agent's next call (carrying the tool result) was
+    refused at trace reservation: the trace looked for the failed stream as
+    the latest call. When every stream is empty, the next call's own resend
+    was refused too (`trace_turn_unavailable`): a resend of a tool-loop call
+    had no saved user message to own it. A chat-dictionary transform of the
+    user's message (`every_transformed`) must not refuse that resend either
+    (TASK-42534 review).
+    """
+    from Tests.Chat.test_console_project_instruction_traces import (
+        GUIDANCE,
+        _project_console,
+    )
+
+    transformed = empty == "every_transformed"
+    empty = "every" if transformed else empty
+    async with _project_console(
+        tmp_path,
+        monkeypatch,
+        source_name="AGENTS.md" if project else "NOTES.md",
+        **(
+            {"response_mode": "fallback", "tools": 2}
+            if empty == "every"
+            else {
+                "response_mode": "stream",
+                "tools": 1,
+                "first_failure": _empty_stream,
+                "failures": 1,
+            }
+        ),
+    ) as app:
+        if transformed:
+            assert app.store.persist_session_if_needed(app.session.id)
+            app.controller._chat_dictionary_applier = (
+                lambda _conversation, text, _frozen_inputs: text.replace(
+                    "calculator", "calculator tool"
+                )
+            )
+        result = await app.controller.submit_draft(
+            "Use calculator once", session_id=app.session.id
+        )
+        assert result.accepted
+        assert app.reservation_errors == []
+        assert app.controller.run_state.status.value == "completed"
+        if transformed:
+            assert any(
+                row.get("content") == "Use calculator tool once"
+                for row in app.http_payloads[0]["messages"]
+            )
+        turn_id = app.store.get_message(result.user_message_id).persisted_message_id
+        calls, _links = _turn_calls(app, turn_id)
+        resend = ("llama_fallback", "complete")
+        assert [(row[1], row[2]) for row in calls] == (
+            [("agent_first", "error"), resend, ("tool_loop", "complete")]
+            if empty == "first"
+            else [("agent_first", "error"), resend, ("tool_loop", "error"), resend]
+        )
+        # The tool ran: its result (6*7, or 7*7 when the first stream's
+        # payload was counted) went out on the run's last call.
+        assert any(
+            str(42 if empty == "first" else 49) in str(row.get("content"))
+            for row in app.http_payloads[-1]["messages"][1:]
+        )
+        reply = app.store.get_message(result.assistant_message_id)
+        assert (reply.status, reply.content) == ("complete", "Fixture reply")
+        sent = len(app.attempts)
+
+        follow_up = await app.controller.submit_draft(
+            "And now?", session_id=app.session.id
+        )
+
+        assert follow_up.accepted
+        assert app.reservation_errors == []
+        assert app.controller.run_state.status.value == "completed"
+        assert len(app.attempts) == sent + (1 if empty == "first" else 2)
+        wire = app.http_payloads[-1]["messages"]
+        assert any(GUIDANCE in str(row.get("content")) for row in wire) is project
+
+
+@pytest.mark.parametrize(
+    "latest",
+    [
+        "failed_tool_loop",
+        "answered",
+        "failed_first_call",
+        "unchanged_after_failed_tool_loop",
+        "appended_after_failed_tool_loop",
+    ],
+)
+async def test_a_resend_of_a_tool_loop_call_repeats_its_failed_call(
+    tmp_path, make_database, make_gateway, latest
+):
+    """TASK-42530: a llama.cpp resend of a tool-loop call owns no new history.
+
+    It runs on its own `llama_fallback` call, and takes the tool loop's turn
+    from the request, so it is admitted only directly after the failed
+    tool-loop call it repeats, on that call's surface, with nothing
+    appended (TASK-42534 review).
+    """
+    from tldw_chatbook.Chat.console_prepared_request import (
+        resolve_request_capacity,
+    )
+    from tldw_chatbook.Chat.console_trace_errors import TraceReservationRefused
+
+    database = make_database(tmp_path / "resend.sqlite", "resend")
+    conversation = database.add_conversation({"title": "resend"})
+    _, revision = _saved_message(database, conversation, "hello")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    actor, chain = new_opaque_id(), new_opaque_id()
+    script = {"failed_tool_loop": [200, 503, 200], "failed_first_call": [503]}.get(
+        latest, [200, 503]
+    )
+    after_failed_tool_loop = latest.endswith("_after_failed_tool_loop")
+    requests = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        status = script[len(requests) - 1] if len(requests) <= len(script) else 200
+        if status != 200:
+            return httpx.Response(status, json={"error": {"message": "fixture"}})
+        if json.loads(request.content).get("stream"):
+            return httpx.Response(
+                200,
+                text='data: {"choices":[{"delta":{"content":"recovered"}}]}\n\n'
+                "data: [DONE]\n\n",
+                headers={"content-type": "text/event-stream"},
+            )
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "recovered"}}]}
+        )
+
+    factory = ConsoleTraceBoundaryFactory(database)
+    gateway = make_gateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+        trace_call_boundary_factory=factory,
+    )
+    resolution = ConsoleProviderResolution(
+        ready=True,
+        provider="llama_cpp",
+        execution_key="llama_cpp",
+        model="qwen3.7-27b",
+        base_url="http://localhost:8080",
+        # A non-streaming first call has no resend of its own.
+        streaming=latest != "failed_first_call",
+    )
+    messages, descriptors = [{"role": "user", "content": "hello"}], [revision]
+
+    async def send(route, resolution=resolution):
+        request = _semantic_request(
+            messages, descriptors, policy, route=route, actor_id=actor, chain_id=chain
+        )
+        items = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                request,
+                route=route,
+                route_actor_id=actor,
+                route_chain_id=chain,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ]
+        return "".join(item for item in items if isinstance(item, str))
+
+    if latest == "failed_first_call":
+        with pytest.raises(httpx.HTTPStatusError):
+            await send(ConsoleRequestRoute.AGENT_FIRST)
+    else:
+        assert await send(ConsoleRequestRoute.AGENT_FIRST) == "recovered"
+    if latest == "failed_tool_loop":
+        # The gateway resends the failed streamed tool-loop call itself.
+        assert await send(ConsoleRequestRoute.TOOL_LOOP) == "recovered"
+        with database.transaction() as cursor:
+            routes = cursor.execute(
+                "SELECT c.route_identity, c.state FROM console_trace_events e "
+                "JOIN console_trace_calls c ON c.call_id = e.call_id "
+                "WHERE e.event_type = 'call_boundary' ORDER BY e.sequence"
+            ).fetchall()
+        assert [tuple(row) for row in routes] == [
+            ("agent_first", "complete"),
+            ("tool_loop", "error"),
+            ("llama_fallback", "complete"),
+        ]
+        return
+    if after_failed_tool_loop:
+        # Not streamed, so the gateway sends no resend of its own: the
+        # failed tool-loop call stays the segment's latest call.
+        with pytest.raises(httpx.HTTPStatusError):
+            await send(
+                ConsoleRequestRoute.TOOL_LOOP, replace(resolution, streaming=False)
+            )
+    if latest == "appended_after_failed_tool_loop":
+        messages = messages + [{"role": "user", "content": "Tool result: 42"}]
+        descriptors = descriptors + [
+            ProviderArtifactTraceProvenance(TraceProvenanceSource.TOOL_RESULT, policy)
+        ]
+    # A resend after another kind of latest call, or that appends history.
+    prepared = prepare_provider_request(
+        _semantic_request(
+            messages,
+            descriptors,
+            policy,
+            route=ConsoleRequestRoute.TOOL_LOOP,
+            actor_id=actor,
+            chain_id=chain,
+        ),
+        wire_style="distinct_roles",
+        provider="llama_cpp",
+        model="qwen3.7-27b",
+        capacity=resolve_request_capacity(context_window_tokens=None),
+    )
+    if latest == "unchanged_after_failed_tool_loop":
+        assert factory(prepared, resolution, ConsoleRequestRoute.LLAMA_FALLBACK)
+        return
+    with pytest.raises(TraceReservationRefused) as refused:
+        factory(prepared, resolution, ConsoleRequestRoute.LLAMA_FALLBACK)
+    assert refused.value.args[0] == "trace_tool_chain_unavailable"
+
+
+@pytest.mark.parametrize(
+    "forged",
+    ["none", "model", "envelope", "missing_envelope", "unstreamed_envelope"],
+)
+async def test_a_llamacpp_resend_is_compared_with_the_call_it_repeats(
+    tmp_path, make_database, make_gateway, monkeypatch, forged
+):
+    """TASK-42534 review: a resend repeats its failed stream, settings and all.
+
+    A llama.cpp resend runs on its own run, so the retry comparison of its
+    request header never ran: nothing proved it repeated the failed call.
+    It is compared with the call whose boundary directly precedes its own;
+    only the verified streaming flip (in the settings and in the literal
+    envelope's `stream`) may differ. Here the stored stream is made to read
+    as another model, or as an envelope with another key; or both envelopes
+    read as missing; or the stream's envelope reads as not streamed, so the
+    pair is no True -> False flip.
+    """
+    database = make_database(tmp_path / "resend-header.sqlite", "resend-header")
+    conversation = database.add_conversation({"title": "resend"})
+    _, revision = _saved_message(database, conversation, "hello")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    actor, chain = new_opaque_id(), new_opaque_id()
+    requests = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(503, json={"error": {"message": "fixture"}})
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "recovered"}}]}
+        )
+
+    factory = ConsoleTraceBoundaryFactory(database)
+    repository = factory.repository
+    header_of, artifact_of = repository.get_request_header, repository.get_artifact
+
+    def forged_header(cursor, header_id):
+        header = header_of(cursor, header_id)
+        if forged == "model" and header.generation_parameters.get("streaming"):
+            return replace(header, model_name="qwen3.7-8b")
+        return header
+
+    def forged_artifact(cursor, artifact_id):
+        artifact = artifact_of(cursor, artifact_id)
+        value = json.loads(artifact.sanitized_bytes)
+        streamed = value == {"model": "qwen3.7-27b", "stream": True}
+        if (
+            forged == "missing_envelope"
+            # Only once the resend's header is written: writes read it back.
+            and written
+            and isinstance(value, dict)
+            and set(value) == {"model", "stream"}
+        ):
+            return None
+        if streamed and forged in {"envelope", "unstreamed_envelope"}:
+            changed = (
+                {**value, "top_k": 5}
+                if forged == "envelope"
+                else {**value, "stream": False}
+            )
+            return replace(artifact, sanitized_bytes=json.dumps(changed).encode())
+        return artifact
+
+    written = []
+    create_header = repository.create_or_reuse_request_header
+
+    def note_written(cursor, **values):
+        header = create_header(cursor, **values)
+        if requests:  # the resend's header, after the stream was sent
+            written.append(header)
+        return header
+
+    monkeypatch.setattr(repository, "get_request_header", forged_header)
+    monkeypatch.setattr(repository, "get_artifact", forged_artifact)
+    monkeypatch.setattr(repository, "create_or_reuse_request_header", note_written)
+    gateway = make_gateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+        trace_call_boundary_factory=factory,
+    )
+    resolution = ConsoleProviderResolution(
+        ready=True,
+        provider="llama_cpp",
+        execution_key="llama_cpp",
+        model="qwen3.7-27b",
+        base_url="http://localhost:8080",
+        streaming=True,
+    )
+    request = _semantic_request(
+        [{"role": "user", "content": "hello"}],
+        [revision],
+        policy,
+        route=ConsoleRequestRoute.AGENT_FIRST,
+        actor_id=actor,
+        chain_id=chain,
+    )
+
+    async def send():
+        items = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                request,
+                route=ConsoleRequestRoute.AGENT_FIRST,
+                route_actor_id=actor,
+                route_chain_id=chain,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ]
+        return "".join(item for item in items if isinstance(item, str))
+
+    if forged == "none":
+        assert await send() == "recovered"
+        assert len(requests) == 2
+    else:
+        with pytest.raises(TraceCallPersistenceError):
+            await send()
+        assert len(requests) == 1
+
+
+_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "calculator",
+        "description": "Evaluate an arithmetic expression.",
+        "parameters": {
+            "type": "object",
+            "properties": {"expression": {"type": "string"}},
+            "required": ["expression"],
+        },
+    },
+}
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "valid",
+        "unchanged_resend",
+        "changed_model",
+        "changed_temperature",
+        "changed_surface",
+        "forged_stream_settings",
+        "streamed_bore_response",
+    ],
+)
+@pytest.mark.parametrize("path", ["self_hosted", "llama_tools"])
+async def test_a_streamed_retry_after_a_failed_in_chain_resend_repeats_the_stream(
+    tmp_path, make_database, make_gateway, monkeypatch, path, scenario
+):
+    """TASK-42532: the retry repeats the streamed call, not its failed resend.
+
+    A self-hosted server's refused stream (TASK-37421), and a llama.cpp stream
+    with tools in the request, are sent once more without streaming as the
+    run's next TOOL_LOOP call. When that resend failed too, the agent's
+    in-place retry streams again; it was compared with the resend
+    (`streaming=False`) and refused. It is compared with the streamed call
+    the resend repeated: only that True -> False flip is the resend's, and
+    any other change of target, settings or surface is still refused.
+    """
+    import functools
+
+    from tldw_chatbook.Chat import Chat_Functions
+    from tldw_chatbook.Provider_Contract import ChatProviderError
+
+    database = make_database(tmp_path / "resend-retry.sqlite", "resend-retry")
+    conversation = database.add_conversation({"title": "retry"})
+    _, revision = _saved_message(database, conversation, "hello")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    actor, chain = new_opaque_id(), new_opaque_id()
+    provider = "vllm" if path == "self_hosted" else "llama_cpp"
+    calls = []
+
+    @functools.wraps(Chat_Functions.chat_api_call)
+    def handler(*_args, **kwargs):
+        calls.append(kwargs.get("streaming"))
+        if len(calls) == 1:
+            # The server refuses to stream.
+            raise ChatProviderError(
+                "fixture refusal", provider=provider, status_code=400
+            )
+        if len(calls) == 2:
+            raise ChatProviderError("fixture busy", provider=provider, status_code=503)
+        return {"choices": [{"message": {"role": "assistant", "content": "recovered"}}]}
+
+    factory = ConsoleTraceBoundaryFactory(database)
+    gateway = make_gateway(
+        chat_api_call_fn=handler,
+        trace_call_boundary_factory=factory,
+    )
+    resolution = ConsoleProviderResolution(
+        ready=True,
+        provider=provider,
+        execution_key=provider,
+        model="qwen3.7-27b",
+        base_url="http://localhost:8080",
+        streaming=True,
+    )
+    tools = [_TOOL_SCHEMA] if path == "llama_tools" else []
+    messages, descriptors = [{"role": "user", "content": "hello"}], [revision]
+
+    async def send(route, resolution):
+        from tldw_chatbook.Chat.console_prepared_request import build_console_request
+        from tldw_chatbook.Chat.console_trace_provenance import (
+            request_route_provenance,
+        )
+
+        request = build_console_request(
+            messages,
+            tools=tools,
+            message_provenance=tuple(descriptors),
+            memory_provenance=(),
+            mandatory_provenance=(),
+            tool_provenance=tuple(
+                ProviderArtifactTraceProvenance(
+                    TraceProvenanceSource.TOOL_DEFINITION, policy
+                )
+                for _ in tools
+            ),
+            metadata_provenance=(
+                request_route_provenance(route, actor_id=actor, chain_id=chain),
+            ),
+            capture_policy=policy,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+        items = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                request,
+                route=route,
+                route_actor_id=actor,
+                route_chain_id=chain,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ]
+        return "".join(item for item in items if isinstance(item, str))
+
+    with pytest.raises(ChatProviderError) as failure:
+        await send(ConsoleRequestRoute.AGENT_FIRST, resolution)
+    assert failure.value.status_code == 503
+    assert calls == [True, False]
+    with database.transaction() as cursor:
+        routes = cursor.execute(
+            "SELECT c.route_identity, c.state FROM console_trace_events e "
+            "JOIN console_trace_calls c ON c.call_id = e.call_id "
+            "WHERE e.event_type = 'call_boundary' ORDER BY e.sequence"
+        ).fetchall()
+    # The resend is the run's own next call, not a llama_fallback run.
+    assert [tuple(row) for row in routes] == [
+        ("agent_first", "error"),
+        ("tool_loop", "error"),
+    ]
+    retry = resolution
+    if scenario == "unchanged_resend":
+        retry = replace(resolution, streaming=False)
+    elif scenario == "changed_model":
+        retry = replace(resolution, model="qwen3.7-8b")
+    elif scenario == "changed_temperature":
+        retry = replace(resolution, temperature=0.25)
+    elif scenario == "forged_stream_settings":
+        # The stored stream reads as if it had the retry's temperature: then
+        # the failed resend is no longer its verified flip, and the retry
+        # is compared with the resend, as before (TASK-42534 review).
+        retry = replace(resolution, temperature=0.25)
+        with database.transaction() as cursor:
+            streamed_header_id = cursor.execute(
+                "SELECT request_header_id FROM console_trace_calls "
+                "WHERE call_sequence = 0"
+            ).fetchone()[0]
+        header_of = factory.repository.get_request_header
+
+        def forged(cursor, header_id):
+            header = header_of(cursor, header_id)
+            if header_id != streamed_header_id:
+                return header
+            return replace(
+                header,
+                generation_parameters={**header.generation_parameters, "temp": 0.25},
+            )
+
+        monkeypatch.setattr(factory.repository, "get_request_header", forged)
+    elif scenario == "streamed_bore_response":
+        # The stored stream reads as if a response had started: then its
+        # resend was not sent for want of one, and the retry is compared
+        # with the resend, as before (TASK-42534 re-review).
+        logical = factory.repository.get_call_by_logical_identity
+
+        def bore_response(cursor, **identity):
+            call = logical(cursor, **identity)
+            if call is not None and call.call_sequence == 0:
+                return replace(call, response_started_at=call.dispatch_started_at)
+            return call
+
+        monkeypatch.setattr(
+            factory.repository, "get_call_by_logical_identity", bore_response
+        )
+    elif scenario == "changed_surface":
+        messages = messages + [
+            {"role": "tool", "content": "unobserved addition", "tool_call_id": "forged"}
+        ]
+        descriptors = descriptors + [
+            ProviderArtifactTraceProvenance(TraceProvenanceSource.TOOL_RESULT, policy)
+        ]
+    if scenario in {"valid", "unchanged_resend"}:
+        assert await send(ConsoleRequestRoute.TOOL_LOOP, retry) == "recovered"
+        assert calls == [True, False, retry.streaming]
+    else:
+        with pytest.raises(TraceCallPersistenceError):
+            await send(ConsoleRequestRoute.TOOL_LOOP, retry)
+        assert calls == [True, False]
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("failed_resends", [1, 99], ids=["recovered", "exhausted"])
+async def test_a_captured_run_retries_a_refused_stream_whose_resend_failed(
+    tmp_path, monkeypatch, failed_resends
+):
+    """TASK-42532: the run retries in place and ends on the provider's error.
+
+    A self-hosted server refuses every stream (HTTP 400); each is sent once
+    more without streaming, and that resend fails with a 503. The agent's
+    in-place retry streams again. It was refused at trace reservation, so
+    the run ended on the trace card instead of the provider's error.
+    """
+    import functools
+
+    from Tests.Chat.test_console_project_instruction_traces import _project_console
+    from tldw_chatbook.Chat import Chat_Functions
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+        ConsoleEgressClass,
+        ConsoleResolvedDestination,
+    )
+    from tldw_chatbook.Provider_Contract import ChatProviderError
+
+    async with _project_console(tmp_path, monkeypatch) as app:
+        calls = []
+
+        @functools.wraps(Chat_Functions.chat_api_call)
+        def handler(*_args, **kwargs):
+            calls.append(kwargs.get("streaming"))
+            if kwargs.get("streaming"):
+                raise ChatProviderError(
+                    "fixture refusal", provider="vllm", status_code=400
+                )
+            if calls.count(False) <= failed_resends:
+                raise ChatProviderError(
+                    "fixture busy", provider="vllm", status_code=503
+                )
+            return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+        async def resolve(_selection):
+            return ConsoleProviderResolution(
+                ready=True,
+                provider="vllm",
+                execution_key="vllm",
+                model="qwen3.7-27b",
+                base_url="http://localhost:8000",
+                api_key="fixture",
+                streaming=True,
+                resolved_destination=ConsoleResolvedDestination(
+                    provider="vllm",
+                    model="qwen3.7-27b",
+                    endpoint_identity="http://localhost:8000",
+                    egress_class=ConsoleEgressClass.ON_DEVICE,
+                ),
+            )
+
+        monkeypatch.setattr(app.gateway, "resolve_for_send", resolve)
+        monkeypatch.setattr(app.gateway, "_chat_api_call_fn", handler)
+        result = await app.controller.submit_draft("Hello", session_id=app.session.id)
+
+        assert result.accepted
+        assert app.reservation_errors == []
+        assert app.store.dispatch_recovery_for_session(app.session.id) is None
+        turn_id = app.store.get_message(result.user_message_id).persisted_message_id
+        lineage = [(row[1], row[2]) for row in _turn_calls(app, turn_id)[0]]
+        failed_round = [_FAILED, _FAILED]
+        if failed_resends == 1:
+            assert app.controller.run_state.status.value == "completed"
+            assert calls == [True, False, True, False]
+            assert lineage == [
+                ("agent_first", "error"),
+                _FAILED,
+                _FAILED,
+                ("tool_loop", "complete"),
+            ]
+        else:
+            assert app.controller.run_state.status.value == "failed"
+            assert calls == [True, False] * 3
+            assert lineage == [("agent_first", "error"), _FAILED, *failed_round * 2]
+            copy = app.controller.run_state.visible_copy
+            assert "503" in copy and "trace" not in copy.lower(), copy
