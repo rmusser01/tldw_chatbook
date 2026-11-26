@@ -685,7 +685,13 @@ async def test_library_empty_state_reports_empty_with_next_action():
     host = DestinationHarness(app, "library")
     async with host.run_test(size=(140, 42)) as pilot:
         library = _active_destination_screen(host)
-        await _wait_for_selector(library, pilot, "#library-canvas-landing")
+        # The landing canvas mounts before the source snapshot updates its counts.
+        await _wait_for_visible_text(
+            library,
+            pilot,
+            "Notes (0) · Media (0) · Conversations (0)",
+            timeout=15.0,
+        )
 
         visible_text = " ".join(
             [
