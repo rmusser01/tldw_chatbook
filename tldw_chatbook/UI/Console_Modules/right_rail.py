@@ -65,7 +65,7 @@ import os
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, ScrollableContainer, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.dom import NoScreen
 from textual.events import DescendantBlur, DescendantFocus, Key, MouseDown, Resize
@@ -339,8 +339,32 @@ class _InspectorOuterBody(VerticalScroll):
         self._on_scrolled = on_scrolled
         #: TASK-41959: counts the user's gestures inside the body -- focus
         #: moving in, a mouse press, a section collapse toggle. The fleet
-        #: reveal stands down for good once it moves.
+        #: reveal stands down for good once it moves. Scrolls of the scroll
+        #: areas inside the body post none of these, so the reveal also
+        #: compares their offsets (`inner_scroll_state`).
         self.user_gestures = 0
+
+    def inner_scroll_state(self) -> tuple[tuple[Widget, float], ...]:
+        """Each scroll area inside the body, with its current offset."""
+        return tuple((area, area.scroll_y) for area in self.query(ScrollableContainer))
+
+    def layout_settling(self) -> bool:
+        """Whether the rail is still re-fitting its bounded sections' caps.
+
+        An opening's first layouts shrink a long Sources list to its cap;
+        until that settles, any position measured below it moves (TASK-41959).
+        """
+        rail = self.parent
+        return bool(getattr(rail, "_outer_reconcile_scheduled", False)) or any(
+            section._reconcile_scheduled
+            for section in self.query(ConsoleBoundedSection)
+        )
+
+    def inner_scrolled_since(self, state: tuple[tuple[Widget, float], ...]) -> bool:
+        """Whether a scroll area from ``state`` has moved since (a wheel or a
+        scrollbar drag). One a rebuild replaced is a new widget and is skipped.
+        """
+        return any(area.is_mounted and area.scroll_y != y for area, y in state)
 
     def on_descendant_focus(self, _event: DescendantFocus) -> None:
         self.user_gestures += 1

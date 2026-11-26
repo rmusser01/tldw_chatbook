@@ -254,9 +254,12 @@ def apply_console_agent_status_state(widget: Any, status_line: str) -> None:
 CONSOLE_AGENT_FLEET_SECTION_ID = "agent-fleet"
 
 #: TASK-41959: Environment landings this soon after the fleet reveal may redo
-#: it -- the opening's local tier, then its PR-and-checks tier -- and at most
-#: this many times. Later landings (the 10 s poll) never do.
-FLEET_REVEAL_REPLAY_SECONDS = 5.0
+#: it. The window covers the opening's PR-and-checks tier, which lands after
+#: the local one: `gh` was measured at about 12 s (the `_pending_ack_tiers`
+#: note in `environment.py`). A landing that leaves the fleet in view scrolls
+#: nothing and spends nothing; at most this many replays scroll, and nothing
+#: replays after the window.
+FLEET_REVEAL_REPLAY_SECONDS = 15.0
 FLEET_REVEAL_REPLAY_LIMIT = 2
 #: Read at call time, so a test can move the clock.
 _fleet_reveal_clock = time.monotonic
@@ -270,9 +273,12 @@ class _FleetReveal:
     body: Any
     token: int
     gestures: int
+    inner: tuple
     offset: float
     deadline: float
     replays_left: int
+    #: Whether a scroll by this reveal spends a replay (the opening's does not).
+    spends: bool = False
 
 
 def _automatic_work_pause_notice(reason: str, *, results_saved: bool = True) -> str:
@@ -2587,6 +2593,7 @@ class ConsoleAgentController:
                 body=body,
                 token=self._fleet_reveal_token,
                 gestures=body.user_gestures,
+                inner=body.inner_scroll_state(),
                 offset=body.scroll_y,
                 deadline=_fleet_reveal_clock() + FLEET_REVEAL_REPLAY_SECONDS,
                 replays_left=FLEET_REVEAL_REPLAY_LIMIT,
@@ -2603,9 +2610,11 @@ class ConsoleAgentController:
         Opening the rail starts the Environment fetch: its local tier, then
         the PR and its checks, grow the sections above and pushed the fleet's
         rows and "View all runs" back below the fold. A landing within
-        ``FLEET_REVEAL_REPLAY_SECONDS`` of the reveal redoes it, at most
-        ``FLEET_REVEAL_REPLAY_LIMIT`` times, and only while the rail is still
-        the one that opened itself and the user has done nothing in it.
+        ``FLEET_REVEAL_REPLAY_SECONDS`` of the reveal redoes it, and only while
+        the rail is open, still the one that opened itself, and the user has
+        done nothing in it. Landings that change nothing (the poll, a focus
+        regain, a TTL re-land) find the fleet in view and spend nothing; at
+        most ``FLEET_REVEAL_REPLAY_LIMIT`` replays scroll.
 
         Args:
             environment_section: The landed Environment section.
@@ -2619,22 +2628,25 @@ class ConsoleAgentController:
             or replay.replays_left < 1
             or _fleet_reveal_clock() > replay.deadline
             or rail_state is None
+            or not rail_state.right_open
             or rail_state.preferred_right_open
             or not self._fleet_reveal_current(replay)
         ):
             return
-        replay = replace(replay, replays_left=replay.replays_left - 1)
         environment_section.call_next(
-            tasks_section.call_next, self._schedule_fleet_reveal, replay
+            tasks_section.call_next,
+            self._schedule_fleet_reveal,
+            replace(replay, spends=True),
         )
 
     def _fleet_reveal_current(self, reveal: _FleetReveal) -> bool:
         """Whether ``reveal`` may still scroll.
 
         It may not once it was cancelled or superseded, the sub-agents
-        finished, the user acted in the rail body, or the body's offset moved
-        from the one the reveal knows (the user scrolled). A reveal that may
-        not scroll arms no replay, so the stand-down is for good.
+        finished, the user acted in the rail body, or an offset moved: the
+        body's own from the one the reveal knows, or a scroll area's inside
+        it (the user scrolled). A reveal that may not scroll arms no replay,
+        so the stand-down is for good.
         """
         return (
             reveal.token == self._fleet_reveal_token
@@ -2642,6 +2654,7 @@ class ConsoleAgentController:
             and reveal.section.is_mounted
             and reveal.body.user_gestures == reveal.gestures
             and reveal.body.scroll_y == reveal.offset
+            and not reveal.body.inner_scrolled_since(reveal.inner)
         )
 
     def _schedule_fleet_reveal(self, reveal: _FleetReveal) -> None:
@@ -2651,26 +2664,48 @@ class ConsoleAgentController:
         TASK-37000), then after the refresh that lays it out. The offset the
         scroll leaves is what a later landing compares against.
         """
-        section = reveal.section
+        section, body = reveal.section, reveal.body
+        armed = False
 
-        def note_offset() -> None:
-            # A stale one fails the replay's own check, so no guard here.
-            self._fleet_replay = replace(reveal, offset=reveal.body.scroll_y)
+        def arm(replays_left: int) -> None:
+            # Once per reveal: `scroll_to_widget` hands `on_complete` to every
+            # scrolling ancestor, and a late duplicate re-armed a replay a
+            # landing had already used.
+            nonlocal armed
+            if not armed:
+                armed = True
+                self._fleet_replay = replace(
+                    reveal,
+                    offset=body.scroll_y,
+                    inner=body.inner_scroll_state(),
+                    replays_left=replays_left,
+                )
 
         def run(attempts: int) -> None:
             if not self._fleet_reveal_current(reveal):
                 return
-            # A refresh can still precede the opened rail's layout (more of
-            # them under load); a section with no region has nothing to show.
-            if not section.region:
-                if attempts > 1:
-                    section.call_after_refresh(run, attempts - 1)
+            # Wait for the layout. With no region yet it has not reached the
+            # section: the normal case when a landing arrived while the rail
+            # was hidden, since the opening rebuilds inside `batch_update`,
+            # where `Screen._on_idle` runs after-refresh callbacks without a
+            # layout. While the rail still re-fits its caps, a long Sources
+            # list is about to shrink and move the section up.
+            if (not section.region or body.layout_settling()) and attempts > 1:
+                section.call_after_refresh(run, attempts - 1)
                 return
+            if not section.region:
+                return
+            if body.content_region.contains_region(section.region):
+                arm(reveal.replays_left)  # in view: nothing to scroll or spend
+                return
+            spent = reveal.replays_left - (1 if reveal.spends else 0)
             # Minimal scroll, not `top=True`: the rail's first layouts still
             # move the rows above (a scrollbar narrows it, the tray's cap
             # re-fits), and a header pinned to the top was pushed out.
-            # `on_complete` fires whether or not a scroll was needed.
-            section.scroll_visible(animate=False, on_complete=note_offset)
+            # `immediate`, so `arm` reads the offset the scroll left.
+            section.scroll_visible(
+                animate=False, immediate=True, on_complete=lambda: arm(spent)
+            )
 
         # ponytail: a fixed 20-refresh bound; a reveal that never lays out
         # just stops.

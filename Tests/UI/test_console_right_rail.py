@@ -1805,7 +1805,7 @@ async def _wait_reveal(pilot, predicate, *, description, stable_polls: int = 1):
 
 
 async def _start_fleet_with_staged_tray(
-    pilot, screen, *, tray_rows: int, history: bool = False
+    pilot, screen, *, tray_rows: int, history: bool = False, open_rail: bool = False
 ):
     """Stage tray rows, then let three running sub-agents reach the fleet.
 
@@ -1814,7 +1814,8 @@ async def _start_fleet_with_staged_tray(
     Environment fetches the rail's opening starts are stubbed out, so the
     only landing a test sees is one it makes. ``history`` gives the bridge
     a run-history page, so the section stays shown ("Run history") after
-    its rows end. Returns the bridge.
+    its rows end. ``open_rail`` applies the rail state in the same tick as
+    the rows, with no pause between. Returns the bridge.
     """
     from Tests.UI.test_console_fleet_panel import _FleetBridge
     from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
@@ -1860,14 +1861,27 @@ async def _start_fleet_with_staged_tray(
     screen._console_agent_drilldown_run_id = None
     screen._character._current_console_rail_conversation_id = lambda: "conv-A"
     screen._agent._console_agent_drilldown_conversation_id = "conv-A"
-    await _real_fleet_sync(pilot, screen)
+    await _real_fleet_sync(pilot, screen, open_rail=open_rail)
     return bridge
 
 
-async def _real_fleet_sync(pilot, screen) -> None:
+async def _real_fleet_sync(pilot, screen, *, open_rail: bool = False) -> None:
     screen._console_agent_section_last = None
     screen._sync_console_agent_section()
+    if open_rail:
+        screen._sync_console_rail_visibility_if_changed(
+            screen._current_console_rail_state()
+        )
     await pilot.pause()
+
+
+@pytest.fixture
+def frozen_reveal_clock(monkeypatch):
+    """Hold the fleet reveal's clock still, so a slow loaded run never
+    outlasts the replay window; only the bound test moves it."""
+    agent_module = importlib.import_module("tldw_chatbook.UI.Console_Modules.agent")
+    monkeypatch.setattr(agent_module, "_fleet_reveal_clock", lambda: 1000.0)
+    return agent_module
 
 
 def _fleet_section_inside_rail_body(screen) -> bool:
@@ -1980,6 +1994,23 @@ def _rich_environment_snapshot():
     )
 
 
+def _lean_environment_snapshot():
+    """A branch and nothing else: the sections above shrink back."""
+    from tldw_chatbook.Chat.console_environment_state import (
+        EnvironmentSnapshot,
+        EnvSourceAvailability,
+        GitEnvState,
+    )
+
+    return EnvironmentSnapshot(
+        git=GitEnvState(
+            availability=EnvSourceAvailability.OK,
+            root="/w",
+            branch="feat/task-1-inspector-order",
+        )
+    )
+
+
 def _land(screen, snapshot=None) -> None:
     """Land an Environment snapshot the way the controller's tiers do."""
     snapshot = snapshot or _rich_environment_snapshot()
@@ -2006,8 +2037,12 @@ async def _auto_open_with_fleet(pilot, screen, *, tray_rows: int) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("size", "tray_rows"), [((150, 40), 6), ((180, 48), 12)])
-async def test_fleet_auto_open_scrolls_the_agents_section_into_view(size, tray_rows):
+@pytest.mark.parametrize(
+    ("size", "tray_rows"), [((150, 40), 6), ((180, 48), 12), ((150, 40), 20)]
+)
+async def test_fleet_auto_open_scrolls_the_agents_section_into_view(
+    size, tray_rows, frozen_reveal_clock
+):
     """TASK-41959 review: the fleet's rail auto-open must show the fleet.
 
     Agents now sits below the Sources tray, Library search and Scope. Its
@@ -2015,6 +2050,9 @@ async def test_fleet_auto_open_scrolls_the_agents_section_into_view(size, tray_r
     `scroll_on_expand` reveal was lost and the auto-opened rail showed no
     fleet: at 150x40 (the narrowest auto-open width) the header sat below
     the rail body's fold, and at 180x48 a 12-row tray pushed it there too.
+    With 20 staged sources the opening then shrank the list to its cap and
+    the section rose above the top (y=1, body 15-31) until the reveal waited
+    for that re-fit.
     """
     async with make_console_pilot(size=size) as pilot:
         screen = pilot.app.screen
@@ -2024,7 +2062,9 @@ async def test_fleet_auto_open_scrolls_the_agents_section_into_view(size, tray_r
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("size", "tray_rows"), [((150, 40), 6), ((180, 48), 12)])
-async def test_fleet_reveal_survives_the_first_environment_landing(size, tray_rows):
+async def test_fleet_reveal_survives_the_first_environment_landing(
+    size, tray_rows, frozen_reveal_clock
+):
     """The rail's opening starts the Environment fetch; its landing grew the
     sections above and pushed the fleet's rows and "View all runs" back below
     the fold (150x40: header 21 -> 30, body 15-31). A landing soon after the
@@ -2046,7 +2086,7 @@ async def test_fleet_reveal_survives_the_first_environment_landing(size, tray_ro
 
 
 @pytest.mark.asyncio
-async def test_environment_landing_keeps_a_scroll_the_user_made():
+async def test_environment_landing_keeps_a_scroll_the_user_made(frozen_reveal_clock):
     """Control: once the user scrolls the body, the landing leaves it alone."""
     async with make_console_pilot(size=(150, 40)) as pilot:
         screen = pilot.app.screen
@@ -2066,7 +2106,9 @@ async def test_environment_landing_keeps_a_scroll_the_user_made():
 
 
 @pytest.mark.asyncio
-async def test_band_open_after_context_closes_reveals_running_sub_agents():
+async def test_band_open_after_context_closes_reveals_running_sub_agents(
+    frozen_reveal_clock,
+):
     """Any automatic opening reveals running sub-agents, not only the fleet's.
 
     At 124 columns the window is too narrow for both rails: the open Context
@@ -2096,7 +2138,9 @@ async def test_band_open_after_context_closes_reveals_running_sub_agents():
 
 
 @pytest.mark.asyncio
-async def test_manual_inspector_open_keeps_its_scroll_with_fleet_rows():
+async def test_manual_inspector_open_keeps_its_scroll_with_fleet_rows(
+    frozen_reveal_clock,
+):
     """The reveal belongs to automatic opens; a rail the user opens is theirs.
 
     At 140 columns the fleet auto-open is declined, so the section expands
@@ -2131,7 +2175,7 @@ async def test_manual_inspector_open_keeps_its_scroll_with_fleet_rows():
 
 
 @pytest.mark.asyncio
-async def test_reveal_is_dropped_when_the_sub_agents_finish_first():
+async def test_reveal_is_dropped_when_the_sub_agents_finish_first(frozen_reveal_clock):
     """Rows that end before the rail opens leave nothing to reveal.
 
     The section stays shown for its "Run history" summary, so a stale reveal
@@ -2173,7 +2217,9 @@ async def test_reveal_is_dropped_when_the_sub_agents_finish_first():
 
 
 @pytest.mark.asyncio
-async def test_environment_scroll_inside_the_rebuild_window_is_kept():
+async def test_environment_scroll_inside_the_rebuild_window_is_kept(
+    frozen_reveal_clock,
+):
     """A scroll made after a landing but before its reveal runs is the user's.
 
     The reveal waits behind the landed sections' rebuilds; it compares the
@@ -2205,7 +2251,9 @@ async def test_environment_scroll_inside_the_rebuild_window_is_kept():
         "mouse-down",
     ],
 )
-async def test_a_gesture_in_the_rail_stops_the_reveal_for_good(gesture):
+async def test_a_gesture_in_the_rail_stops_the_reveal_for_good(
+    gesture, frozen_reveal_clock
+):
     """Expanding a row, toggling a section, focusing or pressing inside the
     rail body makes the rail the user's.
 
@@ -2218,9 +2266,10 @@ async def test_a_gesture_in_the_rail_stops_the_reveal_for_good(gesture):
     async with make_console_pilot(size=(150, 40)) as pilot:
         screen = pilot.app.screen
         await _auto_open_with_fleet(pilot, screen, tray_rows=6)
-        _land(screen)
-        if gesture != "row-in-flight":  # else the row beats that landing's reveal
-            await _settle_refreshes(pilot)
+        if gesture.startswith("row"):  # the Changes row needs a landed snapshot
+            _land(screen)
+            if gesture == "row":  # else the row beats that landing's reveal
+                await _settle_refreshes(pilot)
         calls = _spy_fleet_scroll_visible(screen)
 
         if gesture.startswith("row"):
@@ -2244,10 +2293,13 @@ async def test_a_gesture_in_the_rail_stops_the_reveal_for_good(gesture):
         await _settle_landing(pilot, screen)
 
         assert calls == []
+        # A landing that leaves the fleet in view scrolls nothing either way;
+        # the stand-down shows as no replay armed for later landings.
+        assert screen._agent._fleet_replay is None, "the rail is the user's now"
 
 
 @pytest.mark.asyncio
-async def test_a_rail_reopened_by_hand_is_not_replayed():
+async def test_a_rail_reopened_by_hand_is_not_replayed(frozen_reveal_clock):
     """Closing and reopening the Inspector by hand leaves its scroll alone."""
     async with make_console_pilot(size=(150, 40)) as pilot:
         screen = pilot.app.screen
@@ -2266,35 +2318,226 @@ async def test_a_rail_reopened_by_hand_is_not_replayed():
 
 
 @pytest.mark.asyncio
-async def test_the_replay_is_bounded_and_never_follows_the_poll(monkeypatch):
-    """At most FLEET_REVEAL_REPLAY_LIMIT landings, and only soon after the open.
+async def test_replays_are_bounded_and_end_with_the_window(
+    frozen_reveal_clock, monkeypatch
+):
+    """At most FLEET_REVEAL_REPLAY_LIMIT replays scroll, and none after the window.
 
-    The every-landing replay scrolled once per identical landing (5 of 5).
+    Rich and lean landings alternate, so each rich one pushes the fleet out of
+    view again: the first two are replayed, the third is not. The every-landing
+    replay of round 2 scrolled once per identical landing (5 of 5).
     """
-    agent_module = importlib.import_module("tldw_chatbook.UI.Console_Modules.agent")
-
+    agent_module = frozen_reveal_clock
     async with make_console_pilot(size=(150, 40)) as pilot:
         screen = pilot.app.screen
         await _auto_open_with_fleet(pilot, screen, tray_rows=6)
         calls = _spy_fleet_scroll_visible(screen)
-        for _ in range(5):
-            _land(screen)
+        for index in range(5):
+            _land(screen, None if index % 2 == 0 else _lean_environment_snapshot())
             await _settle_landing(pilot, screen)
-        assert len(calls) <= agent_module.FLEET_REVEAL_REPLAY_LIMIT
+        assert len(calls) == agent_module.FLEET_REVEAL_REPLAY_LIMIT
+        assert not _fleet_section_inside_rail_body(screen), (
+            "the third push-down must not be replayed"
+        )
 
     async with make_console_pilot(size=(150, 40)) as pilot:
         screen = pilot.app.screen
         await _auto_open_with_fleet(pilot, screen, tray_rows=6)
         calls = _spy_fleet_scroll_visible(screen)
-        later = agent_module._fleet_reveal_clock() + 10.0  # the first poll
-        monkeypatch.setattr(agent_module, "_fleet_reveal_clock", lambda: later)
+        after = 1000.0 + agent_module.FLEET_REVEAL_REPLAY_SECONDS + 1.0
+        monkeypatch.setattr(agent_module, "_fleet_reveal_clock", lambda: after)
         _land(screen)
         await _settle_landing(pilot, screen)
         assert calls == []
 
 
 @pytest.mark.asyncio
-async def test_rows_ending_as_the_rail_opens_leave_nothing_armed():
+async def test_landings_that_change_nothing_spend_no_replay(frozen_reveal_clock):
+    """No-op landings -- the poll, a focus regain, a TTL re-land -- cost nothing.
+
+    Round 3 spent a replay on every landing: two unchanged ones used the
+    budget, and the PR tier that followed left the fleet below the fold.
+    """
+    async with make_console_pilot(size=(150, 40)) as pilot:
+        screen = pilot.app.screen
+        await _auto_open_with_fleet(pilot, screen, tray_rows=6)
+        unchanged = screen._console_environment.snapshot
+        for _ in range(2):
+            _land(screen, unchanged)
+            await _settle_landing(pilot, screen)
+        _land(screen)  # the rich PR-and-checks tier
+        await _settle_landing(pilot, screen)
+        await _wait_reveal(
+            pilot,
+            lambda: _fleet_section_inside_rail_body(screen),
+            description=lambda: (
+                f"the fleet after the PR tier: {_fleet_geometry(screen)}"
+            ),
+            stable_polls=3,
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_landing_while_hidden_is_revealed_once_laid_out(frozen_reveal_clock):
+    """A landing that arrives before the rail opens is laid out by the opening.
+
+    The opening rebuilds inside `batch_update`, where after-refresh callbacks
+    run without a layout, so the reveal finds no region at first and retries.
+    """
+    async with make_console_pilot(size=(150, 40)) as pilot:
+        screen = pilot.app.screen
+        await _start_fleet_with_staged_tray(pilot, screen, tray_rows=6)
+        _land(screen)  # while hidden
+        await pilot.pause()
+        screen._sync_console_rail_visibility_if_changed(
+            screen._current_console_rail_state()
+        )
+        await _wait_reveal(
+            pilot,
+            lambda: _right_rail_open(pilot) and _fleet_section_inside_rail_body(screen),
+            description=lambda: (
+                f"the fleet after a hidden landing: {_fleet_geometry(screen)}"
+            ),
+            stable_polls=3,
+        )
+
+
+@pytest.mark.asyncio
+async def test_rows_and_the_rail_opening_in_one_tick(frozen_reveal_clock):
+    """The fleet's own open is not a user's collapse toggle, even when the
+    rail opens in the same tick as the rows (no pause between them)."""
+    async with make_console_pilot(size=(150, 40)) as pilot:
+        screen = pilot.app.screen
+        await _start_fleet_with_staged_tray(pilot, screen, tray_rows=6, open_rail=True)
+        await _wait_reveal(
+            pilot,
+            lambda: _right_rail_open(pilot) and _fleet_section_inside_rail_body(screen),
+            description=lambda: f"same-tick open: {_fleet_geometry(screen)}",
+            stable_polls=3,
+        )
+        _land(screen)
+        await _settle_landing(pilot, screen)
+        await _wait_reveal(
+            pilot,
+            lambda: _fleet_section_inside_rail_body(screen),
+            description=lambda: (
+                f"same-tick open, then a landing: {_fleet_geometry(screen)}"
+            ),
+            stable_polls=3,
+        )
+
+
+@pytest.mark.asyncio
+async def test_one_reveal_arms_the_replay_once(frozen_reveal_clock):
+    """`scroll_to_widget` hands `on_complete` to every scrolling ancestor; a
+    late duplicate re-armed a replay a landing had already used (6 arms per
+    reveal in the review probe)."""
+    async with make_console_pilot(size=(150, 40)) as pilot:
+        screen = pilot.app.screen
+        agent = screen._agent
+        arms: list[object] = []
+
+        class CountingArms(type(agent)):  # type: ignore[misc]
+            @property
+            def _fleet_replay(self):
+                return self.__dict__.get("_counted_replay")
+
+            @_fleet_replay.setter
+            def _fleet_replay(self, value):
+                if value is not None:
+                    arms.append(value)
+                self.__dict__["_counted_replay"] = value
+
+        agent.__dict__["_counted_replay"] = agent.__dict__.pop("_fleet_replay", None)
+        agent.__class__ = CountingArms
+        await _auto_open_with_fleet(pilot, screen, tray_rows=6)
+        await _settle_refreshes(pilot)
+        assert len(arms) == 1
+
+        arms.clear()
+        _land(screen)
+        await _settle_landing(pilot, screen)
+        assert len(arms) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_landing_after_a_manual_close_schedules_nothing(frozen_reveal_clock):
+    """A rail the user closed gets no reveal queued for its hidden body."""
+    async with make_console_pilot(size=(150, 40)) as pilot:
+        screen = pilot.app.screen
+        await _auto_open_with_fleet(pilot, screen, tray_rows=6)
+        screen._set_console_rail_preference(right_open=False)
+        await _settle_refreshes(pilot, count=3)
+        assert not _right_rail_open(pilot)
+        scheduled: list[object] = []
+        agent = screen._agent
+        original = agent._schedule_fleet_reveal
+        agent._schedule_fleet_reveal = lambda reveal: (
+            scheduled.append(reveal),
+            original(reveal),
+        )
+        _land(screen)
+        await _settle_landing(pilot, screen)
+        assert scheduled == []
+
+
+#: Enough staged sources that the Sources list hits its cap and scrolls
+#: (at 150x40 it scrolls by 20 rows; 12 scrolls by only 4).
+CAPPED_TRAY_ROWS = 20
+
+
+def _sources_viewport(screen):
+    from tldw_chatbook.Widgets.Console.console_bounded_section import (
+        ConsoleBoundedSection,
+    )
+
+    return screen.query_one(
+        "#console-bounded-section-sources", ConsoleBoundedSection
+    ).viewport
+
+
+@pytest.mark.asyncio
+async def test_a_scroll_inside_a_rail_scroll_area_stops_the_reveal(frozen_reveal_clock):
+    """A wheel or a scrollbar drag over the Sources tray's capped list moves
+    no body offset and posts no press or focus; it still makes the rail the
+    user's."""
+    async with make_console_pilot(size=(150, 40)) as pilot:
+        screen = pilot.app.screen
+        await _auto_open_with_fleet(pilot, screen, tray_rows=CAPPED_TRAY_ROWS)
+        viewport = _sources_viewport(screen)
+        assert viewport.max_scroll_y > 0, "precondition: the Sources list is capped"
+        calls = _spy_fleet_scroll_visible(screen)
+
+        viewport.scroll_to(y=1, animate=False, immediate=True)  # what a wheel does
+        await _settle_refreshes(pilot, count=3)
+        _land(screen)
+        await _settle_landing(pilot, screen)
+
+        assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_landing_rebuild_is_not_an_inner_scroll(frozen_reveal_clock):
+    """No false stand-down: with the capped Sources list on screen, a rich
+    landing (which re-fits the tray's cap) is still replayed."""
+    async with make_console_pilot(size=(150, 40)) as pilot:
+        screen = pilot.app.screen
+        await _auto_open_with_fleet(pilot, screen, tray_rows=CAPPED_TRAY_ROWS)
+        assert _sources_viewport(screen).max_scroll_y > 0
+        _land(screen)
+        await _settle_landing(pilot, screen)
+        await _wait_reveal(
+            pilot,
+            lambda: _fleet_section_inside_rail_body(screen),
+            description=lambda: (
+                f"the fleet after the landing: {_fleet_geometry(screen)}"
+            ),
+            stable_polls=3,
+        )
+
+
+@pytest.mark.asyncio
+async def test_rows_ending_as_the_rail_opens_leave_nothing_armed(frozen_reveal_clock):
     """The rows end in the same tick the Inspector opens itself (124 columns):
     the reveal in flight must not arm a replay for a fleet that is gone."""
     async with make_console_pilot(size=(124, 40)) as pilot:
@@ -2327,7 +2570,7 @@ async def test_rows_ending_as_the_rail_opens_leave_nothing_armed():
 
 
 @pytest.mark.asyncio
-async def test_a_section_opened_in_view_owes_no_later_reveal():
+async def test_a_section_opened_in_view_owes_no_later_reveal(frozen_reveal_clock):
     """Rows that arrive while the rail is open need no reveal later.
 
     The user opened the rail, the fleet section opened in view, the user
