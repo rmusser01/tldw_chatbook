@@ -222,7 +222,13 @@ def _card_buttons(console) -> dict[str, bool]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("label", list(_CARD_ACTIONS))
+@pytest.mark.parametrize(
+    "label",
+    list(_CARD_ACTIONS),
+    # Space-free, in `_CARD_ACTIONS` order: the UI PR gate census lists each
+    # case by node id, one per line, and refuses whitespace.
+    ids=["retry-library-search", "send-once-without-library", "cancel-send"],
+)
 async def test_a_timed_out_send_says_why_and_each_card_action_does_what_it_says(
     label,
 ):

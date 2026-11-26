@@ -1003,6 +1003,11 @@ MINIMUM_FILES = 2035
 # composer" nodes and the review's captured-draft nodes at the tail. The floor
 # is the measured entry count.
 MINIMUM_FILES = 2490
+# TASK-33620.15.41 review (2026-11-05): append the run-chip activity-copy
+# file and the Library Auto outcome file's six cases at the tail. The floor
+# is the measured entry count.
+MINIMUM_FILES = 2785
+MINIMUM_FILES = 2785
 
 # TASK-34601.1 (2026-11-11): feedback handoff, Stop and actual image-reader
 # shutdown and held-read input join the gate without moving earlier shards.
@@ -1335,6 +1340,7 @@ MINIMUM_FILES = 2766
 # 2026-11-22: re-counted after rebasing onto dev 2f7790873a. The floor is the measured entry count.
 MINIMUM_FILES = 2769
 MINIMUM_FILES = 2778
+MINIMUM_FILES = 2785
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 

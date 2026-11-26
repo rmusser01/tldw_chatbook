@@ -217,13 +217,40 @@ def resolve_active_rag_search_mode() -> str:
     Returns:
         The normalized active search mode after applying ``RAG_SEARCH_MODE``.
     """
-    profile = _resolved_active_profile()
+    return _profile_search_mode(_resolved_active_profile())
+
+
+def _profile_search_mode(profile: Optional[ProfileConfig]) -> str:
+    """A resolved profile's normalized search mode, after ``RAG_SEARCH_MODE``."""
     base = (
         profile.rag_config.search.default_search_mode
         if profile
         else RAGConfig().search.default_search_mode
     )
     return normalize_rag_search_mode(os.getenv("RAG_SEARCH_MODE") or base)
+
+
+def resolve_active_rag_route() -> tuple[str, Optional[str]]:
+    """The active profile's search mode and name, from one profile read.
+
+    TASK-33620.15.41: the Library's keyword-only route names the profile in
+    its disclosure ("Profile 'BM25 Only': keyword search (no vectors)").
+    That name used to be read off the built RAG runtime, so a BM25 Only
+    search built one -- torch, transformers and an embedding model -- just
+    to label a keyword search. Both values come from the SAME resolved
+    profile (the one ``resolve_active_rag_search_mode`` and
+    ``resolve_active_rag_config`` read): two separate reads could straddle a
+    profile switch and pair one profile's mode with the other's name. Imports
+    nothing optional.
+
+    Returns:
+        ``(mode, name)``: the normalized search mode (``RAG_SEARCH_MODE``
+        applied) and the profile's display name, or ``None`` for the name
+        when no profile resolves.
+    """
+    profile = _resolved_active_profile()
+    name = getattr(profile, "name", None)
+    return _profile_search_mode(profile), name if isinstance(name, str) else None
 
 
 def _apply_env_overrides(
