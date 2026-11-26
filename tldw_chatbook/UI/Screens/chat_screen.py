@@ -8408,6 +8408,7 @@ class ChatScreen(BaseAppScreen):
             section_id: ``"environment"`` or ``"tasks"``.
             row_id: The activated row's stable id.
         """
+        self._agent.cancel_fleet_reveal()  # TASK-41959: the rail is the user's now
         from tldw_chatbook.Chat.console_environment_state import (
             ENV_ROW_CHECKS_FIX,
             ENV_ROW_COMMIT_PUSH,
@@ -12348,7 +12349,6 @@ class ChatScreen(BaseAppScreen):
             self._console_fleet_rows_present = False
             self._console_fleet_section_auto_opened = False
             self._console_fleet_inspector_dismissed = False
-            self._agent.drop_fleet_reveal()
             return
         self._console_fleet_rows_present = True
         if (
@@ -12357,7 +12357,9 @@ class ChatScreen(BaseAppScreen):
         ):
             return
         self._console_fleet_section_auto_opened = True
-        self._agent.open_fleet_section_for_rows(fleet_section)
+        self._agent.open_fleet_section_for_rows(
+            fleet_section, self.query_one("#console-inspector-rail-body")
+        )
 
     def _note_console_fleet_surface_toggle(self, open: bool) -> None:
         """Record a deliberate open/collapse of a fleet surface.
@@ -12485,11 +12487,9 @@ class ChatScreen(BaseAppScreen):
         handles_only = console_rail_handle_copy_only_changed(previous, rail_state)
         self._sync_console_rail_visibility(rail_state, handles_only=handles_only)
         self._last_console_rail_state = rail_state
-        # task-13 (review M9): the ONE seam where the Inspect rail becomes
-        # visible, whatever opened it, so an AUTO-opened rail never waits for
-        # the 10s poll on stale data, and one that opens itself while
-        # sub-agents run shows them (TASK-41959). Run AFTER
-        # `_sync_console_rail_visibility`: the rail-open guard reads its DOM.
+        # task-13 (review M9): the ONE seam where the rail becomes visible: an
+        # AUTO-opened one is refreshed now and shows running sub-agents
+        # (TASK-41959). After `_sync_console_rail_visibility`, whose DOM it reads.
         if rail_state.right_open and not (previous is not None and previous.right_open):
             controller = getattr(self, "_console_environment", None)
             if controller is not None:

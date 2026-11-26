@@ -68,7 +68,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.dom import NoScreen
-from textual.events import DescendantBlur, DescendantFocus, Key, Resize
+from textual.events import DescendantBlur, DescendantFocus, Key, MouseDown, Resize
 from textual.geometry import Size
 from textual.message import Message
 from textual.widget import Widget
@@ -337,6 +337,23 @@ class _InspectorOuterBody(VerticalScroll):
         )
         self._on_geometry_changed = on_geometry_changed
         self._on_scrolled = on_scrolled
+        #: TASK-41959: counts the user's gestures inside the body -- focus
+        #: moving in, a mouse press, a section collapse toggle. The fleet
+        #: reveal stands down for good once it moves.
+        self.user_gestures = 0
+
+    def on_descendant_focus(self, _event: DescendantFocus) -> None:
+        self.user_gestures += 1
+
+    def on_mouse_down(self, _event: MouseDown) -> None:
+        self.user_gestures += 1
+
+    def on_console_inspector_section_collapse_toggled(
+        self, event: ConsoleInspectorSection.CollapseToggled
+    ) -> None:
+        # The fleet section's own one-shot open is the product's, not a user's.
+        if not (event.open and event.section_id == CONSOLE_AGENT_FLEET_SECTION_ID):
+            self.user_gestures += 1
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         super().watch_scroll_y(old_value, new_value)

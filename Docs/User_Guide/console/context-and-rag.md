@@ -459,10 +459,12 @@ unchanged. Because this rail defaults closed, the rail now opens itself when
 a fleet starts producing rows — but only at 150 columns or wider, and only
 until you close it: dismissing it once keeps it closed for the rest of that
 busy window. Whenever the Inspector opens itself while sub-agents are
-running — this auto-open, or the 118–128 column band once the Context rail
-closes — it scrolls down to the **Agents** section and keeps it in view
-while the Environment panel refreshes, until you scroll the rail yourself or
-the sub-agents finish. A rail you open yourself keeps its scroll position.
+running — this auto-open, or when you close the Context rail in a window too
+narrow for both rails — it scrolls down to the **Agents** section once, right
+after it opens. If the Environment panel's first results push Agents back
+down within a few seconds, it scrolls there again. It never does so after
+you scroll, click, focus or expand anything in the rail. A rail you open
+yourself keeps its scroll position.
 
 **Refreshing.** The panel does no work at all while the rail is closed —
 opening it is what triggers the first fetch. While open it re-reads the

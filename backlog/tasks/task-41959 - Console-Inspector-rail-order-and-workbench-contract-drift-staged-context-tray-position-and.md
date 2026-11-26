@@ -4,7 +4,7 @@ title: "Console Inspector rail order and workbench contract drift: staged-contex
 status: Done
 assignee: []
 created_date: '2026-11-19 07:30'
-updated_date: '2026-11-25 17:20'
+updated_date: '2026-11-25 19:30'
 labels:
 - follow-up
 - tests
@@ -121,7 +121,7 @@ ADR required: no (owner ruled the order 2026-11-25; one yield moves, the rest is
 
 **Review round 2 (2026-11-25, delta 44a791f679..5ec1696d01).**
 - *I1, importer cap.* `_wait_for_console_quiet` and `_wait_for_right_rail_condition` moved into the non-test helper `Tests/UI/console_rail_section_helpers.py`. `test_console_right_rail.py` and the workbench contract both import them from there. `scripts/ci/tier_policy._importers` now gives `test_console_right_rail.py` 6 transitive test importers (cap 8): environment_wiring, footer_shutdown, inspector_focus_carriers, inspector_navigation, inspector_rail_minors, library_activity. With the earlier import it was 9.
-- *M1, a landing pushed the fleet back down (product).*
+- *M1, a landing pushed the fleet back down (product; the every-landing replay below was replaced in round 3).*
   - What happened: opening the rail starts the Environment fetch. Its landings arrive in tiers (unbound or local first, the PR and its checks later), and a rich one grew the sections above and pushed the fleet out. A one-shot replay on the first landing would not have covered the later PR tier, so `replay_fleet_reveal` instead redoes the minimal reveal on every landing (`_land_console_environment` hands it the Environment and Tasks sections).
   - It stops for good once the section closes, the user opens the rail themselves, the busy window ends, or the body's offset differs from the one the last reveal left (the user scrolled). The reveal also re-checks the offset when it runs, so a scroll made between a landing and its deferred reveal is kept.
   - Timing: the reveal is queued with `call_next` behind each landed section's rebuild (and behind the section's own held rebuild on opening), then `call_after_refresh`. A plain `call_after_refresh` ran against the old layout: in a probe the Environment section was still 4 rows when the scroll ran, then grew to 9.
@@ -153,6 +153,53 @@ ADR required: no (owner ruled the order 2026-11-25; one yield moves, the rest is
 - The 9 reveal tests passed 4 more times at load 25-33.
 - Static checks: `ruff --select F` clean; `ruff_gate.py` OK; size ratchets 238 passed. Tests/Architecture serially: 1507 passed, 5 skipped. Preflight passed.
 - `chat_screen.py` is at exactly its 24,595-line budget.
+
+**Review round 3 (2026-11-25, delta 5ec1696d01..79355fe61f): bounded replay.**
+- *Shape* (coordinator's call):
+  - The auto-open reveal runs once, at the rail-becomes-visible seam.
+  - Replays are bounded by time, not by tier. Telling the opening's network-tier landing apart would have meant exposing the tier from `environment.py`, and a missing `gh` never lands one. So: Environment landings within `FLEET_REVEAL_REPLAY_SECONDS` (5 s) of the reveal may redo it, at most `FLEET_REVEAL_REPLAY_LIMIT` (2) times (the opening's local tier, then its PR-and-checks tier). The 10 s poll never replays.
+  - Any user gesture in the rail stands it down for good: `_InspectorOuterBody.user_gestures` counts focus moving into the body, a mouse press and any section collapse toggle except the fleet's own one-shot open; `_handle_console_environment_row` calls `cancel_fleet_reveal()`; a moved offset counts as a user scroll.
+- *I1:* the review saw a row expand moving the focused row out of the body. It is covered by the cancel, the gesture count and the bound. Tests: `test_a_gesture_in_the_rail_stops_the_reveal_for_good[row, row-in-flight, environment-collapse, agents-collapse, focus, mouse-down]`.
+- *I2:* the replay carries the stored offset into the reveal, so a scroll inside the rebuild window is kept. Test: `test_environment_scroll_inside_the_rebuild_window_is_kept`.
+- *M1 (stale in-flight reveal):* a token, bumped by every cancel and every new reveal, plus a check that the fleet rows are still present. Both are checked when the replay starts and when the reveal runs. A stale re-armed replay fails the token check, so `note_offset` needs no guard of its own. Test: `test_rows_ending_as_the_rail_opens_leave_nothing_armed`. With the rows-present check, the screen's `drop_fleet_reveal()` call went away.
+- *Removed as redundant, so there is nothing left to mutate:*
+  - the replay's `not section.open`: collapsing Agents is a `CollapseToggled` gesture, pinned by `[agents-collapse]`;
+  - `note_offset()` before the scroll: Textual's `scroll_to_region` calls `on_complete` whether or not it scrolls;
+  - the in-`_fleet_reveal_current` self-cancel: a reveal that may not scroll arms no replay.
+- *Nits:*
+  - The screen passes the rail body into `open_fleet_section_for_rows`.
+  - The `waiting` countdown is gone: the replay chains `environment.call_next(tasks.call_next, ...)`.
+  - The hidden test is one condition (`node.display is False`).
+  - The lesson pointers and title are fixed.
+  - `context-and-rag.md` describes the once-plus-early-landing behaviour in plain words.
+- *Mutations*, all 20 reveal tests at `-n 4`; each named mutation fails at least one test:
+  - M01 replay `preferred_right_open` -> the hand-reopen test;
+  - M02 reveal-time check `if False:` -> the rebuild-window, rows-ended and row-in-flight tests;
+  - M03 `hidden` -> `test_a_section_opened_in_view_owes_no_later_reveal`;
+  - M04 the collapse-gesture count -> both collapse cases;
+  - M05 the row cancel -> both row cases;
+  - M06 the deadline and M07 the limit -> the bound test;
+  - M08 rows-present -> the rows-ended and rows-ending tests;
+  - M09 the gestures clause -> the collapse, focus and mouse-down cases;
+  - M10 the offset clause -> the user-scroll and rebuild-window tests;
+  - M11 the token -> row-in-flight;
+  - M12 the seam `preferred_right_open` -> the manual-open test;
+  - M13 the landing hook and M14 the wait behind rebuilds -> both landing nodes;
+  - M15 the seam reveal -> 14 nodes;
+  - M17 the focus count -> `[focus]`;
+  - M18 the mouse count -> `[mouse-down]`.
+  - M16 (the region retry) is still green in both runs this round. It failed the band test once in round 2's matrix and stays as a bounded load-only safety net.
+  - The first round-3 matrix used a `-k` that left the rebuild-window test out. It and the tests' new landing sentinel (`_settle_landing`) were added before the final matrix.
+- *Stability:*
+  - the 20 reveal tests passed 10 of 10 runs at load 13-21, and 10 of 10 more with whole-file runs as generated load (load 18-23);
+  - at load 22-85 an earlier pass went 8 of 10: two runs timed out the 180x48 auto-open wait at the default 5 s, with the section already in view when the wait gave up. The reveal waits now go through `_wait_reveal` (15 s).
+- *Final whole files* at `-n 4`:
+  - right_rail 56/56 (twice);
+  - workbench 76/76. In one other run `test_composer_menu_opens_current_draft_directly_in_recommended_review[size1]` failed at load 52; that is TASK-41633's known flake, an action outside the 100x30 scroll.
+  - agent_rail 51/51;
+  - inspector_navigation 39/40, the shared responsive-reveal red.
+- *Static checks:* `ruff --select F` clean; `ruff_gate.py` OK; size ratchets 238 passed; Tests/Architecture serially 1507 passed, 5 skipped; preflight passed.
+- `chat_screen.py` stays at exactly its 24,595-line budget: the cancel line and the body argument are paid for by dropping the drop call and tightening the seam comment.
 
 **CI note.** `scripts/ci/tier_policy.py` selects the full lanes for this diff, not the light tier. `test_console_workbench_contract.py` has more than `IMPORTER_CAP` (8) transitive test importers.
 
