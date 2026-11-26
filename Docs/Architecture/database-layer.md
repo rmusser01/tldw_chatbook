@@ -143,6 +143,22 @@ reservation, while accepted/completed/uncertain attempts retain links and charge
 The existing restart audit requires review and cannot recover ephemeral bundles.
 Source, report and grant bodies are never stored in this link.
 
+## Indexed voice-promotion locators (TASK-42517)
+
+ChaChaNotes v88 installs `chachanotes_v87_to_v88_message_locator_indexes.sql`:
+one leading-column index for each locator that joined the voice-promotion
+census (`chat_persistence_service._VOICE_PROMOTION_*_LOCATORS`) after schema 72.
+They are the hook-continuation and machine-follow-up receipts'
+`assistant_message_id`/`parent_assistant_message_id`, the four response-rule
+tables' `message_id`, and the v86 mix-in attempts' `result_revision_id` (a
+revision locator, classified in v88). v72 gave every census locator such an
+index so a reconciliation is one indexed search per locator, never a table
+scan; these nine planned as `SCAN` until v88.
+`Tests/DB/test_chachanotes_v72_voice_trace_provenance_migration.py` pins every
+locator's plan without `sqlite_stat1`, on a fresh file and on one upgraded from
+v87. The restore sandbox admits the v87-to-v88 step's nine `CREATE INDEX`
+statements by name and table only (`Tests/Backup_Recovery/test_locator_indexes_sandbox.py`).
+
 ## Spawned child trace segments (ADR-337 amendment, TASK-41310)
 
 ChaChaNotes v87 installs `chachanotes_v86_to_v87_console_trace_child_segments.sql`.

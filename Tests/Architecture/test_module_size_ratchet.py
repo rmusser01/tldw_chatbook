@@ -1038,7 +1038,9 @@ _BUDGETS: dict[str, int] = {
     # dev 2026-11-19: dev's close_connection already takes ``checkpoint``, so
     # the branch's private close helper is gone: 22544 -> 22566 (+22, the
     # store declaration and the method; measured, wc -l).
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22566,
+    # 2026-11-24, TASK-42517: 22566 -> 22573 (+7), the v87->v88 locator-index
+    # step (through the shared DB/chachanotes_sql_steps.py) and its dispatch row.
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22573,
     # TASK-39147: the rebased report reader and workflow migrations cross 4000.
     # 2026-11-12, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +2, the store's @declare_store backup-participant declaration and import.
@@ -1544,7 +1546,9 @@ _BUDGETS: dict[str, int] = {
     # the row by its exact growth): 4262 -> 4265 (+3) -- save_pending_assistant,
     # the anchorless reply-row save a resumed wake takes since TASK-39119, also
     # starts BEGIN IMMEDIATE, so a concurrent writer no longer fails it.
-    "tldw_chatbook/Chat/chat_persistence_service.py": 4265,
+    # 2026-11-24, TASK-42517 review: 4265 -> 4266 (+1), v86's mix-in result
+    # revision classified as a forbidden voice-promotion revision locator.
+    "tldw_chatbook/Chat/chat_persistence_service.py": 4266,
     "tldw_chatbook/UI/Screens/evals_screen.py": 4211,
     # 2026-11-02, TASK-37655 review (owner rule: a fix over a size ratchet
     # raises the row with a dated comment): dev 88af9f9379's 4,304 + 1 = 4,305. The

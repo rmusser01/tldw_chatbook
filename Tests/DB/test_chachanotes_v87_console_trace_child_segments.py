@@ -198,7 +198,9 @@ def test_a_v86_database_upgrades_with_its_trace_intact(tmp_path):
         )
     upgraded = CharactersRAGDB(str(path), "trace-child-segments-upgrade")
     try:
-        assert _rows(upgraded, "SELECT version FROM db_schema_version") == [(87,)]
+        assert _rows(upgraded, "SELECT version FROM db_schema_version") == [
+            (CharactersRAGDB._CURRENT_SCHEMA_VERSION,)
+        ]
         guards = dict(
             _rows(
                 upgraded,

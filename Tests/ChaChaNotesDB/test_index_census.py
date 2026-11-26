@@ -33,8 +33,10 @@ UNIQUE-ness decisions (AC #2): the UNIQUE flag is pinned for ALL indexes via
 application code assumes cannot exist, so every one of the twenty-six is treated
 as integrity-bearing:
 
-* ``idx_canvas_revisions_canvas_sequence`` — one monotonic sequence position
-  per Canvas, including sibling branches.
+* ``uq_canvas_revisions_single_root`` — at most one root revision per Canvas
+  (partial). ADR-239's v81->v82 step made it the uniqueness rule in place of
+  ``idx_canvas_revisions_canvas_sequence``, now a plain
+  (canvas_id, sequence, id) index so offline siblings may share a sequence.
 * ``character_conversation_search_one_ready_generation`` — at most one ready
   character-search projection generation per data authority (partial).
 * ``uq_canvas_documents_id_conversation`` — supports the same-owner composite
@@ -110,6 +112,46 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
     "idx_machine_followup_receipts_conversation": IndexPin(
         "console_machine_followup_receipts", False, ("conversation_id",)
     ),
+    # v85->v86 prompt mix-ins (7970fbcada): the attempts' two message
+    # locators and the revisions' reuse-candidate digest lookup.
+    "idx_console_mixin_attempt_assistant": IndexPin(
+        "console_prompt_mixin_attempts", False, ("assistant_message_id",)
+    ),
+    "idx_console_mixin_attempt_user": IndexPin(
+        "console_prompt_mixin_attempts", False, ("user_message_id",)
+    ),
+    "idx_console_mixin_revision_digest": IndexPin(
+        "console_prompt_mixin_revisions", False, ("conversation_id", "digest")
+    ),
+    # TASK-42517 (v87->v88): the attempts' result-revision locator.
+    "idx_console_mixin_attempt_result_revision": IndexPin(
+        "console_prompt_mixin_attempts", False, ("result_revision_id",)
+    ),
+    # TASK-42517 (v87->v88): the voice-promotion message locators.
+    "idx_hook_continuation_receipts_assistant_message": IndexPin(
+        "console_hook_continuation_receipts", False, ("assistant_message_id",)
+    ),
+    "idx_hook_continuation_receipts_parent_assistant_message": IndexPin(
+        "console_hook_continuation_receipts", False, ("parent_assistant_message_id",)
+    ),
+    "idx_machine_followup_receipts_assistant_message": IndexPin(
+        "console_machine_followup_receipts", False, ("assistant_message_id",)
+    ),
+    "idx_machine_followup_receipts_parent_assistant_message": IndexPin(
+        "console_machine_followup_receipts", False, ("parent_assistant_message_id",)
+    ),
+    "idx_response_rule_assessments_message": IndexPin(
+        "console_response_rule_assessments", False, ("message_id",)
+    ),
+    "idx_response_rule_drafts_message": IndexPin(
+        "console_response_rule_drafts", False, ("message_id",)
+    ),
+    "idx_response_rule_fixtures_message": IndexPin(
+        "console_response_rule_fixtures", False, ("message_id",)
+    ),
+    "idx_response_rule_validations_message": IndexPin(
+        "console_response_rule_validations", False, ("message_id",)
+    ),
     "idx_response_rule_assessments_source": IndexPin(
         "console_response_rule_assessments", False, ("conversation_id", "message_id")
     ),
@@ -148,8 +190,13 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
     "idx_canvas_documents_conversation": IndexPin(
         "canvas_documents", False, ("conversation_id", "deleted", "created_at", "id")
     ),
+    # ADR-239 (v81->v82, 01b17108c7): no longer UNIQUE; siblings share a
+    # sequence and uq_canvas_revisions_single_root keeps one root per Canvas.
     "idx_canvas_revisions_canvas_sequence": IndexPin(
-        "canvas_revisions", True, ("canvas_id", "sequence")
+        "canvas_revisions", False, ("canvas_id", "sequence", "id")
+    ),
+    "uq_canvas_revisions_single_root": IndexPin(
+        "canvas_revisions", True, ("canvas_id",)
     ),
     "idx_canvas_revisions_origin_message": IndexPin(
         "canvas_revisions", False, ("origin_message_id", "canvas_id", "sequence")
@@ -337,6 +384,10 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
     ),
     "idx_conversations_archived_browse_order": IndexPin(
         "conversations", False, ("archived", "last_modified", "id")
+    ),
+    # ADR-166 (v84->v85): the archive chronology browse.
+    "idx_conversations_archive_chronology": IndexPin(
+        "conversations", False, ("deleted", "archived", "archived_at", "id")
     ),
     "idx_conversations_assistant_identity": IndexPin(
         "conversations", False, ("assistant_kind", "assistant_id")

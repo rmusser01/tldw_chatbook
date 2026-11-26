@@ -23,6 +23,10 @@ from tldw_chatbook.Chat.provider_continuation import (
     dump_provider_continuation_json,
 )
 
+# The replay harness's sends read `[hooks]` in-process; see the module mark
+# in test_console_trace_sidecar_replay.py (TASK-42513).
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _save_reasoning(
     harness: SimpleNamespace, text: str

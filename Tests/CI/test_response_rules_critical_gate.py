@@ -128,7 +128,6 @@ INHERITED = {
         "Tests/Chat/test_console_context_presentation_current.py::test_session_close_drains_a_controller_read_issued_during_its_hook_drain",
         # TASK-34975 (PR #3493 port, 2026-11-22): the held context-display read.
         "Tests/Chat/test_console_context_presentation_current.py::test_session_close_drains_context_display_and_refuses_a_new_read",
-        "Tests/Chat/test_console_trace_graph_gc.py::test_stale_mark_never_sweeps_after_concurrent_reachability_change",
         "Tests/Chat/test_console_trace_admission_gc.py::test_collection_between_admission_and_reservation_preserves_exact_revision",
         "Tests/Chat/test_console_trace_admission_gc.py::test_canonical_ancestry_cannot_retain_payload_through_another_owners_policy",
         "Tests/Chat/test_console_retry_json_wire.py::test_json_schema_retry_fence_precedes_actual_http[unchanged-groq]",

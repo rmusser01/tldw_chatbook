@@ -881,7 +881,6 @@ def test_reopen_has_no_trace_payload_in_any_durable_owner(tmp_path) -> None:
             "console_trace_response_links",
             "console_trace_revision_bindings",
             "console_trace_segments",
-            "console_trace_semantic_revisions",
             "console_trace_surface_nodes",
             "console_trace_surface_replacements",
         )
@@ -889,6 +888,20 @@ def test_reopen_has_no_trace_payload_in_any_durable_owner(tmp_path) -> None:
             connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
             for table in payload_tables
         )
+        # ADR-337's current-owner amendment (2026-10-13, 3e618d7119): GC keeps
+        # a live message's canonical revision as a metadata root. It holds
+        # identity only (no content column); every other revision is gone.
+        assert [
+            tuple(row)
+            for row in connection.execute(
+                """SELECT revision.source_conversation_id, revision.creation_reason,
+                          revision.live_message_id = message.id
+                     FROM console_trace_semantic_revisions AS revision
+                     LEFT JOIN messages AS message
+                       ON message.id = revision.live_message_id
+                      AND message.deleted = 0"""
+            )
+        ] == [(conversation_id, "message_create", 1)]
         result_blob = connection.execute(
             "SELECT result_json FROM console_trace_gc_runs WHERE request_id = 'gc-privacy'"
         ).fetchone()[0]

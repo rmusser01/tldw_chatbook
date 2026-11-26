@@ -112,6 +112,8 @@ class _Restrictions:
         self.response_rules_migration = False
         self.prompt_mixins_migration = False
         self.child_segments_migration = False
+        # TASK-42517 v87->v88: index name -> table, empty when off.
+        self.locator_indexes = {}
         self.canvas_sibling_migration = False
         self.portrait_migration = None
         self.archive_chronology_migration = False
@@ -708,6 +710,25 @@ class _Restrictions:
                         and second in {"type", "name", "tbl_name", "rootpage", "sql"}
                     )
                 )
+                # TASK-42517 v87->v88: exactly the nine locator indexes, each
+                # on its own table (name -> table; the installed .sql and the
+                # exact post-step catalog check fix the columns).
+                allowed |= (
+                    bool(self.locator_indexes)
+                    and database == "main"
+                    and source is None
+                    and (
+                        action == sqlite3.SQLITE_CREATE_INDEX
+                        and self.locator_indexes.get(first) == second
+                        or action == sqlite3.SQLITE_REINDEX
+                        and first in self.locator_indexes
+                        or action == sqlite3.SQLITE_INSERT
+                        and first == "sqlite_master"
+                        or action == sqlite3.SQLITE_UPDATE
+                        and first == "sqlite_master"
+                        and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+                    )
+                )
                 # ADR-224 v78->v79: the two normalization UPDATEs, the two
                 # new indexes, and the two conversations triggers the
                 # migration drops and recreates verbatim (sync update;
@@ -1263,6 +1284,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         CHACHANOTES_V85_SCHEMAS,
         CHACHANOTES_V86_SCHEMAS,
         CHACHANOTES_V87_SCHEMAS,
+        CHACHANOTES_V88_SCHEMAS,
         CORE_SCHEMAS,
     )
 
@@ -1291,6 +1313,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         *CHACHANOTES_V85_SCHEMAS,
         *CHACHANOTES_V86_SCHEMAS,
         *CHACHANOTES_V87_SCHEMAS,
+        *CHACHANOTES_V88_SCHEMAS,
         *(sql for _, sql in _SUBSCRIPTIONS_SCHEMA),
     )
     if schema not in frozen:
@@ -1565,6 +1588,8 @@ def _validate_candidate(
                         CHACHANOTES_V84_SCHEMAS,
                         CHACHANOTES_V85_SCHEMAS,
                         CHACHANOTES_V86_SCHEMAS,
+                        CHACHANOTES_V87_SCHEMAS,
+                        CHACHANOTES_V88_LOCATOR_INDEXES,
                     )
 
                     actual_sql = tuple(
@@ -1597,6 +1622,8 @@ def _validate_candidate(
                         and actual_sql in CHACHANOTES_V85_SCHEMAS
                         or version == 86
                         and actual_sql in CHACHANOTES_V86_SCHEMAS
+                        or version == 87
+                        and actual_sql in CHACHANOTES_V87_SCHEMAS
                     ):
                         return (("unsupported_schema_migration",), None)
                     shipped_checkpoint = actual_sql in CHACHANOTES_V76_SHIPPED_SCHEMAS
@@ -1639,14 +1666,16 @@ def _validate_candidate(
                                 shipped_checkpoint
                                 and version == 76
                                 or installed.owner_id == "db.chachanotes.primary"
-                                and version in (77, 78, 79, 80, 81, 84, 85, 86)
+                                and version in (77, 78, 79, 80, 81, 84, 85, 86, 87)
                             ):
                                 migration = (
                                     Path(__file__).resolve().parents[1]
                                     / "DB"
                                     / "migrations"
                                     / (
-                                        "chachanotes_v86_to_v87_console_trace_child_segments.sql"
+                                        "chachanotes_v87_to_v88_message_locator_indexes.sql"
+                                        if version == 87
+                                        else "chachanotes_v86_to_v87_console_trace_child_segments.sql"
                                         if version == 86
                                         else "chachanotes_prompt_mixins.sql"
                                         if version == 85
@@ -1674,6 +1703,11 @@ def _validate_candidate(
                                 restrictions.archive_chronology_migration = version == 84
                                 restrictions.prompt_mixins_migration = version == 85
                                 restrictions.child_segments_migration = version == 86
+                                restrictions.locator_indexes = (
+                                    CHACHANOTES_V88_LOCATOR_INDEXES
+                                    if version == 87
+                                    else {}
+                                )
                                 try:
                                     pending = ""
                                     for line in migration.read_text(
@@ -1711,6 +1745,7 @@ def _validate_candidate(
                                     restrictions.archive_chronology_migration = False
                                     restrictions.prompt_mixins_migration = False
                                     restrictions.child_segments_migration = False
+                                    restrictions.locator_indexes = {}
                             restrictions.portrait_migration = (
                                 version
                                 if installed.owner_id == "db.chachanotes.primary"

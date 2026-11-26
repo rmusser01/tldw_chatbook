@@ -24,3 +24,7 @@ Tests/ChaChaNotesDB/test_index_census.py::TestIndexCensus::test_no_unexpected_in
 - [ ] #2 Any index found to be redundant or unintended is dropped by a migration instead of pinned, and the decision is recorded in the task notes
 - [ ] #3 The test's failure message still prints paste-ready IndexPin lines for the next drift
 <!-- AC:END -->
+
+## Notes
+
+- 2026-11-24 (TASK-42517 review, round 26): this class recurred. The v70-v72 indexes this task names are pinned on dev 75bac413f5, but the census was red again on 5 later indexes (`idx_console_mixin_attempt_assistant`/`_user`, `idx_console_mixin_revision_digest`, `idx_conversations_archive_chronology`, `uq_canvas_revisions_single_root`) and on ADR-239's non-unique `idx_canvas_revisions_canvas_sequence`. Branch `fu/r26-reds2` pins them, each reviewed against its migration, and lanes the file in architecture-guards so the next drift fails PR CI. AC#2's redundant-index question is TASK-42544 (`idx_console_trace_response_revision`).

@@ -484,9 +484,9 @@ def test_legacy_native76_upgrade_preserves_exact_receipts(
 ):
     path = tmp_path / "legacy.sqlite"
     before = _legacy_native76(path, dictionary=dictionary, subscriptions=subscriptions)
-    from tldw_chatbook.DB.recovery_core_schema import CHACHANOTES_V87_SCHEMAS
+    from tldw_chatbook.DB.recovery_core_schema import CHACHANOTES_V88_SCHEMAS
     from tldw_chatbook.DB.recovery_operations import (
-        _SUBSCRIPTIONS_CHILD_SEGMENTS_V87_SCHEMAS,
+        _SUBSCRIPTIONS_LOCATOR_INDEXES_V88_SCHEMAS,
     )
 
     # The current lineage lists the two repaired-77 catalogs, then the two
@@ -496,9 +496,9 @@ def test_legacy_native76_upgrade_preserves_exact_receipts(
     catalog = tuple(
         (sql,)
         for sql in (
-            _SUBSCRIPTIONS_CHILD_SEGMENTS_V87_SCHEMAS[2 * native]
+            _SUBSCRIPTIONS_LOCATOR_INDEXES_V88_SCHEMAS[2 * native]
             if subscriptions
-            else CHACHANOTES_V87_SCHEMAS[native]
+            else CHACHANOTES_V88_SCHEMAS[native]
         )
     )
     for _ in range(2):
@@ -576,12 +576,12 @@ def test_v77_constructor_catalog_matches_exact_native76_capture(
 ):
     import hashlib
     from tldw_chatbook.DB.recovery_core_schema import (
-        CHACHANOTES_V87_SCHEMAS,
+        CHACHANOTES_V88_SCHEMAS,
         _CHAT_DICTIONARIES_INITIAL_TRIGGER,
         _CHAT_DICTIONARIES_UPDATED_TRIGGER,
     )
     from tldw_chatbook.DB.recovery_operations import (
-        _SUBSCRIPTIONS_CHILD_SEGMENTS_V87_SCHEMAS,
+        _SUBSCRIPTIONS_LOCATOR_INDEXES_V88_SCHEMAS,
     )
 
     path = tmp_path / "capture.sqlite"
@@ -605,9 +605,9 @@ def test_v77_constructor_catalog_matches_exact_native76_capture(
         # A fresh shared file pairs the current primary catalog with the
         # Subscriptions catalog that has idx_subscriptions_source (task-34399).
         expected = (
-            _SUBSCRIPTIONS_CHILD_SEGMENTS_V87_SCHEMAS[1]
+            _SUBSCRIPTIONS_LOCATOR_INDEXES_V88_SCHEMAS[1]
             if subscriptions
-            else CHACHANOTES_V87_SCHEMAS[0]
+            else CHACHANOTES_V88_SCHEMAS[0]
         )
         if dictionary:
             expected = tuple(
@@ -803,7 +803,7 @@ def test_populated_legacy_queue_paths_are_lossless(tmp_path, dictionary, route):
         _shipped76,
     )
     from tldw_chatbook.DB.recovery_core_schema import (
-        CHACHANOTES_V87_SCHEMAS,
+        CHACHANOTES_V88_SCHEMAS,
         CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
     )
 
@@ -893,7 +893,7 @@ def test_populated_legacy_queue_paths_are_lossless(tmp_path, dictionary, route):
             assert catalog == (
                 CHACHANOTES_DICTIONARY_UPDATE_SCHEMA
                 if dictionary
-                else CHACHANOTES_V87_SCHEMAS[0]
+                else CHACHANOTES_V88_SCHEMAS[0]
             )
             assert db._get_db_version(connection) == CURRENT
             assert not connection.execute("PRAGMA foreign_key_check").fetchall()

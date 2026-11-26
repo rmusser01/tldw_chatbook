@@ -44,7 +44,7 @@ index is queried DIRECTLY (never through a consumer that re-filters on
 
 from __future__ import annotations
 
-import inspect
+import json
 import os
 import signal
 import sqlite3
@@ -60,6 +60,7 @@ from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
 from tldw_chatbook.DB.chachanotes_fts_backfill import (
     backfill_chachanotes_messages_fts,
 )
+from tldw_chatbook.DB.base_db import _QuiescentSQLiteCursor
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     CharactersRAGDBError,
@@ -161,8 +162,24 @@ def _seed_v45(db_path: Path, bodies: list[str], tombstone: set[int] = frozenset(
             )
             for body in bodies
         ]
+        # Tombstone with the v45-era statement `soft_delete_message` wraps:
+        # today's method also advances the v56 semantic-graph epoch
+        # (c78f641adf), a table a v45 file does not have (TASK-42517).
         for index in tombstone:
-            historical.soft_delete_message(message_ids[index], expected_version=1)
+            with historical.transaction(immediate=True) as conn:
+                assert (
+                    conn.execute(
+                        "UPDATE messages SET deleted = 1, last_modified = ?, "
+                        "version = 2, client_id = ? "
+                        "WHERE id = ? AND version = 1 AND deleted = 0",
+                        (
+                            historical._get_current_utc_timestamp_iso(),
+                            historical.client_id,
+                            message_ids[index],
+                        ),
+                    ).rowcount
+                    == 1
+                )
         rowids = [
             historical.execute_query(
                 "SELECT rowid FROM messages WHERE id = ?", (message_id,)
@@ -618,6 +635,43 @@ HOT_MESSAGE_WRITERS = (
 )
 
 
+def _interleave_backfill_chunk_before_message_insert(
+    writer: CharactersRAGDB,
+    backfiller: CharactersRAGDB,
+    outcome: dict[str, str],
+):
+    """Return a cursor ``execute`` that commits one backfill chunk in the gap.
+
+    It fires once, on the writer connection's ``INSERT INTO messages``: the
+    writer is then between its read snapshot and its first write. The hook
+    sits on the tracked cursor every ``transaction()`` yields, because
+    ``add_message`` stopped calling ``CharactersRAGDB.execute_query`` in
+    c78f641adf and the old hook there never fired (TASK-42517).
+    """
+    writer_connection = writer.get_connection()
+    original_execute = _QuiescentSQLiteCursor.execute
+
+    def interleaved(self, sql, parameters=()):
+        if (
+            self.connection is writer_connection
+            and "INSERT INTO messages" in sql
+            and "chunk" not in outcome
+        ):
+            # Commit one real backfill chunk from a second connection right
+            # here. Under the fixed (IMMEDIATE) shape the writer already
+            # holds the write lock, so the chunk must time out and queue for
+            # later instead of committing.
+            backfiller.get_connection().execute("PRAGMA busy_timeout = 200")
+            try:
+                indexed, _ = backfiller.backfill_messages_fts(chunk_size=1)
+                outcome["chunk"] = f"committed:{indexed}"
+            except (sqlite3.OperationalError, CharactersRAGDBError) as exc:
+                outcome["chunk"] = f"blocked:{exc}"
+        return original_execute(self, sql, parameters)
+
+    return interleaved
+
+
 def test_hot_writer_survives_a_backfill_commit_inside_its_transaction(
     tmp_path: Path,
 ):
@@ -643,28 +697,11 @@ def test_hot_writer_survives_a_backfill_commit_inside_its_transaction(
         conversation_id = writer.add_conversation({"title": "hot", "character_id": 1})
 
         outcome: dict[str, str] = {}
-        original_execute_query = CharactersRAGDB.execute_query
+        interleaved = _interleave_backfill_chunk_before_message_insert(
+            writer, backfiller, outcome
+        )
 
-        def interleaved(self, query, params=None, **kwargs):
-            if (
-                self is writer
-                and "INSERT INTO messages" in query
-                and "chunk" not in outcome
-            ):
-                # The writer is between its read snapshot and its first
-                # write: commit one real backfill chunk from a second
-                # connection right here. Under the fixed (IMMEDIATE) shape
-                # the writer already holds the write lock, so the chunk
-                # must time out and queue for later instead of committing.
-                backfiller.get_connection().execute("PRAGMA busy_timeout = 200")
-                try:
-                    indexed, _ = backfiller.backfill_messages_fts(chunk_size=1)
-                    outcome["chunk"] = f"committed:{indexed}"
-                except (sqlite3.OperationalError, CharactersRAGDBError) as exc:
-                    outcome["chunk"] = f"blocked:{exc}"
-            return original_execute_query(self, query, params, **kwargs)
-
-        with patch.object(CharactersRAGDB, "execute_query", interleaved):
+        with patch.object(_QuiescentSQLiteCursor, "execute", interleaved):
             message_id = writer.add_message(
                 {
                     "conversation_id": conversation_id,
@@ -717,23 +754,11 @@ def test_nested_writer_composition_survives_a_backfill_commit(tmp_path: Path):
         )
 
         outcome: dict[str, str] = {}
-        original_execute_query = CharactersRAGDB.execute_query
+        interleaved = _interleave_backfill_chunk_before_message_insert(
+            writer, backfiller, outcome
+        )
 
-        def interleaved(self, query, params=None, **kwargs):
-            if (
-                self is writer
-                and "INSERT INTO messages" in query
-                and "chunk" not in outcome
-            ):
-                backfiller.get_connection().execute("PRAGMA busy_timeout = 200")
-                try:
-                    indexed, _ = backfiller.backfill_messages_fts(chunk_size=1)
-                    outcome["chunk"] = f"committed:{indexed}"
-                except (sqlite3.OperationalError, CharactersRAGDBError) as exc:
-                    outcome["chunk"] = f"blocked:{exc}"
-            return original_execute_query(self, query, params, **kwargs)
-
-        with patch.object(CharactersRAGDB, "execute_query", interleaved):
+        with patch.object(_QuiescentSQLiteCursor, "execute", interleaved):
             message_id = service.create_message(
                 conversation_id=conversation_id,
                 sender="user",
@@ -751,20 +776,139 @@ def test_nested_writer_composition_survives_a_backfill_commit(tmp_path: Path):
         backfiller.close_connection()
 
 
-def test_hot_message_writers_reserve_the_write_lock_up_front():
-    """Structural backstop for the interleave test above.
+_HOT_WRITER_CONTINUATION_JSON = json.dumps(
+    {
+        "schema_version": 1,
+        "checkpoint_revision": 1,
+        "provider": "deepseek",
+        "protocol": "responses",
+        "model": "deepseek-test",
+        "api_base_url": "https://api.deepseek.com/v1",
+        "state": "active",
+        "rounds": [
+            {
+                "assistant_content": "answer",
+                "reasoning_blocks": [],
+                "calls": [
+                    {
+                        "call_id": "call-1",
+                        "name": "calculator",
+                        "arguments": "{}",
+                        "state": "pending",
+                    }
+                ],
+            }
+        ],
+    }
+)
 
-    The behavioural witness exercises `add_message`; this pins the same
-    IMMEDIATE shape on every enumerated hot writer so a new or reverted
-    DEFERRED read-then-write on the chat path fails here by name. Each of
-    these methods has exactly one `self.transaction(` call site (verified by
-    AST when the list was built), so the two assertions are precise.
+
+def _hot_writer_call(db: CharactersRAGDB, name: str):
+    """Set up ``name``'s preconditions and return its one call to probe."""
+    conversation_id = db.add_conversation({"title": "hot writer", "character_id": 1})
+
+    def add(**extra) -> str:
+        return db.add_message(
+            {"conversation_id": conversation_id, "sender": "user", "content": "hot"}
+            | extra
+        )
+
+    def assistant() -> str:
+        return db.create_assistant_with_continuation(
+            message_id="hot-writer-assistant",
+            conversation_id=conversation_id,
+            parent_message_id=None,
+            content="answer",
+            provider_continuation_json=_HOT_WRITER_CONTINUATION_JSON,
+        )
+
+    if name == "add_message":
+        return add
+    if name == "create_assistant_with_continuation":
+        return assistant
+    if name == "update_provider_continuation":
+        message_id = assistant()
+        return lambda: db.update_provider_continuation(
+            message_id=message_id,
+            expected_message_version=1,
+            provider_continuation_json=None,
+        )
+    if name in {
+        "append_message_attachment_with_metadata",
+        "swap_message_attachment_with_scalar",
+    }:
+        message_id = add(
+            sender="assistant", image_data=b"png0", image_mime_type="image/png"
+        )
+
+        def append() -> int:
+            return db.append_message_attachment_with_metadata(
+                message_id, data=b"png1", mime_type="image/png"
+            )
+
+        if name == "append_message_attachment_with_metadata":
+            return append
+        append()
+        return lambda: db.swap_message_attachment_with_scalar(message_id, 1)
+    message_id = add()
+    if name == "update_message":
+        return lambda: db.update_message(message_id, {"content": "edited"}, 1)
+    if name == "soft_delete_message":
+        return lambda: db.soft_delete_message(message_id, expected_version=1)
+    if name == "soft_delete_message_subtree":
+        return lambda: db.soft_delete_message_subtree(message_id, expected_version=1)
+    if name == "create_message_variant":
+        return lambda: db.create_message_variant(message_id, "variant")
+    assert name == "select_message_variant", name
+    assert db.create_message_variant(message_id, "variant", is_selected=True)
+    return lambda: db.select_message_variant(message_id)
+
+
+@pytest.mark.parametrize("name", HOT_MESSAGE_WRITERS)
+def test_hot_message_writers_reserve_the_write_lock_up_front(
+    tmp_path: Path, name: str
+):
+    """Each hot writer holds the write lock before its transaction's first read.
+
+    Behavioural, so a writer that delegates (``add_message`` has, since
+    c78f641adf) is checked where its transaction actually opens: at the
+    writer connection's first statement inside its transaction, a second
+    connection that will not wait must fail to take the write lock. A
+    DEFERRED begin holds no lock before its first read, so the probe would
+    take it (TASK-42517; this replaced a source-text pin on
+    ``self.transaction(immediate=True)``).
     """
-    for name in HOT_MESSAGE_WRITERS:
-        source = inspect.getsource(getattr(CharactersRAGDB, name))
-        assert "self.transaction(immediate=True)" in source, (
-            f"{name} must reserve the write lock up front (see HOT_MESSAGE_WRITERS)"
+    db_path = tmp_path / "chachanotes.db"
+    db = CharactersRAGDB(db_path, client_id="v47-hot-writer")
+    probe = sqlite3.connect(db_path, timeout=0, isolation_level=None)
+    try:
+        call = _hot_writer_call(db, name)
+        writer_connection = db.get_connection()
+        original_execute = _QuiescentSQLiteCursor.execute
+        first: list[tuple[str, str]] = []
+
+        def execute(self, sql, parameters=()):
+            if (
+                not first
+                and self.connection is writer_connection
+                and writer_connection.in_transaction
+            ):
+                try:
+                    probe.execute("BEGIN IMMEDIATE")
+                except sqlite3.OperationalError as error:
+                    first.append((sql, str(error)))
+                else:
+                    probe.execute("ROLLBACK")
+                    first.append((sql, "write lock was free"))
+            return original_execute(self, sql, parameters)
+
+        with patch.object(_QuiescentSQLiteCursor, "execute", execute):
+            call()
+
+        assert first, f"{name} ran no statement inside a transaction"
+        assert first[0][1] == "database is locked", (
+            f"{name} read before reserving the write lock: {first[0]}"
         )
-        assert "self.transaction()" not in source, (
-            f"{name} still opens a DEFERRED transaction"
-        )
+    finally:
+        probe.close()
+        db.close_connection()

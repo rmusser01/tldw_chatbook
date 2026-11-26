@@ -1280,6 +1280,8 @@ jobs:
       # (bootstrap_profile: that harness reads the tool gates through config),
       # red on the stack and on no lane before. 4 passed in 10.2 s serially
       # with this step's flags at load 5.
+      # TASK-42513 (round 26, 2026-11-24): the trace GC file's stale-mark node
+      # left this step; it runs inside its whole file in dreams-tracking.
       - name: Run the admission-sensitive Console P0 regression tests
         if: ${{ !cancelled() && matrix.profile == 'admission-sensitive' }}
         run: |
@@ -1336,7 +1338,6 @@ jobs:
             "Tests/Chat/test_console_context_presentation_current.py::test_session_close_drains_a_prompt_mixin_read_and_refuses_a_new_one" \
             "Tests/Chat/test_console_context_presentation_current.py::test_session_close_drains_a_controller_read_issued_during_its_hook_drain" \
             "Tests/Chat/test_console_context_presentation_current.py::test_session_close_drains_context_display_and_refuses_a_new_read" \
-            "Tests/Chat/test_console_trace_graph_gc.py::test_stale_mark_never_sweeps_after_concurrent_reachability_change" \
             "Tests/Chat/test_console_trace_admission_gc.py::test_collection_between_admission_and_reservation_preserves_exact_revision" \
             "Tests/Chat/test_console_trace_admission_gc.py::test_canonical_ancestry_cannot_retain_payload_through_another_owners_policy" \
             "Tests/Chat/test_console_retry_json_wire.py::test_json_schema_retry_fence_precedes_actual_http[unchanged-groq]" \
@@ -1584,6 +1585,29 @@ jobs:
     # replaces the usual "+X at 2.6x": this job runs faster in CI than locally
     # (about 11.9 min at load 8), so 2.6x on the per-file additions above would
     # project a misleading ~17.8 min.
+    # Round 26 (2026-11-24): eight files red on dev unseen, on no lane before.
+    # TASK-42513: the Console trace GC and project-turn service files read no
+    # config in-process (RecoveryRequired recorder), so before Tool_Packs; the
+    # GC file's one console-p0-gate node is folded into its whole-file entry
+    # here (removed there, so it runs once). The sidecar replay, sidecar
+    # redaction and proprietary settlement files are bootstrap_profile (their
+    # sends read [hooks] in-process), so after Tool_Packs. TASK-42517: the v47,
+    # v56 and v72 ChaChaNotes files (bootstrap profile by directory), after
+    # Tool_Packs. Serially with this step's flags at load 14-19: graph GC
+    # 10.2 s (21 tests), project turn 13.3 s (22), sidecar replay 25.2 s (22),
+    # sidecar redaction 6.8 s (5), proprietary settlement 6.8 s (4), v47
+    # 13.7 s (23), v56 1.7 s (24), v72 3.2 s (6): 81 s for 127 tests. The whole
+    # step, 42 targets, 1084.2 s locally at load 9-20 (821.9 s for 34 at load
+    # 8 before). On Linux (python 3.12, CI's install line, load ~1) the eight
+    # took 110 s serially and the whole step 669 s (11.2 min before setup) on
+    # Ubuntu 24.04. Budget: +1.8 min on TASK-42516's projected 8.1-11.9 min
+    # puts the job at about 10-14 of its 20 min; add nothing more here
+    # without re-measuring (the TASK-42517 review's files went to
+    # architecture-guards instead, except one 0.8 s node: the voice-promotion
+    # locator inventory, sandboxed, here because architecture-guards admits
+    # no file another PR step lists and the file's P0 node is in
+    # console-p0-gate). Re-measured whole with it: 43 targets, 963.7 s
+    # locally at load 9-11.
     name: Dreams tracking tests and unlaned riders
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -1638,15 +1662,24 @@ jobs:
             Tests/Wizards/test_env_key_launch_notice_sequencing.py \
             Tests/Wizards/test_first_run_discovery_base_url.py \
             Tests/Agents/test_durable_fleet_messages.py \
+            Tests/Chat/test_console_trace_graph_gc.py \
+            Tests/Chat/test_console_trace_project_turn_service.py \
+            "Tests/Chat/test_console_voice_pair_persistence.py::test_voice_promotion_locator_inventory_covers_owned_message_revision_tables" \
             Tests/Tool_Packs \
             Tests/Chat/test_console_trace_retry_recovery_proof.py \
             Tests/Chat/test_console_failed_call_retry_ownership.py \
             Tests/Chat/test_console_provider_failure_copy.py \
+            Tests/Chat/test_console_trace_sidecar_replay.py \
+            Tests/Chat/test_console_trace_sidecar_redaction.py \
+            Tests/Chat/test_console_trace_proprietary_settlement.py \
             Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py \
             Tests/DB/test_chachanotes_v75_hook_continuation_receipts_migration.py \
             Tests/DB/test_chachanotes_v78_fleet_progress_migration.py \
             Tests/DB/test_chachanotes_v79_sargable_migration.py \
             Tests/DB/test_chachanotes_v54_before_first_cursor.py \
+            Tests/DB/test_chachanotes_v47_messages_fts_backfill.py \
+            Tests/DB/test_chachanotes_v56_console_trace_query_plans.py \
+            Tests/DB/test_chachanotes_v72_voice_trace_provenance_migration.py \
             Tests/Backup_Recovery/test_character_presentation_cadence.py \
             --timeout=180 \
             --tb=short
@@ -1678,6 +1711,15 @@ jobs:
     # HOME-move census and script pins (21 tests in the file, ~9 s at load
     # 15-20, the census ~4 s), then the profilers' keyring-pin nodes (4 tests,
     # about 1 s together; not the whole files).
+    # Round 26 (TASK-42517 review, 2026-11-24): files red or unlaned that back
+    # schema v88, all reading no config in-process (RecoveryRequired
+    # recorder). After the SQLite validation file, sandboxed: the v87->v88 and
+    # v86->v87 restore-sandbox gates (16 and 9 tests, 0.7 s and 0.5 s), the
+    # real v81/v85/v87 restore migrations (4 tests, 4.9 s). After the trigger
+    # census, on the ChaChaNotesDB bootstrap profile: the index census (8
+    # tests, 1.3 s) and the two portrait migration files (2 tests each, 1.3 s
+    # each). Serially with this step's flags at load 5-6: 41 tests, ~7.4 s.
+    # The whole step with them: 948 passed in 460.9 s locally at load 7-11.
     name: Architecture guard contracts
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -1739,6 +1781,9 @@ jobs:
             Tests/Architecture/test_console_wave6_inventory.py \
             Tests/Backup_Recovery/test_restore_plan_excluded_directories.py \
             Tests/Backup_Recovery/test_sqlite_validation.py \
+            Tests/Backup_Recovery/test_locator_indexes_sandbox.py \
+            Tests/Backup_Recovery/test_child_segments_sandbox.py \
+            Tests/Backup_Recovery/test_prompt_mixin_restore.py \
             Tests/test_stdlib_logging_format_style.py \
             Tests/test_network_guard.py \
             Tests/test_keyring_isolation.py \
@@ -1749,6 +1794,9 @@ jobs:
             Tests/Architecture/test_timer_path_static_update_inventory.py \
             Tests/ChaChaNotesDB/test_historical_bootstrap.py \
             Tests/ChaChaNotesDB/test_trigger_census.py \
+            Tests/ChaChaNotesDB/test_index_census.py \
+            Tests/ChaChaNotesDB/test_portrait_performance_migration.py \
+            Tests/ChaChaNotesDB/test_portrait_regions_migration.py \
             Tests/DB/test_client_media_debug_logging.py \
             Tests/Architecture/test_persistent_terminal_privacy_boundary.py \
             --timeout=180 \
