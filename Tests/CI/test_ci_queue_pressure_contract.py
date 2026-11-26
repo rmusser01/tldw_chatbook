@@ -939,6 +939,8 @@ RECOVERED_SUITES_TARGETS = (
     "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[helper_body]",
     "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[metadata_body]",
     "Tests/Performance/test_console_managed_received_acceptance.py",
+    # Round 27 (2026-11-26): TASK-42550's slot-drop file (bootstrap_profile).
+    "Tests/Chat/test_console_trace_slot_drop.py",
 )
 #: Deselected 2026-11-12: red on dev e0186fa10a (console_send_diagnostic
 #: ContextVar token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.
