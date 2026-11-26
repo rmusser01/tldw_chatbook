@@ -958,6 +958,9 @@ RECOVERED_SUITES_TARGETS = (
     # Round 27: TASK-42556's child preset fallback file (bootstrap_profile),
     # on no lane before.
     "Tests/Chat/test_console_child_preset_fallback_trace.py",
+    # TASK-41061 review: the hook engine's two regression nodes, on no lane.
+    "Tests/Agents/test_hooks_v2_execution.py::test_cancelled_close_leaves_no_thread_waiting_for_native_custody",
+    "Tests/Agents/test_hooks_v2_execution.py::test_mcp_hook_permission_stays_current_to_other_jobs_while_it_refreshes",
 )
 #: Deselected 2026-11-12: red on dev e0186fa10a (console_send_diagnostic
 #: ContextVar token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.
