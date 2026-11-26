@@ -79,10 +79,10 @@ Sensitive path names (security, storage, recovery, instructions and the rest) no
 - "a test module imported, directly or transitively, by more than 8 other test files, or a deleted one that any test imports";
 - "more than 20 test files of the PR's own (changed, importing or data-reading) ...".
 
-Those cases now run the light tier with a capped sample of the files that depend on the change:
-- a changed or deleted test module or helper under `Tests/` runs up to 8 runnable test files that import it, directly or through other modules;
-- a changed or deleted data file under `Tests/` runs up to 8 runnable test files that read it, or that import a helper that reads it;
-- the whole selection holds at most 20 test files.
+Those cases now run the light tier. The test files that depend on the change are the ones that import a changed or deleted test module or helper under `Tests/`, directly or through other modules, or that read a changed or deleted data file there (or import a helper that reads it).
+- **Under the cap:** with at most 8 dependents the light job can run, all of them run, whether a PR lane runs them or not, as under the amendment above.
+- **Over the cap:** the change is sampled. Only dependents that a PR lane runs are eligible, up to 8, which is a subset of what the full run would have run. On 2026-11-26, only 1,131 of the 5,872 `test_*.py` files were in a PR lane. 4,707 were in none, and the nightly run uses the same lanes, so those run only at release and their health on the PR's platform is unknown. A sample drawn from them could fail on a pre-existing red and evict an unrelated PR, so they are skipped, and the reason says how many.
+- **Budget:** a PR's sampled files share a budget of 8 in all, handed out in turn. Its own changed test files, then the under-the-cap dependents, take the 20 slots first, and the total never exceeds 20. A real 20-file selection measured 37 min locally against the light job's 30-minute cap.
 
 What counts as an importer:
 - Imports are resolved by module path with `ast`, as pytest's prepend import mode loads them: `import Tests.a.mod`, `from Tests.a import mod`, `from Tests.a.mod import X`, relative imports, and bare imports of a module in the importer's own directory. Imports inside functions count, and so do the imports of a child script that a test embeds as a string. When such a script is a template that does not parse as a whole, its import lines are parsed one by one.
@@ -92,13 +92,18 @@ What counts as an importer:
 
 How the sample is drawn:
 - The search runs breadth first over the Tests tree in sorted path order, so direct importers come first and the same diff and tree give the same targets on every machine.
-- It passes through helpers and unrunnable test files without counting them, and stops at the ninth test file the light job can run.
-- Only those count toward the 8. Helpers do not count, and neither does `Tests/CI`, which runs whole anyway. Nor do files the light job cannot run: a file no PR lane runs whole, one a lane runs with deselected nodes, one split across lane steps, or one only push or nightly jobs run.
-- The PR's own changed test files take the first of the 20 slots, by path. The samples share the rest in turn: the first file of each, then the second, so no single module takes them all.
+- It follows every dependent, but counts only test files the light job can run that a PR lane runs. It stops at the ninth of those, or when there are no more dependents.
+- `Tests/CI` runs whole anyway, so it never counts. Neither do files the light job cannot run: a file no PR lane runs whole, one a lane runs with deselected nodes, one split across lane steps, or one only push or nightly jobs run.
+- The PR's own changed test files take the first of the 20 slots, by path. Then come the under-the-cap dependents, and then the samples within their budget of 8. Both are handed out in turn: the first file of each module, then the second, so no single module takes them all.
 
-Something related must run. A change whose dependents include none the light job can run (and none in `Tests/CI`) goes broad: `No test file the light job can run depends on: <path>`.
+The full run is kept only where it reaches what light cannot. A change goes broad when it has a dependent that a PR lane (or a push or nightly job) runs but the light job cannot (heavy, deselected, split or push-only), and nothing laned would run in its place: `Only the full run reaches the laned dependents of <path>: <files>`. When no PR lane runs any dependent, the plan stays light and says so: `no PR lane runs a dependent of <path>; only the release run covers its N test files`. The full run would not run them either.
 
-The plan's reason says, for each module or data file that was capped, cut or skipped, how many test files ran of how many were found, for example `sampled 6 of 9+ importers of <path>`. The `+` means the search stopped at the cap. It also says how many dependents the light job could not run, and whether the 20-file cut applied (`cut to 20 test files`), naming any of the PR's own test files the cut left out.
+The plan's reason says, for each module or data file that was sampled, cut or skipped, how many test files ran of how many were found. Examples:
+- `sampled 6 of 9+ importers of <path> a PR lane runs`, where the `+` means the search stopped at the cap;
+- `skipping N no PR lane runs`;
+- `skipping N the light job cannot run`.
+
+It also says when a cap applied: `8 sampled files in all`, or `cut to 20 test files`, naming any of the PR's own test files the cut left out.
 
 These stay broad, unchanged:
 - `.github/`, `scripts/ci/`, `packages/` and the build files;
@@ -112,4 +117,4 @@ Anything a `conftest.py` loads also stays broad (`Loaded by conftest.py: <path>`
 
 Schema code is narrowed: `user_version` counts only in the `PRAGMA user_version` form, as every real use in `tldw_chatbook/` writes it. A Python name `user_version` no longer sends a module broad. The old pattern did that to `tldw_chatbook/Chat/console_dispatch_repository.py` in #3769, which has no DDL.
 
-**Cost accepted.** A break in an importer the sample did not pick can land on dev. The 09:17 UTC nightly or the release run catches it, attributed across one day's merges. `ci:full` remains the opt-in for a PR that should run everything.
+**Cost accepted.** A break in a dependent the sample did not pick, or in one no PR lane runs, can land on dev. The 09:17 UTC nightly or the release run catches it, attributed across one day's merges. `ci:full` remains the opt-in for a PR that should run everything.

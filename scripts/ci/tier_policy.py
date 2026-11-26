@@ -5,9 +5,10 @@ Tests/CI, the smoke set, its own changed test files and its subsystem's smoke
 tests) and merges; the nightly full run on dev and the release run into main
 are the broad gates. Only inputs that can break CI itself, or the schema, keep
 the full run on the PR; so does anything a conftest.py loads, which starts
-every suite below it. A widely imported test module or helper, or a selection
-over the light job's cap, runs a capped, deterministic sample instead
-(TASK-42626); the nightly and release runs cover the rest.
+every suite below it. A widely imported test module, helper or data file runs
+a capped, deterministic sample of the dependents a PR lane runs instead, and a
+selection over the light job's cap is cut (TASK-42626); the nightly and release
+runs cover the rest.
 """
 
 from __future__ import annotations
@@ -55,9 +56,9 @@ HEAVY_TEST_FILES = {
     "Tests/UI/test_library_shell.py",
     "Tests/Backup_Recovery/test_response_rules_restore.py",
 }
-# At most this many runnable test files that import (or read) one changed
-# module (or data file) run on the PR, breadth first; nightly and release run
-# the rest.
+# A changed module (or data file) with more runnable dependents than this is
+# sampled: only dependents a PR lane runs, breadth first, and at most this many
+# sampled files per PR in all; nightly and release run the rest.
 IMPORTER_CAP = 8
 # The PR's own selected files (its changed tests first, then the samples in
 # turn): more would not fit the light job's 30-minute cap run one by one.
@@ -182,14 +183,14 @@ def _parse(text: str) -> ast.Module | None:
 def _importers(
     path: str,
     corpus: dict[str, str],
-    runnable=_is_test_file,
+    counts=_is_test_file,
     first: list[str] | None = None,
 ) -> list[str]:
     """Files under Tests/ that load `path`, transitively, breadth first in corpus
     order: direct importers (or `first`, such as a data file's readers) before
-    theirs. Unrunnable files are followed but not counted; the search stops
-    once it has IMPORTER_CAP + 1 runnable ones. A file that does not parse
-    counts as an importer, which errs toward more tests.
+    theirs. Every file is followed, but the search stops once IMPORTER_CAP + 1
+    of them satisfy `counts`. A file that does not parse counts as an
+    importer, which errs toward more tests.
     """
     found: list[str] = []
     seen = {path}
@@ -215,7 +216,7 @@ def _importers(
             seen.add(name)
             found.append(name)
             queue.append(name)
-            count += bool(runnable(name))
+            count += bool(counts(name))
             if count > IMPORTER_CAP:
                 return found
     return found
@@ -367,10 +368,19 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
             and not lane_reason(path)
         )
 
+    @functools.cache
+    def laned(path: str) -> bool:
+        """A PR lane runs it: whole, by node or through a lane directory."""
+        return bool(_names(path, step_set)) or any(
+            path.startswith(d.rstrip("/") + "/") for d in lane_dirs
+        )
+
+    def sampleable(path: str) -> bool:
+        return runnable(path) and laned(path)
+
     targets = set(BASE_TESTS)
     changed: list[str] = []  # the PR's own changed test files, kept first
-    # Per changed module or data file: path, kind, sample, runnable found, skipped.
-    samples: list[tuple[str, str, list[str], int, int]] = []
+    samples: list[dict] = []  # per changed module or data file (see below)
     for status, path in changes:
         reason = _full_reason(status, path)
         if reason:
@@ -404,19 +414,39 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
                 )
                 if loading:
                     return broad(f"Read by {loading}, which conftest.py loads: {path}")
-            # Sample the files that depend on it. One the light job cannot run is
-            # skipped (and noted), but something must run.
-            found = _importers(path, tests_corpus(), runnable, first)
-            tests = [f for f in found if runnable(f)]
-            covered = any(_is_test_file(f) and f.startswith("Tests/CI/") for f in found)
-            if found and not tests and not covered:
-                return broad(f"No test file the light job can run depends on: {path}")
-            skipped = sum(
-                _is_test_file(f) and not f.startswith("Tests/CI/") and not runnable(f)
-                for f in found
+            # Run the files that depend on it. With more runnable ones than
+            # IMPORTER_CAP, sample only those a PR lane runs (a subset of the full
+            # run); unlaned ones have no known health on the PR's platform.
+            found = _importers(path, tests_corpus(), sampleable, first)
+            tests = [f for f in found if _is_test_file(f)]
+            in_ci = any(f.startswith("Tests/CI/") for f in tests)
+            tests = [f for f in tests if not f.startswith("Tests/CI/")]
+            run = [f for f in tests if runnable(f)]
+            sampling = len(run) > IMPORTER_CAP
+            sample = [f for f in run if laned(f)][:IMPORTER_CAP] if sampling else run
+            # Laned dependents the light job cannot run: only the full run reaches
+            # them, which matters when nothing laned runs here instead.
+            blocked = [
+                f for f in tests if not runnable(f) and (laned(f) or _names(f, other))
+            ]
+            if blocked and not in_ci and not any(map(laned, sample)):
+                return broad(
+                    f"Only the full run reaches the laned dependents of {path}: "
+                    + ", ".join(blocked[:3])
+                )
+            samples.append(
+                {
+                    "path": path,
+                    "kind": "importers" if first is None else "readers",
+                    "sample": sample,
+                    "sampling": sampling,
+                    "laned": sum(map(sampleable, run)),
+                    "unlaned": len(run) - sum(map(laned, run)) if sampling else 0,
+                    "skipped": len(tests) - len(run),
+                    "orphan": bool(found) and not sample and not in_ci,
+                    "tests": len(tests),
+                }
             )
-            kind = "importers" if first is None else "readers"
-            samples.append((path, kind, tests[:IMPORTER_CAP], len(tests), skipped))
         elif status == "D":
             continue
         elif path.startswith("tldw_chatbook/") and path.endswith(".py"):
@@ -431,22 +461,48 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
         # Docs, backlog, census files and other sources: preflight + smoke only.
     changed.sort()
     own = changed[:LIGHT_FILE_CAP]
-    for rank in range(IMPORTER_CAP):  # the slots left, shared out in turn
-        for _, _, sample, _, _ in samples:
-            if rank < len(sample) and sample[rank] not in own:
-                if len(own) < LIGHT_FILE_CAP:
+
+    def share(entries: list[dict], limit: int) -> None:
+        """Add the samples' files in turn: each one's first, then each second."""
+        for rank in range(IMPORTER_CAP):
+            for entry in entries:
+                sample = entry["sample"]
+                if rank < len(sample) and sample[rank] not in own and len(own) < limit:
                     own.append(sample[rank])
+
+    share([e for e in samples if not e["sampling"]], LIGHT_FILE_CAP)
+    budget = min(LIGHT_FILE_CAP, len(own) + IMPORTER_CAP)  # 8 sampled files in all
+    share([e for e in samples if e["sampling"]], budget)
     notes = []
-    for path, kind, sample, total, skipped in samples:
-        ran = sum(f in own for f in sample)
-        if ran < len(sample) or total > IMPORTER_CAP or skipped:
-            more = "+" if total > IMPORTER_CAP else ""
-            note = f"sampled {ran} of {total}{more} {kind} of {path}"
-            if skipped:
-                note += f", skipping {skipped} the light job cannot run"
-            notes.append(note)
+    for e in samples:
+        ran = sum(f in own for f in e["sample"])
+        path, kind = e["path"], e["kind"]
+        more = "+" if e["laned"] > IMPORTER_CAP else ""
+        if e["orphan"]:
+            note = f"no PR lane runs a dependent of {path}"
+            if e["tests"]:
+                files = "file" if e["tests"] == 1 else "files"
+                note += f"; only the release run covers its {e['tests']} test {files}"
+        elif e["sampling"]:
+            note = (
+                f"sampled {ran} of {e['laned']}{more} {kind} of {path} a PR lane runs"
+            )
+            if e["unlaned"]:
+                note += f", skipping {e['unlaned']}{more} no PR lane runs"
+        elif ran < len(e["sample"]) or e["skipped"]:
+            note = f"sampled {ran} of {len(e['sample'])} {kind} of {path}"
+        else:
+            continue
+        if e["skipped"] and not e["orphan"]:
+            note += f", skipping {e['skipped']} the light job cannot run"
+        notes.append(note)
     cut = changed[LIGHT_FILE_CAP:]
-    if cut or any(f not in own for _, _, sample, _, _ in samples for f in sample):
+    dropped = {e["sampling"] for e in samples for f in e["sample"] if f not in own}
+    if True in dropped and budget < LIGHT_FILE_CAP:
+        notes.insert(0, f"{IMPORTER_CAP} sampled files in all")
+    elif True in dropped:
+        dropped.add(False)  # the 20-file cap cut the samples too
+    if cut or False in dropped:
         unrun = f", not running the PR's own {', '.join(cut)}" if cut else ""
         notes.insert(0, f"cut to {LIGHT_FILE_CAP} test files{unrun}")
     whole: set[str] = set()

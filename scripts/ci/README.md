@@ -42,19 +42,23 @@ changes:
 - guard and budget data under `Tests/Architecture/` or `Tests/Performance/`;
 - its own test files that no PR lane runs whole, or that a lane deselects nodes
   from, splits across steps or runs only on push or nightly;
-- a test module, helper or data file that only files the light job cannot run
-  depend on (something related must run);
+- a test module, helper or data file with a dependent that a PR lane (or a push or
+  nightly job) runs but the light job cannot (heavy, deselected, split or
+  push-only), when nothing laned would run in its place;
 - a removed or moved application file, or a type-changed or unmerged path;
 - or when it carries `ci:full`.
 
 Everything else runs light:
 - preflight, `Tests/CI`, the smoke set and a touched subsystem's smoke nodes;
 - the PR's changed test files;
-- a capped, deterministic sample of the runnable test files that import or read
-  what changed. Imports are resolved by module path, and the search runs breadth
-  first through helpers. It takes at most 8 per changed module or data file, and
-  20 in all: the PR's own changed files first, then the samples in turn. The plan's
-  reason names what was sampled, skipped or cut.
+- the test files that import or read what changed. Imports are resolved by
+  module path, and the search runs breadth first through helpers. With at most 8
+  runnable dependents, all of them run. With more, the change is sampled: only
+  dependents a PR lane runs, since 4,707 of the 5,872 test files are in no lane
+  and run only at release. A PR samples at most 8 files in all, and runs at most
+  20 test files: its own changed files first, then the rest in turn. When no PR
+  lane runs any dependent, the plan stays light and says so. The plan's reason
+  names what was sampled, skipped or cut.
 
 Docs and backlog changes run preflight and smoke only. The nightly and release
 runs are the broad gates.

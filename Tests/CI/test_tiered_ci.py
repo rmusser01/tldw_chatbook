@@ -139,6 +139,12 @@ def test_a_changed_test_file_is_not_narrowed_to_its_own_smoke_nodes(tmp_path):
     assert not [t for t in plan["targets"] if t.startswith(nav + "::")]
 
 
+def _laned(root, *dirs):
+    """A PR lane that runs these directories whole (lane directories)."""
+    _lane_workflow(root, {"pr-fast-lane": ["pytest " + " ".join(dirs)]})
+    return root
+
+
 def _sampled(plan, *changed):
     """The test files a light plan runs beyond the smoke set and `changed`."""
     assert not plan["full"], plan["reason"]
@@ -155,13 +161,14 @@ def test_a_widely_imported_test_module_runs_a_capped_sample_not_broad(tmp_path):
     }
     # Sorts before every direct importer, but imports the module only through one.
     files["Tests/UI/test_a_caller.py"] = "from Tests.UI.test_user_0 import rig\n"
-    root = _tree(tmp_path, files)
+    root = _laned(_tree(tmp_path, files), "Tests/UI")
     plan = policy.select_changes([("M", shared)], root)
     assert _sampled(plan, shared) == set(direct)
     assert shared in plan["targets"]
     assert plan["reason"] == (
         f"Sanity checks; sampled {policy.IMPORTER_CAP} of {policy.IMPORTER_CAP + 1}+"
-        " importers of Tests/UI/test_shared.py; nightly and release runs are the broad gates"
+        " importers of Tests/UI/test_shared.py a PR lane runs;"
+        " nightly and release runs are the broad gates"
     )
     (root / shared).unlink()
     assert _sampled(policy.select_changes([("D", shared)], root)) == set(direct)
@@ -174,7 +181,7 @@ def test_the_sample_is_the_same_whatever_order_the_tree_is_walked(
     shared = "Tests/Chat/test_shared.py"
     users = [f"Tests/Chat/test_user_{n:02d}.py" for n in range(policy.IMPORTER_CAP + 3)]
     files = {shared: "", **{f: "from .test_shared import harness\n" for f in users}}
-    root = _tree(tmp_path, files)
+    root = _laned(_tree(tmp_path, files), "Tests/Chat")
     walk = Path.rglob
     plans = []
     for seed in range(6):
@@ -242,6 +249,20 @@ def test_an_importer_the_light_job_cannot_run_is_skipped_not_broad(tmp_path):
         },
         other="pytest Tests/Backup_Recovery/test_slow.py -n 4",
     )
+    # Only the full run reaches the laned ones, and nothing laned runs instead.
+    plan = policy.select_changes([("M", base)], root)
+    assert plan["full"] and plan["reason"] == (
+        f"Only the full run reaches the laned dependents of {base}: "
+        "Tests/Backup_Recovery/test_slow.py, Tests/Chat/test_deselected.py,"
+        " Tests/Chat/test_split.py"
+    )
+    workflow = root / ".github/workflows/derived-artifacts.yml"
+    workflow.write_text(
+        workflow.read_text().replace(
+            "pytest Tests/Chat/test_split.py::test_b",
+            "pytest Tests/Chat/test_split.py::test_b Tests/UI/test_ok.py",
+        )
+    )
     plan = policy.select_changes([("M", base)], root)
     assert _sampled(plan, base) == {
         "Tests/UI/test_ok.py",
@@ -261,11 +282,11 @@ def test_a_shared_helper_samples_its_importers(tmp_path):
     rig = "Tests/Chat/hooks_rig.py"
     users = [f"Tests/Chat/test_hook_{n:02d}.py" for n in range(policy.IMPORTER_CAP + 2)]
     files = {rig: "", **{f: "from Tests.Chat.hooks_rig import rig\n" for f in users}}
-    root = _tree(tmp_path, files)
+    root = _laned(_tree(tmp_path, files), "Tests/Chat")
     for status in ("M", "D"):
         plan = policy.select_changes([(status, rig)], root)
         assert _sampled(plan) == set(users[: policy.IMPORTER_CAP]), status
-        assert f"sampled 8 of 9+ importers of {rig}" in plan["reason"]
+        assert f"sampled 8 of 9+ importers of {rig} a PR lane runs" in plan["reason"]
     assert not policy.select_changes([("M", "Tests/Chat/hooks_v2_owned_rig.py")], ROOT)[
         "full"
     ]
@@ -904,7 +925,7 @@ def test_an_unrunnable_or_helper_importer_takes_no_sample_slot(tmp_path):
         root,
         {
             "pr-fast-lane": [
-                "pytest Tests/Chat/test_deselected.py "
+                "pytest Tests/Chat "
                 '"--deselect=Tests/Chat/test_deselected.py::test_known_red"'
             ]
         },
@@ -912,8 +933,8 @@ def test_an_unrunnable_or_helper_importer_takes_no_sample_slot(tmp_path):
     plan = policy.select_changes([("M", base)], root)
     assert _sampled(plan, base) == set(users[: policy.IMPORTER_CAP])
     assert (
-        f"sampled 8 of 9+ importers of {base}, skipping 1 the light job cannot run"
-        in plan["reason"]
+        f"sampled 8 of 9+ importers of {base} a PR lane runs,"
+        " skipping 1 the light job cannot run" in plan["reason"]
     )
     # Nine helpers that sort first: their importers fill the sample instead.
     rig = "Tests/Core/base_rig.py"
@@ -921,7 +942,7 @@ def test_an_unrunnable_or_helper_importer_takes_no_sample_slot(tmp_path):
     for n in range(policy.IMPORTER_CAP + 1):
         files[f"Tests/Core/a_rig_{n}.py"] = "from Tests.Core.base_rig import X\n"
         files[f"Tests/Core/test_user_{n}.py"] = f"from Tests.Core.a_rig_{n} import X\n"
-    root = _tree(tmp_path / "helpers", files)
+    root = _laned(_tree(tmp_path / "helpers", files), "Tests/Core")
     plan = policy.select_changes([("M", rig)], root)
     assert len(_sampled(plan)) == policy.IMPORTER_CAP
 
@@ -941,7 +962,19 @@ def test_a_tests_ci_importer_runs_anyway_and_is_not_counted(tmp_path):
     assert (
         plan["reason"] == "Sanity checks; nightly and release runs are the broad gates"
     )
-    assert not policy.select_changes([("M", only_ci)], root)["full"]
+    plan = policy.select_changes([("M", only_ci)], root)
+    assert not plan["full"]
+    assert (
+        plan["reason"] == "Sanity checks; nightly and release runs are the broad gates"
+    )
+    # Sampling with Tests/CI laned, as on dev: the CI importer (it sorts first)
+    # still takes no place among the nine the search counts.
+    ninth = "Tests/UI/test_u_last.py"
+    (root / ninth).write_text(imports)
+    _laned(root, "Tests/CI", "Tests/UI")
+    plan = policy.select_changes([("M", base)], root)
+    assert _sampled(plan, base) == set(users)
+    assert f"sampled 8 of 9+ importers of {base} a PR lane runs" in plan["reason"]
 
 
 def test_the_search_is_breadth_first(tmp_path):
@@ -956,7 +989,7 @@ def test_the_search_is_breadth_first(tmp_path):
             files[f"Tests/Core/test_v{helper}{n}.py"] = (
                 f"from Tests.Core.{helper}_rig import X\n"
             )
-    root = _tree(tmp_path, files)
+    root = _laned(_tree(tmp_path, files), "Tests/Core")
     plan = policy.select_changes([("M", rig)], root)
     assert _sampled(plan) == {*direct, *(f"Tests/Core/test_va{n}.py" for n in range(4))}
 
@@ -977,6 +1010,12 @@ def test_a_data_file_samples_its_readers_and_a_reading_helpers_importers(tmp_pat
     }
     files["Tests/UI/test_library_shell.py"] += 'MORE = "heavy_only.tsv"\n'
     root = _tree(tmp_path, files)
+    # As on dev: a PR lane runs the reader, and a push job the heavy file.
+    _lane_workflow(
+        root,
+        {"pr-fast-lane": ["pytest Tests/UI/test_reader.py"]},
+        other="pytest Tests/UI/test_library_shell.py",
+    )
     plan = policy.select_changes([("M", data)], root)
     assert _sampled(plan) == {
         "Tests/UI/test_reader.py",
@@ -986,11 +1025,15 @@ def test_a_data_file_samples_its_readers_and_a_reading_helpers_importers(tmp_pat
         f"sampled 2 of 2 readers of {data}, skipping 1 the light job cannot run"
         in plan["reason"]
     )
-    for path in ("Tests/UI/heavy_only.tsv", "Tests/UI/orphan.tsv"):
-        plan = policy.select_changes([("M", path)], root)
-        assert plan["full"] and plan["reason"] == (
-            f"No test file the light job can run depends on: {path}"
-        )
+    plan = policy.select_changes([("M", "Tests/UI/heavy_only.tsv")], root)
+    assert plan["full"] and plan["reason"] == (
+        "Only the full run reaches the laned dependents of Tests/UI/heavy_only.tsv:"
+        " Tests/UI/test_library_shell.py"
+    )
+    # A helper nothing imports: nothing runs anywhere, so broad adds nothing.
+    plan = policy.select_changes([("M", "Tests/UI/orphan.tsv")], root)
+    assert _sampled(plan) == set()
+    assert "no PR lane runs a dependent of Tests/UI/orphan.tsv;" in plan["reason"]
 
 
 def test_the_cap_is_shared_in_turn_and_the_notes_follow_the_cut(tmp_path):
@@ -1002,16 +1045,22 @@ def test_the_cap_is_shared_in_turn_and_the_notes_follow_the_cut(tmp_path):
             files[f"Tests/M{m}/test_user_{n}.py"] = (
                 f"from Tests.M{m}.test_shared import X\n"
             )
-    root = _tree(tmp_path, files)
-    changes = [("M", f"Tests/M{m}/test_shared.py") for m in "abc"]
+    small = [f"Tests/Md/test_user_{n}.py" for n in range(5)]
+    files["Tests/Md/test_shared.py"] = ""
+    files.update(dict.fromkeys(small, "from Tests.Md.test_shared import X\n"))
+    root = _laned(_tree(tmp_path, files), "Tests/Ma", "Tests/Mb", "Tests/Mc")
+    changes = [("M", f"Tests/M{m}/test_shared.py") for m in "abcd"]
     plan = policy.select_changes(changes, root)
     assert plan["reason"] == (
-        "Sanity checks; cut to 20 test files;"
-        " sampled 6 of 9+ importers of Tests/Ma/test_shared.py;"
-        " sampled 6 of 9+ importers of Tests/Mb/test_shared.py;"
-        " sampled 5 of 9+ importers of Tests/Mc/test_shared.py;"
+        "Sanity checks; 8 sampled files in all;"
+        " sampled 3 of 9+ importers of Tests/Ma/test_shared.py a PR lane runs;"
+        " sampled 3 of 9+ importers of Tests/Mb/test_shared.py a PR lane runs;"
+        " sampled 2 of 9+ importers of Tests/Mc/test_shared.py a PR lane runs;"
         " nightly and release runs are the broad gates"
     )
+    # The module under the cap runs all its importers, outside the 8-file budget.
+    assert set(small) <= set(plan["targets"])
+    assert len(_sampled(plan, *(c[1] for c in changes))) == 5 + 8
     readers = {
         f"Tests/A/test_reader_{n:02d}.py": 'P = "common.json"\n' for n in range(25)
     }
@@ -1023,6 +1072,7 @@ def test_the_cap_is_shared_in_turn_and_the_notes_follow_the_cut(tmp_path):
         tmp_path / "data",
         {"Tests/A/common.json": "{}", "Tests/Z/test_shared.py": "", **readers, **users},
     )
+    _laned(root, "Tests/A")
     plan = policy.select_changes(
         [("M", "Tests/A/common.json"), ("M", "Tests/Z/test_shared.py")], root
     )
@@ -1030,6 +1080,84 @@ def test_the_cap_is_shared_in_turn_and_the_notes_follow_the_cut(tmp_path):
         *sorted(readers)[: policy.IMPORTER_CAP],
         *users,
     }
+
+
+def test_a_sample_holds_only_dependents_a_pr_lane_runs(tmp_path):
+    """Round 3: unlaned files have no known health; the search goes past them."""
+    base = "Tests/Mix/test_base.py"
+    imports = "from Tests.Mix.test_base import X\n"
+    unlaned = [f"Tests/Mix/test_a{n:02d}.py" for n in range(20)]
+    laned = [f"Tests/Mix/zlaned/test_z{n}.py" for n in range(policy.IMPORTER_CAP + 1)]
+    files = {base: "", **dict.fromkeys(unlaned + laned, imports)}
+    root = _laned(_tree(tmp_path, files), "Tests/Mix/zlaned")
+    plan = policy.select_changes([("M", base)], root)
+    assert _sampled(plan, base) == set(laned[: policy.IMPORTER_CAP])
+    assert plan["reason"] == (
+        f"Sanity checks; sampled 8 of 9+ importers of {base} a PR lane runs,"
+        " skipping 20+ no PR lane runs; nightly and release runs are the broad gates"
+    )
+    for extra in laned[3:]:
+        (root / extra).unlink()
+    plan = policy.select_changes([("M", base)], root)
+    assert _sampled(plan, base) == set(laned[:3])
+    assert (
+        f"sampled 3 of 3 importers of {base} a PR lane runs, skipping 20 no PR lane runs"
+        in plan["reason"]
+    )
+
+
+def test_broad_only_when_the_full_run_reaches_what_light_cannot(tmp_path):
+    """Round 3: a laned dependent the light job cannot run, and none laned to run."""
+    base = "Tests/Mix/test_base.py"
+    imports = "from Tests.Mix.test_base import X\n"
+    unlaned = [f"Tests/Mix/test_u{n}.py" for n in range(policy.IMPORTER_CAP + 1)]
+    deselected = "Tests/Mix/test_deselected.py"
+    root = _tree(
+        tmp_path, {base: "", deselected: imports, **dict.fromkeys(unlaned, imports)}
+    )
+    _lane_workflow(
+        root,
+        {"pr-fast-lane": [f'pytest {deselected} "--deselect={deselected}::test_red"']},
+    )
+    for users in (unlaned, unlaned[:3]):  # sampling, and under the cap
+        for gone in set(unlaned) - set(users):
+            (root / gone).unlink()
+        plan = policy.select_changes([("M", base)], root)
+        assert plan["full"] and plan["reason"] == (
+            f"Only the full run reaches the laned dependents of {base}: {deselected}"
+        )
+    # One laned file among them: light, and under the cap all of them run.
+    (root / "Tests/Mix/zlaned").mkdir()
+    (root / "Tests/Mix/zlaned/test_l.py").write_text(imports)
+    _lane_workflow(
+        root,
+        {
+            "pr-fast-lane": [
+                f'pytest {deselected} "--deselect={deselected}::test_red"',
+                "pytest Tests/Mix/zlaned",
+            ]
+        },
+    )
+    plan = policy.select_changes([("M", base)], root)
+    assert _sampled(plan, base) == {*unlaned[:3], "Tests/Mix/zlaned/test_l.py"}
+    assert "skipping 1 the light job cannot run" in plan["reason"]
+
+
+def test_no_pr_lane_runs_any_dependent_stays_light_and_says_so(tmp_path):
+    """Round 3: broad would run none of them either; only the release run does."""
+    base = "Tests/Mix/test_base.py"
+    users = [f"Tests/Mix/test_u{n}.py" for n in range(policy.IMPORTER_CAP + 1)]
+    root = _tree(
+        tmp_path,
+        {base: "", **dict.fromkeys(users, "from Tests.Mix.test_base import X\n")},
+    )
+    plan = policy.select_changes([("M", base)], root)
+    assert _sampled(plan, base) == set()
+    assert plan["reason"] == (
+        f"Sanity checks; no PR lane runs a dependent of {base};"
+        " only the release run covers its 9 test files;"
+        " nightly and release runs are the broad gates"
+    )
 
 
 def _lane_workflow(root, lanes, other=""):
