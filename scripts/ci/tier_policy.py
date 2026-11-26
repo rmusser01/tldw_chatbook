@@ -4,7 +4,9 @@ Owner decision (TASK-42521, 2026-11-23): a dev PR runs sanity checks (preflight,
 Tests/CI, the smoke set, its own changed test files and its subsystem's smoke
 tests) and merges; the nightly full run on dev and the release run into main
 are the broad gates. Only inputs that can break CI itself, or the schema, keep
-the full run on the PR.
+the full run on the PR. A widely imported test module or helper, or a selection
+over the light job's cap, runs a capped, deterministic sample instead
+(TASK-42626); the nightly and release runs cover the rest.
 """
 
 from __future__ import annotations
@@ -42,17 +44,19 @@ FULL_NAMES = {"conftest.py", "pytest.ini", ".pytest.ini", "tox.ini", "setup.cfg"
 SCHEMA_DIRS = {"DB", "db", "migrations"}
 # Data read by the guard and budget suites (allowlists, snapshots).
 GUARD_DATA_PREFIXES = ("Tests/Architecture/", "Tests/Performance/")
+# The harness that keeps test runs off the user's real profile.
+PROFILE_HARNESS = {"Tests/private_profile.py", "Tests/real_profile_guard.py"}
 # Files no PR lane runs whole: too slow for the light job's cap, or carrying
 # deselected known failures (scripts/library_shell_push_deselect.txt).
 HEAVY_TEST_FILES = {
     "Tests/UI/test_library_shell.py",
     "Tests/Backup_Recovery/test_response_rules_restore.py",
 }
-# A changed test module imported (transitively) by more test files than this
-# is shared infrastructure.
+# At most this many importers of one changed test module or helper run on the
+# PR (direct before transitive, then by path); nightly and release run the rest.
 IMPORTER_CAP = 8
-# The PR's own selected files (changed tests, importers, data readers): more
-# than this would not fit the light job's 30-minute cap run one by one.
+# The PR's own selected files (changed tests, then sampled importers and data
+# readers): more would not fit the light job's 30-minute cap run one by one.
 LIGHT_FILE_CAP = 20
 # Application code that creates, alters or versions its own SQLite schema
 # (uppercase DDL, as this codebase writes it; case-sensitive to skip prose).
@@ -90,9 +94,8 @@ def _full_reason(status: str, path: str) -> str | None:
         return f"CI, build or test configuration: {path}"
     if parts[0] == "tldw_chatbook" and SCHEMA_DIRS & set(parts[1:-1]):
         return f"Schema input: {path}"
-    if path.startswith("Tests/") and path.endswith(".py") and not _is_test_file(path):
-        # private_profile.py, real_profile_guard.py, shared rigs: suites import them.
-        return f"Shared test infrastructure: {path}"
+    if path in PROFILE_HARNESS:
+        return f"Profile isolation harness: {path}"
     if path.startswith(GUARD_DATA_PREFIXES) and not path.endswith(".py"):
         return f"Guard or budget data: {path}"
     if path in HEAVY_TEST_FILES:
@@ -115,22 +118,24 @@ def _import_pattern(stem: str) -> re.Pattern[str]:
     )
 
 
-def _importers(path: str, corpus: dict[str, str]) -> set[str]:
-    """Test files importing this module, transitively; stops past IMPORTER_CAP.
+def _importers(path: str, corpus: dict[str, str]) -> dict[str, int]:
+    """Files under Tests/ importing this module, transitively, with their depth
+    (1 = direct); breadth first in corpus order, stopping past IMPORTER_CAP.
 
     An over-approximation by module name, which errs toward more tests.
     """
-    found: set[str] = set()
-    frontier = [path]
+    found: dict[str, int] = {}
+    frontier = [(path, 0)]
     while frontier:
-        stem = Path(frontier.pop()).stem
+        current, depth = frontier.pop(0)
+        stem = Path(current).stem
         pattern = _import_pattern(stem)
         for name, text in corpus.items():
             if name == path or name in found or stem not in text:
                 continue
             if pattern.search(text):
-                found.add(name)
-                frontier.append(name)
+                found[name] = depth + 1
+                frontier.append((name, depth + 1))
                 if len(found) > IMPORTER_CAP:
                     return found
     return found
@@ -210,29 +215,85 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
 
     def tests_corpus() -> dict[str, str]:
         if not corpus:
+            # Sorted, so every machine draws the same sample.
             corpus.update(
-                (str(f.relative_to(root)), f.read_text(errors="replace"))
-                for f in (root / "Tests").rglob("*.py")
+                sorted(
+                    (str(f.relative_to(root)), f.read_text(errors="replace"))
+                    for f in (root / "Tests").rglob("*.py")
+                )
             )
         return corpus
 
+    steps, deselected, other = _lanes(root)
+    lane_dirs = {
+        t
+        for t in steps
+        if "::" not in t and not t.endswith(".py") and (root / t).is_dir()
+    }
+
+    def lane_nodes(path: str) -> set[str]:
+        """The node ids the PR lanes run this file by; empty means run it whole."""
+        named = _names(path, set(steps))
+        if path in named or any(
+            path.startswith(d.rstrip("/") + "/") for d in lane_dirs
+        ):
+            return set()
+        return named
+
+    def lane_reason(path: str) -> str | None:
+        """Why the light job cannot run this test file as the PR lanes do, or None."""
+        if _names(path, deselected):
+            return f"Test file a PR lane runs with deselected nodes: {path}"
+        if not _names(path, set(steps)) and _names(path, other):
+            return f"Test file only push or nightly jobs run: {path}"
+        if len(set().union(*(steps[t] for t in lane_nodes(path)))) > 1:
+            return f"Test file split across PR lane steps: {path}"
+        return None
+
+    def runnable(path: str) -> bool:
+        """A related file the light job can run; Tests/CI runs whole anyway."""
+        return (
+            _is_test_file(path)
+            and not path.startswith("Tests/CI/")
+            and not _full_reason("M", path)
+            and not lane_reason(path)
+        )
+
     targets = set(BASE_TESTS)
-    own: set[str] = set()  # the PR's own selection, which the file cap counts
+    changed: list[str] = []  # the PR's own changed test files, kept first
+    related: list[str] = []  # sampled importers and data readers, in order
+    notes: list[str] = []
     for status, path in changes:
         reason = _full_reason(status, path)
         if reason:
             return broad(reason)
-        related: set[str] = set()
-        if _is_test_file(path):
-            related = _importers(path, tests_corpus())
-            if related and (status == "D" or len(related) > IMPORTER_CAP):
-                return broad(f"Shared test module ({len(related)}+ importers): {path}")
-            if status != "D":
-                own.add(path)
+        if path.startswith("Tests/") and path.endswith(".py"):
+            # A test module or shared helper, changed or deleted: sample the files
+            # importing it. One the light job cannot run is skipped, not broad.
+            if (
+                _is_test_file(path)
+                and status != "D"
+                and not path.startswith("Tests/CI/")
+            ):
+                reason = lane_reason(path)
+                if reason:
+                    return broad(reason)
+                changed.append(path)
+            found = _importers(path, tests_corpus())
+            ordered = [f for _, f in sorted((d, f) for f, d in found.items())]
+            sample = [f for f in ordered if runnable(f)][:IMPORTER_CAP]
+            if len(sample) < len(found):
+                more = "+" if len(found) > IMPORTER_CAP else ""
+                notes.append(
+                    f"sampled {len(sample)} of {len(found)}{more} importers of {path}"
+                )
+            related += sample
         elif path.startswith("Tests/"):
             # Test data, changed or deleted: the test files that name it read it.
             name = Path(path).name
-            related = {f for f, text in tests_corpus().items() if name in text}
+            related += [
+                f for f, text in tests_corpus().items() if name in text and runnable(f)
+            ]
         elif status == "D":
             continue
         elif path.startswith("tldw_chatbook/") and path.endswith(".py"):
@@ -241,42 +302,21 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
                 source.read_text(errors="replace")
             ):
                 return broad(f"Schema code: {path}")
-        for related_path in related:
-            reason = _full_reason("M", related_path)
-            if reason:
-                return broad(reason)
-        own |= {f for f in related if _is_test_file(f)}
         subsystem = next((key for key in SUBSYSTEM_TESTS if path.startswith(key)), None)
         if subsystem and Path(path).suffix in {".py", ".tcss"}:
             targets.update(SUBSYSTEM_TESTS[subsystem])
         # Docs, backlog, census files and other sources: preflight + smoke only.
-    own = {f for f in own if not f.startswith("Tests/CI/")}  # Tests/CI runs whole
+    own = list(dict.fromkeys(sorted(changed) + related))
     if len(own) > LIGHT_FILE_CAP:
-        return broad(f"{len(own)} test files exceed the light job's cap")
-    steps, deselected, other = _lanes(root)
-    lane_dirs = {
-        t
-        for t in steps
-        if "::" not in t and not t.endswith(".py") and (root / t).is_dir()
-    }
+        notes.append(f"sampled {LIGHT_FILE_CAP} of {len(own)} test files")
+        own = own[:LIGHT_FILE_CAP]
     whole: set[str] = set()
-    for path in sorted(own):
-        named = _names(path, set(steps))
-        if _names(path, deselected):
-            return broad(f"Test file a PR lane runs with deselected nodes: {path}")
-        if not named and _names(path, other):
-            return broad(f"Test file only push or nightly jobs run: {path}")
-        if (
-            not named
-            or path in named
-            or any(path.startswith(d.rstrip("/") + "/") for d in lane_dirs)
-        ):
+    for path in own:
+        nodes = lane_nodes(path)
+        if nodes:
+            targets |= nodes  # the lanes run this file only by node: never whole
+        else:
             whole.add(path)  # run whole, as a lane does (or as no lane does yet)
-            continue
-        # The lanes run this file only by node: run those nodes, never the whole file.
-        if len(set().union(*(steps[t] for t in named))) > 1:
-            return broad(f"Test file split across PR lane steps: {path}")
-        targets |= named
     targets |= whole
     # A file selected whole must not be narrowed to its own smoke nodes
     # (pytest collapses `f f::n` to `f::n`).
@@ -284,10 +324,11 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
     for target in targets:
         if not (root / target.split("::", 1)[0]).is_file():
             raise ValueError(f"Selected test does not exist: {target}")
+    sampled = "".join(f"{note}; " for note in notes)
     return {
         "full": False,
         "targets": sorted(targets),
-        "reason": "Sanity checks; nightly and release runs are the broad gates",
+        "reason": f"Sanity checks; {sampled}nightly and release runs are the broad gates",
     }
 
 

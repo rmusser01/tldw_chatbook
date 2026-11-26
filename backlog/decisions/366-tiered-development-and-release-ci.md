@@ -69,3 +69,26 @@ Everything else runs light:
 Sensitive path names (security, storage, recovery, instructions and the rest) no longer force broad runs on the PR. They rely on review, the PR's own tests, the nightly run and the release run. This supersedes the "absence means broad" and sensitive-name rules above. Adding `ci:full` takes effect on the next push or reopen: the workflow does not run on `labeled`, and re-running jobs reuses the original event's labels. Unset the variable to restore broad dev PR gating.
 
 **Cost accepted.** A regression in an integration the PR's own tests don't reach can land on dev. It is caught the next morning, when the 09:17 UTC nightly runs, or at release, and attributed across one day's merges.
+
+## Amendment: capped samples instead of broad fallback (2026-11-26, TASK-42626)
+
+**Why.** Under the amendment above, a dev PR still ran the full CI (about 63 jobs, 42 of them UI shards) when it touched a widely imported test file. PR #3769's preflight gave `Shared test module (9+ importers): Tests/Chat/test_console_dispatch_recovery.py`. Its full run took 3 h 26 min, because jobs waited up to about 2 h 50 min for runners on the account pool shared with tldw_server. The one-at-a-time merge queue (`scripts/merge_queue.py`) held every armed PR behind it for 4.5 h. A light-tier PR (#3518) went from rebase to merge in 21 minutes. #3769 itself would still run broad under this amendment, because it also changes schema inputs (`tldw_chatbook/DB/assistant_generation_state.py`).
+
+**Decision.** Three cases that used to take the full run now run the light tier with a capped sample of the affected test files:
+- a changed or deleted `test_*.py` module imported, directly or transitively, by more than 8 test files;
+- a changed or deleted non-`test_*.py` Python file under `Tests/`, such as a shared rig or helper (its importers are sampled the same way);
+- more than 20 of the PR's own selected test files.
+
+The sample is deterministic: the same diff and tree give the same targets on every machine. The Tests tree is read in sorted order. Each changed module contributes at most 8 importers, direct importers before transitive ones, then by path. The PR's selection holds at most 20 files: its own changed test files first, by path, then the sampled importers and data readers. An importer or data reader the light job cannot run is skipped, not a reason for the full run. That covers a helper, a file no PR lane runs whole, one a lane runs with deselected nodes, one split across lane steps, and one only push or nightly jobs run. The plan's reason says what it sampled, for example `sampled 8 of 9+ importers of <path>`. The importer count is a lower bound, because the search stops once it finds more than 8.
+
+These stay broad, unchanged:
+- `.github/`, `scripts/ci/`, `packages/` and the build files;
+- `conftest.py`, `pytest.ini`, `.pytest.ini`, `tox.ini` and `setup.cfg` at any depth;
+- schema inputs and schema code;
+- guard and budget data under `Tests/Architecture/` and `Tests/Performance/`;
+- the PR's own changed test files that no lane runs whole, or that a lane deselects nodes from, splits across steps or runs only on push or nightly;
+- removed application files, structural statuses, an empty change range and `ci:full`.
+
+The profile isolation harness, `Tests/private_profile.py` and `Tests/real_profile_guard.py`, also stays broad (`Profile isolation harness: <path>`). It keeps test runs off the user's real profile.
+
+**Cost accepted.** A break in an importer the sample did not pick can land on dev. The 09:17 UTC nightly or the release run catches it, attributed across one day's merges. A helper that a `conftest.py` imports, such as `Tests/network_guard.py`, is sampled like any other helper; the suites under that conftest run in full only at nightly and release. `ci:full` remains the opt-in for a PR that should run everything.

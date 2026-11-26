@@ -29,8 +29,8 @@ all transitive effects of a changed module. Most coverage is intentionally night
 `scripts/ci/tier_policy.py` is the single selector. It compares the PR base SHA to
 the tested merge SHA with `git diff --no-renames --name-status -z`. New source
 files, removals, moves, changes outside the explicit subsystem map, dependencies,
-CI/shared fixtures, DB/backup/runtime boundaries, and authority/storage-related
-path names retain broad coverage. Docs and backlog documents remain broad;
+CI inputs, the profile isolation harness, DB/backup/runtime boundaries, and
+authority/storage-related path names retain broad coverage. Docs and backlog documents remain broad;
 only task bookkeeping has an explicit exception, protected by artifact checks.
 A malformed range fails preflight. Empty diffs select broad. Missing selected
 tests, missing outputs, skipped expected jobs and cancellations cannot turn the
@@ -42,7 +42,10 @@ apply `ci:full` before the next push or reopen the PR after applying it. The lab
 forces broad coverage when the next normal PR event runs; applying a label alone
 does not start another run. Do not dispatch a gate to satisfy PR protection.
 Unknown/new subsystems stay broad until their smoke selection is reviewed and
-qualified. A CI policy or test-harness change itself always takes the broad path.
+qualified. A CI policy, pytest-config or profile-harness change itself always takes
+the broad path. A widely imported test module or helper, or a selection over the
+light job's cap, runs a capped, deterministic sample instead (ADR-366, TASK-42626
+amendment).
 
 ## Nightly and immutable evidence
 

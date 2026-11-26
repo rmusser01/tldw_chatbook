@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import random
 import shlex
 from pathlib import Path
 import subprocess
@@ -44,7 +45,7 @@ def test_explicit_sources_select_their_tests_and_unconditional_smoke():
         "Tests/conftest.py",
         "Tests/UI/conftest.py",
         "Tests/private_profile.py",
-        "Tests/Chat/hooks_v2_owned_rig.py",
+        "Tests/real_profile_guard.py",
         "scripts/ci/tier_policy.py",
         "tldw_chatbook/DB/migrations/123.sql",
         # TASK-42521 review: schema outside DB/migrations, packages, pytest config,
@@ -138,25 +139,138 @@ def test_a_changed_test_file_is_not_narrowed_to_its_own_smoke_nodes(tmp_path):
     assert not [t for t in plan["targets"] if t.startswith(nav + "::")]
 
 
-def test_an_imported_test_module_brings_its_importers_or_goes_broad(tmp_path):
-    """Review I1: a test module other tests import is shared infrastructure."""
-    files = {"Tests/UI/test_shared.py": "", "Tests/UI/test_lonely.py": ""}
-    for n in range(policy.IMPORTER_CAP):
-        files[f"Tests/UI/test_user_{n}.py"] = (
-            "from Tests.UI.test_shared import harness\n"
-        )
+def _sampled(plan, *changed):
+    """The test files a light plan runs beyond the smoke set and `changed`."""
+    assert not plan["full"], plan["reason"]
+    return set(plan["targets"]) - set(policy.BASE_TESTS) - set(changed)
+
+
+def test_a_widely_imported_test_module_runs_a_capped_sample_not_broad(tmp_path):
+    """TASK-42626: direct importers first, at most IMPORTER_CAP, deleted or not."""
+    shared = "Tests/UI/test_shared.py"
+    direct = [f"Tests/UI/test_user_{n}.py" for n in range(policy.IMPORTER_CAP)]
+    files = {
+        shared: "",
+        **{f: "from Tests.UI.test_shared import harness\n" for f in direct},
+    }
+    # Sorts before every direct importer, but imports the module only through one.
+    files["Tests/UI/test_a_caller.py"] = "from Tests.UI.test_user_0 import rig\n"
     root = _tree(tmp_path, files)
-    plan = policy.select_changes([("M", "Tests/UI/test_shared.py")], root)
-    assert not plan["full"]
-    assert {f"Tests/UI/test_user_{n}.py" for n in range(policy.IMPORTER_CAP)} <= set(
-        plan["targets"]
+    plan = policy.select_changes([("M", shared)], root)
+    assert _sampled(plan, shared) == set(direct)
+    assert shared in plan["targets"]
+    assert plan["reason"] == (
+        f"Sanity checks; sampled {policy.IMPORTER_CAP} of {policy.IMPORTER_CAP + 1}+"
+        " importers of Tests/UI/test_shared.py; nightly and release runs are the broad gates"
     )
-    assert policy.select_changes([("D", "Tests/UI/test_shared.py")], root)["full"]
-    assert not policy.select_changes([("D", "Tests/UI/test_lonely.py")], root)["full"]
-    (root / "Tests/UI/test_one_more.py").write_text(
-        "from .test_shared import harness\n"
+    (root / shared).unlink()
+    assert _sampled(policy.select_changes([("D", shared)], root)) == set(direct)
+
+
+def test_the_sample_is_the_same_whatever_order_the_tree_is_walked(
+    tmp_path, monkeypatch
+):
+    """TASK-42626: same diff and tree, same targets, on every machine."""
+    shared = "Tests/Chat/test_shared.py"
+    users = [f"Tests/Chat/test_user_{n:02d}.py" for n in range(policy.IMPORTER_CAP + 3)]
+    files = {shared: "", **{f: "from .test_shared import harness\n" for f in users}}
+    root = _tree(tmp_path, files)
+    walk = Path.rglob
+    plans = []
+    for seed in range(6):
+        order = random.Random(seed)
+
+        def shuffled(self, pattern, order=order):
+            found = list(walk(self, pattern))
+            order.shuffle(found)
+            return iter(found)
+
+        monkeypatch.setattr(Path, "rglob", shuffled)
+        plans.append(policy.select_changes([("M", shared)], root))
+    assert all(plan == plans[0] for plan in plans)
+    assert _sampled(plans[0], shared) == set(users[: policy.IMPORTER_CAP])
+
+
+def test_the_file_cap_keeps_the_prs_own_changed_files_first(tmp_path):
+    """TASK-42626: over LIGHT_FILE_CAP, the PR's own files stay and importers go."""
+    own = [f"Tests/Zeta/test_f{n:02d}.py" for n in range(policy.LIGHT_FILE_CAP - 4)]
+    shared = "Tests/Zeta/test_shared.py"
+    users = [f"Tests/Alpha/test_user_{n}.py" for n in range(policy.IMPORTER_CAP)]
+    files = {f: "" for f in [*own, shared]}
+    files.update({f: "from Tests.Zeta.test_shared import x\n" for f in users})
+    root = _tree(tmp_path, files)
+    plan = policy.select_changes([("M", f) for f in [*own, shared]], root)
+    assert _sampled(plan) == {*own, shared, *users[:3]}
+    assert "sampled 20 of 25 test files" in plan["reason"]
+    # The PR's own files alone over the cap: the first LIGHT_FILE_CAP by path.
+    many = [f"Tests/UI/test_f{n:02d}.py" for n in range(policy.LIGHT_FILE_CAP + 1)]
+    root = _tree(tmp_path, many)
+    plan = policy.select_changes([("M", f) for f in reversed(many)], root)
+    assert _sampled(plan) == set(many[:-1])
+    assert "sampled 20 of 21 test files" in plan["reason"]
+
+
+def test_an_importer_the_light_job_cannot_run_is_skipped_not_broad(tmp_path):
+    """TASK-42626: helpers, heavy, deselected, split and push-only importers."""
+    base = "Tests/UI/test_base.py"
+    imports = "from Tests.UI.test_base import Shell\n"
+    skipped = [
+        "Tests/UI/harness.py",
+        "Tests/UI/test_library_shell.py",
+        "Tests/Chat/test_deselected.py",
+        "Tests/Chat/test_split.py",
+        "Tests/Backup_Recovery/test_slow.py",
+    ]
+    files = {base: "", "Tests/UI/test_ok.py": imports, **{f: imports for f in skipped}}
+    files["Tests/UI/test_via_harness.py"] = "from Tests.UI.harness import rig\n"
+    root = _tree(tmp_path, files)
+    _lane_workflow(
+        root,
+        {
+            "pr-fast-lane": [
+                "pytest Tests/Chat/test_deselected.py "
+                '"--deselect=Tests/Chat/test_deselected.py::test_known_red" '
+                "Tests/Chat/test_split.py::test_a",
+                "pytest Tests/Chat/test_split.py::test_b",
+            ]
+        },
+        other="pytest Tests/Backup_Recovery/test_slow.py -n 4",
     )
-    assert policy.select_changes([("M", "Tests/UI/test_shared.py")], root)["full"]
+    plan = policy.select_changes([("M", base)], root)
+    assert _sampled(plan, base) == {
+        "Tests/UI/test_ok.py",
+        "Tests/UI/test_via_harness.py",
+    }
+    assert "sampled 2 of 7 importers of Tests/UI/test_base.py" in plan["reason"]
+    # The same files changed by the PR itself still go broad.
+    for path in skipped[1:]:
+        assert policy.select_changes([("M", path)], root)["full"], path
+
+
+def test_a_shared_helper_samples_its_importers(tmp_path):
+    """TASK-42626: a non-test module under Tests/ is sampled like a test module."""
+    rig = "Tests/Chat/hooks_rig.py"
+    users = [f"Tests/Chat/test_hook_{n:02d}.py" for n in range(policy.IMPORTER_CAP + 2)]
+    files = {rig: "", **{f: "from Tests.Chat.hooks_rig import rig\n" for f in users}}
+    root = _tree(tmp_path, files)
+    for status in ("M", "D"):
+        plan = policy.select_changes([(status, rig)], root)
+        assert _sampled(plan) == set(users[: policy.IMPORTER_CAP]), status
+        assert f"sampled 8 of 9+ importers of {rig}" in plan["reason"]
+    assert not policy.select_changes([("M", "Tests/Chat/hooks_v2_owned_rig.py")], ROOT)[
+        "full"
+    ]
+
+
+@pytest.mark.parametrize(
+    "path", ["Tests/private_profile.py", "Tests/real_profile_guard.py"]
+)
+def test_the_profile_harness_and_conftest_still_go_broad(path, tmp_path):
+    """TASK-42626: they keep test runs off the user's real profile."""
+    plan = policy.select_changes([("M", path)], ROOT)
+    assert plan["full"] and plan["reason"] == f"Profile isolation harness: {path}"
+    for conftest in ("Tests/conftest.py", "Tests/Chat/deep/conftest.py"):
+        assert policy.select_changes([("M", conftest)], _tree(tmp_path, []))["full"]
 
 
 @pytest.mark.parametrize("status", ["D", "R100", "T", "U"])
@@ -604,14 +718,6 @@ def test_light_job_runs_the_tested_runner_with_the_lanes_plugin_setup():
     assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD" not in step.get("env", {})
 
 
-def test_too_many_selected_files_go_broad(tmp_path):
-    """A light run is serial; the cap counts the PR's own files, not the smoke set."""
-    files = [f"Tests/UI/test_f{n}.py" for n in range(policy.LIGHT_FILE_CAP + 1)]
-    root = _tree(tmp_path, files)
-    assert policy.select_changes([("M", f) for f in files], root)["full"]
-    assert not policy.select_changes([("M", f) for f in files[:-1]], root)["full"]
-
-
 def test_application_code_with_its_own_schema_goes_broad(tmp_path):
     """Review I2: feature modules that create or version SQLite tables."""
     root = _tree(tmp_path, [])
@@ -660,18 +766,6 @@ def test_importers_are_found_through_parentheses_and_transitively(tmp_path):
         "Tests/Chat/test_rig.py",
         "Tests/Chat/test_caller.py",
     } <= set(plan["targets"])
-
-
-def test_an_importer_that_is_shared_infrastructure_goes_broad(tmp_path):
-    """Review M4: a helper module importing the changed test module."""
-    root = _tree(
-        tmp_path,
-        {
-            "Tests/UI/test_base.py": "",
-            "Tests/UI/harness.py": "from Tests.UI.test_base import Shell\n",
-        },
-    )
-    assert policy.select_changes([("M", "Tests/UI/test_base.py")], root)["full"]
 
 
 def _lane_workflow(root, lanes, other=""):
