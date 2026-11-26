@@ -17,6 +17,7 @@ repeats, the resize arm and the retry-lands-on-the-replacement arm live in
 from __future__ import annotations
 
 import pytest
+from textual import events
 from textual.screen import Screen
 from textual.widgets import Button
 
@@ -56,6 +57,30 @@ async def _help_opens(app, pilot) -> None:
     )
 
 
+async def _help_opens_with_detached_notes_focus(app, pilot, screen, monkeypatch) -> None:
+    """Recreate the stale pointer at the real app's first F1 dispatch."""
+    filter_widget = screen.query_one("#library-notes-filter")
+    await filter_widget.remove()
+    original = app.on_event
+    injected = False
+
+    async def dispatch(event: events.Event) -> None:
+        nonlocal injected
+        if isinstance(event, events.Key) and not event.is_forwarded and event.key == "f1":
+            # The real list-entry callback may legitimately refocus during
+            # removal or while the key is queued. Start at the guard's input.
+            assert app.screen is screen and not filter_widget.is_attached
+            screen.focused = filter_widget
+            assert app.focused is filter_widget
+            injected = True
+        await original(event)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(app, "on_event", dispatch)
+        await _help_opens(app, pilot)
+    assert injected
+
+
 async def test_a_focus_write_during_a_filters_removal_is_refused_and_f1_still_opens_help(
     tmp_path, monkeypatch
 ):
@@ -92,18 +117,7 @@ async def test_a_focus_that_went_dead_by_any_route_still_delivers_the_next_key(
         async with app.run_test(size=SIZE) as pilot:
             screen = await _library(app, pilot)
             await _open_notes(screen, pilot)
-            filter_widget = screen.query_one("#library-notes-filter")
-
-            removal = filter_widget.remove()
-            assert filter_widget._pruning is True
-            # The BASE method: bypasses the screen's refusal on purpose.
-            Screen.set_focus(screen, filter_widget)
-            await removal
-            assert screen.focused is filter_widget and not filter_widget.is_attached, (
-                "precondition: the corpse state the review observed"
-            )
-
-            await _help_opens(app, pilot)
+            await _help_opens_with_detached_notes_focus(app, pilot, screen, monkeypatch)
 
             await pilot.press("tab")
             await pilot.pause()
