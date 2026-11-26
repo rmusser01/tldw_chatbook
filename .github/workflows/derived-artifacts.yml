@@ -2124,7 +2124,9 @@ jobs:
       # each) follow last; times in the task's notes.
       # Round 27: TASK-42545's installed-restore validation file (sandboxed,
       # reads no config in-process; RecoveryRequired recorder) follows the
-      # deleted-root guards; timing in the task's notes.
+      # deleted-root guards; timing in the task's notes. TASK-42544's index
+      # plan-pin checker tests (Tests/DB, so the bootstrap profile; they read
+      # no config) follow the goal attempts file.
       # test_closed_loop_pending_submit_is_emergency_detachment: deselected
       # 2026-11-12: red on dev e0186fa10a (console_send_diagnostic ContextVar
       # token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.
@@ -2193,6 +2195,7 @@ jobs:
             Tests/Chat/test_console_goal_dispatch.py \
             Tests/Chat/test_console_goal_recovery.py \
             Tests/DB/test_goal_attempts.py \
+            Tests/DB/test_check_index_plan_pins.py \
             Tests/Chat/test_console_rewind_summarize.py \
             Tests/Chat/test_console_run_state_per_session.py \
             Tests/Chat/test_console_edit_resend.py \

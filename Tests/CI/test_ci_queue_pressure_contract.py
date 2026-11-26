@@ -905,6 +905,10 @@ RECOVERED_SUITES_TARGETS = (
     # serial), which caught a regression this round and ran on no lane.
     "Tests/Chat/test_console_goal_recovery.py",
     "Tests/DB/test_goal_attempts.py",
+    # TASK-42544: the index plan-pin checker's own tests (its new `dropped`
+    # status), on no lane before. Tests/DB keeps the bootstrap profile; no
+    # config read.
+    "Tests/DB/test_check_index_plan_pins.py",
     # Round 13, all bootstrap_profile, red on no lane before: TASK-39154's
     # rewind/summarize and per-session run-state files, TASK-39164's
     # edit-and-resend and regenerate-branching files, and TASK-40097's
