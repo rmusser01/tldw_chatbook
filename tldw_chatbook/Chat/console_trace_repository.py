@@ -2383,7 +2383,7 @@ class ConsoleTraceRepository:
                        FROM console_trace_child_segments AS link
                        JOIN console_trace_owners AS owner
                          ON owner.owner_id = link.owner_id
-                      WHERE link.segment_id = ?1), ?1), 0 UNION ALL
+                      WHERE link.segment_id = :segment_id), :segment_id), 0 UNION ALL
                    SELECT segment.parent_segment_id, child.depth + 1
                      FROM console_trace_segments AS segment
                      JOIN segment_ancestry AS child ON child.segment_id = segment.segment_id
@@ -2394,7 +2394,7 @@ class ConsoleTraceRepository:
                    JOIN console_trace_owners AS owner
                      ON owner.root_segment_id = owned.segment_id
                   ORDER BY owned.depth LIMIT 1""",
-            (segment_id,),
+            {"segment_id": segment_id},
         ).fetchone()
         return None if row is None else self._owner(row)
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 import sqlite3
+import warnings
 
 import pytest
 
@@ -168,6 +169,51 @@ def test_terminal_lifecycle_transition_advances_reachability_epoch_once(
             occurred_at="2026-08-31T12:00:00Z",
         )
         assert repository.get_graph_epoch(cursor) == before + 1
+
+
+def test_effective_owner_lookup_binds_its_parameters_by_name(
+    db: CharactersRAGDB,
+) -> None:
+    """TASK-42581: ``?1`` bound to a sequence warns on 3.12 and raises on 3.14.
+
+    ``get_effective_owner`` names the segment twice; it and its caller
+    ``reserve_call`` must run with that DeprecationWarning as an error.
+    """
+    repository = ConsoleTraceRepository()
+    _conversation_id, owner_id, segment_id, policy_id, _node_id = _root_graph(
+        db, repository
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        with db.transaction(immediate=True) as cursor:
+            owner = repository.get_effective_owner(cursor, segment_id)
+            call = repository.reserve_call(
+                cursor,
+                owner_id=owner_id,
+                segment_id=segment_id,
+                turn_id="turn-named",
+                run_id="run-named",
+                call_sequence=0,
+                idempotency_key="named-placeholder-call",
+                policy_id=policy_id,
+            )
+    assert owner is not None
+    assert owner.owner_id == owner_id
+    assert call.owner_id == owner_id
+
+
+def test_a_named_placeholder_bound_to_a_sequence_fails_any_test() -> None:
+    """TASK-42581's guard: pyproject's ``filterwarnings`` makes this an error.
+
+    It raises ``ProgrammingError`` on Python 3.14; without the guard 3.12 only
+    warns and the test passes.
+    """
+    connection = sqlite3.connect(":memory:")
+    try:
+        with pytest.raises(DeprecationWarning, match="is a named parameter"):
+            connection.execute("SELECT :segment_id", ("segment",))
+    finally:
+        connection.close()
 
 
 def test_direct_trace_deletion_fails_closed_without_sweep_grant(
