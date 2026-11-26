@@ -317,7 +317,7 @@ Implementation note, not an owner decision. It extends the TASK-40716 note that 
   - `test_a_retained_cleanups_claim_refuses_later_console_sends_until_restart`, for an initialization job, a turn's retained tool operation, a sub-agent member's and an owner marked unproven, with an ordinary busy conflict as the control;
   - `test_a_retained_claim_that_a_send_does_not_need_keeps_the_busy_copy`, a held bounded claim the Send does not conflict with (both in `Tests/Workspaces/test_native_change_review_initialization.py`);
   - `test_a_claim_whose_owner_is_marked_unproven_holds_roots_until_restart` (same file), the initializer's `RESTART_REQUIRED` with no retained record;
-  - `test_spawn_refused_by_a_retained_cleanups_claim_names_the_restart` (`Tests/Chat/test_console_ordinary_tree_widening.py`), with a live claim as the control, and `test_a_refused_child_launch_names_the_tool_the_model_called` (same file).
+  - `test_spawn_refused_by_a_retained_cleanups_claim_names_the_restart` (`Tests/Chat/test_console_ordinary_tree_widening.py`), with a live claim as the control, and `test_a_refused_child_launch_names_the_tool_the_model_called` (same file);
   - `test_only_a_refusal_carrying_its_record_ends_the_run` (`Tests/Agents/test_execution_capacity.py`), the run-ending guard on each of its three handlers.
 
 ## Ask compaction hold amendment (TASK-33621.153, 2026-11-19)
