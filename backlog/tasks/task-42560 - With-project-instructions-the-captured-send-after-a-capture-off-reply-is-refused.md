@@ -1,11 +1,11 @@
 ---
 id: TASK-42560
 title: "With project instructions, the captured send after a capture-off reply is refused"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-26 08:07
-updated_date: 2026-11-26 16:08
+updated_date: 2026-11-26 18:32
 labels:
 - follow-up
 - console
@@ -54,10 +54,10 @@ The investigation had recommended the other option, extending the rewritten-tail
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The owner's decision is recorded verbatim in this task, and an ADR-337 amendment (2026-11-26, owner-approved) that defines how each action's call is admitted is written before any code
-- [ ] #2 With Capture On, Edit & resend, Continue and Regenerate each dispatch a traced call of their turn, with and without AGENTS.md and with prompt mix-ins, and the message after each is sent and traced
-- [ ] #3 One test per action drives it through the real controller, with only the provider handlers faked; each is red before the change and green after
-- [ ] #4 Retry of a failed reply is covered by TASK-42555 (which waits on PR #3717); this task leaves Retry unchanged
+- [x] #1 The owner's decision is recorded verbatim in this task, and an ADR-337 amendment (2026-11-26, owner-approved) that defines how each action's call is admitted is written before any code
+- [x] #2 With Capture On, Edit & resend, Continue and Regenerate each dispatch a traced call of their turn, with and without AGENTS.md and with prompt mix-ins, and the message after each is sent and traced
+- [x] #3 One test per action drives it through the real controller, with only the provider handlers faked; each is red before the change and green after
+- [x] #4 Retry of a failed reply is covered by TASK-42555 (which waits on PR #3717); this task leaves Retry unchanged
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -69,3 +69,63 @@ The investigation had recommended the other option, extending the rewritten-tail
 4. Tests through `_project_console` (real controller, bridge, gateway, trace factory; provider HTTP or the hosted handler faked): each action on the agent and direct paths, llama.cpp and hosted, with and without AGENTS.md, with mix-ins, warm and after a trace-runtime restart, then the next message; hard negatives for each new rule with mutations. Lane the file where there is headroom.
 5. User Guide, size rows, lane timing, the brief's checks; list the census/test/guide rows to flip after the restack onto reds3.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Summary.** Under Capture On, Edit & resend, Regenerate and Continue now each dispatch a traced call of their turn, on the agent path and the plain provider path, on llama.cpp and a hosted provider, with and without AGENTS.md and with prompt mix-ins. The message after each is sent and traced, also after the action's own reply failed. The ADR-337 amendment (2026-11-26, owner-approved) was committed before the code (62d0eb0908, corrections f407508046).
+
+**Approach.**
+- *Controller* (`Chat/console_action_capture.py`, new; a few lines in each action body of `console_chat_controller.py`). Each action freezes the Capture-On request a manual send would build: the chat's effective capture policy (a one-time next-send choice applies but stays armed), a policy-carrier `ConsoleTurnPreparation` (never registered), the saved rows read before skill, dictionary and world-info transforms, and the mix-ins composed into the request (the reply path's own composition is then a no-op, the prototype's trap). A temporary chat with Capture On refuses the action before any row is created (decision 15). Two kinds of chat keep the action Capture Off, as before, each a proposed follow-up. One has a pinned prefill: a captured send with a pinned prefill already stops at the chat's second message (`surface_prefix_mismatch`, shown on the base 7ebae7bd52 with a scratch probe). The other has a provider that replays its own continuation checkpoints (Kimi reasoning). Its agent requests carry the saved replies as provider artifacts the proofs cannot name, so traced actions there were refused (the covering run's `test_continue_and_regenerate_keep_one_row_per_reply[moonshot-*]`, green on base). On the plain path a trace refusal before dispatch fails the reply with "Trace capture could not be saved, so this request was not sent."; the agent path already settles it inside the run.
+- *Naming the action* (`console_trace_provenance.py`, `console_agent_bridge.py`, `console_provider_gateway.py`). `RequestRouteTraceProvenance.action` names Edit & resend, Regenerate or Continue on an agent run's calls and on a llama.cpp resend; on the plain path the route is the action. The bridge copies it from the request the action froze, and the gateway's route check ignores it as it does `parent_revision_id`. It is never stored.
+- *The action's call* (`console_trace_runtime.py`, `console_trace_service.py`, new `console_trace_action_calls.py`, `console_trace_rewritten_tail.py`, `console_trace_final_values.py`). A Continue's turn is found behind its instruction and saved replies, and a later call of its run takes the turn from its last saved user row. The planner re-records the turn from its user row: the prefix is capped there, and the suffix, completed-turn witness and both-domains append do not apply. The proof is the rewritten-tail witness, extended with a Continue's replies and instruction and the turn's project rows under the call's policy. It is required even for a one-row replacement and rechecked at binding. A plain-path action route counts as a turn's first call for the slot rules (`console_trace_slot_restore.py`) and for an unresolved earlier call of the turn.
+- *The send after an action's run.* `after_action_call` recognises the run from the ledger. Its first call wrote its pinned user row as the first row of a replacement that started at a user row; every later call is the run's; the latest is settled. Such a send skips the completed-turn witness and is planned as a rewritten tail that removes only the run's rows after its user row. It carries the run's verified reply, or, when the run bore none, nothing or an earlier call's verified reply of the same turn. It may hang off the run's own failed empty reply, and ends with the new user and its project context. It is rechecked at binding from the call before the reserved one. A replacement that starts earlier (Compact now) stays an ordinary rewritten tail. No change in `console_trace_continuation.py`.
+- *Retry* is untouched (AC #4, TASK-42555). A reply a Capture Off Retry wrote after a failed captured action is refused at the next send (`test_a_reply_the_failed_run_did_not_bear_is_refused`).
+
+**Decisions (engineering).** A Continue of a failed reply is traced like any Continue: the failed reply is a saved row of the branch (the UI already refuses it with "Retry the failed response instead"). A Regenerate on another provider than the replaced reply's is admitted under the rules for a turn's first call (slot drop/restore), like any send. The replaced reply's earlier call stays in the trace (decision 10), so a regenerated turn lists both calls. Resend of a broken turn that re-runs from its user message uses Continue's body and route, so it is traced too; its in-place Retry stays Retry's.
+
+**Evidence.** Probes (scratch, not committed) through `_project_console` (real controller, bridge, gateway, trace factory; provider HTTP or the hosted handler faked) reproduced the task's table on the base: the action had no call, and with AGENTS.md the next send was refused (`unsupported_surface_change`, `completed_tool_turn_revision`). With the change, a 160-case matrix passed with every request traced as sent: each action, edits and regenerations of the first message, agent and plain path, llama.cpp and hosted, with and without AGENTS.md, with mix-ins, warm and cold. So did failed-reply probes, tools, prefill, sequences and a llama.cpp resend. The first failed-reply probe found that a failed Regenerate (AGENTS.md) and every failed Continue left the next message refused. That gap led to the send-after-an-action rule, and to the lessons entry.
+
+**Red/green.** `Tests/Chat/test_console_trace_action_calls.py` (56 tests) on the base sources (7ebae7bd52; the product files restored to base in this worktree, test unchanged, then restored and md5-verified) gave 49 failed and 7 passed. Every journey test failed on `assert [] == [('agent_first', 'complete')]` (or the plain path's route): the action had no trace call. The 7 passes are refusals the base already makes (four Continue shapes, the stray edited branch on the plain route, the Retry-written reply) and the Compact-now-after-Regenerate guard. With the change: 56 passed.
+
+**Mutations** (each alone, its subset run, source restored and md5-verified):
+- no prefix cap: 2 failed;
+- no Continue step-back: 2 failed;
+- no action on the bridge: 1 failed;
+- the send-after rule accepts any reply: 1 failed;
+- no failed-reply anchor: 2 failed;
+- no earlier-reply proof: 1 failed;
+- no witness requirement for a one-row action replacement: 1 failed, after adding the agent-run variant (the plain-route case was refused for another reason);
+- the completed-turn witness not skipped after an action: 1 failed;
+- no temporary-chat refusal: 1 failed.
+
+A reply-role check in the chain survived its mutation. It repeated the planner's assistant-row check and binding's saved-value comparison, so it was deleted.
+
+**Post-commit read-back** (coordinator note, slotdrop e90af1535d). A Regenerate's and a Continue's committed rewrite reads back durable after a post-commit failure on this base (`test_an_actions_committed_rewrite_is_read_back_after_a_post_commit_failure`; the helper is a trimmed copy of slot-drop's `_fail_after_commit` at bd801019c9). Rerun it after the restack, together with slot-drop's own read-back test.
+
+**Covering run.** The 109 test files that drive the actions or touch the changed trace code (`Tests/Architecture` excluded; it ran serially) were run at `-n 4` against the final code: 76 failed and 4708 passed. The same 76 node ids fail on the base sources (7ebae7bd52, rerun by id). On the first covering run, four ids failed only on this branch, and both causes are fixed:
+- `test_local_queue_retry_current_regenerate_reopen[False|True]`: the Capture Off helper now covers the actions too;
+- `test_continue_and_regenerate_keep_one_row_per_reply[moonshot-*]`: Kimi continuation chats keep the actions Capture Off.
+
+Other checks:
+- `Tests/CI` (`-n 4`): 2009 passed, 2 skipped;
+- `Tests/Architecture` (serial): 1507 passed, 5 skipped;
+- `Tests/Docs`: 44 passed;
+- `./scripts/preflight.sh`: rc 0;
+- `ruff check tldw_chatbook --select F`: clean;
+- `Tests/lint/ruff_gate.py`: rc 0;
+- the Dreams riders step (serial, `--timeout=180`): 1651 passed, 6 skipped in 1184.5 s, run while the covering run loaded the machine (load about 10).
+
+Soak: the new file passed 5 of 5 times at `-n 4` (56 passed each, 53-62 s, load 7-11). `/verify` (a live TUI launch) was not run: the round's binding rules forbid launching the live TUI.
+
+**Lane.** The file runs in the Dreams tracking riders step, after Tool_Packs (bootstrap_profile): 56 passed in 296.0 s serially with the step's flags (`--timeout=180`) at load 31-54. Before trimming, 68 tests took 393.0 s. That is over this round's stated riders budget (about 3 min for all streams), so the coordinator may move part of it.
+
+**Files.** New: `tldw_chatbook/Chat/console_action_capture.py`, `tldw_chatbook/Chat/console_trace_action_calls.py`, `Tests/Chat/test_console_trace_action_calls.py`. Changed: `console_chat_controller.py` (+27), `console_agent_bridge.py` (+21), `console_provider_gateway.py` (+3), `console_trace_service.py` (+36), `console_trace_final_values.py`, `console_trace_provenance.py`, `console_trace_rewritten_tail.py`, `console_trace_runtime.py`, `console_trace_slot_restore.py`. Also changed: `Tests/Chat/test_console_prompt_mixin_retry.py` (its Capture Off helper now turns the actions' capture off too; `test_local_queue_retry_current_regenerate_reopen` counted their calls otherwise), ADR-337, `Docs/User_Guide/console/semantic-trace-capture.md`, `Tests/Architecture/test_module_size_ratchet.py` (four rows, exact growth, dated), `.github/workflows/derived-artifacts.yml` and `Tests/CI/test_ci_queue_pressure_contract.py`, `backlog/docs/lessons-testing-evidence.md`.
+
+**To flip after the restack onto reds3:**
+- `console_trace_provenance.py` `CONSOLE_REQUEST_ROUTE_CENSUS`: CONTINUE, REGENERATE and EDIT go back to `CONVERSATION_TRACE`, and the comment above the census that lists them as Capture Off is updated.
+- `Tests/Chat/test_console_route_census_capture.py`: its Edit & resend, Regenerate and Continue cases now expect a traced call.
+- `Docs/User_Guide/console/semantic-trace-capture.md`: reds3's new bullet ("**Continue**, **Retry** on a failed reply, and **Impersonate** also send with capture off ...") drops Continue. This branch replaces the Edit & resend/Regenerate bullet that reds3's bullet follows, so a conflict is expected there.
+- reds3's `console-request-provenance-route-census.md` and `test_console_request_provenance_routes.py` rows for these routes, if they pin Capture Off.
+- `Tests/Chat/test_console_trace_slot_drop.py` `test_edit_and_resend_after_a_drop_keeps_the_next_send` docstring: its parenthetical (with project instructions the message after an Edit & resend is refused) is now stale.
+<!-- SECTION:NOTES:END -->
