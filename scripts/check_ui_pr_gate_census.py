@@ -1355,6 +1355,11 @@ MINIMUM_FILES = 2787
 MINIMUM_FILES = 2805
 # 2026-11-22: re-counted after rebasing onto dev fe8c87e3e2. The floor is the measured entry count.
 MINIMUM_FILES = 2805
+# 2026-11-26, TASK-42553 (round 27): test_console_poll_reconciliation.py, on no
+# lane and red on dev, at the tail as its six nodes (the file runs over the
+# 30 s entry budget; the times are in the task's notes). The floor is the
+# measured entry count.
+MINIMUM_FILES = 2811
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 

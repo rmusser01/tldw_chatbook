@@ -33,6 +33,11 @@ PLUGIN_RECOVERY_UI_TARGETS = (
     "Tests/UI/test_plugins_browse.py::test_restored_plugins_recover_from_the_plugins_screen",
     "Tests/UI/test_plugins_browse.py::test_reset_after_restore_sets_plugins_aside_and_kept_data_reattaches",
 )
+# TASK-42553 / TASK-41061: Darwin-only native hook and MCP event suites.
+NATIVE_HOOK_EVENT_TARGETS = (
+    "Tests/Chat/test_native_plugin_hook_preparation.py",
+    "Tests/Chat/test_native_v2_mcp_events.py",
+)
 FAST_LANE_TARGETS = (
     "Tests/CI",
     "Tests/test_smoke.py",
@@ -1699,6 +1704,25 @@ def _assert_plugin_recovery_ui(workflow: dict) -> None:
     assert report["shell"] == "python"
     assert "if" not in report
     assert "plugin-recovery-ui.xml" in report["run"]
+    native = _named_step(job, "Run managed native hook and MCP event suites")
+    assert "if" not in native
+    assert tuple(shlex.split(native["run"].replace("\\\n", " "), comments=True)) == (
+        "pytest",
+        *NATIVE_HOOK_EVENT_TARGETS,
+        "--timeout=300",
+        "--tb=short",
+        "--junitxml=native-hook-events.xml",
+    )
+    native_report = _named_step(
+        job, "Require the managed native hook and MCP event suites to execute"
+    )
+    assert native_report["shell"] == "python"
+    assert "if" not in native_report
+    assert "native-hook-events.xml" in native_report["run"]
+    for target in NATIVE_HOOK_EVENT_TARGETS:
+        # Their native_console fixture calls require_managed_runtime(): Darwin only.
+        source = (PROJECT_ROOT / target).read_text(encoding="utf-8")
+        assert "native_console" in source, target
     required = workflow["jobs"]["derived-artifacts"]
     assert "plugins-recovery-ui" in required["needs"]
     verdict = _named_step(required, "Require successful managed plugin recovery UI")
@@ -1757,6 +1781,44 @@ def test_managed_plugin_recovery_ui_report_requires_two_executed_passes(
     else:
         with pytest.raises(AssertionError):
             exec(compile(source, "plugin-recovery-ui-report", "exec"), {})
+
+
+@pytest.mark.parametrize(
+    ("results", "accepted"),
+    [
+        ((("hook", ""), ("mcp", "")), True),
+        ((), False),
+        ((("hook", ""),), False),
+        ((("hook", ""), ("mcp", "<skipped/>")), False),
+        ((("hook", "<failure/>"), ("mcp", "")), False),
+        ((("hook", ""), ("mcp", "<error/>")), False),
+    ],
+)
+def test_managed_native_hook_events_report_requires_both_suites_executed(
+    tmp_path, monkeypatch, results, accepted
+) -> None:
+    job = _workflow("derived-artifacts.yml")["jobs"]["plugins-recovery-ui"]
+    source = _named_step(
+        job, "Require the managed native hook and MCP event suites to execute"
+    )["run"]
+    modules = {
+        "hook": "test_native_plugin_hook_preparation",
+        "mcp": "test_native_v2_mcp_events",
+    }
+    cases = "".join(
+        f'<testcase classname="Tests.Chat.{modules[suite]}" name="case-{index}">'
+        f"{result}</testcase>"
+        for index, (suite, result) in enumerate(results)
+    )
+    (tmp_path / "native-hook-events.xml").write_text(
+        f"<testsuite>{cases}</testsuite>", encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+    if accepted:
+        exec(compile(source, "native-hook-events-report", "exec"), {})
+    else:
+        with pytest.raises(AssertionError):
+            exec(compile(source, "native-hook-events-report", "exec"), {})
 
 
 @pytest.mark.parametrize(

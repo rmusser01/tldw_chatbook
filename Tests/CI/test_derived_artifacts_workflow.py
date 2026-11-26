@@ -521,6 +521,7 @@ def test_every_pr_lane_pytest_step_has_disjoint_targets():
         "pr-fast-lane-admission-3: Run admission-sensitive suites 3",
         "pr-fast-lane-admission-4: Run admission-sensitive suites 4",
         "plugins-recovery-ui: Run managed plugin recovery UI journeys",
+        "plugins-recovery-ui: Run managed native hook and MCP event suites",
         "console-p0-gate: Run the sandboxed Console P0 regression tests",
         "console-p0-gate: Run the restore Console P0 regression tests",
         "console-p0-gate: Run the admission-sensitive Console P0 regression tests",

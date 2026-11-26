@@ -1141,6 +1141,32 @@ jobs:
               for tag in ("skipped", "failure", "error")
           ), "Managed plugin recovery requires two executed passing cases"
 
+      # TASK-42553 / TASK-41061 (round 27): native plugin hook preparation and
+      # native v2 MCP events need the same Darwin runtime (their fixtures call
+      # require_managed_runtime, so a Linux lane only skips them), and were in
+      # no PR lane. Times are in the tasks' notes.
+      - name: Run managed native hook and MCP event suites
+        run: |
+          pytest \
+            Tests/Chat/test_native_plugin_hook_preparation.py \
+            Tests/Chat/test_native_v2_mcp_events.py \
+            --timeout=300 --tb=short --junitxml=native-hook-events.xml
+      - name: Require the managed native hook and MCP event suites to execute
+        shell: python
+        run: |
+          import xml.etree.ElementTree as ET
+          cases = list(ET.parse("native-hook-events.xml").iter("testcase"))
+          files = {case.get("classname", "").rsplit(".", 1)[-1] for case in cases}
+          assert files == {
+              "test_native_plugin_hook_preparation",
+              "test_native_v2_mcp_events",
+          }, f"Expected both managed native suites, got {sorted(files)}"
+          assert all(
+              case.find(tag) is None
+              for case in cases
+              for tag in ("skipped", "failure", "error")
+          ), "Managed native hook and MCP events require executed passing cases"
+
   console-p0-gate:
     needs: [preflight]
     # TASK-33621.27. The 2026-09-29 Console review's P0 fixes shipped with
