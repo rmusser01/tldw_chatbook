@@ -98,7 +98,8 @@ _BUDGETS: dict[str, int] = {
     # size ratchet raises the row): /stop takes only its captured draft. 1567 -> 1571.
     # 2026-11-19: re-measured after rebasing onto dev a6df4d8d48 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 1571 -> 1564.
     # 2026-11-20: re-measured after rebasing onto dev d85e90bc9e (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 1564 -> 1568.
-    "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1568,
+    # 2026-11-25: re-measured after rebasing onto dev 1b9e3f8a55 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 1568 -> 1575.
+    "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1575,
     "tldw_chatbook/UI/Library_Modules/canvas_sync.py": 1314,
     "tldw_chatbook/Notes/notes_sync_startup.py": 34,
     "tldw_chatbook/UI/Console_Modules/session_prompt_seed.py": 109,
