@@ -34,10 +34,11 @@ route does today, and `Tests/Chat/test_console_route_census_capture.py`
 drives each user action through the real controller to check it. Retry,
 Continue, Regenerate, Edit & resend, Impersonate and citation repair carry no
 turn preparation or capture mode, so they dispatch Capture Off (Retry under
-Capture On awaits an owner decision, TASK-42555). A fresh send is traced; the
-test checks this on the agent and plain paths. The agent's first call, the
-tool loop, direct prefill and the llama fallback are recorded as a fresh send
-records them, but each takes the capture mode of the action it serves. On the
+Capture On is TASK-42555: the owner decided on 2026-11-26 to trace it as a new
+run of the same turn, built after PR #3717). A fresh send is traced; the
+test checks this on the agent and plain paths. The census rows for the agent's
+first call, the tool loop, direct prefill and the llama fallback describe a
+fresh send; each takes the capture mode of the action it serves. On the
 agent path every action's provider call carries the agent-first or tool-loop
 route, so an agent-path Regenerate, Edit & resend, Continue or Retry dispatches
 an agent-first call with capture off, and a Regenerate with a pinned prefill
