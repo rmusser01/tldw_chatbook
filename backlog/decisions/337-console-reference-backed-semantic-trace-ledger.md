@@ -1035,9 +1035,10 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
 
 1. **Capture mode.** Each action freezes the Capture-On request a manual
    send of the chat would: the chat's effective capture policy (global,
-   conversation and the one-time next-send choice, which stays armed for the
-   next send), the saved rows it read before any per-send transform, and its
-   prompt mix-ins composed into the request. Under Capture Off it sends as
+   conversation and the one-time next-send choice, which the action uses up
+   as a send does; corrected 2026-11-26, the first build left it armed for
+   a second send), the saved rows it read before any per-send transform, and
+   its prompt mix-ins composed into the request. Under Capture Off it sends as
    before. A temporary chat with Capture On refuses the action before any
    row is created ("Capture On needs a saved chat. Save the chat or turn
    Capture off, then try again."), as decision 15 allows no durable call

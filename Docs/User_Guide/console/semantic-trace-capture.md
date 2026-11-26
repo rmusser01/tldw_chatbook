@@ -279,7 +279,8 @@ transcript:
   their requests and replies, so a regenerated turn lists both calls. Your next
   message is captured as usual, also when the action's own reply failed.
   **Resend** of a broken turn that starts again from your message is captured
-  the same way.
+  the same way. An action follows the one-time **Next send** choice and uses
+  it up, as a send does.
 - In a temporary chat with Capture On, these actions ask you to save the chat
   or turn Capture off first. In a chat with a pinned response prefill, or
   with a provider that replays its own reasoning checkpoints (Kimi), they

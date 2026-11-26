@@ -45,8 +45,8 @@ def _capture_mode(
 ) -> tuple[ConsoleTraceCaptureMode, Any]:
     """Resolve the capture mode a manual send of this chat would freeze.
 
-    The one-time next-send choice applies, as it would to a send, but stays
-    armed for the next send.
+    The one-time next-send choice applies, as it would to a send;
+    :func:`stream_action` uses it up.
     """
     try:
         snapshot = controller.capture_policy_snapshot(session_id)
@@ -147,6 +147,27 @@ def _trace_request(
     )
 
 
+def _use_up_next_send_choice(
+    controller: ConsoleChatController, session_id: str, snapshot: Any
+) -> None:
+    """Consume the one-time Capture/PII choice the action's mode honoured."""
+    if snapshot is None or (
+        snapshot.next_capture_enabled is None
+        and snapshot.next_pii_redaction_enabled is None
+    ):
+        return
+    try:
+        controller.store.consume_session_next_trace_privacy(
+            session_id, expected_next_revision=snapshot.next_privacy_revision
+        )
+    except Exception as exc:  # noqa: BLE001 -- a normal send logs and goes on
+        from loguru import logger
+
+        logger.bind(
+            phase="privacy_one_shot_consumption", error_type=type(exc).__name__
+        ).warning("capture_policy_resolution_failed")
+
+
 def _replays_provider_continuations(
     controller: ConsoleChatController, session_id: str, resolution: Any
 ) -> bool:
@@ -192,17 +213,21 @@ async def stream_action(
     turn_context = stream["turn_context"]
     session_id = turn_context.session_id
     mode, snapshot = _capture_mode(controller, session_id)
-    if (
-        mode is ConsoleTraceCaptureMode.CAPTURE_OFF
-        or controller.store.session_is_ephemeral(session_id)
-        # ponytail: these keep the action Capture Off, as before. A captured
-        # send with a pinned prefill already stops at the second message
-        # (surface_prefix_mismatch), and a chat whose provider replays its
-        # own continuations (Kimi reasoning) carries rows the re-record's
-        # proof cannot name; each needs its own rule first.
-        or stream.get("prefill")
+    # ponytail: these keep the action Capture Off, as before. A captured send
+    # with a pinned prefill already stops at the second message
+    # (surface_prefix_mismatch), and a chat whose provider replays its own
+    # continuations (Kimi reasoning) carries rows the re-record's proof
+    # cannot name; each needs its own rule first (TASK-42583, TASK-42584).
+    excepted = (
+        controller.store.session_is_ephemeral(session_id)
+        or bool(stream.get("prefill"))
         or _replays_provider_continuations(controller, session_id, stream["resolution"])
-    ):
+    )
+    if mode is ConsoleTraceCaptureMode.CAPTURE_OFF or not excepted:
+        # The action follows the chat's capture mode, so it uses up a
+        # one-time choice as a normal send does.
+        _use_up_next_send_choice(controller, session_id, snapshot)
+    if mode is ConsoleTraceCaptureMode.CAPTURE_OFF or excepted:
         return await controller._stream_assistant_response(**stream)
     assistant_id = stream["assistant_message_id"]
     try:

@@ -461,6 +461,38 @@ async def test_capture_off_actions_stay_untraced(tmp_path, monkeypatch):
 
 
 @pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("action", ACTIONS)
+async def test_an_action_uses_up_the_one_time_capture_choice(
+    tmp_path, monkeypatch, action
+):
+    """A one-time Capture choice covers one send: the action that honoured it
+    uses it up, as a normal send would, so the next plain send is back to the
+    chat's own capture mode (here On)."""
+    async with _console(tmp_path, monkeypatch, project=False) as app:
+        await _send(app, "Hello")
+        await _send(app, "And now?")
+        controller, session = app.controller, app.session.id
+        controller.set_next_trace_privacy(
+            session,
+            capture_enabled=False,
+            pii_redaction_enabled=None,
+            expected_policy_revision=controller.capture_policy_snapshot(
+                session
+            ).policy_revision,
+        )
+        before = _calls(app)
+
+        await _act(app, action)
+
+        assert _calls(app) == before, "the one-time choice (Off) was honoured"
+        assert controller.capture_policy_snapshot(session).next_capture_enabled is None
+        await _send(app, "One more?")
+        assert [call[:2] for call in _calls(app)[len(before) :]] == [
+            ("agent_first", "complete")
+        ]
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
 async def test_a_temporary_chat_with_capture_on_refuses_before_any_row(
     tmp_path, monkeypatch
 ):
