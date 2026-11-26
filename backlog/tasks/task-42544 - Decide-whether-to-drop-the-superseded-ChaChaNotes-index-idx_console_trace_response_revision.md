@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-24 23:44
-updated_date: 2026-11-26 08:30
+updated_date: 2026-11-26 16:00
 labels:
 - follow-up
 - db
@@ -93,4 +93,13 @@ AC#1: dropped in ChaChaNotes **v89** (see Decision). v89 follows the v88 pattern
   - steps: recovered suites 2066 passed, 1 skipped (1284 s); architecture guards 965 passed, 1 skipped (506 s); Dreams riders 1598 passed, 6 skipped (1007 s).
 
 Files: tldw_chatbook/DB/{ChaChaNotes_DB,recovery_core,recovery_core_schema,recovery_operations}.py, tldw_chatbook/DB/migrations/chachanotes_v88_to_v89_drop_superseded_response_revision_index.sql, tldw_chatbook/Backup_Recovery/sqlite_validation.py, scripts/{check_index_plan_pins.py,index_plan_pin_census.tsv}, Docs/Architecture/database-layer.md, Tests/Backup_Recovery/test_{locator_indexes_sandbox,core_owners,prompt_mixin_restore,chachanotes_native76_compatibility}.py, Tests/ChaChaNotesDB/test_index_census.py, Tests/DB/test_{chachanotes_v56_console_trace_query_plans,chachanotes_v72_voice_trace_provenance_migration,chachanotes_v77_agent_chat_starts_migration,check_index_plan_pins}.py, Tests/Architecture/test_module_size_ratchet.py, the workflow and Tests/CI pins.
+
+**Review round (2026-11-26)**
+- **`dropped` ignored order (Important).** The first check passed any name that some DB source drops, so a dropped-then-re-created live index could skip its plan pin. The reviewer marked `idx_canvas_revisions_canvas_sequence` (v81->v82 drops and re-creates it) `dropped`, and `main()` returned 0.
+  - Now only versioned migration scripts count, ordered by `<to>` and then by position in the file. The last `DROP INDEX` must follow the last `CREATE INDEX`, and no non-recovery source (a fresh-schema `.py` string, an unversioned `.sql`) may still create the name. `DB/recovery_*.py` catalogs do not count.
+  - Replaying the reviewer's patch now gives 1. The checker tests cover the review's `DROP INDEX x; CREATE INDEX x` step, a same-step rebuild, a later re-create, a fresh-schema string and a recovery catalog. A real-tree test marks every name some step drops as `dropped`; only the already-dropped row passes, and both canvas indexes are refused. All are red on the previous checker.
+- **Phantom `IF` (Minor).** `_DROP_INDEX` recorded an index `IF` from `Prompts_DB.py`'s f-string drop. A `(?!IF\b)` guard removes it. A test pins both points: no phantom name, and an f-string drop cannot satisfy a `dropped` row.
+- **sqlite_master-only bookkeeping (Minor).** Three new DENY cases: DELETE on `console_trace_response_links`, DELETE on `messages`, and a `rootpage` UPDATE on `console_trace_response_links`. All three went red with the gate's `first == "sqlite_master"` guards removed.
+- **Fourth read (Minor).** `ConsoleTraceService._completed_replay_values` also reads response links by `semantic_revision_id`. The plan test now runs it through the plan cursor; it stops at `completed_replay_terminal` after its one statement. It plans through the exact index on fresh and v88-upgraded files. The test docstring and database-layer.md name the four reads: the test's own locator constant and three product methods.
+- **Filed:** TASK-42579 (most of `test_publication_crashes.py` is on no PR lane) and TASK-42580 (`test_core_owners.py` is on no PR lane). Both files are green on dev.
 
