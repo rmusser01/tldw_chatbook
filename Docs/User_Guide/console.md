@@ -1399,11 +1399,13 @@ configured in **F4 ▸ Providers & Models**.
   response-recovery card. The exception is a reply whose reasoning names a
   different provider destination than the one the send was accepted for (for
   example, a different endpoint). That reply stays on screen but is saved as
-  failed, without its reasoning, under an **Agent run failed: Provider
-  continuation could not be persisted; retry or recover the interrupted run.**
-  row, and the run is marked failed. No response-recovery card appears and
-  there is no run to recover: Send stays available, and your next message
-  goes to the provider without the failed reply in its history.
+  failed, without its reasoning, and the run is marked failed. Its row reads
+  **Agent run failed: This reply's reasoning did not match the provider
+  endpoint your message was sent to, so the reply was marked as failed and will
+  not be sent with your next message. Send again to continue the chat.** There
+  is nothing to retry or recover, so no response-recovery card appears. Send
+  stays available, and your next message goes to the provider without the
+  failed reply in its history.
 - With trace capture on (the default), each turn you send in a saved Kimi chat
   is traced like any other send: its request replays the earlier replies'
   saved reasoning, and **Trace** lists that turn's call with its reply.

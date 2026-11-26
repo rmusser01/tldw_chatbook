@@ -132,6 +132,8 @@ TASK-42424). The harnesses now mark that `TldwCli` running and route its
 as in the shipped app, where `controller.app` is the running App, so the view
 condition was dropped.
 
+2026-11-24: the owner approved the wording of the 2026-11-23 amendment above.
+
 Amended 2026-11-25 (TASK-41947): agent chat-create confirmations
 (`request_chat_create_confirm`) wait in their own loop outside `run_round`.
 With no running App, a confirmation that needs a round is now refused before

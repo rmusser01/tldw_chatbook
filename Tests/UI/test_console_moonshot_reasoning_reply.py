@@ -593,6 +593,16 @@ async def test_unstored_reasoning_checkpoint_keeps_the_reply(
     ), warnings
 
 
+#: TASK-42526 (owner decision 2026-11-24): a destination-refused first final
+#: leaves nothing to retry or recover, so its row says what happened and that
+#: sending again continues the chat.
+DESTINATION_REFUSED_ROW = (
+    "Agent run failed: This reply's reasoning did not match the provider "
+    "endpoint your message was sent to, so the reply was marked as failed and "
+    "will not be sent with your next message. Send again to continue the chat."
+)
+
+
 @pytest.mark.asyncio
 async def test_destination_refused_reasoning_checkpoint_fails_the_reply(
     tmp_path, monkeypatch
@@ -604,10 +614,11 @@ async def test_destination_refused_reasoning_checkpoint_fails_the_reply(
     (review v5r1 F9): the checkpoint names another provider destination than
     the one the send was accepted for. This pins what the user then gets, as
     the User Guide states it (pre-merge review, 2026-11-13): the reply text
-    stays visible but is saved as failed, without its reasoning, under an
-    "Agent run failed: Provider continuation could not be persisted" error
-    row; the run fails; there is NO response-recovery card or dispatch
-    checkpoint; and the next Send reaches the provider and completes.
+    stays visible but is saved as failed, without its reasoning; the run
+    fails; there is NO response-recovery card or dispatch checkpoint; and the
+    next Send reaches the provider and completes. The error row says exactly
+    that (TASK-42526, owner decision 2026-11-24): it used to say "retry or
+    recover the interrupted run", and there is nothing to retry or recover.
 
     The refusal is the real one: the dispatch the store holds is presented
     once as accepted for Moonshot's China endpoint, so the real binding check
@@ -654,14 +665,22 @@ async def test_destination_refused_reasoning_checkpoint_fails_the_reply(
             "assistant_states": ["failed"],
             "run_status": ConsoleRunStatus.FAILED,
             "dispatch_recovery": None,
-            "blocked_copy": ["could not be persisted"],
+            "blocked_copy": [],
             "reply_on_screen": True,
         }
-        screen = " ".join(_frame_rows(h.host))
-        assert (
-            "Agent run failed: Provider continuation could not be persisted; "
-            "retry or recover the interrupted run." in screen
+        # The row names what happened and what Send does next, nothing else.
+        assert [
+            message.content
+            for message in h.store.messages_for_session(saved.id)
+            if message.role is ConsoleMessageRole.SYSTEM
+        ] == [DESTINATION_REFUSED_ROW]
+        assert h.controller.run_state_for(saved.id).visible_copy == (
+            DESTINATION_REFUSED_ROW
         )
+        screen = " ".join(_frame_rows(h.host))
+        assert "Agent run failed: This reply's reasoning did not match" in screen
+        assert "Send again to continue the chat." in screen
+        assert "retry or recover" not in screen
         assert "delivery status is unknown" not in screen
         assert "Send blocked" not in screen
         conversation_id = next(
