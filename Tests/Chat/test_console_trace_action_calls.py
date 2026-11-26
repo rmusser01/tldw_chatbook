@@ -21,6 +21,7 @@ from Tests.Chat.test_console_project_instruction_traces import (
     GUIDANCE,
     _project_console,
 )
+from Tests.Chat.test_console_trace_slot_drop import _fail_after_commit
 
 # The Console bridge reads the tool gates through config, which keeps the
 # collection-time profile only (TASK-41508; RecoveryRequired otherwise).
@@ -945,64 +946,6 @@ async def test_compact_now_after_a_regenerate_keeps_the_next_send(harness):  # n
     assert harness.rechecks[-1].memory_anchor is True
 
 
-def _fail_after_commit(monkeypatch):
-    """Raise once, after the commit of the first dispatch bind.
-
-    The gateway then reads the write back (`_reconcile_dispatch_write`).
-    Returns the state and, per read-back, (outcome, replacement written).
-    A copy of `Tests/Chat/test_console_trace_slot_drop.py`'s helper as of
-    stream slotdrop's tip (bd801019c9), trimmed to what these cases read.
-    """
-    from contextlib import contextmanager
-
-    from tldw_chatbook.Chat import console_trace_service as trace
-
-    service = trace.ConsoleTraceService
-    state = {"armed": False, "in_bind": False, "persisted": None}
-    outcomes = []
-    policy_of = trace.trace_critical_write_checkpoint_policy
-    bind, persist, reconcile = (
-        service.bind_and_mark_dispatch,
-        service.persist_request,
-        service._reconcile_dispatch_write,
-    )
-
-    @contextmanager
-    def policy(database):
-        with policy_of(database):
-            yield
-        if state["armed"] and state["in_bind"] and state["persisted"]:
-            state["armed"] = False
-            raise RuntimeError("post-commit failure")
-
-    def binding(self, *args, **kwargs):
-        state["in_bind"], state["persisted"] = True, None
-        try:
-            return bind(self, *args, **kwargs)
-        finally:
-            state["in_bind"] = False
-
-    def persisting(self, *args, **kwargs):
-        state["persisted"] = persist(self, *args, **kwargs)
-        return state["persisted"]
-
-    def reconciled(self, *args, **kwargs):
-        outcome = reconcile(self, *args, **kwargs)
-        outcomes.append(
-            (
-                outcome if isinstance(outcome, str) else "durable",
-                kwargs["persisted"].replacement is not None,
-            )
-        )
-        return outcome
-
-    monkeypatch.setattr(trace, "trace_critical_write_checkpoint_policy", policy)
-    monkeypatch.setattr(service, "bind_and_mark_dispatch", binding)
-    monkeypatch.setattr(service, "persist_request", persisting)
-    monkeypatch.setattr(service, "_reconcile_dispatch_write", reconciled)
-    return state, outcomes
-
-
 @pytest.mark.usefixtures("shut_down_console_controllers")
 @pytest.mark.parametrize("action", ["regenerate", "continue"])
 async def test_an_actions_committed_rewrite_is_read_back_after_a_post_commit_failure(
@@ -1014,13 +957,12 @@ async def test_an_actions_committed_rewrite_is_read_back_after_a_post_commit_fai
     async with _console(tmp_path, monkeypatch) as app:
         await _send(app, "Hello")
         await _send(app, "And now?")
-        state, outcomes = _fail_after_commit(monkeypatch)
-        state["armed"] = True
+        _state, outcomes = _fail_after_commit(monkeypatch)
         sent = len(app.sent)
 
         await _act(app, action)
 
-        assert outcomes == [("durable", True)]
+        assert outcomes == [("durable", True, False)]
         assert len(app.sent) == sent + 1
         _assert_traced_as_sent(app)
         await _send(app, "One more?")

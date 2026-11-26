@@ -251,11 +251,12 @@ async def test_edit_and_resend_after_a_drop_keeps_the_next_send(
 ):
     """Edit & resend of the message before the drop, or of the one that dropped.
 
-    Its rewritten tail starts before the removal marker, which then sits
-    mid-history; the next message, and the one after it back on llama.cpp,
-    are sent and traced. Control: a chat always on llama.cpp. (Without
-    project instructions: with them, the message after an Edit & resend is
-    refused on any provider, before this change too.)
+    The Edit & resend's own call is traced (TASK-42560): it re-records its
+    turn as a rewritten tail that starts before the removal marker, which
+    then sits mid-history; the next message, and the one after it back on
+    llama.cpp, are sent and traced. Control: a chat always on llama.cpp.
+    Without project instructions here; `test_console_trace_action_calls.py`
+    covers the action and the next message with them.
     """
     async with _llamacpp_falls_back(
         tmp_path, monkeypatch, tool_first=False, project=False, busy=0

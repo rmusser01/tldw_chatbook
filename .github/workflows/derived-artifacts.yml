@@ -2117,7 +2117,8 @@ jobs:
       # after the Skills recovery controls file.
       # Round 27: TASK-42550's slot-drop file (bootstrap_profile, 35 tests;
       # 216.9 s alone under this step's flags at load 34-50; at 24 tests it
-      # was 148 s of a 51.7-min local run of the whole step), at the tail.
+      # was 148 s of a 51.7-min local run of the whole step), after the
+      # managed received-acceptance file.
       # Round 27: TASK-42556's child preset fallback file (bootstrap_profile,
       # on no lane before) follows the slot-drop file; timing in the task's notes.
       # Round 27: TASK-42552's four Console files, on no lane before. The

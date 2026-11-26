@@ -169,15 +169,20 @@ class ConsoleRequestRouteRecord:
 
 #: ``capture`` is what a Capture-On chat's call on the route does today
 #: (``Tests/Chat/test_console_route_census_capture.py`` drives each action).
-#: Retry, Continue, Regenerate, Edit & resend, Impersonate and citation repair
-#: carry no turn preparation or capture mode, so they dispatch Capture Off
-#: (TASK-42552). The owner decided on 2026-11-26 that Retry of a failed turn
-#: under Capture On will be traced as a new run of the same turn (TASK-42555,
-#: built after PR #3717). The
-#: AGENT_FIRST, TOOL_LOOP, DIRECT_PREFILL and LLAMA_FALLBACK rows describe a
-#: fresh send; those routes take the capture mode of the action they serve, so
-#: an agent-path Regenerate, Edit, Continue or Retry dispatches AGENT_FIRST
-#: with capture off, and a Regenerate with a pinned prefill DIRECT_PREFILL.
+#: Edit & resend, Regenerate and Continue are traced as calls of their turn
+#: (ADR-337 amendment 2026-11-26, TASK-42560). Retry, Impersonate and citation
+#: repair carry no turn preparation or capture mode, so they dispatch Capture
+#: Off (TASK-42552). The owner decided on 2026-11-26 that Retry of a failed
+#: turn under Capture On will be traced as a new run of the same turn
+#: (TASK-42555, built after PR #3717).
+#:
+#: The AGENT_FIRST, TOOL_LOOP, DIRECT_PREFILL and LLAMA_FALLBACK rows describe
+#: a fresh send; those routes take the capture mode of the action they serve.
+#: An agent-path Edit & resend, Regenerate or Continue dispatches a traced
+#: AGENT_FIRST call that names the action; an agent-path Retry dispatches
+#: AGENT_FIRST with capture off. An action with a pinned prefill, or in a chat
+#: whose provider replays its own continuation checkpoints, still sends with
+#: capture off (DIRECT_PREFILL for a prefill).
 CONSOLE_REQUEST_ROUTE_CENSUS = (
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.FRESH,
@@ -207,7 +212,7 @@ CONSOLE_REQUEST_ROUTE_CENSUS = (
         "_continue_from_message_body",
         "route=ConsoleRequestRoute.CONTINUE,",
         "continue_requested",
-        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
+        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
     ),
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.REGENERATE,
@@ -217,7 +222,7 @@ CONSOLE_REQUEST_ROUTE_CENSUS = (
         "regenerate_message",
         "route=ConsoleRequestRoute.REGENERATE,",
         "regenerate_requested",
-        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
+        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
     ),
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.EDIT,
@@ -227,7 +232,7 @@ CONSOLE_REQUEST_ROUTE_CENSUS = (
         "edit_and_resend_message",
         "route=ConsoleRequestRoute.EDIT,",
         "edit_and_resend_requested",
-        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
+        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
     ),
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.DIRECT_PREFILL,
