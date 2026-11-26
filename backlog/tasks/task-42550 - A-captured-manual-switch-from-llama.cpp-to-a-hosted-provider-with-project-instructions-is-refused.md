@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-25 17:35
-updated_date: 2026-11-26 07:54
+updated_date: 2026-11-26 16:21
 labels:
 - follow-up
 - console
@@ -100,6 +100,21 @@ Found while doing TASK-42525 (round 26, 2026-11-25); the owner's third decision 
 - `Tests/CI` at `-n 4`: 2009 passed, 2 skipped.
 - `Tests/Architecture` serially: 1506 passed, 5 skipped, 1 failed. The failure, `test_persistent_diagnostic_inventory.py::test_task_15103_review_ledger_canonical_schema_and_arithmetic`, is a load timeout: it takes 128 s alone and 221.7 s in its file's serial rerun, against the suite's 300 s default timeout, and that rerun passed whole (80 passed, 1 skipped). The full run was at load 26-63. This change adds no diagnostic site.
 - `./scripts/preflight.sh` passed; `ruff check tldw_chatbook --select F` is clean; `Tests/lint/ruff_gate.py` exits 0 (RATCHET OK).
+
+**Review fixes (2026-11-26, review of 6e41919880..06848c48e9).**
+- **Important 1.** A dispatch bind that committed and then raised on exit was read back as unknown, and the run blocked (`settlement_failed`) though its trace was whole. This hit a drop with a replacement (project context), and the 2026-11-25 restore with one too. `_reconcile_dispatch_write` checked the rows in a fallback's write order (replacement first, removal last) and required the first to follow the planned head, but a drop writes its removal first and a restore its slot first.
+  - The fix: each replacement row must follow the node written just before its own, and the first node written must follow the planned head. That holds for every write order. Service size row 7056 -> 7059 (+3).
+  - `test_a_committed_slot_change_is_read_back_after_a_post_commit_failure`, built from the reviewer's template, injects the failure after the commit. On the pre-fix service, `drop-project`, `restore-project` and `forged_row` failed (3 of 6); all 6 pass after.
+  - The two forged cases must read back unknown: `forged_row`, a replacement row written against an earlier ancestor, which the ledger's lineage trigger allows; and `forged_head`, another planned head. Removing the per-row check fails only `forged_row`; removing the first-node check fails only `forged_head`.
+- **Minor 1.** The `drops_the_slot` case of the restored-slot Edit & resend test now says the send drops the slot under the 2026-11-26 amendment, and pins one `surface_removal` marker written by that turn's first call (one assertion; 5 passed).
+- **Minor 2.** `remove_surface_slot`'s docstring names both callers and says only a fallback chain's marker is counted by `rewritten_sequences`.
+- **Minor 3.** A `bundled` gateway scenario (the slot dropped and the first row changed) is refused with `unsupported_surface_change`, with no marker and nothing reserved.
+- **Lane.** The file is now 31 tests: 31 passed serially in 174.8 s under the step's flags at load 31-55, with no lease errors. The workflow comment says so.
+- **Runs.**
+  - The slot-drop, retry, chained-replacement, dispatch-recovery and project-instruction files at `-n 4`: 411 passed (load 47-57).
+  - Soak, 20 rounds at `-n 4` (the slot-drop file, the edited retry test and the chain read-back test): 37 passed every round, 63-106 s a round, at load 25.4-61.6.
+  - `Tests/CI` at `-n 4`: 2009 passed, 2 skipped. The size ratchet: 213 passed.
+  - `./scripts/preflight.sh` passed; `ruff check tldw_chatbook --select F` is clean; `Tests/lint/ruff_gate.py` exits 0 (RATCHET OK).
 
 **Found, not fixed (pre-existing).** With AGENTS.md, the message after an Edit & resend is refused under Capture On (`unsupported_surface_change`, `count_or_span`) in a chat that never switches providers: always on llama.cpp or always hosted. A probe was identical on base and branch (2 of 2 refused on each), so the Edit & resend test here covers the no-project case only. Filed as TASK-42560, with Continue, Regenerate and Retry, which fail the same way; it needs an owner decision.
 <!-- SECTION:NOTES:END -->
