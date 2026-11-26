@@ -5,6 +5,7 @@ import gc
 import logging
 import pathlib
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -101,6 +102,8 @@ def _first(matches, *, what: str):
 #: connections can be closed and its temp directory removed, rather than left
 #: to the garbage collector and to /tmp (Qodo review of #2128).
 _OPEN_PERSISTENCES: list["_ReadyCitationPersistence"] = []
+#: Every `_persisted_store`, so its stream-persistence worker can be drained.
+_OPEN_STORES: list[ConsoleChatStore] = []
 
 
 @pytest.fixture(autouse=True)
@@ -108,10 +111,22 @@ def _close_citation_persistences():
     """Close every database this module's tests opened."""
 
     _OPEN_PERSISTENCES.clear()
+    _OPEN_STORES.clear()
     yield
+    # TASK-42569: a deferred stream write runs on the store's single-slot
+    # worker thread and leaves that thread's handle open, which the storage
+    # lease guard reports. Drain the worker so no write reopens a handle, then
+    # close every registered handle, the worker's included.
+    while _OPEN_STORES:
+        _OPEN_STORES.pop()._stream_persistence_executor.submit(lambda: None).result(
+            timeout=5
+        )
     while _OPEN_PERSISTENCES:
         persistence = _OPEN_PERSISTENCES.pop()
         try:
+            registry = getattr(persistence.db, "_connection_quiescence", None)
+            if registry is not None:
+                registry.close_if_idle()
             persistence.db.close_connection()
         except Exception:  # pragma: no cover - cleanup must not mask failures
             pass
@@ -690,6 +705,7 @@ def _persisted_store(
     if persistence is None:
         persistence = _ReadyCitationPersistence()
     store = ConsoleChatStore(persistence=persistence)
+    _OPEN_STORES.append(store)
     # DURABLE (TASK-22301). These sessions used to be ephemeral because the
     # doubles carried `db = None` and a non-ephemeral MANUAL send is refused by
     # the durable-turn gate and TASK-22030's DB-open gate. But an ephemeral
@@ -2763,6 +2779,40 @@ async def _wait_for_citation_checking(controller: ConsoleChatController) -> None
     raise AssertionError("citation checking was not observable")
 
 
+def _hold_citation_check(monkeypatch: pytest.MonkeyPatch) -> asyncio.Event:
+    """Hold the citation check at its one yield until the returned event is set.
+
+    The check yields once (``await asyncio.sleep(0)``) between "Checking
+    citations…" and its Stop check. A refused Send first awaits the
+    worker-thread hook read (since aed1b13501) and thread-owned persistence,
+    so without a hold the check dispatches the repair first (TASK-42569).
+    """
+
+    release = asyncio.Event()
+    real_sleep = asyncio.sleep
+
+    async def sleep(delay, *args, **kwargs):
+        if (
+            delay == 0
+            and not release.is_set()
+            and sys._getframe(1).f_code.co_name == "_select_post_generation_body"
+        ):
+            await release.wait()
+            return None
+        return await real_sleep(delay, *args, **kwargs)
+
+    held = SimpleNamespace(
+        **{
+            name: getattr(asyncio, name)
+            for name in dir(asyncio)
+            if not name.startswith("__")
+        }
+    )
+    held.sleep = sleep
+    monkeypatch.setattr(controller_module, "asyncio", held)
+    return release
+
+
 def _sanitize_selected_persistence(
     persistence: _ReadyCitationPersistence,
     selected_body: str,
@@ -3068,7 +3118,9 @@ async def test_citation_repair_stop_during_initial_generation_keeps_ordinary_sto
 
 @pytest.mark.parametrize("agent", (False, True), ids=("direct", "agent"))
 @pytest.mark.asyncio
-async def test_citation_repair_stop_while_checking_cancels_before_dispatch(agent: bool):
+async def test_citation_repair_stop_while_checking_cancels_before_dispatch(
+    agent: bool, monkeypatch: pytest.MonkeyPatch
+):
     persistence = _ReadyCitationPersistence() if not agent else None
     controller, store, gateway, _bridge, initial_body, _repaired_body = (
         _controlled_citation_repair(
@@ -3076,6 +3128,7 @@ async def test_citation_repair_stop_while_checking_cancels_before_dispatch(agent
             persistence=persistence,
         )
     )
+    release_check = _hold_citation_check(monkeypatch)
     task = asyncio.create_task(controller.submit_draft("question"))
     await _wait_for_citation_checking(controller)
 
@@ -3089,6 +3142,7 @@ async def test_citation_repair_stop_while_checking_cancels_before_dispatch(agent
     assert blocked.visible_copy == "A run is already running in this tab."
     assert controller.run_state.is_stop_allowed is True
     assert controller.stop_active_run() is True
+    release_check.set()
     result = await task
 
     assert result.accepted is True

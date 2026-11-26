@@ -923,6 +923,9 @@ RECOVERED_SUITES_TARGETS = (
     # TASK-42552 review: the route census's capture column checked against
     # each action through the real controller (bootstrap_profile).
     "Tests/Chat/test_console_route_census_capture.py",
+    # TASK-42569: the local citation boundary file (bootstrap profile by
+    # name in Tests/conftest.py), red in no PR lane before.
+    "Tests/Chat/test_console_local_citation_boundary.py",
     # TASK-40323: the green held-pointer case and stock skill-trust cases
     # (bootstrap_profile, private subprocesses), which ran on no lane.
     "Tests/Performance/test_app_wiring_held_pointer_currentness.py::test_actual_stock_held_pointer_refuses_before_foreign_access[collections]",
