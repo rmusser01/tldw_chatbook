@@ -123,13 +123,17 @@ def _original_transition_events(bindings, observe):
         assert not invalid, invalid
 
 
-def _transition_parent(frame, code, owner):
-    """Return only a transient original ancestor; callers must not retain it."""
+def _transition_parent(frame, code, owner, local="self"):
+    """Return only a transient original ancestor; callers must not retain it.
+
+    ``local`` names the owner's argument: module functions that take the
+    screen (``screen``) replaced several ChatScreen methods.
+    """
     parent = frame.f_back
     for _ in range(40):
         if parent is None:
             return None
-        if parent.f_code is code and parent.f_locals.get("self") is owner:
+        if parent.f_code is code and parent.f_locals.get(local) is owner:
             return parent
         parent = parent.f_back
     return None
@@ -610,7 +614,16 @@ async def test_full_request_during_poll_await_replays_with_current_owner(
                 work, task = value._work, value._task
                 # The same FULL task also starts unrelated display workers.
                 # Select the issued FULL body before asserting its route.
-                if not inspect.iscoroutine(work) or work.cr_code is not full_code:
+                # Since d043e22438 the worker gets the bound method, so the
+                # coroutine exists only once Textual admits the worker.
+                issued = (
+                    work.cr_code is full_code
+                    if inspect.iscoroutine(work)
+                    else inspect.ismethod(work)
+                    and work.__func__.__code__ is full_code
+                    and work.__self__ is console
+                )
+                if not issued:
                     return
                 assert frame.f_locals["self"] is case.host.workers
                 assert value.node is console
@@ -666,9 +679,39 @@ async def test_full_request_during_poll_await_replays_with_current_owner(
         held_lock = True
         try:
             with _original_transition_events(bindings, observe):
-                assert await _until(
-                    lambda: bool(held), 5
-                ), "No original natural poll reached the real tab lock"
+                # TASK-42553: the send's late follow-ups (its acknowledgement
+                # release resyncs from a call_later; image recovery and store
+                # listeners start worker FULL passes) land at load-dependent
+                # times. One that reached the tab lock first starved every
+                # poll tick of a visit pass; one that came while the poll was
+                # held left unrelated demand behind it. Either is a setup
+                # race, not the behaviour under test, so let that pass finish
+                # and hold the next natural poll instead (at most 3 tries).
+                for _attempt in range(3):
+                    if (
+                        await _until(lambda: bool(held), 5)
+                        and not console._console_sync_requested
+                    ):
+                        break
+                    held.clear()
+                    publications.clear()
+                    lock.release()
+                    held_lock = False
+                    assert await _until(
+                        lambda: not console._console_sync_in_progress
+                        and not console._console_sync_requested
+                        and console._console_session_tabs_sync_calls == 0
+                        and not getattr(
+                            console, "_console_control_bar_replay_whole_sync", False
+                        )
+                        and not vars(console).get(
+                            "_console_sync_maintenance_paused", False
+                        ),
+                        10,
+                    ), "Original full reconciliation never settled for a new hold"
+                    await lock.acquire()
+                    held_lock = True
+                assert held, "No original natural poll reached the real tab lock"
                 _assert_original_configuration_custody(case)
                 assert not held["task"].done() and not held["future"].done()
                 assert (
@@ -812,6 +855,9 @@ async def test_poll_terminal_transition_settles_while_background_turn_remains_ac
     )
     from tldw_chatbook.UI.Console_Modules import send_acknowledgement, wiring
     from tldw_chatbook.UI.Console_Modules.fleet import ConsoleFleetLifecycleController
+    from tldw_chatbook.Widgets.Console.console_background_effect import (
+        acknowledge_console_transcript,
+    )
     from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
     from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
@@ -870,6 +916,10 @@ async def test_poll_terminal_transition_settles_while_background_turn_remains_ac
         full_code = ChatScreen._sync_native_console_chat_ui.__code__
         transcript_code = ChatScreen._sync_native_console_transcript.__code__
         ack_code = ConsoleRuntime.acknowledge_rendered_terminal_receipts.__code__
+        # 95ca4bf47b (#3536) moved the receipt acknowledgement out of the
+        # transcript sync into this function, which the sync's projection
+        # returns and calls once the projection is published.
+        display_ack_code = acknowledge_console_transcript.__code__
         poll_code = next(
             code
             for code in ChatScreen._start_console_transcript_sync_timer.__code__.co_consts
@@ -1015,15 +1065,24 @@ async def test_poll_terminal_transition_settles_while_background_turn_remains_ac
                 ):
                     return
                 runtime_frame = _transition_parent(frame, ack_code, runtime)
-                display_frame = _transition_parent(frame, transcript_code, console)
-                assert runtime_frame is not None and display_frame is not None
+                display_frame = _transition_parent(
+                    frame, display_ack_code, console, local="screen"
+                )
+                sync_frame = _transition_parent(
+                    frame, transcript_code, console, local="screen"
+                )
+                assert (
+                    runtime_frame is not None
+                    and display_frame is not None
+                    and sync_frame is not None
+                )
                 assert runtime_frame.f_locals["view"] is console
                 assert (
                     runtime_frame.f_locals["attachment_generation"]
                     == console._console_runtime_attachment_generation
                 )
                 assert pair in runtime_frame.f_locals["rendered"]
-                assert pair in display_frame.f_locals["rendered_receipts"]
+                assert pair in display_frame.f_locals["rendered"]
                 # The original SQL committed, then its counted scope retired
                 # before this service returned its exact successful deletion.
                 assert pair in native_acks
