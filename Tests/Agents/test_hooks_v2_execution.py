@@ -1229,3 +1229,89 @@ async def test_phase_plan_stable_dependency_executes_supported_command(required)
     finally:
         scope.close()
         await engine.close()
+
+
+def test_cancelled_close_leaves_no_thread_waiting_for_native_custody():
+    """Loop shutdown cannot wait on a close whose native custody never returns.
+
+    TASK-41061: the close's untimed ``wait_closed`` kept a default-executor
+    thread after the close was cancelled. Loop shutdown and interpreter exit
+    join that thread, so a pytest run printed its summary and then hung.
+    """
+    import threading
+
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+    from tldw_chatbook.Agents.legacy_hook_ownership import _EventCustodyRegistry
+
+    registry = _EventCustodyRegistry()
+    registry._admissions = 1  # an admission whose custody never returns
+    runner = asyncio.Runner()
+
+    async def start_close():
+        engine = HookEngine((), lambda *_: True, HookBudgetOwner())
+        engine._native_commands = registry
+        asyncio.get_running_loop().create_task(engine.close())
+        for _ in range(500):
+            if registry._condition._waiters:
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError("close never reached the native custody join")
+
+    shutdown = threading.Thread(target=runner.close, daemon=True)
+    try:
+        runner.run(start_close())
+        shutdown.start()
+        shutdown.join(5)
+        assert not shutdown.is_alive(), "loop shutdown waited on the custody join"
+    finally:
+        with registry._condition:
+            registry._admissions = 0
+            registry._condition.notify_all()
+        if shutdown.ident is None:
+            runner.close()
+        shutdown.join(10)
+
+
+def test_mcp_hook_permission_stays_current_to_other_jobs_while_it_refreshes():
+    """Another job of the same event reads a refreshing grant as current.
+
+    TASK-41061: ``refresh()`` cleared its token before re-reading the store,
+    so an outer MCP hook checking its event while a nested MCP hook refreshed
+    saw "permission changed" and refused a required hook (under load, the
+    store read is slow enough to hit).
+    """
+    import threading
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.hooks_v2.mcp_executor import MCPHookPermission
+
+    token = object()
+    publication = SimpleNamespace(token=token, pending=False, uncertain=False)
+    loading, release = threading.Event(), threading.Event()
+
+    def load():
+        loading.set()
+        assert release.wait(5)
+
+    permission = MCPHookPermission.__new__(MCPHookPermission)
+    permission.selection = SimpleNamespace(check_memory=lambda: None)
+    permission.grant = SimpleNamespace(check=lambda: None)
+    permission.store = SimpleNamespace(load=load, _mcp_persistence_error=None)
+    permission.publication = publication
+    permission.session_grant = None
+    permission.token = token  # An earlier refresh succeeded.
+    refresh = threading.Thread(target=permission.refresh, daemon=True)
+    refresh.start()
+    try:
+        assert loading.wait(5)
+        permission.check_memory()
+    finally:
+        release.set()
+        refresh.join(5)
+    assert permission.token is token
+    publication.pending = True
+    with pytest.raises(PermissionError):
+        permission.refresh()
+    with pytest.raises(PermissionError):
+        permission.check_memory()

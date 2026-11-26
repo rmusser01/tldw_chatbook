@@ -26,6 +26,12 @@ from .models import HookEvent, HookHandler, HookResult
 from .ownership import HookProcessOwner, HostProcessOwner
 from .validation import handler_phase, parse_event
 
+# A sealed engine's teardown allowance ("3 + 5 seconds"): SessionEnd and
+# teardown deliveries run until TEARDOWN_SECONDS after the seal, and close
+# joins their cleanup for TEARDOWN_CLEANUP_SECONDS more.
+TEARDOWN_SECONDS = 3.0
+TEARDOWN_CLEANUP_SECONDS = 5.0
+
 _teardown_continuation = contextvars.ContextVar(
     "hook_teardown_continuation", default=None
 )
@@ -326,7 +332,8 @@ class HookEngine:
             raise ValueError("causal_depth")
         identity = tuple((key, item) for key, item in value.items() if key != "data")
         now = time.monotonic()
-        deadline = now + ({"Interrupt": 1.0, "SessionEnd": 3.0}.get(event.event, 180.0))
+        allowance = {"Interrupt": 1.0, "SessionEnd": TEARDOWN_SECONDS}
+        deadline = now + allowance.get(event.event, 180.0)
         continuation = self._current_continuation()
         if event.event not in {"PreToolUse", "PostToolUse", "PostToolUseFailure"}:
             continuation = None
@@ -334,7 +341,7 @@ class HookEngine:
             if teardown and event.event not in {"Interrupt", "SessionEnd"}:
                 raise ValueError("invalid teardown event")
             if self._sealed_at is not None:
-                deadline = min(deadline, self._sealed_at + 3.0)
+                deadline = min(deadline, self._sealed_at + TEARDOWN_SECONDS)
         native = None
         if self._native_commands_required:
             if self._native_commands is None:
@@ -748,7 +755,9 @@ class HookEngine:
             ):
                 return failed("admission_closed")
             if state.teardown and self._sealed_at is not None:
-                state.deadline = min(state.deadline, self._sealed_at + 3.0)
+                state.deadline = min(
+                    state.deadline, self._sealed_at + TEARDOWN_SECONDS
+                )
             if time.monotonic() >= state.deadline or state.active_seconds >= 60:
                 return failed("event_deadline")
             if handler.id not in state.dependencies:
@@ -1244,7 +1253,9 @@ class HookEngine:
     @property
     def teardown_deadline(self) -> float | None:
         with self._lock:
-            return None if self._sealed_at is None else self._sealed_at + 3.0
+            if self._sealed_at is None:
+                return None
+            return self._sealed_at + TEARDOWN_SECONDS
 
     def begin_close(self) -> None:
         """Synchronous ordinary admission seal; never reset the teardown clock."""
@@ -1278,12 +1289,14 @@ class HookEngine:
         await asyncio.shield(self._close_task)
 
     async def _drain(self):
+        teardown_end = self._sealed_at + TEARDOWN_SECONDS
+        cleanup_end = teardown_end + TEARDOWN_CLEANUP_SECONDS
         # Ensure synchronously reserved notifications have published their tasks.
         await asyncio.sleep(0)
         tasks = {d.task for d in self._deliveries if d.task is not None}
         if tasks:
             await asyncio.wait(
-                tasks, timeout=max(0, self._sealed_at + 3.0 - time.monotonic())
+                tasks, timeout=max(0, teardown_end - time.monotonic())
             )
         if self.mcp_executor is not None:
             self.mcp_executor.retire_teardown()
@@ -1294,17 +1307,17 @@ class HookEngine:
         }
         if tasks:
             await asyncio.wait(
-                tasks, timeout=max(0, self._sealed_at + 8.0 - time.monotonic())
+                tasks, timeout=max(0, cleanup_end - time.monotonic())
             )
         if self.mcp_executor is not None:
-            await self.mcp_executor.close(deadline=self._sealed_at + 8.0)
+            await self.mcp_executor.close(deadline=cleanup_end)
         # A callback can be slow or fail. The retained task/records survive the
         # bounded close caller; another wait never extends this close deadline.
         self._reconcile_task = asyncio.create_task(self.processes.reap_pending())
         self._reconcile_task.add_done_callback(self._consume)
         await asyncio.wait(
             {self._reconcile_task},
-            timeout=max(0, self._sealed_at + 8.0 - time.monotonic()),
+            timeout=max(0, cleanup_end - time.monotonic()),
         )
         if self._native_commands is not None:
-            await asyncio.to_thread(self._native_commands.wait_closed)
+            await self._native_commands.join_closed()

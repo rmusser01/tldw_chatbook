@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import contextmanager
 from contextvars import ContextVar
 from threading import Condition, Lock, RLock
@@ -34,10 +35,13 @@ class _EventCustodyRegistry:
                 self._events.discard(event)
             self._condition.notify_all()
 
-    def wait_closed(self):
-        """Join actual callbacks/handoffs, retaining any unproven physical custody."""
+    def wait_closed(self, timeout=None):
+        """Join actual callbacks/handoffs, retaining any unproven physical custody.
+
+        Returns None if ``timeout`` elapses first.
+        """
         with self._condition:
-            self._condition.wait_for(
+            if not self._condition.wait_for(
                 lambda: (
                     not self._admissions
                     and all(
@@ -52,9 +56,22 @@ class _EventCustodyRegistry:
                         )
                         for event in self._events
                     )
-                )
-            )
+                ),
+                timeout,
+            ):
+                return None
             return not self._events
+
+    async def join_closed(self):
+        """Await ``wait_closed`` in short slices on worker threads.
+
+        One untimed wait held its executor thread after the waiting task was
+        cancelled, so loop shutdown and interpreter exit, which join that
+        thread, waited forever (TASK-41061). Slices end with the task.
+        """
+        while (closed := await asyncio.to_thread(self.wait_closed, 0.25)) is None:
+            pass
+        return closed
 
     @property
     def cleanup_pending(self):

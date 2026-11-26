@@ -351,9 +351,12 @@ class _CommandEvent:
             and custody.retired
             and (
                 custody.owner._drain_outcome is True
+                # A borrowed turn owner may still be live (None); one that
+                # drained unproven never returns the context (TASK-41061).
                 or self.ordinary_tree is not None
                 and custody.claim is None
                 and custody.owner is self.ordinary_tree.owner
+                and custody.owner._drain_outcome is not False
             )
         )
 
