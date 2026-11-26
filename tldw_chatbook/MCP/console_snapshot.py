@@ -794,13 +794,14 @@ def _mcp_metadata_is_closed(service):
 
 
 def _capture_stays_pending(service, admitted):
-    """Whether an unadmitted capture is left pending for the ordinary tree.
+    """Whether an unadmitted capture is left pending for native custody.
 
-    Only the ordinary tree resolves a pending capture, and unqualified
-    platforms admit none (``admit_ordinary_turn``), so they read the
-    definitions now, as before 11d71e5db5. Left pending there, the turn's
-    MCP maximum stayed empty and a required MCP hook failed every send
-    (TASK-41061).
+    A pending capture is resolved only under native custody: by the ordinary
+    tree, workflow preparation or standalone compaction's hook preparation.
+    Unqualified platforms have none of them (``admit_ordinary_turn`` admits
+    no tree), so they read the definitions now, as before 11d71e5db5. Left
+    pending there, the turn's MCP maximum stayed empty and a required MCP
+    hook failed every send (TASK-41061).
     """
     from tldw_chatbook.Utils.platform_files import supports_native_process_groups
 
