@@ -1474,7 +1474,7 @@ def test_a_common_data_file_name_needs_its_directory_named(tmp_path):
         "Tests/Pl/test_cursor.py": 'P = ROOT / "cursor-a1" / "LICENSE"\n',
         "Tests/Other/test_any_license.py": 'NAME = "LICENSE"\n',
         # Names the folder only inside a longer word.
-        "Tests/Other/test_near_miss.py": 'PASSWORD = "cursor-a1-secret"\nNAME = "LICENSE"\n',
+        "Tests/Other/test_near_miss.py": 'NAME = "LICENSE"  # cursor-a1-secret\n',
         "Tests/Pl/fixtures/unique_golden.json": "",
         "Tests/Other/test_golden.py": 'G = "unique_golden.json"\n',
     }
@@ -1550,6 +1550,173 @@ def test_a_helper_met_in_the_search_is_read_by_name_too(tmp_path):
     plan = policy.select_changes([("M", "Tests/T/only_helpers.py")], root)
     assert _sampled(plan) == set()
     assert "no test file depends on Tests/T/only_helpers.py" in plan["reason"]
+
+
+def test_a_tests_ci_file_naming_only_a_bare_name_covers_nothing(tmp_path):
+    """Round 6 (CI gap): a synthetic fixture name in Tests/CI is not a reader."""
+    data = "Tests/Hooks/hooks_manifest.json"
+    files = {
+        data: "{}",
+        "Tests/Hooks/test_push.py": "P = 'hooks_manifest.json'\n",
+        "Tests/CI/test_policy.py": "FIXTURES = {'Tests/X/hooks_manifest.json': '{}'}\n",
+    }
+    root = _tree(tmp_path, files)
+    _lane_workflow(
+        root,
+        {"pr-fast-lane": ["pytest Tests/CI"]},
+        other="pytest Tests/Hooks/test_push.py",
+    )
+    plan = policy.select_changes([("M", data)], root)
+    assert plan["full"] and plan["reason"] == (
+        f"Only the full run reaches the laned dependents of {data}: Tests/Hooks/test_push.py"
+    )
+
+
+def test_leads_never_take_sampled_files_past_eight(tmp_path):
+    """Round 6 (n1): ten blocked sampled changes; the ninth gets no lead."""
+    files, lane, pushed = {}, [], []
+    for m in range(10):
+        files[f"Tests/S{m}/rig.py"] = ""
+        for n in range(policy.IMPORTER_CAP + 1):
+            lane.append(f"Tests/S{m}/test_s{n}.py")
+            files[lane[-1]] = f"from Tests.S{m}.rig import X\n"
+        pushed.append(f"Tests/S{m}/test_push.py")
+        files[pushed[-1]] = f"from Tests.S{m}.rig import X\n"
+    root = _tree(tmp_path, files)
+    _lane_workflow(
+        root,
+        {"pr-fast-lane": ["pytest " + " ".join(lane)]},
+        other="pytest " + " ".join(pushed),
+    )
+    plan = policy.select_changes([("M", f"Tests/S{m}/rig.py") for m in range(10)], root)
+    assert plan["full"] and plan["reason"] == (
+        "Only the full run reaches the laned dependents of Tests/S8/rig.py:"
+        " Tests/S8/test_push.py"
+    )
+
+
+def test_a_lead_that_is_the_prs_own_file_is_not_a_sampled_file(tmp_path):
+    """Round 6 (n1, L8): the PR's own changed file runs anyway; 8 remain."""
+    files, lane = {"Tests/S/rig.py": "", "Tests/T/rig.py": ""}, []
+    for rig in "ST":
+        for n in range(policy.IMPORTER_CAP + 1):
+            lane.append(f"Tests/{rig}/test_{rig.lower()}{n}.py")
+            files[lane[-1]] = f"from Tests.{rig}.rig import X\n"
+    files["Tests/S/test_push.py"] = "from Tests.S.rig import X\n"
+    root = _tree(tmp_path, files)
+    _lane_workflow(
+        root,
+        {"pr-fast-lane": ["pytest " + " ".join(lane)]},
+        other="pytest Tests/S/test_push.py",
+    )
+    own = "Tests/S/test_s0.py"
+    changes = [("M", "Tests/S/rig.py"), ("M", own), ("M", "Tests/T/rig.py")]
+    plan = policy.select_changes(changes, root)
+    assert not plan["full"] and own in plan["targets"]
+    assert len(_sampled(plan, own)) == policy.IMPORTER_CAP
+
+
+def test_a_common_name_needs_its_folder_on_the_same_line(tmp_path):
+    """Round 6 (n2): `age_v1/official.age` and an unrelated "README.md" elsewhere."""
+    readme = "Tests/Backup/fixtures/age_v1/README.md"
+    files = {
+        readme: "",
+        "Tests/Other/README.md": "",
+        "Tests/Pkg/test_distribution.py": (
+            'FIXTURE = "Tests/Backup/fixtures/age_v1/official.age"\n\n'
+            'SHIPPED = ["README.md"]\n'
+        ),
+        "Tests/Pkg/test_readme.py": 'R = FIXTURES / "age_v1" / "README.md"\n',
+        # A list of fixture folders, with the file name built elsewhere.
+        "Tests/Pkg/test_listed.py": 'FOLDERS = [\n    "age_v1",\n]\nNAME = "README.md"\n',
+    }
+    root = _tree(tmp_path, files)
+    plan = policy.select_changes([("M", readme)], root)
+    assert _sampled(plan) == {"Tests/Pkg/test_readme.py", "Tests/Pkg/test_listed.py"}
+
+
+def test_deleting_one_of_two_same_named_files_keeps_the_name_common(tmp_path):
+    """Round 6 (n3): the tree no longer has the deleted twin, but it counted."""
+    files = {
+        "Tests/P/a/LICENSE": "x",
+        "Tests/P/c/LICENSE": "z",
+        "Tests/P/test_reads_a.py": "P = 'a/LICENSE'\n",
+    }
+    root = _tree(tmp_path, files)
+    _lane_workflow(
+        root, {"pr-fast-lane": ["true"]}, other="pytest Tests/P/test_reads_a.py"
+    )
+    (root / "Tests/P/c/LICENSE").unlink()
+    plan = policy.select_changes([("D", "Tests/P/c/LICENSE")], root)
+    assert not plan["full"]
+    assert "nothing imports or names Tests/P/c/LICENSE" in plan["reason"]
+
+
+def test_a_conftest_literal_may_start_with_a_dot_directory(tmp_path):
+    """Round 6 (n4): `.codex-plugin/plugin.json` is a directory, not a `./`."""
+    data = "Tests/Pl/fixtures/codex/.codex-plugin/plugin.json"
+    files = {
+        "Tests/Pl/conftest.py": "MANIFEST = '.codex-plugin/plugin.json'\n",
+        data: "{}",
+        "Tests/Pl/test_x.py": "P = 'codex/.codex-plugin/plugin.json'\n",
+    }
+    root = _tree(tmp_path, files)
+    plan = policy.select_changes([("M", data)], root)
+    assert plan["full"] and plan["reason"] == (
+        f"Named at conftest time by Tests/Pl/conftest.py: {data}"
+    )
+
+
+def test_a_blocked_change_leads_with_its_first_laned_dependent(tmp_path):
+    """Round 6 (n5, K1): the laned dependent sorts after two unlaned ones."""
+    files = {
+        f"Tests/Own/test_f{n:02d}.py": "" for n in range(policy.LIGHT_FILE_CAP - 2)
+    }
+    files["Tests/Q/rig.py"] = ""
+    for name in ("test_a_unlaned", "test_b_unlaned", "test_c_laned", "test_push"):
+        files[f"Tests/Q/{name}.py"] = "from Tests.Q.rig import X\n"
+    root = _tree(tmp_path, files)
+    _lane_workflow(
+        root,
+        {"pr-fast-lane": ["pytest Tests/Q/test_c_laned.py"]},
+        other="pytest Tests/Q/test_push.py",
+    )
+    own = [("M", f) for f in files if f.startswith("Tests/Own/")]
+    plan = policy.select_changes([*own, ("M", "Tests/Q/rig.py")], root)
+    assert not plan["full"] and "Tests/Q/test_c_laned.py" in plan["targets"]
+
+
+def test_a_same_named_helper_without_precise_readers_needs_its_folder(tmp_path):
+    """Round 6 (n6): two guard.py fixtures do not share their bare-name readers."""
+    alpha = "Tests/Pl/fixtures/alpha/guard.py"
+    files = {
+        alpha: "",
+        "Tests/Pl/fixtures/beta/guard.py": "",
+        "Tests/Pl/test_alpha.py": 'A = FIXTURES / "alpha" / "guard.py"\n',
+        "Tests/Pl/test_beta.py": 'B = FIXTURES / "beta" / "guard.py"\n',
+    }
+    root = _tree(tmp_path, files)
+    assert _sampled(policy.select_changes([("M", alpha)], root)) == {
+        "Tests/Pl/test_alpha.py"
+    }
+
+
+def test_name_counts_come_from_tracked_files(tmp_path):
+    """Round 6 (nit): an untracked twin, such as local junk, does not count."""
+    files = {
+        "Tests/P/x/LICENSE": "x",
+        "Tests/P/y/LICENSE": "junk",
+        "Tests/P/test_any.py": "NAME = 'LICENSE'\n",
+    }
+    root = _tree(tmp_path, files)
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+
+    git("init", "-q")
+    git("add", "Tests/P/x/LICENSE", "Tests/P/test_any.py", *policy.BASE_TESTS)
+    plan = policy.select_changes([("M", "Tests/P/x/LICENSE")], root)
+    assert _sampled(plan) == {"Tests/P/test_any.py"}
 
 
 def _lane_workflow(root, lanes, other=""):

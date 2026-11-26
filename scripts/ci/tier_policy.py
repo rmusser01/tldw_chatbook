@@ -212,12 +212,15 @@ def _readers(
     path: str,
     corpus: dict[str, str],
     index: dict[str, list[str]],
-    common: bool = False,
+    common: bool | None = None,
 ) -> list[str]:
     """Files that name `path`, in corpus order: by its file name as a whole
     word, or for a `.py` by module name too (data a test reads; a helper a test
     runs by path or -m). A `.py` helper's precise readers (_names_path) win
-    when it has any; a `common` file name also needs its directory named.
+    when it has any. Otherwise a `common` file name (one other files under
+    Tests/ share; for a `.py`, None means count the corpus) needs its folder
+    named on the same line, or as a quoted literal of its own. A Tests/CI file
+    counts only if precise: its synthetic fixtures reuse real names.
     """
     target = Path(path)
     names = [target.name]
@@ -233,11 +236,26 @@ def _readers(
         for f in sorted(pool)
         if f != path and any(pattern.search(corpus[f]) for pattern in patterns)
     ]
-    if common:
-        readers = [f for f in readers if _word(target.parent.name).search(corpus[f])]
-    if path.endswith(".py"):
-        return [f for f in readers if _names_path(f, corpus[f], path)] or readers
-    return readers
+    precise = [f for f in readers if _names_path(f, corpus[f], path)]
+    if common is None:
+        common = sum(Path(f).name == target.name for f in corpus) > 1
+    if path.endswith(".py") and precise:
+        readers = precise
+    elif common:
+        # The folder on the same line as the name, or as a quoted literal of its
+        # own (a list of fixture folders); not merely inside a longer path.
+        folder = _word(target.parent.name)
+        listed = re.compile(rf"""["']{re.escape(target.parent.name)}["']""")
+        readers = [
+            f
+            for f in readers
+            if listed.search(corpus[f])
+            or any(
+                folder.search(line) and any(p.search(line) for p in patterns)
+                for line in corpus[f].splitlines()
+            )
+        ]
+    return [f for f in readers if not f.startswith("Tests/CI/") or f in precise]
 
 
 def _names_path(reader: str, text: str, path: str) -> bool:
@@ -247,7 +265,7 @@ def _names_path(reader: str, text: str, path: str) -> bool:
     target = Path(path)
     name = re.escape(target.name)
     for literal in re.findall(rf"""["']([^"'\n]*/{name})["']""", text):
-        if f"/{path}".endswith("/" + literal.lstrip("./")):
+        if f"/{path}".endswith("/" + re.sub(r"^(?:\.{1,2}/)+", "", literal)):
             return True
     if target.suffix == ".py" and _word(path[:-3].replace("/", ".")).search(text):
         return True
@@ -474,13 +492,21 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
     counts: collections.Counter[str] = collections.Counter()
 
     def name_counts() -> collections.Counter[str]:
-        """How many files under Tests/ share each file name (LICENSE, SKILL.md)."""
+        """How many tracked files under Tests/ share each file name (LICENSE,
+        SKILL.md). Outside a git checkout, the files on disk."""
         if not counts:
-            counts.update(
-                f.name
-                for f in (root / "Tests").rglob("*")
-                if "__pycache__" not in f.parts and f.is_file()
+            listed = subprocess.run(
+                ["git", "-C", str(root), "ls-files", "-z", "--", "Tests"],
+                capture_output=True,
             )
+            names = [Path(n).name for n in listed.stdout.decode().split("\0") if n]
+            if listed.returncode or not names:  # not a git checkout: what is on disk
+                names = [
+                    f.name
+                    for f in (root / "Tests").rglob("*")
+                    if "__pycache__" not in f.parts and f.is_file()
+                ]
+            counts.update(names)
         return counts
 
     def shorten(items: list[str], keep: int) -> str:
@@ -533,7 +559,8 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
         if not found and not _is_test_file(path):
             # Test data, or a helper nothing imports (a child process or a
             # spec-loaded file): the files that name it read or run it.
-            common = not path.endswith(".py") and name_counts()[Path(path).name] > 1
+            # A deleted twin still counts: the tree no longer has it.
+            common = name_counts()[Path(path).name] + (status == "D") > 1
             first = _readers(path, tests_corpus(), token_index(), common)
             loading = next(
                 (
@@ -589,9 +616,12 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
     led = 0
     for e in samples:
         lead = next((f for f in e["sample"] if laned(f)), None)
+        sampled = e["sampling"] and lead not in changed  # the PR's own file is not
         if e["blocked"] and lead and lead not in own and len(own) < LIGHT_FILE_CAP:
+            if sampled and led >= IMPORTER_CAP:
+                continue  # the 8 sampled files are spent: the check below goes broad
             own.append(lead)
-            led += e["sampling"]
+            led += sampled
     own += [f for f in changed if f not in own][: LIGHT_FILE_CAP - len(own)]
 
     def share(entries: list[dict], limit: int) -> None:

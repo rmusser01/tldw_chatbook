@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-26 15:30'
-updated_date: '2026-11-27 06:00'
+updated_date: '2026-11-27 08:30'
 labels:
   - ci
 dependencies:
@@ -41,6 +41,7 @@ These cases should run the light tier with a capped, deterministic sample of the
 - [x] #15 A helper nothing imports has the files that name it, by file name or module name, as dependents. It goes broad when a conftest-time file names it precisely. A change nothing imports or names says so.
 - [x] #16 The plan does not depend on the order of the changes, every cheap reason for the full run is found before any search, and a cut or budget that leaves a blocked change with nothing laned sends the plan broad
 - [x] #17 Names match as whole words, a common data file name needs its folder named, and a conftest literal must end the path. Helpers met during the search are read by name too. A blocked change's first laned dependent takes a slot ahead of the PR's own overflow.
+- [x] #18 A PR never samples more than 8 files (an own-file lead does not count). A Tests/CI file reads a change only when it names it precisely. Name counts come from tracked files and include a deleted twin, and the common-name rule covers `.py` helpers without precise readers.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -57,6 +58,7 @@ These cases should run the light tier with a capped, deterministic sample of the
 9. Fix round 3 (coordinator): sample only dependents a PR lane runs, keep the full run only where it reaches what light cannot, and cap sampled files at 8 per PR; re-measure the light runner on the worst selection.
 10. Fix round 4 (independent re-review I-A, M-A to M-E, nits): read unimported helpers by name; check blocked dependents after the cuts; cheap reasons first with a word index; kill the reviewer's mutations; precise conftest naming; honest timing evidence; docstrings, sorting, `Tests/CI` note and reason length.
 11. Fix round 5 (re-review m1-m6, nits): whole-word names, precise helper readers, literal conftest naming, common data names, lead slots for blocked changes, name fallback during the search, corrected notes.
+12. Fix round 6 (re-review CI gap, n1-n6, nits): precise-only Tests/CI readers, a capped lead budget, same-line folder rule, deleted twins, prefix-only `./` stripping, a K1 test, the common-name rule for `.py`, tracked-file counts.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -71,7 +73,7 @@ These cases should run the light tier with a capped, deterministic sample of the
 - **The full run only where it reaches what light cannot (rounds 3 and 4).**
   - A change goes broad when a dependent that a PR lane (or a push or nightly job) runs is one the light job cannot run (heavy, deselected, split, push-only), and nothing laned of it runs once the slots are handed out: `Only the full run reaches the laned dependents of <path>: ...`.
   - Round 4 (M-A) runs the check after the 20-file cut and the 8-file budget.
-  - Round 5 (m5): each blocked change first gets one slot for its first laned dependent, ahead even of the PR's own files. A sampled lead counts toward the 8. This covers the reviewer's K1 (laned dependent after unlaned ones), K2 (under-the-cap changes filling the slots) and K6 (the laned dependent is an own file past the cut). It replaces round 4's blocked-first sort. A laned-first sample sort I also tried was redundant with the lead (no test could tell, mutation z), so it is gone.
+  - Round 5 (m5): each blocked change first gets one slot for its first laned dependent, ahead even of the PR's own files. A sampled lead counts toward the 8, unless it is one of the PR's own changed files; once 8 are spent, a further blocked sampled change gets no lead and the after-the-cut check sends the plan broad, so a PR never samples more than 8 (round 6, n1). This covers the reviewer's K1 (laned dependent after unlaned ones), K2 (under-the-cap changes filling the slots) and K6 (the laned dependent is an own file past the cut). It replaces round 4's blocked-first sort. A laned-first sample sort I also tried was redundant with the lead (no test could tell, mutation z), so it is gone.
   - A `Tests/CI` dependent covers the change, and the note says `Tests/CI covers <path>`.
   - When no PR lane runs any dependent, the plan stays light and says so: `no PR lane runs a dependent of <path>; only the release run covers its N test files`.
 - **Import resolution (rounds 2 and 4).**
@@ -86,7 +88,10 @@ These cases should run the light tier with a capped, deterministic sample of the
   - Names match as whole words (`_word`: no letter, digit, `_` or `-` on either side), so `guard.py` is not read inside `test_focus_guard.py`, nor a folder `interop` inside `interop-synthetic-password`.
   - A `.py` helper's precise readers win over bare-name ones.
   - `_names_path` needs a quoted, directory-qualified literal that the path ends with, so `"skills/review/SKILL.md"` names only `SKILL.md` files under `skills/review/`.
-  - A data file whose name occurs more than once under `Tests/` (`LICENSE`, `SKILL.md`, `README.md`) needs its folder named as a whole word.
+  - A file whose name other tracked files under `Tests/` share (`LICENSE`, `SKILL.md`, `README.md`, the fixtures' `guard.py`) needs its folder named on the same line as the name, or as a quoted literal of its own such as a list of fixture folders (round 6, n2), when it has no precise reader; this now covers `.py` helpers too (n6).
+  - A deleted twin still counts as sharing (n3). The counts come from `git ls-files`, falling back to the files on disk only outside a git checkout, so local junk does not change them (nit).
+  - A `Tests/CI` file reads a change only when it names it precisely, because its synthetic fixtures reuse real names (round 6, CI gap).
+  - A conftest literal drops a leading `./` or `../` as a prefix, keeping a dot-directory such as `.codex-plugin/` (n4).
   - A helper met during the search that nothing imports is read by name too: `Tests/fixtures/longtail/CAPTURE.md` now runs `test_capture_local_gguf_guard.py`, which loads `capture_local.py` with `spec_from_file_location`.
   - With no test dependents at all, the note is `no test file depends on <path>`.
 - **The search.** `_importers` runs breadth first in sorted corpus order and follows every dependent. It stops once it has IMPORTER_CAP + 1 files that count: runnable files a PR lane runs. The depth sort is gone, because BFS order already puts direct importers first. Candidates come from a word index of the Tests tree (`_token_index`), built once per plan, instead of a substring scan per step (round 4, M-B).
@@ -136,10 +141,11 @@ These cases should run the light tier with a capped, deterministic sample of the
   - The 9 round-1 cases fail on f8b476384b.
   - 7 round-2 tests, and the 2 whose reason wording changed, fail on 5c83750feb.
   - The 3 new round-3 tests, and the 6 updated for lanes or reason wording, fail on 280dc7b24f.
+  - 8 round-6 tests fail on 0315213e7c. A ninth (K1) pins the lead step to kill S9.
   - 6 round-5 tests fail on ff7ec61bc0. Three more pin existing behaviour, to kill R4, R5 and R10.
   - 10 round-4 tests fail on 58421663. Three more pass on it by design: they pin behaviour that already existed, to kill the reviewer's mutations N7/N8, N10 and N16.
   - The determinism test also fails when only the corpus `sorted(` is removed.
-- **Mutations: all 36 killed on the final policy.**
+- **Mutations: all 46 killed on the final policy.**
   - a: no runnable filter.
   - b: cap before the runnable filter.
   - b2: the search counts every file.
@@ -169,6 +175,8 @@ These cases should run the light tier with a capped, deterministic sample of the
   - bb: no "no test file depends" note.
   - cc: sampled leads not counted toward the 8.
   - ee: a hyphen does not end a word.
+  - Round 6: S9 (lead = the first sample file, not the first laned one), CI (Tests/CI bare-name readers count), n1a (leads not capped at 8), n1b (an own-file lead counts toward the 8), n2 (folder anywhere in the file), n3 (a deleted twin not counted), n4 (`lstrip` instead of a prefix), n6 (no common-name rule for `.py` roots), the counts taken from disk rather than tracked files, and ff (no folder-literal form for common names).
+  - ee survived the first round-6 run, because the same-line rule already rejected the near-miss file. Its folder-like word now shares a line with the name.
   - For e, the depth sort was deleted; z (a laned-first sample sort) survived because the lead slot made it redundant, so the sort was removed.
 - **Precision and recall,** checked on the round-2 resolver against the reviewer's ground-truth regex (extended with the `from Tests.pkg import mod` form) over all 6,135 Tests files:
   - Every file parses.
@@ -211,7 +219,35 @@ These cases should run the light tier with a capped, deterministic sample of the
   - 1 light: sampled (laned only) -> broad: Only the full run reaches
   - 1 light: no PR lane runs a dependent -> light: dependents run
 
-  The one new broad is `Tests/Backup_Recovery/fixtures/age_v1/README.md`: its only reader names its folder, and only the full run reaches that reader's importers.
+  The one new broad in that round-5 run was `Tests/Backup_Recovery/fixtures/age_v1/README.md`, a false positive. An earlier version of this note called its reader real. `Tests/Packaging/test_backup_helper_distribution.py` names `.../age_v1/official.age` on one line and an unrelated `"README.md"` on another. Round 6 (n2) requires the folder and the name on the same line, so it is no longer read.
+- **The reviewer's round-6 sweep (`sweep5.py`), before (0315213e7c) and after:**
+
+| Outcome | Before (0315213e7c) | After |
+|---|---:|---:|
+| broad: Loaded by conftest.py | 34 | 34 |
+| broad: Named at conftest time | 10 | 10 |
+| broad: Only the full run reaches | 15 | 14 |
+| broad: Test file | 31 | 31 |
+| light: dependents run | 876 | 872 |
+| light: no PR lane runs a dependent | 43 | 43 |
+| light: no test file depends on it | 3 | 2 |
+| light: nothing imports or names it | 164 | 172 |
+| light: sampled (laned only) | 321 | 319 |
+| total | 1497 | 1497 |
+
+  The 8 changes:
+  - Tests/Backup_Recovery/fixtures/age_v1/README.md: broad: Only the full run reaches -> light: nothing imports or names it
+  - Tests/Plugins/fixtures/interop/codex/commands/note.md: light: sampled (laned only) -> light: nothing imports or names it
+  - Tests/Plugins/fixtures/interop/cursor/commands/note.md: light: sampled (laned only) -> light: nothing imports or names it
+  - Tests/Plugins/fixtures/interop/upstream/cursor-teaching-f5bdd682/skills/create-learning-path/SKILL.md: light: dependents run -> light: nothing imports or names it
+  - Tests/Plugins/fixtures/interop/upstream/cursor-teaching-f5bdd682/skills/run-learning-retrospective/SKILL.md: light: dependents run -> light: nothing imports or names it
+  - Tests/Plugins/fixtures/interop/upstream/provenance.json: light: dependents run -> light: nothing imports or names it
+  - Tests/Sync_Tests/__init__.py: light: dependents run -> light: nothing imports or names it
+  - Tests/UI/Embeddings/run_tests.py: light: no test file depends on it -> light: nothing imports or names it
+
+  - The first strict cut of n2 (the folder only on the same line as the name) changed 26 outcomes. It dropped real readers such as `Tests/Skills/test_skills_import.py`, which lists each `superpowers_skills` folder as its own quoted literal and builds `"SKILL.md"` elsewhere.
+  - Accepting the folder as a quoted literal of its own (but not merely inside a longer path, which is the `age_v1` case) brought the changes down to these 8.
+  - The other 7 now say `nothing imports or names <path>`; no file names their folder with the file.
 - **Cost.** A one-file plan takes about 2-3 s cold, most of it the one-off word index (2.2 s). The worst cold cases, the `Tests/Plugins/fixtures/**/guard.py` fixtures, take about 9-11 s; round 4's notes said 3.8 s, a figure measured with the index already built.
 - **Several changes at once (round 4, M-B),** cold, reviewer's `multi3`:
   - 30, 100 and 400 of the sweep's light rows took 7.1, 8.4 and 12.5 s, against 20, 55 and 134 s before. They end broad by the after-the-cut check, which runs after every search.
@@ -219,8 +255,8 @@ These cases should run the light tier with a capped, deterministic sample of the
 - **Conftest naming (round 4, M-D).** Of the 280 tracked data files under `Tests/` (guard data excluded), conftest-time files named 11 precisely in round 4, against 51 by file name only. All 11 were `SKILL.md` files; an earlier version of this note said "10 ... and one other", which was wrong. Round 5 (m2) requires the literal to end the path. 9 remain, all `SKILL.md` files under a `skills/review/` directory, which `Tests/Plugins/conftest.py`'s literal really ends; they stay broad as a conservative over-match.
 - **Hosted dev-light timing (round 4, M-E).** 33 successful "Dev smoke and affected contracts" jobs on PRs from 2026-11-24 to 2026-11-26 took 4.4 to 25.0 min (median 8.1). The largest selection was 12 files (90 targets, run 45435066859) in 9.9 min. The longest job was 25.0 min for 8 files (34 targets, run 45462985645). No hosted run has selected 20 files yet.
 - **Verification:**
-  - `Tests/CI/test_tiered_ci.py`: 133 passed.
-  - `Tests/CI -n 4`: 2050 passed, 2 skipped.
+  - `Tests/CI/test_tiered_ci.py`: 142 passed.
+  - `Tests/CI -n 4`: 2059 passed, 2 skipped.
   - `./scripts/preflight.sh` under a scratch HOME with `PYTHON=.venv/bin/python` (3.12.11): all derived-artifact checks passed.
   - These all pass: `ruff check tldw_chatbook --select F`; `ruff check scripts/ci Tests/CI/test_tiered_ci.py --select F`; `ruff format --check`; `Tests/lint/ruff_gate.py`.
 - **PR #3769** (base 434eb71f95, head 7a453d4d36, root = a detached worktree of the head) still runs **broad**, for one reason: `Schema input: tldw_chatbook/DB/assistant_generation_state.py`. With that file dropped, it runs light: 22 targets, 18 files. The reason is `8 sampled files in all; sampled 4 of 9+ importers of Tests/Chat/test_console_dispatch_recovery.py a PR lane runs, skipping 32+ no PR lane runs; sampled 4 of 9+ importers of Tests/UI/test_console_prompt_queue.py a PR lane runs, skipping 18+ no PR lane runs, skipping 1 the light job cannot run`. The UI `test_console_dispatch_recovery.py` runs both of its importers, under the cap.
