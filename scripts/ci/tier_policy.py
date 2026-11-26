@@ -243,8 +243,12 @@ def _readers(
         # `age_v1/README.md` or `"age_v1" / "README.md"`; or a list of fixture
         # folders (`"executing-plans"`) in a file naming their parent folder too.
         folder, parent = target.parent.name, target.parent.parent.name
+        # A longer path before the folder must go through the grandparent:
+        # `skills/review/SKILL.md` is not `custom/review/SKILL.md`.
+        through = rf"|(?<![\w-]){re.escape(parent)}/" if parent else ""
         beside = re.compile(
-            rf"""(?<![\w-]){re.escape(folder)}[\s'"/,)(]+{re.escape(target.name)}(?![\w-])"""
+            rf"""(?:(?<![\w./-]){through}){re.escape(folder)}[\s'"/,)(]+"""
+            rf"""{re.escape(target.name)}(?![\w-])"""
         )
         listed = re.compile(rf"""["']{re.escape(folder)}["']""")
         readers = [
@@ -258,6 +262,33 @@ def _readers(
             )
         ]
     return [f for f in readers if not f.startswith("Tests/CI/") or f in precise]
+
+
+def _folder_readers(
+    path: str,
+    corpus: dict[str, str],
+    index: dict[str, list[str]],
+    folders: collections.Counter[str],
+) -> list[str]:
+    """Files that name the folder holding `path` as a quoted literal: a test
+    that copies a fixture package by its folder (`interop_package("cursor-guard")`).
+    Only a distinctive folder counts: one with a `-` or a digit in its name,
+    below a top-level folder, that no other tracked folder shares. Measured on
+    the tree, every wider form (domain words such as `rules` or `watchlists`,
+    or ancestors further up) admitted hundreds of unrelated readers."""
+    folder = Path(path).parent.name
+    if len(Path(path).parts) < 4 or not re.search(r"[-\d]", folder):
+        return []
+    if folders[folder] > 1:
+        return []
+    literal = re.compile(rf"""["']{re.escape(folder)}["']""")
+    words = re.findall(r"\w+", folder)
+    pool = min((index.get(w, []) for w in words), key=len, default=[])
+    return [
+        f
+        for f in pool
+        if f != path and not f.startswith("Tests/CI/") and literal.search(corpus[f])
+    ]
 
 
 def _names_path(reader: str, text: str, path: str) -> bool:
@@ -498,36 +529,44 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
             index.update(_token_index(tests_corpus()))
         return index
 
-    counts: collections.Counter[str] = collections.Counter()
+    @functools.cache
+    def tracked() -> tuple[str, ...]:
+        """The tracked files under Tests/, once per plan. Outside a git checkout,
+        when git lists no Tests files (a root inside another repository), or with
+        no git binary: the files on disk."""
+        try:
+            listed = subprocess.run(
+                ["git", "-C", str(root), "ls-files", "-z", "--", "Tests"],
+                capture_output=True,
+                # A hook's GIT_DIR would point at another repository's index.
+                env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
+            )
+            output = "" if listed.returncode else listed.stdout.decode(errors="replace")
+        except OSError:  # no git binary
+            output = ""
+        paths = [n for n in output.split("\0") if n]
+        if not paths:
+            paths = [
+                str(f.relative_to(root))
+                for f in (root / "Tests").rglob("*")
+                if "__pycache__" not in f.parts and f.is_file()
+            ]
+        return tuple(paths)
 
-    def name_counts() -> collections.Counter[str]:
-        """How many tracked files under Tests/ share each file name (LICENSE,
-        SKILL.md), once per plan. Outside a git checkout, when git lists no
-        Tests files (a root inside another repository), or with no git binary,
-        the files on disk."""
-        if not counts:
-            try:
-                listed = subprocess.run(
-                    ["git", "-C", str(root), "ls-files", "-z", "--", "Tests"],
-                    capture_output=True,
-                )
-                output = (
-                    listed.stdout.decode(errors="replace")
-                    if not listed.returncode
-                    else ""
-                )
-            except OSError:  # no git binary
-                output = ""
-            names = [Path(n).name for n in output.split("\0") if n]
-            # Outside a git checkout, or git lists no Tests files: what is on disk.
-            if not names:
-                names = [
-                    f.name
-                    for f in (root / "Tests").rglob("*")
-                    if "__pycache__" not in f.parts and f.is_file()
-                ]
-            counts.update(names)
-        return counts
+    deleted = collections.Counter(Path(p).name for s, p in changes if s == "D")
+
+    @functools.cache
+    def shared() -> collections.Counter[str]:
+        """How many files share each file name (LICENSE, SKILL.md): the tracked
+        ones, plus those the PR deletes, which the tree no longer has."""
+        return collections.Counter(Path(n).name for n in tracked()) + deleted
+
+    @functools.cache
+    def folders() -> collections.Counter[str]:
+        """How many tracked folders under Tests/ share each folder name."""
+        return collections.Counter(
+            Path(d).name for d in {str(Path(n).parent) for n in tracked()}
+        )
 
     def shorten(items: list[str], keep: int) -> str:
         """At most `keep` items, so a large PR's reason stays readable."""
@@ -576,13 +615,12 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
         found = []
         if path.endswith(".py"):
             found = _importers(
-                path, tests_corpus(), sampleable, None, token_index(), name_counts()
+                path, tests_corpus(), sampleable, None, token_index(), shared()
             )
         if not found and not _is_test_file(path):
             # Test data, or a helper nothing imports (a child process or a
             # spec-loaded file): the files that name it read or run it.
-            # A deleted twin still counts: the tree no longer has it.
-            common = name_counts()[Path(path).name] + (status == "D") > 1
+            common = shared()[Path(path).name] > 1
             first = _readers(path, tests_corpus(), token_index(), common)
             loading = next(
                 (
@@ -595,6 +633,8 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
             )
             if loading:
                 return broad(f"Named at conftest time by {loading}: {path}")
+            if not first:  # a fixture a test copies by its folder
+                first = _folder_readers(path, tests_corpus(), token_index(), folders())
             if first:
                 found = _importers(
                     path,
@@ -602,7 +642,7 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
                     sampleable,
                     first,
                     token_index(),
-                    name_counts(),
+                    shared(),
                 )
         # Run the files that depend on it. With more runnable ones than
         # IMPORTER_CAP, sample only those a PR lane runs (a subset of the full

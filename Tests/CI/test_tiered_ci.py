@@ -1463,6 +1463,14 @@ def test_a_conftest_literal_must_end_the_data_path(tmp_path):
     assert policy.select_changes([("M", under)], root)["full"]
     plan = policy.select_changes([("M", beside)], root)
     assert not plan["full"] and _sampled(plan) == {"Tests/Pl/test_reader.py"}
+    # A unique name the conftest writes under another folder: not this file.
+    golden = "Tests/Pl/fixtures/alpha/golden_unique.json"
+    (root / golden).parent.mkdir(parents=True)
+    (root / golden).write_text("{}")
+    (root / "Tests/Pl/conftest.py").write_text(
+        'OUT = "other/alpha/golden_unique.json"\n'
+    )
+    assert not policy.select_changes([("M", golden)], root)["full"]
 
 
 def test_a_common_data_file_name_needs_its_directory_named(tmp_path):
@@ -1783,6 +1791,91 @@ def test_name_counts_fall_back_to_disk_without_a_git_binary(tmp_path, monkeypatc
     monkeypatch.setattr(policy.subprocess, "run", no_git)
     plan = policy.select_changes([("M", "Tests/P/x/LICENSE")], root)
     assert not plan["full"] and _sampled(plan) == set()
+
+
+def test_a_longer_path_before_the_folder_must_go_through_its_parent(tmp_path):
+    """Round 8 (m1, U3): `skills/review/SKILL.md` is not `custom/review/SKILL.md`."""
+    custom = "Tests/P/fixtures/custom/review/SKILL.md"
+    files = {
+        custom: "",
+        "Tests/P/fixtures/picked/review/SKILL.md": "",
+        "Tests/P/test_skills.py": 'FILE = package / "skills/review/SKILL.md"\n',
+        "Tests/P/test_custom.py": 'FILE = FIXTURES / "custom/review/SKILL.md"\n',
+        # Through the comma alone: no other clause admits it.
+        "Tests/P/test_joined.py": 'FILE = os.path.join(FIXTURES, "review", "SKILL.md")\n',
+    }
+    root = _tree(tmp_path, files)
+    assert _sampled(policy.select_changes([("M", custom)], root)) == {
+        "Tests/P/test_custom.py",
+        "Tests/P/test_joined.py",
+    }
+
+
+def test_an_inherited_git_dir_does_not_point_at_another_index(tmp_path, monkeypatch):
+    """Round 8 (m2): hooks export GIT_DIR; the counts must come from the root."""
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "Tests/P/x").mkdir(parents=True)
+    (other / "Tests/P/x/LICENSE").write_text("x")
+    subprocess.run(["git", "-C", str(other), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(other), "add", "Tests"], check=True)
+    root = _license_twins(tmp_path / "root")
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    plan = policy.select_changes([("M", "Tests/P/x/LICENSE")], root)
+    assert not plan["full"] and _sampled(plan) == set()  # two on disk: common
+
+
+def test_a_twin_the_pr_deletes_still_counts_for_a_helper_met_in_the_search(tmp_path):
+    """Round 8 (deleted twins, U2): beta/guard.py is deleted; alpha's stays common."""
+    files = {
+        "Tests/Z/lib.py": "",
+        "Tests/Pl/fixtures/alpha/guard.py": "from Tests.Z.lib import go\n",
+        "Tests/Pl/test_alpha.py": 'A = FIXTURES / "alpha" / "guard.py"\n',
+        "Tests/Pl/test_bare.py": 'NAME = "guard.py"\n',
+    }
+    root = _tree(tmp_path, files)
+    changes = [("M", "Tests/Z/lib.py"), ("D", "Tests/Pl/fixtures/beta/guard.py")]
+    assert _sampled(policy.select_changes(changes, root)) == {"Tests/Pl/test_alpha.py"}
+
+
+def test_a_fixture_package_copied_by_its_folder_has_the_copying_tests(tmp_path):
+    """Round 8 (fixture folders): only a distinctive folder name counts."""
+    files = {
+        "Tests/Pl/fixtures/interop/pack-1/guard.py": "",
+        "Tests/Pl/test_inspect.py": 'PACKAGE = interop_package("pack-1")\n',
+        "Tests/Pl/fixtures/rules/always.mdc": "",
+        "Tests/Pl/test_rules.py": 'KIND = "rules"\n',
+        "Tests/Pl/fixtures/a/pack-2/x.json": "",
+        "Tests/Pl/fixtures/b/pack-2/y.json": "",
+        "Tests/Pl/test_pack_2.py": 'P = "pack-2"\n',
+    }
+    root = _tree(tmp_path, files)
+    plan = policy.select_changes(
+        [("M", "Tests/Pl/fixtures/interop/pack-1/guard.py")], root
+    )
+    assert _sampled(plan) == {"Tests/Pl/test_inspect.py"}
+    for generic in (
+        "Tests/Pl/fixtures/rules/always.mdc",
+        "Tests/Pl/fixtures/a/pack-2/x.json",
+    ):
+        plan = policy.select_changes([("M", generic)], root)
+        assert _sampled(plan) == set() and "nothing imports or names" in plan["reason"]
+    # Built from parts: a literal of the whole path here would make this file a
+    # precise reader, and Tests/CI would then cover the change itself.
+    real = "/".join(
+        [
+            "Tests",
+            "Plugins",
+            "fixtures",
+            "interop",
+            "cursor" + "-guard",
+            "guard" + ".py",
+        ]
+    )
+    plan = policy.select_changes([("M", real)], ROOT)
+    # Its copying tests (test_retained_inspection.py and two more) are its readers:
+    # over the cap, so only the laned dependents run, but it is no longer orphaned.
+    assert f"readers of {real} a PR lane runs" in plan["reason"]
 
 
 def _lane_workflow(root, lanes, other=""):
