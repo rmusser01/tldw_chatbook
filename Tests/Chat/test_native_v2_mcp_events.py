@@ -1172,7 +1172,18 @@ async def test_original_reaper_and_done_callback_return_the_same_hold_once(
         job = next(iter(engine.mcp_executor._jobs))
         pending.cancel()
         await asyncio.gather(pending, return_exceptions=True)
-        await until(lambda: deferred and job.pending_release and job.task.done())
+        # Count only once every other holder has returned its callback: the
+        # worker thread, and the engine delivery that wraps the job in
+        # target.activate() and is resumed after job.task finishes. Under load
+        # that delivery could still be inside activate(), so the count read 2
+        # (start + activate, the worker's already returned).
+        await until(
+            lambda: deferred
+            and job.pending_release
+            and job.task.done()
+            and job.worker.done()
+            and not any(d.job is job for d in engine._deliveries)
+        )
         assert job.native_target._callbacks == 1
         assert not job.bridges[0].completed.is_set()
         if ordering == "done_first":
