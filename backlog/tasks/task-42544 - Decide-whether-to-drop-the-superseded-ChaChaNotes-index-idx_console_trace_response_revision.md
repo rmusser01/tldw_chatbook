@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-24 23:44
-updated_date: 2026-11-26 16:00
+updated_date: 2026-11-26 16:40
 labels:
 - follow-up
 - db
@@ -97,9 +97,20 @@ Files: tldw_chatbook/DB/{ChaChaNotes_DB,recovery_core,recovery_core_schema,recov
 **Review round (2026-11-26)**
 - **`dropped` ignored order (Important).** The first check passed any name that some DB source drops, so a dropped-then-re-created live index could skip its plan pin. The reviewer marked `idx_canvas_revisions_canvas_sequence` (v81->v82 drops and re-creates it) `dropped`, and `main()` returned 0.
   - Now only versioned migration scripts count, ordered by `<to>` and then by position in the file. The last `DROP INDEX` must follow the last `CREATE INDEX`, and no non-recovery source (a fresh-schema `.py` string, an unversioned `.sql`) may still create the name. `DB/recovery_*.py` catalogs do not count.
-  - Replaying the reviewer's patch now gives 1. The checker tests cover the review's `DROP INDEX x; CREATE INDEX x` step, a same-step rebuild, a later re-create, a fresh-schema string and a recovery catalog. A real-tree test marks every name some step drops as `dropped`; only the already-dropped row passes, and both canvas indexes are refused. All are red on the previous checker.
+  - Replaying the reviewer's patch now gives 1. The checker tests cover the review's `DROP INDEX x; CREATE INDEX x` step, a same-step rebuild, a later re-create, a fresh-schema string and a recovery catalog. A real-tree test marks every name some step drops as `dropped`; only the already-dropped row passes, and both canvas indexes are refused. On the previous checker 7 failed and 1 passed: the recovery-catalog test is a positive control and passes there too.
 - **Phantom `IF` (Minor).** `_DROP_INDEX` recorded an index `IF` from `Prompts_DB.py`'s f-string drop. A `(?!IF\b)` guard removes it. A test pins both points: no phantom name, and an f-string drop cannot satisfy a `dropped` row.
 - **sqlite_master-only bookkeeping (Minor).** Three new DENY cases: DELETE on `console_trace_response_links`, DELETE on `messages`, and a `rootpage` UPDATE on `console_trace_response_links`. All three went red with the gate's `first == "sqlite_master"` guards removed.
 - **Fourth read (Minor).** `ConsoleTraceService._completed_replay_values` also reads response links by `semantic_revision_id`. The plan test now runs it through the plan cursor; it stops at `completed_replay_terminal` after its one statement. It plans through the exact index on fresh and v88-upgraded files. The test docstring and database-layer.md name the four reads: the test's own locator constant and three product methods.
 - **Filed:** TASK-42579 (most of `test_publication_crashes.py` is on no PR lane) and TASK-42580 (`test_core_owners.py` is on no PR lane). Both files are green on dev.
+
+**Re-review (2026-11-26)**
+- **Families (Important).** Steps were ordered across database families: a create in `aaa_v2_to_v3` with a drop in `bbb_v2_to_v3` returned 0, and so did `chachanotes_v10_to_v11` with `workspaces_v11_to_v12`. Index names repeat across databases (for example `idx_sync_log_ts`), and step numbers overlap.
+  - The family now comes from the filename (`^(.*?)_v<n>_to_v<n>`). Every family that creates the name must drop it later in the same family. A drop in a family that never creates the name is ignored.
+  - A create and a drop at the same step in different files fail closed.
+  - Tests: cases A and B, one family dropping while another still creates, the same step in two files, and a positive case with two families plus an ignored foreign drop. Cases A and B and the one-family case were red on the previous checker; the two-file case was already refused there.
+- **Comment stripping (Minor).** `--` was stripped before `/* */`, so a `/*----` banner lost its `----*/` close and the block pass swallowed code up to the next `*/`. That hid three ChaChaNotes_DB.py creations: `idx_convkw_kw`, `idx_collkw_kw` and `idx_notekw_kw`.
+  - Both kinds are now stripped in one left-to-right pass. The declared set is unchanged at 342 names, with no new census rows; those three names only gain ChaChaNotes_DB.py as a source. The checker reports OK.
+  - Case H (a re-create after such a banner) is a test, red on the previous checker.
+- **Recovery exemption.** The filename pattern is replaced by `_RECOVERY_CATALOGS`, the 9 current `DB/recovery_*.py` modules listed by path. A test shows a new `recovery_repair.py` that creates the name fails the row; it was red before.
+- **TASK-42580** now says the other laned tests already catch a missed version bump, step or sandbox admission. `test_core_owners.py` alone pins the exact policy shape.
 
