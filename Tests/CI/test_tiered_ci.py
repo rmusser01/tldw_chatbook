@@ -262,13 +262,72 @@ def test_a_shared_helper_samples_its_importers(tmp_path):
     ]
 
 
+_CONFTEST_TREE = {
+    "Tests/conftest.py": (
+        "from Tests import real_guard as _real_guard, net_guard  # noqa: F401\n"
+        "from Tests import (\n    paren_one,\n    paren_two,\n)\n"
+        "import Tests.chain.start\n"
+        "from tldw_chatbook.Utils import other_rig\n"
+        "\n\ndef pytest_configure(config):\n    from Tests.fixtures import doubles\n"
+    ),
+    "Tests/chain/start.py": "from Tests.chain.middle import step\n",
+    "Tests/chain/middle.py": "import Tests.chain.end as end\n",
+    "Tests/UI/deep/conftest.py": (
+        "from Tests.UI.deep.rig import thing\n\n\ndef recorder():\n"
+        "    from Tests.Chat.test_loaded import Recorder\n"
+    ),
+    "Tests/UI/test_other.py": "from Tests.UI.other_rig import x\n",
+}
+
+
 @pytest.mark.parametrize(
-    "path", ["Tests/private_profile.py", "Tests/real_profile_guard.py"]
+    "path",
+    [
+        "Tests/real_guard.py",  # `from Tests import a as b, c`
+        "Tests/net_guard.py",
+        "Tests/paren_two.py",  # a parenthesized list
+        "Tests/chain/end.py",  # reached only through two other helpers
+        "Tests/fixtures/doubles.py",  # an import indented inside a hook
+        "Tests/UI/deep/rig.py",  # a nested conftest's helper
+        "Tests/Chat/test_loaded.py",  # a test module a conftest imports
+    ],
 )
-def test_the_profile_harness_and_conftest_still_go_broad(path, tmp_path):
-    """TASK-42626: they keep test runs off the user's real profile."""
-    plan = policy.select_changes([("M", path)], ROOT)
-    assert plan["full"] and plan["reason"] == f"Profile isolation harness: {path}"
+def test_anything_a_conftest_loads_goes_broad(path, tmp_path):
+    """Fix round 1: it starts every suite below the conftest, as the conftest does."""
+    files = {**_CONFTEST_TREE, path: ""}
+    files.update({f: "" for f in ("Tests/UI/other_rig.py", "Tests/chain/end.py")})
+    root = _tree(tmp_path, files)
+    for status in ("M", "D"):
+        if status == "D":
+            (root / path).unlink()
+        plan = policy.select_changes([(status, path)], root)
+        assert plan["full"] and plan["reason"] == f"Loaded by conftest.py: {path}"
+    # A helper only tests import, named like a non-Tests import, stays light.
+    assert not policy.select_changes([("M", "Tests/UI/other_rig.py")], root)["full"]
+
+
+def test_the_real_conftests_load_the_profile_harness_and_shared_doubles():
+    """Fix round 1: replaces the hand list of the two profile-harness files."""
+    plan = policy.select_changes([("M", "Tests/network_guard.py")], ROOT)
+    assert plan["full"] and plan["reason"] == (
+        "Loaded by conftest.py: Tests/network_guard.py"
+    )
+    corpus = {
+        str(f.relative_to(ROOT)): f.read_text(errors="replace")
+        for f in (ROOT / "Tests").rglob("*.py")
+    }
+    assert {
+        "Tests/private_profile.py",
+        "Tests/real_profile_guard.py",
+        "Tests/textual_test_harness.py",
+        "Tests/fixtures/required_doubles.py",
+        "Tests/Backup_Recovery/config_test_support.py",
+        "Tests/Chat/test_console_skill_substitution.py",
+    } <= policy._conftest_loaded(corpus)
+    assert "Tests/Chat/hooks_v2_owned_rig.py" not in policy._conftest_loaded(corpus)
+
+
+def test_conftest_files_still_go_broad(tmp_path):
     for conftest in ("Tests/conftest.py", "Tests/Chat/deep/conftest.py"):
         assert policy.select_changes([("M", conftest)], _tree(tmp_path, []))["full"]
 
@@ -869,6 +928,21 @@ def test_schema_ddl_is_matched_case_sensitively(tmp_path):
     (feature / "dictionary.py").write_text('SQL = "CREATE TRIGGER t AFTER INSERT"\n')
     (feature / "notes.py").write_text("# we create table views for the user\n")
     for name, full in [("keys.py", True), ("dictionary.py", True), ("notes.py", False)]:
+        plan = policy.select_changes([("M", f"tldw_chatbook/Feature/{name}")], root)
+        assert plan["full"] is full, name
+
+
+def test_only_the_pragma_versions_a_schema_not_a_python_name(tmp_path):
+    """Fix round 1: #3769's `user_version` parameter is not schema code."""
+    root = _tree(tmp_path, [])
+    feature = root / "tldw_chatbook/Feature"
+    feature.mkdir(parents=True)
+    (feature / "repository.py").write_text(
+        "def settle(row, user_version: int):\n"
+        '    return row["current_user_version"] == user_version\n'
+    )
+    (feature / "store.py").write_text('conn.execute("PRAGMA user_version = 3")\n')
+    for name, full in [("repository.py", False), ("store.py", True)]:
         plan = policy.select_changes([("M", f"tldw_chatbook/Feature/{name}")], root)
         assert plan["full"] is full, name
 

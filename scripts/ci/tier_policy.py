@@ -4,7 +4,8 @@ Owner decision (TASK-42521, 2026-11-23): a dev PR runs sanity checks (preflight,
 Tests/CI, the smoke set, its own changed test files and its subsystem's smoke
 tests) and merges; the nightly full run on dev and the release run into main
 are the broad gates. Only inputs that can break CI itself, or the schema, keep
-the full run on the PR. A widely imported test module or helper, or a selection
+the full run on the PR; so does anything a conftest.py loads, which starts
+every suite below it. A widely imported test module or helper, or a selection
 over the light job's cap, runs a capped, deterministic sample instead
 (TASK-42626); the nightly and release runs cover the rest.
 """
@@ -44,8 +45,6 @@ FULL_NAMES = {"conftest.py", "pytest.ini", ".pytest.ini", "tox.ini", "setup.cfg"
 SCHEMA_DIRS = {"DB", "db", "migrations"}
 # Data read by the guard and budget suites (allowlists, snapshots).
 GUARD_DATA_PREFIXES = ("Tests/Architecture/", "Tests/Performance/")
-# The harness that keeps test runs off the user's real profile.
-PROFILE_HARNESS = {"Tests/private_profile.py", "Tests/real_profile_guard.py"}
 # Files no PR lane runs whole: too slow for the light job's cap, or carrying
 # deselected known failures (scripts/library_shell_push_deselect.txt).
 HEAVY_TEST_FILES = {
@@ -59,10 +58,17 @@ IMPORTER_CAP = 8
 # readers): more would not fit the light job's 30-minute cap run one by one.
 LIGHT_FILE_CAP = 20
 # Application code that creates, alters or versions its own SQLite schema
-# (uppercase DDL, as this codebase writes it; case-sensitive to skip prose).
+# (uppercase DDL and PRAGMA, as this codebase writes them; case-sensitive to
+# skip prose, and PRAGMA-only so a Python name `user_version` does not count).
 SCHEMA_TEXT = re.compile(
     r"\b(?:ALTER TABLE|CREATE (?:TABLE|UNIQUE INDEX|INDEX|TRIGGER|VIEW|VIRTUAL TABLE))\b"
-    r"|\buser_version\b"
+    r"|\bPRAGMA[ \t]+user_version\b"
+)
+# `from Tests.x import a, (b)` and `import Tests.x`, at any indent.
+TESTS_IMPORT = re.compile(
+    r"^[ \t]*(?:from[ \t]+(Tests(?:\.\w+)*)[ \t]+import[ \t]+(\([^)]*\)|[^\n]*)"
+    r"|import[ \t]+(Tests(?:\.\w+)*))",
+    re.M,
 )
 # The PR lanes: the jobs the required check needs, and the UI lane's census.
 LANE_WORKFLOW = ".github/workflows/derived-artifacts.yml"
@@ -94,8 +100,6 @@ def _full_reason(status: str, path: str) -> str | None:
         return f"CI, build or test configuration: {path}"
     if parts[0] == "tldw_chatbook" and SCHEMA_DIRS & set(parts[1:-1]):
         return f"Schema input: {path}"
-    if path in PROFILE_HARNESS:
-        return f"Profile isolation harness: {path}"
     if path.startswith(GUARD_DATA_PREFIXES) and not path.endswith(".py"):
         return f"Guard or budget data: {path}"
     if path in HEAVY_TEST_FILES:
@@ -139,6 +143,34 @@ def _importers(path: str, corpus: dict[str, str]) -> dict[str, int]:
                 if len(found) > IMPORTER_CAP:
                     return found
     return found
+
+
+def _conftest_loaded(corpus: dict[str, str]) -> set[str]:
+    """Paths a conftest.py loads, transitively through its `Tests.*` imports.
+
+    They run at the start of every suite below that conftest, as it does. The
+    set includes missing paths, so deleting one the conftest still loads counts.
+    Names after `import` that are not modules add paths no file has; harmless.
+    """
+    # ponytail: relative imports are not followed; no conftest-loaded module
+    # uses one (2026-11-26). Resolve `from .x import y` here if one ever does.
+    loaded: set[str] = set()
+    frontier = [name for name in corpus if Path(name).name == "conftest.py"]
+    while frontier:
+        for module, names, plain in TESTS_IMPORT.findall(corpus[frontier.pop()]):
+            for dotted in [
+                plain or module,
+                *(f"{module}.{n}" for n in re.findall(r"\w+", names)),
+            ]:
+                parts = dotted.split(".")
+                for end in range(1, len(parts) + 1):
+                    base = "/".join(parts[:end])
+                    for path in (f"{base}.py", f"{base}/__init__.py"):
+                        if path not in loaded:
+                            loaded.add(path)
+                            if path in corpus:
+                                frontier.append(path)
+    return loaded
 
 
 def _run_words(step: str) -> list[str]:
@@ -224,6 +256,13 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
             )
         return corpus
 
+    loaded: set[str] = set()
+
+    def conftest_loaded() -> set[str]:
+        if not loaded:
+            loaded.update(_conftest_loaded(tests_corpus()))
+        return loaded
+
     steps, deselected, other = _lanes(root)
     lane_dirs = {
         t
@@ -268,6 +307,8 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
         if reason:
             return broad(reason)
         if path.startswith("Tests/") and path.endswith(".py"):
+            if path in conftest_loaded():
+                return broad(f"Loaded by conftest.py: {path}")
             # A test module or shared helper, changed or deleted: sample the files
             # importing it. One the light job cannot run is skipped, not broad.
             if (

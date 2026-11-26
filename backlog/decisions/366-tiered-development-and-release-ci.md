@@ -84,11 +84,13 @@ The sample is deterministic: the same diff and tree give the same targets on eve
 These stay broad, unchanged:
 - `.github/`, `scripts/ci/`, `packages/` and the build files;
 - `conftest.py`, `pytest.ini`, `.pytest.ini`, `tox.ini` and `setup.cfg` at any depth;
-- schema inputs and schema code;
+- schema inputs, and schema code (see the narrowing below);
 - guard and budget data under `Tests/Architecture/` and `Tests/Performance/`;
 - the PR's own changed test files that no lane runs whole, or that a lane deselects nodes from, splits across steps or runs only on push or nightly;
 - removed application files, structural statuses, an empty change range and `ci:full`.
 
-The profile isolation harness, `Tests/private_profile.py` and `Tests/real_profile_guard.py`, also stays broad (`Profile isolation harness: <path>`). It keeps test runs off the user's real profile.
+Anything a `conftest.py` loads also stays broad (`Loaded by conftest.py: <path>`). It runs at the start of every suite below that conftest, exactly as an edit to the conftest would. The set is derived, not listed by hand: the `Tests.*` imports of every `Tests/**/conftest.py`, followed transitively through the modules they reach. Module-level imports and imports indented inside functions both count. It includes the profile isolation harness (`Tests/private_profile.py`, `Tests/real_profile_guard.py`), `Tests/network_guard.py`, the shared doubles and Textual harness, and `Tests/Chat/test_console_skill_substitution.py`, a test module a conftest imports. Deleting a path a conftest still loads goes broad too.
 
-**Cost accepted.** A break in an importer the sample did not pick can land on dev. The 09:17 UTC nightly or the release run catches it, attributed across one day's merges. A helper that a `conftest.py` imports, such as `Tests/network_guard.py`, is sampled like any other helper; the suites under that conftest run in full only at nightly and release. `ci:full` remains the opt-in for a PR that should run everything.
+Schema code is narrowed: `user_version` counts only in the `PRAGMA user_version` form, as every real use in `tldw_chatbook/` writes it. A Python name `user_version` no longer sends a module broad. The old pattern did that to `tldw_chatbook/Chat/console_dispatch_repository.py` in #3769, which has no DDL.
+
+**Cost accepted.** A break in an importer the sample did not pick can land on dev. The 09:17 UTC nightly or the release run catches it, attributed across one day's merges. `ci:full` remains the opt-in for a PR that should run everything.

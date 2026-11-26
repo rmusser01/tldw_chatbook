@@ -1,14 +1,15 @@
 # Development, nightly and release CI (TASK-41564 / ADR-366)
 
-This policy is **prepared, not activated**. `CI_TIERED_ENABLED` must remain unset
-until the rollout checks below pass. Execution uses GitHub-hosted runners. The owner
-canceled the entire self-hosted CI effort and benchmark on 2026-11-17.
+This policy is **active**: the owner set `CI_TIERED_ENABLED=true` on 2026-11-23
+(TASK-42521). Unset it to restore broad dev PR gating. Execution uses GitHub-hosted
+runners. The owner canceled the entire self-hosted CI effort and benchmark on
+2026-11-17.
 
 | Event | Checks | Blocking result |
 | --- | --- | --- |
 | PR into dev, opt-in unset | Existing artifact preflight and broad PR regression census | Existing Derived artifacts context |
-| PR into dev, opt-in true | Preflight, CI contracts, core smoke, representative checks for changed Chat/UI/Widgets/Notes/CSS subsystems | Same context, fail-closed |
-| High-risk or unclassified dev PR | Existing broad census; no test command removed | Same context |
+| PR into dev, opt-in true | Preflight, CI contracts, core smoke, the PR's changed test files with a capped sample of their importers, and smoke nodes for changed Chat/UI/Widgets/Notes/CSS sources | Same context, fail-closed |
+| Dev PR changing CI, build, pytest-config, conftest-loaded or schema inputs, or labelled `ci:full` | Existing broad census; no test command removed | Same context |
 | Protected dev push, opt-in true | Preflight, CI contracts and core smoke on the merged tree | Push result; does not rerun every PR matrix |
 | Nightly, changed dev | Existing broad census, all smoke selections, Library shell matrix and Backup_Recovery owner suites | Nightly regression **workflow conclusion**, including Library shell |
 | PR into main | Broad regression, comprehensive core/UI suite, native lease contracts, package build and installed-distribution checks | Stable Derived context and release-only qualification verdict |
@@ -26,26 +27,43 @@ all transitive effects of a changed module. Most coverage is intentionally night
 
 ## Selection and failure behavior
 
-`scripts/ci/tier_policy.py` is the single selector. It compares the PR base SHA to
-the tested merge SHA with `git diff --no-renames --name-status -z`. New source
-files, removals, moves, changes outside the explicit subsystem map, dependencies,
-CI inputs, the profile isolation harness, DB/backup/runtime boundaries, and
-authority/storage-related path names retain broad coverage. Docs and backlog documents remain broad;
-only task bookkeeping has an explicit exception, protected by artifact checks.
+`scripts/ci/tier_policy.py` is the single selector; ADR-366 and its amendments
+hold the full rule. It compares the PR base SHA to the tested merge SHA with
+`git diff --no-renames --name-status -z`. A dev PR keeps the broad run when it
+changes:
+
+- CI, build or pytest configuration: `.github/`, `scripts/ci/`, `packages/`,
+  `pyproject.toml`, `requirements*.txt`, and `conftest.py` or `pytest.ini` at any
+  depth;
+- anything a `conftest.py` loads, transitively, such as the profile harness and
+  the shared doubles;
+- schema inputs (`DB`, `db` or `migrations` directories) or application code with
+  uppercase DDL or `PRAGMA user_version`;
+- guard and budget data under `Tests/Architecture/` or `Tests/Performance/`;
+- its own test files that no PR lane runs whole, or that a lane deselects nodes
+  from, splits across steps or runs only on push or nightly;
+- a removed or moved application file, or a type-changed or unmerged path;
+- or when it carries `ci:full`.
+
+Everything else runs light:
+- preflight, `Tests/CI`, the smoke set and a touched subsystem's smoke nodes;
+- the PR's changed test files;
+- a capped, deterministic sample of the test files that import or read what
+  changed: at most 8 per changed module and 20 in all, the PR's own files first.
+
+Docs and backlog changes run preflight and smoke only. The nightly and release
+runs are the broad gates.
+
 A malformed range fails preflight. Empty diffs select broad. Missing selected
 tests, missing outputs, skipped expected jobs and cancellations cannot turn the
-required aggregate green. No required workflow uses path filters. Required preflight executes the pinned
-Ruff F gate and debt ratchet; the standalone lint workflow remains available.
+required aggregate green. No required workflow uses path filters. Required
+preflight executes the pinned Ruff F gate and debt ratchet; the standalone lint
+workflow remains available.
 
 For semantic high-risk changes whose filenames do not reveal their effect,
 apply `ci:full` before the next push or reopen the PR after applying it. The label
 forces broad coverage when the next normal PR event runs; applying a label alone
 does not start another run. Do not dispatch a gate to satisfy PR protection.
-Unknown/new subsystems stay broad until their smoke selection is reviewed and
-qualified. A CI policy, pytest-config or profile-harness change itself always takes
-the broad path. A widely imported test module or helper, or a selection over the
-light job's cap, runs a capped, deterministic sample instead (ADR-366, TASK-42626
-amendment).
 
 ## Nightly and immutable evidence
 
@@ -66,6 +84,9 @@ selects `ubuntu-latest`, including fork PRs. Existing broad workflows select
 their hosted defaults with `CI_TEST_RUNNER` and `CI_CONTROL_RUNNER` unset.
 
 ## Rollout (do not skip steps)
+
+The owner set the variable on 2026-11-23 (TASK-42521). These steps remain as the
+planned activation record and the checklist for re-enabling it after a rollback.
 
 1. Rebase only this policy onto current dev and retain a successful hosted full
    PR gate as the timing baseline. The earlier #3529 result is historical
