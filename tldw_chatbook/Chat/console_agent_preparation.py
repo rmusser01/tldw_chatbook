@@ -4,6 +4,14 @@ from __future__ import annotations
 
 from . import console_agent_bridge as native_host
 
+# ADR-337 records no fallback call for a spawned child, which keeps one chain
+# and segment, so under Capture On each preset alternate is a visible skip
+# (TASK-42556) instead of a call the trace refuses once it is reserved.
+PRESET_FALLBACK_NOT_CAPTURED = (
+    "Capture is on, and a sub-agent's fallback cannot be traced; turn Capture "
+    "off for this chat to let sub-agents fall back"
+)
+
 
 @native_host.contextlib.contextmanager
 def _prepare_native_reply(
@@ -2320,6 +2328,11 @@ def _prepare_native_reply(
         ),
         propagate_trace_call_persistence_errors=(
             propagate_trace_call_persistence_errors
+        ),
+        preset_fallback_refusal=(
+            PRESET_FALLBACK_NOT_CAPTURED
+            if capture_mode is native_host.ConsoleTraceCaptureMode.CAPTURE_ON
+            else None
         ),
     )
     # PR2b Task 1: publish BEFORE `run_turn` is called (below) -- see

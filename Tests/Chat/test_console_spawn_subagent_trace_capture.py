@@ -39,6 +39,7 @@ ENDPOINT = {
     "models": [MODEL],
 }
 DRAFT = "Delegate a task, then finish."
+FALLBACK_MODEL = "synthetic-qwen-fallback"
 MIXIN = "MIXIN-BODY: answer as a pirate."
 
 
@@ -115,9 +116,14 @@ async def _spawn_turn(
     fenced_spawn=False,
     parent_openai=False,
     trace_view=False,
+    preset_fallback=False,
 ) -> SimpleNamespace:
     """Send one turn (Capture On unless ``capture`` says otherwise) whose model
-    spawns a child; return the facts."""
+    spawns a child; return the facts.
+
+    ``preset_fallback``: the child runs the ``worker`` preset, whose own
+    model is unavailable (404 ``model_not_found``) and whose
+    ``fallback_models`` names FALLBACK_MODEL (ADR-200, TASK-42556)."""
     import httpx
     import urllib3
 
@@ -135,14 +141,17 @@ async def _spawn_turn(
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
     facts = SimpleNamespace(wire=[], refusals=[], boundary_errors=[], tools=[])
-    facts.applied, facts.persisted, facts.sent = [], [], []
+    facts.applied, facts.persisted, facts.sent, facts.models = [], [], [], []
     # The child re-resolves the inherited custom endpoint from app config,
     # which conftest redirects into the test root; refuse outside it.
     assert config.get_cli_config_path().is_relative_to(
         Path(os.environ["TLDW_TEST_CONFIG_ROOT"])
     )
+    endpoint = (
+        {**ENDPOINT, "models": [MODEL, FALLBACK_MODEL]} if preset_fallback else ENDPOINT
+    )
     old_endpoint = config.get_cli_setting("custom_endpoints", "spawntrace", {})
-    config.save_setting_to_cli_config("custom_endpoints", "spawntrace", ENDPOINT)
+    config.save_setting_to_cli_config("custom_endpoints", "spawntrace", endpoint)
     original_preparation = console_chat_controller.ConsoleTurnPreparation
 
     def capture_on(**kwargs):
@@ -274,6 +283,7 @@ async def _spawn_turn(
         roles = [message["role"] for message in request["messages"]]
         facts.wire.append((kind, roles))
         facts.sent.append((kind, request["messages"]))
+        facts.models.append((kind, request.get("model")))
         facts.tools.append(
             (
                 kind,
@@ -283,6 +293,14 @@ async def _spawn_turn(
                 ],
             )
         )
+        if preset_fallback and kind != "primary" and request.get("model") == MODEL:
+            unavailable = {"error": {"code": "model_not_found", "message": "gone"}}
+            return urllib3.response.HTTPResponse(
+                body=io.BytesIO(json.dumps(unavailable).encode()),
+                status=404,
+                headers={"Content-Type": "application/json"},
+                preload_content=False,
+            )
         if fenced_spawn and kind == "primary" and len(roles) == 2:
             from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 
@@ -299,7 +317,11 @@ async def _spawn_turn(
                         "arguments": json.dumps(
                             {
                                 "task": each,
-                                **({"agent": "worker"} if parent_openai else {}),
+                                **(
+                                    {"agent": "worker"}
+                                    if parent_openai or preset_fallback
+                                    else {}
+                                ),
                             }
                         ),
                     },
@@ -337,7 +359,7 @@ async def _spawn_turn(
         raise AssertionError("network prohibited")
 
     chat = CharactersRAGDB(str(tmp_path / "chat.db"), client_id="spawntrace")
-    app_config = {"custom_endpoints": {"spawntrace": ENDPOINT}}
+    app_config = {"custom_endpoints": {"spawntrace": endpoint}}
     if parent_openai:
         # A parent on an endpoint without a continuation protocol (legacy
         # OpenAI handler) whose child is routed to the custom endpoint.
@@ -364,7 +386,7 @@ async def _spawn_turn(
         ),
         agent_runtime_enabled=True,
     )
-    if parent_openai:
+    if parent_openai or preset_fallback:
         from tldw_chatbook.Agents.agent_models import AgentDefinition
 
         runs.create_agent_definition(
@@ -373,6 +395,11 @@ async def _spawn_turn(
                 instructions="Do the task.",
                 provider="custom-ep:spawntrace",
                 model=MODEL,
+                fallback_models=(
+                    (("custom-ep:spawntrace", FALLBACK_MODEL),)
+                    if preset_fallback
+                    else ()
+                ),
             )
         )
     session = store.ensure_session()
@@ -398,12 +425,14 @@ async def _spawn_turn(
                 ) and all(status != "running" for _, status in facts.runs):
                     break
                 await asyncio.sleep(0.05)
-        facts.child_errors = [
-            step.get("summary")
+        facts.child_steps = [
+            (step.get("kind"), step.get("summary"))
             for row in runs.list_runs(session.persisted_conversation_id)
             if row["agent_kind"] == "subagent"
             for step in (runs.get_run(row["id"]) or {}).get("steps") or ()
-            if step.get("kind") == "error"
+        ]
+        facts.child_errors = [
+            summary for kind, summary in facts.child_steps if kind == "error"
         ]
 
         if trace_view:

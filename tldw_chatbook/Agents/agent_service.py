@@ -2605,6 +2605,7 @@ class AgentService:
             Callable[[str, tuple[str, ...], int], None] | None
         ) = None,
         propagate_trace_call_persistence_errors: bool = False,
+        preset_fallback_refusal: str | None = None,
         wall_clock: Callable[[], datetime] = _utc_now,
         inline_child_model_scope: (
             Callable[[], contextlib.AbstractContextManager] | None
@@ -2647,6 +2648,7 @@ class AgentService:
             propagate_trace_call_persistence_errors
         )
         self._primary_trace_call_persistence_error: Exception | None = None
+        self._preset_fallback_refusal = preset_fallback_refusal  # TASK-42556
         self._on_step = on_step
         self._on_tool_activity = on_tool_activity
         self._on_resolved_target = on_resolved_target
@@ -6406,10 +6408,15 @@ class AgentService:
                                 _safe_exception_type(exc),
                             )
 
+                # A refused alternate is a visible skip, never a call.
+                refusal = self._preset_fallback_refusal
+                skip = {"ready": False, "skip_reason": refusal} if refusal else {}
                 fallback_runtime = FallbackRuntime(
                     candidates=tuple(
                         dataclasses.replace(
-                            candidate, native=config.native_tools and candidate.native
+                            candidate,
+                            native=config.native_tools and candidate.native,
+                            **skip,
                         )
                         for candidate in config.preset_fallback_targets
                     ),

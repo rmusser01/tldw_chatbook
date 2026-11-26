@@ -1186,7 +1186,11 @@ _BUDGETS: dict[str, int] = {
     # path cache and its LoopDeps wiring.
     # 2026-11-24, TASK-33620.1.12 review 2 (same rule): 7744 -> 7745 (+1), the
     # unreadable-stop hold reports through the shared fail-safe notifier.
-    "tldw_chatbook/Agents/agent_service.py": 7745,
+    # 2026-11-26, TASK-42556: under Capture On a spawned child's preset
+    # fallback alternates are visible skips (preset_fallback_refusal);
+    # 7698 -> 7705 (+7); 2026-11-26, ported onto dev 9926834bc8 (round 27):
+    # dev's 7,745 plus 7, exact measurement 7,752.
+    "tldw_chatbook/Agents/agent_service.py": 7752,
     # 2026-10-31, PR #3259: explicit user size-limit waiver. Pin the
     # actual current-base N-32 file-body F6 integration at 9,541 lines.
     # TASK-36513, 2026-11-03 (size waiver per the burn-down brief: re-pin at
