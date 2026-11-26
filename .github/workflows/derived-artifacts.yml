@@ -1739,8 +1739,9 @@ jobs:
       # 0). 6 passed in 3.8 s serially with this step's flags at load 7.
       # TASK-42560 (round 27): the traced Edit & resend, Regenerate and
       # Continue file, bootstrap_profile (the Console bridge reads the tool
-      # gates through config), so after Tool_Packs. 56 passed in 296.0 s
-      # serially with this step's flags at load 31-54.
+      # gates through config), so after Tool_Packs. After its review round,
+      # 96 passed in 274.6 s serially with this step's flags at load 6-7
+      # (2026-11-26).
       - name: Run the Dreams tracking tests and unlaned riders
         run: |
           pytest \
