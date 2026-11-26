@@ -15,7 +15,7 @@ from textual.widgets import Static
 
 from Tests.UI.app_factory import persist_seeded_config, run_on_host
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
-from Tests.UI.test_console_right_rail import _wait_for_console_quiet
+from Tests.UI.console_rail_section_helpers import _wait_for_console_quiet
 from Tests.UI.test_console_internals_decomposition import (
     _build_bound_mcp_test_app,
     _open_console_inspector,
@@ -168,7 +168,7 @@ async def _wait_until(pilot, predicate, what: str, timeout: float = 10.0) -> Non
 
 
 def _approval_card_displayed(console) -> bool:
-    return any(card.display for card in console.query("#chat-approval-card"))
+    return any(_is_displayed(card) for card in console.query("#chat-approval-card"))
 
 
 async def _stage_pending_tool_card(console, pilot) -> None:

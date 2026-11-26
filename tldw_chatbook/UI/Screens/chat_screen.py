@@ -7945,6 +7945,7 @@ class ChatScreen(BaseAppScreen):
                 row_id,
                 previous_row_ids,
             )
+        self._agent.replay_fleet_reveal(environment_section, tasks_section)
 
     def _console_environment_focused_row_in_section(
         self, section_id: str
@@ -12347,6 +12348,7 @@ class ChatScreen(BaseAppScreen):
             self._console_fleet_rows_present = False
             self._console_fleet_section_auto_opened = False
             self._console_fleet_inspector_dismissed = False
+            self._agent.drop_fleet_reveal()
             return
         self._console_fleet_rows_present = True
         if (
@@ -12484,11 +12486,10 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_rail_visibility(rail_state, handles_only=handles_only)
         self._last_console_rail_state = rail_state
         # task-13 (review M9): the ONE seam where the Inspect rail becomes
-        # visible, whatever opened it (Alt+I, the handle, the launch or fleet
-        # auto-open, the responsive band), so an AUTO-opened rail never waits
-        # for the 10s poll on stale data, and one the fleet opened shows that
-        # fleet (TASK-41959). Must run AFTER `_sync_console_rail_visibility`
-        # above: the controller's rail-open guard reads the DOM it updates.
+        # visible, whatever opened it, so an AUTO-opened rail never waits for
+        # the 10s poll on stale data, and one that opens itself while
+        # sub-agents run shows them (TASK-41959). Run AFTER
+        # `_sync_console_rail_visibility`: the rail-open guard reads its DOM.
         if rail_state.right_open and not (previous is not None and previous.right_open):
             controller = getattr(self, "_console_environment", None)
             if controller is not None:

@@ -15,6 +15,10 @@ exercises the same disclosure path a user does.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+import time
+
+import pytest
 from textual.css.query import NoMatches
 from textual.pilot import OutOfBounds
 
@@ -72,3 +76,44 @@ async def open_rail_section(screen, pilot, section_id: str) -> None:
             await pilot.pause(0.05)
 
     raise AssertionError(f"Context rail section {section_id!r} would not open")
+
+
+async def _wait_for_right_rail_condition(
+    pilot,
+    predicate,
+    *,
+    description: str | Callable[[], str],
+    timeout: float = 5.0,
+    attempts: int | None = None,
+    stable_polls: int = 1,
+) -> None:
+    """Bound asynchronous rail reconciliation by observable state and time.
+
+    ``stable_polls`` above 1 waits for quiet: the predicate must hold on that
+    many consecutive polls, a ``pilot.pause`` apart (TASK-42415).
+    """
+
+    deadline = time.monotonic() + timeout
+    polls = 0
+    held = 0
+    while True:
+        held = held + 1 if predicate() else 0
+        if held >= stable_polls:
+            return
+        if time.monotonic() >= deadline or (attempts is not None and polls >= attempts):
+            break
+        polls += 1
+        await pilot.pause(0.02)
+    detail = description() if callable(description) else description
+    pytest.fail(f"Timed out waiting for {detail}")
+
+
+async def _wait_for_console_quiet(pilot, screen) -> None:
+    """Wait until the Console owes no startup or sync work, on two polls in a row."""
+    await _wait_for_right_rail_condition(
+        pilot,
+        lambda: not screen.console_pending_startup_work(),
+        description=lambda: f"Console work: {screen.console_pending_startup_work()}",
+        timeout=15.0,
+        stable_polls=2,
+    )

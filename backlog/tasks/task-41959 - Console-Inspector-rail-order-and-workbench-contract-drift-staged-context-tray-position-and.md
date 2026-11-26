@@ -4,7 +4,7 @@ title: "Console Inspector rail order and workbench contract drift: staged-contex
 status: Done
 assignee: []
 created_date: '2026-11-19 07:30'
-updated_date: '2026-11-25 15:40'
+updated_date: '2026-11-25 17:20'
 labels:
 - follow-up
 - tests
@@ -86,9 +86,10 @@ ADR required: no (owner ruled the order 2026-11-25; one yield moves, the rest is
 
 **Review round (2026-11-25, local review of #3777 at 44a791f679).**
 - *Fleet auto-open revealed nothing (Important 1, product fix).* The fleet's one-shot section expand runs while the rail is still hidden, so the section's `scroll_on_expand` reveal scrolled nothing. Below the tray that loss is visible. Red first on 44a791f679: the auto-opened rail at 150x40 with a 6-row tray put the Agents header at y=42, with the body ending at y=31. Fix, in `Console_Modules/agent.py`, because `chat_screen.py` is at its size budget:
-  - `open_fleet_section_for_rows` records a pending reveal when it opens the section behind a closed rail.
-  - `reveal_fleet_after_rail_auto_open` runs at the screen's one rail-becomes-visible seam. It retries after refresh until the section has a region, then scrolls it into view with a minimal scroll.
-  - A rail the user opened (`preferred_right_open`) keeps its scroll, and so does one whose busy window ended. In both cases the pending reveal is dropped.
+  - `open_fleet_section_for_rows` keeps the section when it opens it behind a closed rail.
+  - `reveal_fleet_after_rail_auto_open` runs at the screen's one rail-becomes-visible seam and scrolls the section into view with a minimal scroll once it has a region.
+  - A rail the user opened (`preferred_right_open`) keeps its scroll, and the owed reveal is dropped.
+  - Round 2 below changed the details.
   - Why not `top=True`: probed at 180x48 with 12 tray rows, the rail's first layouts shrank the rows above by 3 (scrollbar width and tray cap), which pushed a top-pinned header out of the body.
   - `chat_screen.py` changes by -1 line net.
 - Tests in `test_console_right_rail.py`: `test_fleet_auto_open_scrolls_the_agents_section_into_view` at 150x40 with 6 tray rows and at 180x48 with 12, and `test_manual_inspector_open_keeps_its_scroll_with_fleet_rows` (140x40, where the auto-open is declined, opened by Alt+I's action).
@@ -118,9 +119,44 @@ ADR required: no (owner ruled the order 2026-11-25; one yield moves, the rest is
   - The design spec carries a dated note pointing here.
   - These notes now correct the handoffs flake, the `[size1]` node and the "red in every run" claim.
 
+**Review round 2 (2026-11-25, delta 44a791f679..5ec1696d01).**
+- *I1, importer cap.* `_wait_for_console_quiet` and `_wait_for_right_rail_condition` moved into the non-test helper `Tests/UI/console_rail_section_helpers.py`. `test_console_right_rail.py` and the workbench contract both import them from there. `scripts/ci/tier_policy._importers` now gives `test_console_right_rail.py` 6 transitive test importers (cap 8): environment_wiring, footer_shutdown, inspector_focus_carriers, inspector_navigation, inspector_rail_minors, library_activity. With the earlier import it was 9.
+- *M1, a landing pushed the fleet back down (product).*
+  - What happened: opening the rail starts the Environment fetch. Its landings arrive in tiers (unbound or local first, the PR and its checks later), and a rich one grew the sections above and pushed the fleet out. A one-shot replay on the first landing would not have covered the later PR tier, so `replay_fleet_reveal` instead redoes the minimal reveal on every landing (`_land_console_environment` hands it the Environment and Tasks sections).
+  - It stops for good once the section closes, the user opens the rail themselves, the busy window ends, or the body's offset differs from the one the last reveal left (the user scrolled). The reveal also re-checks the offset when it runs, so a scroll made between a landing and its deferred reveal is kept.
+  - Timing: the reveal is queued with `call_next` behind each landed section's rebuild (and behind the section's own held rebuild on opening), then `call_after_refresh`. A plain `call_after_refresh` ran against the old layout: in a probe the Environment section was still 4 rows when the scroll ran, then grew to 9.
+  - Red first: `test_fleet_reveal_survives_the_first_environment_landing[150x40/6, 180x48/12]` landed a rich snapshot (branch, 3 changed files, PR with 3 checks, branch task). The section ended at y=29-30 (body 15-31) and y=35 (body 15-39). Control: `test_environment_landing_keeps_a_scroll_the_user_made`.
+- *M2, any automatic opening reveals.* Kept as intended. The `chat_screen.py` seam comment, the `agent.py` docstrings and `context-and-rag.md` now say "when the Inspector opens itself while sub-agents are running". `test_band_open_after_context_closes_reveals_running_sub_agents` pins the 124-column band case: the Context rail is closed by preference, the band opens the Inspector with `preferred_right_open=False`, and the fleet is shown.
+- *M3, no fixed pause.* The manual-open test spies on `scroll_visible` and asserts it is never called. It waits for the Agents section to have a region, then ten rounds of `pilot.pause()` plus `wait_for_refresh()`. `wait_for_refresh` alone did not run the queued rebuilds, and the mutated user-scroll guard then passed (see the new lesson).
+- *M4.* `_sync_console_fleet_surface_flags`'s rows-absent branch calls `drop_fleet_reveal()`. That is now the only guard for ended rows: the reveal's rows-present check was removed as redundant. `test_reveal_is_dropped_when_the_sub_agents_finish_first`: at 140x40 the rows end, the bridge keeps a run-history page so the section stays shown, then an automatic opening happens, and `scroll_visible` is never called.
+- *Nits.*
+  - Zero DOM: the controller acts only on the sections the screen hands it, and the module docstring says so.
+  - `open_fleet_section_for_rows` is typed `ConsoleInspectorSection`.
+  - Lesson wording now says "a reviewer" and "the implementer".
+  - `agent-runs-and-tools.md` is rewrapped.
+  - `_approval_card_displayed` uses `_is_displayed`.
+- *Mutations* (the reveal tests at `-n 4`). Each was red in both matrix runs unless noted:
+  - no landing hook: the 2 landing nodes fail;
+  - no user-scroll check: the control fails;
+  - no wait behind the landed rebuilds: the 2 landing nodes fail;
+  - no seam reveal: 6 nodes fail;
+  - no `preferred_right_open` guard: the manual test fails;
+  - no drop: the rows-ended test fails;
+  - no region retry: the band test failed in 1 of 2 matrix runs. The retry stays as a bounded safety net (20 refreshes).
+- *Stability:* the 9 reveal tests passed 6 of 6 runs at load 30-59 and 4 more under the final load (below). One earlier pass of a since-changed version failed 2 nodes; the cause was the harness's own "unbound" landing arriving out of order. The tests now give the Environment controller a root (`/w`) with stubbed dispatches, so the only landing is the test's.
+- *Final runs on this code* (whole files at `-n 4`, load 28-75):
+  - right_rail 45/45;
+  - workbench 76/76;
+  - agent_rail 51/51;
+  - navigation 39/40, the shared responsive-reveal red;
+  - handoffs 5 failed / 75 passed, all in the shared workflows/artifacts/staged-launch set.
+- The 9 reveal tests passed 4 more times at load 25-33.
+- Static checks: `ruff --select F` clean; `ruff_gate.py` OK; size ratchets 238 passed. Tests/Architecture serially: 1507 passed, 5 skipped. Preflight passed.
+- `chat_screen.py` is at exactly its 24,595-line budget.
+
 **CI note.** `scripts/ci/tier_policy.py` selects the full lanes for this diff, not the light tier. `test_console_workbench_contract.py` has more than `IMPORTER_CAP` (8) transitive test importers.
 
 **Docs.** `Docs/User_Guide/console/context-and-rag.md` lists the new Inspector order in both places that gave the old one.
 
-Files: `tldw_chatbook/UI/Console_Modules/right_rail.py`, `tldw_chatbook/UI/Console_Modules/agent.py`, `tldw_chatbook/UI/Screens/chat_screen.py`, `Docs/User_Guide/console/agent-runs-and-tools.md`, `Docs/superpowers/specs/2026-09-04-console-inspector-environment-redesign-design.md`, `Tests/UI/test_console_workbench_contract.py`, `Tests/UI/test_console_right_rail.py`, `Tests/UI/test_console_live_work_handoffs.py`, `Docs/User_Guide/console/context-and-rag.md`, `backlog/docs/lessons-testing-evidence.md` (closed-Inspector trap at 118-128 columns).
+Files: `tldw_chatbook/UI/Console_Modules/right_rail.py`, `tldw_chatbook/UI/Console_Modules/agent.py`, `tldw_chatbook/UI/Screens/chat_screen.py`, `Docs/User_Guide/console/agent-runs-and-tools.md`, `Docs/superpowers/specs/2026-09-04-console-inspector-environment-redesign-design.md`, `Tests/UI/console_rail_section_helpers.py`, `Tests/UI/test_console_workbench_contract.py`, `Tests/UI/test_console_right_rail.py`, `Tests/UI/test_console_live_work_handoffs.py`, `Docs/User_Guide/console/context-and-rag.md`, `backlog/docs/lessons-testing-evidence.md` (closed-Inspector trap at 118-128 columns).
 <!-- SECTION:NOTES:END -->

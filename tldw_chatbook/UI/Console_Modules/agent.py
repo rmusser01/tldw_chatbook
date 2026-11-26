@@ -51,7 +51,8 @@ already names:
    at line 587+, so a cold `import chat_screen` would find them missing.
 
 **Zero DOM.** No `query_one`/`query`/`mount` traffic reaches through
-`screen` here, matching every other controller. That is what keeps
+`screen` here, matching every other controller (TASK-41959's fleet reveal
+acts only on the section the screen hands it). That is what keeps
 `_sync_console_agent_section` on `ChatScreen`: its second half is nine
 `query_one` calls against the mounted rail. Only its first half -- deriving
 the seven-field payload, the part that reads the bridge, the run store, the
@@ -166,6 +167,7 @@ from ...Widgets.Console.console_agent_steering_bar import (
     ConsoleAgentSteeringState,
 )
 from ...Widgets.Console.console_inspector_section import (
+    ConsoleInspectorSection,
     ConsoleInspectorSectionState,
     InspectorSectionRow,
 )
@@ -1054,8 +1056,13 @@ class ConsoleAgentController:
         self._console_agent_drilldown_run_id: str | None = None
         self._console_agent_drilldown_conversation_id: str | None = None
         #: TASK-41959: the fleet section opened behind a closed rail, so its
-        #: own reveal was lost; the rail's automatic opening owes it one.
-        self._fleet_reveal_pending = False
+        #: own reveal was lost; the rail opening itself next owes it one.
+        self._fleet_reveal_section: ConsoleInspectorSection | None = None
+        #: After that reveal: the section, the rail body and the offset the
+        #: reveal left, so a later Environment landing can redo it.
+        self._fleet_reveal_replay: tuple[ConsoleInspectorSection, Any, float] | None = (
+            None
+        )
         #: `_console_agent_full_log_available`'s probe cache -- the resolved
         #: target run id and the answer for it. No reader outside this
         #: cluster, so no screen proxy.
@@ -2508,60 +2515,128 @@ class ConsoleAgentController:
             group="console-sync",
         )
 
-    def open_fleet_section_for_rows(self, fleet_section: Any) -> None:
+    def open_fleet_section_for_rows(
+        self, fleet_section: ConsoleInspectorSection
+    ) -> None:
         """Open the Inspector's fleet section for a busy window's first rows.
 
         TASK-41959. Behind a closed rail the section's ``scroll_on_expand``
-        reveal scrolls nothing, and the section now sits below the Sources
-        tray, Library search and Scope row. The reveal is recorded here and
-        replayed by ``reveal_fleet_after_rail_auto_open`` when the rail opens.
+        reveal scrolls nothing, and the section sits below the Sources tray,
+        Library search and Scope row. The section is kept here and revealed
+        by ``reveal_fleet_after_rail_auto_open`` when the Inspector next opens
+        itself while sub-agents are running.
 
         Args:
             fleet_section: The mounted ``#console-agent-section-subagents``.
         """
-        self._fleet_reveal_pending = not self._screen._is_console_widget_displayed(
-            "console-right-rail"
+        hidden = any(
+            node.display is False or node.styles.display == "none"
+            for node in fleet_section.ancestors_with_self
         )
+        self._fleet_reveal_section = fleet_section if hidden else None
         fleet_section.set_open(True)
 
-    def reveal_fleet_after_rail_auto_open(self, rail_state: ConsoleRailState) -> None:
-        """Scroll the fleet section into view once an automatic open shows it.
+    def drop_fleet_reveal(self) -> None:
+        """Forget any owed fleet reveal: the busy window ended (TASK-41959)."""
+        self._fleet_reveal_section = None
+        self._fleet_reveal_replay = None
 
-        A rail the user opened (``preferred_right_open``) keeps its scroll:
-        the pending reveal is dropped, not replayed. So is one whose busy
-        window ended before the rail opened.
+    def reveal_fleet_after_rail_auto_open(self, rail_state: ConsoleRailState) -> None:
+        """Scroll the fleet section into view when the Inspector opens itself.
+
+        Runs at the screen's rail-becomes-visible seam. Any automatic opening
+        replays the owed reveal -- the fleet's own, the launch's, the 118-128
+        column band's -- because sub-agents are running and the rail opened
+        without being asked. A rail the user opened (``preferred_right_open``)
+        keeps its scroll: the owed reveal is dropped, not replayed.
 
         Args:
             rail_state: The state that just made the rail visible.
         """
-        if not self._fleet_reveal_pending:
+        section, self._fleet_reveal_section = self._fleet_reveal_section, None
+        if section is None or rail_state.preferred_right_open:
             return
-        self._fleet_reveal_pending = False
-        screen = self._screen
-        if rail_state.preferred_right_open or not screen._console_fleet_rows_present:
-            return
-        from textual.css.query import QueryError
+        self._reveal_fleet_section(section)
 
-        try:
-            fleet_section = screen.query_one("#console-agent-section-subagents")
-        except QueryError:
+    def replay_fleet_reveal(self, *landed: ConsoleInspectorSection) -> None:
+        """Redo the reveal after an Environment landing, until the user scrolls.
+
+        Opening the rail starts the Environment fetch, and it lands in tiers:
+        an empty or local snapshot first, the PR and its checks later. A rich
+        landing grows the sections above and pushed the fleet's rows and
+        "View all runs" back below the fold. Each landing therefore redoes the
+        minimal reveal while the rail is still the one that opened itself.
+        The replay stops for good once the section closes, the user opens the
+        rail themselves, or the body's offset differs from the one the last
+        reveal left -- then the user scrolled, and the view is theirs.
+
+        Args:
+            landed: The sections the landing synced. Each queued any rebuild
+                with ``call_next``, so the reveal waits behind all of them.
+        """
+        replay = self._fleet_reveal_replay
+        if replay is None:
             return
+        section, body, offset = replay
+        rail_state = self._screen._last_console_rail_state
+        if (
+            not section.open
+            or rail_state is None
+            or not rail_state.right_open
+            or rail_state.preferred_right_open
+            or body.scroll_y != offset
+        ):
+            self._fleet_reveal_replay = None
+            return
+        waiting = [section_ for section_ in landed if section_.is_mounted]
+        if not waiting:
+            self._reveal_fleet_section(section)
+            return
+
+        def rebuilt() -> None:
+            waiting.pop()
+            if not waiting:
+                self._reveal_fleet_section(section)
+
+        for section_ in tuple(waiting):
+            section_.call_next(rebuilt)
+
+    def _reveal_fleet_section(self, section: ConsoleInspectorSection) -> None:
+        """Scroll ``section`` into view once the opened rail has laid it out.
+
+        Records the offset the scroll leaves, so a later landing can tell
+        whether the user has scrolled since.
+        """
+        body = section.parent
+        if body is None:
+            return
+        expected = body.scroll_y
+
+        def note_offset() -> None:
+            self._fleet_reveal_replay = (section, body, body.scroll_y)
 
         def reveal(attempts: int) -> None:
-            # The first refresh after the opening can still precede the
-            # rail's layout; a section with no region has none to scroll to.
-            if not fleet_section.is_mounted or not fleet_section.open:
+            # A refresh can still precede the opened rail's layout (more of
+            # them under load); a section with no region has nothing to show.
+            if not section.is_mounted or not section.open:
                 return
-            if not fleet_section.region:
+            if body.scroll_y != expected:
+                self._fleet_reveal_replay = None  # the user scrolled meanwhile
+                return
+            if not section.region:
                 if attempts > 1:
-                    fleet_section.call_after_refresh(reveal, attempts - 1)
+                    section.call_after_refresh(reveal, attempts - 1)
                 return
+            note_offset()  # kept when no scroll was needed
             # Minimal scroll, not `top=True`: the rail's first layouts still
             # move the rows above (a scrollbar narrows it, the tray's cap
             # re-fits), and a header pinned to the top was pushed out.
-            fleet_section.scroll_visible(animate=False)
+            section.scroll_visible(animate=False, on_complete=note_offset)
 
-        fleet_section.call_after_refresh(reveal, 5)
+        # Behind any rebuild the section queued (the opening's held one,
+        # TASK-37000), then after the refresh that lays it out. ponytail: a
+        # fixed 20-refresh bound; a reveal that never lays out just stops.
+        section.call_next(section.call_after_refresh, reveal, 20)
 
     def _apply_fleet_agent_section_auto_open(
         self, rail_state: ConsoleRailState
