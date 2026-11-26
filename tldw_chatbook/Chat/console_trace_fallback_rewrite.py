@@ -317,8 +317,11 @@ def remove_surface_slot(
     """Remove one surface row with a content-free marker (ADR-337, 2026-11-24).
 
     The replacement points at a removal marker. The surface projection drops
-    it, so nothing takes the row's place; readers of raw nodes count it as one
-    of the run's dead rows (``rewritten_sequences``).
+    it, so nothing takes the row's place. Two callers write one: a fallback
+    chain's first call (2026-11-24), after its rows, and a new turn's first
+    call dropping the leading slot (2026-11-26, ``console_trace_slot_restore``),
+    before its rows. Readers of raw nodes count only a fallback chain's marker
+    as one of its run's dead rows (``rewritten_sequences``).
 
     Returns:
         The marker node, now the segment's tail, and the replacement row.
