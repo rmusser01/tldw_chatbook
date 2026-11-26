@@ -1737,6 +1737,10 @@ jobs:
       # turn service file's whole-file entry (TASK-42513), not on its own line,
       # so it runs once. Sandboxed, no config read (RecoveryRequired recorder:
       # 0). 6 passed in 3.8 s serially with this step's flags at load 7.
+      # TASK-42560 (round 27): the traced Edit & resend, Regenerate and
+      # Continue file, bootstrap_profile (the Console bridge reads the tool
+      # gates through config), so after Tool_Packs. 56 passed in 296.0 s
+      # serially with this step's flags at load 31-54.
       - name: Run the Dreams tracking tests and unlaned riders
         run: |
           pytest \
@@ -1773,6 +1777,7 @@ jobs:
             Tests/Chat/test_console_trace_sidecar_replay.py \
             Tests/Chat/test_console_trace_sidecar_redaction.py \
             Tests/Chat/test_console_trace_proprietary_settlement.py \
+            Tests/Chat/test_console_trace_action_calls.py \
             Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py \
             Tests/DB/test_chachanotes_v75_hook_continuation_receipts_migration.py \
             Tests/DB/test_chachanotes_v78_fleet_progress_migration.py \

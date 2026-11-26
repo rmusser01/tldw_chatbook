@@ -574,6 +574,9 @@ DREAMS_TRACKING_RIDERS = (
     "Tests/Chat/test_console_trace_sidecar_replay.py",
     "Tests/Chat/test_console_trace_sidecar_redaction.py",
     "Tests/Chat/test_console_trace_proprietary_settlement.py",
+    # TASK-42560 (round 27): bootstrap_profile (the Console bridge reads the
+    # tool gates through config), so after Tool_Packs.
+    "Tests/Chat/test_console_trace_action_calls.py",
     # TASK-42516 (round 25): Tests/conftest.py keeps Tests/DB on the bootstrap
     # profile, so after Tool_Packs.
     "Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py",
