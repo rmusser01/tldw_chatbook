@@ -32,4 +32,5 @@ Constraint: `Workspaces/change_review_consent.py` is on another session's do-not
 - [ ] #1 A cancelled Change Review initialization drain whose worker never returns leaves no thread that loop shutdown or interpreter exit waits on
 - [ ] #2 A test shows that red before the fix and green after, on a PR lane
 - [ ] #3 A drain whose workers do return still joins them before it reports closed
+- [ ] #4 A worker that holds unproven custody is still not waited for (`join_unless_retained`'s retained-worker rule)
 <!-- AC:END -->

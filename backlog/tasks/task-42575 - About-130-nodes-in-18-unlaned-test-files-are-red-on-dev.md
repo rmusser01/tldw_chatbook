@@ -41,7 +41,7 @@ Red nodes per file. Each note is the deepest frame from a `--tb=line` run of the
 
 Also seen, but load flakes rather than dev reds: in the same files, `test_console_send_without_ready_runtime_keeps_setup_block_tooltip_only` failed 1 of 6 on dev; `test_actual_console_registers_selected_managed_agent` had a teardown `plugin_owned_work_not_drained` once at `-n 4` and passed 3 of 3 serially. `test_late_subagent_stop_retains_original_tree_until_physical_return` and `test_real_mounted_console_stop_entry_emits_interrupt` passed on dev but failed in the heavily loaded run.
 
-This task may be split per area (MCP snapshot and capture; workflow scheduling and native journeys; archive recovery dispatch; SSH custody; Console UI). Each part takes the criteria below.
+This task may be split per area (MCP snapshot and capture; workflow scheduling and native journeys; archive recovery dispatch; SSH custody; Console UI). Each part is filed as its own task when it is picked up and takes the criteria below; this task stays the umbrella until every part is done.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
