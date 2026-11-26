@@ -5972,3 +5972,5 @@ the loop stalls during a threaded phase with a heap this size, record the
 collection records (generation, duration) with the heartbeat, and expect a
 worker's allocations to produce loop stalls. The ADR-011 JSON does not tag a pass's
 thread, so that last attribution is by timing only.
+
+See also: "A full collection that keeps almost nothing brings CPython's next generation-2 passes forward: compare the next send window, not just the new collection" (above).
