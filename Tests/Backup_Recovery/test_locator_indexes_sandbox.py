@@ -169,6 +169,10 @@ def test_the_real_drop_statement_passes_only_inside_the_step():
         (sqlite3.SQLITE_CREATE_INDEX, DROPPED, LINKS, "main", None),
         (sqlite3.SQLITE_DROP_TABLE, LINKS, None, "main", None),
         (sqlite3.SQLITE_UPDATE, "sqlite_master", "sql", "main", None),
+        # The bookkeeping admissions are for sqlite_master only, not rows.
+        (sqlite3.SQLITE_DELETE, LINKS, None, "main", None),
+        (sqlite3.SQLITE_DELETE, "messages", None, "main", None),
+        (sqlite3.SQLITE_UPDATE, LINKS, "rootpage", "main", None),
     ],
     ids=[
         "same-table",
@@ -180,6 +184,9 @@ def test_the_real_drop_statement_passes_only_inside_the_step():
         "create",
         "drop-table",
         "catalog-sql",
+        "delete-links-rows",
+        "delete-messages-rows",
+        "update-links-rootpage",
     ],
 )
 def test_the_drop_step_refuses_anything_else(action, first, second, database, source):
