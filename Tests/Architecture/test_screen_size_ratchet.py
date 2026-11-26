@@ -361,7 +361,20 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-23, TASK-42475 (same rule, exact growth): a public accessor names the Console's pending startup work, and the credential poll's pre-gate moved into one method that it and the poll read: +41 lines, +2 methods (24544/741 -> 24585/743).
     #: 2026-11-24, TASK-42475 review (same rule, exact growth): the accessor reads the gate the credential poll last recorded instead of reading the credential, and the pre-gate helper went back into the poll: +7 lines, -1 method (24585/743 -> 24592/742).
     #: 2026-11-23, TASK-34100.16.1 ported onto dev b31e3e9241 (same rule, exact growth): the Console dictionary and world-book pickers run their store reads and writes through run_finite_local_worker, so they keep no pool-thread lease a backup pause cannot revoke: +3 lines (one import, two comment-carrying calls), no methods (24592 -> 24595 on this stack).
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24595, 742),
+    #: 2026-11-12: re-measured after rebasing onto dev 4b90eb860b (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24608/741 -> 24542/741.
+    #: 2026-11-12, TASK-33628.20 PR #3458 review (owner decision: a fix over a
+    #: size ratchet raises the row): the clearing commands take only their
+    #: captured draft and /doctor takes before its checks. 24542/741 -> 24555/741.
+    #: 2026-11-12: re-measured after rebasing onto dev 26b2e677dd (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24568/742 -> 24599/742.
+    #: 2026-11-13: re-measured after rebasing onto dev 531acb8cdc (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24599/742 -> 24589/742.
+    #: 2026-11-15: re-measured after rebasing onto dev 2ff0e9a5e5 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24569/742 -> 24590/742.
+    #: 2026-11-19: re-measured after rebasing onto dev a6df4d8d48 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24592/743 -> 24594/743.
+    #: 2026-11-21: re-measured after rebasing onto dev f864f00762 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24594/743 -> 24563/741.
+    #: 2026-11-21: re-measured after rebasing onto dev fe84affafc (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24563/741 -> 24568/741.
+    #: 2026-11-22: re-measured after rebasing onto dev fe8c87e3e2 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24537/741 -> 24568/741.
+    #: 2026-11-23: re-measured after rebasing onto dev b31e3e9241 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24544/741 -> 24575/741.
+    #: 2026-11-24: re-measured after rebasing onto dev 9fa2bf1b1d (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24595/742 -> 24626/742.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24626, 742),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

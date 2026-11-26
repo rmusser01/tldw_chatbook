@@ -46,6 +46,7 @@ class ConsoleGoalsController:
         push_screen,
         run_worker,
         open_changes,
+        command_draft_taker=lambda: (lambda: None),
     ):
         self.app_instance = app_instance
         self.get_controller = get_controller
@@ -53,6 +54,7 @@ class ConsoleGoalsController:
         self.push_screen = push_screen
         self.run_worker = run_worker
         self.open_changes = open_changes
+        self.command_draft_taker = command_draft_taker
 
     def open_history(self, offset: int = 0) -> None:
         self.run_worker(self._open_history(offset))
@@ -248,6 +250,15 @@ class ConsoleGoalsController:
                     )
                 return GoalRequest.model_validate(values)
 
+            # A started goal takes "/goal <objective>" out (TASK-33628.20);
+            # Cancel and the refusals above keep it.
+            take_draft = self.command_draft_taker()
+
+            def _started(goal) -> None:
+                if goal:
+                    take_draft()
+                self._started(goal)
+
             self.push_screen(
                 ConsoleGoalSetupModal(
                     request,
@@ -257,7 +268,7 @@ class ConsoleGoalsController:
                     discover_tools=discover_tools,
                     configure=configure,
                 ),
-                self._started,
+                _started,
             )
         except (RuntimeError, ValueError) as exc:
             self.app_instance.notify(str(exc), severity="warning")
@@ -288,4 +299,11 @@ def build_goals_controller(screen):
         open_changes=lambda run_id, **kwargs: screen._open_change_review(
             run_id, **kwargs
         ),
+        command_draft_taker=lambda: _command_draft_taker(screen),
     )
+
+
+def _command_draft_taker(screen):
+    from .command_draft import ran_command_draft_taker
+
+    return ran_command_draft_taker(screen)

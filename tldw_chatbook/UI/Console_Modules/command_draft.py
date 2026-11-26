@@ -37,7 +37,18 @@ CAPTURED_COMMAND_DRAFT: ContextVar[Any] = ContextVar(
     "console_captured_command_draft", default=None
 )
 """The ``ConsoleDraftStash`` the send captured for the command running in
-this task, set by ``command_handoff`` inside the command's own worker."""
+this task, set by ``command_handoff`` inside the command's own worker.
+
+It leaks, as ``command_handoff.COMMAND_ORIGIN`` does: a task copies the
+context it was created in, so a worker a command starts and a screen a
+command pushes (its message pump is such a task) both see the command's
+capture. A take from there is still harmless. ``take_command_draft`` removes
+the captured revision only while the composer is on that capture's draft
+generation, and the command's own take, another send, a load or a chat
+switch moves the generation on, so a stale capture then removes nothing.
+``take_ran_command_draft`` and ``take_or_clear_command_draft`` also spend the
+capture in their own context once they have taken it, so nothing the command
+starts after its take can take again (PR #3458 review)."""
 
 
 @dataclass(frozen=True)
@@ -91,6 +102,88 @@ def take_command_draft(
     elif not composer.commit_captured_draft(stash):
         return TakenCommandDraft(composer, stash, None)
     return TakenCommandDraft(composer, stash, _generation(composer))
+
+
+def take_ran_command_draft(owner: Any) -> None:
+    """Take a slash command's own text out of the composer once it ran.
+
+    TASK-33628.20, owner decision 2026-11-12 ("Clear it after running"): a
+    command that ran leaves an empty composer, the same as a sent message. A
+    refused or unknown command never calls this, so its text stays to be
+    corrected. Only the revision the send captured goes (``take_command_draft``):
+    text typed since stays, and a composer that moved to another chat is left
+    alone. Outside a sent command -- a button that opens the same dialog, or a
+    direct call -- there is no captured command, and nothing is taken.
+
+    Args:
+        owner: The Console screen, or a controller with its
+            ``_console_composer_or_none()`` and, optionally, its
+            ``_clear_console_composer_draft`` (which also resyncs the command
+            popup; the composer's own ``clear_draft`` otherwise). Read only
+            inside a sent command.
+    """
+    if CAPTURED_COMMAND_DRAFT.get() is None:
+        return
+    composer = owner._console_composer_or_none()
+    if composer is None:
+        return
+    clear_draft = getattr(owner, "_clear_console_composer_draft", None)
+    take_command_draft(composer, clear_draft or composer.clear_draft)
+    CAPTURED_COMMAND_DRAFT.set(None)
+
+
+def take_or_clear_command_draft(owner: Any) -> None:
+    """Take a command's own text where it used to clear the whole composer.
+
+    For the commands that always cleared the composer when they ran:
+    /prefill, /steer, /redirect, /stop, /fewer-permission-prompts and the
+    action commands (/model, /new, ...). Inside a sent command it takes only
+    the captured revision, as ``take_ran_command_draft`` does, so text typed
+    after Enter stays and another chat's draft is never cleared (PR #3458
+    review). A direct call has no capture and still clears the draft through
+    the owner's own clear, exactly as these commands always did.
+
+    Args:
+        owner: The Console screen (``_clear_console_composer_draft`` and,
+            inside a sent command, ``_console_composer_or_none()``).
+    """
+    if CAPTURED_COMMAND_DRAFT.get() is None:
+        owner._clear_console_composer_draft()
+        return
+    take_command_draft(
+        owner._console_composer_or_none(), owner._clear_console_composer_draft
+    )
+    CAPTURED_COMMAND_DRAFT.set(None)
+
+
+def ran_command_draft_taker(owner: Any) -> Callable[[], None]:
+    """Hold the running command's draft for a dialog that finishes it later.
+
+    A command whose dialog is only a setup step -- /goal's launch review,
+    /workflow new, /system's editor and picker -- has run once that dialog
+    starts or applies something; Cancel keeps its text. The dialog's callback
+    runs outside the command, so the captured draft is kept here.
+
+    Args:
+        owner: As for ``take_ran_command_draft``.
+
+    Returns:
+        A call that takes the command's own text out, as
+        ``take_ran_command_draft`` would have inside the command; a no-op
+        outside a sent command.
+    """
+    stash = CAPTURED_COMMAND_DRAFT.get()
+
+    def _take() -> None:
+        if stash is None:
+            return
+        token = CAPTURED_COMMAND_DRAFT.set(stash)
+        try:
+            take_ran_command_draft(owner)
+        finally:
+            CAPTURED_COMMAND_DRAFT.reset(token)
+
+    return _take
 
 
 def restore_command_draft(composer: Any | None, taken: TakenCommandDraft | None) -> str:

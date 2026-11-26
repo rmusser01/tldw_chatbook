@@ -998,6 +998,11 @@ MINIMUM_FILES = 2033
 # TASK-33621.59 review (2026-11-06): append the two Stop-during-a-card-retry
 # nodes at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2035
+# TASK-33628.16 and TASK-33628.20 with its PR #3458 review (2026-11-12):
+# append the command-row loss nodes, the "a command that ran leaves an empty
+# composer" nodes and the review's captured-draft nodes at the tail. The floor
+# is the measured entry count.
+MINIMUM_FILES = 2490
 
 # TASK-34601.1 (2026-11-11): feedback handoff, Stop and actual image-reader
 # shutdown and held-read input join the gate without moving earlier shards.
@@ -1323,6 +1328,13 @@ MINIMUM_FILES = 2765
 # the tail as a whole file (22.6 s serially; the time is in the task's notes).
 # The floor is the measured entry count.
 MINIMUM_FILES = 2766
+# 2026-11-20: re-counted after rebasing onto dev d85e90bc9e. The floor is the measured entry count.
+# 2026-11-21: re-counted after rebasing onto dev f864f00762. The floor is the measured entry count.
+# 2026-11-21: re-counted after rebasing onto dev fe84affafc. The floor is the measured entry count.
+# 2026-11-22: re-counted after rebasing onto dev ddd3c02052. The floor is the measured entry count.
+# 2026-11-22: re-counted after rebasing onto dev 2f7790873a. The floor is the measured entry count.
+MINIMUM_FILES = 2769
+MINIMUM_FILES = 2778
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 
