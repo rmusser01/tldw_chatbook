@@ -1450,14 +1450,14 @@ def test_a_file_name_inside_a_longer_name_is_not_a_reader(tmp_path):
 
 
 def test_a_conftest_literal_must_end_the_data_path(tmp_path):
-    """Round 5 (m2): `skills/review/SKILL.md` is not every `review/SKILL.md`."""
-    under = "Tests/Pl/fixtures/a/skills/review/SKILL.md"
-    beside = "Tests/Pl/fixtures/b/picked/review/SKILL.md"
+    """Round 5 (m2): `skills/audit/SKILL.md` is not every `audit/SKILL.md`."""
+    under = "Tests/Pl/fixtures/a/skills/audit/SKILL.md"
+    beside = "Tests/Pl/fixtures/b/picked/audit/SKILL.md"
     files = {
-        "Tests/Pl/conftest.py": 'FILE = package / "skills/review/SKILL.md"\n',
+        "Tests/Pl/conftest.py": 'FILE = package / "skills/audit/SKILL.md"\n',
         under: "",
         beside: "",
-        "Tests/Pl/test_reader.py": 'DATA = "picked/review/SKILL.md"\n',
+        "Tests/Pl/test_reader.py": 'DATA = "picked/audit/SKILL.md"\n',
     }
     root = _tree(tmp_path, files)
     assert policy.select_changes([("M", under)], root)["full"]
@@ -1667,12 +1667,12 @@ def test_deleting_one_of_two_same_named_files_keeps_the_name_common(tmp_path):
 
 
 def test_a_conftest_literal_may_start_with_a_dot_directory(tmp_path):
-    """Round 6 (n4): `.codex-plugin/plugin.json` is a directory, not a `./`."""
-    data = "Tests/Pl/fixtures/codex/.codex-plugin/plugin.json"
+    """Round 6 (n4): `.acme-plugin/plugin.json` is a directory, not a `./`."""
+    data = "Tests/Pl/fixtures/acme/.acme-plugin/plugin.json"
     files = {
-        "Tests/Pl/conftest.py": "MANIFEST = '.codex-plugin/plugin.json'\n",
+        "Tests/Pl/conftest.py": "MANIFEST = '.acme-plugin/plugin.json'\n",
         data: "{}",
-        "Tests/Pl/test_x.py": "P = 'codex/.codex-plugin/plugin.json'\n",
+        "Tests/Pl/test_x.py": "P = 'acme/.acme-plugin/plugin.json'\n",
     }
     root = _tree(tmp_path, files)
     plan = policy.select_changes([("M", data)], root)
@@ -1794,15 +1794,15 @@ def test_name_counts_fall_back_to_disk_without_a_git_binary(tmp_path, monkeypatc
 
 
 def test_a_longer_path_before_the_folder_must_go_through_its_parent(tmp_path):
-    """Round 8 (m1, U3): `skills/review/SKILL.md` is not `custom/review/SKILL.md`."""
-    custom = "Tests/P/fixtures/custom/review/SKILL.md"
+    """Round 8 (m1, U3): `skills/audit/SKILL.md` is not `custom/audit/SKILL.md`."""
+    custom = "Tests/P/fixtures/custom/audit/SKILL.md"
     files = {
         custom: "",
-        "Tests/P/fixtures/picked/review/SKILL.md": "",
-        "Tests/P/test_skills.py": 'FILE = package / "skills/review/SKILL.md"\n',
-        "Tests/P/test_custom.py": 'FILE = FIXTURES / "custom/review/SKILL.md"\n',
+        "Tests/P/fixtures/picked/audit/SKILL.md": "",
+        "Tests/P/test_skills.py": 'FILE = package / "skills/audit/SKILL.md"\n',
+        "Tests/P/test_custom.py": 'FILE = FIXTURES / "custom/audit/SKILL.md"\n',
         # Through the comma alone: no other clause admits it.
-        "Tests/P/test_joined.py": 'FILE = os.path.join(FIXTURES, "review", "SKILL.md")\n',
+        "Tests/P/test_joined.py": 'FILE = os.path.join(FIXTURES, "audit", "SKILL.md")\n',
     }
     root = _tree(tmp_path, files)
     assert _sampled(policy.select_changes([("M", custom)], root)) == {
@@ -1876,6 +1876,65 @@ def test_a_fixture_package_copied_by_its_folder_has_the_copying_tests(tmp_path):
     # Its copying tests (test_retained_inspection.py and two more) are its readers:
     # over the cap, so only the laned dependents run, but it is no longer orphaned.
     assert f"readers of {real} a PR lane runs" in plan["reason"]
+
+
+def test_a_deletion_outside_tests_does_not_make_a_name_common(tmp_path):
+    """Round 9 (m1): deleting `Docs/old/golden_z.json` leaves the Tests one unique."""
+    data = "Tests/X/data/golden_z.json"
+    files = {data: "{}", "Tests/X/test_r.py": "P = 'golden_z.json'\n"}
+    root = _tree(tmp_path, files)
+    changes = [("M", data), ("D", "Docs/old/golden_z.json")]
+    assert _sampled(policy.select_changes(changes, root)) == {"Tests/X/test_r.py"}
+
+
+def test_a_quoted_path_component_before_the_folder_must_be_its_parent(tmp_path):
+    """Round 9: `"skills" / "audit" / "SKILL.md"` is still not `custom/audit/`."""
+    custom = "Tests/P/fixtures/custom/audit/SKILL.md"
+    files = {
+        custom: "",
+        "Tests/P/fixtures/picked/audit/SKILL.md": "",
+        "Tests/P/test_joined_path.py": 'F = package / "skills" / "audit" / "SKILL.md"\n',
+        "Tests/P/test_join_call.py": 'F = os.path.join("skills", "audit", "SKILL.md")\n',
+        "Tests/P/test_custom.py": 'F = FIXTURES / "custom" / "audit" / "SKILL.md"\n',
+    }
+    root = _tree(tmp_path, files)
+    assert _sampled(policy.select_changes([("M", custom)], root)) == {
+        "Tests/P/test_custom.py"
+    }
+
+
+def test_the_folder_fallback_limits(tmp_path):
+    """Round 9 (F3, F4, conftest, ancestors): where a folder literal reads nothing."""
+    files = {
+        # A top-level folder is too broad, however distinctive.
+        "Tests/pack-9/x.json": "",
+        "Tests/Pl/test_top.py": 'P = "pack-9"\n',
+        # Only Tests/CI names this one.
+        "Tests/Pl/fixtures/interop/pack-1/guard.py": "",
+        "Tests/CI/test_policy_fixture.py": 'P = interop_package("pack-1")\n',
+        # Another pack-3 holds only a subfolder: the name is shared all the same.
+        "Tests/Pl/fixtures/a/pack-3/x.json": "",
+        "Tests/Pl/fixtures/b/pack-3/sub/y.json": "",
+        "Tests/Pl/test_pack_3.py": 'P = "pack-3"\n',
+    }
+    root = _tree(tmp_path, files)
+    for path in (
+        "Tests/pack-9/x.json",
+        "Tests/Pl/fixtures/interop/pack-1/guard.py",
+        "Tests/Pl/fixtures/a/pack-3/x.json",
+    ):
+        plan = policy.select_changes([("M", path)], root)
+        assert _sampled(plan) == set(), path
+        assert f"nothing imports or names {path}" in plan["reason"]
+    # A conftest naming a distinctive folder reads it at conftest time.
+    (root / "Tests/Pl/conftest.py").write_text('PACKAGE = interop_package("pack-1")\n')
+    plan = policy.select_changes(
+        [("M", "Tests/Pl/fixtures/interop/pack-1/guard.py")], root
+    )
+    assert plan["full"] and plan["reason"] == (
+        "Named at conftest time by Tests/Pl/conftest.py:"
+        " Tests/Pl/fixtures/interop/pack-1/guard.py"
+    )
 
 
 def _lane_workflow(root, lanes, other=""):

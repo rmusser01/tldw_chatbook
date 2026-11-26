@@ -251,10 +251,23 @@ def _readers(
             rf"""{re.escape(target.name)}(?![\w-])"""
         )
         listed = re.compile(rf"""["']{re.escape(folder)}["']""")
+        # A quoted component before it (`"skills" / "review"`, or a join's
+        # `"x", "review"`) is a longer path too, so it must be the grandparent.
+        component = re.compile(r"""["']([\w.-]+)["']\s*[/,]\s*["']$""")
+
+        def named_beside(text: str) -> bool:
+            for match in beside.finditer(text):
+                previous = component.search(
+                    text, max(0, match.start() - 200), match.start()
+                )
+                if previous is None or previous.group(1) == parent:
+                    return True
+            return False
+
         readers = [
             f
             for f in readers
-            if beside.search(corpus[f])
+            if named_beside(corpus[f])
             or (
                 listed.search(corpus[f])
                 and parent not in ("", "Tests")
@@ -553,7 +566,9 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
             ]
         return tuple(paths)
 
-    deleted = collections.Counter(Path(p).name for s, p in changes if s == "D")
+    deleted = collections.Counter(
+        Path(p).name for s, p in changes if s == "D" and p.startswith("Tests/")
+    )
 
     @functools.cache
     def shared() -> collections.Counter[str]:
@@ -565,7 +580,7 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
     def folders() -> collections.Counter[str]:
         """How many tracked folders under Tests/ share each folder name."""
         return collections.Counter(
-            Path(d).name for d in {str(Path(n).parent) for n in tracked()}
+            p.name for p in {p for n in tracked() for p in Path(n).parents} if p.name
         )
 
     def shorten(items: list[str], keep: int) -> str:
@@ -635,6 +650,16 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
                 return broad(f"Named at conftest time by {loading}: {path}")
             if not first:  # a fixture a test copies by its folder
                 first = _folder_readers(path, tests_corpus(), token_index(), folders())
+                loading = next(
+                    (
+                        f
+                        for f in first
+                        if f in conftest_loaded() or Path(f).name == "conftest.py"
+                    ),
+                    None,
+                )
+                if loading:
+                    return broad(f"Named at conftest time by {loading}: {path}")
             if first:
                 found = _importers(
                     path,
