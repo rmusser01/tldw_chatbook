@@ -532,3 +532,22 @@ def test_the_real_tree_keeps_dropped_for_indexes_no_step_creates_again(checker):
     already = {name for name in dropped_somewhere if census[name][0] == checker.DROPPED}
     assert already and len(flagged) >= 2, (already, flagged)
     assert flagged == dropped_somewhere - already
+
+
+def test_windows_paths_still_match_the_recovery_catalogs(checker, monkeypatch):
+    """``_RECOVERY_CATALOGS`` holds forward-slash paths; on Windows ``str()``
+    of a relative path has backslashes, so the real dropped row went live."""
+    from pathlib import PureWindowsPath
+
+    root = PureWindowsPath("C:/repo")
+    db = root / "tldw_chatbook" / "DB"
+    statements = {
+        checker._CREATE_INDEX: [
+            ("idx_zz_old", db / "migrations" / "db_v1_to_v2_add.sql", 0),
+            ("idx_zz_old", db / "recovery_core_schema.py", 0),
+        ],
+        checker._DROP_INDEX: [("idx_zz_old", db / "migrations" / "db_v2_to_v3_drop.sql", 0)],
+    }
+    monkeypatch.setattr(checker, "REPO_ROOT", root)
+    monkeypatch.setattr(checker, "_statements", lambda pattern: iter(statements[pattern]))
+    assert checker.undropped_rows({"idx_zz_old": (checker.DROPPED, "")}) == []

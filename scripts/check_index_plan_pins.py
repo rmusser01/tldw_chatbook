@@ -211,7 +211,7 @@ def declared_indexes(pattern: re.Pattern[str] = _CREATE_INDEX) -> dict[str, set[
     """
     found: dict[str, set[str]] = {}
     for name, path, _offset in _statements(pattern):
-        found.setdefault(name, set()).add(str(path.relative_to(REPO_ROOT)))
+        found.setdefault(name, set()).add(path.relative_to(REPO_ROOT).as_posix())
     return found
 
 
@@ -236,7 +236,7 @@ def undropped_rows(census: dict[str, tuple[str, str]]) -> list[tuple[str, str]]:
     statements: dict[str, list[tuple[str, tuple[str, int] | None, str, int]]] = {}
     for kind, pattern in (("create", _CREATE_INDEX), ("drop", _DROP_INDEX)):
         for name, path, offset in _statements(pattern):
-            rel = str(path.relative_to(REPO_ROOT))
+            rel = path.relative_to(REPO_ROOT).as_posix()
             statements.setdefault(name, []).append((kind, _step(path), rel, offset))
     failures = []
     for name in sorted(n for n, (status, _note) in census.items() if status == DROPPED):
@@ -399,7 +399,7 @@ def plan_pinning_files() -> dict[str, set[str]]:
             tree = ast.parse(source)
         except SyntaxError:
             continue
-        rel = str(path.relative_to(REPO_ROOT))
+        rel = path.relative_to(REPO_ROOT).as_posix()
         for text in _plan_evidence_strings(tree):
             stripped = _strip_sql_comments(text)
             names = set(_CREATE_INDEX.findall(stripped)) | set(
