@@ -273,6 +273,10 @@ transcript:
   has no trace call of its own. Your next send in the chat is captured as usual.
   It records the edited branch as one bounded replacement of the earlier trace
   history, and it does not ask you to choose an action.
+- **Continue**, **Retry** on a failed reply, and **Impersonate** also send with
+  capture off, so the trace has no call for them. A citation repair ("Citations
+  repaired") is sent with capture off too; the reply it repairs keeps its own
+  trace call. Your next send in the chat is captured as usual.
 - After Compact now, the next captured send on the Console's default agent path
   records the compacted history the same way: the conversation memory replaces
   the older turns it summarized. On the plain provider path (character chats,

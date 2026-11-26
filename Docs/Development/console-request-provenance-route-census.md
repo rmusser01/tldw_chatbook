@@ -32,13 +32,11 @@ and Capture Off.
 The census's capture column records what a Capture-On chat's call on each
 route does today, and `Tests/Chat/test_console_route_census_capture.py`
 drives each user action through the real controller to check it. Retry,
-Continue, Regenerate, Edit & resend and Impersonate carry no turn preparation
-or capture mode, so they dispatch Capture Off (Retry under Capture On awaits
-an owner decision, TASK-42555). A fresh send is traced; the test checks this
-on the agent and plain paths. Direct prefill and the llama fallback take the
-capture mode of the send they belong to. Citation repair is recorded as
-traced, but its call passes no capture mode, and that has not yet been
-checked through the controller.
+Continue, Regenerate, Edit & resend, Impersonate and citation repair carry no
+turn preparation or capture mode, so they dispatch Capture Off (Retry under
+Capture On awaits an owner decision, TASK-42555). A fresh send is traced; the
+test checks this on the agent and plain paths. Direct prefill and the llama
+fallback take the capture mode of the send they belong to.
 
 The explicitly excluded preparation owners are Console side chat, visual
 evaluation, and prompt improvement. Persona preview and character generation

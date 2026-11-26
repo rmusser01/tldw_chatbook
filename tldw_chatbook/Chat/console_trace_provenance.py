@@ -169,9 +169,9 @@ class ConsoleRequestRouteRecord:
 
 #: ``capture`` is what a Capture-On chat's call on the route does today
 #: (``Tests/Chat/test_console_route_census_capture.py`` drives each action).
-#: Retry, Continue, Regenerate, Edit & resend and Impersonate carry no turn
-#: preparation or capture mode, so they dispatch Capture Off (TASK-42552;
-#: Retry under Capture On awaits the owner in TASK-42555).
+#: Retry, Continue, Regenerate, Edit & resend, Impersonate and citation repair
+#: carry no turn preparation or capture mode, so they dispatch Capture Off
+#: (TASK-42552; Retry under Capture On awaits the owner in TASK-42555).
 CONSOLE_REQUEST_ROUTE_CENSUS = (
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.FRESH,
@@ -263,7 +263,7 @@ CONSOLE_REQUEST_ROUTE_CENSUS = (
         "_select_post_generation_body",
         "route=ConsoleRequestRoute.CITATION_REPAIR,",
         "citation_repair_required",
-        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
+        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
     ),
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.MANUAL_SUMMARY,
@@ -353,7 +353,7 @@ CONSOLE_GATEWAY_CALLSITE_CENSUS = (
         "tldw_chatbook/Chat/console_chat_controller.py",
         "_select_post_generation_body",
         "stream_chat",
-        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
+        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
         (ConsoleRequestRoute.CITATION_REPAIR,),
         "ConsoleRequestRoute.CITATION_REPAIR",
     ),

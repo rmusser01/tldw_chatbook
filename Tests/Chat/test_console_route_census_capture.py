@@ -24,6 +24,8 @@ from Tests.Chat.test_console_trace_rewritten_history import (  # noqa: F401
     _send,
     harness,
 )
+from tldw_chatbook.Chat.citation_repair import CitationRepairContract
+from tldw_chatbook.Chat.citation_trace_models import MarkerNamespace
 from tldw_chatbook.Chat.console_trace_provenance import (
     CONSOLE_REQUEST_ROUTE_CENSUS,
     ConsoleRequestRoute,
@@ -54,6 +56,10 @@ async def _act(chat, action: str, first) -> None:
         await controller.continue_from_message(first.assistant_message_id)
     elif action == "impersonate":
         await controller.impersonate_user_reply(SESSION)
+    elif action == "citation_repair":
+        # The send carries a citation contract and the reply cites nothing,
+        # so the controller makes one repair call after the fresh one.
+        await _send(chat, "q1")
     else:
         raise AssertionError(action)
 
@@ -68,10 +74,11 @@ async def _act(chat, action: str, first) -> None:
         ("continue", ConsoleRequestRoute.CONTINUE),
         ("retry", ConsoleRequestRoute.RETRY),
         ("impersonate", ConsoleRequestRoute.IMPERSONATE),
+        ("citation_repair", ConsoleRequestRoute.CITATION_REPAIR),
     ],
 )
 async def test_a_captured_chats_action_is_traced_as_the_route_census_says(
-    census_harness, action, route
+    census_harness, action, route, monkeypatch
 ):
     chat = census_harness
     first, sent, reserved = await _send(chat, "q0")
@@ -82,6 +89,18 @@ async def test_a_captured_chats_action_is_traced_as_the_route_census_says(
         chat.adapter_error = False
         message = chat.store.get_message(failed.assistant_message_id)
         assert "failed" in (message.status, message.assistant_generation_state)
+    if action == "citation_repair":
+        contract = CitationRepairContract(
+            schema_version=1,
+            marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+            allowed_ordinals=(1,),
+            evidence_context="[S1] MEDIA - Repair source\nExact repair evidence.",
+        )
+
+        async def staged_evidence(_draft, turn_context=None, origin=None):
+            return contract.evidence_context, None, None, contract
+
+        monkeypatch.setattr(chat.controller, "_capture_rag_context", staged_evidence)
     calls, reservations = len(chat.entries), len(chat.boundaries)
 
     if action == "retry":
@@ -91,8 +110,12 @@ async def test_a_captured_chats_action_is_traced_as_the_route_census_says(
 
     record = next(item for item in CONSOLE_REQUEST_ROUTE_CENSUS if item.route is route)
     traced = record.capture is ConsoleRouteCaptureDisposition.CONVERSATION_TRACE
-    assert len(chat.entries) - calls == 1, "the action must reach the provider once"
+    # A citation repair follows its own traced fresh call.
+    before = int(action == "citation_repair")
+    assert len(chat.entries) - calls == 1 + before, "one provider call per route"
+    if before:
+        assert chat.entries[-1][-1]["content"].startswith("UNTRUSTED EVIDENCE BEGIN")
     assert chat.failures == []
-    assert len(chat.boundaries) - reservations == int(traced), (
+    assert len(chat.boundaries) - reservations == before + int(traced), (
         f"{route.value}: census says traced={traced}"
     )

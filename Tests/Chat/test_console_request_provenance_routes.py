@@ -121,7 +121,7 @@ def test_logical_route_census_is_closed_complete_and_actor_aware() -> None:
     )
     # Manual summary goes through complete_auxiliary, like automatic
     # compaction; it always admits capture off and refuses a traced route, so
-    # manual summary has never been traced. The other five carry no turn
+    # manual summary has never been traced. The other six carry no turn
     # preparation or capture mode, so they dispatch Capture Off today;
     # test_console_route_census_capture.py drives them (TASK-42552).
     capture_off_routes = {
@@ -132,6 +132,7 @@ def test_logical_route_census_is_closed_complete_and_actor_aware() -> None:
         ConsoleRequestRoute.REGENERATE,
         ConsoleRequestRoute.EDIT,
         ConsoleRequestRoute.IMPERSONATE,
+        ConsoleRequestRoute.CITATION_REPAIR,
     }
     assert all(
         item.capture is ConsoleRouteCaptureDisposition.CAPTURE_OFF
