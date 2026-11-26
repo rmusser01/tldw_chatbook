@@ -174,17 +174,22 @@ def test_terminal_lifecycle_transition_advances_reachability_epoch_once(
 def test_effective_owner_lookup_binds_its_parameters_by_name(
     db: CharactersRAGDB,
 ) -> None:
-    """TASK-42581: ``?1`` bound to a sequence warns on 3.12 and raises on 3.14.
+    """TASK-42581: ``?1`` bound to a sequence warns only on 3.12.0-3.12.3.
 
     ``get_effective_owner`` names the segment twice; it and its caller
-    ``reserve_call`` must run with that DeprecationWarning as an error.
+    ``reserve_call`` must run with that binding DeprecationWarning as an
+    error (red on Ubuntu 24.04's 3.12.3 before the named-placeholder fix).
     """
     repository = ConsoleTraceRepository()
     _conversation_id, owner_id, segment_id, policy_id, _node_id = _root_graph(
         db, repository
     )
     with warnings.catch_warnings():
-        warnings.simplefilter("error", DeprecationWarning)
+        warnings.filterwarnings(
+            "error",
+            message=r"Binding \d+ .* is a named parameter",
+            category=DeprecationWarning,
+        )
         with db.transaction(immediate=True) as cursor:
             owner = repository.get_effective_owner(cursor, segment_id)
             call = repository.reserve_call(
@@ -205,12 +210,14 @@ def test_effective_owner_lookup_binds_its_parameters_by_name(
 def test_a_named_placeholder_bound_to_a_sequence_fails_any_test() -> None:
     """TASK-42581's guard: pyproject's ``filterwarnings`` makes this an error.
 
-    It raises ``ProgrammingError`` on Python 3.14; without the guard 3.12 only
-    warns and the test passes.
+    Python 3.14 raises ``ProgrammingError`` itself; on 3.12 and 3.13 only the
+    guard turns the warning into an error (without it this test fails).
     """
     connection = sqlite3.connect(":memory:")
     try:
-        with pytest.raises(DeprecationWarning, match="is a named parameter"):
+        with pytest.raises(
+            (DeprecationWarning, sqlite3.ProgrammingError), match="is a named parameter"
+        ):
             connection.execute("SELECT :segment_id", ("segment",))
     finally:
         connection.close()
