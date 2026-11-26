@@ -4,7 +4,7 @@ title: "A retained Change Review initialization job's opaque claim refuses every
 status: Done
 assignee: []
 created_date: '2026-11-19 07:30'
-updated_date: '2026-11-25 18:54'
+updated_date: '2026-11-25 19:36'
 labels:
 - follow-up
 - workspaces
@@ -42,6 +42,8 @@ Owner decision 2026-11-25: a retained init job keeps its opaque claim until rest
 3. ADR-134 amendment and ADR-285 cross-reference.
 4. Second owner decision (2026-11-25, after step 1 showed every chat is refused): keep the claim, but a Send refused by a retained cleanup's claim names the restart (AC #3). At `OrdinaryTurn.admit`, tell a retained owner's conflicting claim apart (the check `_InitializationSource.admit` makes) and raise `CleanupUnprovenRefused`; the Console's Send maps it to restart copy. Ordinary busy conflicts keep the old copy. Red first; a control for the old copy; cover TASK-40716 retained tool operations if the same check does.
 5. Review round 2: key the restart copy on the claim never retiring (a member whose drain or cleanup is unproven) through one `WorktreeActivity` predicate used by admit, widen and the initializer; give the model-facing widen refusal a restart variant (AC #4); pin the footprint filter and a sub-agent member.
+6. Review round 3: drop the "exactly" claim and file the uncovered non-durable paths (TASK-42605); pin the `_InitializationSource.admit` switch with a marked-unproven case; document both `CleanupUnprovenRefused` meanings; drop the retained-record lookup from the predicate; give the model text a next step; name the resume tool; delete `holds_conflicting_claim`.
+7. Review round 4: replace the handler comments with a structural guard (end the run only on a refusal that carries its record), pin it per handler with a negative control, name both raisers of the record-carrying meaning, add the legacy-hook path to TASK-42605, and say in the User Guide that no held slot may be listed.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -64,16 +66,21 @@ Refinements to the task's premise:
   - Such a member's drain can never be proven, so the claim never retires. A member drained unproven always has the flag set (its drain outcome is `not _cleanup_unproven`, set once at prune), so the flag alone decides.
   - The owners' flags are read after the activity lock is released, so no lock nesting is added.
   - Round 3 dropped the `capacity` parameter and the retained-record lookup. No consumer reads `.retention` or `.label` from these refusals, and the record found usually belonged to another chat, where `explain_pre_run_stop` would have offered Release for it.
-- **Not covered.** A claim is also held until restart when a member drained proven but was never settled durable:
+- **Not covered.** Known paths that hold a claim until restart without an unproven owner cleanup include (round 4 dropped round 3's "two paths"):
   - a Change Review snapshot whose write failed outside a workflow wave (`_SnapshotTicket.returned` settles `durable=False`, `Workspaces/change_review_ownership.py:300-303`; the producer is the UNRESOLVED handoff in `Workspaces/change_review_finalization.py:1136-1141`);
-  - an ordinary turn whose run-row check failed (`OrdinaryTurn.host_returned`, `Agents/ordinary_tree.py:893-929`).
+  - an ordinary turn whose run-row check failed, or whose started row captured no terminal (`OrdinaryTurn.host_returned`, `Agents/ordinary_tree.py:893-929`); that registry member is never settled at all;
+  - a legacy hook event outside an ordinary tree whose required write failed (`Agents/legacy_hook_ownership.py:238-255`, `:321`/`:332` on dev b534feabd3).
 
   Those claims still get the busy copy, because the registry cannot tell "not yet durable" from "never". They are filed as TASK-42605, with the queued-snapshot gap (`_SnapshotSource._admit_owned`'s `_snapshot_prelaunch` refusal, `Workspaces/change_review_ownership.py:216-218`).
 - **`CleanupUnprovenRefused` has two meanings.**
-  - From `reserve_tool`, the owner's own cleanup is unproven and the run ends.
-  - From the predicate, another owner's claim is held and the run goes on.
+  - With a retained record, raised by `reserve_tool` and `run_on_custody_thread`: the owner's own cleanup is unproven and the run or turn ends.
+  - Without one, raised by the predicate: another owner's claim is held and the run goes on.
 
-  Its docstring now states both, and says the run-ending handlers must only wrap `reserve_tool`. A comment marks each of them: inline in `agent_service.py` (`_call_with_timeout`'s reservation), and one line above each of the two in `agent_request_execution.py`. In `agent_service.py` the comment is folded into the existing line, because that module's size-ratchet row (7,698) is exact.
+  Its docstring names both raisers. Round 4 replaced round 3's comment convention ("handlers must only wrap `reserve_tool`") with a structural guard. It was wrong because `run_on_custody_thread` raises the record-carrying meaning too, and `explain_pre_run_stop` ends a turn on it.
+  - The three run-ending handlers match `isinstance(exc, CleanupUnprovenRefused) and exc.retention is not None`: `_call_with_timeout`'s reservation (`agent_service.py`) and `invoke_tool`'s definitive and no-timeout paths (`agent_request_execution.py`).
+  - Every record-carrying raiser sets `retention`: `reserve_tool` from `op.retention`, and `run_on_custody_thread` from the operation's retention. Their behaviour is unchanged.
+  - A record-less refusal falls through to each handler's existing ordinary-refusal branch: "tool call refused: …" (no termination outside a goal run), `TOOL_ADMISSION_REFUSED`, the same as any other `CapacityRefused` today.
+  - `agent_service.py` stays at exactly 7,698 lines, its ratchet row. `explain_pre_run_stop` already requires a retention.
 - **Send.** `OrdinaryTurn.admit` raises the refusal, else the busy `CapacityRefused`. `submit_draft` picks its copy with `activity_refusal_copy` (`Chat/console_ordinary_tree.py`, typed, with a docstring): the restart copy for this refusal, the busy copy for every other `CapacityRefused`. The controller edit is net zero lines, so its exact size-ratchet row (28,777) is unchanged.
 - **Widen.** `OrdinaryTurn.widen` raises the refusal for the opaque footprint, excluding the turn's own claim, else the busy refusal; its docstring now names both. `widen_refusal` gains "<tool> is unavailable: workspace activity is held by a cleanup that could not be proven; only restarting Chatbook clears it. Continue without it."
   - The spawn admission in `agent_run_tools` routes `CleanupUnprovenRefused` to `widen_refusal`; before, it would have read "runtime sub-agent limit reached".
@@ -102,6 +109,7 @@ Refinements to the task's premise:
   - In every case: the owner finishes, its drain is `unproven`, the claim is still held, and a Send still gets the restart copy.
   - Teardown joins every custody worker, not only `hold()`'s exit. The neighbouring TASK-41635 test `test_retained_cleanups_hold_later_roots_until_restart_and_say_so` now does the same.
 - **Footprint control.** `test_a_retained_claim_that_a_send_does_not_need_keeps_the_busy_copy`. A retained cleanup holds a bounded claim on one folder, and a live claim covers the folder that holds each turn's scratch space (a light Send's whole footprint). The Send gets the busy copy, then is admitted once the live claim is gone.
+- **Run-ending guard.** `test_only_a_refusal_carrying_its_record_ends_the_run` (`Tests/Agents/test_execution_capacity.py`), parametrized over the timeout-wrapped, definitive-after-start and no-timeout dispatch paths × record or no record. A refusal with its record ends the run (`CLEANUP_UNPROVEN`); a record-less one is an ordinary refusal and nothing runs. It reuses `_unwrapped_dispatch` from `test_unproven_tool_cleanup_run.py`, which is left unedited because it carries a known dev red the light tier would inherit.
 - **Initializer with no record.** `test_a_claim_whose_owner_is_marked_unproven_holds_roots_until_restart`. An opaque claim's owner is marked unproven with no retained record. The refused root reads `RESTART_REQUIRED` with `_RESTART_REASON`, and retry returns 0. This pins the `_InitializationSource.admit` switch, which round 2 left unpinned.
 - **Resume naming.** `test_a_refused_child_launch_names_the_tool_the_model_called` (`Tests/Chat/test_console_ordinary_tree_widening.py`), parametrized resumed × held. It calls `AgentRunTools._launch_fleet_child` over a fake service whose tree refuses the child. A resume names `send_to_agent`, a spawn names `spawn_subagent`, and each gets the busy or the restart text.
 - **Widen.** `test_spawn_refused_by_a_retained_cleanups_claim_names_the_restart` (`Tests/Chat/test_console_ordinary_tree_widening.py`), parametrized `retained` True/False. Another owner holds a bounded claim on a different folder, so the chat's own Send is admitted. The model's spawn then widens and is refused. With the owner's tool retained, the model sees the restart text and not the busy text; with a live owner, it sees the old busy text. The existing `test_spawn_conflicting_with_another_running_turn_is_refused_not_awaited` also still sees it.
@@ -119,8 +127,31 @@ Refinements to the task's premise:
 - NAME, a resume names `spawn_subagent` again: both resumed cases red.
 - A, the init job's claim released on retention: `initialization` red at the first refused Send. The mutation also breaks the TASK-41635 retry control.
 - C, Release also frees the owner's claim: `initialization`, `tool_operation` and `child_member` red at the held-claim check after Release.
+- Round 4, the run-ending guard, with each handler's `and exc.retention is not None` removed in turn: `agent_service.py` turns only `[False-timeout_wrapped]` red; `agent_request_execution.py`'s definitive-path handler turns only `[False-definitive_after_start]` red; its no-timeout handler turns only `[False-no_timeout]` red.
 
-**Evidence (2026-11-25, base origin/dev 2959b48314; machine load average 18-90 from other sessions). Every file whole, serially and at `-n 4`, at the round-3 head:**
+**Round-4 evidence (2026-11-25, load average 8-10). Every file whole, at the round-4 head:**
+
+| File | Result |
+|---|---|
+| `test_execution_capacity.py` (new guard test) | 30 passed, serial and `-n 4` |
+| `test_native_change_review_initialization.py` | 33 passed, serial and `-n 4` |
+| `test_console_ordinary_tree_widening.py` | 26 passed, serial and `-n 4` |
+| `test_native_change_review_git_custody.py` | 15 passed, serial and `-n 4` |
+| `test_console_unproven_cleanup_release.py` (`-n 4`) | 16 passed |
+| `test_console_pre_run_cleanup_stop.py` (`-n 4`) | 4 passed |
+| `test_worktree_activity.py` (`-n 4`) | 51 passed |
+| `test_fleet_runtime_admission.py` (`-n 4`) | 6 passed |
+| `test_fleet_continuation.py` (`-n 4`) | 49 passed |
+| `test_fleet_runtime.py` (`-n 4`) | 146 passed |
+| base set | 52 passed |
+| two `test_chat_functions` nodes | 128 passed |
+| `test_unproven_tool_cleanup_run.py` | 10 passed + the known dev red |
+
+- `Tests/Architecture` serially in full, after the last code edit: 1507 passed, 5 skipped.
+- `agent_service.py` is 7,698 lines, its exact ratchet row.
+- `./scripts/preflight.sh` under a scratch HOME passed. Ruff F, `ruff_gate` and `check_markup_interpolation` passed.
+
+**Round-3 evidence (2026-11-25, base origin/dev 2959b48314; machine load average 18-90 from other sessions). Every file whole, serially and at `-n 4`, at the round-3 head:**
 
 | File | Serial | `-n 4` |
 |---|---|---|

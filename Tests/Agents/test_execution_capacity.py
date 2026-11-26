@@ -359,3 +359,38 @@ def test_admission_membership_distinguishes_real_owners_through_physical_retirem
     assert owner.is_admitted
     operation.finish()
     assert not owner.is_admitted
+
+
+@pytest.mark.parametrize(
+    "path", ["timeout_wrapped", "definitive_after_start", "no_timeout"]
+)
+@pytest.mark.parametrize("recorded", [True, False])
+def test_only_a_refusal_carrying_its_record_ends_the_run(
+    tmp_path, monkeypatch, path, recorded
+):
+    """The three run-ending handlers match ``CleanupUnprovenRefused`` only when
+    it carries this owner's retained record (TASK-41950). A record-less one,
+    which says another owner's claim is held until restart, is an ordinary
+    refusal there: the run is not ended."""
+    from Tests.Agents.test_unproven_tool_cleanup_run import _unwrapped_dispatch
+    from tldw_chatbook.Agents.agent_models import RunTerminationReason, ToolCall
+    from tldw_chatbook.Agents.execution_capacity import CleanupUnprovenRefused
+
+    capacity = RuntimeCapacity()
+    owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
+    if recorded:
+        owner.reserve_tool().retain_unproven("fs_read")
+    else:
+
+        def refused():
+            raise CleanupUnprovenRefused("workspace activity")
+
+        monkeypatch.setattr(owner, "reserve_tool", refused)
+    invoke_tool, invoked = _unwrapped_dispatch(tmp_path, monkeypatch, path, owner)
+    result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
+    assert invoked == [] and not result.ok
+    if recorded:
+        assert result.termination_reason is RunTerminationReason.CLEANUP_UNPROVEN
+    else:
+        assert result.termination_reason is not RunTerminationReason.CLEANUP_UNPROVEN
+        assert "previous_tool_cleanup_unproven" in result.error, result.error

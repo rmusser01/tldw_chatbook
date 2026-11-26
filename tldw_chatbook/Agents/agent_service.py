@@ -2201,7 +2201,7 @@ def _call_with_timeout(
             automatic_work.check()
         operation = owner.reserve_tool() if owner is not None else None
     except (CapacityRefused, AutomaticWorkRefused) as exc:
-        if isinstance(exc, CleanupUnprovenRefused):  # reserve_tool's only (TASK-41950)
+        if isinstance(exc, CleanupUnprovenRefused) and exc.retention is not None:
             return cleanup_unproven_result(exc.label)
         return ToolResult(
             ok=False,

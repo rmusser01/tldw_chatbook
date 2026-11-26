@@ -358,6 +358,8 @@ Chatbook to clear it.* An agent's sub-agents, skill installs and scripts, and
 code reviews need the whole workspace, so any such held reservation refuses
 them the same way. Change Review work outside an agent turn holds the workspace
 activity of every chat, so then every message is refused until you restart.
+This can also happen with no held tool slot listed, when Chatbook could not
+confirm another cleanup.
 
 Change Review never runs a Git filter program while it prepares a folder or
 records a turn's changes. (Undo restores files with Git's normal checkout.) If

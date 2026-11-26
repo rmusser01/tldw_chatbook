@@ -895,11 +895,12 @@ _HELD_COPY = (
 def _member_of_claim(activity, owner, *, opaque=False):
     """Whether ``owner`` is a member of a held claim (an opaque one, if asked)."""
     with activity._lock:
-        return any(
-            member.owner is owner
-            and (not opaque or activity._claims[member.claim_id].footprint.opaque)
-            for member in activity._members.values()
-        )
+        for member in activity._members.values():
+            state = activity._claims.get(member.claim_id)
+            if member.owner is owner and state is not None:
+                if not opaque or state.footprint.opaque:
+                    return True
+    return False
 
 
 def _console_rig(h, monkeypatch, tmp_path):

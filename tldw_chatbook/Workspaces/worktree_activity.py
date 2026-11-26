@@ -473,9 +473,10 @@ class WorktreeActivity:
 
         Covers a conflicting claim with a member whose owner's cleanup is
         unproven (TASK-40716): its drain can never be proven, so the claim
-        never retires (TASK-41950). A claim held only because a member was
-        settled non-durable (a failed snapshot write, an unproven run-row
-        read) is not covered and keeps the busy refusal (TASK-42605).
+        never retires (TASK-41950). A claim held because a member drained
+        proven but will never settle durable (for example a failed snapshot
+        write, or an ordinary turn whose run-row check failed) is not covered
+        and keeps the busy refusal (TASK-42605).
 
         Args:
             footprint: The refused footprint.
