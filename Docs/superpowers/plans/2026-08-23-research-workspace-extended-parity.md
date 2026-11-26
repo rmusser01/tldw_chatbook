@@ -58,8 +58,8 @@ ADR required: yes for the companion Server Data Tables admission
 ADR path:
 `backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md`
 
-Reason: ADR-322 governs Chatbook ownership and the companion Server ADR-099
-(`Docs/ADR/099-research-workspace-data-tables.md` in tldw_server) defines the
+Reason: ADR-322 governs Chatbook ownership and the companion Server ADR-101
+(`Docs/ADR/101-research-workspace-data-tables.md` in tldw_server) defines the
 approved exact-route admission and native job replay contract.
 
 ## Extended owner truth table
@@ -148,7 +148,7 @@ persistence.
    server grounded route, validate bounded Mermaid/text result, and persist the
    full content as a server workspace artifact of the exact type.
 3. Data Table, Literature Matrix, and Corpus Gap Finder await the companion
-   Server ADR-099 contract first. Probe the chosen provider/model, pass selected
+   Server ADR-101 contract first. Probe the chosen provider/model, pass selected
    Workspace and Media versions, recover the exact native job on retry, and
    store a Workspace reference to the published native table UUID and version.
    Inspect, poll, cancel, and export through native Data Tables.
