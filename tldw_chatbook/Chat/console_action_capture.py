@@ -147,6 +147,19 @@ def _trace_request(
     )
 
 
+def _replays_provider_continuations(
+    controller: ConsoleChatController, session_id: str, resolution: Any
+) -> bool:
+    """Whether this send would replay provider continuation checkpoints."""
+    try:
+        sidecars, target = controller._provider_continuation_history_for_resolution(
+            session_id, resolution
+        )
+    except Exception:  # noqa: BLE001 -- the stream refuses a conflict itself
+        return False
+    return bool(sidecars) and target is not None
+
+
 async def stream_action(
     controller: ConsoleChatController,
     *,
@@ -182,10 +195,13 @@ async def stream_action(
     if (
         mode is ConsoleTraceCaptureMode.CAPTURE_OFF
         or controller.store.session_is_ephemeral(session_id)
-        # ponytail: a pinned prefill keeps the action Capture Off, as before;
-        # a captured send with one already stops at the second message
-        # (surface_prefix_mismatch), so its own rules come first.
+        # ponytail: these keep the action Capture Off, as before. A captured
+        # send with a pinned prefill already stops at the second message
+        # (surface_prefix_mismatch), and a chat whose provider replays its
+        # own continuations (Kimi reasoning) carries rows the re-record's
+        # proof cannot name; each needs its own rule first.
         or stream.get("prefill")
+        or _replays_provider_continuations(controller, session_id, stream["resolution"])
     ):
         return await controller._stream_assistant_response(**stream)
     assistant_id = stream["assistant_message_id"]

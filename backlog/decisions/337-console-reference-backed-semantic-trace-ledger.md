@@ -1041,10 +1041,13 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    before. A temporary chat with Capture On refuses the action before any
    row is created ("Capture On needs a saved chat. Save the chat or turn
    Capture off, then try again."), as decision 15 allows no durable call
-   before Save. An action in a chat with a pinned response prefill still
-   sends with Capture Off: a captured send with a pinned prefill already
-   stops at the chat's second message (`surface_prefix_mismatch`), so that
-   route's own rules come first (a follow-up). Resend of a broken turn that
+   before Save. Two kinds of chat still send the action with Capture Off,
+   as before, each a follow-up: one with a pinned response prefill (a
+   captured send with one already stops at the chat's second message,
+   `surface_prefix_mismatch`), and one whose provider replays its own
+   continuation checkpoints (Kimi reasoning), whose agent requests carry
+   the saved replies as provider artifacts that the proofs below cannot
+   name. Resend of a broken turn that
    re-runs from its user message uses Continue's body and route, so it is
    traced the same way; its in-place Retry of a failed reply is Retry's.
 

@@ -281,7 +281,8 @@ transcript:
   **Resend** of a broken turn that starts again from your message is captured
   the same way.
 - In a temporary chat with Capture On, these actions ask you to save the chat
-  or turn Capture off first. In a chat with a pinned response prefill they
+  or turn Capture off first. In a chat with a pinned response prefill, or
+  with a provider that replays its own reasoning checkpoints (Kimi), they
   still send with capture off. **Retry** of a failed reply also still sends
   with capture off; if it rewrote a reply that a captured action left failed,
   your next message stops at **Trace capture could not start** (TASK-42555).
