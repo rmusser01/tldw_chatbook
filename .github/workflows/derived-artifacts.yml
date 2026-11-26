@@ -2122,6 +2122,9 @@ jobs:
       # join a cancelled close leaves no thread in, and the MCP grant that
       # stays current while it refreshes; bootstrap_profile file, under 1 s
       # each) follow last; times in the task's notes.
+      # Round 27: TASK-42545's installed-restore validation file (sandboxed,
+      # reads no config in-process; RecoveryRequired recorder) follows the
+      # deleted-root guards; timing in the task's notes.
       # test_closed_loop_pending_submit_is_emergency_detachment: deselected
       # 2026-11-12: red on dev e0186fa10a (console_send_diagnostic ContextVar
       # token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.
@@ -2164,6 +2167,7 @@ jobs:
             Tests/Backup_Recovery/test_same_session_retirement_capture.py \
             Tests/Backup_Recovery/test_effective_admission_roots.py \
             Tests/Backup_Recovery/test_config_companion_missing_record_evidence.py \
+            Tests/Backup_Recovery/test_installed_restore_validation.py \
             Tests/Chat/test_subscription_background_readiness.py \
             Tests/Wizards/test_first_run_subscription_readiness.py \
             Tests/Actor_Packs/test_actor_pack_export.py \
