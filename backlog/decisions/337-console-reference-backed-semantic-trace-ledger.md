@@ -1035,22 +1035,35 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
 
 1. **Capture mode.** Each action freezes the Capture-On request a manual
    send of the chat would: the chat's effective capture policy (global,
-   conversation and the one-time next-send choice, which the action uses up
-   as a send does; corrected 2026-11-26, the first build left it armed for
-   a second send), the saved rows it read before any per-send transform, and
-   its prompt mix-ins composed into the request. Under Capture Off it sends as
-   before. A temporary chat with Capture On refuses the action before any
-   row is created ("Capture On needs a saved chat. Save the chat or turn
-   Capture off, then try again."), as decision 15 allows no durable call
-   before Save. Two kinds of chat still send the action with Capture Off,
-   as before, each a follow-up: one with a pinned response prefill (a
-   captured send with one already stops at the chat's second message,
-   `surface_prefix_mismatch`), and one whose provider replays its own
-   continuation checkpoints (Kimi reasoning), whose agent requests carry
-   the saved replies as provider artifacts that the proofs below cannot
-   name. Resend of a broken turn that
-   re-runs from its user message uses Continue's body and route, so it is
-   traced the same way; its in-place Retry of a failed reply is Retry's.
+   conversation and the one-time next-send choice), the saved rows it read
+   before any per-send transform, and its prompt mix-ins composed into the
+   request. Under Capture Off it sends as before. Three kinds of action
+   still send with Capture Off whatever the policy, as before, each a
+   follow-up (corrected 2026-11-26 after review):
+   - one that sends the pinned response prefill: Edit & resend, Regenerate,
+     and Resend (a plain Continue sends none and is traced). A captured send
+     with a pinned prefill already stops at the chat's second message,
+     `surface_prefix_mismatch` (TASK-42583);
+   - any action in a chat whose provider replays its own continuation
+     checkpoints (Kimi reasoning), whose agent requests carry the saved
+     replies as provider artifacts that the proofs below cannot name
+     (TASK-42584); when that lookup fails, the action sends this way too and
+     the stream refuses the conflict itself;
+   - a Continue of a message with later rows after it (other than
+     transcript-only system rows): its request runs only through the
+     selected message, but its reply is appended at the end of the chat, so
+     its call would re-record that turn and drop the later ones (TASK-42586).
+
+   An action that follows the policy (traced, or Capture Off) uses up the
+   one-time choice as a send does; one of the three above leaves a one-time
+   Capture On for the next send (corrected 2026-11-26: the first build left
+   every choice armed for a second send). A temporary chat with Capture On
+   refuses an action that would be traced before any row is created
+   ("Capture On needs a saved chat. Save the chat or turn Capture off, then
+   try again."), as decision 15 allows no durable call before Save; the
+   three above send as before. Resend of a broken turn that re-runs from its
+   user message uses Continue's body and route, so it is traced the same
+   way; its in-place Retry of a failed reply is Retry's.
 
 2. **Which call is the action's.** On the plain provider path the call's
    route names it (EDIT, REGENERATE, CONTINUE). On the agent path the run's
@@ -1071,7 +1084,11 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    to the saved user before that reply: the planner steps back over the
    instruction and one or more saved assistant replies, which must lead
    directly to a saved user row. A Regenerate of a continued reply has the
-   same shape. A later call of the run (a tool loop, a resend) takes its turn
+   same shape. Only a call naming Continue or Regenerate steps back, and
+   only when the trailing row's text ends with Console's instruction
+   ("Continue and extend the selected message.", after any prompt mix-in
+   body); an Edit & resend's call, or one naming no action, never does
+   (2026-11-26, after review). A later call of the run (a tool loop, a resend) takes its turn
    from its last saved user row, and the existing origin checks then apply.
 
 4. **The action's call re-records its turn.** The call replaces the recorded
@@ -1122,8 +1139,10 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    is refused here: Retry is TASK-42555's. The dispatch-binding transaction
    recomputes the run from the call directly before the reserved one and
    rechecks every point. A replacement that starts before the run's user row
-   (after Compact now, say) is an ordinary rewritten tail, as before, with
-   no project context.
+   (after Compact now, say), or that starts at it but carries another row
+   there (a Capture Off Edit & resend of that message, or a switch back to
+   the branch the action replaced; 2026-11-26, after review), is an ordinary
+   rewritten tail, as before, with no project context.
 
 6. **What the trace shows.** Historical calls and heads stay as they were
    (decision 10): a Regenerate's or Edit & resend's earlier call keeps its
@@ -1137,13 +1156,27 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    contacted. On the agent path the run fails as for any refused captured
    call ("trace capture could not be saved, so this request was not sent");
    on the plain path the reply fails with "Trace capture could not be saved,
-   so this request was not sent." Its Retry is Retry's (TASK-42555).
+   so this request was not sent.", as it does for any other failure to
+   freeze the request; when the action's prompt mix-ins cannot be composed,
+   it is refused as the reply path refuses them ("Mix-in attempt could not
+   be saved; response was not sent."). Its Retry is Retry's (TASK-42555).
+
+8. **A skipped failed reply** (2026-11-26, after review). In any rewritten
+   tail, the current user may hang off a failed reply that holds nothing
+   (no content, image, attachment, continuation or thinking) and whose
+   parent is the last history row; the request skips that reply. The
+   witness names it, and the dispatch-binding transaction rechecks that it
+   is still failed and empty and still the user's parent. After an action's
+   run it applies only when the run bore no response. It covers a failed
+   action whose user was a transform (with prompt mix-ins the replacement
+   restores the user's saved source, then the new user hangs off the failed
+   reply) and an action the trace refused before dispatch.
 
 Still refused: an action call over provider continuations in the replaced
 range (as for any rewritten tail); a re-record whose matched prefix stops
 before history the rewritten tail cannot prove; project context in a
 rewritten tail of any other send; and every shape the rules above do not
-name. Out of scope: citation repair (a follow-up).
+name. Out of scope: citation repair (TASK-42585).
 
 ## Current-owner integration amendment (2026-10-13)
 
