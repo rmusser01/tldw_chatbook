@@ -4,7 +4,7 @@ title: "Console Inspector rail order and workbench contract drift: staged-contex
 status: Done
 assignee: []
 created_date: '2026-11-19 07:30'
-updated_date: '2026-11-26 00:30'
+updated_date: '2026-11-26 02:00'
 labels:
 - follow-up
 - tests
@@ -280,6 +280,13 @@ ADR required: no (owner ruled the order 2026-11-25; one yield moves, the rest is
   - agent_rail 51/51;
   - inspector_navigation 39/40, the shared responsive-reveal red.
   - ruff F clean; ruff gate OK; size ratchets 238 passed; `chat_screen.py` unchanged (24,595).
+
+**Review round 6 (2026-11-26, coordinator review of 6861880954).**
+- *Held attempts spun the loop.* Under a real `batch_update` hold, `Screen._on_idle` runs after-refresh callbacks at once, so `call_after_refresh(run, attempts)` with an unchanged count re-ran as fast as the loop could go. A held attempt now re-checks on a 0.02 s `set_timer`; counted attempts still use `call_after_refresh`.
+  - Measured with `_paints_held` wrapped at 190x40/20, with no forced hold: 23-25 wait runs, 15 of them held (before), against 13 wait runs, 2 held (after).
+  - With a real 0.5 s `_begin_batch()` hold: 2,549 held runs before, 14 after.
+  - `test_a_paint_hold_is_waited_out_on_a_timer_not_a_spin` bounds the held runs at 60 and checks the reveal still lands. It fails on 6861880954 with 2,454.
+- *Nits.* Cut the test-history sentence from `_outer_layout_settling`'s docstring. Earlier rounds recorded that each clause alone kept every test green and that dropping the outer flag failed 5. `hold_cap` now carries a comment saying it reads real time on purpose.
 
 **CI note.** `scripts/ci/tier_policy.py` selects the full lanes for this diff, not the light tier. `test_console_workbench_contract.py` has more than `IMPORTER_CAP` (8) transitive test importers.
 

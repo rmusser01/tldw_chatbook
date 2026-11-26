@@ -746,8 +746,7 @@ class ConsoleInspectorRail(Vertical):
 
         One flag covers the bounded sections too: the outer reconcile stays
         scheduled while any of them reconciles (`_run_scheduled_outer_reconcile`
-        re-queues itself). Mutating the sections' own check away left every
-        reveal test green; dropping this flag fails them.
+        re-queues itself).
         """
         return self._outer_reconcile_scheduled
 

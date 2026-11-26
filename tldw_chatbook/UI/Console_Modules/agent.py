@@ -2682,6 +2682,8 @@ class ConsoleAgentController:
         """
         section, body = reveal.section, reveal.body
         armed = False
+        # Real time, not `_fleet_reveal_clock`: a hold ends in wall-clock time,
+        # and the frozen test clock would never reach the cap.
         hold_cap = time.monotonic() + FLEET_REVEAL_PAINT_HOLD_CAP_SECONDS
 
         def arm(replays_left: int) -> None:
@@ -2708,8 +2710,13 @@ class ConsoleAgentController:
             # while paints are held (wide windows spent 15 of 20 that way)
             # do not count, up to `FLEET_REVEAL_PAINT_HOLD_CAP_SECONDS`.
             if (not section.region or body.layout_settling()) and attempts > 1:
-                held = _paints_held(section.app) and time.monotonic() < hold_cap
-                section.call_after_refresh(run, attempts if held else attempts - 1)
+                if _paints_held(section.app) and time.monotonic() < hold_cap:
+                    # Re-check on a short timer: under a hold, `Screen._on_idle`
+                    # runs after-refresh callbacks at once, so `call_after_refresh`
+                    # spun the loop (2,549 runs in a 0.5 s hold).
+                    section.set_timer(0.02, partial(run, attempts))
+                else:
+                    section.call_after_refresh(run, attempts - 1)
                 return
             if not section.region:
                 return  # never laid out (the rail closed again): nothing to show

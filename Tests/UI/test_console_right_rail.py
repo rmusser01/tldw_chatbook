@@ -2741,3 +2741,39 @@ async def test_a_paint_hold_that_never_ends_cannot_stall_the_reveal(
             lambda: bool(calls),
             description="the reveal to give up waiting and scroll",
         )
+
+
+@pytest.mark.asyncio
+async def test_a_paint_hold_is_waited_out_on_a_timer_not_a_spin(
+    frozen_reveal_clock, monkeypatch
+):
+    """Under a real `batch_update` hold, `Screen._on_idle` runs after-refresh
+    callbacks at once, so re-queuing the wait with `call_after_refresh` spun
+    the loop for the whole hold (2,549 runs in this 0.5 s hold). It re-checks
+    on a short timer instead, and the reveal still lands once the hold ends."""
+    agent_module = frozen_reveal_clock
+    held_runs: list[bool] = []
+    real = agent_module._paints_held
+
+    def counting(app) -> bool:
+        held = real(app)
+        held_runs.append(held)
+        return held
+
+    monkeypatch.setattr(agent_module, "_paints_held", counting)
+    async with make_console_pilot(size=(190, 40)) as pilot:
+        screen = pilot.app.screen
+        await _start_fleet_with_staged_tray(pilot, screen, tray_rows=CAPPED_TRAY_ROWS)
+        app = pilot.app
+        app._begin_batch()  # a hold like `hold_paints`', ended after 0.5 s
+        asyncio.get_running_loop().call_later(0.5, app._end_batch)
+        screen._sync_console_rail_visibility_if_changed(
+            screen._current_console_rail_state()
+        )
+        await _wait_reveal(
+            pilot,
+            lambda: _right_rail_open(pilot) and _fleet_section_inside_rail_body(screen),
+            description=lambda: f"the fleet after the hold: {_fleet_geometry(screen)}",
+            stable_polls=3,
+        )
+        assert 0 < sum(held_runs) <= 60, f"{sum(held_runs)} wait runs during the hold"
