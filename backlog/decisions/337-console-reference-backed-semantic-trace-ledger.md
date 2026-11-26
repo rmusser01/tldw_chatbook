@@ -1161,22 +1161,27 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    it is refused as the reply path refuses them ("Mix-in attempt could not
    be saved; response was not sent."). Its Retry is Retry's (TASK-42555).
 
-8. **A skipped failed reply** (2026-11-26, after review). In any rewritten
-   tail, the current user may hang off a failed reply that holds nothing
-   (no content, image, attachment, continuation or thinking) and whose
-   parent is the last history row; the request skips that reply. The
-   witness names it, and the dispatch-binding transaction rechecks that it
-   is still failed and empty and still the user's parent. After an action's
-   run it applies only when the run bore no response. It covers a failed
-   action whose user was a transform (with prompt mix-ins the replacement
-   restores the user's saved source, then the new user hangs off the failed
-   reply) and an action the trace refused before dispatch.
+8. **A skipped failed reply** (2026-11-26, after review). After an action's
+   run that bore no response, when the run's user was a transform (prompt
+   mix-ins), the replacement starts at the run's user row and restores the
+   user's saved source as its one history row; the new user then hangs off
+   the run's failed reply, which holds nothing (no content, image,
+   attachment, continuation or thinking) and whose parent is that source.
+   The request skips that reply. The witness names it, and the
+   dispatch-binding transaction rechecks that it is still failed and empty
+   and still the user's parent. No other rewritten tail skips a reply: a
+   wider rule (any tail) admitted a legacy wrong-owner ledger that
+   `test_legacy_artifact_history_remains_frozen_and_has_explicit_recovery`
+   keeps frozen.
 
 Still refused: an action call over provider continuations in the replaced
 range (as for any rewritten tail); a re-record whose matched prefix stops
 before history the rewritten tail cannot prove; project context in a
-rewritten tail of any other send; and every shape the rules above do not
-name. Out of scope: citation repair (TASK-42585).
+rewritten tail of any other send; the send after an action the trace
+refused before dispatch, whose user hangs off the action's failed, empty
+reply (it pauses at "Trace capture could not start", and Send without
+capture sends it); and every shape the rules above do not name. Out of
+scope: citation repair (TASK-42585).
 
 ## Current-owner integration amendment (2026-10-13)
 
