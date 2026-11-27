@@ -32,14 +32,17 @@ if TYPE_CHECKING:
 TEMPORARY_CAPTURE_COPY = (
     "Capture On needs a saved chat. Save the chat or turn Capture off, then try again."
 )
-#: The reply's failure copy when its call could not be traced.
-TRACE_REFUSED_COPY = "Trace capture could not be saved, so this request was not sent."
+#: The kept reply's failure copy when a call of its run could not be traced;
+#: an earlier call of the run may have been sent.
+TRACE_REFUSED_COPY = "Trace capture could not be saved, so this reply stopped."
 #: Why an action the trace refused before dispatch was undone (owner
 #: decision 2026-11-26).
 ACTION_NOT_SENT_COPY = (
-    "Not sent: trace capture could not start. Try again, or turn Capture off "
-    "for this chat."
+    "Not sent: trace capture could not start. Choose Capture off for the next "
+    "send, or turn Capture off for this chat."
 )
+#: The same for an Edit & resend, whose edited message is removed with it.
+EDIT_NOT_SENT_COPY = ACTION_NOT_SENT_COPY + " Your edit was not kept."
 #: The reply path's own copy when the mix-ins cannot be composed.
 MIXIN_UNAVAILABLE_COPY = "Mix-in attempt could not be saved; response was not sent."
 
@@ -251,6 +254,7 @@ async def stream_action(
     user_id: str,
     earlier: bool = False,
     previous_leaf_id: str | None = None,
+    note_ids: tuple[str, ...] = (),
     **stream: Any,
 ) -> ConsoleSubmitResult:
     """Stream an action's reply, traced under Capture On like a normal send.
@@ -260,9 +264,8 @@ async def stream_action(
         trace_source_messages: The saved rows as read, before transforms.
         user_id: Native id of the saved user row that owns the call.
         earlier: A Continue of a message with later rows after it.
-        previous_leaf_id: The active leaf before the action changed the
-            branch (Regenerate, Edit & resend); a Continue's is its reply's
-            parent.
+        previous_leaf_id: The active leaf before the action added any row.
+        note_ids: Transcript-only skipped-skill notes the action added.
         **stream: The action's ``_stream_assistant_response`` arguments.
 
     Returns:
@@ -295,10 +298,14 @@ async def stream_action(
     assistant_id = stream["assistant_message_id"]
     # An Edit & resend also created its edited message.
     root_id = user_id if stream["route"] is ConsoleRequestRoute.EDIT else assistant_id
+    turn_id = controller.store.get_message(user_id).persisted_message_id
     undo = _Undo(
         root_id=root_id,
         previous_leaf_id=previous_leaf_id,
-        calls_before=_latest_call_rowid(controller),
+        note_ids=note_ids,
+        turn_id=turn_id,
+        calls_before=_turn_calls(controller, turn_id),
+        copy=EDIT_NOT_SENT_COPY if root_id == user_id else ACTION_NOT_SENT_COPY,
     )
     try:
         # The reply path composes the mix-ins too; composing them first
@@ -320,8 +327,8 @@ async def stream_action(
             user_id=user_id,
         )
     except MixinSnapshotUnavailableError:
-        # As the reply path refuses its own composition.
-        _use_up_next_send_choice(controller, session_id, snapshot)
+        # As the reply path refuses its own composition; nothing was sent, so
+        # a one-time choice stays armed.
         return controller._block_context_preflight(
             session_id=session_id,
             assistant_message_id=assistant_id,
@@ -349,7 +356,7 @@ async def stream_action(
         if _dispatch_may_have_started(exc):
             _use_up_next_send_choice(controller, session_id, snapshot)
             return _fail_unsent(controller, session_id, assistant_id)
-        return _refused(controller, session_id, snapshot, assistant_id, undo)
+        return _refused(controller, session_id, snapshot, assistant_id, undo, exc)
     except BaseException:
         _use_up_next_send_choice(controller, session_id, snapshot)
         raise
@@ -363,38 +370,60 @@ class _Undo:
 
     root_id: str
     previous_leaf_id: str | None
-    calls_before: int | None
+    note_ids: tuple[str, ...]
+    turn_id: str | None
+    #: The turn's trace calls before the action; None if unreadable.
+    calls_before: frozenset[str] | None
+    copy: str
 
 
-def _latest_call_rowid(controller: ConsoleChatController) -> int | None:
-    """The trace ledger's newest call, before the action's run (None if
-    the ledger cannot be read, which keeps a refused reply)."""
+def _turn_calls(
+    controller: ConsoleChatController, turn_id: str | None, *, dispatched: bool = False
+) -> frozenset[str] | None:
+    """The turn's trace call ids (None if the ledger cannot be read, which
+    keeps a refused reply)."""
     database = getattr(getattr(controller.store, "persistence", None), "db", None)
-    if database is None:
+    if database is None or turn_id is None:
         return None
     try:
         with database.transaction() as cursor:
-            row = cursor.execute(
-                "SELECT coalesce(max(rowid), 0) FROM console_trace_calls"
-            ).fetchone()
+            rows = cursor.execute(
+                "SELECT call_id FROM console_trace_calls WHERE turn_id = ?"
+                + (" AND dispatch_started_at IS NOT NULL" if dispatched else ""),
+                (turn_id,),
+            ).fetchall()
     except Exception:  # noqa: BLE001 -- unreadable: keep the reply
         return None
-    return int(row[0])
+    return frozenset(str(row[0]) for row in rows)
 
 
-def _run_dispatched(controller: ConsoleChatController, calls_before: int) -> bool:
-    """Whether any call reserved since ``calls_before`` reached the provider."""
-    database = controller.store.persistence.db
-    try:
-        with database.transaction() as cursor:
-            row = cursor.execute(
-                "SELECT 1 FROM console_trace_calls WHERE rowid > ? "
-                "AND dispatch_started_at IS NOT NULL LIMIT 1",
-                (calls_before,),
-            ).fetchone()
-    except Exception:  # noqa: BLE001 -- unreadable: keep the reply
+def _run_dispatched(controller: ConsoleChatController, undo: _Undo) -> bool:
+    """Whether a call of the action's turn reserved since it began reached
+    the provider (a call of another chat or turn never counts)."""
+    dispatched = _turn_calls(controller, undo.turn_id, dispatched=True)
+    return (
+        dispatched is None
+        or undo.calls_before is None
+        or bool(dispatched - undo.calls_before)
+    )
+
+
+def _settle_refused_call(exc: Exception | None) -> bool:
+    """Mark a refused call's established reservation not dispatched, as a
+    canceled trace pause does; False when that cannot be proven."""
+    boundary = getattr(exc, "boundary", None)
+    if boundary is None:
         return True
-    return row is not None
+    status = getattr(boundary, "reservation_status", "unknown")
+    if status == "not_established":
+        return True
+    if status != "established":
+        return False
+    try:
+        boundary.mark_not_dispatched()
+    except Exception:  # noqa: BLE001 -- unsaved: keep the reply
+        return False
+    return True
 
 
 def _dispatch_may_have_started(exc: Exception) -> bool:
@@ -413,11 +442,15 @@ def _holds_nothing(controller: ConsoleChatController, message_id: str) -> bool:
         reply = controller.store.get_message(message_id)
     except KeyError:
         return False
-    return (
-        not reply.content
-        and reply.image_data is None
-        and not reply.attachments
-        and getattr(reply, "provider_continuation", None) is None
+    return not (
+        reply.content
+        or reply.image_data is not None
+        or reply.attachments
+        or reply.provider_continuation is not None
+        or reply.thinking is not None
+        or reply.opaque_thinking_json
+        or reply.tool_output_full
+        or reply.tool_diff
     )
 
 
@@ -427,9 +460,12 @@ def _refused(
     snapshot: Any,
     assistant_id: str,
     undo: _Undo,
+    exc: Exception | None = None,
 ) -> ConsoleSubmitResult:
     """Undo an action the trace refused before anything was sent (owner
     decision 2026-11-26), or fail its reply when that cannot be proven."""
+    from loguru import logger
+
     from tldw_chatbook.Chat.console_chat_controller import (
         ConsoleRunState,
         ConsoleRunStatus,
@@ -437,27 +473,32 @@ def _refused(
     )
 
     if (
-        undo.calls_before is None
-        or _run_dispatched(controller, undo.calls_before)
+        not _settle_refused_call(exc)
+        or _run_dispatched(controller, undo)
         or not _holds_nothing(controller, assistant_id)
     ):
         _use_up_next_send_choice(controller, session_id, snapshot)
         return _fail_unsent(controller, session_id, assistant_id)
     try:
-        # A pending reply cannot be deleted; it never streamed.
+        # A pending reply cannot be deleted; it never streamed. The leaf
+        # moves first, so a failure after it leaves the branch as it was.
         controller.store.mark_message_failed(assistant_id)
-        controller.store.delete_message(undo.root_id)
         if undo.previous_leaf_id is not None:
             controller.store.set_active_leaf(session_id, undo.previous_leaf_id)
+        controller.store.delete_message(undo.root_id)
+        for note_id in undo.note_ids[:1]:  # each note hangs off the one before
+            controller.store.delete_message(note_id)
     except KeyError:
         return controller._session_closed_result(session_id=session_id)
-    controller._set_run_state(
-        ConsoleRunState.blocked(ACTION_NOT_SENT_COPY), session_id=session_id
-    )
+    except Exception as error:  # noqa: BLE001 -- settle the run whatever failed
+        logger.bind(error_type=type(error).__name__).warning("action_undo_failed")
+        _use_up_next_send_choice(controller, session_id, snapshot)
+        return _fail_unsent(controller, session_id, assistant_id)
+    controller._set_run_state(ConsoleRunState.blocked(undo.copy), session_id=session_id)
     return ConsoleSubmitResult(
         False,
         False,
-        ACTION_NOT_SENT_COPY,
+        undo.copy,
         session_id=session_id,
         terminal_status=ConsoleRunStatus.BLOCKED,
     )
@@ -465,26 +506,37 @@ def _refused(
 
 def action_dropped(result: ConsoleSubmitResult) -> bool:
     """Whether ``stream_action`` undid a refused action."""
-    return not result.accepted and result.visible_copy == ACTION_NOT_SENT_COPY
+    return not result.accepted and result.visible_copy in {
+        ACTION_NOT_SENT_COPY,
+        EDIT_NOT_SENT_COPY,
+    }
 
 
 def _fail_unsent(
     controller: ConsoleChatController, session_id: str, assistant_id: str
 ) -> ConsoleSubmitResult:
-    """Fail the reply of a request the trace refused before dispatch."""
+    """Keep and fail the reply of an action the trace refused."""
+    from loguru import logger
+
     from tldw_chatbook.Chat.console_chat_controller import (
         ConsoleRunState,
         ConsoleRunStatus,
         ConsoleSubmitResult,
     )
 
-    # Nothing reached the provider. The agent path settles its run the
-    # same way; the reply fails and keeps Retry.
+    # The agent path settles its run the same way; the reply fails and keeps
+    # Retry. The run state is settled whatever else fails.
     try:
         controller.store.mark_message_failed(assistant_id)
     except KeyError:
-        return controller._session_closed_result(session_id=session_id)
-    controller._append_failure_system_row(session_id, TRACE_REFUSED_COPY)
+        if not any(row.id == session_id for row in controller.store.sessions()):
+            return controller._session_closed_result(session_id=session_id)
+    except Exception as error:  # noqa: BLE001
+        logger.bind(error_type=type(error).__name__).warning("action_reply_not_failed")
+    try:
+        controller._append_failure_system_row(session_id, TRACE_REFUSED_COPY)
+    except Exception as error:  # noqa: BLE001
+        logger.bind(error_type=type(error).__name__).warning("action_reply_not_failed")
     controller._set_run_state(
         ConsoleRunState(ConsoleRunStatus.FAILED, TRACE_REFUSED_COPY),
         session_id=session_id,
@@ -494,6 +546,7 @@ def _fail_unsent(
 
 __all__ = [
     "ACTION_NOT_SENT_COPY",
+    "EDIT_NOT_SENT_COPY",
     "MIXIN_UNAVAILABLE_COPY",
     "TEMPORARY_CAPTURE_COPY",
     "TRACE_REFUSED_COPY",

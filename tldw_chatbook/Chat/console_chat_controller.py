@@ -18468,12 +18468,15 @@ class ConsoleChatController:
             return refusal
         if refuse is not None:
             return self._block(session_id, refuse)
-        for note in skill_notes:
+        leaf = self.store.active_path_message_ids(session_id)[-1]  # TASK-42560
+        notes = tuple(
             # An embedded skipped-skill note is never an abort: append the
             # same system-row copy `_block` would, then let the turn proceed.
             self.store.append_message(
                 session_id, role=ConsoleMessageRole.SYSTEM, content=note
-            )
+            ).id
+            for note in skill_notes
+        )
         provider_messages = await self._apply_chat_dictionaries(
             provider_messages, session_id, turn_context
         )
@@ -18507,6 +18510,8 @@ class ConsoleChatController:
             trace_source_messages=trace_source,
             user_id=turn_user_id(self, session_id, assistant.id),
             earlier=earlier,
+            previous_leaf_id=leaf,
+            note_ids=notes,
             route=ConsoleRequestRoute.CONTINUE,
             mixin_observation_revision=mixin_current.revision if mixin_current is not None else None,
             mixin_anchor_id=mixin_anchor_id,
@@ -18677,12 +18682,15 @@ class ConsoleChatController:
             return refusal
         if refuse is not None:
             return self._block(session_id, refuse)
-        for note in skill_notes:
+        leaf = self.store.active_path_message_ids(session_id)[-1]  # TASK-42560
+        notes = tuple(
             # An embedded skipped-skill note is never an abort: append the
             # same system-row copy `_block` would, then let the turn proceed.
             self.store.append_message(
                 session_id, role=ConsoleMessageRole.SYSTEM, content=note
-            )
+            ).id
+            for note in skill_notes
+        )
         provider_messages = await self._apply_chat_dictionaries(
             provider_messages, session_id, turn_context
         )
@@ -18701,8 +18709,6 @@ class ConsoleChatController:
         prefill = self._pinned_prefill_for_session(session_id)
         if refusal := action_capture_refusal(self, session_id, resolution, prefill):
             return self._block(session_id, refusal)
-        leaf = self.store.active_path_message_ids(session_id)[-1]  # TASK-42560
-        self.clear_original_attempt(message_id)
         new_message = self.store.create_sibling(
             message_id,
             role=ConsoleMessageRole.ASSISTANT,
@@ -18717,6 +18723,7 @@ class ConsoleChatController:
             trace_source_messages=trace_source,
             user_id=turn_user_id(self, session_id, new_message.id),
             previous_leaf_id=leaf,
+            note_ids=notes,
             route=ConsoleRequestRoute.REGENERATE,
             mixin_observation_revision=mixin_current.revision if mixin_current is not None else None,
             mixin_anchor_id=mixin_anchor_id,
@@ -18732,6 +18739,7 @@ class ConsoleChatController:
         )
         if action_dropped(result):  # TASK-42560: the refused sibling is gone
             return result
+        self.clear_original_attempt(message_id)
         try:
             persisted_sibling = self.store.get_message(new_message.id)
         except KeyError:
@@ -19811,12 +19819,15 @@ class ConsoleChatController:
             return refusal
         if refuse is not None:
             return self._block(session_id, refuse)
-        for note in skill_notes:
+        leaf = self.store.active_path_message_ids(session_id)[-1]  # TASK-42560
+        notes = tuple(
             # An embedded skipped-skill note is never an abort: append the
             # same system-row copy `_block` would, then let the turn proceed.
             self.store.append_message(
                 session_id, role=ConsoleMessageRole.SYSTEM, content=note
-            )
+            ).id
+            for note in skill_notes
+        )
         provider_messages = await self._apply_chat_dictionaries(
             provider_messages, session_id, turn_context
         )
@@ -19840,31 +19851,12 @@ class ConsoleChatController:
         # sibling and append the empty ASSISTANT node to stream into.
         active_path = self.store.active_path_message_ids(session_id)
         anchor_index = active_path.index(message_id)
-        for replaced_message_id in active_path[anchor_index:]:
-            self.clear_original_attempt(replaced_message_id)
         edited_message = self.store.create_sibling(
             message_id,
             role=ConsoleMessageRole.USER,
             content=clean_content,
             persist=self.store.persistence is not None,
             attachments=anchor_attachments,
-        )
-        self.store.record_trace_event(
-            session_id,
-            anchor_message_id=message_id,
-            event_kind="message_edited",
-            summary="Message edited and resent",
-            status="completed",
-            source_event_id=(
-                f"message:{message.persisted_message_id}"
-                if message.persisted_message_id is not None
-                else None
-            ),
-            replacement_event_id=(
-                f"message:{edited_message.persisted_message_id}"
-                if edited_message.persisted_message_id is not None
-                else None
-            ),
         )
         synthetic_id = ancestors[-1].id
         provider_messages, trace_source = (
@@ -19882,11 +19874,12 @@ class ConsoleChatController:
             content="",
             persist=self.store.persistence is not None,
         )
-        return await stream_action(
+        result = await stream_action(
             self,
             trace_source_messages=trace_source,
             user_id=edited_message.id,
-            previous_leaf_id=active_path[-1],
+            previous_leaf_id=leaf,
+            note_ids=notes,
             route=ConsoleRequestRoute.EDIT,
             mixin_observation_revision=mixin_current.revision if mixin_current is not None else None,
             mixin_anchor_id=mixin_anchor_id,
@@ -19900,6 +19893,28 @@ class ConsoleChatController:
             turn_context=turn_context,
             trusted_profile_user_message_id=edited_message.id,
         )
+        if action_dropped(result):  # TASK-42560: the edit was undone
+            return result
+        for replaced_message_id in active_path[anchor_index:]:
+            self.clear_original_attempt(replaced_message_id)
+        self.store.record_trace_event(
+            session_id,
+            anchor_message_id=message_id,
+            event_kind="message_edited",
+            summary="Message edited and resent",
+            status="completed",
+            source_event_id=(
+                f"message:{message.persisted_message_id}"
+                if message.persisted_message_id is not None
+                else None
+            ),
+            replacement_event_id=(
+                f"message:{edited_message.persisted_message_id}"
+                if edited_message.persisted_message_id is not None
+                else None
+            ),
+        )
+        return result
 
     def capture_personal_context_preview_guard(self, session_id: str) -> Callable[[], bool]:
         from .console_personal_context import capture_personal_context_preview_guard

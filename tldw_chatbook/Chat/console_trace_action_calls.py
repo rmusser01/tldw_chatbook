@@ -197,6 +197,20 @@ def _starts_with_user(
     return revision is not None and revision.normalized_role == "user"
 
 
+def _never_sent(
+    service: ConsoleTraceService, cursor: sqlite3.Cursor, call_id: str
+) -> bool:
+    from tldw_chatbook.Chat.console_trace_models import TraceCallState
+
+    call = service.repository.get_call(cursor, call_id)
+    return (
+        call is not None
+        and call.state is TraceCallState.NOT_DISPATCHED
+        and call.surface_node_id is None
+        and call.dispatch_started_at is None
+    )
+
+
 def after_action_call(
     service: ConsoleTraceService,
     cursor: sqlite3.Cursor,
@@ -232,6 +246,10 @@ def after_action_call(
     if before_call_id is not None:
         if not boundaries or boundaries[0][0] != before_call_id:
             return None
+        boundaries = boundaries[1:]
+    while boundaries and _never_sent(service, cursor, boundaries[0][0]):
+        # A refused later call of the run, marked not dispatched before it
+        # bound any row (ADR-337 amendment 2026-11-26, point 7).
         boundaries = boundaries[1:]
     if not boundaries:
         return None
@@ -318,8 +336,17 @@ def after_action_call(
         and link.verification_outcome == "verified_equal"
         else None
     )
-    if bore and response is None and latest.state is not TraceCallState.ERROR:
-        # A response the trace cannot name proves nothing.
+    if (
+        bore
+        and response is None
+        and (link is None or link.link_kind == "revision")
+        and latest.state is not TraceCallState.ERROR
+    ):
+        # A response the trace cannot name proves nothing. A latest call
+        # whose response the trace holds as a provider artifact (a tool call
+        # after which the run ended: the emergency stop, a breaker, the turn
+        # budget) saved no reply, so the run bore none the next send can
+        # carry, as when its call failed.
         return None
     return AfterActionCall(
         latest.call_id,

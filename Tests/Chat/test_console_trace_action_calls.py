@@ -355,6 +355,60 @@ async def test_an_action_on_an_earlier_message(tmp_path, monkeypatch):
 
 @pytest.mark.usefixtures("shut_down_console_controllers")
 @pytest.mark.parametrize("project", [False, True], ids=["plain", "agents_md"])
+@pytest.mark.parametrize("ending", ["emergency_stop", "turn_budget"])
+@pytest.mark.parametrize("action", ["continue", "regenerate"])
+async def test_after_a_run_ends_on_a_tool_call_the_next_message_is_sent(
+    tmp_path, monkeypatch, action, ending, project
+):
+    """The action's run ends right after a complete tool-call response: the
+    emergency stop holds two tool turns (#3786), or the turn budget runs
+    out. Nothing is saved as the reply, which fails empty (a Regenerate's
+    original reply is back on the path). The next message is sent and
+    traced, as after a held Capture Off action."""
+    from dataclasses import replace
+
+    from Tests.Chat.test_console_failed_call_retry_ownership import (
+        _NATIVE_TOOL_CALL,
+    )
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.Chat import console_agent_bridge
+
+    replies = []
+    async with _console(
+        tmp_path, monkeypatch, hosted=True, project=project, replies=replies
+    ) as app:
+        await _send(app, "Hello")
+        stop = {"on": ending == "emergency_stop"}
+        monkeypatch.setattr(
+            AgentService,
+            "_emergency_stop_refusal",
+            lambda _self: (
+                "tool call blocked: the emergency stop is active." if stop["on"] else None
+            ),
+        )
+        original_budget = console_agent_bridge.console_run_budget
+        if ending == "turn_budget":
+            budget = original_budget()
+            monkeypatch.setattr(
+                console_agent_bridge,
+                "console_run_budget",
+                lambda: replace(budget, max_model_turns=1),
+            )
+        replies.extend([_NATIVE_TOOL_CALL] * 2)
+        before = _calls(app)
+
+        await _act(app, action)
+
+        assert {call[1] for call in _calls(app)[len(before) :]} == {"complete"}
+        stop["on"] = False
+        replies.clear()
+        monkeypatch.setattr(console_agent_bridge, "console_run_budget", original_budget)
+        await _send(app, "One more?")
+        _assert_traced_as_sent(app, every_request=False)
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("project", [False, True], ids=["plain", "agents_md"])
 async def test_an_edit_and_resend_of_an_earlier_message(tmp_path, monkeypatch, project):
     """An Edit & resend of the first message answers on a new branch off the
     first turn; its call re-records the turn, and the next message is sent."""
@@ -765,6 +819,20 @@ def _refuse_next_reservation(monkeypatch, *, after=0):
     monkeypatch.setattr(ConsoleTraceService, "prepare_current_surface_delta", refuse)
 
 
+def _refuse_next_binding(monkeypatch):
+    """The dispatch binding fails before its commit; the reservation stays,
+    as for a real binding recheck or saved-value mismatch."""
+    from tldw_chatbook.Chat import console_trace_service
+
+    original = console_trace_service.build_verified_surface_delta
+
+    def refuse(*args, **kwargs):
+        monkeypatch.setattr(console_trace_service, "build_verified_surface_delta", original)
+        raise ValueError("fixture_binding_refusal")
+
+    monkeypatch.setattr(console_trace_service, "build_verified_surface_delta", refuse)
+
+
 def _transcript(app):
     """The active branch, and every saved row, by id and content."""
     session = app.session.id
@@ -774,83 +842,290 @@ def _transcript(app):
     )
 
 
+def _trajectory_kinds(app):
+    conversation = next(
+        row for row in app.store.sessions() if row.id == app.session.id
+    ).persisted_conversation_id
+    return [row.event_kind for row in app.db.get_trajectory_rows(conversation)]
+
+
+def _skipped_skill_note(monkeypatch, controller):
+    """The action's skill substitution skips an embedded skill, so the body
+    appends its transcript-only note before streaming."""
+    substitute = controller._apply_skill_substitution
+
+    async def with_note(*args, **kwargs):
+        rows, refuse, notes, bindings, block = await substitute(*args, **kwargs)
+        return rows, refuse, (*notes, "Skill fixture was skipped."), bindings, block
+
+    monkeypatch.setattr(controller, "_apply_skill_substitution", with_note)
+
+
 @pytest.mark.usefixtures("shut_down_console_controllers")
 @pytest.mark.parametrize(
-    ("action", "plain_path", "mixins"),
+    ("action", "plain_path", "where", "mixins"),
     [
         pytest.param(
             action,
             plain,
+            where,
             mixins,
-            id=f"{action}-{'plain_path' if plain else 'agent'}"
+            id=f"{action}-{'plain_path' if plain else 'agent'}-{where}"
             + ("-mixins" if mixins else ""),
         )
-        for action, plain, mixins in (
-            *((action, plain, False) for action in ACTIONS for plain in (False, True)),
-            ("edit", False, True),
-            ("regenerate", True, True),
+        for action, plain, where, mixins in (
+            *(
+                (action, plain, where, False)
+                for action in ACTIONS
+                for plain in (False, True)
+                for where in ("reservation", "binding")
+            ),
+            ("edit", False, "reservation", True),
+            ("regenerate", True, "binding", True),
         )
     ],
 )
 async def test_a_refused_action_leaves_the_chat_as_it_was(
-    tmp_path, monkeypatch, action, plain_path, mixins
+    tmp_path, monkeypatch, action, plain_path, where, mixins
 ):
     """Owner decision 2026-11-26: the trace refuses the action's own call
-    before anything is sent, so the action is undone. Its empty reply (and
-    an Edit & resend's edited message) is removed, the branch before it is
-    active, the one-time choice is still armed, the copy says why, and the
-    next message is sent and traced as after no action."""
-    from tldw_chatbook.Chat.console_action_capture import ACTION_NOT_SENT_COPY
+    before anything is sent (its reservation, or its dispatch binding, whose
+    reserved call is then marked not dispatched), so the action is undone.
+    Its empty reply (and an Edit & resend's edited message), the skipped
+    skill note it added, and a citation repair's original-attempt preview it
+    would clear are as before; the branch before it is active; the one-time
+    choice is still armed; the copy says why. Trying the action again, then
+    the next message, are sent and traced as after no action."""
+    from tldw_chatbook.Chat.console_action_capture import (
+        ACTION_NOT_SENT_COPY,
+        EDIT_NOT_SENT_COPY,
+    )
 
     async with _console(
         tmp_path, monkeypatch, plain_path=plain_path, mixins=mixins
     ) as app:
+        controller = app.controller
         await _send(app, "Hello")
         await _send(app, "And now?")
         _one_time_capture(app, True)
-        before, sent, calls = _transcript(app), len(app.sent), _calls(app)
-        _refuse_next_reservation(monkeypatch)
+        replaced = _last(app, "user" if action == "edit" else "assistant").id
+        controller._remember_original_attempt(replaced, "fixture original")
+        before, sent, kinds = _transcript(app), len(app.sent), _trajectory_kinds(app)
+        calls = _calls(app)
+        _skipped_skill_note(monkeypatch, controller)
+        (_refuse_next_binding if where == "binding" else _refuse_next_reservation)(
+            monkeypatch
+        )
 
         result = await _act(app, action)
 
-        assert app.reservation_errors == ["unsupported_surface_change"]
+        copy = EDIT_NOT_SENT_COPY if action == "edit" else ACTION_NOT_SENT_COPY
+        assert app.reservation_errors == (
+            ["unsupported_surface_change"] if where == "reservation" else []
+        )
         assert not result.accepted
-        assert result.visible_copy == ACTION_NOT_SENT_COPY
-        assert app.controller.run_state.visible_copy == ACTION_NOT_SENT_COPY
+        assert result.visible_copy == controller.run_state.visible_copy == copy
         assert len(app.sent) == sent
-        assert _calls(app) == calls
+        assert [call[:2] for call in _calls(app)[len(calls) :]] == (
+            [] if where == "reservation" else [(None, "not_dispatched")]
+        )
         assert _transcript(app) == before
         assert _next_capture(app) is True
+        assert controller._original_attempts.get(replaced) == "fixture original"
+        assert "message_edited" not in _trajectory_kinds(app)[len(kinds) :]
         app.reservation_errors.clear()
+        monkeypatch.setattr(
+            controller,
+            "_apply_skill_substitution",
+            type(controller)._apply_skill_substitution.__get__(controller),
+        )
+
+        again = await _act(app, action)
+
+        assert again.accepted
+        _assert_traced_as_sent(app, every_request=False)
         await _send(app, "One more?")
-        _assert_traced_as_sent(app)
+        _assert_traced_as_sent(app, every_request=False)
 
 
 @pytest.mark.usefixtures("shut_down_console_controllers")
-async def test_a_refusal_after_the_run_dispatched_keeps_the_reply(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    ("write", "action", "plain_path"),
+    [
+        ("mark", "continue", False),
+        ("leaf", "regenerate", True),
+        ("delete", "edit", False),
+        ("delete", "continue", True),
+    ],
+)
+async def test_an_undo_whose_write_fails_still_settles_the_run(
+    tmp_path, monkeypatch, write, action, plain_path
 ):
-    """A Continue's first call is sent and asks for a tool; the trace then
-    refuses the tool-loop call. The run reached the provider, so its reply is
-    kept and fails with copy that says why."""
+    """The undo's own write raises (a pending dispatch, a refused cursor
+    change, a database error): the reply is kept and fails with the trace
+    copy, and the run is settled, so the tab takes the next message."""
+    import sqlite3
+
+    from tldw_chatbook.Chat.console_action_capture import TRACE_REFUSED_COPY
+
+    async with _console(tmp_path, monkeypatch, plain_path=plain_path) as app:
+        await _send(app, "Hello")
+        await _send(app, "And now?")
+        name, error = {
+            "mark": ("mark_message_failed", sqlite3.OperationalError("database is locked")),
+            "leaf": ("set_active_leaf", RuntimeError("Conversation cursor change was refused.")),
+            "delete": (
+                "delete_message",
+                ValueError("Resolve pending dispatch before deleting this message."),
+            ),
+        }[write]
+        original = getattr(app.store, name)
+        _refuse_next_reservation(monkeypatch)
+        stream = app.controller._stream_assistant_response
+
+        async def then_fail_once(**kwargs):
+            try:
+                return await stream(**kwargs)
+            finally:
+
+                def fail(*_args, **_kwargs):
+                    monkeypatch.setattr(app.store, name, original)
+                    raise error
+
+                monkeypatch.setattr(app.store, name, fail)
+
+        monkeypatch.setattr(app.controller, "_stream_assistant_response", then_fail_once)
+
+        result = await _act(app, action)
+
+        monkeypatch.setattr(app.controller, "_stream_assistant_response", stream)
+        monkeypatch.setattr(app.store, name, original)
+        assert result.visible_copy == TRACE_REFUSED_COPY
+        assert app.controller.run_state.status.value == "failed"
+        following = await app.controller.submit_draft(
+            "One more?", session_id=app.session.id
+        )
+        assert following.accepted
+        assert "already running" not in following.visible_copy
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize(
+    ("action", "where", "project"),
+    [
+        ("continue", "reservation", False),
+        ("continue", "binding", True),
+        ("regenerate", "binding", True),
+        ("edit", "binding", True),
+    ],
+)
+async def test_a_refusal_after_the_run_dispatched_keeps_the_reply(
+    tmp_path, monkeypatch, action, where, project
+):
+    """The action's first call is sent and asks for a tool; the trace then
+    refuses the tool-loop call (its reservation, or its binding, whose call
+    is marked not dispatched). The run reached the provider, so its reply is
+    kept and fails with copy that does not claim nothing was sent; the next
+    message is sent and traced."""
     from Tests.Chat.test_console_failed_call_retry_ownership import (
         _NATIVE_TOOL_CALL,
     )
+    from tldw_chatbook.Chat import console_trace_service
     from tldw_chatbook.Chat.console_action_capture import TRACE_REFUSED_COPY
 
     replies = []
-    async with _console(tmp_path, monkeypatch, hosted=True, replies=replies) as app:
+    async with _console(
+        tmp_path, monkeypatch, hosted=True, project=project, replies=replies
+    ) as app:
         await _send(app, "Hello")
+        await _send(app, "And now?")
         replies.append(_NATIVE_TOOL_CALL)
         before, sent = _transcript(app), len(app.sent)
-        _refuse_next_reservation(monkeypatch, after=1)
+        if where == "binding":
+            bind = console_trace_service.build_verified_surface_delta
+            bound = []
 
-        result = await _act(app, "continue")
+            def second_refused(*args, **kwargs):
+                bound.append(None)
+                if len(bound) < 2:
+                    return bind(*args, **kwargs)
+                monkeypatch.setattr(
+                    console_trace_service, "build_verified_surface_delta", bind
+                )
+                raise ValueError("fixture_binding_refusal")
+
+            monkeypatch.setattr(
+                console_trace_service, "build_verified_surface_delta", second_refused
+            )
+        else:
+            _refuse_next_reservation(monkeypatch, after=1)
+
+        result = await _act(app, action)
 
         assert len(app.sent) == sent + 1
         assert result.visible_copy == TRACE_REFUSED_COPY
+        assert "not sent" not in TRACE_REFUSED_COPY
         assert _transcript(app) != before
-        assert _last(app, "assistant").status == "failed"
+        if where == "binding":
+            assert _calls(app)[-1][:2] == (None, "not_dispatched")
+        app.reservation_errors.clear()
+        await _send(app, "One more?")
+        _assert_traced_as_sent(app, every_request=False)
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+async def test_the_undo_reads_only_the_actions_own_turn(tmp_path, monkeypatch):
+    """A call another turn (or chat) dispatches during the action does not
+    count as the action's; a call of its own turn reserved since it began
+    does. The check compares call ids, not ledger rowids, which a purge can
+    reuse."""
+    from dataclasses import replace
+
+    from tldw_chatbook.Chat import console_action_capture as capture
+
+    async with _console(tmp_path, monkeypatch) as app:
+        await _send(app, "Hello")
+        turn = app.store.get_message(_last(app, "user").id).persisted_message_id
+        undo = capture._Undo(
+            root_id="unused",
+            previous_leaf_id=None,
+            note_ids=(),
+            turn_id=turn,
+            calls_before=capture._turn_calls(app.controller, turn),
+            copy=capture.ACTION_NOT_SENT_COPY,
+        )
+
+        await _send(app, "And now?")
+
+        assert capture._run_dispatched(app.controller, undo) is False
+        assert (
+            capture._run_dispatched(app.controller, replace(undo, calls_before=frozenset()))
+            is True
+        )
+
+
+@pytest.mark.parametrize(
+    "field", ["thinking", "opaque_thinking_json", "tool_output_full", "tool_diff"]
+)
+def test_a_reply_with_any_saved_part_is_not_undone(field):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat import console_action_capture as capture
+
+    reply = SimpleNamespace(
+        content="",
+        image_data=None,
+        attachments=(),
+        provider_continuation=None,
+        thinking=None,
+        opaque_thinking_json=None,
+        tool_output_full=None,
+        tool_diff=None,
+    )
+    controller = SimpleNamespace(store=SimpleNamespace(get_message=lambda _id: reply))
+    assert capture._holds_nothing(controller, "reply")
+    setattr(reply, field, ("a", "b", "c") if field == "tool_diff" else "x")
+    assert not capture._holds_nothing(controller, "reply")
 
 
 @pytest.mark.usefixtures("shut_down_console_controllers")
@@ -860,8 +1135,8 @@ async def test_an_action_whose_request_cannot_be_built_fails_visibly(
 ):
     """Before dispatch the action's mix-ins cannot be composed (refused as
     the reply path refuses them), or its trace request cannot be frozen (the
-    action is undone): nothing is sent, the copy says why, no run stays
-    open, and the next send goes out."""
+    action is undone): nothing is sent, the copy says why, a one-time choice
+    stays armed, no run stays open, and the next send goes out."""
     from tldw_chatbook.Chat import console_action_capture, console_prepared_request
     from tldw_chatbook.Chat.console_action_capture import (
         ACTION_NOT_SENT_COPY,
@@ -889,6 +1164,7 @@ async def test_an_action_whose_request_cannot_be_built_fails_visibly(
             raise error
 
         monkeypatch.setattr(module, name, fail_once)
+        _one_time_capture(app, True)
         before, sent = _transcript(app), len(app.sent)
 
         result = await _act(app, "regenerate")
@@ -898,6 +1174,7 @@ async def test_an_action_whose_request_cannot_be_built_fails_visibly(
             MIXIN_UNAVAILABLE_COPY if failure == "mixins" else ACTION_NOT_SENT_COPY
         )
         assert app.controller.run_state.status.value == "blocked"
+        assert _next_capture(app) is True, "nothing was sent"
         if failure == "request":
             assert _transcript(app) == before
         await _send(app, "One more?")

@@ -360,7 +360,12 @@ _BUDGETS: dict[str, int] = {
     # branch's leaf before the action, and Regenerate stops after an undone
     # action.
     # Round 27 port onto dev 9926834bc8: 28854 -> 28860, exact measurement.
-    "tldw_chatbook/Chat/console_chat_controller.py": 28860,
+    # 2026-11-26, TASK-42560 review fix round (same rule): 28,860 -> 28,875
+    # (+15), exact measurement. Each action keeps its skipped-skill notes'
+    # ids and its leaf from before them for an undo; Regenerate and Edit &
+    # resend clear the original-attempt previews, and Edit records its
+    # "message edited" event, only once the action is not undone.
+    "tldw_chatbook/Chat/console_chat_controller.py": 28875,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     # TASK-41637, 2026-11-18: +9, a round armed with no running app and no
     # answerable view fails closed instead of waiting forever (dev's row +
