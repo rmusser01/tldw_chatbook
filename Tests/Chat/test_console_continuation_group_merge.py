@@ -41,7 +41,11 @@ def adapter_case(with_history):
             raise PreparedReached
 
     adapter = _StreamingModelAdapter(
-        store=SimpleNamespace(session_id_for_message=lambda _: "session"),
+        # TASK-42472 (45cf929ac6): a primary call first reads the message it
+        # streams into; KeyError is the store's "nothing streamed yet".
+        store=SimpleNamespace(
+            session_id_for_message=lambda _: "session", get_message={}.__getitem__
+        ),
         provider_gateway=Gateway(),
         resolution=SimpleNamespace(provider="custom-hosted", model="synthetic"),
         assistant_message_id="current",

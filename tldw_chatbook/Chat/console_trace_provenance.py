@@ -150,28 +150,41 @@ class ConsoleRouteCaptureDisposition(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class ConsoleRequestRouteRecord:
-    """Capture ownership requirements for one logical request route."""
+    """Capture ownership requirements for one logical request route.
+
+    ``source_marker`` is a stripped source line inside ``source_function``;
+    the census is keyed by function, not line number (TASK-42552).
+    """
 
     route: ConsoleRequestRoute
     gateway: Literal["stream_chat", "complete_auxiliary"]
     rag: RouteRagDisposition
     source_module: str
     source_function: str
-    source_line: int
     source_marker: str
     predicate: str
     capture: ConsoleRouteCaptureDisposition
     actor_chain_required: bool = False
 
 
+#: ``capture`` is what a Capture-On chat's call on the route does today
+#: (``Tests/Chat/test_console_route_census_capture.py`` drives each action).
+#: Retry, Continue, Regenerate, Edit & resend, Impersonate and citation repair
+#: carry no turn preparation or capture mode, so they dispatch Capture Off
+#: (TASK-42552). The owner decided on 2026-11-26 that Retry of a failed turn
+#: under Capture On will be traced as a new run of the same turn (TASK-42555,
+#: built after PR #3717). The
+#: AGENT_FIRST, TOOL_LOOP, DIRECT_PREFILL and LLAMA_FALLBACK rows describe a
+#: fresh send; those routes take the capture mode of the action they serve, so
+#: an agent-path Regenerate, Edit, Continue or Retry dispatches AGENT_FIRST
+#: with capture off, and a Regenerate with a pinned prefill DIRECT_PREFILL.
 CONSOLE_REQUEST_ROUTE_CENSUS = (
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.FRESH,
         "stream_chat",
         RouteRagDisposition.SOURCE_OR_FRESH_OMISSION,
         "tldw_chatbook/Chat/console_chat_controller.py",
-        "_submit_draft_inner",
-        6750,
+        "_submit_draft_body",
         "route=ConsoleRequestRoute.FRESH,",
         "fresh_submit",
         ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
@@ -181,22 +194,20 @@ CONSOLE_REQUEST_ROUTE_CENSUS = (
         "stream_chat",
         RouteRagDisposition.RETRY_OMISSION,
         "tldw_chatbook/Chat/console_chat_controller.py",
-        "retry_message",
-        11814,
+        "_retry_message_body",
         "route=ConsoleRequestRoute.RETRY,",
         "retry_requested",
-        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
+        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
     ),
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.CONTINUE,
         "stream_chat",
         RouteRagDisposition.RETRY_OMISSION,
         "tldw_chatbook/Chat/console_chat_controller.py",
-        "continue_from_message",
-        11968,
+        "_continue_from_message_body",
         "route=ConsoleRequestRoute.CONTINUE,",
         "continue_requested",
-        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
+        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
     ),
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.REGENERATE,
@@ -204,10 +215,9 @@ CONSOLE_REQUEST_ROUTE_CENSUS = (
         RouteRagDisposition.RETRY_OMISSION,
         "tldw_chatbook/Chat/console_chat_controller.py",
         "regenerate_message",
-        12102,
         "route=ConsoleRequestRoute.REGENERATE,",
         "regenerate_requested",
-        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
+        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
     ),
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.EDIT,
@@ -215,10 +225,9 @@ CONSOLE_REQUEST_ROUTE_CENSUS = (
         RouteRagDisposition.RETRY_OMISSION,
         "tldw_chatbook/Chat/console_chat_controller.py",
         "edit_and_resend_message",
-        12761,
         "route=ConsoleRequestRoute.EDIT,",
         "edit_and_resend_requested",
-        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
+        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
     ),
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.DIRECT_PREFILL,
@@ -226,7 +235,6 @@ CONSOLE_REQUEST_ROUTE_CENSUS = (
         RouteRagDisposition.NOT_APPLICABLE,
         "tldw_chatbook/Chat/console_chat_controller.py",
         "_stream_assistant_response_inner",
-        16055,
         "route=(ConsoleRequestRoute.DIRECT_PREFILL if prefill else route),",
         "direct_prefill_present",
         ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
@@ -235,10 +243,9 @@ CONSOLE_REQUEST_ROUTE_CENSUS = (
         ConsoleRequestRoute.AGENT_FIRST,
         "stream_chat",
         RouteRagDisposition.AGENT_WAKE_OMISSION,
-        "tldw_chatbook/Chat/console_agent_bridge.py",
-        "chat_call",
-        2619,
-        "ConsoleRequestRoute.AGENT_FIRST",
+        "tldw_chatbook/Chat/console_streaming_request.py",
+        "chat_call_impl",
+        "bridge.ConsoleRequestRoute.AGENT_FIRST",
         "agent_first_wake",
         ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
         actor_chain_required=True,
@@ -247,10 +254,9 @@ CONSOLE_REQUEST_ROUTE_CENSUS = (
         ConsoleRequestRoute.TOOL_LOOP,
         "stream_chat",
         RouteRagDisposition.AGENT_WAKE_OMISSION,
-        "tldw_chatbook/Chat/console_agent_bridge.py",
-        "chat_call",
-        2621,
-        "else ConsoleRequestRoute.TOOL_LOOP",
+        "tldw_chatbook/Chat/console_streaming_request.py",
+        "chat_call_impl",
+        "else bridge.ConsoleRequestRoute.TOOL_LOOP",
         "agent_tool_loop_iteration",
         ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
         actor_chain_required=True,
@@ -261,21 +267,19 @@ CONSOLE_REQUEST_ROUTE_CENSUS = (
         RouteRagDisposition.NOT_APPLICABLE,
         "tldw_chatbook/Chat/console_chat_controller.py",
         "_select_post_generation_body",
-        17344,
         "route=ConsoleRequestRoute.CITATION_REPAIR,",
         "citation_repair_required",
-        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
+        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
     ),
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.MANUAL_SUMMARY,
-        "stream_chat",
+        "complete_auxiliary",
         RouteRagDisposition.NOT_APPLICABLE,
-        "tldw_chatbook/Chat/console_chat_controller.py",
-        "summarize_up_to",
-        12277,
-        "route=ConsoleRequestRoute.MANUAL_SUMMARY,",
+        "tldw_chatbook/Chat/console_context_compaction.py",
+        "summarize_manual",
+        "completion, summary_engine = await self._summary_completion(",
         "manual_summary_requested",
-        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
+        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
     ),
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.IMPERSONATE,
@@ -283,18 +287,16 @@ CONSOLE_REQUEST_ROUTE_CENSUS = (
         RouteRagDisposition.NOT_APPLICABLE,
         "tldw_chatbook/Chat/console_chat_controller.py",
         "impersonate_user_reply",
-        12467,
         "route=ConsoleRequestRoute.IMPERSONATE,",
         "impersonate_requested",
-        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
+        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
     ),
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.AUTO_COMPACTION,
         "complete_auxiliary",
         RouteRagDisposition.NOT_APPLICABLE,
         "tldw_chatbook/Chat/console_context_compaction.py",
-        "compact",
-        483,
+        "_compact_once",
         "route=ConsoleRequestRoute.AUTO_COMPACTION,",
         "automatic_conversation_compaction",
         ConsoleRouteCaptureDisposition.CAPTURE_OFF,
@@ -305,7 +307,6 @@ CONSOLE_REQUEST_ROUTE_CENSUS = (
         RouteRagDisposition.NOT_APPLICABLE,
         "tldw_chatbook/Chat/console_provider_gateway.py",
         "stream_chat",
-        4063,
         "ConsoleRequestRoute.LLAMA_FALLBACK",
         "llama_fallback_selected",
         ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
@@ -315,12 +316,15 @@ CONSOLE_REQUEST_ROUTE_CENSUS = (
 
 @dataclass(frozen=True, slots=True)
 class GatewayCallsiteRecord:
-    """One AST-discoverable gateway callsite and its preparation ownership."""
+    """One AST-discoverable gateway callsite and its preparation ownership.
+
+    ``route_binding`` is the call's ``route=`` expression, ``**name`` when the
+    route travels in a keyword splat, or ``""`` when the call binds none.
+    """
 
     module: str
     function: str
     gateway: Literal["stream_chat", "complete_auxiliary"]
-    source_line: int
     owner: ConsoleRouteCaptureDisposition
     routes: tuple[ConsoleRequestRoute, ...]
     route_binding: str = ""
@@ -331,16 +335,14 @@ CONSOLE_GATEWAY_CALLSITE_CENSUS = (
         "tldw_chatbook/Chat/console_chat_controller.py",
         "_collect_summary_completion",
         "stream_chat",
-        12521,
-        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
-        (ConsoleRequestRoute.MANUAL_SUMMARY, ConsoleRequestRoute.IMPERSONATE),
+        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
+        (ConsoleRequestRoute.IMPERSONATE,),
         "route",
     ),
     GatewayCallsiteRecord(
         "tldw_chatbook/Chat/console_chat_controller.py",
         "_run_direct_provider_reply",
         "stream_chat",
-        16804,
         ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
         (
             ConsoleRequestRoute.FRESH,
@@ -357,34 +359,66 @@ CONSOLE_GATEWAY_CALLSITE_CENSUS = (
         "tldw_chatbook/Chat/console_chat_controller.py",
         "_select_post_generation_body",
         "stream_chat",
-        17340,
-        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
+        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
         (ConsoleRequestRoute.CITATION_REPAIR,),
         "ConsoleRequestRoute.CITATION_REPAIR",
     ),
     GatewayCallsiteRecord(
-        "tldw_chatbook/Chat/console_agent_bridge.py",
-        "_consume",
+        "tldw_chatbook/Chat/console_streaming_request.py",
+        "_consume_body",
         "stream_chat",
-        2757,
         ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
         (ConsoleRequestRoute.AGENT_FIRST, ConsoleRequestRoute.TOOL_LOOP),
         "route",
     ),
     GatewayCallsiteRecord(
+        "tldw_chatbook/Chat/console_voice_attempts.py",
+        "_run",
+        "stream_chat",
+        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
+        (ConsoleRequestRoute.FRESH,),
+        "**stream_kwargs",
+    ),
+    # The one auxiliary summary call: automatic compaction (route bound),
+    # manual summary and the controller's summarize_span_as_note (via
+    # summarize_span_to_text), both with no route. All Capture Off, because
+    # complete_auxiliary always admits capture off and refuses a traced route.
+    GatewayCallsiteRecord(
         "tldw_chatbook/Chat/console_context_compaction.py",
-        "compact",
+        "_summary_completion",
         "complete_auxiliary",
-        476,
         ConsoleRouteCaptureDisposition.CAPTURE_OFF,
-        (ConsoleRequestRoute.AUTO_COMPACTION,),
-        "ConsoleRequestRoute.AUTO_COMPACTION",
+        (ConsoleRequestRoute.AUTO_COMPACTION, ConsoleRequestRoute.MANUAL_SUMMARY),
+        "**kwargs",
+    ),
+    GatewayCallsiteRecord(
+        "tldw_chatbook/Chat/response_rules/builder.py",
+        "learn",
+        "complete_auxiliary",
+        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
+        (),
+        "None",
+    ),
+    GatewayCallsiteRecord(
+        "tldw_chatbook/Chat/response_rules/builder.py",
+        "validate_edit",
+        "complete_auxiliary",
+        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
+        (),
+        "None",
+    ),
+    GatewayCallsiteRecord(
+        "tldw_chatbook/Chat/response_rules/evaluator.py",
+        "_batch",
+        "complete_auxiliary",
+        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
+        (),
+        "None",
     ),
     GatewayCallsiteRecord(
         "tldw_chatbook/Chat/console_side_chat.py",
         "run",
         "stream_chat",
-        151,
         ConsoleRouteCaptureDisposition.EXCLUDED,
         (),
         "None",
@@ -393,7 +427,6 @@ CONSOLE_GATEWAY_CALLSITE_CENSUS = (
         "tldw_chatbook/Chat/console_visual_evaluation.py",
         "_evaluate_representation",
         "stream_chat",
-        833,
         ConsoleRouteCaptureDisposition.EXCLUDED,
         (),
         "None",
@@ -402,7 +435,6 @@ CONSOLE_GATEWAY_CALLSITE_CENSUS = (
         "tldw_chatbook/Prompt_Management/prompt_improvement_service.py",
         "improve",
         "complete_auxiliary",
-        447,
         ConsoleRouteCaptureDisposition.EXCLUDED,
         (),
         "None",
@@ -411,7 +443,6 @@ CONSOLE_GATEWAY_CALLSITE_CENSUS = (
         "tldw_chatbook/UI/Persona_Modules/personas_preview_controller.py",
         "_consume",
         "stream_chat",
-        775,
         ConsoleRouteCaptureDisposition.EXCLUDED,
         (),
         "None",
@@ -420,10 +451,17 @@ CONSOLE_GATEWAY_CALLSITE_CENSUS = (
         "tldw_chatbook/Character_Chat/character_generation_controller.py",
         "_run",
         "stream_chat",
-        97,
         ConsoleRouteCaptureDisposition.EXCLUDED,
         (),
         "None",
+    ),
+    GatewayCallsiteRecord(
+        "tldw_chatbook/UI/Screens/chat_screen.py",
+        "_test_console_generation",
+        "complete_auxiliary",
+        ConsoleRouteCaptureDisposition.EXCLUDED,
+        (),
+        "",
     ),
 )
 

@@ -755,14 +755,8 @@ ARCH_REVIEW_TARGETS = (
     "Tests/DB/test_chachanotes_v53_safe_capture_trim.py::test_v53_without_the_trimming_port_fails_closed_and_stays_v52",
     "Tests/DB/test_chachanotes_v53_safe_capture_trim.py::test_fresh_database_opens_without_the_trimming_port",
     "Tests/DB/test_chachanotes_bare_open_self_migration.py::test_a_bare_open_of_a_v52_safe_capture_fails_closed_and_stays_v52",
-    # TASK-41136 (bootstrap_profile): three red nodes deselected, TASK-41053.
+    # TASK-41136 (bootstrap_profile); whole file, no deselects (TASK-40413).
     "Tests/Chat/test_console_provider_gateway.py",
-)
-#: Red on dev, owned by TASK-41053; remove each once it passes (TASK-41136).
-ARCH_REVIEW_DESELECTED = (
-    "Tests/Chat/test_console_provider_gateway.py::test_all_qwencloud_kwargs_paths_forward_pinned_mode_and_base",
-    "Tests/Chat/test_console_provider_gateway.py::test_console_send_leaves_base_url_unpinned_in_default_case[deepseek]",
-    "Tests/Chat/test_console_provider_gateway.py::TestGatewayExchangeCapture::test_openai_stop_closes_transport_through_gateway_boundary",
 )
 #: Owner decision (2026-11-06): suites runnable again after being red in no PR
 #: lane, in their own job, serial under --storage-lease-guard. Sandboxed suites
@@ -864,6 +858,10 @@ RECOVERED_SUITES_TARGETS = (
     "Tests/MCP/test_catalog_fingerprint.py",
     "Tests/Chat/test_console_run_start_anchor.py",
     "Tests/MCP/test_run_catalog_fingerprint_off_loop.py",
+    # TASK-42552: the request-provenance route census, red in no PR lane
+    # before. Sandboxed and reads no config (a RecoveryRequired recorder
+    # counted none), so it ends the sandboxed block.
+    "Tests/Chat/test_console_request_provenance_routes.py",
     # TASK-39142: bootstrap_profile since TASK-38111. TASK-39049's keyword-leg
     # pool retirement file runs beside its four siblings.
     "Tests/Prompt_Management/test_prompt_improvement_service.py",
@@ -917,6 +915,17 @@ RECOVERED_SUITES_TARGETS = (
     # tests), which pins that a failed regenerate keeps the prior answer and
     # ran on no lane.
     "Tests/Chat/test_console_variant_stream.py",
+    # TASK-42552: the continuation-merge, named-agent and redirect-cut files
+    # (bootstrap_profile), red in no PR lane before.
+    "Tests/Chat/test_console_continuation_group_merge.py",
+    "Tests/Chat/test_console_named_agent_model.py",
+    "Tests/Chat/test_console_redirect_stream_cut.py",
+    # TASK-42552 review: the route census's capture column checked against
+    # each action through the real controller (bootstrap_profile).
+    "Tests/Chat/test_console_route_census_capture.py",
+    # TASK-42569: the local citation boundary file (bootstrap profile by
+    # name in Tests/conftest.py), red in no PR lane before.
+    "Tests/Chat/test_console_local_citation_boundary.py",
     # TASK-40323: the green held-pointer case and stock skill-trust cases
     # (bootstrap_profile, private subprocesses), which ran on no lane.
     "Tests/Performance/test_app_wiring_held_pointer_currentness.py::test_actual_stock_held_pointer_refuses_before_foreign_access[collections]",
@@ -2046,7 +2055,6 @@ def test_architecture_review_lane_is_one_serial_minimal_python_312_job() -> None
     assert tuple(shlex.split(step["run"].replace("\\\n", " "), comments=True)) == (
         "pytest",
         *ARCH_REVIEW_TARGETS,
-        *(f"--deselect={node}" for node in ARCH_REVIEW_DESELECTED),
         "--timeout=180",
         "--tb=short",
     )

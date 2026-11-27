@@ -4403,7 +4403,10 @@ async def test_all_qwencloud_kwargs_paths_forward_pinned_mode_and_base() -> None
         assert "api_mode" not in primary_kwargs
         assert "api_mode" not in prepared_kwargs
         assert "api_mode" not in auxiliary_kwargs
-        if provider == "anthropic":
+        # DeepSeek shares QwenCloud's branch (f5a63125ff, ADR-064's
+        # 2026-10-12 amendment): its explicit mode and the endpoint Console
+        # checked are pinned on every path (TASK-40413).
+        if provider in {"anthropic", "deepseek"}:
             assert primary_kwargs["api_base_url"] == base_url
             assert prepared_kwargs["api_base_url"] == base_url
         else:
@@ -4532,7 +4535,10 @@ async def test_console_send_leaves_base_url_unpinned_in_default_case(
     (including any legacy-section endpoint) exactly as before the fix.
     HuggingFace is the exception (TASK-40300 review r14ep-rev5): its adapter
     reads ``huggingface_api`` unpinned, whatever Console checked, so it is
-    always pinned to the endpoint Console checked.
+    always pinned to the endpoint Console checked. DeepSeek is the other
+    (TASK-40413): it shares QwenCloud's explicit-mode branch (f5a63125ff),
+    which pins the endpoint Console checked, and the trace verifier
+    reconstructs the same pin.
     """
 
     calls: list[dict[str, object]] = []
@@ -4568,7 +4574,7 @@ async def test_console_send_leaves_base_url_unpinned_in_default_case(
         )
     ] == ["ok"]
 
-    if provider_key == "huggingface":
+    if provider_key in {"huggingface", "deepseek"}:
         assert calls[0]["api_base_url"] == resolution.base_url
     else:
         assert "api_base_url" not in calls[0]
@@ -11420,9 +11426,11 @@ class TestGatewayExchangeCapture:
             def raise_for_status(self) -> None:
                 return None
 
-            def iter_lines(self, *, decode_unicode: bool):
-                assert decode_unicode is True
-                yield 'data: {"choices": [{"delta": {"content": "he"}}]}'
+            def iter_lines(self, chunk_size=512, decode_unicode=False, delimiter=None):
+                # TASK-38589 (c1cad552f4): the adapter reads BYTES and decodes
+                # UTF-8 itself, never with requests' header-charset decode.
+                assert decode_unicode is False
+                yield b'data: {"choices": [{"delta": {"content": "he"}}]}'
                 raise AssertionError("stopped stream requested another HTTP chunk")
 
             def close(self) -> None:

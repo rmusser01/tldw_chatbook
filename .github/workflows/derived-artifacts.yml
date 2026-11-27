@@ -1903,7 +1903,7 @@ jobs:
     #
     # TASK-41136: the Console provider gateway file (bootstrap_profile, so
     # last), on no PR lane before: 494 tests, 4.1 min serially at load ~56.
-    # Its three deselected nodes are red on dev, owned by TASK-41053.
+    # TASK-40413: its three once-deselected nodes pass again and run here.
     #
     # The media body-move series (TASK-36952.3): its Architecture wiring pins
     # (sandboxed, so before the TASK-39114 files), in no PR lane before; 16
@@ -1975,9 +1975,6 @@ jobs:
             Tests/DB/test_chachanotes_v53_safe_capture_trim.py::test_fresh_database_opens_without_the_trimming_port \
             Tests/DB/test_chachanotes_bare_open_self_migration.py::test_a_bare_open_of_a_v52_safe_capture_fails_closed_and_stays_v52 \
             Tests/Chat/test_console_provider_gateway.py \
-            "--deselect=Tests/Chat/test_console_provider_gateway.py::test_all_qwencloud_kwargs_paths_forward_pinned_mode_and_base" \
-            "--deselect=Tests/Chat/test_console_provider_gateway.py::test_console_send_leaves_base_url_unpinned_in_default_case[deepseek]" \
-            "--deselect=Tests/Chat/test_console_provider_gateway.py::TestGatewayExchangeCapture::test_openai_stop_closes_transport_through_gateway_boundary" \
             --timeout=180 \
             --tb=short
 
@@ -2084,6 +2081,14 @@ jobs:
       # was 148 s of a 51.7-min local run of the whole step), at the tail.
       # Round 27: TASK-42556's child preset fallback file (bootstrap_profile,
       # on no lane before) comes last; timing in the task's notes.
+      # Round 27: TASK-42552's four Console files, on no lane before. The
+      # request-provenance census (sandboxed, reads no config) ends the
+      # sandboxed block; the continuation-merge, named-agent and redirect-cut
+      # files (bootstrap_profile) follow the variant-stream file, then the
+      # route census's capture check through the real controller
+      # (bootstrap_profile). TASK-42569 appends the local citation boundary
+      # file (bootstrap profile by name in Tests/conftest.py), on no lane
+      # before. Timings in the tasks' notes.
       # test_closed_loop_pending_submit_is_emergency_detachment: deselected
       # 2026-11-12: red on dev e0186fa10a (console_send_diagnostic ContextVar
       # token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.
@@ -2135,6 +2140,7 @@ jobs:
             Tests/MCP/test_catalog_fingerprint.py \
             Tests/Chat/test_console_run_start_anchor.py \
             Tests/MCP/test_run_catalog_fingerprint_off_loop.py \
+            Tests/Chat/test_console_request_provenance_routes.py \
             Tests/Prompt_Management/test_prompt_improvement_service.py \
             Tests/RAG_Search/test_keyword_leg_chacha.py \
             Tests/RAG_Search/test_keyword_leg_db_resolution.py \
@@ -2158,6 +2164,11 @@ jobs:
             Tests/Chat/test_console_automatic_library_preparation.py \
             Tests/integration/test_library_ingest_flow.py \
             Tests/Chat/test_console_variant_stream.py \
+            Tests/Chat/test_console_continuation_group_merge.py \
+            Tests/Chat/test_console_named_agent_model.py \
+            Tests/Chat/test_console_redirect_stream_cut.py \
+            Tests/Chat/test_console_route_census_capture.py \
+            Tests/Chat/test_console_local_citation_boundary.py \
             "Tests/Performance/test_app_wiring_held_pointer_currentness.py::test_actual_stock_held_pointer_refuses_before_foreign_access[collections]" \
             "Tests/Performance/test_app_wiring_held_pointer_currentness.py::test_actual_stock_held_pointer_refuses_before_foreign_access[skill]" \
             "Tests/Performance/test_app_wiring_held_pointer_currentness.py::test_actual_stock_held_pointer_refuses_before_foreign_access[skill-factory]" \

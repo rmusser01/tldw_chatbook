@@ -3309,6 +3309,47 @@ async def test_the_image_context_call_never_reaches_a_refused_endpoint(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("provider", "base_url"),
+    [
+        ("deepseek", "https://api.deepseek.com"),
+        ("deepseek", "https://deepseek-proxy.example.test/v1"),
+        ("openai", "https://api.openai.com/v1"),
+        ("openai", "https://openai-proxy.example.test/v1"),
+    ],
+)
+async def test_the_image_context_call_pins_what_a_console_send_pins(provider, base_url):
+    """TASK-40413: DeepSeek's Console send pins its endpoint even when it is the
+    builtin one, so ``/image``'s context call must pin it too, not leave the
+    adapter to resolve its own (OpenAI keeps the conditional pin)."""
+    from Tests.Chat.test_console_generation_actions import (
+        _bare_generation_screen,
+        _imagegen_cfg,
+    )
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    resolution = _dispatch_resolution(provider, base_url)
+    screen = _bare_generation_screen(ConsoleChatStore())
+    screen._build_console_provider_selection = lambda: "selection"
+
+    class _FakeGateway:
+        async def resolve_for_send(self, _selection):
+            return resolution
+
+    screen._ensure_console_provider_gateway = lambda: _FakeGateway()
+
+    options = await screen._image._console_generate_image_llm_context_options(
+        _imagegen_cfg()
+    )
+    sent = ConsoleProviderGateway()._chat_api_kwargs(
+        resolution, [{"role": "user", "content": "q"}]
+    )
+
+    assert options.provider_ready is True
+    assert options.api_base_url == sent.get("api_base_url")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     "pasted",
     [
         "https://api.deepinfra.com/v1/openai/models",

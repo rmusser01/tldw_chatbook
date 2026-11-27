@@ -5,19 +5,50 @@ adapter-entry sealing and execution-time verification. The frozen executable
 census is `CONSOLE_REQUEST_ROUTE_CENSUS` and `CONSOLE_GATEWAY_CALLSITE_CENSUS`
 in `Chat/console_trace_provenance.py`; its AST test is intentionally
 bidirectional so a newly added or removed direct gateway call cannot silently
-escape classification.
+escape classification. Rows are keyed by module and function, never by line
+number: a route row names a marker line inside its function, and a callsite
+row names its `route=` binding (`**name` when the route travels in a keyword
+splat, empty when the call binds none). A traced callsite must bind a route.
 
 Conversation-owned logical routes are fresh send, retry, continue,
 regenerate, edit/resend, direct prefill, agent first call, agent tool loop,
 citation repair, manual summary, impersonation, automatic compaction, and the
 llama fallback. Agent-first and tool-loop calls require actor/chain metadata at
 the later execution-sealing boundary. Automatic compaction is conversation
-owned even though its auxiliary result has no visible assistant owner.
+owned even though its auxiliary result has no visible assistant owner. Manual
+summary, automatic compaction and Summarize-as-note (`summarize_span_as_note`,
+through `summarize_span_to_text`) reach the provider through one auxiliary
+call, `_summary_completion`. All three are Capture Off, because
+`complete_auxiliary()` always admits capture off and refuses any traced
+route. Owner decision (2026-11-26), asked "Manual summaries (and Summarize as
+note) have always been sent with capture off, even in captured chats, the
+same as automatic compaction. The old route census and its design doc wrongly
+said they were traced, and round 27 corrects them to say capture off. Keep
+that behaviour?": "Keep capture off (Recommended)". Fresh send has a second
+callsite: speculative duplex voice dispatches a Capture-On fresh turn from
+`console_voice_attempts.py`. Response rules' helper calls are Console-owned
+and Capture Off.
+
+The census's capture column records what a Capture-On chat's call on each
+route does today, and `Tests/Chat/test_console_route_census_capture.py`
+drives each user action through the real controller to check it. Retry,
+Continue, Regenerate, Edit & resend, Impersonate and citation repair carry no
+turn preparation or capture mode, so they dispatch Capture Off (Retry of a
+failed turn under Capture On is TASK-42555: the owner decided on 2026-11-26 to
+trace it as a new run of the same turn, built after PR #3717). A fresh send is traced; the
+test checks this on the agent and plain paths. The census rows for the agent's
+first call, the tool loop, direct prefill and the llama fallback describe a
+fresh send; each takes the capture mode of the action it serves. On the
+agent path every action's provider call carries the agent-first or tool-loop
+route, so an agent-path Regenerate, Edit & resend, Continue or Retry dispatches
+an agent-first call with capture off, and a Regenerate with a pinned prefill
+dispatches direct prefill with capture off.
 
 The explicitly excluded preparation owners are Console side chat, visual
 evaluation, and prompt improvement. Persona preview and character generation
 are also classified as excluded because the AST census finds their use of the
-same gateway API outside a Console conversation.
+same gateway API outside a Console conversation, as is the Conversation
+settings generation probe.
 
 Fresh requests record either a RAG source descriptor or
 `fresh_rag_not_selected`. Retry/continue/regenerate/edit requests do not
