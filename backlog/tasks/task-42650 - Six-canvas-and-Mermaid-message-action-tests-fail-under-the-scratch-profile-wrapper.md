@@ -4,7 +4,7 @@ title: "Six canvas and Mermaid message-action tests fail on dev under the scratc
 status: To Do
 assignee: []
 created_date: 2026-11-27 18:00
-updated_date: 2026-11-27 18:40
+updated_date: 2026-11-27 18:38
 labels:
 - follow-up
 - tests

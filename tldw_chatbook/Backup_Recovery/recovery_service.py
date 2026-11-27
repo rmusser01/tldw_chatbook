@@ -394,8 +394,8 @@ def issue_message(code: str) -> str:
         return (
             f"Backup and restore need SQLite {needed} or newer, and this Python "
             f"uses SQLite {sqlite3.sqlite_version}. Run Chatbook with a Python "
-            "that has a newer SQLite (Docs/Backup-and-Recovery.md names some), "
-            "then try again. The rest of Chatbook works as before."
+            "that has a newer SQLite (the \"Local backup and recovery\" guide names "
+            "some), then try again. The rest of Chatbook works as before."
         )
     return _ISSUE_MESSAGES.get(
         code, "Review the recovery status and selected local paths before trying again."
@@ -861,8 +861,12 @@ class RecoveryService:
         restore planner resolves it again against its current target inventory.
         Legacy Everything keeps its existing whole-archive planning path.
         """
+        from .qualification import require_supported_sqlite
         from .restore_groups import resolve_archive_groups
 
+        # TASK-42546: the restore review's first step, so an old SQLite stops
+        # it here rather than after a linked-group round.
+        require_supported_sqlite()
         doc = archive_reader.verify_sealed(self.inspection(inspection_id))
         if data_groups is None and doc.group_scope is None:
             return None

@@ -1099,10 +1099,10 @@ def test_sqlite_version_refusal_names_found_and_needed_versions(monkeypatch):
     message = issue_message(code)
     assert "SQLite 3.41.0 or newer" in message
     assert "uses SQLite 3.40.1" in message
-    assert "Docs/Backup-and-Recovery.md" in message
+    assert 'the "Local backup and recovery" guide' in message
 
 
-@pytest.mark.parametrize("review", ["restore", "rollback", "backup"])
+@pytest.mark.parametrize("review", ["groups", "restore", "rollback", "backup"])
 def test_reviews_refuse_sqlite_before_3_41_before_reading_anything(
     monkeypatch, tmp_path, review
 ):
@@ -1119,12 +1119,13 @@ def test_reviews_refuse_sqlite_before_3_41_before_reading_anything(
         monkeypatch.setattr(service, "inspection", no_reads)
         monkeypatch.setattr(service, "preview_backup", no_reads)
         calls = {
+            "groups": lambda: service.restore_group_requirements("inspection"),
             "restore": lambda: service.preview_restore("inspection", mode="isolated"),
             "rollback": lambda: service.start_rollback_preview(
                 "copy", old_password=b"x", target=None
             ),
             "backup": lambda: service.preview_backup_details(
-                (), options={}, destination=tmp_path / "out.tldwbackup"
+                (), options={}, destination=tmp_path / "out.tldw-backup.zip"
             ),
         }
         with pytest.raises(ValueError, match="^sqlite_version_unsupported$"):
