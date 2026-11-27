@@ -270,7 +270,15 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #: 224: the 104 new entries bring 134 modules here, more than the 102
 #: measured live, because the census starts before the screen routes. Pinned
 #: exactly, no slack; the rule for every other entry is unchanged.
-MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 224
+#: 2026-11-27 (TASK-40608, rebased onto dev c0a999302f): lowered 224 -> 203.
+#: TASK-33620.15.57 had since made the warm-up's closing re-freeze book what
+#: it imported as runtime growth, which must stay under ADR-198's compaction
+#: floor (50,000 objects); with the whole project-chat block it booked
+#: 53,988. The plugin services, trace capture, the profile tool provider and
+#: anyio left the block (22 entries; the first project message imports them,
+#: about 0.2 s there) and the warm-up books 44,322. Census: 203, pinned
+#: exactly.
+MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 203
 
 _CENSUS_SCRIPT = """
 import json

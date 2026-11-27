@@ -88,7 +88,6 @@ tldw_chatbook.Backup_Recovery.recovered_media_schema
 tldw_chatbook.Backup_Recovery.recovery_files
 tldw_chatbook.Backup_Recovery.runtime_maintenance
 tldw_chatbook.Backup_Recovery.runtime_producer_lifetime
-tldw_chatbook.Backup_Recovery.service_storage
 tldw_chatbook.Backup_Recovery.settings_file_participants
 tldw_chatbook.Backup_Recovery.storage_admission
 tldw_chatbook.Backup_Recovery.visual_identity_participants
@@ -141,6 +140,7 @@ tldw_chatbook.Chat.citation_trace_builder
 tldw_chatbook.Chat.citation_trace_identity
 tldw_chatbook.Chat.citation_trace_models
 tldw_chatbook.Chat.citation_trace_repository
+tldw_chatbook.Chat.console_action_capture
 tldw_chatbook.Chat.console_agent_bridge
 tldw_chatbook.Chat.console_appearance
 tldw_chatbook.Chat.console_attention_preparation

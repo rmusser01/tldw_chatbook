@@ -189,13 +189,22 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     # TASK-40608 (owner decision 2026-11-21, "Warm up after UI ready"): what a
     # first message in a PROJECT chat with local tools still imported after
     # every entry above: the remote-binding status read, the personal-context
-    # service, the plugin and project-index services, trace capture and the
-    # agent's local tool dispatch (about 0.5-0.7 s of imports on Windows,
-    # inside the send). Measured on the TASK-40608 journey with the routes and
-    # the list above already loaded. Third-party packages first, then the
-    # modules in reverse start order, so each comes after what it loads.
-    "sniffio",
-    "anyio",
+    # service, the project-index service and the agent's local tool dispatch.
+    # Measured on the TASK-40608 journey with the routes and the list above
+    # already loaded. Third-party packages first, then the modules in reverse
+    # start order, so each comes after what it loads.
+    #
+    # Not the whole of it. The warm-up's closing re-freeze books everything it
+    # imported as runtime growth, which must stay under ADR-198's compaction
+    # floor (50,000 objects; TASK-33620.15.57's test in
+    # ``Tests/UI/test_console_first_send_preimport.py``). The list above books
+    # 31,654; with every project-chat module it was 53,988. Left for the first
+    # project message to import, about 0.2 s there: the plugin services
+    # (``Plugins.*``), trace capture (``Chat.console_trace_*``), the profile
+    # tool provider and ``anyio``. They cost the most objects per second of
+    # import; the two slow imports (``Personal_Context.recovery`` 0.57 s,
+    # ``Tools.remote_binding_status`` 0.13 s) are light and stay. Measured
+    # 2026-11-27 on dev c0a999302f: 44,271 booked with this block.
     "cryptography",
     "tldw_chatbook.Agents.tool_disclosure_diagnostics",
     "tldw_chatbook.Agents.run_webhooks",
@@ -208,12 +217,6 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Chat.console_approval_feedback",
     "tldw_chatbook.Agents.tool_output",
     "tldw_chatbook.Chat.refused_stream",
-    "tldw_chatbook.Chat.console_trace_metrics",
-    "tldw_chatbook.Chat.console_trace_runtime",
-    "tldw_chatbook.Chat.console_trace_service",
-    "tldw_chatbook.Chat.console_trace_continuation",
-    "tldw_chatbook.Chat.console_voice_trace_gateway",
-    "tldw_chatbook.Chat.console_voice_trace_promotion",
     "tldw_chatbook.Agents.goal_storage_lifetime",
     "tldw_chatbook.Chat.stream_stall_watchdog",
     "tldw_chatbook.Chat.console_streaming_request",
@@ -225,24 +228,11 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Chat.console_tool_activity",
     "tldw_chatbook.Canvas.authoring",
     "tldw_chatbook.Agents.fleet_message_tools",
-    "tldw_chatbook.Plugins.host_references",
-    "tldw_chatbook.Skills_Interop.skill_script_runner",
-    "tldw_chatbook.Plugins.revisions",
-    "tldw_chatbook.Plugins.service",
-    "tldw_chatbook.Plugins.admission",
-    "tldw_chatbook.Plugins.revocation",
-    "tldw_chatbook.Plugins.review",
-    "tldw_chatbook.Plugins.authority",
-    "tldw_chatbook.Plugins.recovery",
-    "tldw_chatbook.Plugins.package_files",
-    "tldw_chatbook.Plugins.models",
-    "tldw_chatbook.Plugins",
     "tldw_chatbook.DB.fleet_progress_repository",
     "tldw_chatbook.Agents.fleet_messages",
     "tldw_chatbook.Chat.console_agent_preparation",
     "tldw_chatbook.Agents.native_source_storage",
     "tldw_chatbook.Agents.archive_recovery_tool_provider",
-    "tldw_chatbook.Agents.profile_tool_provider",
     "tldw_chatbook.Personal_Context.proposal_service",
     "tldw_chatbook.Chat.console_personal_context",
     "tldw_chatbook.Personal_Context.recovery",
