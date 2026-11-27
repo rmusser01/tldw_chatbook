@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-27 05:50'
-updated_date: '2026-11-27 05:50'
+updated_date: '2026-11-27 17:00'
 labels:
   - tests
   - flaky
@@ -25,6 +25,7 @@ The test should fail only when the Library rail really loses its scroll offset a
 - [x] #1 The test waits for the recompose's new rail and its restored offset instead of checking at a fixed 0.6 s
 - [x] #2 The test passes when the screen's recompose is slowed, and fails when the rail-scroll restore is removed
 - [x] #3 The test no longer passes on the old rail when the recompose has not run yet
+- [x] #4 `Tests/UI/test_library_details_hanging_indent.py`, which imports this file and so runs in its light job, passes
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -53,5 +54,7 @@ The test should fail only when the Library rail really loses its scroll offset a
 - `_wait_for_selector`'s 2 s cap (`Tests/UI/test_destination_shells.py`) ran out;
 - in `test_library_workspaces_create_local_workspace_mouse_clicks`, the click on the create button sometimes never pushed the modal.
 
-Files: `Tests/UI/test_post_release_workspaces_library_depth.py`.
+**AC #4 (the PR's light run, 2026-11-27).** The light job also runs the files that import this one. `test_library_details_hanging_indent.py::test_a_wrapped_details_row_paints_its_continuations_indented` failed there on both sizes with `RecoveryRequired: raw_source_selection_changed`. It fails the same way on dev d2ad1e5330, and no PR lane runs the file. Its mounted test builds the app with `test_library_shell._build_test_app`, which needs the `bootstrap_profile` fixture; every test in `test_library_shell.py` has that marker. With the marker the file passes (5 passed).
+
+Files: `Tests/UI/test_post_release_workspaces_library_depth.py`, `Tests/UI/test_library_details_hanging_indent.py`.
 <!-- SECTION:NOTES:END -->
