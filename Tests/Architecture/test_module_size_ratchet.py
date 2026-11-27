@@ -355,7 +355,12 @@ _BUDGETS: dict[str, int] = {
     # earlier message to the refusal and the stream, which keep those Capture
     # Off; Regenerate and Edit pass their prefill to the refusal.
     # Round 27 port onto dev 9926834bc8: 28848 -> 28854, exact measurement.
-    "tldw_chatbook/Chat/console_chat_controller.py": 28854,
+    # 2026-11-26, TASK-42560 owner decision (refused action undone; same rule):
+    # 28,810 -> 28,816 (+6), exact measurement. Regenerate and Edit pass the
+    # branch's leaf before the action, and Regenerate stops after an undone
+    # action.
+    # Round 27 port onto dev 9926834bc8: 28854 -> 28860, exact measurement.
+    "tldw_chatbook/Chat/console_chat_controller.py": 28860,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     # TASK-41637, 2026-11-18: +9, a round armed with no running app and no
     # answerable view fails closed instead of waiting forever (dev's row +

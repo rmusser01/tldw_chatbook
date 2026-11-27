@@ -294,6 +294,7 @@ from tldw_chatbook.Chat.console_trace_provenance import (
 from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
 from tldw_chatbook.Chat.console_action_capture import (  # TASK-42560
     action_capture_refusal,
+    action_dropped,
     continues_earlier_message,
     saved_rows,
     stream_action,
@@ -18700,6 +18701,7 @@ class ConsoleChatController:
         prefill = self._pinned_prefill_for_session(session_id)
         if refusal := action_capture_refusal(self, session_id, resolution, prefill):
             return self._block(session_id, refusal)
+        leaf = self.store.active_path_message_ids(session_id)[-1]  # TASK-42560
         self.clear_original_attempt(message_id)
         new_message = self.store.create_sibling(
             message_id,
@@ -18714,6 +18716,7 @@ class ConsoleChatController:
             self,
             trace_source_messages=trace_source,
             user_id=turn_user_id(self, session_id, new_message.id),
+            previous_leaf_id=leaf,
             route=ConsoleRequestRoute.REGENERATE,
             mixin_observation_revision=mixin_current.revision if mixin_current is not None else None,
             mixin_anchor_id=mixin_anchor_id,
@@ -18727,6 +18730,8 @@ class ConsoleChatController:
             skill_bundle_block=skill_bundle_block,
             turn_context=turn_context,
         )
+        if action_dropped(result):  # TASK-42560: the refused sibling is gone
+            return result
         try:
             persisted_sibling = self.store.get_message(new_message.id)
         except KeyError:
@@ -19881,6 +19886,7 @@ class ConsoleChatController:
             self,
             trace_source_messages=trace_source,
             user_id=edited_message.id,
+            previous_leaf_id=active_path[-1],
             route=ConsoleRequestRoute.EDIT,
             mixin_observation_revision=mixin_current.revision if mixin_current is not None else None,
             mixin_anchor_id=mixin_anchor_id,

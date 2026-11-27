@@ -12,6 +12,7 @@ routed here.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -33,6 +34,12 @@ TEMPORARY_CAPTURE_COPY = (
 )
 #: The reply's failure copy when its call could not be traced.
 TRACE_REFUSED_COPY = "Trace capture could not be saved, so this request was not sent."
+#: Why an action the trace refused before dispatch was undone (owner
+#: decision 2026-11-26).
+ACTION_NOT_SENT_COPY = (
+    "Not sent: trace capture could not start. Try again, or turn Capture off "
+    "for this chat."
+)
 #: The reply path's own copy when the mix-ins cannot be composed.
 MIXIN_UNAVAILABLE_COPY = "Mix-in attempt could not be saved; response was not sent."
 
@@ -243,6 +250,7 @@ async def stream_action(
     trace_source_messages: Sequence[Mapping[str, Any]],
     user_id: str,
     earlier: bool = False,
+    previous_leaf_id: str | None = None,
     **stream: Any,
 ) -> ConsoleSubmitResult:
     """Stream an action's reply, traced under Capture On like a normal send.
@@ -252,12 +260,17 @@ async def stream_action(
         trace_source_messages: The saved rows as read, before transforms.
         user_id: Native id of the saved user row that owns the call.
         earlier: A Continue of a message with later rows after it.
+        previous_leaf_id: The active leaf before the action changed the
+            branch (Regenerate, Edit & resend); a Continue's is its reply's
+            parent.
         **stream: The action's ``_stream_assistant_response`` arguments.
 
     Returns:
-        The stream's result. A request the trace refuses before dispatch
-        fails the reply with :data:`TRACE_REFUSED_COPY`, or blocks it with
-        :data:`MIXIN_UNAVAILABLE_COPY` when its mix-ins cannot be composed.
+        The stream's result. When the trace refuses the action before
+        anything is sent, the action is undone (:func:`action_dropped`); a
+        reply that cannot be undone fails with :data:`TRACE_REFUSED_COPY`.
+        A mix-in composition failure is blocked with
+        :data:`MIXIN_UNAVAILABLE_COPY`.
     """
     from tldw_chatbook.Chat.console_prepared_request import (
         compose_current_mixin_messages,
@@ -273,13 +286,20 @@ async def stream_action(
     excepted = controller.store.session_is_ephemeral(session_id) or _keeps_capture_off(
         controller, session_id, stream["resolution"], stream.get("prefill"), earlier
     )
-    if mode is ConsoleTraceCaptureMode.CAPTURE_OFF or not excepted:
-        # The action follows the chat's capture mode, so it uses up a
-        # one-time choice as a normal send does.
-        _use_up_next_send_choice(controller, session_id, snapshot)
     if mode is ConsoleTraceCaptureMode.CAPTURE_OFF or excepted:
+        if mode is ConsoleTraceCaptureMode.CAPTURE_OFF:
+            # The action follows the chat's capture mode, so it uses up a
+            # one-time choice as a normal send does.
+            _use_up_next_send_choice(controller, session_id, snapshot)
         return await controller._stream_assistant_response(**stream)
     assistant_id = stream["assistant_message_id"]
+    # An Edit & resend also created its edited message.
+    root_id = user_id if stream["route"] is ConsoleRequestRoute.EDIT else assistant_id
+    undo = _Undo(
+        root_id=root_id,
+        previous_leaf_id=previous_leaf_id,
+        calls_before=_latest_call_rowid(controller),
+    )
     try:
         # The reply path composes the mix-ins too; composing them first
         # freezes the request with the body the provider receives.
@@ -301,6 +321,7 @@ async def stream_action(
         )
     except MixinSnapshotUnavailableError:
         # As the reply path refuses its own composition.
+        _use_up_next_send_choice(controller, session_id, snapshot)
         return controller._block_context_preflight(
             session_id=session_id,
             assistant_message_id=assistant_id,
@@ -312,15 +333,139 @@ async def stream_action(
         logger.bind(error_type=type(exc).__name__).warning(
             "action_trace_request_failed"
         )
-        return _fail_unsent(controller, session_id, assistant_id)
+        return _refused(controller, session_id, snapshot, assistant_id, undo)
     try:
-        return await controller._stream_assistant_response(
+        result = await controller._stream_assistant_response(
             **(stream | {"provider_messages": provider_messages}),
             capture_mode_override=mode,
             trace_request=request,
+            # The agent path raises a refused call's error instead of
+            # settling it, so a refusal before dispatch can be undone.
+            propagate_trace_call_persistence_errors=True,
         )
-    except (TraceCallPersistenceError, TraceProvenancePersistenceError):
+    except TraceProvenancePersistenceError:
+        return _refused(controller, session_id, snapshot, assistant_id, undo)
+    except TraceCallPersistenceError as exc:
+        if _dispatch_may_have_started(exc):
+            _use_up_next_send_choice(controller, session_id, snapshot)
+            return _fail_unsent(controller, session_id, assistant_id)
+        return _refused(controller, session_id, snapshot, assistant_id, undo)
+    except BaseException:
+        _use_up_next_send_choice(controller, session_id, snapshot)
+        raise
+    _use_up_next_send_choice(controller, session_id, snapshot)
+    return result
+
+
+@dataclass(frozen=True, slots=True)
+class _Undo:
+    """What a refused action created, and the branch before it."""
+
+    root_id: str
+    previous_leaf_id: str | None
+    calls_before: int | None
+
+
+def _latest_call_rowid(controller: ConsoleChatController) -> int | None:
+    """The trace ledger's newest call, before the action's run (None if
+    the ledger cannot be read, which keeps a refused reply)."""
+    database = getattr(getattr(controller.store, "persistence", None), "db", None)
+    if database is None:
+        return None
+    try:
+        with database.transaction() as cursor:
+            row = cursor.execute(
+                "SELECT coalesce(max(rowid), 0) FROM console_trace_calls"
+            ).fetchone()
+    except Exception:  # noqa: BLE001 -- unreadable: keep the reply
+        return None
+    return int(row[0])
+
+
+def _run_dispatched(controller: ConsoleChatController, calls_before: int) -> bool:
+    """Whether any call reserved since ``calls_before`` reached the provider."""
+    database = controller.store.persistence.db
+    try:
+        with database.transaction() as cursor:
+            row = cursor.execute(
+                "SELECT 1 FROM console_trace_calls WHERE rowid > ? "
+                "AND dispatch_started_at IS NOT NULL LIMIT 1",
+                (calls_before,),
+            ).fetchone()
+    except Exception:  # noqa: BLE001 -- unreadable: keep the reply
+        return True
+    return row is not None
+
+
+def _dispatch_may_have_started(exc: Exception) -> bool:
+    """Read the refused call's dispatch evidence as a normal send does."""
+    boundary = getattr(exc, "boundary", None)
+    if getattr(boundary, "dispatch_outcome", None) == "unknown":
+        return True
+    started = getattr(boundary, "dispatch_started", None)
+    if type(started) is bool:
+        return started
+    return getattr(exc, "reservation_status", None) is None
+
+
+def _holds_nothing(controller: ConsoleChatController, message_id: str) -> bool:
+    try:
+        reply = controller.store.get_message(message_id)
+    except KeyError:
+        return False
+    return (
+        not reply.content
+        and reply.image_data is None
+        and not reply.attachments
+        and getattr(reply, "provider_continuation", None) is None
+    )
+
+
+def _refused(
+    controller: ConsoleChatController,
+    session_id: str,
+    snapshot: Any,
+    assistant_id: str,
+    undo: _Undo,
+) -> ConsoleSubmitResult:
+    """Undo an action the trace refused before anything was sent (owner
+    decision 2026-11-26), or fail its reply when that cannot be proven."""
+    from tldw_chatbook.Chat.console_chat_controller import (
+        ConsoleRunState,
+        ConsoleRunStatus,
+        ConsoleSubmitResult,
+    )
+
+    if (
+        undo.calls_before is None
+        or _run_dispatched(controller, undo.calls_before)
+        or not _holds_nothing(controller, assistant_id)
+    ):
+        _use_up_next_send_choice(controller, session_id, snapshot)
         return _fail_unsent(controller, session_id, assistant_id)
+    try:
+        # A pending reply cannot be deleted; it never streamed.
+        controller.store.mark_message_failed(assistant_id)
+        controller.store.delete_message(undo.root_id)
+        if undo.previous_leaf_id is not None:
+            controller.store.set_active_leaf(session_id, undo.previous_leaf_id)
+    except KeyError:
+        return controller._session_closed_result(session_id=session_id)
+    controller._set_run_state(
+        ConsoleRunState.blocked(ACTION_NOT_SENT_COPY), session_id=session_id
+    )
+    return ConsoleSubmitResult(
+        False,
+        False,
+        ACTION_NOT_SENT_COPY,
+        session_id=session_id,
+        terminal_status=ConsoleRunStatus.BLOCKED,
+    )
+
+
+def action_dropped(result: ConsoleSubmitResult) -> bool:
+    """Whether ``stream_action`` undid a refused action."""
+    return not result.accepted and result.visible_copy == ACTION_NOT_SENT_COPY
 
 
 def _fail_unsent(
@@ -348,10 +493,12 @@ def _fail_unsent(
 
 
 __all__ = [
+    "ACTION_NOT_SENT_COPY",
     "MIXIN_UNAVAILABLE_COPY",
     "TEMPORARY_CAPTURE_COPY",
     "TRACE_REFUSED_COPY",
     "action_capture_refusal",
+    "action_dropped",
     "continues_earlier_message",
     "saved_rows",
     "stream_action",
