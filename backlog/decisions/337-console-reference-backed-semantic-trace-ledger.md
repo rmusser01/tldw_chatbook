@@ -1123,7 +1123,14 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    replacement that started at a user row (or at a chain's placeholders),
    which a normal send's own call never does; every call after it belongs to
    the run (or is a llama.cpp resend of one of its calls); the latest call is
-   settled. The replacement then:
+   settled. Engineering clarification (2026-11-26, after review): a later
+   call of the run the trace refused and marked not dispatched before it
+   bound any row (point 7) is passed over, and a latest call whose response
+   the trace holds only as a provider artifact (a tool-call response after
+   which the run ended: the emergency stop holding its tool turns, a
+   breaker, the turn budget) bore no saved reply, so the run counts as
+   bearing none; a saved response the trace cannot verify still refuses.
+   The replacement then:
    - removes only rows the run wrote after its user row, or from that row
      when it is a transform, whose saved source then leads the replacement;
    - carries, before the new user, the latest call's verified saved
@@ -1155,20 +1162,39 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
 7. **Refusal.** A shape outside these rules is refused before the provider is
    contacted. When the action's prompt mix-ins cannot be composed, it is
    refused as the reply path refuses them ("Mix-in attempt could not be
-   saved; response was not sent."). Amended 2026-11-26 by the owner's
-   decision below: when the trace refuses the action's own call (its
-   reservation or dispatch binding) before anything is sent, or the
-   action's trace request cannot be frozen, on the agent path and the plain
-   path alike, the action is undone: its empty reply is removed (for an
-   Edit & resend, the edited message with it) and the active branch is the
-   one before the action, so the transcript is as it was. A one-time
-   next-send choice is left armed. The status line and a notification say
-   "Not sent: trace capture could not start. Try again, or turn Capture off
-   for this chat." The reply is kept, and fails with "Trace capture could
-   not be saved, so this request was not sent.", when it holds any content,
-   attachment or continuation, when a call of the action's run was
-   dispatched (a later tool-loop call refused), or when the refused call's
-   dispatch is unknown. Its Retry is Retry's (TASK-42555).
+   saved; response was not sent."), and a one-time next-send choice stays
+   armed. Amended 2026-11-26 by the owner's decision below: when the trace
+   refuses the action's own call (its reservation or dispatch binding)
+   before anything is sent, or the action's trace request cannot be frozen,
+   on the agent path and the plain path alike, the action is undone:
+   - a refused binding's established reservation is first marked not
+     dispatched, as a canceled trace pause does;
+   - the active branch is set back to the leaf before the action, then its
+     empty reply (for an Edit & resend, the edited message with it) and any
+     skipped-skill note it added are removed;
+   - a one-time next-send choice stays armed; Regenerate and Edit & resend
+     clear citation-repair "original attempt" previews, and Edit & resend
+     records its "message edited" event, only once the action is not undone;
+   - the status line and a notification say "Not sent: trace capture could
+     not start. Choose Capture off for the next send, or turn Capture off
+     for this chat." (with " Your edit was not kept." for an Edit & resend).
+
+   What stays (corrected 2026-11-26 after review): on the agent path the
+   failed agent run is still listed in the Run log; the mix-in attempt
+   record saved for the removed reply stays; the undo's own writes (the
+   reply's tombstone, the branch selection) are recorded as for any delete
+   or branch switch.
+
+   The reply is kept, and fails with "Trace capture could not be saved, so
+   this reply stopped.", when it holds any content (text, an image, an
+   attachment, a continuation, thinking, tool output or a diff), when a call
+   of the action's own turn reserved since it began was dispatched (a later
+   tool-loop call refused; calls of other turns or chats never count), when
+   the refused call's dispatch is unknown or its reservation could not be
+   marked not dispatched, or when an undo write fails. The run is settled
+   either way. After a kept reply whose run was sent, the next captured send
+   is planned by point 5 (its refused later call is passed over). Its Retry
+   is Retry's (TASK-42555).
 
    Owner decision (2026-11-26). The question was: "When the trace refuses
    one of these actions' own call (rare), the empty reply it already saved
@@ -1178,7 +1204,9 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    reply (Recommended)": "When the trace refuses before anything is sent,
    remove the action's empty reply and say why. The chat is left as it was
    before the action, so the user can try again or turn Capture off. Small,
-   and stays clear of PR #3717."
+   and stays clear of PR #3717." The copy's "Try again" was replaced after
+   review: retrying repeats a structural refusal, while the one-time Capture
+   off for the next send applies to actions too.
 
 8. **A skipped failed reply** (2026-11-26, after review). After an action's
    run that bore no response, when the run's user was a transform (prompt
@@ -1199,7 +1227,8 @@ before history the rewritten tail cannot prove; project context in a
 rewritten tail of any other send; and every shape the rules above do not
 name. An action the trace refused before dispatch no longer leaves a failed,
 empty reply on the path (point 7, 2026-11-26), so the sends after it are
-planned as after no action. Out of scope: citation repair (TASK-42585).
+planned as after no action; a kept reply's next send is planned by point 5.
+Out of scope: citation repair (TASK-42585).
 
 ## Current-owner integration amendment (2026-10-13)
 
