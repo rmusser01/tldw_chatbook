@@ -409,6 +409,105 @@ async def test_an_action_on_the_turn_after_a_skipped_failed_reply(
 
 
 @pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("plain_path", [False, True], ids=["agent", "plain_path"])
+@pytest.mark.parametrize("first", ["send", "continue", "edit"])
+async def test_the_next_message_after_a_failed_reply_that_kept_partial_text(
+    tmp_path, monkeypatch, first, plain_path
+):
+    """A failed reply that kept partial text is skipped by the next request,
+    after a failed send, Continue or Edit & resend alike: the next message
+    and then a Regenerate are sent and traced (review probe P30; a failed
+    Continue's was refused)."""
+    replies = []
+    async with _console(
+        tmp_path,
+        monkeypatch,
+        hosted=True,
+        project=False,
+        plain_path=plain_path,
+        replies=replies,
+    ) as app:
+        await _after_a_skipped_failed_reply(app, replies, first, partial=True)
+
+        result = await _act(app, "regenerate")
+
+        assert result.accepted, result.visible_copy
+        _assert_traced_as_sent(app, every_request=False)
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("plain_path", [False, True], ids=["agent", "plain_path"])
+@pytest.mark.parametrize("step", ["send", "continue", "edit"])
+async def test_a_real_mid_stream_failure_then_the_next_message_and_an_action(
+    tmp_path, monkeypatch, step, plain_path
+):
+    """The hosted provider streams some text, then the connection breaks, on
+    every attempt of a send, a Continue or an Edit & resend: the reply fails
+    and keeps the partial text. The next message, and a Regenerate after it,
+    are sent and traced, and the partial text is in no request. On the
+    plain path the failed call even links its partial reply as a verified
+    revision; the send after the action's run does not count that link as
+    a saved reply (the request skips the failed reply), so it is sent."""
+    from unittest.mock import Mock
+
+    import requests
+
+    from Tests.Chat.test_console_project_instruction_traces import (
+        _PARTIAL,
+        _project_console,
+        _sse,
+    )
+
+    breaks, sent = {"left": 0}, []
+
+    def post(*_args, **kwargs):
+        sent.append(kwargs.get("json") or json.loads(kwargs["data"]))
+        broken = breaks["left"] > 0
+        breaks["left"] -= int(broken)
+        body = _sse(_PARTIAL if broken else f"Reply {len(sent)}").encode()
+
+        def lines(*_args, **_kwargs):
+            yield body.strip()
+            if broken:
+                raise requests.exceptions.ChunkedEncodingError("fixture: mid-body")
+            yield b"data: [DONE]"
+
+        response = Mock(status_code=200, ok=True, headers={})
+        response.iter_lines.side_effect = lines
+        return response
+
+    monkeypatch.setattr("requests.Session.post", post)
+    async with _project_console(
+        tmp_path, monkeypatch, source_name="NOTES.md", hosted=True, response_mode="stream"
+    ) as app:
+        if plain_path:
+            app.controller._agent_runtime_enabled = False
+        # The OpenAI handler sends the system prompt as a message; the trace
+        # holds it apart from the rows.
+        app.sent = sent
+        app.wire = lambda: [row for row in sent[-1]["messages"] if row["role"] != "system"]
+        await _send(app, "Hello")
+        await _send(app, "And now?")
+        breaks["left"] = 3
+        if step == "send":
+            await app.controller.submit_draft("Third?", session_id=app.session.id)
+        else:
+            await _act(app, step)
+        breaks["left"] = 0
+        failed = _last(app, "assistant")
+        assert failed.status == "failed" and _PARTIAL.startswith(failed.content[:6])
+        after_failure = len(sent)
+
+        await _send(app, "One more?")
+        _assert_traced_as_sent(app, every_request=False)
+        result = await _act(app, "regenerate")
+
+        assert result.accepted, result.visible_copy
+        _assert_traced_as_sent(app, every_request=False)
+        assert not any(_PARTIAL[:6] in json.dumps(request) for request in sent[after_failure:])
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
 @pytest.mark.parametrize(
     "shape",
     [

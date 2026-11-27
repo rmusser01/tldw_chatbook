@@ -361,7 +361,6 @@ def build_rewritten_tail_witness(
             cursor,
             conversation_id=conversation_id,
             message_id=anchor,
-            text_allowed=after_action is None,
         )
         == retained_message
     ):
@@ -467,7 +466,6 @@ def validate_rewritten_tail(
             cursor,
             conversation_id=conversation_id,
             message_id=witness.anchor_message_id,
-            text_allowed=witness.after_call_id is None,
         )
         is None
     ):
