@@ -1174,13 +1174,20 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    before anything is sent, or the action's trace request cannot be frozen,
    on the agent path and the plain path alike, the action is undone:
    - a refused binding's established reservation is first marked not
-     dispatched, as a canceled trace pause does;
+     dispatched, as a canceled trace pause does. A refusal that holds no
+     reservation is undone only when no call of the action's turn was
+     reserved since it began (a factory that fails after its own commit
+     leaves one, whose state is unknown);
    - the active branch is set back to the leaf before the action, then its
-     empty reply (for an Edit & resend, the edited message with it) and any
-     skipped-skill note it added are removed;
-   - a one-time next-send choice stays armed; Regenerate and Edit & resend
-     clear citation-repair "original attempt" previews, and Edit & resend
-     records its "message edited" event, only once the action is not undone;
+     empty reply (for an Edit & resend, the edited message with it) is
+     removed, then any skipped-skill note it added (a note that cannot be
+     removed stays off the branch; the action is still undone);
+   - a one-time next-send choice stays armed; the citation-repair
+     "original attempt" previews that Regenerate and Edit & resend clear
+     before streaming are restored; Edit & resend records its "message
+     edited" event once its stream ends (or raises) and the action was not
+     undone, so the event follows the reply's own events (corrected
+     2026-11-27 after review);
    - the status line and a notification say "Not sent: trace capture could
      not start. Choose Capture off for the next send, or turn Capture off
      for this chat." (with " Your edit was not kept." for an Edit & resend).
@@ -1196,9 +1203,11 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    attachment, a continuation, thinking, tool output or a diff), when a call
    of the action's own turn reserved since it began was dispatched (a later
    tool-loop call refused; calls of other turns or chats never count), when
-   the refused call's dispatch is unknown or its reservation could not be
-   marked not dispatched, or when an undo write fails. The run is settled
-   either way. After a kept reply whose run was sent, the next captured send
+   the refused call's dispatch is unknown, its reservation could not be
+   marked not dispatched or is unknown, or when an undo write before the
+   reply's removal fails (the branch is then set back to the reply). The run
+   is settled either way, and a one-time choice is used up only when a call
+   of the action's turn was dispatched. After a kept reply whose run was sent, the next captured send
    is planned by point 5 (its refused later call is passed over). Its Retry
    is Retry's (TASK-42555).
 
