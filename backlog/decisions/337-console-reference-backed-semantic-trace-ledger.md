@@ -1213,13 +1213,15 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    whose run was sent, the next captured send is planned by point 5 (its
    refused later call is passed over). A kept reply whose request was never
    sent: with an unknown reservation, or one that could not be marked not
-   dispatched, its reserved call stops each later captured message at "Trace
-   capture could not start" (Send without capture sends it) until startup
-   recovery settles the call. When the reservation was settled and only a
+   dispatched, its reserved call can stop later captured messages at "Trace
+   capture could not start" (Send without capture sends them) until startup
+   recovery settles the call: after an Edit & resend always, and after a
+   Regenerate or Continue with project instructions on the agent path; other
+   shapes plan the next send as usual. When the reservation was settled and only a
    later undo write failed, the next send after a kept Regenerate or Continue is planned as
    usual, while a kept Edit & resend's edited branch is one no rule names, so
    the next captured message after it may stop at "Trace capture could not
-   start" (Send without capture sends it). Corrected three times on
+   start" (Send without capture sends it). Corrected four times on
    2026-11-27 after review. Its Retry is Retry's
    (TASK-42555).
 
