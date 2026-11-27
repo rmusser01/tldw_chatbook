@@ -39,8 +39,9 @@ changes:
   the shared doubles, and any data file or unimported helper a conftest (or a
   file it loads) names by a directory-qualified literal its path ends with, by
   module name, or from beside it;
-- schema inputs (`DB`, `db` or `migrations` directories) or application code with
-  uppercase DDL or `PRAGMA user_version`;
+- anything in a `migrations` directory, or application code (a `DB` module
+  included) with uppercase DDL, `PRAGMA user_version` or an
+  `UPDATE db_schema_version`;
 - guard and budget data under `Tests/Architecture/` or `Tests/Performance/`;
 - its own test files that no PR lane runs whole, or that a lane deselects nodes
   from, splits across steps or runs only on push or nightly;

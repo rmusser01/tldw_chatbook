@@ -48,8 +48,9 @@ FULL_PREFIXES = (".github/", "scripts/ci/", "packages/")
 FULL_FILES = {"pyproject.toml", "setup.py", "setup.cfg"}
 # pytest configuration at any depth changes how every suite below it runs.
 FULL_NAMES = {"conftest.py", "pytest.ini", ".pytest.ini", "tox.ini", "setup.cfg"}
-# Schema code: migration directories and the DB layers (TASK-42521 review I2).
-SCHEMA_DIRS = {"DB", "db", "migrations"}
+# Migration directories: every file there is schema (TASK-42521 review I2). A
+# DB-layer module elsewhere is schema only when its text says so (SCHEMA_TEXT).
+SCHEMA_DIRS = {"migrations"}
 # Data read by the guard and budget suites (allowlists, snapshots).
 GUARD_DATA_PREFIXES = ("Tests/Architecture/", "Tests/Performance/")
 # Files no PR lane runs whole: too slow for the light job's cap, or carrying
@@ -68,9 +69,11 @@ LIGHT_FILE_CAP = 20
 # Application code that creates, alters or versions its own SQLite schema
 # (uppercase DDL and PRAGMA, as this codebase writes them; case-sensitive to
 # skip prose, and PRAGMA-only so a Python name `user_version` does not count).
+# ChaChaNotes stamps its version in a table, so a write there counts too.
 SCHEMA_TEXT = re.compile(
     r"\b(?:ALTER TABLE|CREATE (?:TABLE|UNIQUE INDEX|INDEX|TRIGGER|VIEW|VIRTUAL TABLE))\b"
     r"|\bPRAGMA[ \t]+user_version\b"
+    r"|\bUPDATE[ \t\n]+db_schema_version\b"
 )
 # Nodes whose first statement may be a docstring (not a child script).
 DOCUMENTED = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)

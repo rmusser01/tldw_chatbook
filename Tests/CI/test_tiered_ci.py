@@ -51,7 +51,7 @@ def test_explicit_sources_select_their_tests_and_unconditional_smoke():
         # TASK-42521 review: schema outside DB/migrations, packages, pytest config,
         # guard data and the files no PR lane runs whole.
         "tldw_chatbook/Plugins/migrations/001.sql",
-        "tldw_chatbook/Scheduling/db/schedules_db.py",
+        "tldw_chatbook/Scheduling/db/migrations/v0_to_v1.py",
         "tldw_chatbook/DB/Client_Media_DB_v2.py",
         "packages/tldw_profile_core/src/tldw_profile_core/paths.py",
         "packages/tldw_profile_core/tests/test_paths.py",
@@ -1395,7 +1395,11 @@ def test_cheap_reasons_for_the_full_run_come_before_any_search(tmp_path, monkeyp
         raise AssertionError("searched before the cheap reasons")
 
     monkeypatch.setattr(policy, "_importers", no_search)
-    for late in ("pyproject.toml", "requirements-dev.txt", "tldw_chatbook/DB/x.py"):
+    for late in (
+        "pyproject.toml",
+        "requirements-dev.txt",
+        "tldw_chatbook/DB/migrations/x.sql",
+    ):
         plan = policy.select_changes([("M", "Tests/UI/test_x.py"), ("M", late)], root)
         assert plan["full"] and late in plan["reason"]
 
@@ -2099,6 +2103,29 @@ def test_only_the_pragma_versions_a_schema_not_a_python_name(tmp_path):
     (feature / "store.py").write_text('conn.execute("PRAGMA user_version = 3")\n')
     for name, full in [("repository.py", False), ("store.py", True)]:
         plan = policy.select_changes([("M", f"tldw_chatbook/Feature/{name}")], root)
+        assert plan["full"] is full, name
+
+
+def test_a_db_module_is_schema_only_when_its_text_says_so(tmp_path):
+    """TASK-42626 AC #21: #3686 and #3769 went broad on the DB/ directory alone."""
+    root = _tree(tmp_path, [])
+    db = root / "tldw_chatbook/DB"
+    (db / "migrations").mkdir(parents=True)
+    (db / "queries.py").write_text('SQL = "SELECT id FROM things WHERE k = ?"\n')
+    (db / "store.py").write_text('SQL = "CREATE INDEX idx_k ON things(k)"\n')
+    (db / "steps.py").write_text(
+        'SQL = """\nUPDATE db_schema_version\n   SET version = ?\n"""\n'
+    )
+    (db / "reader.py").write_text('SQL = "SELECT version FROM db_schema_version"\n')
+    (db / "migrations/v1_to_v2.sql").write_text("-- comment only\n")
+    for name, full in [
+        ("queries.py", False),
+        ("store.py", True),
+        ("steps.py", True),
+        ("reader.py", False),
+        ("migrations/v1_to_v2.sql", True),
+    ]:
+        plan = policy.select_changes([("M", f"tldw_chatbook/DB/{name}")], root)
         assert plan["full"] is full, name
 
 

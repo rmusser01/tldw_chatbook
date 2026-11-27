@@ -126,4 +126,6 @@ Anything a `conftest.py` loads also stays broad (`Loaded by conftest.py: <path>`
 
 Schema code is narrowed: `user_version` counts only in the `PRAGMA user_version` form, as every real use in `tldw_chatbook/` writes it. A Python name `user_version` no longer sends a module broad. The old pattern did that to `tldw_chatbook/Chat/console_dispatch_repository.py` in #3769, which has no DDL.
 
+Schema inputs are narrowed too (owner decision, 2026-11-27). Every file in a `migrations` directory stays broad. A module in a `DB` or `db` directory is no longer broad for its directory alone: like any application module, it goes broad only when its text holds uppercase DDL, `PRAGMA user_version` or an `UPDATE db_schema_version` (the table ChaChaNotes stamps its version in, written by `DB/chachanotes_sql_steps.py`). #3769 had gone broad on `tldw_chatbook/DB/assistant_generation_state.py`, which holds none of these. 35 of the 63 `DB`/`db` modules outside `migrations` hold none, and now run light.
+
 **Cost accepted.** A break in a dependent the sample did not pick, or in one no PR lane runs, can land on dev. The 09:17 UTC nightly or the release run catches it, attributed across one day's merges. `ci:full` remains the opt-in for a PR that should run everything.

@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-26 15:30'
-updated_date: '2026-11-27 15:00'
+updated_date: '2026-11-27 05:30'
 labels:
   - ci
 dependencies:
@@ -44,6 +44,7 @@ These cases should run the light tier with a capped, deterministic sample of the
 - [x] #18 A PR never samples more than 8 files (an own-file lead does not count). A Tests/CI file reads a change only when it names it precisely. Name counts come from tracked files and include a deleted twin, and the common-name rule covers `.py` helpers without precise readers.
 - [x] #19 A common name needs its folder right before it, or a folder literal in a file that names the folder above it too. One tracked-file count serves the whole plan, and the counts survive a missing git binary.
 - [x] #20 A longer path before a common name's folder must go through its parent, quoted components included (on the folder's line, or the line above when the folder opens its line; a comma separates parts only in a join). The counts ignore an inherited git environment and include the PR's deletions under `Tests/` everywhere. A fixture copied by a distinctive folder name has the copying tests as readers; a conftest-time one sends the plan broad.
+- [x] #21 A module in a `DB` or `db` directory goes broad only when its text is schema code (uppercase DDL, `PRAGMA user_version` or an `UPDATE db_schema_version`); every file in a `migrations` directory stays broad.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -339,4 +340,6 @@ No PR lane runs them, which is the round-3 reason samples avoid unlaned files.
 - A file inside a package counts as loading its `__init__.py`, as pytest imports it, so an `__init__.py` change has the package's own tests as dependents.
 - Bare imports resolve only to a module beside the importer, as the review asked.
 - An over-the-cap change whose laned dependents are all past the 8-file budget runs none of them (`sampled 0 of ...`). The nightly and release runs cover them.
+
+**AC #21 (owner decision 2026-11-27): schema inputs narrowed to schema text.** `SCHEMA_DIRS` is now `{"migrations"}`. A `DB`/`db` module goes broad through `SCHEMA_TEXT` like any application module, which now also matches `UPDATE db_schema_version` (the .sql migration runner's version stamp). #3769's file list now plans light (22 files; it had gone broad on `DB/assistant_generation_state.py`). #3686 stays broad for its own reason: it changes `Tests/Backup_Recovery/test_activation_startup.py`, which only push and nightly jobs run. A replay of dev's last 60 merges is unchanged (33 light, 26 broad, 1 replay error from a file missing in this tree): none of them changed a `DB` module without schema text. Tests: `test_a_db_module_is_schema_only_when_its_text_says_so`; two table rows that named non-existent DB paths now name real migration files.
 <!-- SECTION:NOTES:END -->
