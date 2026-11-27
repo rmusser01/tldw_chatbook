@@ -1627,6 +1627,11 @@ class ConsoleTraceService:
         """Read only the exact attempted call and changed boundary material."""
         if reserved_call is None:
             return "unknown"
+        written = () if persisted is None else (
+            *persisted.chain_nodes,
+            *persisted.appended_nodes,
+            *(() if persisted.removal_node is None else (persisted.removal_node,)),
+        )
         try:
             with operation_owned_connection(database), database.transaction() as cursor:  # type: ignore[attr-defined]
                 durable = self.repository.get_call(cursor, reserved_call.call_id)
@@ -1656,15 +1661,7 @@ class ConsoleTraceService:
                     != persisted.header
                     or any(
                         self.repository.get_surface_node(cursor, node.node_id) != node
-                        for node in (
-                            *persisted.chain_nodes,
-                            *persisted.appended_nodes,
-                            *(
-                                ()
-                                if persisted.removal_node is None
-                                else (persisted.removal_node,)
-                            ),
-                        )
+                        for node in written
                     )
                 ):
                     return "unknown"
@@ -1673,7 +1670,12 @@ class ConsoleTraceService:
                     if persisted.replacement is None
                     else (*persisted.chain_replacements, persisted.replacement)
                 ) + (() if persisted.removal is None else (persisted.removal,))
-                for index, expected in enumerate(records):
+                # Each row follows the node written before its own, and the
+                # first node follows the planned head: a slot's restore or
+                # drop is written before the replacement (ADR-337, 2026-11-25/26).
+                predecessors = {node.node_id: node.predecessor_node_id for node in written}
+                first = min(written, key=lambda node: node.sequence, default=None)
+                for expected in records:
                     replacement = expected.replacement
                     row = cursor.execute(
                         """SELECT replacement_id, segment_id, predecessor_head_id,
@@ -1696,9 +1698,10 @@ class ConsoleTraceService:
                             replacement.end_sequence,
                             replacement.replacement_node_id,
                         )
-                        # A chain's later links follow its own placeholders.
-                        or index == 0
-                        and replacement.predecessor_head_id
+                        or replacement.predecessor_head_id
+                        != predecessors.get(replacement.replacement_node_id, "")
+                        or first is None
+                        or first.predecessor_node_id
                         != surface_delta.predecessor_surface_head_id
                     ):
                         return "unknown"
@@ -2071,7 +2074,7 @@ class ConsoleTraceService:
         stored_replacement: SurfaceReplacementRecord | None = None
         chain_nodes: tuple[SurfaceNodeRecord, ...] = ()
         chain_replacements: tuple[SurfaceReplacementRecord, ...] = ()
-        restored_node = None
+        restored_node = removal_node = removal = dropped_slot = None
         if restoring:
             # First, so the call's other rows take the sequences planned.
             restored_node = tail = _slot_restore().write_restored_slot(
@@ -2086,8 +2089,21 @@ class ConsoleTraceService:
                 route_identity=_route(provenance),
                 reserved_call=reserved_call,
             )
-            if replacement is not None:
-                replacement = replace(replacement, predecessor_head_id=tail.node_id)
+        elif _slot_restore().drop_planned(self, child_state, tail):
+            # The slot's planned removal, first too (ADR-337, 2026-11-26).
+            dropped_slot, removal_node, removal = _slot_restore().write_dropped_slot(
+                self,
+                cursor,
+                segment_id=segment_id,
+                tail=tail,
+                projection=projection,
+                bundle=bundle,
+                route_identity=_route(provenance),
+                reserved_call=reserved_call,
+            )
+            tail = removal_node
+        if replacement is not None and (restored_node or removal_node) is not None:
+            replacement = replace(replacement, predecessor_head_id=tail.node_id)
         if replacement is not None:
             span = replacement.end_sequence - replacement.start_sequence + 1
             if span > MAX_SURFACE_REPLACEMENT_SPAN and not replacement.chain:
@@ -2147,13 +2163,12 @@ class ConsoleTraceService:
                         event_type="gap",
                         omission_reason_code=tail.omission_reason_code,
                     )
-        removal_node = removal = None
         removed_slot = (
-            None
+            dropped_slot
             if surface_delta.fallback_rewrite is None
             else surface_delta.fallback_rewrite.removed_slot_sequence
         )
-        if removed_slot is not None:
+        if removed_slot is not None and removal_node is None:
             # Written last, so the rewritten tool rows keep their places.
             assert tail is not None
             from tldw_chatbook.Chat.console_trace_fallback_rewrite import (
@@ -2544,9 +2559,10 @@ class ConsoleTraceService:
         ) * len(provenance.continuations)
         tail = self._effective_surface_tail(cursor, segment_id)
         projection = self._surface_projection(cursor, segment_id, tail)
-        # ADR-337 amendment 2026-11-25 (TASK-42525): a new turn's first call
-        # may put the leading slot back; plan as if it already led.
-        restored = (
+        # ADR-337 amendments 2026-11-25 and 2026-11-26 (TASK-42525, 42550): a
+        # new turn's first call may put the leading slot back, or drop it;
+        # plan as if that were done.
+        slot_change = (
             None
             if live_native_custody is not None or fallback_parent is not None
             else _slot_restore().restored_slot_projection(
@@ -2560,8 +2576,14 @@ class ConsoleTraceService:
                 values=values,
                 message_count=len(provenance.messages_payload),
             )
+            or _slot_restore().dropped_slot_projection(
+                route_identity=route_identity,
+                tail=tail,
+                projection=projection,
+                values=values[: len(provenance.messages_payload)],
+            )
         )
-        projection = restored or projection
+        projection = slot_change or projection
         physical_active = projection.entries
         # Surface nodes stay physically append-only, so later messages can
         # follow older continuation nodes. Compare in provider domain order
@@ -3125,8 +3147,8 @@ class ConsoleTraceService:
                 and (bootstrap or completed_tool_turn.project_context_count is not None)
             )
             or (rewritten is not None and bootstrap)
-            # The live checkpoint has no slot (ADR-337 amendment 2026-11-25).
-            or restored is not None
+            # The live checkpoint has the surface's slot as it was.
+            or slot_change is not None
         ):
             # A cold parent is built entirely from committed references.
             assert tail is not None and current_policy_id is not None
@@ -3140,7 +3162,7 @@ class ConsoleTraceService:
                 cursor,
                 owner_id=owner_id,
                 segment_id=segment_id,
-                tail=tail if restored is None else _slot_restore().planned_tail(tail),
+                tail=tail if slot_change is None else _slot_restore().planned_tail(tail),
                 projection=projection,
                 route=route_identity,
                 policy_id=current_policy_id,

@@ -262,9 +262,13 @@ transcript:
   holds when you switch a captured chat from a hosted provider to a llama.cpp
   server. Only a message's first call can do this; a retry, a fallback or a
   tool call cannot.
-- Switching a captured chat with project instructions (AGENTS.md) from a
-  llama.cpp server to a hosted provider by hand still stops with "Trace
-  capture could not start". **Send without capture** sends it.
+- Switching a captured chat from a llama.cpp server to a hosted provider is
+  captured too, with or without project instructions (AGENTS.md): the
+  message's first call drops the system prompt from the message list, since
+  the hosted provider takes it separately, and the trace records the
+  removal. Earlier calls keep the system prompt as they sent it, and
+  switching back to llama.cpp puts it back, as above. Here too only a
+  message's first call can do this.
 - Edit & resend and Regenerate send their reply with capture off, so that reply
   has no trace call of its own. Your next send in the chat is captured as usual.
   It records the edited branch as one bounded replacement of the earlier trace

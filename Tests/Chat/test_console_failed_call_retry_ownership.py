@@ -3667,9 +3667,10 @@ async def test_edit_and_resend_before_a_restored_slot_keeps_the_next_send(
     binding only: the call's slot is rechecked there and the row skipped
     between links is not one (`rendered_system_slot_mismatch`).
     `drops_the_slot` sends that message to a
-    hosted provider, which has no system row: the slot is one of the
-    rewritten rows, as it is for a chat that was always on llama.cpp
-    (the existing rewritten-tail rule, unchanged).
+    hosted provider, which has no system row: the message's first call
+    removes the slot first, with one removal marker (ADR-337 amendment
+    2026-11-26, TASK-42550), and the edited history after it is the
+    existing rewritten tail.
     """
     from tldw_chatbook.Chat import console_trace_service as trace
 
@@ -3743,9 +3744,22 @@ async def test_edit_and_resend_before_a_restored_slot_keeps_the_next_send(
             entries = app.factory.service._surface_projection(
                 cursor, segment, tail
             ).entries
+            removed_by = cursor.execute(
+                "SELECT c.turn_id, c.route_identity, c.call_sequence"
+                " FROM console_trace_surface_nodes n"
+                " JOIN console_trace_surface_replacements r"
+                " ON r.replacement_node_id = n.node_id"
+                " JOIN console_trace_events e ON e.surface_replacement_id = r.replacement_id"
+                " JOIN console_trace_calls c ON c.call_id = (SELECT b.call_id"
+                " FROM console_trace_events b WHERE b.segment_id = e.segment_id"
+                " AND b.event_type = 'call_boundary' AND b.sequence < e.sequence"
+                " ORDER BY b.sequence DESC LIMIT 1)"
+                " WHERE n.component_kind = 'surface_removal'"
+            ).fetchall()
         kinds = [key[0] for _, key in entries]
         if binding == "drop_the_system_row":
             assert "rendered_system" not in kinds
+            assert [tuple(row) for row in removed_by] == [(turn, "agent_first", 0)]
         else:
             assert kinds[0] == "rendered_system"
             assert kinds.count("rendered_system") == 1
