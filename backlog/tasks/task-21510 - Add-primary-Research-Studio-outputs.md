@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@codex'
 created_date: 2026-08-24 05:54
-updated_date: 2026-11-24 20:18
+updated_date: 2026-11-27 10:41
 labels:
 - research
 - workspace
@@ -56,7 +56,7 @@ Follow `Docs/superpowers/plans/2026-08-23-research-workspace-primary-studio.md` 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-All five primary Studio outputs now save to their canonical owners in Local and Server under ADR-322. Local Study deck/cards and quiz/questions use bounded membership metadata. Server text uses versioned artifacts and accepted-version Markdown export. Server Study uses the retry-safe workspace publication contract from tldw_server TASK-15637 and ADR-097 (local server commit dfd9ff90aa). Canonical Study owns edits and deletion, and Studio can generate a new version. Older server installations leave the Flashcards and Quiz cards unavailable.
+All five primary Studio outputs now save to their canonical owners in Local and Server under ADR-322. Local Study deck/cards and quiz/questions use bounded membership metadata. Server text uses versioned artifacts and accepted-version Markdown export. Server Study uses the retry-safe workspace publication contract from tldw_server TASK-15677 and ADR-097 (local server commit dfd9ff90aa). Canonical Study owns edits and deletion, and Studio can generate a new version. Older server installations leave the Flashcards and Quiz cards unavailable.
 
 Server Study handoffs check the active backend, server profile, account, and workspace. Both saved owner IDs reopen outside the first page, and Back to Workspace returns to Research. The client normalizes native typed quiz responses and settles the exact handoff after the Study selection succeeds.
 
