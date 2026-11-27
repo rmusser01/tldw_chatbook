@@ -85,7 +85,7 @@ def test_actual_source_version_capture_identity_and_integrated_plan(
             ("legacy", "chat", 81),
             ("legacy", "workspaces", 8),
             ("legacy", "runs", version),
-            ("canonical", "chat", 89),
+            ("canonical", "chat", 90),
             ("canonical", "workspaces", 11),
             ("canonical", "runs", 33),
         )

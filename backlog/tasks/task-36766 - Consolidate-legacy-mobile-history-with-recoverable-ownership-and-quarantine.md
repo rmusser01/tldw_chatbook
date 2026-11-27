@@ -17,7 +17,7 @@ documentation:
 - Docs/superpowers/plans/2026-10-25-shared-console-mobile-supervision-implementation.md
 - Docs/superpowers/specs/2026-10-25-shared-console-mobile-supervision-design.md
 - backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
-updated_date: 2026-11-25 17:32
+updated_date: 2026-11-27 18:39
 ---
 
 ## Description
@@ -113,6 +113,18 @@ Own-source failed native group-entry retirement correction BEFORE implementation
 Current-dev 692acb4 PR #3345 CI repair (2026-11-25, before fixture changes). ADR required: no. ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md. Reason: the existing native ownership, retirement and shared runtime contracts apply. Preserve the original hosted failures and local 1295–1299 receipts. Give writable AgentRuns test setup a real execution owner and retire the retention seed's owning-thread connection before the worker. Keep the original one-second native drain, streaming/trace/upgrade assertions, and the legacy phone-store controls. Align the light-surface census with the shared runtime builder and route the workspace draft test through native saved-session hydration. Diagnose the separate local Notes config-source refusal and any remaining genuine failure before qualification. Verify the affected cohorts, rebase contracts, original software UAT, independent exact-head review, and own-head hosted gates before closeout. No runtime, case, worker, permission or durability limit increase.
 
 Current-dev follow-up before the Goal source and fixture changes. ADR required: no. ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md and backlog/decisions/285-native-phased-agent-workflows.md. Reason: preserve established close generations, one native saved-session producer and independent SQLite authorities. In 1300 the three Goal restore cases show None now flows back to the persisted conversation's ID after a committed close. Keep the old fence, select a fresh live ID only in the winning saved-session producer, revalidate before returning, and verify simultaneous reopen shares one owner. Repair the independent Goal ledger race fixture so its two threads contest prepare transactions after setup without concurrently running the schema script. On the exact 1302 Notes RED, enroll its cold source-bound config consumer in the existing private bootstrap profile and preserve the native handle assertion. Keep built-in runtime/case/worker/storage limits and all original rebase contracts.
+
+Integration with the concurrent native Chat migration
+
+ADR required: yes, amend the existing recovery and ownership decision.
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Native and mobile histories must have distinct, recoverable schema identities.
+
+- Preserve the native v88 to v89 index removal and frozen v89 catalog. Install mobile ownership receipts at v90 from that exact native catalog.
+- Verify both native starting versions with populated SQLite and the installed candidate validator. Refuse the retained mobile v89 preview before opening a writer. Keep the original marker, source bytes, rollback fences, and runtime budgets.
+- Carry every surviving CI and UAT assertion forward, including the shared phone and desktop bridge and its light-surface reader. Re-run the original software acceptance journeys on this integration before exact-head review.
+
+After the original 300-second case timed out during repeated installed discovery, give producer metadata, payload, and physical identity controls separate native captures. Keep both aliases, every original refusal and genuine schedule check, and the default case limit. This test-only fixture adjustment uses the existing ADR 244 proof contract.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -249,6 +261,9 @@ Own-source Windows startup oracle correction after native integration. Published
 Rebased PR #3345 onto dev 9fa2bf1 and preserved all 118 recorded feature commits. Fixed POSIX admission retirement using verified native close and source identity. The applied storage and ownership controls passed 80 cases at their original limits. The Fast Lane diagnostic code and source-only ratchet corrections passed focused qualification, along with the Plugins keyboard control under the existing settlement budget. The original browser UAT passed all 15 cases. Stock mounted operation a8012986292e49758297648e928c3464 completed with four physical exits, nine verified retained file pairs, and six empty guard records. The source remains In Progress pending exact committed-head review and its own hosted checks.
 
 PR #3345 now integrates dev 9926834 with all 122 feature commits preserved. Existing ADR 244 covers native Chat v88 indexes and the mobile receipt migration at v89. The authenticated phone and desktop entry points share the native light-surface bridge. The focused guard, trace, migration, storage and index checks passed at their stated scopes. The original browser and mounted UAT were independently audited. The original concurrent v25 resource refusal remains in the evidence, and the unchanged original case passed during serialized qualification. The task remains In Progress until the new head's hosted checks, exact review and final acceptance criteria are complete. See Docs/superpowers/qa/2026-10-25-shared-console-mobile-supervision/ci-repair-2026-11-05.md for the qualification details.
+Current integration against dev c0a9993 preserves all 131 feature commits and their ordered parents. ChaChaNotes keeps the native v88-to-v89 index migration, puts mobile receipts at v90, refuses the old receipt-bearing preview before writer setup, and limits receipt catalog permissions to their own migration step. The terminal journal agrees with the v90 schema. The real desktop and phone paths share one app-owned bridge with the light-surface reader in both startup orders.
+
+The three native alias recovery groups passed at the original 300-second case limit. The original 15-case browser UAT and mounted operation b9c397bc11ea40e5b01df8d2116feea9 passed independent evidence audit. Both native macOS recovery journeys and all 74 hook and MCP cases passed locally. The ordered local Fast Lane passed 4,790 cases with four existing skips. The previous hosted cancellation remains documented. The current commit still needs its own hosted qualification before task closeout.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

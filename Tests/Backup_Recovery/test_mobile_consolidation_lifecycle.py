@@ -464,7 +464,7 @@ def test_private_lifecycle_verifies_fixed_native_partitions_before_owners(
                 key: versions(rollback)[key]
                 for key in ("db.chachanotes.primary", "db.workspaces", "db.agent_runs")
             } == {
-                "db.chachanotes.primary": 89,
+                "db.chachanotes.primary": 90,
                 "db.workspaces": 11,
                 "db.agent_runs": 33,
             }

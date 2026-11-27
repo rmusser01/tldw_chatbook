@@ -3646,3 +3646,18 @@ Unmerged mobile v88 captures remain archived evidence for their matching
 build. A receipt-bearing v88 store is refused before writer setup.
 
 The [earlier mobile v87 draft SQL](../../Docs/superpowers/qa/2026-10-25-shared-console-mobile-supervision/retained-sources/chachanotes_v86_to_v87_mobile_consolidation.sql) is retained byte-for-byte as historical evidence. The live index census records both the native v88 plan test and the voice-promotion lookup test against the installed index names.
+
+### 2026-11-27 integration of the native Chat version 89 index removal
+
+Dev's native 88→89 step drops exactly
+`idx_console_trace_response_revision`. Its nine message locators and frozen
+native v89 catalogs remain valid. The mobile receipt migration follows at
+v90, extending each exact native v89 layout. Restore checks the catalog
+and owner stamp after each step. The shared Subscription catalog keeps
+each native and mobile Chat stamp distinct.
+
+A receipt-bearing v89 file from the unmerged mobile preview requires its
+matching retained build and is refused before writer setup. Genuine native
+v89 has no mobile receipt table and upgrades normally. Old captures and
+journals remain evidence for their matching build. No writer, authorizer
+allowlist beyond the native one-index step, or runtime budget changes.

@@ -470,7 +470,7 @@ def _reject_preview_connection(connection, family, deadline):
             ).fetchone()[0]
         else:
             version = None
-        minimum = {"chat": 89, "workspaces": 11, "runs": 33 if mobile else 32}[family]
+        minimum = {"chat": 90, "workspaces": 11, "runs": 33 if mobile else 32}[family]
         if type(version) is not int or version < minimum:
             raise IncompatiblePreviewError(_GUIDANCE)
     except sqlite3.OperationalError as error:

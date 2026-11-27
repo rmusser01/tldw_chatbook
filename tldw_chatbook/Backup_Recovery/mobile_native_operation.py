@@ -962,7 +962,7 @@ def _consolidate(captured, *, password, cancel):
             terminal_budget.value(witnesses, text_copies=3)
             terminal_budget.container(3)
             targets = []
-            for target, version in zip(prepared.targets, (89, 11, 33), strict=True):
+            for target, version in zip(prepared.targets, (90, 11, 33), strict=True):
                 terminal_budget.value(target.model_dump(), text_copies=2)
                 targets.append(
                     {

@@ -140,6 +140,7 @@ class _Restrictions:
         self.locator_indexes = {}
         # TASK-42544 v88->v89: the one index name -> table it drops.
         self.dropped_indexes = {}
+        self.mobile_chat_receipts_migration = False
         self.canvas_sibling_migration = False
         self.portrait_migration = None
         self.archive_chronology_migration = False
@@ -483,11 +484,10 @@ class _Restrictions:
         if self.migrating:
             if action == sqlite3.SQLITE_TRANSACTION:
                 return sqlite3.SQLITE_OK
-            if self.migration_owner in {
-                "db.chachanotes.primary",
-                "db.workspaces",
-                "db.agent_runs",
-            }:
+            if self.migration_owner in {"db.workspaces", "db.agent_runs"} or (
+                self.migration_owner == "db.chachanotes.primary"
+                and self.mobile_chat_receipts_migration
+            ):
                 tables = {"mobile_consolidation_batches"}
                 if self.migration_owner != "db.chachanotes.primary":
                     tables.add("mobile_import_authority_holds")
@@ -1930,6 +1930,12 @@ def _validate_candidate(
                                 and version in (82, 83)
                                 else None
                             )
+                            # The mobile receipt table has its own catalog
+                            # bookkeeping, separate from the native index drop.
+                            restrictions.mobile_chat_receipts_migration = (
+                                installed.owner_id == "db.chachanotes.primary"
+                                and (version, expected) == (89, 90)
+                            )
                             try:
                                 for statement in statements:
                                     if restrictions.expired():
@@ -1944,6 +1950,7 @@ def _validate_candidate(
                                     finally:
                                         restrictions.dropping_workflow_phase = False
                             finally:
+                                restrictions.mobile_chat_receipts_migration = False
                                 restrictions.portrait_migration = None
                         restrictions.migrating = False
                         issues, version = _check(

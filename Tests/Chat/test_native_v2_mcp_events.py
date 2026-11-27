@@ -21,6 +21,7 @@ from Tests.Chat.test_native_v2_command_events import (
 )
 from Tests.Chat.test_native_v2_command_events import (
     opaque_busy,
+    until,
 )
 from Tests.MCP.test_typed_tool_results import (
     controlled_service,
@@ -45,18 +46,6 @@ pytestmark = [
 ]
 
 
-async def until(probe):
-    """Wait for ``probe``; costs nothing once it holds.
-
-    The shared helper's 8 s ran out at load ~60 while these MCP workers and
-    their private-profile children were still making progress (TASK-41061
-    review).
-    """
-    async with asyncio.timeout(30):
-        while not probe():
-            await asyncio.sleep(0.005)
-
-
 def is_event_worker_reservation(frame):
     """Whether ``reserve_tool`` was called by a native event's worker selection.
 
@@ -70,9 +59,7 @@ def is_event_worker_reservation(frame):
     return frame.f_code is _CommandEvent._select.__code__
 
 
-def mcp_handler(
-    event="SessionStart", *, required=True, id="mcp", error=False, **extra
-):
+def mcp_handler(event="SessionStart", *, required=True, id="mcp", error=False):
     return parse_handlers(
         [
             {
@@ -89,7 +76,6 @@ def mcp_handler(
                         "structuredContent": {"version": 2, "decision": "pass"},
                     }
                 },
-                **extra,
             }
         ]
     )[0]
@@ -156,19 +142,15 @@ async def test_session_end_nested_workers_consume_original_holds_after_capacity_
 ):
     case = mcp_case
     marker = tmp_path / "nested"
-    # Each handler gets the largest timeout (60 s): with four of these runs
-    # at once (load ~56) the MCP handler's nested chain took over its default
-    # 10 s (handler_deadline). See the allowance below.
     engine = case.runtime.ensure_hooks_v2(
         case.rig.session.id,
         (
-            mcp_handler("SessionEnd", required=False, timeout_seconds=60),
+            mcp_handler("SessionEnd", required=False),
             command(
                 f"from pathlib import Path;Path({str(marker)!r}).touch()",
                 required=True,
-                timeout_seconds=60,
             ),
-            command(name="PostToolUse", id="post", required=True, timeout_seconds=60),
+            command(name="PostToolUse", id="post", required=True),
         ),
         lambda *_: True,
     )
@@ -177,15 +159,6 @@ async def test_session_end_nested_workers_consume_original_holds_after_capacity_
     ).accepted
     entered, release = threading.Event(), threading.Event()
     original = engine.mcp_executor._invoke_worker_bound
-    from tldw_chatbook.Agents.hooks_v2 import engine as hook_engine
-
-    # The MCP worker's nested PreToolUse and PostToolUse commands each start a
-    # private-profile interpreter. At load ~50 that chain outlasted the 3 s
-    # SessionEnd allowance after the seal (event_deadline, the MCP call never
-    # ran), and its cleanup the 8 s wait below. Those wall-clock budgets are
-    # not what this test checks.
-    monkeypatch.setattr(hook_engine, "TEARDOWN_SECONDS", 30.0)
-
     errors = []
 
     def held(job):
@@ -208,9 +181,7 @@ async def test_session_end_nested_workers_consume_original_holds_after_capacity_
         assert opaque_busy(case.runtime)
     finally:
         release.set()
-    async with asyncio.timeout(45):  # The widened allowance plus its cleanup.
-        while engine.cleanup_pending:
-            await asyncio.sleep(0.005)
+    await until(lambda: not engine.cleanup_pending)
     assert marker.exists(), (dict(engine.notification_failures), errors)
     assert case.service.execution_log.read_recent(), dict(engine.notification_failures)
     assert case.runtime.execution_capacity.snapshot().tool_workers == 0
@@ -745,22 +716,17 @@ async def test_distinct_actual_nested_mcp_worker_and_command_share_one_original_
     store.save_discovery_snapshot("second", await case.client.describe_server("second"))
     second = replace(case.tool, server_key="local:second", server_label="second")
     case.service.set_tool_state("local:second", "fixture", "allow", tool=second)
-    # The largest handler timeout (60 s): with six of these runs at once
-    # (load ~40) the nested MCP job and its leaf command, a private-profile
-    # interpreter, took over the default 10 s (handler_deadline).
-    nested = mcp_handler("PreToolUse", id="nested", timeout_seconds=60).model_dump()
+    nested = mcp_handler("PreToolUse", id="nested").model_dump()
     nested.update(
         server="local:second",
         match={"tool_id": [llm_tool_name("local:fixture", "fixture")]},
     )
     nested = parse_handlers([{k: v for k, v in nested.items() if v is not None}])[0]
-    leaf = command(required=True, timeout_seconds=60).model_copy(
+    leaf = command(required=True).model_copy(
         update={"match": {"tool_id": (llm_tool_name("local:second", "fixture"),)}}
     )
     engine = case.runtime.ensure_hooks_v2(
-        case.rig.session.id,
-        (mcp_handler(timeout_seconds=60), nested, leaf),
-        lambda *_: True,
+        case.rig.session.id, (mcp_handler(), nested, leaf), lambda *_: True
     )
     entries = []
     original = engine.mcp_executor._invoke_worker_bound

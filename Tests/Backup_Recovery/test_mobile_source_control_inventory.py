@@ -213,8 +213,9 @@ def test_ordinary_shared_owner_change_still_changes_discovery_scope(tmp_path):
     assert compare_scope(before, after) == ("scope_changed",)
 
 
+@pytest.mark.parametrize("probe_kind", ("producer", "payload", "physical"))
 def test_native_alias_members_require_every_producer_payload_and_physical_proof(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, probe_kind
 ):
     import sys
 
@@ -248,72 +249,78 @@ def test_native_alias_members_require_every_producer_payload_and_physical_proof(
                 assert representative.logical_id == min(
                     row.logical_id for row in aliases
                 )
-                for alias in aliases:
-                    for changes in (
-                        {"owner_id": "db.agent_runs"},
-                        {"status": "unused"},
-                        {"dependencies": ()},
-                        {"shared_group": None},
-                        {"shared_group": "unproved-group"},
-                    ):
-                        altered = alias.model_copy(update=changes)
-                        document_copy = document.model_copy(
+                if probe_kind == "producer":
+                    for alias in aliases:
+                        for changes in (
+                            {"owner_id": "db.agent_runs"},
+                            {"status": "unused"},
+                            {"dependencies": ()},
+                            {"shared_group": None},
+                            {"shared_group": "unproved-group"},
+                        ):
+                            altered = alias.model_copy(update=changes)
+                            document_copy = document.model_copy(
+                                update={
+                                    "producer_inventory": tuple(
+                                        altered
+                                        if row.logical_id == alias.logical_id
+                                        else row
+                                        for row in document.producer_inventory
+                                    )
+                                }
+                            )
+                            with pytest.raises(ValueError, match="inventory_changed"):
+                                probe(document_copy)
+                        missing = document.model_copy(
                             update={
                                 "producer_inventory": tuple(
-                                    altered
-                                    if row.logical_id == alias.logical_id
-                                    else row
+                                    row
                                     for row in document.producer_inventory
+                                    if row.logical_id != alias.logical_id
                                 )
                             }
                         )
                         with pytest.raises(ValueError, match="inventory_changed"):
-                            probe(document_copy)
-                    missing = document.model_copy(
-                        update={
-                            "producer_inventory": tuple(
-                                row
-                                for row in document.producer_inventory
-                                if row.logical_id != alias.logical_id
+                            probe(missing)
+                    return
+                if probe_kind == "payload":
+                    for alias in aliases:
+                        member = next(
+                            row
+                            for row in document.files
+                            if row.logical_id == alias.logical_id
+                        )
+                        for changes, reason in (
+                            ({"owner_id": "db.agent_runs"}, "member_changed"),
+                            ({"size": member.size + 1}, "alias_payload_changed"),
+                            ({"sha256": "0" * 64}, "alias_payload_changed"),
+                        ):
+                            altered = member.model_copy(update=changes)
+                            changed = document.model_copy(
+                                update={
+                                    "files": tuple(
+                                        altered
+                                        if row.logical_id == member.logical_id
+                                        else row
+                                        for row in document.files
+                                    )
+                                }
                             )
-                        }
-                    )
-                    with pytest.raises(ValueError, match="inventory_changed"):
-                        probe(missing)
-                    member = next(
-                        row
-                        for row in document.files
-                        if row.logical_id == alias.logical_id
-                    )
-                    for changes, reason in (
-                        ({"owner_id": "db.agent_runs"}, "member_changed"),
-                        ({"size": member.size + 1}, "alias_payload_changed"),
-                        ({"sha256": "0" * 64}, "alias_payload_changed"),
-                    ):
-                        altered = member.model_copy(update=changes)
-                        changed = document.model_copy(
+                            with pytest.raises(ValueError, match=reason):
+                                probe(changed)
+                        missing = document.model_copy(
                             update={
                                 "files": tuple(
-                                    altered
-                                    if row.logical_id == member.logical_id
-                                    else row
+                                    row
                                     for row in document.files
+                                    if row.logical_id != alias.logical_id
                                 )
                             }
                         )
-                        with pytest.raises(ValueError, match=reason):
-                            probe(changed)
-                    missing = document.model_copy(
-                        update={
-                            "files": tuple(
-                                row
-                                for row in document.files
-                                if row.logical_id != alias.logical_id
-                            )
-                        }
-                    )
-                    with pytest.raises(ValueError, match="member_changed"):
-                        probe(missing)
+                        with pytest.raises(ValueError, match="member_changed"):
+                            probe(missing)
+                    return
+
                 path = preview.source_dir / "workspaces.db"
                 retained = path.with_name("test-retained-workspaces.db")
                 identity = mobile_consolidation._resource_identity
@@ -321,10 +328,7 @@ def test_native_alias_members_require_every_producer_payload_and_physical_proof(
 
                 def replace_after_first_native_observation(selected):
                     actual = identity(selected)
-                    if (
-                        selected == path
-                        and sys._getframe(1).f_code is native_code
-                    ):
+                    if selected == path and sys._getframe(1).f_code is native_code:
                         observed.append(actual)
                         if len(observed) == 1:
                             original = path.read_bytes()
@@ -389,7 +393,7 @@ def test_distinct_alias_capture_preserves_source_and_canonical_bytes(
                 ("legacy", "chat", 81),
                 ("legacy", "workspaces", 8),
                 ("legacy", "runs", 25),
-                ("canonical", "chat", 89),
+                ("canonical", "chat", 90),
                 ("canonical", "workspaces", 11),
                 ("canonical", "runs", 33),
             )
@@ -472,7 +476,7 @@ def test_distinct_alias_capture_preserves_native_optional_runs_absence(
                 password=b"test-private-mobile-rollback", cancel=Event()
             ) as reads,
         ):
-            assert ("canonical", "chat", 89) in reads.versions
+            assert ("canonical", "chat", 90) in reads.versions
             assert ("canonical", "workspaces", 11) in reads.versions
             assert not any(row[:2] == ("canonical", "runs") for row in reads.versions)
             with pytest.raises(ValueError, match="member_absent"):

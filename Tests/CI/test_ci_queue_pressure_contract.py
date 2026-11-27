@@ -1705,8 +1705,7 @@ def _assert_plugin_recovery_ui(workflow: dict) -> None:
     assert job["runs-on"] == "macos-latest"
     assert job["if"] == LANES
     assert job["needs"] == ["preflight"]
-    # Owner decision 2026-11-26: 25 min for the native hook and MCP event step.
-    assert job["timeout-minutes"] == 25
+    assert job["timeout-minutes"] == 15
     assert not job.get("continue-on-error", False)
     assert all(not step.get("continue-on-error", False) for step in job["steps"])
     setup = next(

@@ -137,7 +137,7 @@ def test_actual_captured_sqlite_reads_preserve_frozen_schemas_and_bytes(
                     ("legacy", "chat", 81),
                     ("legacy", "workspaces", 8),
                     ("legacy", "runs", 25),
-                    ("canonical", "chat", 89),
+                    ("canonical", "chat", 90),
                     ("canonical", "workspaces", 11),
                     ("canonical", "runs", 33),
                 )

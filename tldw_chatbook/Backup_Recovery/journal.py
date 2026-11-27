@@ -984,7 +984,7 @@ class _MobileCaptureFinal(_Evidence):
 
 
 class _MobileTargetFinal(_MobileTarget):
-    schema_version: Literal[89, 11, 33]
+    schema_version: Literal[90, 11, 33]
 
 
 class _MobileOwnerFinal(_Evidence):
@@ -1050,7 +1050,7 @@ def _validate_mobile_committed(value, prior, prepared, witnesses):
         or value.kind == "imported"
         and any(row.event == "mobile_source_empty" for row in prior)
         or tuple(row.owner_id for row in value.targets) != _MOBILE_OWNERS
-        or tuple(row.schema_version for row in value.targets) != (89, 11, 33)
+        or tuple(row.schema_version for row in value.targets) != (90, 11, 33)
         or tuple(row.owner_id for row in value.owners)
         != (_MOBILE_OWNERS if value.kind == "imported" else ())
     ):

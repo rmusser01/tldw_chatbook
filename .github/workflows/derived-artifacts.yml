@@ -1123,10 +1123,8 @@ jobs:
     name: Managed plugin recovery UI
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: macos-latest
-    # Owner decision 2026-11-26 ("Existing job, cap 25"): 15 -> 25 min for the
-    # native hook and MCP event step (TASK-42553, TASK-41061), which took 600 s
-    # locally, serial at load 27-46; the job's last run took 1m49s before it.
-    timeout-minutes: 25
+    # Keep the existing job limit with the native hook and MCP event step.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

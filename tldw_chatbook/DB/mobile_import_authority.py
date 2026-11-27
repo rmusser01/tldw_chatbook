@@ -16,7 +16,7 @@ def _migration(name: str) -> tuple[str, ...]:
     )
 
 
-CHAT_MIGRATION = _migration("chachanotes_v88_to_v89_mobile_consolidation.sql")
+CHAT_MIGRATION = _migration("chachanotes_v89_to_v90_mobile_consolidation.sql")
 WORKSPACE_MIGRATION = _migration("workspaces_v10_to_v11_mobile_consolidation.sql")
 AGENT_RUNS_MIGRATION = _migration("agent_runs_v32_to_v33_mobile_consolidation.sql")
 AUTHORITY_KINDS = frozenset(
