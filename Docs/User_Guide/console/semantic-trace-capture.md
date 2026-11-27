@@ -286,15 +286,18 @@ transcript:
   send** choice stays set, and your next message is captured as usual. On the
   agent path the Run log still lists the failed run. If an earlier request of
   the action had already been sent (a tool call, say), the reply is kept and
-  stops with "Trace capture could not be saved, so this reply stopped."; your
+  stops with "Trace capture could not be saved, so this reply stopped." (for
+  Regenerate, which shows the earlier reply again: "Trace capture could not be
+  saved, so the regenerated reply stopped. The earlier reply is shown."); your
   next message is captured as usual. The same holds after the emergency stop or
-  the turn budget ends an action's run right after a tool call. In the rare case
-  that the trace cannot tell whether the action's call was reserved, the reply
-  is kept and stops the same way, and later captured messages may stop at
-  **Trace capture could not start** until Console restarts. **Resend** of a
-  broken turn that starts again from your message is captured the same way. An
-  action that follows the chat's Capture setting, captured or not, uses up the
-  one-time **Next send** choice as a send does.
+  the turn budget ends an action's run right after a tool call. Rarely the reply
+  is kept although nothing was sent: the undo could not be saved, or the trace
+  cannot tell whether the action's call was reserved. Then each later captured
+  message stops at **Trace capture could not start**, and **Send without
+  capture** sends it; when the reservation is in doubt, this lasts until Console
+  restarts. **Resend** of a broken turn that starts again from your message is
+  captured the same way. An action that follows the chat's Capture setting,
+  captured or not, uses up the one-time **Next send** choice as a send does.
 - Some actions still send with capture off, whatever the Capture setting:
   Edit & resend, Regenerate and Resend in a chat with a pinned response
   prefill (they send the prefill; a plain Continue sends none and is
