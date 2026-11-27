@@ -5,7 +5,7 @@ import sys
 import warnings
 from collections import Counter
 from collections.abc import Iterable
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, dataclass
 from pathlib import Path
 
 import pytest
@@ -249,11 +249,19 @@ def _qualified_calls(source_path: Path, predicate) -> Counter[str]:
     return visitor.calls
 
 
-def _qualified_sqlite_connect_calls(source_path: Path) -> Counter[str]:
-    tree = _parse_source(source_path)
+def _qualified_sqlite_connect_calls(
+    source_path: Path,
+    *,
+    tree: ast.Module | None = None,
+    nodes: tuple[ast.AST, ...] | None = None,
+) -> Counter[str]:
+    if tree is None:
+        tree = _parse_source(source_path)
+    if nodes is None:
+        nodes = tuple(ast.walk(tree))
     module_aliases: set[str] = set()
     callable_aliases: set[str] = set()
-    for node in ast.walk(tree):
+    for node in nodes:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name in {"sqlite3", "sqlite3.dbapi2"}:
@@ -300,7 +308,7 @@ def _qualified_sqlite_connect_calls(source_path: Path) -> Counter[str]:
         return isinstance(root, ast.Name) and root.id in module_aliases
 
     rebound_aliases: list[tuple[str, ast.expr]] = []
-    for node in ast.walk(tree):
+    for node in nodes:
         if isinstance(node, ast.Assign):
             rebound_aliases.extend(
                 (target.id, node.value)
@@ -361,8 +369,13 @@ def _qualified_private_sqlite_calls(
     source_path: Path,
     *,
     validation_transport: bool = False,
+    tree: ast.Module | None = None,
+    nodes: tuple[ast.AST, ...] | None = None,
 ) -> list[tuple[str, str, ast.Call]]:
-    tree = _parse_source(source_path)
+    if tree is None:
+        tree = _parse_source(source_path)
+    if nodes is None:
+        nodes = tuple(ast.walk(tree))
     seam_names = (
         {
             "_connect_registered_sqlite",
@@ -376,7 +389,7 @@ def _qualified_private_sqlite_calls(
     module_aliases: set[str] = set()
     callable_aliases: dict[str, str] = {}
     local_seams: set[str] = set()
-    for node in ast.walk(tree):
+    for node in nodes:
         if (
             validation_transport
             and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -438,7 +451,7 @@ def _qualified_private_sqlite_calls(
         return dotted in module_aliases if dotted is not None else False
 
     rebound_aliases: list[tuple[str, ast.expr]] = []
-    for node in ast.walk(tree):
+    for node in nodes:
         if isinstance(node, ast.Assign):
             rebound_aliases.extend(
                 (target.id, node.value)
@@ -775,8 +788,11 @@ def _qualified_store_kernel_dispatch(source_path, symbol, call):
 def _private_sqlite_seam_violations(
     source_path: Path,
     production_module: str,
+    *,
+    tree: ast.Module | None = None,
+    nodes: tuple[ast.AST, ...] | None = None,
 ) -> tuple[list[tuple[str, str, ast.Call]], list[str]]:
-    calls = _qualified_private_sqlite_calls(source_path)
+    calls = _qualified_private_sqlite_calls(source_path, tree=tree, nodes=nodes)
     violations: list[str] = []
     for symbol, seam_name, call in calls:
         if seam_name == "open_recovery_validation":
@@ -850,15 +866,6 @@ def _private_sqlite_seam_violations(
                     f"{policy.production_module}"
                 )
     return calls, violations
-
-
-def _current_direct_connect_sites() -> Counter[tuple[str, str]]:
-    calls: Counter[tuple[str, str]] = Counter()
-    for source_path in PRODUCTION_ROOT.rglob("*.py"):
-        module = source_path.relative_to(PROJECT_ROOT).with_suffix("").as_posix()
-        for symbol, count in _qualified_sqlite_connect_calls(source_path).items():
-            calls[(module, symbol)] += count
-    return calls
 
 
 def _parse_source(source_path: Path) -> ast.Module:
@@ -1014,11 +1021,13 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
     ]
 
 
-def test_raw_connection_census_is_qualified_and_transition_aware() -> None:
+def test_raw_connection_census_is_qualified_and_transition_aware(
+    production_sqlite_census: _ProductionSqliteCensus,
+) -> None:
     documented_legacy = Counter(
         (row["module"], row["symbol"]) for row in _inventory_rows("C")
     )
-    current = _current_direct_connect_sites()
+    current = production_sqlite_census.raw_connections
     seam_module = "tldw_chatbook/DB/private_sqlite"
     seam_tree = _parse_source(PROJECT_ROOT / f"{seam_module}.py")
     seam_exists = any(
@@ -1220,20 +1229,11 @@ def test_runtime_capability_probe_guard_rejects_forwarded_input(
         _assert_runtime_probe_is_literal_memory_only(source_path)
 
 
-def test_private_sqlite_seam_calls_use_literal_module_owned_ids() -> None:
-    total_calls = 0
-    violations: list[str] = []
-    for source_path in PRODUCTION_ROOT.rglob("*.py"):
-        module = source_path.relative_to(PROJECT_ROOT).with_suffix("").as_posix()
-        calls, source_violations = _private_sqlite_seam_violations(
-            source_path,
-            module,
-        )
-        total_calls += len(calls)
-        violations.extend(source_violations)
-
-    assert total_calls > 0
-    assert violations == []
+def test_private_sqlite_seam_calls_use_literal_module_owned_ids(
+    production_sqlite_census: _ProductionSqliteCensus,
+) -> None:
+    assert production_sqlite_census.public_calls > 0
+    assert production_sqlite_census.violations == []
 
 
 def test_private_sqlite_seam_guard_detects_aliases_and_owner_bypasses(
@@ -1638,26 +1638,37 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
     )
 
 
+def _direct_backup_sites(
+    module: str,
+    tree: ast.Module,
+    nodes: Iterable[ast.AST],
+) -> Iterable[tuple[str, str, str]]:
+    if not any(
+        isinstance(node, ast.Attribute) and node.attr == "backup" for node in nodes
+    ):
+        return
+    visitor = _QualifiedCallNodeVisitor(
+        lambda call: (
+            isinstance(call.func, ast.Attribute) and call.func.attr == "backup"
+        )
+    )
+    visitor.visit(tree)
+    for symbol, call in visitor.calls:
+        yield module, symbol, ast.unparse(call.func.value)
+
+
 def _assert_direct_backup_census(
     sources: Iterable[tuple[str, ast.Module]],
 ) -> None:
-    calls: Counter[tuple[str, str, str]] = Counter()
-    for module, tree in sources:
-        if not any(
-            isinstance(node, ast.Attribute) and node.attr == "backup"
-            for node in ast.walk(tree)
-        ):
-            continue
-        visitor = _QualifiedCallNodeVisitor(
-            lambda call: (
-                isinstance(call.func, ast.Attribute) and call.func.attr == "backup"
-            )
-        )
-        visitor.visit(tree)
-        calls.update(
-            (module, symbol, ast.unparse(call.func.value))
-            for symbol, call in visitor.calls
-        )
+    calls = Counter(
+        site
+        for module, tree in sources
+        for site in _direct_backup_sites(module, tree, ast.walk(tree))
+    )
+    _assert_direct_backup_sites(calls)
+
+
+def _assert_direct_backup_sites(calls: Counter[tuple[str, str, str]]) -> None:
     # Detached normalization uses the restricted candidate helper, which
     # reaches _backup_pages. The wrapper only reserves its source.
     assert calls == Counter(
@@ -1721,14 +1732,10 @@ def test_direct_backup_census_rejects_unreviewed_calls(mutation: str) -> None:
         )
 
 
-def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> None:
-    _assert_direct_backup_census(
-        (
-            source_path.relative_to(PROJECT_ROOT).with_suffix("").as_posix(),
-            _parse_source(source_path),
-        )
-        for source_path in PRODUCTION_ROOT.rglob("*.py")
-    )
+def test_backup_inventory_matches_current_sqlite_and_settings_operations(
+    production_sqlite_census: _ProductionSqliteCensus,
+) -> None:
+    _assert_direct_backup_sites(production_sqlite_census.direct_backups)
 
     expected_calls = Counter(
         {
@@ -1869,21 +1876,7 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
             ('tldw_chatbook/Personal_Context/recovery', '_Repository.capture', "copy_private_sqlite"): 1,  # TASK-40134
         }
     )
-    actual_calls: Counter[tuple[str, str, str]] = Counter()
-    for source_path in PRODUCTION_ROOT.rglob("*.py"):
-        module = source_path.relative_to(PROJECT_ROOT).with_suffix("").as_posix()
-        for symbol, seam_name, _call in _qualified_private_sqlite_calls(source_path):
-            if seam_name in {
-                "backup_connection_to_private",
-                "backup_open_connections_to_private",
-                "backup_profile_migration_boundary",
-                "copy_private_sqlite",
-                "migrate_profile_store_to_candidate",
-                "restore_private_sqlite",
-            }:
-                actual_calls[(module, symbol, seam_name)] += 1
-
-    assert actual_calls == expected_calls
+    assert production_sqlite_census.qualified_backups == expected_calls
 
 
 def test_parent_creator_inventory_is_checked_and_has_a_disposition() -> None:
@@ -2592,11 +2585,17 @@ def _assert_validation_operation_source(source_path: Path, *, wrapper: bool) -> 
     assert ast.dump(functions[0]) == ast.dump(expected)
 
 
-def _validation_transport_sites(source_path: Path, module: str) -> Counter:
+def _validation_transport_sites(
+    source_path: Path,
+    module: str,
+    *,
+    tree: ast.Module | None = None,
+    nodes: tuple[ast.AST, ...] | None = None,
+) -> Counter:
     return Counter(
         (module, symbol, seam)
         for symbol, seam, _call in _qualified_private_sqlite_calls(
-            source_path, validation_transport=True
+            source_path, validation_transport=True, tree=tree, nodes=nodes
         )
     )
 
@@ -2605,18 +2604,64 @@ def _assert_validation_transport_census(current: Counter) -> None:
     assert current == _RECOVERY_VALIDATION_TRANSPORT_SITES
 
 
-def test_recovery_validation_operation_and_compatibility_are_exact():
+@dataclass
+class _ProductionSqliteCensus:
+    raw_connections: Counter[tuple[str, str]]
+    direct_backups: Counter[tuple[str, str, str]]
+    qualified_backups: Counter[tuple[str, str, str]]
+    validation: Counter[tuple[str, str, str]]
+    public_calls: int
+    violations: list[str]
+
+
+@pytest.fixture(scope="module")
+def production_sqlite_census() -> _ProductionSqliteCensus:
+    # The four production checks examine the same checkout. Keep only their
+    # findings between tests, and discard each parsed file after projecting it.
+    census = _ProductionSqliteCensus(Counter(), Counter(), Counter(), Counter(), 0, [])
+    for source_path in PRODUCTION_ROOT.rglob("*.py"):
+        module = source_path.relative_to(PROJECT_ROOT).with_suffix("").as_posix()
+        tree = _parse_source(source_path)
+        nodes = tuple(ast.walk(tree))
+        for symbol, count in _qualified_sqlite_connect_calls(
+            source_path, tree=tree, nodes=nodes
+        ).items():
+            census.raw_connections[(module, symbol)] += count
+        census.direct_backups.update(_direct_backup_sites(module, tree, nodes))
+        calls, violations = _private_sqlite_seam_violations(
+            source_path, module, tree=tree, nodes=nodes
+        )
+        census.public_calls += len(calls)
+        census.violations.extend(violations)
+        census.qualified_backups.update(
+            (module, symbol, seam)
+            for symbol, seam, _ in calls
+            if seam in {
+                "backup_connection_to_private",
+                "backup_open_connections_to_private",
+                "backup_profile_migration_boundary",
+                "copy_private_sqlite",
+                "migrate_profile_store_to_candidate",
+                "restore_private_sqlite",
+            }
+        )
+        census.validation.update(
+            _validation_transport_sites(source_path, module, tree=tree, nodes=nodes)
+        )
+        del calls, tree, nodes
+    return census
+
+
+def test_recovery_validation_operation_and_compatibility_are_exact(
+    production_sqlite_census: _ProductionSqliteCensus,
+) -> None:
     _assert_validation_operation_source(
         PRODUCTION_ROOT / "Backup_Recovery/sqlite_validation.py", wrapper=False
     )
     _assert_validation_operation_source(
         PRODUCTION_ROOT / "DB/private_sqlite.py", wrapper=True
     )
-    current = Counter()
-    for source in PRODUCTION_ROOT.rglob("*.py"):
-        module = source.relative_to(PROJECT_ROOT).with_suffix("").as_posix()
-        current.update(_validation_transport_sites(source, module))
-    _assert_validation_transport_census(current)
+    _assert_validation_transport_census(production_sqlite_census.validation)
 
 
 @pytest.mark.parametrize(
