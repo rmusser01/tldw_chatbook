@@ -313,6 +313,18 @@ The **Agent** filter lists each run once; choosing a sub-agent there shows its
 **Agent run** row and steps, but not its Child call rows, which the trace does
 not tie to a run.
 
+When a sub-agent's preset model fails and the preset lists **Fallback
+models**, the sub-agent falls back with Capture on too. The trace records the
+fallback's calls as the same sub-agent's, after the failed call, for example
+`sub-agent 1 · call 2 · agent first` on the fallback model. The trace tells
+targets apart by engine (the provider family) and model, not by server. An
+alternate on the same engine and model as the sub-agent's current target, for
+example `custom-ep:box-b/qwen` after `custom-ep:box-a/qwen` on two servers of
+the same kind, cannot be recorded as a fallback. With Capture on it is listed
+as skipped in the sub-agent's steps ("Provider fallback skipped: ... (same
+engine and model, not traceable under Capture; turn Capture off to allow
+it)"), and nothing is sent to it.
+
 An unfinished sub-agent call never holds up its parent's turn. Child calls of a
 turn that is no longer shown (deleted, or replaced by Edit & resend) are left
 out. A fork does not carry the source conversation's sub-agent calls, and the

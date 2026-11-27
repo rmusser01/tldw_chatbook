@@ -941,6 +941,9 @@ RECOVERED_SUITES_TARGETS = (
     "Tests/Performance/test_console_managed_received_acceptance.py",
     # Round 27 (2026-11-26): TASK-42550's slot-drop file (bootstrap_profile).
     "Tests/Chat/test_console_trace_slot_drop.py",
+    # Round 27: TASK-42556's child preset fallback file (bootstrap_profile),
+    # on no lane before.
+    "Tests/Chat/test_console_child_preset_fallback_trace.py",
 )
 #: Deselected 2026-11-12: red on dev e0186fa10a (console_send_diagnostic
 #: ContextVar token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.

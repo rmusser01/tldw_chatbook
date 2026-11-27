@@ -2605,6 +2605,7 @@ class AgentService:
             Callable[[str, tuple[str, ...], int], None] | None
         ) = None,
         propagate_trace_call_persistence_errors: bool = False,
+        preset_fallback_refusal: str | None = None,
         wall_clock: Callable[[], datetime] = _utc_now,
         inline_child_model_scope: (
             Callable[[], contextlib.AbstractContextManager] | None
@@ -2647,6 +2648,7 @@ class AgentService:
             propagate_trace_call_persistence_errors
         )
         self._primary_trace_call_persistence_error: Exception | None = None
+        self._preset_fallback_refusal = preset_fallback_refusal  # TASK-42564
         self._on_step = on_step
         self._on_tool_activity = on_tool_activity
         self._on_resolved_target = on_resolved_target
@@ -6389,8 +6391,15 @@ class AgentService:
                 and restore_provider_continuation is None
             ):
 
+                def target_key(candidate):
+                    target = candidate.target
+                    return (target.execution_provider or target.provider, target.model)
+
+                current = [(config.execution_provider or api_endpoint, config.model)]
+
                 def select_preset_target(candidate) -> None:
                     self.db.set_run_active_fallback(run_id, candidate.index)
+                    current[0] = target_key(candidate)
                     if self._fleet is not None:
                         self._fleet.set_resolved_target(
                             run_id, candidate.provider, candidate.model
@@ -6406,6 +6415,7 @@ class AgentService:
                                 _safe_exception_type(exc),
                             )
 
+                refusal = self._preset_fallback_refusal
                 fallback_runtime = FallbackRuntime(
                     candidates=tuple(
                         dataclasses.replace(
@@ -6416,6 +6426,12 @@ class AgentService:
                     build=_build_for_candidate,
                     pre_tool_only=True,
                     select=select_preset_target,
+                    # Captured, one that keeps the target is skipped (TASK-42564).
+                    refuse=(
+                        (lambda c: refusal if target_key(c) == current[0] else "")
+                        if refusal
+                        else None
+                    ),
                 )
         else:
             resolved_chain = resolve_fallback_chain(

@@ -20,6 +20,7 @@ from tldw_chatbook.Chat.console_trace_continuation import (
     falls_back_from,
     run_chains,
 )
+from tldw_chatbook.Chat.console_trace_child_fallback import child_fallback_admits
 from tldw_chatbook.Chat.console_trace_errors import (
     TraceReservationRefused,
     TraceSurfaceChangeRefused,
@@ -551,6 +552,23 @@ class ConsoleTraceBoundaryFactory:
                         and owner is not None
                         and route_record.route is ConsoleRequestRoute.AGENT_FIRST
                     ):
+                        # A later chain of the child is its preset fallback
+                        # (ADR-337 amendment 2026-11-26, TASK-42564).
+                        if (
+                            child_fallback_admits(
+                                cursor,
+                                self.repository,
+                                run_id=run_id,
+                                owner_id=owner.owner_id,
+                                turn_id=turn_id,
+                                policy_id=policy.policy_id,
+                                provider=getattr(_resolution, "execution_key", None)
+                                or _resolution.provider,
+                                model=_resolution.model,
+                            )
+                            is False
+                        ):
+                            raise ValueError("trace_child_segment_unavailable")
                         child = self.repository.create_child_segment(
                             cursor,
                             owner_id=owner.owner_id,

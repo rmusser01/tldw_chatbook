@@ -2767,14 +2767,17 @@ def _recover_model_failure(
                 if candidate.model
                 else candidate.provider
             )
-            if not candidate.ready:
+            skip_reason = candidate.skip_reason
+            if candidate.ready and deps.fallback.refuse is not None:
+                skip_reason = deps.fallback.refuse(candidate)
+            if not candidate.ready or skip_reason:
                 _trace(
                     state,
                     STEP_MODEL_ERROR,
                     summary=(
                         f"Provider fallback skipped: "
                         f"{candidate_name} "
-                        f"({candidate.skip_reason})"
+                        f"({skip_reason})"
                     ),
                     status="failed",
                     field_states={"payload": "omitted"},

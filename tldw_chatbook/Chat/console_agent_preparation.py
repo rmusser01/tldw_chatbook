@@ -4,6 +4,15 @@ from __future__ import annotations
 
 from . import console_agent_bridge as native_host
 
+# Under Capture On a spawned child's preset fallback is a new chain of the
+# child (ADR-337 amendment 2026-11-26, TASK-42564). The trace compares the
+# engine (execution key) and model, so an alternate on the same engine and
+# model, even on another server, cannot be one: it is a visible skip before
+# any call (TASK-42556), kept short for the 200-character step summary.
+PRESET_FALLBACK_NOT_CAPTURED = (
+    "same engine and model, not traceable under Capture; turn Capture off to allow it"
+)
+
 
 @native_host.contextlib.contextmanager
 def _prepare_native_reply(
@@ -1207,6 +1216,7 @@ def _prepare_native_reply(
         capture_mode=capture_mode,
         trace_request=trace_request,
         fallback_providers=tuple(config.fallback_providers or ()),
+        preset_fallback_state=self._db.get_run_fallback_state,
     )
 
     # PR3a-1 Task 6b (audit F1): this turn's own key into
@@ -2320,6 +2330,11 @@ def _prepare_native_reply(
         ),
         propagate_trace_call_persistence_errors=(
             propagate_trace_call_persistence_errors
+        ),
+        preset_fallback_refusal=(
+            PRESET_FALLBACK_NOT_CAPTURED
+            if capture_mode is native_host.ConsoleTraceCaptureMode.CAPTURE_ON
+            else None
         ),
     )
     # PR2b Task 1: publish BEFORE `run_turn` is called (below) -- see

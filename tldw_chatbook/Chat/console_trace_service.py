@@ -2238,6 +2238,10 @@ class ConsoleTraceService:
                 None if tail is None else tail.node_id,
             ):
                 previous = before
+        elif reserved_call is not None and surface_delta.route_identity == "agent_first":
+            from .console_trace_child_fallback import recheck_child_fallback
+
+            recheck_child_fallback(cursor, self.repository, reserved_call, header)
         if previous is not None and previous.state is TraceCallState.ERROR:
             prior_header = self.repository.get_request_header(
                 cursor, previous.request_header_id

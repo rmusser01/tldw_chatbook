@@ -1326,10 +1326,13 @@ def _records_from_child_calls(calls: Iterable[Any]) -> list[TrajectoryRecord]:
 
     Children are numbered per turn in dispatch order (the order the ledger
     shows them), so siblings read as ``sub-agent 1``/``sub-agent 2`` and
-    never as the parent's own calls.
+    never as the parent's own calls. A child's chains (``actor:chain``; a
+    preset fallback starts a new one, TASK-42564) share its actor, so they
+    number as one child, and its calls count across them.
     """
     records: list[TrajectoryRecord] = []
     numbers: dict[tuple[str, str], int] = {}
+    counts: dict[tuple[str, str], int] = {}
     timed = [(_parse_timestamp(_field(c, "dispatch_started_at")), c) for c in calls]
     timed.sort(key=lambda pair: (pair[0] is None, pair[0] or 0.0))
     for started_at, call in timed:
@@ -1338,9 +1341,10 @@ def _records_from_child_calls(calls: Iterable[Any]) -> list[TrajectoryRecord]:
         run_id = _optional_text(_field(call, "run_id"))
         if not (call_id and turn_id and run_id):
             continue
-        if (turn_id, run_id) not in numbers:
-            numbers[(turn_id, run_id)] = 1 + sum(t == turn_id for t, _ in numbers)
-        sequence = _optional_int(_field(call, "call_sequence")) or 0
+        child = (turn_id, run_id.partition(":")[0])
+        if child not in numbers:
+            numbers[child] = 1 + sum(t == turn_id for t, _ in numbers)
+        counts[child] = counts.get(child, 0) + 1
         route = _optional_text(_field(call, "route_identity")) or "call"
         state = _field(call, "state")
         model = _optional_text(_field(call, "model_name"))
@@ -1352,7 +1356,7 @@ def _records_from_child_calls(calls: Iterable[Any]) -> list[TrajectoryRecord]:
                 turn_id=turn_id,
                 message_id=None,
                 content_preview=(
-                    f"sub-agent {numbers[(turn_id, run_id)]} · call {sequence + 1}"
+                    f"sub-agent {numbers[child]} · call {counts[child]}"
                     f" · {route.replace('_', ' ')}"
                 ),
                 usage=ProviderUsage.from_stored_call_usage(
