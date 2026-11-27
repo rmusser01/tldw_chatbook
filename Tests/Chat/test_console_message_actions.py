@@ -1400,12 +1400,26 @@ def test_diff_only_tool_marker_offers_expansion_labeled_diff():
     assert action.label == "Diff"
 
 
-def test_full_output_tool_marker_keeps_full_output_label():
-    """TASK-1860 copy is unchanged for a marker with hidden full text."""
+@pytest.mark.parametrize(
+    "status", [None, "success", "failed", "timed_out", "stopped", "done"]
+)
+def test_full_output_tool_marker_keeps_full_output_label(status: str | None):
+    """TASK-1860 copy is unchanged for a marker with hidden full text.
+
+    TASK-33621.34 review: a tool that RAN -- and then failed, timed out or
+    was stopped -- produced the text it hides, so only a refusal status may
+    take the "Sent to the model" relabel. Without these cases, relabelling
+    every non-success status passed the whole file.
+    """
     message = ConsoleChatMessage(
         role=ConsoleMessageRole.TOOL,
         content="calculator → 42",
         tool_output_full="the whole untruncated result",
+        activity_presentation=(
+            None
+            if status is None
+            else ConsoleActivityPresentation("tool", "calculator", status)
+        ),
     )
 
     action = _tool_output_action(message)
@@ -1452,6 +1466,45 @@ def test_refused_tool_marker_says_the_body_went_to_the_model(status: str):
 
     assert action is not None
     assert action.label == "Sent to the model"
+
+
+@pytest.mark.parametrize("lifecycle_state", ["cancelled", "timed_out"])
+def test_stopped_raw_cli_marker_keeps_full_output_label(lifecycle_state: str):
+    """TASK-33621.34: the refusal relabel must not reach a raw-CLI row.
+
+    A cancelled or timed-out command's header status is ``blocked`` -- a
+    refusal-status word -- but what it hides is the command's own stdout and
+    stderr, which the model never received as a refusal.
+    """
+    from tldw_chatbook.Chat.console_chat_models import RawCliPresentation
+    from tldw_chatbook.Chat.console_raw_cli import raw_cli_activity_presentation
+
+    activity = raw_cli_activity_presentation(lifecycle_state, None)
+    assert activity.status == "blocked", "precondition: the header reads blocked"
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="Command:\nsleep 60\n\nstdout:\n(no output)",
+        tool_output_full="stdout:\npartial line\n\nstderr:\n(no output)",
+        activity_presentation=activity,
+        raw_cli_presentation=RawCliPresentation(
+            invocation_id="raw-1",
+            caller="model",
+            lifecycle_state=lifecycle_state,
+            command="sleep 60",
+            shell="/bin/bash",
+            cwd="/tmp/project",
+            started_at_monotonic=10.0,
+            elapsed_seconds=0.5,
+            exit_code=None,
+            truncated=False,
+            cleanup_proven=True,
+        ),
+    )
+
+    action = _tool_output_action(message)
+
+    assert action is not None
+    assert action.label == "Full output"
 
 
 def test_plain_tool_marker_offers_no_expansion():

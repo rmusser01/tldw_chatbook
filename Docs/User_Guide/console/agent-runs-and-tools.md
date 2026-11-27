@@ -733,12 +733,15 @@ including `Connecting tools…`.
 A refused call leaves a row in the transcript naming **who** refused it, not
 one generic word:
 
-- `· denied by you` — you pressed **Deny** on the card. Covers MCP tools
+- `· Denied by you` — you pressed **Deny** on the card. Covers MCP tools
   and **local workspace tools** alike.
 - `· blocked (Off)` — the tool's permission is **Off**; no card was shown.
   Covers MCP, local workspace, and raw-shell tools alike.
 - `· blocked (kill switch)` — the global kill switch refused it.
-- `· blocked` — an approval timeout, or a round that ended undecided.
+- `· blocked` — an approval timeout, or a round that ended undecided. A raw
+  CLI command that was stopped or timed out is not a refusal: its row reads
+  `Stopped` or `Timed out` with the elapsed time, and keeps **Full output**,
+  because what it holds is the command's own output.
 
 Expanding a refused row is labelled **Sent to the model** rather than "Full
 output": what it holds is the refusal text the model was given ("Do not retry
