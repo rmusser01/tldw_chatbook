@@ -278,10 +278,12 @@ transcript:
   and extend the selected message." instruction after it. Earlier calls keep
   their requests and replies, so a regenerated turn lists both calls. Your next
   message is captured as usual, also when the action's own reply failed. If
-  the trace refuses the action itself ("Trace capture could not be saved, so
-  this request was not sent."), each later message in that chat pauses at
-  **Trace capture could not start**, and **Send without capture** sends it.
-  **Resend** of a broken turn that starts again from your message is
+  the trace refuses the action before anything is sent, the action is
+  undone: its empty reply (and, for Edit & resend, the edited message) is
+  removed, the chat is as it was, and Console says "Not sent: trace capture
+  could not start. Try again, or turn Capture off for this chat." A one-time
+  **Next send** choice stays set, and your next message is captured as
+  usual. **Resend** of a broken turn that starts again from your message is
   captured the same way. An action that follows the chat's Capture setting,
   captured or not, uses up the one-time **Next send** choice as a send does.
 - Some actions still send with capture off, whatever the Capture setting:
