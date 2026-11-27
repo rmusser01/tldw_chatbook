@@ -775,10 +775,25 @@ def _transcript(app):
 
 
 @pytest.mark.usefixtures("shut_down_console_controllers")
-@pytest.mark.parametrize("plain_path", [False, True], ids=["agent", "plain_path"])
-@pytest.mark.parametrize("action", ACTIONS)
+@pytest.mark.parametrize(
+    ("action", "plain_path", "mixins"),
+    [
+        pytest.param(
+            action,
+            plain,
+            mixins,
+            id=f"{action}-{'plain_path' if plain else 'agent'}"
+            + ("-mixins" if mixins else ""),
+        )
+        for action, plain, mixins in (
+            *((action, plain, False) for action in ACTIONS for plain in (False, True)),
+            ("edit", False, True),
+            ("regenerate", True, True),
+        )
+    ],
+)
 async def test_a_refused_action_leaves_the_chat_as_it_was(
-    tmp_path, monkeypatch, action, plain_path
+    tmp_path, monkeypatch, action, plain_path, mixins
 ):
     """Owner decision 2026-11-26: the trace refuses the action's own call
     before anything is sent, so the action is undone. Its empty reply (and
@@ -787,7 +802,9 @@ async def test_a_refused_action_leaves_the_chat_as_it_was(
     next message is sent and traced as after no action."""
     from tldw_chatbook.Chat.console_action_capture import ACTION_NOT_SENT_COPY
 
-    async with _console(tmp_path, monkeypatch, plain_path=plain_path) as app:
+    async with _console(
+        tmp_path, monkeypatch, plain_path=plain_path, mixins=mixins
+    ) as app:
         await _send(app, "Hello")
         await _send(app, "And now?")
         _one_time_capture(app, True)
