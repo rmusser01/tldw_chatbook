@@ -73,19 +73,24 @@ def test_a_repeated_payload_is_filtered_once(monkeypatch):
     )
 
 
+SHORT = ["type", "description", "", "fs_read", SECRET, "token=" + SECRET, "sk_" "live_0123456789abcdef"]
+
+
 def test_an_entry_holds_no_input_text_and_no_known_credential():
     sanitizer = CredentialSanitizer(known_credentials=(SECRET,))
-    for text in CORPUS:
+    for text in CORPUS + SHORT:
         sanitizer._sanitize_text(text)
     assert redaction._sanitized_text, "nothing was remembered"
-    for key, (projection, value) in redaction._sanitized_text.items():
+    assert redaction._sanitized_short_text, "no short string was remembered"
+    entries = [*redaction._sanitized_text.items(), *redaction._sanitized_short_text.items()]
+    for key, (projection, value) in entries:
         assert type(key) is bytes and len(key) == 32
         assert projection is None or callable(projection)
         assert value is None or type(value) is str
         if value is not None:
             assert value not in CORPUS, "an unchanged input was kept as a value"
             assert SECRET not in value and "hunter2" not in value
-        for text in CORPUS:
+        for text in CORPUS + [text for text in SHORT if text]:
             assert text.encode("utf-8", "surrogatepass") not in key
         assert SECRET.encode() not in key
 
@@ -147,19 +152,101 @@ def test_a_replaced_projection_never_serves_another_projections_result(monkeypat
         assert "sk_live_" in CredentialSanitizer()._sanitize_text(text)
 
 
-def test_short_strings_are_not_remembered():
+@pytest.mark.parametrize("include_known", [True, False])
+def test_short_strings_are_remembered_in_their_own_table(include_known):
     sanitizer = CredentialSanitizer(known_credentials=(SECRET,))
-    for chunk in ("one ", "two ", SECRET, "three"):
-        assert sanitizer._sanitize_text(chunk) == _fresh(sanitizer, chunk)
+    for chunk in SHORT:
+        expected = _fresh(sanitizer, chunk, include_known=include_known)
+        assert sanitizer._sanitize_text(chunk, include_known=include_known) == expected
+        assert sanitizer._sanitize_text(chunk, include_known=include_known) == expected
     assert not redaction._sanitized_text
+    assert len(redaction._sanitized_short_text) == len(SHORT)
+
+
+def test_a_repeated_tool_list_filters_each_short_string_once(monkeypatch):
+    """What the journey measured: the same schema words in every request."""
+    calls = []
+    real = redaction._CREDENTIAL_PROJECTIONS[redaction.CREDENTIAL_FILTER_VERSION]
+
+    def counted(text):
+        calls.append(text)
+        return real(text)
+
+    monkeypatch.setitem(
+        redaction._CREDENTIAL_PROJECTIONS, redaction.CREDENTIAL_FILTER_VERSION, counted
+    )
+    schema = {
+        "type": "function",
+        "function": {
+            "name": "fs_read",
+            "description": "Read a file.",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string", "description": "The file."}},
+                "required": ["path"],
+            },
+        },
+    }
+    payload = {"model": "m", "tools": [dict(schema) for _ in range(20)]}
+    first = CredentialSanitizer().sanitize(payload)
+    distinct = len(calls)
+    # A word that is both a key and a value ("function") is filtered once as
+    # each: keys are filtered without the known values, so they do not share.
+    assert max(calls.count(text) for text in set(calls)) <= 2
+    assert distinct < 30, "the first pass filtered repeated schema words again"
+    second = CredentialSanitizer().sanitize(payload)
+    assert first == second and first.value == payload
+    assert len(calls) == distinct, "the second request filtered remembered strings again"
+
+
+def test_one_off_short_strings_never_push_out_a_long_one(monkeypatch):
+    monkeypatch.setattr(redaction, "_SANITIZED_SHORT_TEXT_MAX", 8)
+    sanitizer = CredentialSanitizer()
+    long_text = CORPUS[0]
+    sanitizer._sanitize_text(long_text)
+    for index in range(40):
+        sanitizer._sanitize_text(f"chunk {index}")
+    assert len(redaction._sanitized_short_text) == 8
+    assert len(redaction._sanitized_text) == 1
+    calls = []
+    monkeypatch.setattr(
+        CredentialSanitizer,
+        "_sanitize_text_now",
+        lambda self, value, **options: calls.append(value) or value,
+    )
+    assert sanitizer._sanitize_text(long_text) == long_text
+    assert not calls, "the long string was filtered again"
+
+
+def test_a_short_string_computed_under_a_replaced_projection_is_not_reused(monkeypatch):
+    """The projection rule of the long table holds for the short one."""
+    from tldw_chatbook.Utils.log_sanitizer import sanitize_trace_credentials_v1
+
+    text = "sk" + "_live_" + "DONOTUSEEXAMPLEONLY" + "a1B2c3D4e5"
+    assert len(text) < redaction._SANITIZED_TEXT_MIN_LENGTH
+    expected = _fresh(CredentialSanitizer(), text)
+    assert "sk_live_" not in expected
+    with monkeypatch.context() as weaker:
+        weaker.setitem(
+            redaction._CREDENTIAL_PROJECTIONS,
+            redaction.CREDENTIAL_FILTER_VERSION,
+            sanitize_trace_credentials_v1,
+        )
+        assert "sk_live_" in CredentialSanitizer()._sanitize_text(text), (
+            "the control: v1 leaves this bare key in place"
+        )
+    assert CredentialSanitizer()._sanitize_text(text) == expected
 
 
 def test_the_memo_is_bounded(monkeypatch):
     monkeypatch.setattr(redaction, "_SANITIZED_TEXT_MAX", 8)
+    monkeypatch.setattr(redaction, "_SANITIZED_SHORT_TEXT_MAX", 8)
     sanitizer = CredentialSanitizer()
     for index in range(40):
         sanitizer._sanitize_text(f"{index:04d} " + "filler text that is long enough to remember " * 2)
+        sanitizer._sanitize_text(f"short {index:04d}")
     assert len(redaction._sanitized_text) == 8
+    assert len(redaction._sanitized_short_text) == 8
 
 
 @pytest.mark.parametrize(
