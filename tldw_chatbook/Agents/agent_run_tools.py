@@ -50,6 +50,7 @@ from .agent_models import (
     MAX_STEERING_CHARS,
     RUN_DONE,
     RUN_ERROR,
+    SEND_TO_AGENT_TOOL_NAME,
     SPAWN_TOOL_NAME,
     STEERING_SOURCE_REDIRECT,
     STEERING_SOURCE_SUPERVISOR,
@@ -79,7 +80,11 @@ from .agent_service import (
     coerce_max_live_subagents,
 )
 from .automatic_work_budget import AutomaticWorkLimits, AutomaticWorkRefused
-from .execution_capacity import CapacityRefused, current_execution_owner
+from .execution_capacity import (
+    CapacityRefused,
+    CleanupUnprovenRefused,
+    current_execution_owner,
+)
 
 if TYPE_CHECKING:
     from .agent_models import AgentConfig
@@ -171,9 +176,9 @@ class AgentRunTools:
         # owns its independent scope or the parent finishes refused-launch cleanup.
         self._launch_fleet_child = core_operation(service.db)(self._launch_fleet_child)
 
-    def _reserve_child_execution(self, child_kwargs) -> tuple[
-        ExecutionOwner | None, str | None, ToolResult | None
-    ]:
+    def _reserve_child_execution(
+        self, child_kwargs, tool_name=SPAWN_TOOL_NAME
+    ) -> tuple[ExecutionOwner | None, str | None, ToolResult | None]:
         automatic_work = self.service._automatic_work
         reservation_id = None
         child_owner = None
@@ -241,10 +246,12 @@ class AgentRunTools:
                 )
             if not isinstance(exc, CapacityRefused):
                 raise
-            if str(exc) == "worktree_activity_busy":
+            if isinstance(exc, CleanupUnprovenRefused) or (
+                str(exc) == "worktree_activity_busy"
+            ):
                 from .ordinary_tree import widen_refusal
 
-                error = widen_refusal(SPAWN_TOOL_NAME, exc)
+                error = widen_refusal(tool_name, exc)
             else:
                 error = (
                     f"runtime sub-agent limit reached ({exc}); wait for running "
@@ -263,7 +270,11 @@ class AgentRunTools:
         resumed_managed=None,
         managed_resume_ceiling=None,
     ):
-        child_owner, child_reservation, failure = self._reserve_child_execution(child_kwargs)
+        child_owner, child_reservation, failure = self._reserve_child_execution(
+            child_kwargs,
+            # A resume is the model's send_to_agent call, not a spawn.
+            SEND_TO_AGENT_TOOL_NAME if resumed_managed is not None else SPAWN_TOOL_NAME,
+        )
         if failure is not None:
             return None, failure
         launched = False

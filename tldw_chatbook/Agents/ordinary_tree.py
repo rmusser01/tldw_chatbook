@@ -15,7 +15,7 @@ from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 from loguru import logger
 
 from .activation import OriginalSourceChanged
-from .execution_capacity import CapacityRefused, WorkOrigin
+from .execution_capacity import CapacityRefused, CleanupUnprovenRefused, WorkOrigin
 
 
 @dataclass
@@ -34,6 +34,12 @@ class _Member:
 
 def widen_refusal(tool_name, refused):
     """The tool error the model sees when a turn's claim cannot widen."""
+    if isinstance(refused, CleanupUnprovenRefused):  # TASK-41950
+        return (
+            f"{tool_name} is unavailable: workspace activity is held by a "
+            "cleanup that could not be proven; only restarting Chatbook clears "
+            "it. Continue without it."
+        )
     if str(refused) == "worktree_activity_busy":
         return (
             f"{tool_name} is unavailable while other workspace activity is "
@@ -661,7 +667,10 @@ class OrdinaryTurn:
             raise CapacityRefused("runtime_closed")
         with self.activity.prelaunch(footprint=footprint) as claim:
             if claim is None:
-                raise CapacityRefused("worktree_activity_busy")
+                # A claim held until restart says so (TASK-41950).
+                raise self.activity.restart_refusal(footprint) or CapacityRefused(
+                    "worktree_activity_busy"
+                )
             owner = self.capacity.begin_execution(
                 origin=self.origin, conversation_id=self.launch_key
             )
@@ -791,7 +800,8 @@ class OrdinaryTurn:
 
         Sub-agents and skill installs/scripts declare no footprint, so the claim
         widens when the turn actually uses one (TASK-40715). Never waits: another
-        live claim refuses with ``worktree_activity_busy``. The turn's sources
+        live claim refuses with ``worktree_activity_busy``, and a claim held
+        until restart with ``CleanupUnprovenRefused`` (TASK-41950). The turn's sources
         and runtime must still be current; an already-OPAQUE claim then covers
         the effect even after the turn sealed (fleet children outlive their
         parent's submission).
@@ -810,7 +820,12 @@ class OrdinaryTurn:
         except ValueError:
             raise CapacityRefused("ordinary_turn_closed") from None
         if footprint is None:
-            raise CapacityRefused("worktree_activity_busy")
+            from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
+
+            # A claim held until restart says so (TASK-41950).
+            raise self.activity.restart_refusal(
+                WorktreeFootprint(opaque=True), excluding=self.claim
+            ) or CapacityRefused("worktree_activity_busy")
         self.footprint = footprint
 
     def attach(self, owner):

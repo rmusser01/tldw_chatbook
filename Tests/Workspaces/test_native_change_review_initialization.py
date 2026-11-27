@@ -818,11 +818,13 @@ def test_retained_cleanups_hold_later_roots_until_restart_and_say_so(
     initialize = change_turn_tracker.initialize_shadow_root
     held_roots: set[str] = set()
     both_reserved = threading.Barrier(2, timeout=10)
+    holders: list[threading.Thread] = []
 
     def unproven(root, **kwargs):
         if root not in held_roots:
             return initialize(root, **kwargs)
         both_reserved.wait()
+        holders.append(threading.current_thread())
         # As run_native_git does when no cleanup proof remains.
         native_snapshot_ticket().operation.retain_unproven("native Git").hold()
         raise OSError("native Git cleanup proof unavailable")
@@ -874,6 +876,308 @@ def test_retained_cleanups_hold_later_roots_until_restart_and_say_so(
             lambda: not any(holds_unproven_custody(t) for t in threading.enumerate()),
             timeout=15,
         )
+        # Leaving hold() is not the end: the worker still completes and
+        # returns its ticket, which must finish before the fixture tears down.
+        for holder in holders:
+            holder.join(15)
+            assert not holder.is_alive(), "custody worker did not return"
+        owner.finish_root()
+        claim.settle(durable=True)
+
+
+_BUSY_COPY = "Workspace activity is busy; retry after it finishes."
+_HELD_COPY = (
+    "Workspace activity is held by a cleanup that could not be proven; "
+    "restart Chatbook to clear it."
+)
+
+
+def _member_of_claim(activity, owner, *, opaque=False):
+    """Whether ``owner`` is a member of a held claim (an opaque one, if asked)."""
+    with activity._lock:
+        for member in activity._members.values():
+            state = activity._claims.get(member.claim_id)
+            if member.owner is owner and state is not None:
+                if not opaque or state.footprint.opaque:
+                    return True
+    return False
+
+
+def _console_rig(h, monkeypatch, tmp_path):
+    """A real Console controller over the fixture's runtime, with one chat in
+    the init workspace and one in another workspace."""
+    from Tests.Chat.test_console_skill_substitution import _RecordingGateway
+    from Tests.console_provider_doubles import persisted_console_store
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Tools import workspace_file_roots as roots_api
+
+    monkeypatch.setattr(roots_api, "_registry_factory", lambda: h.registry)
+    monkeypatch.setattr(roots_api, "_LAUNCH_CWD", str(h.root))
+    store = persisted_console_store(
+        db_path=tmp_path / "chat.db", workspace_registry=h.registry
+    )
+    gateway = _RecordingGateway()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, provider="llama_cpp", model="m"
+    )
+    h.app.chachanotes_db = store.persistence.db
+    h.app.local_chat_conversation_service = ChatConversationService(
+        store.persistence.db
+    )
+    h.runtime.set_chat_store(store)
+    h.runtime.set_chat_controller(controller)
+    h.registry.create_workspace(workspace_id="elsewhere", name="Elsewhere")
+
+    async def send(chat, text):
+        result = await controller.submit_draft(text, session_id=chat.id)
+        return result.accepted, result.visible_copy
+
+    async def admitted(chat, text):
+        accepted, copy = await send(chat, text)
+        assert accepted, copy
+        stream = controller._active_stream_tasks.get(chat.id)
+        if stream is not None:
+            await asyncio.wait_for(asyncio.shield(stream), 15)
+        await asyncio.to_thread(wait_until, lambda: not h.runtime._ordinary_turns, 15)
+
+    return SimpleNamespace(
+        controller=controller,
+        gateway=gateway,
+        session=store.create_session(workspace_id="init-workspace"),
+        elsewhere=store.create_session(workspace_id="elsewhere"),
+        send=send,
+        admitted=admitted,
+        sandbox=lambda: roots_api.run_file_sandbox(h.root),
+    )
+
+
+@pytest.mark.parametrize(
+    "holder", ["initialization", "tool_operation", "child_member", "marked_unproven"]
+)
+def test_a_retained_cleanups_claim_refuses_later_console_sends_until_restart(
+    native_initializer, monkeypatch, tmp_path, holder
+):
+    """Owner decisions 2026-11-25 (TASK-41950, ADR-134): a claim with a member
+    whose cleanup is unproven stays held until restart (TASK-40716): an
+    initialization job's own opaque claim, an agent turn's claim whose tool
+    operation (or a sub-agent's) was retained, or one whose owner was marked
+    unproven with no retained record. A later Console Send is refused at
+    ordinary-turn admission, in the job's workspace and in any other, and
+    says that a restart clears it; Release frees only the tool slot, and not
+    even a proof changes that. An ordinary busy conflict keeps the "retry"
+    copy, and the same rig admits a Send once that conflict is gone."""
+    from tldw_chatbook.Agents.execution_capacity import holds_unproven_custody
+    from tldw_chatbook.Chat.console_unproven_cleanup import release_held_tool_slot
+    from tldw_chatbook.Workspaces import change_turn_tracker
+    from tldw_chatbook.Workspaces.change_review_ownership import (
+        native_snapshot_ticket,
+    )
+
+    h = native_initializer
+    capacity, activity = h.runtime.execution_capacity, h.runtime.worktree_activity
+    owners = []  # finished in teardown
+    workers: list[threading.Thread] = []  # custody workers, joined
+
+    def unproven(root, **kwargs):
+        workers.append(threading.current_thread())
+        # As run_native_git does when no cleanup proof remains.
+        native_snapshot_ticket().operation.retain_unproven("native Git").hold()
+        raise OSError("native Git cleanup proof unavailable")
+
+    monkeypatch.setattr(change_turn_tracker, "initialize_shadow_root", unproven)
+    rig = _console_rig(h, monkeypatch, tmp_path)
+    session, elsewhere, send = rig.session, rig.elsewhere, rig.send
+
+    def no_custody():
+        return not any(holds_unproven_custody(t) for t in threading.enumerate())
+
+    def holds_claim(owner):
+        return _member_of_claim(activity, owner)
+
+    def begin(**kwargs):
+        owners.append(capacity.begin_execution(origin=WorkOrigin.MANUAL, **kwargs))
+        return owners[-1]
+
+    async def scenario():
+        # Control: a live claim is ordinary busy work, even beside a retained
+        # cleanup whose owner holds no claim. Its copy still says "retry".
+        bystander = capacity.begin_execution(
+            origin=WorkOrigin.MANUAL, conversation_id=""
+        )
+        unrelated = bystander.reserve_tool()
+        unrelated_retention = unrelated.retain_unproven("Raw CLI")
+        live = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="t")
+        claim = activity.try_acquire(
+            owner=live, footprint=WorktreeFootprint(opaque=True)
+        )
+        assert claim is not None
+        assert await send(session, "while busy") == (False, _BUSY_COPY)
+        claim.settle(durable=True)
+        live.finish_root()
+        unrelated_retention.prove()
+        unrelated.finish()
+        bystander.finish_root()
+        # Control: once that conflict is gone, this rig admits a Send in
+        # either workspace.
+        await rig.admitted(session, "before the hold")
+        await rig.admitted(elsewhere, "elsewhere before the hold")
+        assert len(rig.gateway.payloads) == 2
+
+        retention = None
+        if holder == "initialization":
+            h.registry.set_change_review_enabled("init-workspace", True)
+            h.service.admit_turn("init-workspace")  # no turn bound: its own owner
+            await asyncio.to_thread(wait_until, lambda: capacity.retained(), 15)
+            (retention,) = capacity.retained()
+            owner = retention.operation.owner
+            assert owner.conversation_id == "" and owner.run_id is None
+        else:
+            # An agent turn's opaque claim.
+            turn = begin(conversation_id="agent-turn")
+            turn_claim = activity.try_acquire(
+                owner=turn, footprint=WorktreeFootprint(opaque=True)
+            )
+            assert turn_claim is not None
+            owner = turn
+            if holder == "child_member":  # a sub-agent joined the turn's claim
+                owner = begin(conversation_id="agent-turn", child=True)
+                turn_claim.attach_child(owner)
+            if holder == "marked_unproven":  # no retained record at all
+                owner.mark_cleanup_unproven()
+                assert not capacity.retained()
+            else:
+                retention = owner.reserve_tool().retain_unproven("native Git")
+        assert _member_of_claim(activity, owner, opaque=True)
+
+        assert await send(session, "a later send") == (False, _HELD_COPY)
+        # The claim is opaque: a chat in another workspace is refused as well.
+        assert await send(elsewhere, "elsewhere") == (False, _HELD_COPY)
+        if retention is not None:
+            # Release (the Held tool slots action) returns the tool slot only;
+            # the claim, and the refusal, stay.
+            assert capacity.snapshot().tool_workers == 1
+            assert release_held_tool_slot(rig.controller, owner.execution_id)
+            assert retention.abandoned
+            assert capacity.snapshot().tool_workers == 0
+            assert holds_claim(owner)
+            assert await send(session, "after release") == (False, _HELD_COPY)
+            assert await send(elsewhere, "after release") == (False, _HELD_COPY)
+            # Not even a proof (no production code proves) retires the claim:
+            # the owner finishes, but its drain stays unproven.
+            retention.prove()
+            for worker in workers:  # the job's ticket returns, finishing its root
+                await asyncio.to_thread(worker.join, 15)
+                assert not worker.is_alive(), "custody worker did not return"
+            assert not capacity.retained()
+        if owner in owners:
+            owners.remove(owner)
+            owner.finish_root()
+        assert owner.drain_state() == "unproven"
+        assert holds_claim(owner)
+        # The claim is still held, so the copy still names the restart.
+        assert await send(session, "after the proof") == (False, _HELD_COPY)
+        assert len(rig.gateway.payloads) == 2
+
+    try:
+        with rig.sandbox():
+            asyncio.run(scenario())
+    finally:
+        for retention in capacity.retained():
+            retention.prove()
+        wait_until(no_custody, timeout=15)
+        for worker in workers:
+            worker.join(15)
+            assert not worker.is_alive(), "custody worker did not return"
+        for owner in reversed(owners):
+            owner.finish_root()
+
+
+def test_a_retained_claim_that_a_send_does_not_need_keeps_the_busy_copy(
+    native_initializer, monkeypatch, tmp_path
+):
+    """The restart copy needs a held claim that conflicts with the Send's own
+    footprint (TASK-41950). A retained cleanup's bounded claim on one folder
+    beside a live claim on the folder that holds each turn's scratch space:
+    the Send conflicts only with the live claim, so it still says "retry"."""
+    from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+    from tldw_chatbook.Workspaces.worktree_activity import WorktreeScope
+
+    h = native_initializer
+    capacity, activity = h.runtime.execution_capacity, h.runtime.worktree_activity
+    rig = _console_rig(h, monkeypatch, tmp_path)
+    folder = tmp_path / "held-folder"
+    folder.mkdir()
+    retained_owner = capacity.begin_execution(
+        origin=WorkOrigin.MANUAL, conversation_id="retained"
+    )
+    bounded = WorktreeFootprint(
+        writes=(WorktreeScope(folder, True, capture_directory_chain(folder)),)
+    )
+    assert activity.try_acquire(owner=retained_owner, footprint=bounded)
+    operation = retained_owner.reserve_tool()
+    retention = operation.retain_unproven("native Git")
+    # A Send's own footprint is its turn's scratch space (light surface).
+    scratch = rig.controller._scratch_spaces._temp_parent
+    live = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="live")
+    claim = activity.try_acquire(
+        owner=live,
+        footprint=WorktreeFootprint(
+            writes=(WorktreeScope(scratch, True, capture_directory_chain(scratch)),)
+        ),
+    )
+    assert claim is not None
+
+    async def scenario():
+        assert await rig.send(rig.session, "while busy") == (False, _BUSY_COPY)
+        claim.settle(durable=True)
+        live.finish_root()
+        # With the live claim gone, the bounded held claim does not stand in
+        # the way of this Send.
+        await rig.admitted(rig.session, "once the live claim is gone")
+
+    try:
+        with rig.sandbox():
+            asyncio.run(scenario())
+    finally:
+        retention.prove()
+        operation.finish()
+        retained_owner.finish_root()
+        claim.settle(durable=True)
+        if live.is_admitted:
+            live.finish_root()
+
+
+def test_a_claim_whose_owner_is_marked_unproven_holds_roots_until_restart(
+    native_initializer,
+):
+    """A claim whose owner's cleanup is unproven never retires, even with no
+    retained record to Release (TASK-41950 review): the refused root waits
+    for a restart and is not offered a retry."""
+    h = native_initializer
+    capacity, activity = h.runtime.execution_capacity, h.runtime.worktree_activity
+    owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="t")
+    claim = activity.try_acquire(owner=owner, footprint=WorktreeFootprint(opaque=True))
+    assert claim is not None
+    owner.mark_cleanup_unproven()
+    assert not capacity.retained()
+    try:
+        h.registry.set_change_review_enabled("init-workspace", True)
+        h.service.admit_turn("init-workspace")
+        wait_until(
+            lambda: (
+                h.service.status("init-workspace").roots[0].state
+                is not RootReadinessState.PREPARING
+            )
+        )
+        root = h.service.status("init-workspace").roots[0]
+        assert (root.state, root.reason) == (
+            RootReadinessState.RESTART_REQUIRED,
+            h.service._RESTART_REASON,
+        )
+        assert root.reason == _RESTART_COPY
+        assert h.service.retry_failed_roots("init-workspace") == 0
+    finally:
         owner.finish_root()
         claim.settle(durable=True)
 

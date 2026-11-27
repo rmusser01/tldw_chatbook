@@ -11,6 +11,8 @@ from tldw_chatbook.Agents.activation import (
     capture_callable_source as _function_record,  # noqa: F401 - original source record import
 )
 from tldw_chatbook.Agents.execution_capacity import (
+    CapacityRefused,
+    CleanupUnprovenRefused,
     WorkOrigin,
     bind_ordinary_tree as bind_ordinary_tree,
     current_ordinary_tree as current_ordinary_tree,
@@ -34,6 +36,25 @@ def _bootstrap_personal_service(app):
     if tree is not None:
         tree.publish_personal_service(app, service)
     return service
+
+
+def activity_refusal_copy(refused: CapacityRefused) -> str:
+    """Return the Send's copy when ordinary-turn admission refuses activity.
+
+    Args:
+        refused: The refusal ``admit_ordinary_turn`` raised.
+
+    Returns:
+        The restart copy when a conflicting claim is held until restart
+        (``CleanupUnprovenRefused``), else the ordinary busy copy.
+    """
+    if isinstance(refused, CleanupUnprovenRefused):
+        # A claim held until restart never finishes (TASK-40716, TASK-41950).
+        return (
+            "Workspace activity is held by a cleanup that could not be proven; "
+            "restart Chatbook to clear it."
+        )
+    return "Workspace activity is busy; retry after it finishes."
 
 
 def finish_ordinary_submission(controller, task):

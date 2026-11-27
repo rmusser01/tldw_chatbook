@@ -10137,7 +10137,7 @@ class ConsoleChatController:
         await prepare_agent_sources(self, session, configuration)
         from tldw_chatbook.Agents.execution_capacity import CapacityRefused
 
-        from .console_ordinary_tree import admit_ordinary_turn
+        from .console_ordinary_tree import activity_refusal_copy, admit_ordinary_turn
         from .console_references import _native_reference_candidates
 
         candidates = (
@@ -10160,11 +10160,11 @@ class ConsoleChatController:
                     session, prefill=selected_prefill[0]
                 ),
             )
-        except CapacityRefused:
+        except CapacityRefused as refused:
             return ConsoleSubmitResult(
                 False,
                 False,
-                "Workspace activity is busy; retry after it finishes.",
+                activity_refusal_copy(refused),
                 session_id=session.id,
                 origin=origin,
                 queue_entry_id=queue_entry_id,

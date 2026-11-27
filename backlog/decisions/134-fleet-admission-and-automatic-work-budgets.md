@@ -284,6 +284,42 @@ Implementation note, not an owner decision. It extends the TASK-40716 note that 
 - Such a root, the retained one included, reads the `RESTART_REQUIRED` readiness, which says that change history waits for an app restart because an earlier cleanup could not be proven. Settings ▸ Workspaces shows it on its own line with no retry, and "Retry failed preparation" skips it. `ChangeReviewConsentService._fail` maps each refusal to its readiness in one place; "busy; retry from Settings" is left for refusals a retry can clear.
 - Threads stay bounded: the two pool threads, at most one live custody worker per pool thread, and one per retained cleanup. Until Release, the retained owner refuses further reservations (`CleanupUnprovenRefused`) and its claim refuses every other initialization, so only jobs admitted before the first retention can still be retained, at most one per folder admitted with it. A Release frees the retained operation, so a still-live turn can then admit, and possibly retain, more initializations: each further custody worker follows a user's Release. The custody worker itself lives until restart.
 
+## Retained Change Review initialization claim amendment (TASK-41950, 2026-11-25)
+
+**Owner decisions, 2026-11-25 ([TASK-41950](../tasks/task-41950%20-%20A-retained-Change-Review-initialization-jobs-opaque-claim-refuses-every-later-workspace-ac.md)).** The first applies the TASK-40716 decision to a Change Review initialization job that runs under its own owner (outside any ordinary turn). The second was made after the first showed that such a claim refuses every chat's Send until restart.
+- When such a job's Git cleanup is retained as unproven, the job keeps its opaque workspace activity claim until restart, as every retained operation keeps its claim.
+- Releasing the job's tool slot (Release in "Held tool slots", TASK-41307) frees only the slot. The claim stays held.
+- A Send refused by a conflicting claim that is held until restart says so: "Workspace activity is held by a cleanup that could not be proven; restart Chatbook to clear it." A tool the model calls whose widening is refused the same way says "<tool> is unavailable: workspace activity is held by a cleanup that could not be proven; only restarting Chatbook clears it. Continue without it." Ordinary conflicts, which do finish, keep "Workspace activity is busy; retry after it finishes." and "<tool> is unavailable while other workspace activity is running: … retry after that activity finishes."
+
+**What this costs, accepted.** An opaque claim conflicts with every other claim, and the Console runtime keeps one activity registry for all chats. So until restart every later Console Send is refused at ordinary-turn admission, in any workspace and not only the job's. Later initializations read `RESTART_REQUIRED` (section above).
+
+**Implementation note (not an owner decision).**
+- `WorktreeActivity.restart_refusal(footprint)` is the "held until restart" predicate. It returns a `CleanupUnprovenRefused` (no retained record) when a claim that conflicts with `footprint` has a member whose owner's cleanup is unproven (`ExecutionOwner.cleanup_unproven`). Such a member's drain can never be proven, so `_retire_if_settled` never retires the claim. A member drained unproven always has that flag set, so the flag alone decides.
+- It does not cover every claim held until restart. `_retire_if_settled` also needs each member's durable settlement. Known paths that leave a claim held without an unproven owner cleanup include:
+  - a Change Review snapshot whose write failed outside a workflow wave (`_SnapshotTicket.returned`);
+  - an ordinary turn whose run-row check failed or recorded no terminal (`OrdinaryTurn.host_returned`);
+  - a legacy hook event outside an ordinary tree whose required write failed (`_EventCustody` never settles or finishes its root).
+
+  Those claims still get the busy copy. The registry cannot tell "not yet durable" from "never", so they are [TASK-42605](../tasks/task-42605%20-%20Claims-held-until-restart-by-a-non-durable-settlement-still-say-retry-and-a-queued-snapsho.md), together with a Change Review snapshot that queues behind a held claim.
+- The predicate covers a retained operation's owner: an initialization job, an agent turn's own tool (TASK-40716), or a sub-agent that joined the turn's claim. It also covers an owner marked unproven with no retained record (`mark_cleanup_unproven`, for example an agent worktree's Git command or a workflow child whose launch outcome is unknown). The copy does not change after `UnprovenRetention.prove` removes the record, because the claim stays held.
+- Three call sites use it, each falling back to its ordinary busy refusal:
+  - `OrdinaryTurn.admit`: the Console's Send picks its copy with `activity_refusal_copy` (`Chat/console_ordinary_tree.py`).
+  - `OrdinaryTurn.widen` (it excludes the turn's own claim): `widen_refusal` names the restart. The spawn admission in `agent_run_tools` routes this refusal to it too, under the tool the model called (`send_to_agent` for a resume).
+  - `_InitializationSource.admit`: the `RESTART_REQUIRED` readiness.
+- The refusal applies where an ordinary turn takes a claim: on platforms with native process groups (macOS and Linux).
+- `CleanupUnprovenRefused` now has two meanings:
+  - With a retained record, raised by `reserve_tool` and `run_on_custody_thread`: this owner's own cleanup is unproven, and its run or turn ends (TASK-40716).
+  - Without one, raised by this predicate: another owner's claim is held, and the run goes on.
+
+  The run-ending handlers (`_call_with_timeout`'s reservation and `invoke_tool`'s two unwrapped paths) match only a refusal whose `retention` is set. `explain_pre_run_stop` already requires one.
+- Nothing in the running process retires the claim. `retain_unproven` marks the owner's drain unproven, and `WorktreeActivity._retire_if_settled` retires a claim only when every member's drain is proven. Even `UnprovenRetention.prove`, which no production code calls, lets the custody worker return but leaves the claim held.
+- Pinned by:
+  - `test_a_retained_cleanups_claim_refuses_later_console_sends_until_restart`, for an initialization job, a turn's retained tool operation, a sub-agent member's and an owner marked unproven, with an ordinary busy conflict as the control;
+  - `test_a_retained_claim_that_a_send_does_not_need_keeps_the_busy_copy`, a held bounded claim the Send does not conflict with (both in `Tests/Workspaces/test_native_change_review_initialization.py`);
+  - `test_a_claim_whose_owner_is_marked_unproven_holds_roots_until_restart` (same file), the initializer's `RESTART_REQUIRED` with no retained record;
+  - `test_spawn_refused_by_a_retained_cleanups_claim_names_the_restart` (`Tests/Chat/test_console_ordinary_tree_widening.py`), with a live claim as the control, and `test_a_refused_child_launch_names_the_tool_the_model_called` (same file);
+  - `test_only_a_refusal_carrying_its_record_ends_the_run` (`Tests/Agents/test_execution_capacity.py`), the run-ending guard on each of its three handlers.
+
 ## Ask compaction hold amendment (TASK-33621.153, 2026-11-19)
 
 This narrows "Elapsed time includes queueing and human approval waits" above for one pause.

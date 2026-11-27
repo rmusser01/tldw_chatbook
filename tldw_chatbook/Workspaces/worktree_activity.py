@@ -28,7 +28,10 @@ from tldw_chatbook.Utils.filesystem_identity import (
 )
 
 if TYPE_CHECKING:
-    from tldw_chatbook.Agents.execution_capacity import ExecutionOwner
+    from tldw_chatbook.Agents.execution_capacity import (
+        CleanupUnprovenRefused,
+        ExecutionOwner,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -460,17 +463,44 @@ class WorktreeActivity:
             self._members[claim_id] = member
         owner.on_drained(lambda proven: self.record_drain(claim_id, proven=proven))
 
-    def holds_conflicting_claim(
-        self, owner: ExecutionOwner, footprint: WorktreeFootprint
-    ) -> bool:
-        """Whether ``owner`` is a member of a held claim that conflicts with ``footprint``."""
+    def restart_refusal(
+        self,
+        footprint: WorktreeFootprint,
+        *,
+        excluding: WorktreeActivityClaim | None = None,
+    ) -> CleanupUnprovenRefused | None:
+        """The refusal for a conflict held until restart, else ``None``.
+
+        Covers a conflicting claim with a member whose owner's cleanup is
+        unproven (TASK-40716): its drain can never be proven, so the claim
+        never retires (TASK-41950). A claim held because a member drained
+        proven but will never settle durable (for example a failed snapshot
+        write, or an ordinary turn whose run-row check failed) is not covered
+        and keeps the busy refusal (TASK-42605).
+
+        Args:
+            footprint: The refused footprint.
+            excluding: The caller's own claim, when it is widening.
+
+        Returns:
+            ``CleanupUnprovenRefused`` with no retained record, or ``None``.
+        """
+        from tldw_chatbook.Agents.execution_capacity import CleanupUnprovenRefused
+
         with self._lock:
-            return any(
-                member.owner is owner
-                for state in self._claims.values()
-                if footprint._conflicts(state.footprint)
+            # A member drained unproven always has an unproven owner cleanup
+            # (its drain outcome is ``not _cleanup_unproven``), so the owner's
+            # flag alone decides.
+            owners = [
+                member.owner
+                for key, state in self._claims.items()
+                if (excluding is None or key != excluding.id)
+                and footprint._conflicts(state.footprint)
                 for member in state.members.values()
-            )
+            ]
+        if any(owner.cleanup_unproven for owner in owners):
+            return CleanupUnprovenRefused("workspace activity")
+        return None
 
     def validate_claim(
         self,

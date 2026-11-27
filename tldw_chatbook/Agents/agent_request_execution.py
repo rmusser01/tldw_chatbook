@@ -747,7 +747,10 @@ def make_invoke_tool(
             try:
                 operation = owner.reserve_tool() if owner is not None else None
             except CapacityRefused as exc:
-                if isinstance(exc, CleanupUnprovenRefused):  # end the run (TASK-40716)
+                if (
+                    isinstance(exc, CleanupUnprovenRefused)
+                    and exc.retention is not None
+                ):
                     return cleanup_unproven_result(exc.label)
                 return runtime.ToolResult.blocked(f"{TOOL_ADMISSION_REFUSED}{exc}")
             result = runtime.ToolResult(
@@ -846,7 +849,7 @@ def make_invoke_tool(
         try:
             operation = owner.reserve_tool() if owner is not None else None
         except CapacityRefused as exc:
-            if isinstance(exc, CleanupUnprovenRefused):  # end the run (TASK-40716)
+            if isinstance(exc, CleanupUnprovenRefused) and exc.retention is not None:
                 return cleanup_unproven_result(exc.label)
             return runtime.ToolResult(
                 ok=False,
