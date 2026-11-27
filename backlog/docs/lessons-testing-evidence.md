@@ -1,5 +1,23 @@
 # Lessons: what counts as evidence a change works
 
+## A red that dev shares in an earlier step skips the step your PR breaks (TASK-42659, 2026-11-27)
+
+**Incident.** PR #3781 (TASK-42517) classified a 31st voice-promotion locator in b40d12adb3 and left the perf gate's pins at 30. Its own Perf Guard run (45733242633) was red, but at "Run boot budget ratchets": 689 app modules against a limit of 688, the same assertion dev b534feabd3 already failed (run 45726512388). The job stops at its first failing step, so "Run Console tab-publication and voice gates" never ran on the PR that broke it. PR #3785 fixed the boot budget in the same stack, and the first dev run after the merges (45755430693, dev 6e41919880) went red one step later, at `assert 31 == 30`. That red was still on dev c0a999302f on 2026-11-27. While it stood, the keystroke census, the storage-unit ratchet and the compact-setup gates ran on no pull request that reached that step. Two open PRs (#3345 and #3771) each repaired the pin on their own branch, with two different splits of the gate's 1,000 rows (50/36 and 38/37), and dev stayed red.
+
+**What to do.** When a job is red for a reason dev shares, list the steps that did not run and run their commands locally before you merge:
+
+```bash
+gh run view <run-id> --json jobs --jq '.jobs[].steps[] | select(.conclusion=="skipped") | .name'
+```
+
+"Same red as dev" describes only the first failing step. Fix a red on dev in its own PR against dev. A fix carried inside a feature branch leaves dev red for everyone else, and the next branch fixes it differently.
+
+## A strict xfail that accepts any AssertionError stayed XFAIL after its defect was fixed (TASK-42659, 2026-11-27)
+
+**Incident.** `test_completed_pair_history_gate_meets_large_history_thresholds` is `xfail(strict=True, raises=AssertionError)` on TASK-36510 (eight locator columns with no leading index), and perf-guard's comment says its XPASS will announce the fix. Schema v88 (PR #3781) added those indexes, and the node still reported XFAIL. The same PR added a locator, so the gate's own consistency check in `_locator_distribution` raised `AssertionError("completed-pair baseline distribution drifted")` before any measurement. `--runxfail` on dev c0a999302f showed that error, not a scan. With the split repaired, the gate's report had `scan_count == 0` and passed in 2 of 3 local runs, and the node failed only at its own stale count pin (`assert 31 == 30`).
+
+**What to do.** When the code a strict xfail tracks changes, run the node with `--runxfail` and read which assertion fails. XFAIL in the summary does not say it is the tracked one: `raises=AssertionError` also accepts a helper's internal check and every stale pin inside the node. Keep pins that are not the tracked defect in a separate unmarked test, so they fail by name.
+
 ## Ubuntu 24.04's Python 3.12.3 warns about `?1` placeholders that 3.12.4+ and 3.14 accept (TASK-42581, 2026-11-26)
 
 **Incident.** Round 27's Linux check (ubuntu:24.04, Python 3.12.3) logged about 468 `DeprecationWarning: Binding 1 ('?1') is a named parameter ... Starting with Python 3.14 an sqlite3.ProgrammingError will be raised`. TASK-42581 was filed as a 3.14 failure on the warning's own word. Measured: `SELECT ?1, ?1` bound to `(1,)` under `-W error::DeprecationWarning` warns on 3.12.3, but is accepted on 3.12.11, 3.13.13 and 3.14.7. CPython gh-117995 (3.12.4) stopped treating `?NNN` as named. Only `:name`, `@name` or `$name` bound to a sequence raises on 3.14. The new red test could not go red locally: it was red only in the 3.12.3 container.
