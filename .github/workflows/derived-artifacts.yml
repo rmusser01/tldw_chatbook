@@ -1511,7 +1511,7 @@ jobs:
       # Regenerate and Continue file (bootstrap_profile: the Console bridge
       # reads the tool gates through config), last. Not in the Dreams riders
       # job: that one ran 13.8-19.7 of its 20 min on CI since 2026-11-25.
-      # 138 passed in 409.7 s on ubuntu:24.04 with this step's flags and
+      # 147 passed in 408.7 s on ubuntu:24.04 with this step's flags and
       # install line; this job ran 19.8-23.7 of its 35 min over the same CI runs.
       - name: Run Dreams and Guardian boundary contracts
         if: ${{ !cancelled() }}

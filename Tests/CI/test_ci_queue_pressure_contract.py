@@ -502,7 +502,7 @@ DREAMS_BOUNDARY_TARGETS = (
     "Tests/Chat/test_automatic_wake_recovery.py",
     # TASK-42560 (round 27, 2026-11-27): the traced actions file
     # (bootstrap_profile), last; the Dreams riders job has no room for its
-    # ~7 min (138 passed in 409.7 s serial on ubuntu:24.04).
+    # ~7 min (147 passed in 408.7 s serial on ubuntu:24.04).
     "Tests/Chat/test_console_trace_action_calls.py",
 )
 #: TASK-34929: the Dreams tracking tests, gated whole in their own job.
