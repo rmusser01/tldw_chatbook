@@ -1408,7 +1408,19 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-25 (TASK-42551): dev 692acb43dc measures 7,103; +5 to make
     # ConsoleRuntime's two received-dispatch methods lazy again, so that
     # module and console_preparation_reads leave the boot path: 7,108.
-    "tldw_chatbook/Chat/console_runtime.py": 7108,
+    # 2026-11-06, TASK-33620.8.3 (owner rule "expand limits, don't contort
+    # code"): +9, both capture seams note an unrecorded Library reply with the
+    # turn's own session for the one-time records question; rebased onto dev
+    # (measured 7,028): exact measurement 7,037.
+    # 2026-11-15: re-measured after rebasing onto dev 2ff0e9a5e5 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7067 -> 7076.
+    # 2026-11-15: re-measured after rebasing onto dev cc6006fcf5 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7078 -> 7087.
+    # 2026-11-20: re-measured after rebasing onto dev d85e90bc9e (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7087 -> 7096.
+    # 2026-11-21: re-measured after rebasing onto dev dc371f0842 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7089 -> 7098.
+    # 2026-11-22: re-measured after rebasing onto dev 2f7790873a (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7095 -> 7104.
+    # 2026-11-22: re-measured after rebasing onto dev fe8c87e3e2 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7104 -> 7113.
+    # 2026-11-25: re-measured after rebasing onto dev 692acb43dc (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7113 -> 7112.
+    # 2026-11-25: re-measured after rebasing onto dev 6e41919880 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7108 -> 7117.
+    "tldw_chatbook/Chat/console_runtime.py": 7117,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-337 amendment 2026-10-27). The proof itself lives in
@@ -1579,7 +1591,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-06, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +2, the store's @declare_store backup-participant declaration and import.
     "tldw_chatbook/DB/Prompts_DB.py": 4676,  # 2026-11-03: +3 shared store-error import (TASK-36949.5)
-    "tldw_chatbook/Chat/citation_trace_repository.py": 4717,
+    # 2026-11-06, TASK-33620.8.3 (owner rule "expand limits, don't contort
+    # code"): 4717 -> 4724 (+7), set_canonical_writes_enabled applies the
+    # one-time citation-records answer to the live policy.
+    "tldw_chatbook/Chat/citation_trace_repository.py": 4724,
     # 2026-10-29, TASK-34000.28/.40 polish-1a (PR #3259), rebased onto dev
     # 38c9d2edcf: 4,646 -> 4,736 (+90: the filter fast path, kept draft and
     # one-hop link-back on the Notes canvas). Owner rule "expand limits,

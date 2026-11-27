@@ -376,7 +376,19 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-24: re-measured after rebasing onto dev 9fa2bf1b1d (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24595/742 -> 24626/742.
     #: 2026-11-24, TASK-33620.1.12 (owner ruling: /research is held by the emergency stop; same rule, exact growth): /research refuses at start with the stop's copy, as a held send does: +6 lines, no methods (24595 -> 24601).
     #: 2026-11-25: re-measured after rebasing onto dev 1b9e3f8a55 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24626/742 -> 24632/742.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24632, 742),
+    #: 2026-11-12, TASK-33620.8.3 re-measured after rebasing onto dev (owner rule:
+    #: exact): dev's 24,568/742 + 4 lines (the one-time citation-records question
+    #: asked after count discovery) -> 24,572/742.
+    #: 2026-11-15: re-measured after rebasing onto dev 2ff0e9a5e5 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24569/742 -> 24563/742.
+    #: 2026-11-19: re-measured after rebasing onto dev a6df4d8d48 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24592/743 -> 24567/743.
+    #: 2026-11-21: re-measured after rebasing onto dev dc371f0842 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24567/743 -> 24536/741.
+    #: 2026-11-22: re-measured after rebasing onto dev 2f7790873a (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24536/741 -> 24541/741.
+    #: 2026-11-22: re-measured after rebasing onto dev fe8c87e3e2 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24537/741 -> 24541/741.
+    #: 2026-11-23: re-measured after rebasing onto dev b31e3e9241 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24544/741 -> 24548/741.
+    #: 2026-11-24: re-measured after rebasing onto dev 9fa2bf1b1d (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24595/742 -> 24599/742.
+    #: 2026-11-25: re-measured after rebasing onto dev 1b9e3f8a55 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24626/742 -> 24630/742.
+    #: 2026-11-26: re-measured after rebasing onto dev 9926834bc8 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24632/742 -> 24636/742.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24636, 742),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

@@ -119,6 +119,9 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     "SessionSummaryDialog": "tiny summary dialog (base width 44)",
     "ThemeLeaveModal": "tiny leave confirmation (base width 60)",
     "ResponseRulesModal": "95% of the viewport already, wider than the 85% tier",
+    # TASK-33620.8.3: the one-time citation-records question, a two-answer
+    # ConfirmationDialog that keeps the family's geometry.
+    "CitationRecordsQuestionDialog": "tiny-by-design confirm (ConfirmationDialog family, base width 60)",
 }
 
 #: Whole modules whose ModalScreen subclasses are all outside the tier:
