@@ -279,6 +279,37 @@ async def _wait_for_enabled_button(
     raise AssertionError(f"Timed out waiting for enabled button {selector}")
 
 
+async def _wait_for_console_start_up_syncs(
+    console, pilot, *, timeout: float = 10.0
+) -> bool:
+    """Wait until the Console's own start-up can no longer undo hand-written state.
+
+    After its attach reconcile the Console's 0.25 s credential poll makes one
+    completed pass, which derives the send controls from the real provider
+    state and then goes quiet. A test that writes composer state by hand, with
+    no ready provider behind it, loses that state if the pass lands afterwards.
+    On Windows the pass used to come after such a test had ended (the Console
+    was still attaching); once start-up got faster it landed inside the test's
+    0.1 s pause (TASK-40608: 5 failures in 6 runs, none on the slower tree).
+
+    Best effort: a start-up that has not settled in ``timeout`` seconds leaves
+    the test exactly as it was before this wait existed.
+
+    Returns:
+        Whether the reconcile ended and the poll's first pass was committed.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if (
+            console._console_attach_reconciled
+            and getattr(console, "_console_credential_pre_gate", None) is not None
+        ):
+            await pilot.pause()
+            return True
+        await pilot.pause(0.05)
+    return False
+
+
 async def _open_console_inspector(console, pilot, *, timeout: float = 15.0) -> None:
     """Open the persistent Inspector rail and wait for measurable layout.
 
@@ -855,6 +886,9 @@ async def test_console_composer_ranks_actions_by_current_availability():
         assert stop_button.disabled is False
         assert mic_button.disabled is False
 
+        # This harness has no ready provider, so the state written below is
+        # the test's own: let the Console finish deriving the real one first.
+        await _wait_for_console_start_up_syncs(console, pilot)
         composer.sync_action_state(
             has_draft=True,
             run_active=False,
