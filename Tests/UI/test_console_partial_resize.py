@@ -136,13 +136,24 @@ async def test_recomposed_console_does_not_reuse_a_previous_tree_resize(tmp_path
                 type(console)._sync_console_rail_visibility.__code__: "apply_enter",
             }
             entered = []
+            resize_returns = []
 
             def entry(observed, _offset):
                 frame = sys._getframe(1)
                 if frame.f_locals.get("self") is console:
                     observe(codes[observed], frame.f_locals.get("rail_state"))
-                    if observed is code:
+                    if observed is code and frame.f_locals["event"] is narrow:
                         entered.append(True)
+
+            def resize_return(_observed, _offset, _value):
+                frame = sys._getframe(1)
+                if (
+                    frame.f_locals.get("self") is console
+                    and frame.f_locals.get("event") is narrow
+                ):
+                    left = console.query_one("#console-left-rail")
+                    right = console.query_one("#console-right-rail")
+                    resize_returns.append((left, left.display, right.display))
 
             tool = None
             for candidate in range(5, -1, -1):
@@ -159,29 +170,44 @@ async def test_recomposed_console_does_not_reuse_a_previous_tree_resize(tmp_path
                     sys.monitoring.events.PY_START,
                     entry,
                 )
+                sys.monitoring.register_callback(
+                    tool, sys.monitoring.events.PY_RETURN, resize_return
+                )
                 for observed in codes:
-                    sys.monitoring.set_local_events(
-                        tool, observed, sys.monitoring.events.PY_START
-                    )
+                    events = sys.monitoring.events.PY_START
+                    if observed is code:
+                        events |= sys.monitoring.events.PY_RETURN
+                    sys.monitoring.set_local_events(tool, observed, events)
                 console._adapt_console_workspace_to_width(narrow)
+                # The native retry can return before the next test-side poll.
+                # Measure its own paint before another refresh reads the fixture's
+                # actual 160-column terminal, which this direct event leaves wide.
+                await until(lambda: bool(resize_returns), 2.0)
             finally:
                 for observed in codes:
                     sys.monitoring.set_local_events(tool, observed, 0)
                 sys.monitoring.register_callback(
                     tool, sys.monitoring.events.PY_START, None
                 )
+                sys.monitoring.register_callback(
+                    tool, sys.monitoring.events.PY_RETURN, None
+                )
                 sys.monitoring.free_tool_id(tool)
-            observe("resize_body_return")
+            observe("after_native_resize_observation")
             assert entered == [True], (
                 "the real resize body was deferred, so this setup is invalid"
             )
             (tmp_path / "native-resize-generation-trace.json").write_text(
                 json.dumps(trace, indent=2)
             )
-            assert not new_left.display, (
+            assert len(resize_returns) == 1
+            painted_left, left_display, right_display = resize_returns[0]
+            assert painted_left is new_left
+            assert console.query_one("#console-left-rail") is new_left
+            assert not left_display, (
                 "the previous tree's resize suppressed the new rail owner"
             )
-            assert not console.query_one("#console-right-rail").display
+            assert not right_display
     finally:
         await dispose_console_runtime(app)
 
