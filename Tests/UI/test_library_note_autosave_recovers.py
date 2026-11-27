@@ -43,6 +43,7 @@ from Tests.UI.library_quit_guard_support import (
     _type_at_end,
     _until,
 )
+from tldw_chatbook.Widgets.Library.library_note_work_pane import LibraryNoteWorkPane
 
 #: Same reason as the quit-guard files: full-app boots need the bootstrap
 #: profile locally (``raw_source_selection_changed`` under the per-test redirect).
@@ -169,15 +170,51 @@ async def test_a_note_left_dirty_by_a_rail_switch_is_autosaved_on_return(
                 assert profile.note(profile.note_id)["content"] == _BODY
                 await pilot.pause(_MAX_WAIT + 0.5)  # away past the max wait
 
+                prior_epoch = screen._notes_state.tree_topology_epoch
                 screen.query_one("#library-row-browse-notes", Button).press()
-                await _until(
-                    pilot,
-                    lambda: bool(screen.query("#library-note-body")),
-                    "the retained editor to come back",
-                )
-                await pilot.pause(0.2)
-                body = screen.query_one("#library-note-body", TextArea)
-                await _type_at_end(pilot, body, "bc")
+
+                def returned_editor_is_ready() -> bool:
+                    # A late tree page can replace the first mounted editor
+                    # and move focus to the list during the rail handoff.
+                    if (
+                        screen._notes_state.tree_topology_epoch <= prior_epoch
+                        or not screen._notes_state.editor_armed
+                        or screen._library_entry_reconcile_pending is not None
+                        or any(
+                            worker.node is screen
+                            and (
+                                worker.group.startswith("library_notes_tree:")
+                                or worker.group in {
+                                    "library_notes_trash", "library_source_snapshot"
+                                }
+                            )
+                            for worker in app.workers
+                        )
+                    ):
+                        return False
+                    pane = next(iter(screen.query(LibraryNoteWorkPane)), None)
+                    if (
+                        pane is None
+                        or pane._recompose_required
+                        or pane.recompose_in_flight
+                    ):
+                        return False
+                    fields = pane.query("#library-note-body").results(TextArea)
+                    body = next(fields, None)
+                    return (
+                        body is not None
+                        and body.is_parent_active
+                        and body.focusable
+                        and not body._pruning
+                    )
+
+                await _until(pilot, returned_editor_is_ready, "the returned Notes editor")
+                pane = screen.query_one(LibraryNoteWorkPane)
+                body = pane.query_one("#library-note-body", TextArea)
+                body.focus()
+                await _until(pilot, lambda: screen.focused is body, "editor focus")
+                body.move_cursor(body.document.end)
+                await _type(pilot, "bc")
 
                 saved = await _autosaved(pilot, screen, profile, _BODY + "abc")
                 row = profile.note(profile.note_id)
