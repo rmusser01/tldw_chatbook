@@ -12,6 +12,20 @@
 
 **What to do.** Key a source census by module and function, plus an expression that names the callsite (`route=` text, the keyword splat), never by line number. Count rows with a `Counter` so two same-shaped calls in one function still count twice. When a census test is red, replay it at its introducing commit before you assume a later change broke it. A pure-AST check can run against `git cat-file --batch` blobs with no checkout and no app import.
 
+## A summary followed by a hang is a thread interpreter exit joins; an untimed wait in `asyncio.to_thread` is one (TASK-41061, 2026-11-26)
+
+**Incident.** Round 26's serial run of the native hook files on dev 692acb43dc printed "21 failed, 1 error in 1752s" and then sat for 80+ minutes. Its log had the culprit in pytest-timeout's thread dump: the asyncio default-executor thread `asyncio_1` was blocked in `_EventCustodyRegistry.wait_closed` (`Condition.wait_for` with no timeout), which `HookEngine._drain` awaited through `asyncio.to_thread`. A test had failed while one native hook event's custody was still open. pytest-timeout cancelled the teardown awaits three times, but cancelling a `to_thread` await does not stop its thread: pytest-asyncio's runner close (`shutdown_default_executor`) and then interpreter exit (`concurrent.futures.thread._python_exit`) both join it. A forced reproduction (a custody admission that never returns, then `asyncio.Runner.close()`) held loop shutdown past 5 s; awaiting the same wait in 0.25 s slices let it close at once.
+
+**What to do.** When a run hangs after its summary, read the timeout dump's non-main threads before suspecting the test that failed. Never put an untimed blocking wait behind `asyncio.to_thread`: poll it in short slices, so cancelling the awaiting task leaves no thread for loop shutdown or exit to join. The same applies in the app, which would otherwise not exit after Quit.
+
+## Probes that patch a class-wide method catch the turn's own calls too (TASK-42553, TASK-41061, 2026-11-26)
+
+**Incident.** Eight native tests had been red since they reached dev with #3480. They held or counted `PluginAdmission.check`, `ExecutionOwner.reserve_tool` or `OwnedOperation.finish` class-wide, which caught the wrong call each time:
+- the send's own plugin-skill admission (`_native_skill_configuration`, since 2026-10-15) ran before hook preparation, so the held admission was never the hook's ("plugin admission ran outside native activity");
+- the ordinary tree (11d71e5db5) reserves and returns one operation at admission and one for MCP composition on every qualified send, so a "selected deny reserves nothing" count saw two, and a held `finish` blocked the event loop for 8 s before the hook started.
+
+**What to do.** Scope such a probe to the seam under test: a ContextVar set by a wrapper around the entry point (it propagates into `run_coroutine_threadsafe` and `to_thread` work), or the caller's frame code (`sys._getframe(1).f_code is Seam.__code__`). Then check the probe still sees the call it exists for: hold it and assert the test reaches its own check.
+
 ## Under the light tier, a red shared with dev still fails your PR: it inherits the reds of every test file it edits and of every file that imports one (TASK-33621.197, 2026-11-24)
 
 **Incident.** The merge queue evicted PR #3708 (TASK-33621.21) on its second failure of the required check (run 45362116936). Apart from one size-ratchet row, all 13 reds failed on dev 9fa2bf1b1d alone under the same test ids. The light tier (TASK-42521, 2026-11-23) runs a dev PR's changed test files whole, plus every test file that imports one of them. #3708 edited `test_console_voice_input.py` and `test_console_dictation_firstrun.py`, which no PR lane had ever run. It also edited `test_console_voice_capture.py`, and `test_console_voice_factory_composition.py` imports one helper from it, so that file's 8 reds came along. Those reds dated from 2026-09-10 (a `retain()` stub that went stale) and 2026-11-01 (tests pressing again before the preparation lock freed). The PR's own "branch vs dev by test id" comparison had listed the factory reds as shared and not counted them against it.

@@ -310,18 +310,29 @@ class MCPHookPermission:
         )
 
     def refresh(self):
-        self.token = None
-        self.selection.check_memory()
-        # This read observes disk edits as well as same-path store mutations.
-        # The actual provider then evaluates its original arguments/decision.
-        self.store.load()
-        before = self.publication.token
-        if before is None or self.publication.pending or self.publication.uncertain:
-            raise PermissionError("hook_mcp_permission_publication_unavailable")
-        self.grant.check()
-        self.selection.check_memory()
-        if self.publication.token is not before:
-            raise PermissionError("hook_mcp_permission_publication_changed")
+        # The previous token stays until this refresh succeeds or fails: the
+        # same event's other jobs read check_memory() meanwhile, and a None
+        # there refused a required hook whenever a nested MCP job refreshed
+        # (TASK-41061). A changed publication still fails their check.
+        try:
+            self.selection.check_memory()
+            # This read observes disk edits as well as same-path store mutations.
+            # The actual provider then evaluates its original arguments/decision.
+            self.store.load()
+            before = self.publication.token
+            if (
+                before is None
+                or self.publication.pending
+                or self.publication.uncertain
+            ):
+                raise PermissionError("hook_mcp_permission_publication_unavailable")
+            self.grant.check()
+            self.selection.check_memory()
+            if self.publication.token is not before:
+                raise PermissionError("hook_mcp_permission_publication_changed")
+        except BaseException:
+            self.token = None
+            raise
         self.token = before
         self.check_memory()
 

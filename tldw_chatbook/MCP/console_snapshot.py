@@ -793,6 +793,25 @@ def _mcp_metadata_is_closed(service):
     )
 
 
+def _capture_stays_pending(service, admitted):
+    """Whether an unadmitted capture is left pending for native custody.
+
+    A pending capture is resolved only under native custody: by the ordinary
+    tree, workflow preparation or standalone compaction's hook preparation.
+    Unqualified platforms have none of them (``admit_ordinary_turn`` admits
+    no tree), so they read the definitions now, as before 11d71e5db5. Left
+    pending there, the turn's MCP maximum stayed empty and a required MCP
+    hook failed every send (TASK-41061).
+    """
+    from tldw_chatbook.Utils.platform_files import supports_native_process_groups
+
+    return (
+        not admitted
+        and not _mcp_metadata_is_closed(service)
+        and supports_native_process_groups()
+    )
+
+
 def _bounded_policy_source(app, service):
     from tldw_chatbook.runtime_policy.enforcement import _console_local_listing_source
 
@@ -949,7 +968,7 @@ async def _capture_console_definition_selection(
         captured = _bounded_sources
         captured.require_current()
     else:
-        if not _admitted and not _mcp_metadata_is_closed(service):
+        if _capture_stays_pending(service, _admitted):
             return _DefinitionSelection(MappingProxyType({}), (), False, True)
         captured = _CapturedSources(service)
     run_native = _owned_worker if _run_native is None else _run_native

@@ -1114,7 +1114,10 @@ jobs:
     name: Managed plugin recovery UI
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: macos-latest
-    timeout-minutes: 15
+    # Owner decision 2026-11-26 ("Existing job, cap 25"): 15 -> 25 min for the
+    # native hook and MCP event step (TASK-42553, TASK-41061), which took 600 s
+    # locally, serial at load 27-46; the job's last run took 1m49s before it.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -1140,6 +1143,32 @@ jobs:
               for case in cases
               for tag in ("skipped", "failure", "error")
           ), "Managed plugin recovery requires two executed passing cases"
+
+      # TASK-42553 / TASK-41061 (round 27): native plugin hook preparation and
+      # native v2 MCP events need the same Darwin runtime (their fixtures call
+      # require_managed_runtime, so a Linux lane only skips them), and were in
+      # no PR lane. Times are in the tasks' notes.
+      - name: Run managed native hook and MCP event suites
+        run: |
+          pytest \
+            Tests/Chat/test_native_plugin_hook_preparation.py \
+            Tests/Chat/test_native_v2_mcp_events.py \
+            --timeout=300 --tb=short --junitxml=native-hook-events.xml
+      - name: Require the managed native hook and MCP event suites to execute
+        shell: python
+        run: |
+          import xml.etree.ElementTree as ET
+          cases = list(ET.parse("native-hook-events.xml").iter("testcase"))
+          files = {case.get("classname", "").rsplit(".", 1)[-1] for case in cases}
+          assert files == {
+              "test_native_plugin_hook_preparation",
+              "test_native_v2_mcp_events",
+          }, f"Expected both managed native suites, got {sorted(files)}"
+          assert all(
+              case.find(tag) is None
+              for case in cases
+              for tag in ("skipped", "failure", "error")
+          ), "Managed native hook and MCP events require executed passing cases"
 
   console-p0-gate:
     needs: [preflight]
@@ -2080,7 +2109,7 @@ jobs:
       # 216.9 s alone under this step's flags at load 34-50; at 24 tests it
       # was 148 s of a 51.7-min local run of the whole step), at the tail.
       # Round 27: TASK-42556's child preset fallback file (bootstrap_profile,
-      # on no lane before) comes last; timing in the task's notes.
+      # on no lane before) follows the slot-drop file; timing in the task's notes.
       # Round 27: TASK-42552's four Console files, on no lane before. The
       # request-provenance census (sandboxed, reads no config) ends the
       # sandboxed block; the continuation-merge, named-agent and redirect-cut
@@ -2089,6 +2118,10 @@ jobs:
       # (bootstrap_profile). TASK-42569 appends the local citation boundary
       # file (bootstrap profile by name in Tests/conftest.py), on no lane
       # before. Timings in the tasks' notes.
+      # Round 27: TASK-41061's two hook-engine regression nodes (the custody
+      # join a cancelled close leaves no thread in, and the MCP grant that
+      # stays current while it refreshes; bootstrap_profile file, under 1 s
+      # each) follow last; times in the task's notes.
       # test_closed_loop_pending_submit_is_emergency_detachment: deselected
       # 2026-11-12: red on dev e0186fa10a (console_send_diagnostic ContextVar
       # token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.
@@ -2189,6 +2222,8 @@ jobs:
             Tests/Performance/test_console_managed_received_acceptance.py \
             Tests/Chat/test_console_trace_slot_drop.py \
             Tests/Chat/test_console_child_preset_fallback_trace.py \
+            Tests/Agents/test_hooks_v2_execution.py::test_cancelled_close_leaves_no_thread_waiting_for_native_custody \
+            Tests/Agents/test_hooks_v2_execution.py::test_mcp_hook_permission_stays_current_to_other_jobs_while_it_refreshes \
             --deselect="Tests/Chat/test_console_automatic_library_preparation.py::test_closed_loop_pending_submit_is_emergency_detachment" \
             --storage-lease-guard \
             --timeout=180 \

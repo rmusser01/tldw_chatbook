@@ -5315,7 +5315,7 @@ class ConsoleRuntime:
         task = getattr(self, "_legacy_hooks_cleanup_task", None)
         if task is None:
             task = self._legacy_hooks_cleanup_task = asyncio.create_task(
-                asyncio.to_thread(source.wait_closed),
+                source.join_closed(),
                 name="console-legacy-hook-cleanup",
             )
         cancelled = False

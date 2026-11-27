@@ -318,9 +318,9 @@ def _capture_mcp_definition_selection(
     service = getattr(app, "unified_mcp_service", None)
     if service is None:
         return empty
-    from tldw_chatbook.MCP.console_snapshot import _mcp_metadata_is_closed
+    from tldw_chatbook.MCP.console_snapshot import _capture_stays_pending
 
-    if not _admitted and not _mcp_metadata_is_closed(service):
+    if _capture_stays_pending(service, _admitted):
         return _DefinitionSelection(MappingProxyType({}), (), False, True)
     try:
         if service.get_kill_switch():

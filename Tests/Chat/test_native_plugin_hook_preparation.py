@@ -2,6 +2,7 @@
 
 import asyncio
 import threading
+from contextvars import ContextVar
 from dataclasses import replace
 from uuid import uuid4
 
@@ -38,6 +39,9 @@ pytestmark = [
 ]
 
 
+_HOOK_ADMISSION = ContextVar("hook_preparation_admission", default=False)
+
+
 async def until(probe):
     async with asyncio.timeout(5):
         while not probe():
@@ -62,14 +66,29 @@ async def preparation(native_console, hook_file, monkeypatch):
     entered, release = threading.Event(), threading.Event()
     owners = []
     check = rig.service._admission.check
+    hook_configuration = rig.service.hook_configuration
+
+    async def hook_admission(maximum, **kwargs):
+        token = _HOOK_ADMISSION.set(True)
+        try:
+            return await hook_configuration(maximum, **kwargs)
+        finally:
+            _HOOK_ADMISSION.reset(token)
 
     def held_check(*args, **kwargs):
+        if not _HOOK_ADMISSION.get():
+            # A send first admits its plugin skill rows for model constraints
+            # (console_plugin_context._native_skill_configuration, since
+            # 0327cb5cf9). That admission is not hook preparation; hold only
+            # the admission made inside PluginService.hook_configuration.
+            return check(*args, **kwargs)
         owners.append(current_execution_owner())
         entered.set()
         assert release.wait(10), "test failed to release actual plugin admission"
         return check(*args, **kwargs)
 
     monkeypatch.setattr(rig.service._admission, "check", held_check)
+    monkeypatch.setattr(rig.service, "hook_configuration", hook_admission)
     rig.runtime, rig.entered, rig.release, rig.owners = (
         runtime,
         entered,
@@ -140,8 +159,8 @@ async def test_original_native_result_handoff_remains_owned(preparation, monkeyp
     entered, release = asyncio.Event(), asyncio.Event()
     original = rig.service.hook_configuration
 
-    async def held_handoff(maximum):
-        result = await original(maximum)
+    async def held_handoff(maximum, **kwargs):
+        result = await original(maximum, **kwargs)
         assert result.service is rig.service
         entered.set()
         await release.wait()
@@ -249,7 +268,12 @@ async def test_first_use_original_resource_replacement_refuses_before_plugin_wor
             rig.runtime._worktree_activity = WorktreeActivity()
     finally:
         release.set()
-    assert not (await task).accepted
+    # The first hook read is now the ordinary tree's own maximum capture
+    # (11d71e5db5). The tree pins the runtime's resources when it is built,
+    # so the replacement refuses the send there, raised as the tree's other
+    # source changes are.
+    with pytest.raises(RuntimeError, match="original ordinary turn source changed"):
+        await task
     assert not rig.entered.is_set()
     assert capacity.snapshot().tool_workers == 0
     with activity.prelaunch(footprint=WorktreeFootprint(opaque=True)) as claim:
@@ -510,8 +534,8 @@ async def test_original_host_check_cannot_accept_replaced_native_source(
     native_returned = asyncio.Event()
     replaced = []
 
-    async def observed_native(maximum):
-        result = await original_native(maximum)
+    async def observed_native(maximum, **kwargs):
+        result = await original_native(maximum, **kwargs)
         native_returned.set()
         return result
 
