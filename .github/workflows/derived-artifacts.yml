@@ -1507,6 +1507,12 @@ jobs:
       # speech engine choice, Welcome copy) open the bootstrap block. Timed
       # 2026-11-24 with this step's flags, serial at load 10-14 on 18 CPUs:
       # 4.7, 4.6, 4.2, 13.6, 4.8, 47.7 and 33.2 s (113 s together).
+      # TASK-42560 (round 27, 2026-11-27): the traced Edit & resend,
+      # Regenerate and Continue file (bootstrap_profile: the Console bridge
+      # reads the tool gates through config), last. Not in the Dreams riders
+      # job: that one ran 13.8-19.7 of its 20 min on CI since 2026-11-25.
+      # 138 passed in 409.7 s on ubuntu:24.04 with this step's flags and
+      # install line; this job ran 19.8-23.7 of its 35 min over the same CI runs.
       - name: Run Dreams and Guardian boundary contracts
         if: ${{ !cancelled() }}
         run: |
@@ -1554,6 +1560,7 @@ jobs:
             Tests/DB/test_sync_log_retention.py \
             Tests/Backup_Recovery/test_console_sync_maintenance.py \
             Tests/Chat/test_automatic_wake_recovery.py \
+            Tests/Chat/test_console_trace_action_calls.py \
             --storage-lease-guard \
             --timeout=180 \
             --tb=short
@@ -1737,11 +1744,6 @@ jobs:
       # turn service file's whole-file entry (TASK-42513), not on its own line,
       # so it runs once. Sandboxed, no config read (RecoveryRequired recorder:
       # 0). 6 passed in 3.8 s serially with this step's flags at load 7.
-      # TASK-42560 (round 27): the traced Edit & resend, Regenerate and
-      # Continue file, bootstrap_profile (the Console bridge reads the tool
-      # gates through config), so after Tool_Packs. After its review round,
-      # 96 passed in 274.6 s serially with this step's flags at load 6-7
-      # (2026-11-26).
       - name: Run the Dreams tracking tests and unlaned riders
         run: |
           pytest \
@@ -1778,7 +1780,6 @@ jobs:
             Tests/Chat/test_console_trace_sidecar_replay.py \
             Tests/Chat/test_console_trace_sidecar_redaction.py \
             Tests/Chat/test_console_trace_proprietary_settlement.py \
-            Tests/Chat/test_console_trace_action_calls.py \
             Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py \
             Tests/DB/test_chachanotes_v75_hook_continuation_receipts_migration.py \
             Tests/DB/test_chachanotes_v78_fleet_progress_migration.py \

@@ -206,7 +206,8 @@ INHERITED = {
         "Tests/Web_Server/test_mobile_service.py",  # TASK-39049
         "Tests/DB/test_sync_log_retention.py",  # TASK-39049
         "Tests/Backup_Recovery/test_console_sync_maintenance.py",  # TASK-39043
-        "Tests/Chat/test_automatic_wake_recovery.py",  # TASK-39043, last
+        "Tests/Chat/test_automatic_wake_recovery.py",  # TASK-39043
+        "Tests/Chat/test_console_trace_action_calls.py",  # TASK-42560, last
         "--storage-lease-guard",  # TASK-38986
         "--timeout=180",
         "--tb=short",

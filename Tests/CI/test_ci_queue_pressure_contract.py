@@ -500,6 +500,10 @@ DREAMS_BOUNDARY_TARGETS = (
     # automatic wake recovery suite (bootstrap_profile, ~13 s serial).
     "Tests/Backup_Recovery/test_console_sync_maintenance.py",
     "Tests/Chat/test_automatic_wake_recovery.py",
+    # TASK-42560 (round 27, 2026-11-27): the traced actions file
+    # (bootstrap_profile), last; the Dreams riders job has no room for its
+    # ~7 min (138 passed in 409.7 s serial on ubuntu:24.04).
+    "Tests/Chat/test_console_trace_action_calls.py",
 )
 #: TASK-34929: the Dreams tracking tests, gated whole in their own job.
 DREAMS_TRACKING_TARGET = "Tests/Dreams/test_track_service.py"
@@ -574,9 +578,6 @@ DREAMS_TRACKING_RIDERS = (
     "Tests/Chat/test_console_trace_sidecar_replay.py",
     "Tests/Chat/test_console_trace_sidecar_redaction.py",
     "Tests/Chat/test_console_trace_proprietary_settlement.py",
-    # TASK-42560 (round 27): bootstrap_profile (the Console bridge reads the
-    # tool gates through config), so after Tool_Packs.
-    "Tests/Chat/test_console_trace_action_calls.py",
     # TASK-42516 (round 25): Tests/conftest.py keeps Tests/DB on the bootstrap
     # profile, so after Tool_Packs.
     "Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py",
