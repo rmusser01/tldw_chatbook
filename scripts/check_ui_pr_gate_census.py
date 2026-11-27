@@ -1432,6 +1432,8 @@ MINIMUM_FILES = 2964
 MINIMUM_FILES = 3053
 # PR3345: preserve all 3,072 selectors after the dev census merge.
 MINIMUM_FILES = 3072
+# Preserve the exact 3,072-selector PR prefix and all twenty incoming dev selectors.
+MINIMUM_FILES = 3092
 # The combined dev and mobile roster has 3,098 distinct selectors.
 MINIMUM_FILES = 3098
 # Keep the reviewed shared-mobile roster and the incoming paint-hold case.
