@@ -62,7 +62,11 @@ event acquires one complete opaque WorktreeActivity claim and a genuine non-chil
 ExecutionOwner, reserving each real target's tool operation before the existing
 pool/notification enqueue. Capacity/activity refusal preserves the event's
 existing policy. No-target and disabled events allocate neither. Standalone
-RunHooksEngine callers remain independent of native attachment.
+RunHooksEngine callers remain independent of native attachment. An event
+observes the service-less agent recovery sources when it is captured and
+observes them again at every check, on whichever thread runs it: an agent
+admission its caller holds is not the event's, and a source that changed in
+between refuses the event (TASK-41943).
 
 Targets retain their operation through actual callback return, original process
 exit plus managed-group absence, and the original host handoff. First-deny keeps
