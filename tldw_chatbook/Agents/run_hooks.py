@@ -850,6 +850,24 @@ async def _capture_hook(
                     logger.warning("run-hooks: bounded process reap expired")
 
 
+def _emergency_stop_hold() -> tuple[str, bool] | None:
+    """The stop's copy and whether its state was unreadable, while it holds.
+
+    TASK-33620.1.12 / .18: run on the engine's pool thread, so the blocking
+    read is off the event loop. Doubt holds, as for every other stop reader.
+    """
+    # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+    from tldw_chatbook import emergency_stop
+
+    state = emergency_stop.current_emergency_stop()
+    if not state.active:
+        return None
+    return (
+        emergency_stop.held_copy(state),
+        state.reason == emergency_stop.STATE_UNAVAILABLE_REASON,
+    )
+
+
 def _run_hook(
     target: HookTarget,
     payload: dict[str, Any],
@@ -871,6 +889,22 @@ def _run_hook(
         run_id=payload.get("run_id"),
         hook_id=fingerprint,
     ):
+        # TASK-33620.1.12 / .18: the one spawn point of every run hook (fires
+        # and notifications). During an emergency stop the hook is not
+        # launched. It keeps the meaning of a refused launch: a blocking
+        # event is denied with the stop's copy, any other event is skipped.
+        held = _emergency_stop_hold()
+        if held is not None:
+            logger.info(
+                "run-hooks: {} held by the emergency stop (unreadable={})",
+                identity,
+                held[1],
+            )
+            return spec, (
+                _Decision(denied=True, reason=held[0])
+                if spec.event in BLOCKING_EVENTS
+                else None
+            )
         try:
             return _execute_hook(target, payload, closed, identity, launch_guard)
         except HookLaunchRefused as refusal:

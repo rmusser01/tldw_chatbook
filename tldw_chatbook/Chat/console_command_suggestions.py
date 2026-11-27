@@ -49,7 +49,7 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "steer": "Send guidance into the RUNNING turn (plain messages queue)",
     "redirect": "Cut off the current response and re-run the turn with your correction",
     "stop": "Stop this tab's running reply (Ctrl+G)",
-    "emergency-stop": "Hold ALL new agent runs + scheduled dispatches (clear to resume)",
+    "emergency-stop": "Hold ALL runs, tool calls, hooks, research + schedules (clear to resume)",
     "rewind": "Rewind the session to an earlier user prompt",
     "research": "Run deep research in the background; the report is delivered into this conversation",
     "help": "List the console commands, or /help <command> for one command's detail",

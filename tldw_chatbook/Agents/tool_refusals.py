@@ -19,4 +19,67 @@ from __future__ import annotations
 #: reading the transcript) can tell this from a per-call denial.
 TOOL_KILL_SWITCH_REFUSAL = "tool call blocked: the chat tool kill switch is on"
 
-__all__ = ["TOOL_KILL_SWITCH_REFUSAL"]
+#: TASK-33620.1.12: the start of the result every agent tool call gets while
+#: the global emergency stop is active. Owner decision, 2026-11-23: an
+#: in-flight run's tool calls are held too, not only new runs. Names the stop,
+#: so the model and a user reading the transcript can tell it from a per-call
+#: denial and from the kill switch above.
+TOOL_EMERGENCY_STOP_REFUSAL = "tool call blocked: the emergency stop is active"
+
+#: ``tldw_chatbook.emergency_stop.EMERGENCY_STOP_CLEAR_COMMAND``, copied
+#: because this module takes no imports; a test pins that the two agree.
+_EMERGENCY_STOP_CLEAR_COMMAND = "/emergency-stop clear"
+
+#: The stop's reason is free text the user typed. The model and the call's
+#: transcript row get it on one line, bounded.
+_EMERGENCY_STOP_REASON_LIMIT = 200
+
+
+def emergency_stop_tool_refusal(reason: str = "") -> str:
+    """The emergency stop's refusal for one agent tool call.
+
+    Args:
+        reason: The stop's reason: what the user typed after
+            ``/emergency-stop``, or the fail-safe cause when the stop's
+            state could not be read. Blank leaves the parentheses out.
+
+    Returns:
+        One line naming the stop, its reason and how to clear it.
+    """
+    why = " ".join(str(reason or "").split())
+    if len(why) > _EMERGENCY_STOP_REASON_LIMIT:
+        why = why[: _EMERGENCY_STOP_REASON_LIMIT - 1].rstrip() + "\u2026"
+    detail = f" ({why})" if why else ""
+    return (
+        f"{TOOL_EMERGENCY_STOP_REFUSAL}{detail}. No tool runs until the user "
+        f"clears it with {_EMERGENCY_STOP_CLEAR_COMMAND}."
+    )
+
+
+#: The fail-safe's refusal when the stop's state could not be read at all (its
+#: location could not be resolved, or the check itself failed). Running
+#: /emergency-stop clear cannot help there, so it says what happened instead.
+TOOL_EMERGENCY_STOP_UNAVAILABLE_REFUSAL = (
+    "tool call blocked: the emergency stop's state couldn't be read, so tools "
+    "are held. Chatbook could not reach its data folder (a backup or restore "
+    "may be running, or the folder's permissions changed); stop this run and "
+    "send again once Chatbook is ready."
+)
+
+
+def emergency_stop_unavailable_tool_refusal() -> str:
+    """The fail-safe's refusal when the stop's state could not be read.
+
+    Returns:
+        ``TOOL_EMERGENCY_STOP_UNAVAILABLE_REFUSAL``.
+    """
+    return TOOL_EMERGENCY_STOP_UNAVAILABLE_REFUSAL
+
+
+__all__ = [
+    "TOOL_EMERGENCY_STOP_REFUSAL",
+    "TOOL_EMERGENCY_STOP_UNAVAILABLE_REFUSAL",
+    "TOOL_KILL_SWITCH_REFUSAL",
+    "emergency_stop_tool_refusal",
+    "emergency_stop_unavailable_tool_refusal",
+]

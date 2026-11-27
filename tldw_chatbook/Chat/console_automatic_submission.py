@@ -303,6 +303,32 @@ async def prepare_submission_hooks(
     return None
 
 
+async def emergency_stop_turn_refusal() -> str | None:
+    """The stop's copy when it holds this manual turn, read off the UI loop.
+
+    TASK-33620.1.12 / .18: the Console checks the stop before a Send, then
+    the Send awaits its preparation before UserPromptSubmit hooks fire. A
+    stop landing in that window must refuse the turn there, before any prompt
+    hook or provider call runs (a prompt hook that fails open must never be
+    what lets it through). Doubt holds, as for every other stop reader: a
+    read whose worker thread fails holds the send too.
+    """
+    # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+    from tldw_chatbook import emergency_stop
+
+    try:
+        state = await asyncio.to_thread(emergency_stop.current_emergency_stop)
+    except Exception as exc:  # noqa: BLE001 -- doubt holds
+        from loguru import logger
+
+        logger.warning(
+            "emergency-stop read for a send failed (error_type={}); holding the send",
+            type(exc).__name__,
+        )
+        state = emergency_stop.stop_state_unavailable()
+    return emergency_stop.held_copy(state) if state.active else None
+
+
 async def submission_hook_input(
     controller, draft, origin, provider_messages=()
 ) -> list[dict[str, Any]]:

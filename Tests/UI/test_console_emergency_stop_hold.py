@@ -44,8 +44,10 @@ STRIP_HOLD = "Emergency stop: runs and schedules held"
 SEND_HOLD = "Send held — emergency stop is on"
 
 # Mounted-app tests that build app config in their body keep the
-# collection-time profile (Tests/conftest.py ``bootstrap_profile``).
-pytestmark = pytest.mark.bootstrap_profile
+# collection-time profile (Tests/conftest.py ``bootstrap_profile``). They set
+# the stop at the app's real default path, so they also opt out of the
+# per-test stop redirect (TASK-33620.1.12, ``real_emergency_stop_path``).
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.real_emergency_stop_path]
 
 
 @pytest.fixture

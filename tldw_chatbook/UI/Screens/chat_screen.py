@@ -18945,6 +18945,12 @@ class ChatScreen(BaseAppScreen):
                 f"/research: {usage_error}"
             )
             return
+        # TASK-33620.1.12 (owner ruling 2026-11-24): refused like a held send.
+        if run_controls.emergency_stop_still_held(self):
+            await self._append_native_console_system_message(
+                self._console_emergency_stop_copy
+            )
+            return
         question = intent.question
         source_policy = intent.source_policy
         provider_overrides = intent.provider_overrides()

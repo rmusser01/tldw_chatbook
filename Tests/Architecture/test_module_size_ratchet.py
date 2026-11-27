@@ -340,7 +340,11 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-24: re-measured after rebasing onto dev 9fa2bf1b1d (owner rule:
     # exact measurement): dev measures 28,763 + the same 14 lines of TASK-33621.46
     # = 28,777 (28773 -> 28777).
-    "tldw_chatbook/Chat/console_chat_controller.py": 28777,
+    # 2026-11-24: re-measured after rebasing onto dev 75bac413f5 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 28764 -> 28763.
+    # 2026-11-24, TASK-33620.1.12 (owner ruling: run hooks are held by the emergency stop; owner rule: raise by the change's own lines): 28763 -> 28774 (+11), a manual send whose stop landed after the Console gate is refused before its UserPromptSubmit hooks.
+    # 2026-11-25: re-measured after rebasing onto dev 692acb43dc (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 28777 -> 28788.
+    # 2026-11-25 (TASK-33620.1.12 review round 5): a send cancelled during the stop re-read or the hook-v2 prompt input releases its echo, preparation and run state (owner rule: exact measurement): 28788 -> 28821.
+    "tldw_chatbook/Chat/console_chat_controller.py": 28821,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     # TASK-41637, 2026-11-18: +9, a round armed with no running app and no
     # answerable view fails closed instead of waiting forever (dev's row +
@@ -1176,7 +1180,13 @@ _BUDGETS: dict[str, int] = {
     # carried #3295 review fix: a light plan never reaches the compact
     # find/load fallback); 2026-11-23, ported onto dev b31e3e9241 (round
     # 24): dev's 7,696 plus 2, exact measurement 7,698.
-    "tldw_chatbook/Agents/agent_service.py": 7698,
+    # 2026-11-23, TASK-33620.1.12 (owner decision: the emergency stop holds an
+    # in-flight run's tool calls; owner rule: raise by the change's own
+    # lines): 7698 -> 7744 (+46) -- the run's fail-safe stop probe, its
+    # path cache and its LoopDeps wiring.
+    # 2026-11-24, TASK-33620.1.12 review 2 (same rule): 7744 -> 7745 (+1), the
+    # unreadable-stop hold reports through the shared fail-safe notifier.
+    "tldw_chatbook/Agents/agent_service.py": 7745,
     # 2026-10-31, PR #3259: explicit user size-limit waiver. Pin the
     # actual current-base N-32 file-body F6 integration at 9,541 lines.
     # TASK-36513, 2026-11-03 (size waiver per the burn-down brief: re-pin at
@@ -1479,7 +1489,15 @@ _BUDGETS: dict[str, int] = {
     # reasoning checkpoint keeps the delivered reply (AC#2, AC#3).
     # 2026-11-23, port onto dev b31e3e9241: re-measured, dev's file is still
     # 3,961, so the row stays 4,069 (dev's 3,961 + the branch's 108).
-    "tldw_chatbook/Agents/agent_runtime.py": 4069,
+    # 2026-11-23, TASK-33620.1.12 (owner decision: the emergency stop holds an
+    # in-flight run's tool calls; owner rule: raise by the change's own
+    # lines): 4069 -> 4172 (+103), exact measurement. The loop's stop probe,
+    # its batch hold before review, its per-call hold at dispatch, the
+    # held-turn breaker that ends a run the stop keeps holding, and the goal
+    # runs' emergency-stop termination reason.
+    # 2026-11-24, TASK-33620.1.12 review 2 (same rule): 4172 -> 4175 (+3), the
+    # raising-probe hold reports through the shared fail-safe notifier.
+    "tldw_chatbook/Agents/agent_runtime.py": 4175,
     # 2026-11-20, TASK-42014 (owner rule: raise by the change's own lines):
     # 6108 -> 6110 (+2) -- the credential buttons carry the class their
     # press handler selects, so a press a recompose forwards still runs it.

@@ -6919,8 +6919,8 @@ class ConsoleChatController:
         """
         # TASK-26004: the global emergency stop refuses EVERY new send
         # first (AC#1), reporting plainly with the clear hint (AC#5) and
-        # fail-safe to stopped on an unreadable state (AC#4). In-flight runs
-        # are untouched -- this only gates STARTING new work.
+        # fail-safe to stopped on an unreadable state (AC#4). This gates new
+        # sends; the agent loop holds a running run's tool calls (33620.1.12).
         from tldw_chatbook.emergency_stop import (
             default_emergency_stop_path,
             emergency_stop_state,
@@ -8839,6 +8839,27 @@ class ConsoleChatController:
             except KeyError:
                 return
             raise
+
+    def _release_send_cancelled_before_acceptance(
+        self, session_id: str, echoed_user, preparation
+    ) -> None:
+        """Release a send cancelled in an await before its acceptance.
+
+        TASK-33620.1.12: the legacy prompt-hook await's release, for the
+        awaits before it (the stop re-read, the hook-v2 prompt input). An
+        echo left ``complete`` enters the next send's provider context, and a
+        run state left mid-send refuses the tab's next send.
+        """
+        if echoed_user is not None:
+            self._mark_transient_echo_blocked(echoed_user.id)
+        if preparation is not None:
+            self._abandon_preparation(preparation.preparation_id)
+        self._set_run_state(
+            ConsoleRunState(
+                ConsoleRunStatus.STOPPED, "Send cancelled before acceptance."
+            ),
+            session_id=session_id,
+        )
 
     def submit_accepted_voice_turn(
         self,
@@ -11169,6 +11190,24 @@ class ConsoleChatController:
                     "content": clean_draft,
                 },
             ]
+        # TASK-33620.1.12: a stop that lands after the Console's send gate
+        # refuses the turn here, before any UserPromptSubmit hook runs.
+        if origin is ConsoleSubmissionOrigin.MANUAL:
+            from .console_automatic_submission import emergency_stop_turn_refusal
+
+            try:
+                held = await emergency_stop_turn_refusal()
+            except BaseException:
+                self._release_send_cancelled_before_acceptance(
+                    session.id, echoed_user, preparation
+                )
+                raise
+            if held:
+                if echoed_user is not None:
+                    self._mark_transient_echo_blocked(echoed_user.id)
+                if preparation is not None:
+                    self._abandon_preparation(preparation.preparation_id)
+                return self._block(session.id, held)
         hook_owner = getattr(self, "_hooks_v2_submissions", {}).get(
             asyncio.current_task()
         )
@@ -11185,6 +11224,11 @@ class ConsoleChatController:
             if preparation is not None:
                 self._abandon_preparation(preparation.preparation_id)
             return self._block(session.id, "Required hook input failed.")
+        except BaseException:
+            self._release_send_cancelled_before_acceptance(
+                session.id, echoed_user, preparation
+            )
+            raise
         # This await remains before acceptance. A refusal or cancellation must
         # release the exact optimistic echo and preparation, preserving custody.
         hook_context = ""

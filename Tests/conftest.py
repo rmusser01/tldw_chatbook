@@ -2145,6 +2145,57 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             _release_profile_startups(test_data_dir)
 
 
+@pytest.fixture(autouse=True)
+def _redirect_emergency_stop_path(request, tmp_path, monkeypatch):
+    """Point the emergency stop at this test's own file, and make its fail-safe loud.
+
+    TASK-33620.1.12: every agent run reads the emergency stop before each tool
+    call, through ``emergency_stop.default_emergency_stop_path()``. That lookup
+    is a guarded config read: it refuses in the per-test sandbox
+    (``RecoveryRequired: raw_source_selection_changed``) and in any
+    ``bootstrap_profile`` test that monkeypatches the config readers
+    (``config_directory_selection_unavailable``). The read fails SAFE, so
+    such a test's tool calls were refused in silence -- some still passed,
+    for the wrong reason. Every test therefore gets
+    ``tmp_path / "emergency_stop.json"`` (absent means clear), unless it is
+    marked ``real_emergency_stop_path``.
+
+    And anything held because the stop could not be read at all -- an agent
+    tool call, a hook action, a research step
+    (``emergency_stop.stop_state_unavailable``) -- fails the test at
+    teardown, unless it is marked ``emergency_stop_unavailable``: that hold
+    is never silent here.
+
+    Read the redirected path through the module
+    (``emergency_stop.default_emergency_stop_path()``): a name imported into
+    a test module at collection is the unpatched function.
+    """
+    from tldw_chatbook import emergency_stop
+
+    path = tmp_path / "emergency_stop.json"
+    # The resolved path is cached per process; no test reuses another's.
+    monkeypatch.setattr(emergency_stop, "_RESOLVED_PATH", None)
+    if request.node.get_closest_marker("real_emergency_stop_path") is None:
+        monkeypatch.setattr(emergency_stop, "default_emergency_stop_path", lambda: path)
+    held: list[str] = []
+    unavailable = emergency_stop.stop_state_unavailable
+
+    def record_unavailable():
+        held.append(request.node.nodeid)
+        return unavailable()
+
+    monkeypatch.setattr(emergency_stop, "stop_state_unavailable", record_unavailable)
+    yield path
+    if held and request.node.get_closest_marker("emergency_stop_unavailable") is None:
+        pytest.fail(
+            f"{len(held)} action(s) were held because the emergency stop's "
+            "state could not be read (TASK-33620.1.12). Fix the test's stop "
+            "path, or mark it emergency_stop_unavailable if that hold is what "
+            "it tests.",
+            pytrace=False,
+        )
+
+
 def _release_profile_startups(profile_dir: Path) -> None:
     """Release the startup admissions of one test's own fresh profile.
 

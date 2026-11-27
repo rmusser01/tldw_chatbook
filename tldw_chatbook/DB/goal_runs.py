@@ -419,6 +419,7 @@ class GoalRunsStore:
                 RunTerminationReason.AUTHORITY_CHANGED,
                 RunTerminationReason.PRE_EFFECT_PERMANENT,
                 RunTerminationReason.CANCELLED,
+                RunTerminationReason.EMERGENCY_STOP,
             ):
                 decision = decision.model_copy(
                     update={

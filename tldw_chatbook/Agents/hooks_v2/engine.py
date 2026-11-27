@@ -17,6 +17,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from threading import RLock
 
+from loguru import logger
+
 from .budgets import BudgetExceeded, HookBudgetOwner
 from .command_executor import CommandExecutor
 from .matching import UnsupportedEventField, matches_handler
@@ -28,6 +30,11 @@ _teardown_continuation = contextvars.ContextVar(
     "hook_teardown_continuation", default=None
 )
 _current_delivery = contextvars.ContextVar("hook_current_delivery", default=None)
+
+#: TASK-33620.1.12 (owner ruling 2026-11-24): the failure code of a hook action
+#: the emergency stop held. Recorded like any other refused action;
+#: ``HookEngine._failure`` keeps a held gate blocking.
+EMERGENCY_STOP_FAILURE = "emergency_stop"
 
 
 def _envelope(event: HookEvent) -> dict:
@@ -442,6 +449,31 @@ class HookEngine:
         except Exception:  # noqa: BLE001 - retain unknown dependency requirements
             return True, "dependency_check_failed"
 
+    @staticmethod
+    async def _emergency_stop_hold() -> bool | None:
+        """``None`` while the stop is clear, else whether its state was unreadable.
+
+        TASK-33620.1.12. Read on a worker thread: deliveries run on the hook
+        owner loop, which may be the app's. Doubt holds, as for every other
+        stop reader: a read whose worker fails (after executor shutdown, say)
+        holds as the stop's unavailable state, and its log line says so.
+        """
+        # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+        from tldw_chatbook import emergency_stop
+
+        try:
+            state = await asyncio.to_thread(emergency_stop.current_emergency_stop)
+        except Exception as exc:  # noqa: BLE001 -- doubt holds
+            logger.warning(
+                "hooks-v2: emergency-stop read failed (error_type={}); "
+                "holding the action",
+                type(exc).__name__,
+            )
+            state = emergency_stop.stop_state_unavailable()
+        if not state.active:
+            return None
+        return state.reason == emergency_stop.STATE_UNAVAILABLE_REASON
+
     async def _authority_status(self, handler, event, stage) -> tuple[bool, str | None]:
         try:
             return (
@@ -846,6 +878,21 @@ class HookEngine:
                 )
                 if not authorized:
                     failure = callback_failure or "authority_refused"
+            # TASK-33620.1.12: the one point every command and MCP action (an
+            # awaited fire or a notification) passes before its executor
+            # starts. During a stop the action is skipped and recorded.
+            if failure is None:
+                unreadable = await self._emergency_stop_hold()
+                if unreadable is not None:
+                    # The event and handler id only: never its command or input.
+                    logger.info(
+                        "hooks-v2: event={} handler={} held by the emergency stop "
+                        "(unreadable={})",
+                        event.event,
+                        handler.id,
+                        unreadable,
+                    )
+                    failure = EMERGENCY_STOP_FAILURE
             if failure is None and (delivery.cancel.is_set() or execution.closed):
                 failure = "cancelled"
             if failure:

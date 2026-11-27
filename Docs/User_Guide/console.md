@@ -1629,10 +1629,33 @@ match steering (visible notice; same 4,000-character cap).
 
 **Emergency stop.** `/emergency-stop` is the global brake: it holds **all**
 new agent runs and new scheduled dispatches from starting, across the whole
-app — in-flight runs and already-dispatched scheduled tasks are left to
-finish untouched. The stop is durable (it survives a restart) and
+app. A run that is already going keeps running, but none of its tool calls
+executes while the stop is active — the shell tool, built-in, local and MCP
+tools, and sub-agent spawns alike. Each call is refused with a result that
+names the stop and the reason you typed, for example "tool call blocked: the
+emergency stop is active (runaway agent)", so the model can wind down and
+you can see why on the call's row. If the model asks for tools again on its
+next turn, the run ends there ("Agent stopped: the emergency stop held its
+tool calls 2 turns in a row …") instead of spending more model calls that
+can run nothing. No approval card is raised during the stop, and a card you
+approve after the stop lands is refused instead of run. A call that was
+already executing when the stop landed finishes and keeps its own result.
+Hooks don't run during the stop either: your run hooks (`[[hooks.hook]]`,
+see [Run hooks](console/agent-runs-and-tools.md#run-hooks--your-own-commands-at-session-lifecycle-points))
+and command and MCP hook handlers alike. Each is skipped because of the
+emergency stop and the log says so (the event, never the command). A
+PreToolUse guard that can't run still blocks its tool, and a send that was
+already on its way when the stop landed is refused with the stop's message
+before its UserPromptSubmit hooks run.
+`/research` is refused while the stop is active, and a research run that is
+already going stops at its next step ("Stopped by the emergency stop"),
+keeping what it had saved. The stop is durable (it survives a restart) and
 fail-safe: if its state can't be read, the app treats it as stopped rather
-than proceeding. While it is active the Console shows it until it is
+than proceeding. When even the stop's location can't be reached (for example
+while a backup or restore holds the data folder), each tool call says "the
+emergency stop's state couldn't be read, so tools are held", and a send or a
+hook it holds says the same; it doesn't offer `/emergency-stop clear`, which
+can't reach that folder either. Send again once Chatbook is ready. While it is active the Console shows it until it is
 cleared, not just in the five-second toast: the header badge reads
 **Held · emergency stop** (just **Held** in a narrow window) instead of
 Ready, the status strip starts with **Emergency stop: runs and schedules
@@ -1641,7 +1664,8 @@ is on", and an empty chat says the stop is active. A send you try anyway is
 refused with a notice that names `/emergency-stop clear`. A stop still
 active from an earlier session is announced once when the Console opens.
 Choose **Clear** on the status strip, or run `/emergency-stop clear`, to
-resume at once; no restart is needed. If the stop can't be saved (for
+resume at once (sends, schedules, tool calls, hooks and research); no
+restart is needed. If the stop can't be saved (for
 example, the data folder is read-only), the Console says so and keeps
 showing the stop's real state. A stop cleared from another copy of the app
 is noticed the next time you send, and that send goes through. To end just

@@ -683,6 +683,8 @@ class RunTerminationReason(str, Enum):
     PRE_EFFECT_PERMANENT = "pre_effect_permanent"
     PREFLIGHT_REFUSED = "preflight_refused"
     CLEANUP_UNPROVEN = "cleanup_unproven"
+    #: TASK-33620.1.12: the global emergency stop held the run's tool calls.
+    EMERGENCY_STOP = "emergency_stop"
 
 
 

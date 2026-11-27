@@ -723,6 +723,70 @@ async def test_native_iteration_limit_saves_partial_work_without_successor(
 
 
 @pytest.mark.asyncio
+async def test_an_iteration_held_by_the_emergency_stop_pauses_its_goal(
+    stores, monkeypatch
+):
+    """The stop lands mid-iteration: the goal pauses, buying no successor.
+
+    The held tool call ends the run with the emergency-stop reason. Read as an
+    ordinary failure, the iteration would "continue" and the goal would buy
+    up to two more iterations while the stop is still active (TASK-33620.1.12).
+    """
+    import json
+
+    from tldw_chatbook import emergency_stop
+    from tldw_chatbook.Agents.goal_models import GoalToolScope
+
+    runs, persistence, registry, req = stores
+    req = req.model_copy(
+        update={
+            "tool_scope": GoalToolScope(
+                catalog_tools=("builtin:get_current_datetime",),
+                runtime_tools=("find_tools",),
+            )
+        }
+    )
+
+    def provider(**kwargs):
+        # The user sets the stop while the model is answering.
+        emergency_stop.set_emergency_stop(
+            emergency_stop.default_emergency_stop_path(), reason="mid-goal"
+        )
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": "looking around",
+                        "tool_calls": [
+                            {
+                                "id": "find",
+                                "type": "function",
+                                "function": {
+                                    "name": "find_tools",
+                                    "arguments": json.dumps({"query": "none"}),
+                                },
+                            }
+                        ],
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 2, "completion_tokens": 2},
+        }
+
+    goal, _, _, _, co, gateway, calls = build_goal_rig(
+        (runs, persistence, registry, req), monkeypatch, provider
+    )
+    try:
+        saved = await co.start(goal.id)
+        assert len(calls) == 1, f"a held iteration bought {len(calls) - 1} more"
+        assert saved.status == "paused"
+        assert saved.pause_reason == "iteration_emergency_stop"
+        assert saved.iteration_count == 1
+    finally:
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
 async def test_stop_write_failure_still_fences_and_drains_active_owner(
     stores, monkeypatch
 ):
