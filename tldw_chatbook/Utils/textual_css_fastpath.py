@@ -79,6 +79,20 @@ ordered candidates for identical live subject/ancestor names. It retains no
 nodes or computed styles. Class/id/ancestry changes alter the key; stylesheet
 reparsing replaces the cache. Upstream still matches pseudo-classes and order,
 resolves values, and processes recursive component styles on every call.
+
+Widget searches (TASK-40608, 2026-11-26)
+----------------------------------------
+
+``textual.css.match.match`` builds ``node.css_path_nodes`` -- every ancestor,
+root first -- for each node a search tests. ``DOMQuery`` tests every widget
+under its root, so one ``screen.query("#some-id")`` on the Console (558
+widgets) followed about 7,000 parent links and took 8 ms; one approved-edit
+turn made 312 searches for 0.46 s of the UI thread (exact, by the thread's
+cycle counter). A selector with no ancestry can only succeed on the node
+itself -- the fact ``_check_subject_pseudo_classes`` already relies on -- so
+``_match_on_subject`` runs those checks on the node alone and delegates every
+other shape to upstream. ``Tests/Performance/test_dom_query_subject_match.py``
+compares both on every node and pins the upstream shape.
 """
 
 from __future__ import annotations
@@ -86,6 +100,8 @@ from __future__ import annotations
 from collections import OrderedDict
 from typing import Any
 
+from textual import dom
+from textual.css import query as css_query
 from textual.css import stylesheet
 from textual.css.match import _check_selectors as _upstream_check_selectors
 from textual.css.model import CombinatorType, Selector
@@ -267,15 +283,54 @@ def _check_subject_pseudo_classes(
     return _upstream_check_selectors(selectors, css_path_nodes)
 
 
+def _match_on_subject(selector_sets: Any, node: Any) -> bool:
+    """Textual's ``match`` for widget searches, without needless ancestor lists.
+
+    A single selector or SAME/zero-advance compound can only succeed on the
+    subject (the shapes and the reasoning are ``_check_subject_pseudo_classes``'s),
+    so its original checks run on the node alone. Any other shape gets the
+    node's ancestor list and upstream's matcher, as before. Nothing is cached.
+
+    Args:
+        selector_sets: The parsed alternatives of one selector.
+        node: The node a search is testing.
+
+    Returns:
+        Whether the node matches any alternative, exactly as upstream answers.
+    """
+    for selector_set in selector_sets:
+        selectors = selector_set.selectors
+        if len(selectors) == 1 and selectors[0].combinator == CombinatorType.DESCENDENT:
+            if selectors[0].check(node):
+                return True
+        elif (
+            selectors
+            and selectors[0].combinator == CombinatorType.DESCENDENT
+            and selectors[0].advance == 0
+            and all(
+                selector.combinator == CombinatorType.SAME and previous.advance == 0
+                for previous, selector in zip(selectors, selectors[1:])
+            )
+        ):
+            if all(selector.check(node) for selector in selectors):
+                return True
+        elif _upstream_check_selectors(selectors, node.css_path_nodes):
+            return True
+    return False
+
+
 def install_stylesheet_fastpath() -> bool:
-    """Install the fast path on ``Stylesheet.apply``. Idempotent.
+    """Install the fast paths on ``Stylesheet.apply`` and widget searches. Idempotent.
 
     Returns:
         ``True`` if this call installed the patch, ``False`` if it was already
         installed by an earlier call.
     """
-    # Patch only stylesheet resolution; DOM query matching stays upstream.
     stylesheet._check_selectors = _check_subject_pseudo_classes
+    # Widget searches (``query``, ``query_one``) keep upstream's answers; only
+    # the ancestor list built for every tested node is skipped where it cannot
+    # matter. Message-handler and focus-chain matching stay upstream.
+    css_query.match = dom.match = _match_on_subject
     upstream = Stylesheet.apply
     if getattr(upstream, _MARKER, False):
         return False
