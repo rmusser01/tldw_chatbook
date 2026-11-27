@@ -53,7 +53,8 @@ The explicitly excluded preparation owners are Console side chat, visual
 evaluation, and prompt improvement. Persona preview and character generation
 are also classified as excluded because the AST census finds their use of the
 same gateway API outside a Console conversation, as is the Conversation
-settings generation probe.
+settings generation probe. Local Research Workspace chat also uses the gateway
+for its own workspace conversation and is excluded from Console trace capture.
 
 Fresh requests record either a RAG source descriptor or
 `fresh_rag_not_selected`. Retry/continue/regenerate/edit requests do not
