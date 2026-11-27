@@ -1199,17 +1199,24 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    or branch switch.
 
    The reply is kept, and fails with "Trace capture could not be saved, so
-   this reply stopped.", when it holds any content (text, an image, an
-   attachment, a continuation, thinking, tool output or a diff), when a call
-   of the action's own turn reserved since it began was dispatched (a later
-   tool-loop call refused; calls of other turns or chats never count), when
-   the refused call's dispatch is unknown, its reservation could not be
-   marked not dispatched or is unknown, or when an undo write before the
-   reply's removal fails (the branch is then set back to the reply). The run
-   is settled either way, and a one-time choice is used up only when a call
-   of the action's turn was dispatched. After a kept reply whose run was sent, the next captured send
-   is planned by point 5 (its refused later call is passed over). Its Retry
-   is Retry's (TASK-42555).
+   this reply stopped." (for a Regenerate, whose earlier reply is shown
+   again: "Trace capture could not be saved, so the regenerated reply
+   stopped. The earlier reply is shown."), when it holds any content (text,
+   an image, an attachment, a continuation, thinking, tool output or a diff),
+   when a call of the action's own turn reserved since it began was
+   dispatched (a later tool-loop call refused; calls of other turns or chats
+   never count), when the refused call's dispatch is unknown, its reservation
+   could not be marked not dispatched or is unknown, or when an undo write
+   before the reply's removal fails (the branch is then set back to the
+   reply). The run is settled either way, and a one-time choice is used up
+   only when a call of the action's turn was dispatched. After a kept reply
+   whose run was sent, the next captured send is planned by point 5 (its
+   refused later call is passed over). A kept reply whose request was never
+   sent is one no rule names: each later captured message stops at "Trace
+   capture could not start", and Send without capture sends it (corrected
+   2026-11-27 after review; with an unknown reservation this lasts until
+   startup recovery settles the reserved call). Its Retry is Retry's
+   (TASK-42555).
 
    Owner decision (2026-11-26). The question was: "When the trace refuses
    one of these actions' own call (rare), the empty reply it already saved
