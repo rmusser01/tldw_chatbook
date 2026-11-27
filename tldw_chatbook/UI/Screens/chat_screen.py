@@ -179,6 +179,7 @@ from ..Console_Modules.retrieval import (
 )
 from ..Console_Modules.transcript import (
     _ConsoleTranscriptReadingState,
+    consume_console_mount_visit,
     note_console_conversation_painted,
     request_console_heap_refreeze,
     request_transcript_sync as _request_transcript_sync,
@@ -15117,9 +15118,9 @@ class ChatScreen(BaseAppScreen):
                 getattr(self.app_instance, "app_config", {}) or {}
             )
             if wiring.workflows_enabled():
-                from ..Console_Modules.workflows import ConsoleWorkflowLine
-
-                yield ConsoleWorkflowLine()
+                # Built through config_sync, so the tick knows the screen has one
+                # without searching for it (console_workflow_line_is_mounted).
+                yield config_sync.console_workflow_line(self)
             temporary, temporary_capture_on = temporary_segment_state(self)
             status_chips = ConsoleStatusChips(
                 control_state,
@@ -17948,7 +17949,7 @@ class ChatScreen(BaseAppScreen):
                         sessions = store.sessions()
                         active_session_id = store.active_session_id
                     if (
-                        self.query("#console-workflow-line")
+                        config_sync.console_workflow_line_is_mounted(self)
                         and self._console_runtime().chat_controller is not None
                     ):
                         self._workflows.select_chat(active_session)
@@ -23013,8 +23014,7 @@ class ChatScreen(BaseAppScreen):
         # skill-candidate worker and scheduled the task-resume sync; running
         # them again here just doubled the work. Consumed (not merely read),
         # so every subsequent resume refreshes normally.
-        mount_already_refreshed = self._console_mount_visit_refreshed
-        self._console_mount_visit_refreshed = False
+        mount_already_refreshed = consume_console_mount_visit(self)
         if not mount_already_refreshed and (
             self._pending_resume_local_conversation_id is not None
             or self._pending_character_conversation_target is not None

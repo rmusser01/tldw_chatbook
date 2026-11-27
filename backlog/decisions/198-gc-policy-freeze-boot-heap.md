@@ -532,6 +532,33 @@ blocks of one launch per arm, 8 per cell, and the host was below 15% idle for
 - A Library click into the warm-up: 699, 627 and 696 ms. At its closing: 731,
   716 and 849 ms. Fix minus dev was -48 and -4 ms.
 
+## Amendment (2026-11-26, TASK-40608): ask again when the Console is shown again
+
+**Context.** The 2026-10-10 amendment names two moments at which the Console
+asks for a re-freeze: a settled run, and a different conversation on the
+transcript. Leaving the Console and coming back is neither. Measured on the
+TASK-40608 Windows journey (one turn, then Settings to grant a folder write
+access, then a second turn in the same conversation): the first run's settle
+re-froze the heap, the Settings visit built its own widgets, nothing asked for
+maintenance on the way back, and the second turn's generation-2 passes
+rescanned all of it. On a heavily loaded host that was 5 passes and 0.94 s of
+the turn, against 4 passes and 0.26 s when a request was made on return (same
+host, same hour; both figures are two to three times what a quiet host shows).
+
+**Decision (owner, 2026-11-26).** The Console also asks when it is the top
+screen again after another screen or a dialog covered it
+(`ChatScreen.on_screen_resume`, reason `console_resumed`). The mount's own
+resume does not ask: the first painted conversation already does. Nothing
+else changes. The request runs only when the Console is not busy and no input
+has arrived for the quiet period; a busy Console drops it; a later request
+replaces an earlier one.
+
+**Verification.**
+`Tests/UI/test_console_idle_heap_refreeze.py::test_console_asks_for_a_refreeze_when_it_is_shown_again`
+covers the Console with another screen, waits well past the quiet period, and
+uncovers it: no re-freeze runs while it is covered, one runs once it is back,
+and the mount's own resume asks for none.
+
 ## Python versions
 
 The owner plans to move from 3.12 to 3.13 and then 3.14. Checked against the 3.14 documentation on 2026-09-29:

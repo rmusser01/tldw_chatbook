@@ -393,3 +393,55 @@ def test_workbench_frame_direct_child_ids_are_stable_data_contract():
         "workbench-mode-strip",
         "workbench-command-strip",
     )
+
+
+@pytest.mark.asyncio
+async def test_mode_strip_rewrites_only_a_chip_whose_label_changed(monkeypatch):
+    """TASK-40608: a status or active change re-set every chip's label.
+
+    ``Static.update`` asks for a whole-screen layout even for the copy a chip
+    already shows. Classes still follow every change; only new copy is written.
+    """
+    from textual.app import App
+    from textual.widgets import Static
+
+    modes = (
+        WorkbenchMode(id="chat", label="Chat", active=True, status="ready"),
+        WorkbenchMode(id="rag", label="RAG", status="empty"),
+    )
+    strip = ModeStrip(modes, id="strip")
+
+    class Host(App):
+        def compose(self):
+            yield strip
+
+    async with Host().run_test() as pilot:
+        await pilot.pause()
+        chat, rag = strip.query_one("#workbench-mode-chat"), strip.query_one("#workbench-mode-rag")
+        updated: list[Static] = []
+        update = Static.update
+
+        def recorded(widget, *args, **kwargs):
+            updated.append(widget)
+            return update(widget, *args, **kwargs)
+
+        monkeypatch.setattr(Static, "update", recorded)
+
+        strip.sync_modes(
+            (
+                WorkbenchMode(id="chat", label="Chat", status="ready"),
+                WorkbenchMode(id="rag", label="RAG", active=True, status="running"),
+            )
+        )
+        assert updated == []
+        assert not chat.has_class("is-active")
+        assert rag.has_class("is-active") and rag.has_class("status-running")
+
+        strip.sync_modes(
+            (
+                WorkbenchMode(id="chat", label="Chat", status="ready"),
+                WorkbenchMode(id="rag", label="RAG (2)", active=True, status="running"),
+            )
+        )
+        assert updated == [rag]
+        assert rag.content == "RAG (2)"

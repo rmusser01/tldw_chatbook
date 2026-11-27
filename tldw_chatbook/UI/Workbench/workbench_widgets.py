@@ -506,7 +506,12 @@ class ModeStrip(Horizontal):
         return label
 
     def _sync_mode_label(self, label: Static, mode: WorkbenchMode) -> None:
-        label.update(mode.label)
+        # TASK-40608 (measured 2026-11-23): a run changes one mode's status or
+        # active flag, and every chip was then handed the label it already
+        # showed. ``Static.update`` asks for a whole-screen layout each time:
+        # 28-42 requests a Console turn. Only new copy is written.
+        if type(label.content) is not str or label.content != mode.label:
+            label.update(mode.label)
         setattr(label, "_workbench_mode_id", mode.id)
         label.set_class(True, "workbench-mode")
         label.set_class(mode.active, "is-active")
