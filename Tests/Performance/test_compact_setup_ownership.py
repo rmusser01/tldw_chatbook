@@ -186,6 +186,21 @@ async def run():
             assert trust is app._local_skill_trust_service and trust is not None
             prearm_facts['original_skill_trust_dependency_prepared'] = True
             await old.remove()
+            if outcome == 'dispose':
+                from tldw_chatbook.UI.Console_Modules.view_workers import capture_console_view_workers
+
+                # This control calls Runtime.dispose directly. Establish the
+                # App shutdown's view fence and settle just its AgentRuns
+                # readers before arming the timed compact callback.
+                assert runtime.view is screen and not runtime._disposed
+                screen._console_chat_tearing_down = True
+                readers = capture_console_view_workers(
+                    app, groups=frozenset({'console-subagent-counts', 'console-agent-history'})
+                )[-1]
+                tasks = {task for _worker, _node, task, _work in readers if not task.done()}
+                if tasks:
+                    _, pending = await asyncio.wait(tasks, timeout=10)
+                    assert not pending, 'compact_view_agent_runs_reads_unsettled'
             if outcome in {'missing_providers', 'missing_defaults'}:
                 app.app_config = dict(original_mapping)
                 app.app_config.pop('providers' if outcome == 'missing_providers' else 'chat_defaults', None)

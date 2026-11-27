@@ -17,7 +17,7 @@ documentation:
 - Docs/superpowers/plans/2026-10-25-shared-console-mobile-supervision-implementation.md
 - Docs/superpowers/specs/2026-10-25-shared-console-mobile-supervision-design.md
 - backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
-updated_date: 2026-11-27 18:39
+updated_date: 2026-11-27 19:41
 ---
 
 ## Description
@@ -125,6 +125,8 @@ Reason: Native and mobile histories must have distinct, recoverable schema ident
 - Carry every surviving CI and UAT assertion forward, including the shared phone and desktop bridge and its light-surface reader. Re-run the original software acceptance journeys on this integration before exact-head review.
 
 After the original 300-second case timed out during repeated installed discovery, give producer metadata, payload, and physical identity controls separate native captures. Keep both aliases, every original refusal and genuine schedule check, and the default case limit. This test-only fixture adjustment uses the existing ADR 244 proof contract.
+
+Hosted compact-model disposal fixture follow-up. ADR required: no. ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md. The existing view-worker and native ownership contracts apply. Preserve the exact hosted AgentRuns retirement refusal and use the established TASK-42426 wait for issued view AgentRuns readers at the compact test's direct-dispose intervention. Keep the real model callback held, the native lifetime and post-dispose assertions, both disposal routes, and every existing runtime and case limit. Run the exact affected Perf step and independently review the committed change before publication.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -264,6 +266,7 @@ PR #3345 now integrates dev 9926834 with all 122 feature commits preserved. Exis
 Current integration against dev c0a9993 preserves all 131 feature commits and their ordered parents. ChaChaNotes keeps the native v88-to-v89 index migration, puts mobile receipts at v90, refuses the old receipt-bearing preview before writer setup, and limits receipt catalog permissions to their own migration step. The terminal journal agrees with the v90 schema. The real desktop and phone paths share one app-owned bridge with the light-surface reader in both startup orders.
 
 The three native alias recovery groups passed at the original 300-second case limit. The original 15-case browser UAT and mounted operation b9c397bc11ea40e5b01df8d2116feea9 passed independent evidence audit. Both native macOS recovery journeys and all 74 hook and MCP cases passed locally. The ordered local Fast Lane passed 4,790 cases with four existing skips. The previous hosted cancellation remains documented. The current commit still needs its own hosted qualification before task closeout.
+Compact setup CI follow-up. Hosted Perf job 140686564429 on 59e1cae failed at the direct-dispose control with sqlite_retirement_incomplete:AgentRuns. A controlled comparison held the same real view AgentRuns history worker before both variants. The original control reproduced the refusal. The corrected fixture settled the reader without cancelling it before arming the compact callback and passed. The original two-file Perf step passed all 17 cases in 165.269 seconds without skips. The direct-dispose action, App-closing control, 100 ms progress probe, and existing runtime and case limits are preserved. Existing ADR 244 applies. Product and original software UAT entrypoints are unchanged. Own-head hosted checks and closeout remain pending.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
