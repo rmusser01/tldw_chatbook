@@ -142,10 +142,11 @@ async def test_a_zero_match_send_shows_its_line_and_keeps_it_after_a_reload():
             await pilot.pause()
             await until(lambda: _line_sits_under_the_user_turn(host, ZERO_LINE))
 
-            # Repaint: a forced full transcript rebuild keeps it.
+            # Repaint: a forced full transcript rebuild keeps it. TASK-42629:
+            # wait for the rebuilt rows' paint; one pause read the screen
+            # before it on a loaded runner.
             await console._sync_native_console_transcript(force=True)
-            await pilot.pause()
-            assert _line_sits_under_the_user_turn(host, ZERO_LINE)
+            await until(lambda: _line_sits_under_the_user_turn(host, ZERO_LINE))
 
             # Negative control: without the persisted record, a reload has no
             # line to show -- the record is its only source.

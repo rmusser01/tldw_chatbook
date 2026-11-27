@@ -1,5 +1,7 @@
 """ConsoleCommandPopup widget behavior; ChatScreen integration (Tasks 3-4)."""
 
+import asyncio
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -95,9 +97,7 @@ async def test_slash_opens_popup_and_typing_filters():
         # popup offers the registered commands" -- so assert that, plus the
         # six this test was written for, and let honest additions through.
         labels = _popup_labels(popup)
-        commands = [
-            f"/{name}" for name in default_console_registry().available_names()
-        ]
+        commands = [f"/{name}" for name in default_console_registry().available_names()]
         # 0520df15ac (TASK-32954) ships the built-in Character Creator skill,
         # so the trusted skills' `/skills <name>` rows follow the commands.
         assert labels[: len(commands)] == commands
@@ -284,6 +284,25 @@ async def test_popup_does_not_reclaim_workspace_grid_rows():
         )
 
 
+async def _wait_for_anchored_popup(pilot, popup, *, timeout: float = 5.0) -> None:
+    """Wait until the open popup is laid out at the anchor it last computed.
+
+    TASK-42629: a fixed 0.2 s pause failed on a loaded runner, which read the
+    popup at y=-12 before it had settled.
+    """
+    deadline = time.monotonic() + timeout
+    while not (
+        popup.is_open
+        and popup.region.height > 0
+        and popup.region.offset == popup.absolute_offset
+    ):
+        assert time.monotonic() < deadline, (
+            f"popup never settled at its anchor: {popup.region} "
+            f"vs {popup.absolute_offset}"
+        )
+        await pilot.pause(0.02)
+
+
 @pytest.mark.asyncio
 async def test_popup_anchors_above_composer_with_real_css():
     """The popup's bottom edge sits at the composer's top edge, no overlap."""
@@ -298,13 +317,38 @@ async def test_popup_anchors_above_composer_with_real_css():
         popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
 
         await pilot.press("/")
-        await pilot.pause()
-        # Let the call_after_refresh re-anchor land and layout settle.
-        await pilot.pause(0.2)
-        assert popup.is_open
-        assert popup.region.height > 0
+        await _wait_for_anchored_popup(pilot, popup)
         popup_bottom = popup.region.y + popup.region.height
         assert popup_bottom <= composer.region.y, (
+            f"popup {popup.region} overlaps composer {composer.region}"
+        )
+        assert popup.region.y >= 0
+
+
+@pytest.mark.asyncio
+async def test_a_paint_hold_across_the_first_show_still_anchors_the_popup():
+    """TASK-42629: under a held batch, every re-anchor of the first show ran
+    before the popup had a layout, and the popup stayed in its flow slot under
+    the composer (y=82 here) until the next keystroke."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _StyledConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
+
+        async def hold_paints() -> None:
+            with host.batch_update():
+                await asyncio.sleep(0.15)
+
+        hold = asyncio.get_running_loop().create_task(hold_paints())
+        await pilot.press("/")
+        await hold
+        await _wait_for_anchored_popup(pilot, popup)
+        assert popup.region.y + popup.region.height <= composer.region.y, (
             f"popup {popup.region} overlaps composer {composer.region}"
         )
         assert popup.region.y >= 0
@@ -355,9 +399,7 @@ async def test_popup_anchor_clears_chips_above_composer_by_default():
         popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
 
         await pilot.press("/")
-        await pilot.pause()
-        await pilot.pause(0.2)
-        assert popup.is_open
+        await _wait_for_anchored_popup(pilot, popup)
         assert chips.display and chips.region.height > 0
         # The chips top the cluster, above the composer.
         assert chips.region.y + chips.region.height <= composer.region.y
@@ -390,10 +432,7 @@ async def test_popup_anchor_clears_composer_with_chips_below():
         popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
 
         await pilot.press("/")
-        await pilot.pause()
-        # Let the call_after_refresh re-anchor land and layout settle.
-        await pilot.pause(0.2)
-        assert popup.is_open
+        await _wait_for_anchored_popup(pilot, popup)
         assert chips.display and chips.region.height > 0
         # The chips are the bottom row, below the composer.
         assert composer.region.y + composer.region.height <= chips.region.y
@@ -462,7 +501,9 @@ async def test_popup_orders_most_used_command_first():
         expected_labels = [
             s.label
             for s in suggestions_for_draft(
-                "/", console._console_command_registry, console._console_skill_candidates
+                "/",
+                console._console_command_registry,
+                console._console_skill_candidates,
             )
         ]
         assert sorted(labels) == sorted(expected_labels)
@@ -492,7 +533,9 @@ async def test_popup_order_is_registry_order_with_no_usage_data():
         expected = [
             s.label
             for s in suggestions_for_draft(
-                "/", console._console_command_registry, console._console_skill_candidates
+                "/",
+                console._console_command_registry,
+                console._console_skill_candidates,
             )
         ]
         assert _popup_labels(popup) == expected

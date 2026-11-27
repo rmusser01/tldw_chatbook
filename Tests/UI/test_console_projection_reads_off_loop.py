@@ -342,7 +342,19 @@ async def test_a_full_sync_slower_than_the_display_life_does_not_replay_itself(
             await until(lambda: not projection.pending, timeout=30)
             stretch["share"] = 0.6
             read_at = projection.at
-            assert await console._sync_native_console_chat_ui() is True
+            # TASK-42629: this returned False once on a loaded runner (#3777's
+            # UI shard 36) and never in 12 local runs; name the entry guards.
+            guards = (
+                console._console_sync_in_progress,
+                console._console_sync_requested,
+                console._console_control_bar_replay_whole_sync,
+                getattr(console, "_console_sync_maintenance_paused", False),
+                projection.pending,
+            )
+            assert await console._sync_native_console_chat_ui() is True, (
+                "the second FULL sync deferred; before it (in progress, "
+                f"requested, replay, paused, pending) = {guards}"
+            )
             assert projection.at == read_at, "the rail step re-read a live display"
 
             # While reads fail, the rail step starts no read either: one failed
