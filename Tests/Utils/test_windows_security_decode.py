@@ -64,6 +64,15 @@ def native(monkeypatch):
         dacl(pointer, None, dacl_out, None)
         return 0
 
+    def query(handle, information, buffer, size, needed):
+        """The kernel's own descriptor copied into the caller's buffer, or a refusal."""
+        state.counts["query"] += 1
+        assert information == 5 and size == 4096  # owner and access list, one page
+        if state.error in {"acquire", "query"} or len(state.data) > size:
+            return 0
+        C.memmove(buffer, state.data, len(state.data))
+        return 1
+
     def free(pointer):
         state.counts["free"] += 1
         del state.allocations[address(pointer)]
@@ -90,6 +99,7 @@ def native(monkeypatch):
     api.advapi = SimpleNamespace(
         GetSecurityInfo=acquire, GetSecurityDescriptorLength=lambda pointer: len(state.data),
         GetSecurityDescriptorOwner=owner, GetSecurityDescriptorDacl=dacl, GetAce=ace,
+        GetKernelObjectSecurity=query,
     )
     api.kernel = SimpleNamespace(LocalFree=free)
     api.sid_string = sid_string
@@ -99,26 +109,87 @@ def native(monkeypatch):
     assert not state.allocations
 
 
-def test_repeated_bytes_still_acquire_and_free_each_native_descriptor(native):
+#: TASK-40608: the ordinary read asks the kernel for the descriptor in one call
+#: into its own buffer; the admission read (``with_descriptor=True``) still asks
+#: the access control library, which allocates a descriptor that must be freed.
+#: Every property below holds for both.
+ROUTES = pytest.mark.parametrize("route", ["ordinary", "admission"])
+
+
+def _read(api, route, handle, is_directory):
+    """One read by the named route, as ``(uid, mode)``."""
+    if route == "admission":
+        return api.security(handle, is_directory, with_descriptor=True)[:2]
+    return api.security(handle, is_directory)
+
+
+def _object_reads(state, route):
+    """How often the object itself was read; nothing native may be left behind."""
+    if route == "admission":
+        assert state.counts["query"] == 0
+        assert state.counts["acquire"] == state.counts["free"]
+        return state.counts["acquire"]
+    assert state.counts["acquire"] == state.counts["free"] == 0
+    return state.counts["query"]
+
+
+@ROUTES
+def test_repeated_bytes_still_acquire_and_free_each_native_descriptor(native, route):
     api, state = native
-    assert api.security(7, False) == (1000, 0o600)
+    assert _read(api, route, 7, False) == (1000, 0o600)
     first = state.counts.copy()
-    assert api.security(7, False) == (1000, 0o600)
-    assert state.counts["acquire"] == state.counts["free"] == 2
+    assert _read(api, route, 7, False) == (1000, 0o600)
+    assert _object_reads(state, route) == 2
     assert state.counts["sid"] == first["sid"]
     assert state.counts["ace"] == first["ace"]
 
 
-def test_changed_permissions_are_observed_on_the_same_handle(native):
+@ROUTES
+def test_changed_permissions_are_observed_on_the_same_handle(native, route):
     api, state = native
+    assert _read(api, route, 7, False) == (1000, 0o600)
+    state.data = _descriptor(trustee=2000)
+    assert _read(api, route, 7, False) == (1000, 0o644)
+    state.data = _descriptor(owner=2000, trustee=2000)
+    assert _read(api, route, 7, False) == (-1, 0o644)
+    state.data = _descriptor()
+    assert _read(api, route, 7, False) == (1000, 0o600)
+    assert _object_reads(state, route) == 4
+
+
+def test_ordinary_read_asks_the_kernel_and_not_the_access_control_library(native):
+    api, state = native
+    assert api.security(7, False) == (1000, 0o600)
+    assert api.security(7, True) == (1000, 0o700)
+    assert state.counts["query"] == 2
+    assert state.counts["acquire"] == state.counts["free"] == 0
+
+
+def test_ordinary_read_takes_the_library_route_when_the_kernel_read_refuses(native):
+    """A refusal of the direct read is never an answer: the original route decides."""
+    api, state = native
+    state.error = "query"
     assert api.security(7, False) == (1000, 0o600)
     state.data = _descriptor(trustee=2000)
     assert api.security(7, False) == (1000, 0o644)
-    state.data = _descriptor(owner=2000, trustee=2000)
-    assert api.security(7, False) == (-1, 0o644)
-    state.data = _descriptor()
-    assert api.security(7, False) == (1000, 0o600)
-    assert state.counts["acquire"] == state.counts["free"] == 4
+    assert state.counts["query"] == 2
+    assert state.counts["acquire"] == state.counts["free"] == 2
+
+
+@pytest.mark.parametrize("is_directory", [False, True])
+@pytest.mark.parametrize("flags", [0, 1, 2, 3, 8, 11])
+def test_decode_never_reads_the_inherited_mark(native, flags, is_directory):
+    """What the kernel read and the library read may disagree on changes nothing.
+
+    The access control library sets INHERITED_ACE (0x10) on entries it finds in
+    the parent folder; the kernel returns the entry as stored. The ordinary read
+    uses the kernel's bytes (TASK-40608), so the mode must not depend on that bit.
+    """
+    api, state = native
+    state.data = _descriptor(trustee=2000, mask=0x1F01FF, flags=flags)
+    stored = api.security(7, is_directory)
+    state.data = _descriptor(trustee=2000, mask=0x1F01FF, flags=flags | 0x10)
+    assert api.security(7, is_directory) == stored
 
 
 def test_directory_flag_and_current_user_are_part_of_decode_identity(native):
@@ -130,37 +201,46 @@ def test_directory_flag_and_current_user_are_part_of_decode_identity(native):
     assert api.security(7, True) == (-1, 0o700)
 
 
-def test_warm_decode_never_hides_a_fresh_native_acquisition_failure(native):
+@ROUTES
+def test_warm_decode_never_hides_a_fresh_native_acquisition_failure(native, route):
     api, state = native
-    api.security(7, False)
+    _read(api, route, 7, False)
     state.error = "acquire"
     with pytest.raises(PermissionError):
-        api.security(7, False)
-    assert state.counts["acquire"] == 2 and state.counts["free"] == 1
+        _read(api, route, 7, False)
+    if route == "admission":
+        assert state.counts["acquire"] == 2 and state.counts["free"] == 1
+    else:
+        # The kernel read refused, then the original route refused: its error
+        # is the one raised, and it allocated nothing.
+        assert state.counts["query"] == 2
+        assert state.counts["acquire"] == 1 and state.counts["free"] == 0
 
 
-def test_failed_decode_is_not_cached_and_releases_the_acquired_descriptor(native):
+@ROUTES
+def test_failed_decode_is_not_cached_and_releases_the_acquired_descriptor(native, route):
     api, state = native
     state.error = "decode"
     with pytest.raises(ValueError, match="controlled SID"):
-        api.security(7, False)
+        _read(api, route, 7, False)
     state.error = None
-    assert api.security(7, False) == (1000, 0o600)
-    assert state.counts["acquire"] == state.counts["free"] == 2
+    assert _read(api, route, 7, False) == (1000, 0o600)
+    assert _object_reads(state, route) == 2
     assert state.counts["sid"] == 3
 
 
+@ROUTES
 @pytest.mark.parametrize("phase", ["owner", "dacl", "ace"])
-def test_native_decoder_refusal_is_not_cached_or_replaced_by_an_older_result(native, phase):
+def test_native_decoder_refusal_is_not_cached_or_replaced_by_an_older_result(native, phase, route):
     api, state = native
-    assert api.security(7, False) == (1000, 0o600)
+    assert _read(api, route, 7, False) == (1000, 0o600)
     state.data = _descriptor(trustee=2000)
     state.error = phase
     with pytest.raises(OSError, match="controlled native"):
-        api.security(7, False)
+        _read(api, route, 7, False)
     state.error = None
-    assert api.security(7, False) == (1000, 0o644)
-    assert state.counts["acquire"] == state.counts["free"] == 3
+    assert _read(api, route, 7, False) == (1000, 0o644)
+    assert _object_reads(state, route) == 3
 
 
 @pytest.mark.parametrize("options", [{"padding": 4096}, {"relative": False}])
@@ -170,6 +250,8 @@ def test_ineligible_descriptors_keep_the_original_uncached_decoder(native, optio
     assert api.security(7, False) == api.security(7, False) == (1000, 0o600)
     assert state.counts["sid"] == 4
     assert state.counts["acquire"] == state.counts["free"] == 2
+    # Each call asked the kernel first; neither answer was usable.
+    assert state.counts["query"] == 2
 
 
 def test_successful_decode_retention_has_a_fixed_entry_bound(native):
@@ -244,7 +326,9 @@ def test_native_decode_reuse_preserves_fresh_acquisition_and_records_cost(tmp_pa
     class Observed:
         def __getattr__(self, name):
             function = getattr(real, name)
-            if name not in {"GetSecurityInfo", "GetAce", "ConvertSidToStringSidW"}:
+            if name not in {
+                "GetSecurityInfo", "GetKernelObjectSecurity", "GetAce", "ConvertSidToStringSidW",
+            }:
                 return function
             def call(*args):
                 counts[name] += 1
@@ -287,8 +371,11 @@ def test_native_decode_reuse_preserves_fresh_acquisition_and_records_cost(tmp_pa
             first = counts.copy()
             for _ in range(10):
                 assert native.security(handle, False) == (1000, 0o600)
-            assert counts["GetSecurityInfo"] == 11
-            assert counts["descriptor_free"] == 11 and not allocations
+            # One kernel read per call, into the call's own buffer: the access
+            # control library is not asked and nothing native is allocated.
+            assert counts["GetKernelObjectSecurity"] == 11
+            assert counts["GetSecurityInfo"] == 0
+            assert counts["descriptor_free"] == 0 and not allocations
             assert counts["GetAce"] == first["GetAce"]
             assert counts["ConvertSidToStringSidW"] == first["ConvertSidToStringSidW"]
         samples = {"cached": [], "uncached": []}
@@ -304,6 +391,146 @@ def test_native_decode_reuse_preserves_fresh_acquisition_and_records_cost(tmp_pa
         }, sort_keys=True))
     finally:
         windows.close(descriptor)
+
+
+def _library_projection(native, handle, is_directory):
+    """What the access control library's own view of the object decodes to."""
+    owner, dacl, acquired = files._P(), files._P(), files._P()
+    result = native.advapi.GetSecurityInfo(
+        handle, 1, 5, C.byref(owner), None, C.byref(dacl), None, C.byref(acquired)
+    )
+    if result:
+        raise C.WinError(result)
+    try:
+        size = native.advapi.GetSecurityDescriptorLength(acquired)
+        return (
+            native._decode_security(owner, dacl, is_directory, native.user_sid),
+            C.string_at(acquired, size),
+        )
+    finally:
+        native.kernel.LocalFree(acquired)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires actual Windows descriptors")
+def test_real_ordinary_read_equals_the_library_projection_for_every_acl_shape(tmp_path, monkeypatch):
+    """TASK-40608: the kernel read and the library read must decode alike.
+
+    The library also examines the parent folder and marks the entries it finds
+    inherited, and it returns the group. Everything created inside one of this
+    module's own private folders is such an object (``home/plain`` and
+    ``home/folder`` below), so its bytes differ from the kernel's there. The
+    owner and the mode never may. ``shared`` is a folder made the same way but
+    with a public read entry for its children: there the entry the library
+    marks is one the mode depends on.
+    """
+    import contextlib
+    import subprocess  # nosec B404 -- fixed icacls commands against disposable owned files below.
+
+    windows = files.WindowsOS()
+    native = files._native()
+
+    def icacls(path, *arguments):
+        subprocess.run(["icacls", str(path), *arguments], check=True, capture_output=True)  # nosec B603 B607 -- fixed native tool, disposable owned file
+
+    home = tmp_path / "home"
+    windows.mkdir(home, 0o700)
+    shapes = {"home": True}
+
+    @contextlib.contextmanager
+    def shared_sd():
+        """Like the module's private descriptor, plus read for everyone, inherited by children."""
+        descriptor = files._P()
+        sddl = f"O:{native.user_sid}D:P(A;OICI;FA;;;{native.user_sid})(A;OICI;FR;;;WD)"
+        native.check(
+            native.advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl, 1, C.byref(descriptor), None
+            )
+        )
+        try:
+            yield descriptor
+        finally:
+            native.kernel.LocalFree(descriptor)
+
+    shared = tmp_path / "shared"
+    with monkeypatch.context() as patch:
+        patch.setattr(native, "private_sd", shared_sd)
+        windows.mkdir(shared, 0o700)
+    (shared / "child").write_bytes(b"")
+    (shared / "sub").mkdir()
+    shapes.update({"shared": True, "shared/child": False, "shared/sub": True})
+    for name in ("plain", "public-read", "public-write", "deny", "protected", "copied"):
+        (home / name).write_bytes(b"")
+        shapes["home/" + name] = False
+    for name in ("folder", "public-folder"):
+        (home / name).mkdir()
+        shapes["home/" + name] = True
+    icacls(home / "public-read", "/grant", "*S-1-1-0:(R)")
+    icacls(home / "public-write", "/grant", "*S-1-1-0:(M)")
+    # Deny write data only: a deny of all write access would also refuse
+    # READ_CONTROL, and then nothing could read this descriptor at all.
+    icacls(home / "deny", "/deny", "*S-1-1-0:(WD)")
+    icacls(home / "protected", "/inheritance:r", "/grant", f"*{native.user_sid}:(F)")
+    icacls(home / "copied", "/inheritance:d")
+    icacls(home / "public-folder", "/grant", "*S-1-1-0:(OI)(CI)(IO)(R)")
+    kernel32 = C.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.argtypes = (
+        C.c_wchar_p, C.c_uint32, C.c_uint32, C.c_void_p, C.c_uint32, C.c_uint32, C.c_void_p,
+    )
+    kernel32.CreateFileW.restype = C.c_void_p
+    private = windows.open(home / "private", windows.O_CREAT | windows.O_EXCL | windows.O_RDWR, 0o600)
+    handles = {"home/private": (native.handle(private), False)}
+    opened = []
+    differing, seen = [], {}
+    try:
+        for name, is_directory in shapes.items():
+            # READ_CONTROL is all either read needs.
+            handle = kernel32.CreateFileW(
+                str(tmp_path / name), 0x20000, 7, None, 3, 0x02000000, None
+            )
+            assert handle not in (None, C.c_void_p(-1).value), (name, C.get_last_error())
+            opened.append(handle)
+            handles[name] = (handle, is_directory)
+        for name, (handle, is_directory) in handles.items():
+            native._decoded_security.cache_clear()
+            expected, library_bytes = _library_projection(native, handle, is_directory)
+            assert native.security(handle, is_directory) == expected, name
+            # The admission read is unchanged: the library's own bytes.
+            assert native.security(handle, is_directory, with_descriptor=True) == (
+                *expected,
+                library_bytes,
+            ), name
+            buffer = C.create_string_buffer(4096)
+            assert native.advapi.GetKernelObjectSecurity(
+                handle, 5, buffer, 4096, C.byref(files._U32())
+            ), name
+            size = native.advapi.GetSecurityDescriptorLength(buffer)
+            if C.string_at(buffer, size) != library_bytes:
+                differing.append(name)
+            seen[name] = expected
+    finally:
+        for handle in opened:
+            native.kernel.CloseHandle(handle)
+        windows.close(private)
+    # The comparison only tests the difference if some object has one.
+    assert {"home/plain", "home/folder", "shared/child", "shared/sub"} <= set(differing), differing
+    # A public entry the library marked inherited still counts.
+    assert seen["shared/child"] == (1000, 0o644)
+    assert seen["shared/sub"][1] & 0o044
+    # And the shapes are not all one answer.
+    assert seen["home/private"] == (1000, 0o600)
+    assert seen["home/public-read"][1] & 0o044 and not seen["home/public-read"][1] & 0o022
+    assert seen["home/public-write"][1] & 0o022
+    assert seen["home/public-folder"][1] & 0o044
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires actual Windows handles and ACL mutation")
+def test_real_ordinary_read_reports_the_original_error_for_a_refused_handle(tmp_path):
+    native = files._native()
+    with pytest.raises(OSError) as ordinary:
+        native.security(0, False)
+    with pytest.raises(OSError) as library:
+        _library_projection(native, 0, False)
+    assert ordinary.value.winerror == library.value.winerror
 
 
 @pytest.mark.skipif(os.name != "nt", reason="requires actual Windows handles and ACL mutation")

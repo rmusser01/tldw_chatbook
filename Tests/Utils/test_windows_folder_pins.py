@@ -366,6 +366,466 @@ def test_a_repeated_root_is_pinned_once_and_fully_released(windows_files, profil
     os.rename(profile, profile.with_name("moved"))
 
 
+def test_a_walk_beside_or_above_a_pin_starts_at_the_kept_folder(
+    windows_files, profile, tmp_path, monkeypatch
+):
+    # TASK-40608: these walks used to open every folder from the drive root.
+    beside = profile.parent / "beside.txt"
+    above = tmp_path / "above.txt"
+    elsewhere = tmp_path / "other" / "deep" / "file.txt"
+    elsewhere.parent.mkdir(parents=True)
+    for path in (beside, above, elsewhere):
+        path.write_bytes(b"abc")
+    checked = windows_files.WindowsOS()
+    full = {path: checked.stat(path) for path in (beside, above, elsewhere)}
+
+    windows_files.set_pinned_roots([profile])
+    names = _count_opens(monkeypatch, windows_files)
+    kept = {path: checked.stat(path) for path in (beside, above, elsewhere)}
+
+    assert names == ["beside.txt", "above.txt", "other", "deep", "file.txt"]
+    for path in full:
+        assert (kept[path].st_ino, kept[path].st_dev, kept[path].st_size, kept[path].st_mode) == (
+            full[path].st_ino, full[path].st_dev, full[path].st_size, full[path].st_mode,
+        )
+
+
+def test_every_folder_above_a_pin_is_kept_once_and_released_with_it(
+    windows_files, profile, tmp_path, monkeypatch
+):
+    windows_files.set_pinned_roots([profile, profile / "data"])
+    drive, parts = windows_files._split_local(profile)
+    chain = [windows_files._pin_key(drive, parts[:depth]) for depth in range(len(parts) + 1)]
+    # The drive root, every folder down to the first pin, and that pin as the
+    # folder above the second one.
+    assert set(windows_files._ancestors) == set(chain)
+    kept = list(windows_files._ancestors.values())
+    assert all(pin.handle is not None and pin.borrowers == 0 for pin in kept)
+
+    windows_files.release_pinned_roots()
+    assert windows_files._ancestors == {}
+    assert all(pin.handle is None for pin in kept)
+    names = _count_opens(monkeypatch, windows_files)
+    with pytest.raises(FileNotFoundError):
+        windows_files.WindowsOS().stat(profile.parent / "absent.txt")
+    assert len(names) == len(parts) + 1  # the drive root and every folder again
+    monkeypatch.undo()
+    os.rename(profile.parent, profile.parent.with_name("home-moved"))
+
+
+def test_a_change_beside_a_pin_is_seen_at_once_through_the_kept_folder(windows_files, profile):
+    checked = windows_files.WindowsOS()
+    windows_files.set_pinned_roots([profile])
+    beside = profile.parent / "beside.txt"
+    with pytest.raises(FileNotFoundError):
+        checked.stat(beside)
+    beside.write_bytes(b"abc")
+    assert checked.stat(beside).st_size == 3
+    beside.write_bytes(b"longer")
+    assert checked.stat(beside).st_size == 6
+    os.remove(beside)
+    with pytest.raises(FileNotFoundError):
+        checked.stat(beside)
+
+
+def test_a_junction_beside_a_pin_is_still_refused(windows_files, profile, tmp_path):
+    import _winapi
+
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "f.txt").write_bytes(b"x")
+    link = profile.parent / "link"
+    windows_files.set_pinned_roots([profile])
+    _winapi.CreateJunction(str(target), str(link))
+    checked = windows_files.WindowsOS()
+    with pytest.raises(OSError):
+        checked.stat(link)
+    with pytest.raises(OSError):
+        checked.stat(link / "f.txt")
+
+
+def test_a_kept_folder_stays_open_until_the_borrowing_walk_returns_it(windows_files, profile):
+    windows_files.set_pinned_roots([profile])
+    drive, parts = windows_files._split_local(profile.parent)
+    kept = windows_files._ancestors[windows_files._pin_key(drive, parts)]
+    with windows_files._parent(profile.parent / "beside.txt") as (parent, leaf):
+        assert (parent, leaf, kept.borrowers) == (kept.handle, "beside.txt", 1)
+        windows_files.release_pinned_roots()
+        assert windows_files._ancestors == {}
+        assert windows_files._native().info(parent).attributes & windows_files._DIRECTORY
+    assert kept.handle is None
+
+
+def test_the_drive_root_is_never_handed_out_through_its_kept_handle(windows_files, profile):
+    # WindowsOS.open duplicates the root handle it is given: a duplicate of the
+    # kept one would share its directory listing position with every caller.
+    windows_files.set_pinned_roots([profile])
+    drive, _ = windows_files._split_local(profile)
+    kept = windows_files._ancestors[windows_files._pin_key(drive, [])]
+    with windows_files._parent(drive + "\\") as (parent, leaf):
+        assert leaf is None
+        assert parent != kept.handle
+        assert kept.borrowers == 0
+    checked = windows_files.WindowsOS()
+    listings = []
+    for _ in range(2):
+        fd = checked.open(drive + "\\", os.O_RDONLY | checked.O_DIRECTORY)
+        try:
+            listings.append(sorted(checked.listdir(fd)))
+        finally:
+            os.close(fd)
+    assert listings[0] == listings[1] != []
+
+
+def test_a_pin_its_own_path_no_longer_leads_to_keeps_no_folders(
+    windows_files, profile, tmp_path, monkeypatch
+):
+    # A pin opened while a folder of its chain was being moved names a folder
+    # that the walk from the drive root does not reach. Nothing above it may
+    # be kept: those folders are not the ones the pin holds in place.
+    other = tmp_path / "other"
+    other.mkdir()
+    pin_one = windows_files._pin_one
+
+    def pin_of_another_folder(path):
+        key, _ = pin_one(path)
+        windows_files._native().kernel.CloseHandle(_.handle)
+        return key, pin_one(other)[1]
+
+    monkeypatch.setattr(windows_files, "_pin_one", pin_of_another_folder)
+    windows_files.set_pinned_roots([profile])
+    assert len(windows_files.pinned_roots()) == 1
+    assert windows_files._ancestors == {}
+
+
+@pytest.fixture
+def trusted_walk(windows_files, monkeypatch):
+    """``native_files.pinned_directory`` with its memo cleared and its checks recorded."""
+    from tldw_chatbook.Backup_Recovery import native_files
+
+    native_files._pinned_ancestors.clear()
+    checked, unsafe = [], set()
+    fstat = native_files.os.fstat
+
+    def recording_fstat(fd):
+        info = fstat(fd)
+        checked.append(info.st_ino)
+        if info.st_ino in unsafe:
+            return os.stat_result((info.st_mode | 0o022, *info[1:]))
+        return info
+
+    monkeypatch.setattr(native_files.os, "fstat", recording_fstat)
+    yield native_files, checked, unsafe
+    native_files._pinned_ancestors.clear()
+
+
+def _inode(windows_files, path):
+    return windows_files.WindowsOS().stat(path).st_ino
+
+
+def test_the_trusted_folder_walk_starts_at_a_pin_after_one_full_walk(
+    windows_files, profile, trusted_walk, monkeypatch
+):
+    # TASK-40608: the admission folder was walked from the drive root about
+    # 200 times in a Console turn, to a folder just below a held pin.
+    native_files, checked, _ = trusted_walk
+    windows_files.set_pinned_roots([profile])
+    target = profile / "data"
+    chain = [_inode(windows_files, folder) for folder in (*reversed(target.parents), target)]
+    names = _count_opens(monkeypatch, windows_files)
+
+    with native_files.pinned_directory(target) as fd:
+        assert native_files.os.fstat(fd).st_ino == chain[-1]
+    assert checked[: len(chain)] == chain  # every folder from the drive root
+    full_opens = len(names)
+    del checked[:], names[:]
+
+    with native_files.pinned_directory(target) as fd:
+        assert native_files.os.fstat(fd).st_ino == chain[-1]
+    # The pin itself and the folder below it are checked again; nothing above.
+    assert checked[:2] == chain[-2:]
+    assert names == ["data"]
+    assert full_opens > len(target.parts) - 2
+
+    del checked[:]
+    with native_files.pinned_directory(profile) as fd:  # the pin itself
+        assert native_files.os.fstat(fd).st_ino == chain[-2]
+    assert checked[:1] == chain[-2:-1]
+
+
+def test_the_trusted_folder_walk_is_full_after_the_window_and_after_a_release(
+    windows_files, profile, trusted_walk, monkeypatch
+):
+    native_files, checked, _ = trusted_walk
+    windows_files.set_pinned_roots([profile])
+    target = profile / "data"
+    depth = len(target.parts)
+
+    def walk():
+        del checked[:]
+        with native_files.pinned_directory(target):
+            return len(checked)
+
+    assert walk() == depth  # the first walk checks the whole chain
+    assert walk() == 2
+    monkeypatch.setattr(native_files, "_PINNED_ANCESTORS_SECONDS", 0.0)
+    assert walk() == depth
+    monkeypatch.setattr(native_files, "_PINNED_ANCESTORS_SECONDS", 3600.0)
+    assert walk() == 2  # the full walk made after the window ended was recorded
+
+    windows_files.release_pinned_roots()
+    assert walk() == depth  # no pin: every folder, and nothing is recorded
+    assert walk() == depth
+    windows_files.restore_pinned_roots()
+    assert walk() == depth  # a new pin generation starts with a full walk
+    assert walk() == 2
+
+
+def test_an_unsafe_folder_at_or_below_the_pin_is_refused_on_every_walk(
+    windows_files, profile, trusted_walk, monkeypatch
+):
+    native_files, _, unsafe = trusted_walk
+    monkeypatch.setattr(native_files, "_PINNED_ANCESTORS_SECONDS", 3600.0)
+    windows_files.set_pinned_roots([profile])
+    target = profile / "data"
+    with native_files.pinned_directory(target):
+        pass
+    for folder in (target, profile):
+        unsafe.add(_inode(windows_files, folder))
+        with pytest.raises(OSError, match="unsafe_directory"):
+            with native_files.pinned_directory(target):
+                pass
+        unsafe.clear()
+    with native_files.pinned_directory(target):
+        pass
+
+
+def test_an_unsafe_folder_above_the_pin_is_refused_when_the_window_ends(
+    windows_files, profile, trusted_walk, monkeypatch
+):
+    # Owner decision O3: a permission change above a pin is seen within one
+    # second, not at once. Its identity cannot change while the pin is held.
+    native_files, _, unsafe = trusted_walk
+    monkeypatch.setattr(native_files, "_PINNED_ANCESTORS_SECONDS", 3600.0)
+    windows_files.set_pinned_roots([profile])
+    target = profile / "data"
+    with native_files.pinned_directory(target):
+        pass
+    unsafe.add(_inode(windows_files, profile.parent))
+    with native_files.pinned_directory(target):
+        pass
+    monkeypatch.setattr(native_files, "_PINNED_ANCESTORS_SECONDS", 0.0)
+    with pytest.raises(OSError, match="unsafe_directory"):
+        with native_files.pinned_directory(target):
+            pass
+
+
+def test_a_refused_full_walk_records_nothing(windows_files, profile, trusted_walk, monkeypatch):
+    native_files, checked, unsafe = trusted_walk
+    monkeypatch.setattr(native_files, "_PINNED_ANCESTORS_SECONDS", 3600.0)
+    windows_files.set_pinned_roots([profile])
+    target = profile / "data"
+    unsafe.add(_inode(windows_files, profile.parent))
+    with pytest.raises(OSError, match="unsafe_directory"):
+        with native_files.pinned_directory(target):
+            pass
+    unsafe.clear()
+    del checked[:]
+    with native_files.pinned_directory(target):
+        pass
+    assert len(checked) == len(target.parts)  # still a full walk
+
+
+def test_a_visitor_is_shown_the_whole_chain_on_every_walk(
+    windows_files, profile, trusted_walk, monkeypatch
+):
+    native_files, _, _ = trusted_walk
+    monkeypatch.setattr(native_files, "_PINNED_ANCESTORS_SECONDS", 3600.0)
+    windows_files.set_pinned_roots([profile])
+    target = profile / "data"
+    with native_files.pinned_directory(target):
+        pass
+    for _ in range(2):
+        visited = []
+        with native_files.pinned_directory(target, _visit=visited.append):
+            pass
+        assert len(visited) == len(target.parts)
+
+
+def test_a_walk_beside_the_pin_is_always_full(windows_files, profile, trusted_walk, monkeypatch):
+    native_files, checked, _ = trusted_walk
+    monkeypatch.setattr(native_files, "_PINNED_ANCESTORS_SECONDS", 3600.0)
+    windows_files.set_pinned_roots([profile])
+    beside = profile.parent / "beside"
+    beside.mkdir()
+    with native_files.pinned_directory(profile / "data"):
+        pass
+    for _ in range(2):
+        del checked[:]
+        with native_files.pinned_directory(beside):
+            pass
+        assert len(checked) == len(beside.parts)
+
+
+@pytest.fixture
+def verified_walk(trusted_walk):
+    """``private_paths.verify_trusted_directory`` with its memo cleared; checks recorded."""
+    from tldw_chatbook.Utils import private_paths
+
+    native_files, checked, unsafe = trusted_walk
+    assert private_paths.os is native_files.os  # one recorder serves both walks
+    private_paths._pinned_directory_walks.clear()
+
+    def verify(path):
+        del checked[:]
+        result = private_paths.verify_trusted_directory(path, allow_shared_sticky=False)
+        assert result.status is private_paths.PrivatePathStatus.TRUSTED_DIRECTORY
+        return list(dict.fromkeys(checked))  # each folder checked, in order
+
+    yield private_paths, verify, unsafe
+    private_paths._pinned_directory_walks.clear()
+
+
+def test_the_directory_verification_starts_beside_a_pin_after_one_full_walk(
+    windows_files, profile, verified_walk, monkeypatch
+):
+    # TASK-40608: each SQLite connect verified its folder with a walk of every
+    # folder from the drive root, 23 times in the first Console turn.
+    _, verify, _ = verified_walk
+    windows_files.set_pinned_roots([profile])
+    target = profile / "data"
+    chain = [_inode(windows_files, folder) for folder in (*reversed(target.parents), target)]
+
+    assert verify(target) == chain
+    names = _count_opens(monkeypatch, windows_files)
+    # The folder holding the pin, the pin and the folder below it are opened
+    # by name and checked again; nothing above them is.
+    assert verify(target) == chain[-3:]
+    assert names == ["home", "profile", "profile", "data", "data"]
+    del names[:]
+    assert verify(profile) == chain[-3:-1]  # the pin itself is the folder asked about
+    assert names == ["home", "profile", "profile"]
+
+
+def test_the_directory_verification_is_full_after_the_window_and_after_a_release(
+    windows_files, profile, verified_walk, monkeypatch
+):
+    private_paths, verify, _ = verified_walk
+    windows_files.set_pinned_roots([profile])
+    target = profile / "data"
+    depth = len(target.parts)
+
+    assert len(verify(target)) == depth
+    assert len(verify(target)) == 3
+    monkeypatch.setattr(private_paths, "_PINNED_ANCESTORS_SECONDS", 0.0)
+    assert len(verify(target)) == depth
+    monkeypatch.setattr(private_paths, "_PINNED_ANCESTORS_SECONDS", 3600.0)
+    assert len(verify(target)) == 3
+
+    windows_files.release_pinned_roots()
+    assert len(verify(target)) == depth  # no pin: every folder, nothing recorded
+    assert len(verify(target)) == depth
+    windows_files.restore_pinned_roots()
+    assert len(verify(target)) == depth  # a new pin generation starts in full
+    assert len(verify(target)) == 3
+
+
+def test_the_directory_verification_refuses_an_unsafe_folder_from_the_pin_holder_down(
+    windows_files, profile, verified_walk, monkeypatch
+):
+    private_paths, verify, unsafe = verified_walk
+    monkeypatch.setattr(private_paths, "_PINNED_ANCESTORS_SECONDS", 3600.0)
+    windows_files.set_pinned_roots([profile])
+    target = profile / "data"
+    verify(target)
+    for folder in (target, profile, profile.parent):
+        unsafe.add(_inode(windows_files, folder))
+        with pytest.raises(private_paths.PrivatePathError):
+            verify(target)
+        unsafe.clear()
+    assert len(verify(target)) == 3
+
+
+def test_the_directory_verification_refuses_an_unsafe_folder_above_when_the_window_ends(
+    windows_files, profile, verified_walk, tmp_path, monkeypatch
+):
+    # Owner decision O3, as for the other checked walks.
+    private_paths, verify, unsafe = verified_walk
+    monkeypatch.setattr(private_paths, "_PINNED_ANCESTORS_SECONDS", 3600.0)
+    windows_files.set_pinned_roots([profile])
+    target = profile / "data"
+    verify(target)
+    unsafe.add(_inode(windows_files, tmp_path))
+    assert len(verify(target)) == 3
+    monkeypatch.setattr(private_paths, "_PINNED_ANCESTORS_SECONDS", 0.0)
+    with pytest.raises(private_paths.PrivatePathError):
+        verify(target)
+
+
+def test_a_refused_directory_verification_records_nothing(
+    windows_files, profile, verified_walk, tmp_path, monkeypatch
+):
+    private_paths, verify, unsafe = verified_walk
+    monkeypatch.setattr(private_paths, "_PINNED_ANCESTORS_SECONDS", 3600.0)
+    windows_files.set_pinned_roots([profile])
+    target = profile / "data"
+    unsafe.add(_inode(windows_files, tmp_path))
+    with pytest.raises(private_paths.PrivatePathError):
+        verify(target)
+    unsafe.clear()
+    assert len(verify(target)) == len(target.parts)  # still a full walk
+    assert len(verify(target)) == 3
+
+
+def test_a_directory_verification_with_its_own_open_is_always_full(
+    windows_files, profile, verified_walk, monkeypatch
+):
+    private_paths, verify, _ = verified_walk
+    monkeypatch.setattr(private_paths, "_PINNED_ANCESTORS_SECONDS", 3600.0)
+    windows_files.set_pinned_roots([profile])
+    target = profile / "data"
+    verify(target)
+    opened = []
+
+    def recording_open(*args, **kwargs):
+        opened.append(args[0])
+        return private_paths._native_open(*args, **kwargs)
+
+    for _ in range(2):
+        del opened[:]
+        private_paths.verify_trusted_directory(
+            target, allow_shared_sticky=False, _open=recording_open
+        )
+        assert len(opened) == len(target.parts)
+
+
+def test_a_checked_stat_reads_the_handle_information_once(windows_files, profile, monkeypatch):
+    # TASK-40608: the open and the stat each read it, 3,500 times a turn.
+    target = profile / "data" / "notes.db"
+    checked = windows_files.WindowsOS()
+    windows_files.set_pinned_roots([profile])
+    plain = checked.stat(target)
+    reads = []
+    info = windows_files._Native.info
+
+    def counting(self, handle):
+        reads.append(handle)
+        return info(self, handle)
+
+    monkeypatch.setattr(windows_files._Native, "info", counting)
+    again = checked.stat(target)
+    # One read for the folder walked through and one for the file itself.
+    assert len(reads) == 2
+    assert again == plain
+    del reads[:]
+    fd = os.open(target, os.O_RDONLY)
+    try:
+        assert checked.fstat(fd).st_ino == plain.st_ino
+    finally:
+        os.close(fd)
+    assert len(reads) == 1  # a stat of an open descriptor still reads it
+
+
 @pytest.fixture(scope="module")
 def lifecycle_mixin():
     # Import the app before per-test fixtures redirect the profile, as test

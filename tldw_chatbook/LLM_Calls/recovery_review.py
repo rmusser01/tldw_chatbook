@@ -96,7 +96,7 @@ def unqualified(function):
             operation, owned = _ordinary_operation()
             iterator = function(*args, **kwargs)
             try:
-                with _using(operation):
+                with _using(operation, just_read=True):
                     async for item in iterator:
                         yield item
             finally:
@@ -112,7 +112,7 @@ def unqualified(function):
         async def asynchronous(*args, **kwargs):
             operation, owned = _ordinary_operation()
             try:
-                with _using(operation):
+                with _using(operation, just_read=True):
                     return await function(*args, **kwargs)
             finally:
                 if owned:
@@ -125,7 +125,7 @@ def unqualified(function):
         operation, owned = _ordinary_operation()
         transferred = False
         try:
-            with _using(operation):
+            with _using(operation, just_read=True):
                 result = function(*args, **kwargs)
             if isinstance(result, Iterator) and owned:
                 operation.own(result)
@@ -468,10 +468,10 @@ class _Operation:
             records.append(matches[0])
         return tuple(records)
 
-    def check(self, *, fresh=True):
+    def check(self, *, fresh=True, history=True):
         if self.closed or self.path != bootstrap.effective_config_path():
             raise ProviderReconnectRequired()
-        if _history(self.path, self.lease, fresh=fresh) != self.history:
+        if history and _history(self.path, self.lease, fresh=fresh) != self.history:
             raise ProviderReconnectRequired()
 
     def check_request(self, url, key):
@@ -525,8 +525,22 @@ _current = ContextVar("openai_connection", default=None)
 
 
 @contextmanager
-def _using(operation, *, fresh=True):
-    operation.check(fresh=fresh)
+def _using(operation, *, fresh=True, just_read=False):
+    """Make ``operation`` the current one for this task after checking it.
+
+    ``just_read`` is for the three ``unqualified`` wrappers only: their
+    ``_ordinary_operation()`` returned this operation on the line before and
+    read the history there, with no window (it made the operation, or checked
+    the active one). Reading it again here asked the same question of the same
+    moment, and each such read observes every evidence input: half of the
+    fresh reads of a provider request (TASK-40608, counted 2026-11-23, removed
+    2026-11-26). The operation's own state is still checked, and
+    ``check_request`` still reads the history when the request is sent.
+    """
+    if just_read:
+        operation.check(fresh=fresh, history=False)
+    else:
+        operation.check(fresh=fresh)
     token = _current.set((operation, _identity()))
     try:
         yield operation

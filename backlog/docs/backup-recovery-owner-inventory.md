@@ -983,6 +983,7 @@ Admission owns private control-root registry records and persistent lock files; 
 | Module | Qualified symbol | Call | Count | Classification | Cohort |
 | --- | --- | --- | --- | --- | --- |
 | tldw_chatbook/Backup_Recovery/native_files.py | _flush_private_tree | open | 1 | generic_boundary | backup_native_storage |
+| tldw_chatbook/Backup_Recovery/native_files.py | _open_at_pin | open | 1 | generic_boundary | backup_native_storage |
 | tldw_chatbook/Backup_Recovery/native_files.py | create_private_directory | mkdir | 1 | generic_boundary | backup_native_storage |
 | tldw_chatbook/Backup_Recovery/native_files.py | create_private_file | open | 1 | generic_boundary | backup_native_storage |
 | tldw_chatbook/Backup_Recovery/native_files.py | pinned_directory | open | 2 | generic_boundary | backup_native_storage |
