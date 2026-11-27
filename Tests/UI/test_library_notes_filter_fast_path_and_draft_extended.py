@@ -37,6 +37,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.library_note_links_support import _notes_tree_publication
 from Tests.UI.library_quit_guard_support import (
     SIZE,
     _armed_editor,
@@ -484,25 +485,31 @@ async def test_a_pane_key_during_a_pending_down_keeps_the_users_focus(
             f"{screen._library_notes_filter_row_handoff!r})",
         )
         await pilot.pause(0.3)
+        prior_epoch = screen._notes_state.tree_topology_epoch
         host.pop_screen()
-        await _wait(pilot, lambda: host.screen is screen, "the return from the dialog")
-        await pilot.pause(0.5)
+        # Resume reloads the tree, source counts and trash. The old filtered
+        # row can still be attached while these reads prepare its replacement.
+        await _wait(
+            pilot,
+            lambda: host.screen is screen
+            and screen._notes_state.tree_topology_epoch > prior_epoch
+            and not any(
+                worker.node is screen
+                and worker.group in {"library_source_snapshot", "library_notes_trash"}
+                for worker in host.workers
+            )
+            and screen._library_entry_reconcile_pending is None
+            and _notes_tree_publication(screen) is not None
+            and _row_titled(screen, THESIS) is not None,
+            "the resumed Notes list and its published Thesis row",
+        )
         focused = screen.focused
         assert focused is None or not focused.has_class("library-notes-row"), (
             _focused_id(screen)
         )
 
         # R2-3: with a note open, F6 to its Save -- a control with a portable
-        # role -- and after the landing focus is on that same control. The
-        # return from the dialog reloads the tree, so wait for the Thesis row
-        # to be mounted again before pressing it (a slow runner can be
-        # mid-redraw here).
-        await _wait(
-            pilot,
-            lambda: (row := _row_titled(screen, THESIS)) is not None
-            and row.is_attached,
-            "the tree to repaint the Thesis row after the dialog",
-        )
+        # role -- and after the landing focus is on that same control.
         _row_titled(screen, THESIS).press()
         await _armed_editor(screen, pilot, seeded.thesis_id)
         held = await _held_down("index")
