@@ -856,6 +856,81 @@ def _plant_repo(tmp_path: Path) -> Path:
     return root
 
 
+def test_a_write_resolves_the_deny_set_once_and_a_read_once(tmp_path, monkeypatch):
+    """A write ran two deny checks, and each resolved the whole set for itself.
+
+    TASK-40608: one approved edit resolved it 19 times (31 path resolutions
+    each). A caller's own context is still used as given, and every call
+    without one still resolves a fresh set.
+    """
+    from tldw_chatbook.Tools import local_tool_impls
+    from tldw_chatbook.Utils import sensitive_paths
+
+    root = tmp_path / "workspace"
+    (root / "src").mkdir(parents=True)
+    resolved = []
+    resolve = sensitive_paths.resolve_sensitive_context
+
+    def counting():
+        resolved.append(1)
+        return resolve()
+
+    # Both modules call it by name: the tool module for this call's own set,
+    # the deny checks for a check that was handed none.
+    monkeypatch.setattr(sensitive_paths, "resolve_sensitive_context", counting)
+    monkeypatch.setattr(local_tool_impls, "resolve_sensitive_context", counting)
+
+    target = local_tool_impls.resolve_workspace_path("src/new.py", root, intent="write")
+    assert target == (root / "src" / "new.py").resolve()
+    assert len(resolved) == 1
+    del resolved[:]
+    local_tool_impls.resolve_workspace_path("src/new.py", root, intent="write")
+    assert len(resolved) == 1  # fresh again for the next call
+
+    del resolved[:]
+    local_tool_impls.resolve_workspace_path("src/new.py", root, intent="read")
+    assert len(resolved) == 1
+
+    del resolved[:]
+    shared = resolve()
+    local_tool_impls.resolve_workspace_path("src/new.py", root, intent="write", context=shared)
+    assert resolved == []
+
+
+def test_a_write_under_one_resolved_set_still_refuses_both_ways(tmp_path, monkeypatch):
+    from tldw_chatbook.Tools import local_tool_impls
+    from tldw_chatbook.Utils import sensitive_paths
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    seen = []
+    sensitive = sensitive_paths.is_sensitive_path
+    chain = sensitive_paths.refuses_new_directory_chain
+
+    def record(name, original, answer):
+        def check(path, context=None):
+            seen.append((name, context))
+            return answer if answer is not None else original(path, context=context)
+
+        return check
+
+    monkeypatch.setattr(local_tool_impls, "is_sensitive_path", record("file", sensitive, None))
+    monkeypatch.setattr(
+        local_tool_impls, "refuses_new_directory_chain", record("chain", chain, True)
+    )
+    with pytest.raises(local_tool_impls.LocalToolError, match="would collide with a protected path"):
+        local_tool_impls.resolve_workspace_path("a/b.py", root, intent="write")
+    # Both checks ran, in order, with the one set this call resolved.
+    assert [name for name, _ in seen] == ["file", "chain"]
+    assert seen[0][1] is not None and seen[0][1] is seen[1][1]
+
+    del seen[:]
+    monkeypatch.setattr(local_tool_impls, "is_sensitive_path", record("file", sensitive, True))
+    with pytest.raises(local_tool_impls.LocalToolError, match="is a protected path"):
+        local_tool_impls.resolve_workspace_path("a/b.py", root, intent="write")
+    assert [name for name, _ in seen] == ["file"]
+
+
 def test_fs_write_refuses_rewriting_git_config(tmp_path):
     root = _plant_repo(tmp_path)
     before = (root / ".git" / "config").read_text()

@@ -230,6 +230,11 @@ def resolve_workspace_path(
         ) from exc
 
     verb = _INTENT_VERBS.get(intent, "accessed")
+    if context is None and intent == "write":
+        # A write runs both deny checks below. Each resolved the same deny set
+        # for itself, one right after the other (31 path resolutions apiece;
+        # TASK-40608, counted 2026-11-26): one fresh set now serves this call.
+        context = resolve_sensitive_context()
     if is_sensitive_path(resolved, context=context):
         raise LocalToolError(
             f"Refused: '{path}' is a protected path and cannot be {verb}"

@@ -7,6 +7,7 @@ escape allowed directories.
 
 import os
 import stat
+import sys
 import time
 import unicodedata
 from pathlib import Path
@@ -15,20 +16,26 @@ from typing import Optional, Sequence, Union
 # No module-scope loguru import: this module sits inside the pinned
 # workspace worker's stdlib-only import closure (Phase 0c), so merely
 # importing it must not pull loguru. Logging happens only on actual
-# validation-failure paths, which import it lazily below — the same rule
-# the telemetry wrappers directly underneath already follow.
+# validation-failure paths, which fetch the logger where they write
+# (``_logging_logger()``), never at a validator's first line: a successful
+# validation in a fresh process must not load loguru either.
 
 
 # Telemetry belongs to actual validation calls; pure recovery path parsing must
 # not bootstrap config, optional engines or persistent metrics during discovery.
 #
-# The lazy ``..Metrics`` import is additionally guarded with an ImportError
-# fallback (Phase 1d): this module sits inside the pinned worker's closure,
-# and Task 8 concatenates it into the remote worker bundle that runs on a
-# bare remote interpreter with no ``tldw_chatbook`` package. There the
-# relative import raises ImportError, and telemetry degrades to a no-op
-# instead of failing every validation call. In the parent application the
-# import always succeeds, so parent behaviour is unchanged.
+# The metrics module is looked up, never imported from here (TASK-40608,
+# measured 2026-11-26). The application has loaded it long before its first
+# validation, so it records as before. Two kinds of process have not, and
+# record nothing: the remote worker bundle (Phase 1d: a bare interpreter with
+# no ``tldw_chatbook`` package) and the local one-shot tool worker. That
+# worker used to import the module on its first validation, with psutil and
+# loguru behind it: 106 modules, most of the worker's time on every local tool
+# call (a file read: about 10 ms of work behind roughly 90 ms of imports), for
+# a metric nothing reads, because the process serves one request and exits.
+_METRICS_MODULE = "tldw_chatbook.Metrics.metrics_logger"
+
+
 def log_counter(
     name: str, value: int = 1, labels: Optional[dict[str, str]] = None
 ) -> None:
@@ -39,11 +46,9 @@ def log_counter(
         value: Amount to add.
         labels: Optional metric labels.
     """
-    try:
-        from ..Metrics.metrics_logger import log_counter as emit
-    except ImportError:
-        return
-    emit(name, value, labels)
+    emit = getattr(sys.modules.get(_METRICS_MODULE), "log_counter", None)
+    if emit is not None:
+        emit(name, value, labels)
 
 
 def log_histogram(
@@ -56,11 +61,9 @@ def log_histogram(
         value: Observed value.
         labels: Optional metric labels.
     """
-    try:
-        from ..Metrics.metrics_logger import log_histogram as emit
-    except ImportError:
-        return
-    emit(name, value, labels)
+    emit = getattr(sys.modules.get(_METRICS_MODULE), "log_histogram", None)
+    if emit is not None:
+        emit(name, value, labels)
 
 
 class _NoOpLogger:
@@ -90,8 +93,8 @@ class _NoOpLogger:
 def _logging_logger():
     """Return loguru's logger, or a silent no-op when loguru is absent.
 
-    Same laziness rule as ``log_counter`` above: the import happens per
-    call, never at module scope, and the ImportError fallback exists for
+    The import happens per call, never at module scope, and callers call
+    this where they write a message. The ImportError fallback exists for
     the stdlib-only remote worker bundle (Phase 1d). In the parent, where
     loguru is an installed dependency, the return value is unchanged.
     """
@@ -247,8 +250,6 @@ def validate_path(
     Raises:
         ValueError: If the path is invalid or attempts directory traversal
     """
-    logger = _logging_logger()
-
     start_time = time.time()
     log_counter("path_validation_validate_path_attempt")
     redacted_failure: str | None = None
@@ -269,9 +270,9 @@ def validate_path(
             full_path.relative_to(base_directory)
         except ValueError:
             if redact_paths:
-                logger.warning("Path traversal attempt detected.")
+                _logging_logger().warning("Path traversal attempt detected.")
             else:
-                logger.warning(
+                _logging_logger().warning(
                     f"Path traversal attempt detected: {user_path} -> {full_path}"
                 )
             log_counter(
@@ -293,9 +294,9 @@ def validate_path(
             part.startswith(".") for part in relative_parts if part != "."
         ):
             if redact_paths:
-                logger.warning("Hidden file/directory access attempt detected.")
+                _logging_logger().warning("Hidden file/directory access attempt detected.")
             else:
-                logger.warning(f"Hidden file/directory access attempt: {full_path}")
+                _logging_logger().warning(f"Hidden file/directory access attempt: {full_path}")
             log_counter(
                 "path_validation_security_violation",
                 labels={"type": "hidden_file_access"},
@@ -318,9 +319,9 @@ def validate_path(
         # tools can be rooted at a dotted directory.
         if not allow_hidden and base_directory.name.startswith("."):
             if redact_paths:
-                logger.warning("Hidden base directory rejected.")
+                _logging_logger().warning("Hidden base directory rejected.")
             else:
-                logger.warning(f"Hidden base directory rejected: {base_directory}")
+                _logging_logger().warning(f"Hidden base directory rejected: {base_directory}")
             log_counter(
                 "path_validation_security_violation",
                 labels={"type": "hidden_file_access"},
@@ -354,12 +355,12 @@ def validate_path(
         )
 
         if redact_paths:
-            logger.error(
+            _logging_logger().error(
                 "Path validation failed (category={}).",
                 type(e).__name__,
             )
         else:
-            logger.error(f"Path validation error for '{user_path}': {e}")
+            _logging_logger().error(f"Path validation error for '{user_path}': {e}")
         if redact_paths:
             raise ValueError(redacted_failure or "Invalid path") from None
         if isinstance(e, ValueError):
@@ -551,8 +552,6 @@ def validate_path_simple(
     Raises:
         ValueError: If the path contains security risks
     """
-    logger = _logging_logger()
-
     start_time = time.time()
     log_counter("path_validation_validate_path_simple_attempt")
 
@@ -612,7 +611,7 @@ def validate_path_simple(
                 resolved = path.resolve()
                 # Check if resolution changed the path significantly (possible symlink attack)
                 if path.is_absolute() and resolved != path:
-                    logger.warning("Path resolution changed during validation")
+                    _logging_logger().warning("Path resolution changed during validation")
             elif require_exists:
                 raise ValueError("Path does not exist")
         elif require_exists:
