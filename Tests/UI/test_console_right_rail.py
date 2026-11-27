@@ -599,6 +599,9 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
         def initial_geometry_is_stable() -> bool:
             return (
                 swap_reconcile_settled(1)
+                # The rail counts requests from every mounted owner. Finish
+                # startup work before measuring the second swap's one pass.
+                and not screen.console_pending_startup_work()
                 and not bounded._reconcile_scheduled
                 and not rail._outer_reconcile_scheduled
                 and bounded.desired_content_lines == before_demand
@@ -1244,16 +1247,31 @@ async def test_more_toggle_disappearance_recovers_to_next_inspector_boundary(
             ),
         )
 
-        rows = tuple(
-            row
-            for row in inspector.state.rows
-            if row.label not in {"Tools", "Approvals", "Artifacts"}
-        ) + (
+        promoted_rows = (
             ConsoleDisplayRow("Tools", "1 ready"),
             ConsoleDisplayRow("Approvals", "1 pending", status="blocked"),
             ConsoleDisplayRow("Artifacts", "Chatbook available"),
         )
-        inspector.sync_state(replace(inspector.state, rows=rows))
+
+        def promote_groups(state: ConsoleInspectorState) -> ConsoleInspectorState:
+            rows = tuple(
+                row
+                for row in state.rows
+                if row.label not in {"Tools", "Approvals", "Artifacts"}
+            )
+            return replace(state, rows=rows + promoted_rows)
+
+        # A native control-bar refresh can publish between the synthetic
+        # promotion and its recompose. Project the same three rows there too.
+        build_state = screen._build_console_inspector_state
+
+        def build_promoted_state(pending_launch):
+            return promote_groups(build_state(pending_launch))
+
+        monkeypatch.setattr(
+            screen, "_build_console_inspector_state", build_promoted_state
+        )
+        inspector.sync_state(promote_groups(inspector.state))
         for _ in range(4):
             await pilot.pause()
 

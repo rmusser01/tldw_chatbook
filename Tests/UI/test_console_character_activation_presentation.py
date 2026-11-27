@@ -172,9 +172,9 @@ async def test_prepared_character_switcher_yields_to_due_timer_before_dismissal(
         preparing = None
         observed = []
 
-        async def open_saved(conversation_id):
+        async def open_saved(conversation_id, **kwargs):
             nonlocal preparing
-            opened = await open_conversation(conversation_id)
+            opened = await open_conversation(conversation_id, **kwargs)
             if opened:
                 preparing = asyncio.current_task()
             return opened

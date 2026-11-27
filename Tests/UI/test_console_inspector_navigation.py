@@ -1692,20 +1692,39 @@ async def test_structural_run_recompose_restores_same_stable_action_id():
 
 
 @pytest.mark.asyncio
-async def test_structural_control_and_boundary_removal_recovers_without_stale_reentry():
+async def test_structural_control_and_boundary_removal_recovers_without_stale_reentry(
+    monkeypatch,
+):
     async with make_console_pilot(size=(160, 45)) as pilot:
         rail = await _open_inspector(pilot)
+        screen = pilot.app.screen
         inspector = rail.query_one("#console-run-inspector-state", ConsoleRunInspector)
         first = ConsoleInspectorAction("recompose-action-first", "First", True)
         middle = ConsoleInspectorAction("recompose-action-middle", "Middle", True)
         inserted = ConsoleInspectorAction("recompose-action-inserted", "Inserted", True)
         last = ConsoleInspectorAction("recompose-action-last", "Last", True)
-        initial_state = replace(
-            inspector.state,
-            dictionary_rows=(),
-            dictionary_actions=(first, middle, last),
+        dictionary_actions = ()
+        build_state = screen._build_console_inspector_state
+
+        def project_dictionary_state(state):
+            return replace(
+                state, dictionary_rows=(), dictionary_actions=dictionary_actions
+            )
+
+        def build_dictionary_state(pending_launch):
+            return project_dictionary_state(build_state(pending_launch))
+
+        def publish_dictionary_actions(*actions):
+            nonlocal dictionary_actions
+            dictionary_actions = actions
+            inspector.sync_state(project_dictionary_state(inspector.state))
+
+        # Startup can publish while the fixture moves through each phase.
+        # Keep only the dictionary projection consistent on both paths.
+        monkeypatch.setattr(
+            screen, "_build_console_inspector_state", build_dictionary_state
         )
-        inspector.sync_state(initial_state)
+        publish_dictionary_actions(first, middle, last)
         await _wait_for_right_rail_condition(
             pilot,
             lambda: bool(list(rail.query("#recompose-action-middle"))),
@@ -1722,9 +1741,7 @@ async def test_structural_control_and_boundary_removal_recovers_without_stale_re
             description="middle structural recovery control focused",
         )
 
-        inspector.sync_state(
-            replace(initial_state, dictionary_actions=(first, inserted, last))
-        )
+        publish_dictionary_actions(first, inserted, last)
         await _wait_for_right_rail_condition(
             pilot,
             lambda: (
@@ -1744,9 +1761,7 @@ async def test_structural_control_and_boundary_removal_recovers_without_stale_re
         assert pilot.app.focused is not current_last
         _assert_recovery_references_are_current(rail)
 
-        inspector.sync_state(
-            replace(initial_state, dictionary_actions=(), dictionary_rows=())
-        )
+        publish_dictionary_actions()
         await _wait_for_right_rail_condition(
             pilot,
             lambda: not list(rail.query("#console-bounded-section-chat-dictionaries")),

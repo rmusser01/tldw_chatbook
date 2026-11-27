@@ -21,6 +21,10 @@ from Tests.UI.test_console_workbench_contract import (
 )
 from Tests.UI.test_library_inspection_admission import library  # noqa: F401
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.UI.Console_Modules.view_workers import (
+    capture_console_view_workers,
+    drain_console_view_workers,
+)
 from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
     ConsoleSessionSwitcherModal,
 )
@@ -213,6 +217,10 @@ async def test_cancelled_rename_settles_committed_title_before_releasing_worker(
                 )
         finally:
             owner.chachanotes_db = db
+            # The mounted harness owns these workers. Join them before
+            # Textual shuts it down and the fixture retires AgentRuns.
+            chat._console_chat_tearing_down = True
+            await drain_console_view_workers(capture_console_view_workers(host))
 
 
 @pytest.mark.asyncio
