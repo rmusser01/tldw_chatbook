@@ -33,6 +33,8 @@ The Inspect rail describes the *conversation* (run state, sources, settings) but
 
 ## Layout / information architecture
 
+> **Later ruling (2026-11-25, TASK-41959):** the owner moved the Agents section below the Sources tray, Library search and Scope row, so the tray follows Tasks directly. The sketch below is the original v1 order.
+
 Top-to-bottom inside the existing 34-column rail:
 
 ```

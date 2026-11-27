@@ -34,11 +34,11 @@ Where this page's controls live:
   to its heading and the **Run** line so the body below keeps room for a
   whole section — see [Sessions, tabs & workspaces](sessions-tabs-workspaces.md)),
   then the scrolling body: the
-  **Environment**, **Tasks**, and **Agents** sections (see [The Environment
+  **Environment** and **Tasks** sections (see [The Environment
   panel](#the-environment-panel-environment-tasks-agents) below), the
   "Sources — next send" tray, the Library search controls, the
-  retrieval-scope row, the "Prefill" rows when one is armed, the
-  run/readiness groups, the "Selected turn" block, "Chat settings", the
+  retrieval-scope row, the **Agents** section, the "Prefill" rows when one
+  is armed, the run/readiness groups, the "Selected turn" block, "Chat settings", the
   "Live work sources" card, and the "Chat Dictionaries" / "World Books"
   blocks at the bottom. Press **Alt+I**
   to open the rail and put the caret on the send summary; press it again to
@@ -392,8 +392,11 @@ remain compact rows; they do not expand into separate 20-line sections.
 
 The top of the Inspect rail answers the questions you would otherwise flip
 to a terminal or GitHub for: *what has changed, is CI green, which task is
-this, what are my sub-agents doing?* Three collapsible sections sit above
-the "Sources — next send" tray:
+this, what are my sub-agents doing?* Three collapsible sections answer
+them. **Environment** and **Tasks** sit above the "Sources — next send"
+tray. **Agents** sits below the tray, its Library search controls and the
+Scope row, just above the run groups, so the sources you act on before
+sending stay at the top:
 
 **Environment** — the git working tree behind the conversation. It reports
 on the **active workspace's change-review root** (the same tree its **Review in
@@ -455,7 +458,16 @@ list itself moved. Its rows and actions (including per-row cancel) are
 unchanged. Because this rail defaults closed, the rail now opens itself when
 a fleet starts producing rows — but only at 150 columns or wider, and only
 until you close it: dismissing it once keeps it closed for the rest of that
-busy window.
+busy window. Whenever the Inspector opens itself while sub-agents are
+running — this auto-open, or when you close the Context rail in a window too
+narrow for both rails — it scrolls down to the **Agents** section once, right
+after it opens. If the Environment panel's results push Agents back out of
+view in the next 15 seconds or so (pull-request details can take that long
+to arrive), it scrolls there again, at most twice. Refreshes that leave
+Agents in view never scroll or count toward that limit, and nothing scrolls
+after that window. It never does so after you scroll, click, focus or expand
+anything in the rail, the Sources list included. A rail you open yourself
+keeps its scroll position.
 
 **Refreshing.** The panel does no work at all while the rail is closed —
 opening it is what triggers the first fetch. While open it re-reads the

@@ -1370,6 +1370,19 @@ EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
             "ConsoleLeftRail",
             "_recover_pending_focus",
         ),
+        # 2026-11-27, TASK-41959: the fleet-section reveal re-checks on a 20 ms
+        # timer while paints are held (`Screen._on_idle` runs after-refresh
+        # callbacks at once under a hold, so `call_after_refresh` spun). It
+        # stops at FLEET_REVEAL_PAINT_HOLD_CAP_SECONDS of wall-clock time.
+        # Checked with census(): it reaches `_fleet_reveal_current`, `arm`,
+        # `_paints_held`, `layout_settling`, `inner_scrolled_since` and
+        # `scroll_visible`, and no `.update(`.
+        (
+            "rearming-set_timer",
+            "tldw_chatbook/UI/Console_Modules/agent.py",
+            "ConsoleAgentController",
+            "run",
+        ),
         # 2026-11-23, TASK-42422: the Library list-entry window's close
         # re-arms one 50 ms timer while the Notes filter it would land on is
         # being repainted. It stops after LIBRARY_LIST_ENTRY_FOCUS_EXPIRY_RETRIES

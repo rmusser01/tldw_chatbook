@@ -7945,6 +7945,7 @@ class ChatScreen(BaseAppScreen):
                 row_id,
                 previous_row_ids,
             )
+        self._agent.replay_fleet_reveal(environment_section, tasks_section)
 
     def _console_environment_focused_row_in_section(
         self, section_id: str
@@ -8407,6 +8408,7 @@ class ChatScreen(BaseAppScreen):
             section_id: ``"environment"`` or ``"tasks"``.
             row_id: The activated row's stable id.
         """
+        self._agent.cancel_fleet_reveal()  # TASK-41959: the rail is the user's now
         from tldw_chatbook.Chat.console_environment_state import (
             ENV_ROW_CHECKS_FIX,
             ENV_ROW_COMMIT_PUSH,
@@ -12355,7 +12357,9 @@ class ChatScreen(BaseAppScreen):
         ):
             return
         self._console_fleet_section_auto_opened = True
-        fleet_section.set_open(True)
+        self._agent.open_fleet_section_for_rows(
+            fleet_section, self.query_one("#console-inspector-rail-body")
+        )
 
     def _note_console_fleet_surface_toggle(self, open: bool) -> None:
         """Record a deliberate open/collapse of a fleet surface.
@@ -12483,14 +12487,9 @@ class ChatScreen(BaseAppScreen):
         handles_only = console_rail_handle_copy_only_changed(previous, rail_state)
         self._sync_console_rail_visibility(rail_state, handles_only=handles_only)
         self._last_console_rail_state = rail_state
-        # task-13 (review M9): the ONE seam where the Inspect rail actually
-        # becomes visible, whatever opened it -- the Alt+I action, the handle
-        # button, the launch auto-open, the responsive band, or the fleet
-        # force. Refreshing here (rather than only at the explicit toggle)
-        # means an AUTO-opened rail never sits on stale data waiting for the
-        # 10s poll. Must run AFTER `_sync_console_rail_visibility` above:
-        # the controller's rail-open guard reads the DOM, which that call is
-        # what updates.
+        # task-13 (review M9): the ONE seam where the rail becomes visible: an
+        # AUTO-opened one is refreshed now and shows running sub-agents
+        # (TASK-41959). After `_sync_console_rail_visibility`, whose DOM it reads.
         if rail_state.right_open and not (previous is not None and previous.right_open):
             controller = getattr(self, "_console_environment", None)
             if controller is not None:
@@ -12505,6 +12504,7 @@ class ChatScreen(BaseAppScreen):
                     if section.recompose_count != count:
                         hold_paints_until_rebuilt(section)
                 controller.notify_rail_opened()
+            self._agent.reveal_fleet_after_rail_auto_open(rail_state)
 
     @staticmethod
     def _sync_console_rail_descendant_visibility(widget: Any, visible: bool) -> None:

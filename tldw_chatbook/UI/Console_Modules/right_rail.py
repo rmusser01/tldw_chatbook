@@ -8,9 +8,10 @@ Context tray, retrieval-Scope row, run inspector, and live-work card. task-9
 prepended two more scrollable-body sections ahead of the tray: Environment
 (``#console-environment-section``) and Tasks (``#console-tasks-section``).
 task-10 then moved the Agent rail's fleet mini-section
-(``#console-agent-section-subagents``) here from the left rail, directly
-below Tasks -- the left rail's Agent section keeps its status/steps/
-drilldown controls; only the sub-agent list moved.
+(``#console-agent-section-subagents``) here from the left rail; TASK-41959
+placed it after the Scope row, ahead of the run inspector -- the left rail's
+Agent section keeps its status/steps/drilldown controls; only the sub-agent
+list moved.
 
 **Naming**: shell ids use the ``console-inspector-rail-*`` family
 (``console-inspector-rail-collapse``, ``console-inspector-rail-body``) plus
@@ -64,10 +65,10 @@ import os
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, ScrollableContainer, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.dom import NoScreen
-from textual.events import DescendantBlur, DescendantFocus, Key, Resize
+from textual.events import DescendantBlur, DescendantFocus, Key, MouseDown, Resize
 from textual.geometry import Size
 from textual.message import Message
 from textual.widget import Widget
@@ -328,6 +329,7 @@ class _InspectorOuterBody(VerticalScroll):
         *,
         on_geometry_changed: Callable[[], None],
         on_scrolled: Callable[[], None],
+        layout_settling: Callable[[], bool],
     ) -> None:
         super().__init__(
             id="console-inspector-rail-body",
@@ -336,6 +338,49 @@ class _InspectorOuterBody(VerticalScroll):
         )
         self._on_geometry_changed = on_geometry_changed
         self._on_scrolled = on_scrolled
+        self._layout_settling = layout_settling
+        #: TASK-41959: counts the user's gestures inside the body -- focus
+        #: moving in, a mouse press, a section collapse toggle. The fleet
+        #: reveal stands down for good once it moves. Scrolls of the scroll
+        #: areas inside the body post none of these, so the reveal also
+        #: compares their offsets (`inner_scroll_state`). A rebuild replaces
+        #: an area with a new widget; the old one keeps its last offset.
+        self.user_gestures = 0
+
+    def inner_scroll_state(self) -> tuple[tuple[Widget, float], ...]:
+        """Each scroll area inside the body, with its current offset."""
+        return tuple((area, area.scroll_y) for area in self.query(ScrollableContainer))
+
+    def layout_settling(self) -> bool:
+        """Whether the rail is still re-fitting its sections' caps.
+
+        An opening's first layouts shrink a long Sources list to its cap;
+        until that settles, any position measured below it moves (TASK-41959).
+        """
+        return self._layout_settling()
+
+    def inner_scrolled_since(self, state: tuple[tuple[Widget, float], ...]) -> bool:
+        """Whether a scroll area from ``state`` has moved since (a wheel or a
+        scrollbar drag).
+
+        An area a rebuild replaced is no longer in the DOM and keeps the
+        offset it had (Textual 8.2.8 never clears ``is_mounted`` on removal),
+        so it compares unchanged -- or as moved, if the user scrolled it first.
+        """
+        return any(area.scroll_y != y for area, y in state)
+
+    def on_descendant_focus(self, _event: DescendantFocus) -> None:
+        self.user_gestures += 1
+
+    def on_mouse_down(self, _event: MouseDown) -> None:
+        self.user_gestures += 1
+
+    def on_console_inspector_section_collapse_toggled(
+        self, event: ConsoleInspectorSection.CollapseToggled
+    ) -> None:
+        # The fleet section's own one-shot open is the product's, not a user's.
+        if not (event.open and event.section_id == CONSOLE_AGENT_FLEET_SECTION_ID):
+            self.user_gestures += 1
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         super().watch_scroll_y(old_value, new_value)
@@ -695,6 +740,15 @@ class ConsoleInspectorRail(Vertical):
         """Coalesce Inspector owner invalidation behind local section demand."""
 
         self._request_outer_reconcile(owner_demand=True)
+
+    def _outer_layout_settling(self) -> bool:
+        """Whether a cap re-fit is still scheduled (TASK-41959's fleet reveal).
+
+        One flag covers the bounded sections too: the outer reconcile stays
+        scheduled while any of them reconciles (`_run_scheduled_outer_reconcile`
+        re-queues itself).
+        """
+        return self._outer_reconcile_scheduled
 
     def _request_outer_geometry_reconcile(self) -> None:
         """Reconcile geometry without creating a second logical owner pass."""
@@ -1680,6 +1734,7 @@ class ConsoleInspectorRail(Vertical):
         with _InspectorOuterBody(
             on_geometry_changed=self._request_outer_geometry_reconcile,
             on_scrolled=self._handle_outer_scrolled,
+            layout_settling=self._outer_layout_settling,
         ):
             # task-9: Environment and Tasks sections -- mounted FIRST, ahead
             # of the staged-context tray, per the redesign spec's rail
@@ -1729,36 +1784,6 @@ class ConsoleInspectorRail(Vertical):
                 "block" if self._tasks_section_state.rows else "none"
             )
             yield tasks_section
-
-            # task-10: the Agent rail's fleet mini-section, moved here from
-            # the left rail's Agent section (it stays ordinary content --
-            # its own `ConsoleInspectorSection` header/body handle its own
-            # collapse; no bounded viewport wraps it). Same unconditional-
-            # mount-hide-when-empty pattern as Environment/Tasks above; the
-            # widget id, section id, and default-collapsed `open=False`
-            # are all unchanged from the left rail so the sync path
-            # (`ChatScreen._sync_console_agent_section`) and existing tests
-            # keep querying by the same id without change.
-            fleet_section = ConsoleInspectorSection(
-                title="Agents",
-                section_id=CONSOLE_AGENT_FLEET_SECTION_ID,
-                rows=self._agent_fleet_section_state.rows,
-                summary=self._agent_fleet_section_state.summary,
-                notice=self._agent_fleet_section_state.notice,
-                max_visible_rows=4,
-                scroll_on_expand=True,
-                view_all_label="View all runs",
-                collapsible=True,
-                open=False,
-                id="console-agent-section-subagents",
-            )
-            fleet_section.styles.display = (
-                "block"
-                if self._agent_fleet_section_state.rows
-                or self._agent_fleet_section_state.summary
-                else "none"
-            )
-            yield fleet_section
 
             # Context (staged sources) section -- moved here from the left
             # rail (task-400). Pinned to the TOP of the Inspector body so it
@@ -1810,6 +1835,41 @@ class ConsoleInspectorRail(Vertical):
             retrieval_scope_row.styles.min_width = 0
             retrieval_scope_row.add_class("h-auto")
             yield frame_console_region(retrieval_scope_row, variant="quiet")
+
+            # task-10: the Agent rail's fleet mini-section, moved here from
+            # the left rail's Agent section (it stays ordinary content --
+            # its own `ConsoleInspectorSection` header/body handle its own
+            # collapse; no bounded viewport wraps it). Same unconditional-
+            # mount-hide-when-empty pattern as Environment/Tasks above; the
+            # widget id, section id, and default-collapsed `open=False`
+            # are all unchanged from the left rail so the sync path
+            # (`ChatScreen._sync_console_agent_section`) and existing tests
+            # keep querying by the same id without change.
+            #
+            # TASK-41959 (owner ruling, 2026-11-25): it sits below the
+            # Sources tray, its Library search and the Scope row, not
+            # directly below Tasks. The tray is what the user acts on
+            # before sending; this section is status.
+            fleet_section = ConsoleInspectorSection(
+                title="Agents",
+                section_id=CONSOLE_AGENT_FLEET_SECTION_ID,
+                rows=self._agent_fleet_section_state.rows,
+                summary=self._agent_fleet_section_state.summary,
+                notice=self._agent_fleet_section_state.notice,
+                max_visible_rows=4,
+                scroll_on_expand=True,
+                view_all_label="View all runs",
+                collapsible=True,
+                open=False,
+                id="console-agent-section-subagents",
+            )
+            fleet_section.styles.display = (
+                "block"
+                if self._agent_fleet_section_state.rows
+                or self._agent_fleet_section_state.summary
+                else "none"
+            )
+            yield fleet_section
 
             with Vertical(id="console-run-inspector"):
                 yield ConsoleRunInspector(

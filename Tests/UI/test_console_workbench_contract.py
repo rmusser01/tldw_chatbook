@@ -3,6 +3,7 @@ import pytest
 # The harness mounts the real ChatScreen/config chain; per-test env redirect
 # trips the config-participant admission (sibling strip suites' opt-in).
 pytestmark = pytest.mark.bootstrap_profile
+import time
 from unittest.mock import AsyncMock, Mock
 from textual.app import ComposeResult
 
@@ -14,6 +15,7 @@ from textual.widgets import Static
 
 from Tests.UI.app_factory import persist_seeded_config, run_on_host
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.console_rail_section_helpers import _wait_for_console_quiet
 from Tests.UI.test_console_internals_decomposition import (
     _build_bound_mcp_test_app,
     _open_console_inspector,
@@ -44,6 +46,7 @@ from tldw_chatbook.UI.Screens.chat_screen import (
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ApprovalSummary
 from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
     build_composer_menu_entries,
 )
@@ -153,6 +156,48 @@ def _configure_native_ready_console(app, model: str = "local-model") -> None:
     }
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = model
+
+
+async def _wait_until(pilot, predicate, what: str, timeout: float = 10.0) -> None:
+    """Poll ``predicate`` between pauses; fail naming ``what`` after ``timeout``."""
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"Timed out waiting for {what}")
+        await pilot.pause(0.02)
+
+
+def _approval_card_displayed(console) -> bool:
+    return any(_is_displayed(card) for card in console.query("#chat-approval-card"))
+
+
+async def _stage_pending_tool_card(console, pilot) -> None:
+    """Stage one legacy tool-approval card once Console startup is quiet.
+
+    Staged while startup work is still owed (attach reconcile, control-bar
+    replay, credential poll), the card was wiped: the runtime's attach
+    projects its empty decision head through `_set_console_pending_decision`,
+    which writes `pending_approval=None` (TASK-41959 review).
+    """
+    await _wait_for_console_quiet(pilot, console)
+    console.set_task_resume_state(
+        TaskResumeState(
+            pending_approval={
+                "calls": [
+                    {
+                        "llm_name": "mcp__srv__auth",
+                        "server_label": "Srv",
+                        "tool_name": "auth",
+                        "arguments": {},
+                    }
+                ],
+                "timeout_seconds": 30.0,
+            }
+        )
+    )
+    await _wait_until(
+        pilot, lambda: _approval_card_displayed(console), "the approval card to display"
+    )
 
 
 def _is_displayed(widget) -> bool:
@@ -489,8 +534,12 @@ async def test_console_approvals_chip_activation_focuses_the_decision_not_submit
     documented keyboard route jump-to-card + Enter -- one keystroke from
     granting a tool access to a call the user had not read. Rows are pre-armed
     to `approve_once` (correct: a blank Select breaks `allow_blank=False`), so
-    the fix was to move the FOCUS target, not the default. The contract is now
-    the row's decision Select, via `ChatApprovalCard.first_focus_widget_id`.
+    the fix was to move the FOCUS target, not the default.
+
+    TASK-41959: a2fcbe61bc (#3036) moved that target again, from the row's
+    decision Select (now hidden behind More options) to the card's neutral
+    request summary, `ChatApprovalCard.first_focus_widget_id`'s
+    ``approval-request-summary``, where Enter does nothing.
     """
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -500,22 +549,9 @@ async def test_console_approvals_chip_activation_focuses_the_decision_not_submit
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-control-bar")
 
-        console.set_task_resume_state(
-            TaskResumeState(
-                pending_approval={
-                    "calls": [
-                        {
-                            "llm_name": "mcp__srv__auth",
-                            "server_label": "Srv",
-                            "tool_name": "auth",
-                            "arguments": {},
-                        }
-                    ],
-                    "timeout_seconds": 30.0,
-                }
-            )
-        )
-        await pilot.pause(0.1)
+        # Bounded waits, not fixed pauses: in a whole-file `-n 4` run the
+        # 0.1 s pauses left focus on the status line (TASK-41959).
+        await _stage_pending_tool_card(console, pilot)
 
         # TASK-35160: focus the status line, walk its segment cursor to the
         # approvals segment, activate with Space (the chip's focus+Space).
@@ -528,15 +564,18 @@ async def test_console_approvals_chip_activation_focuses_the_decision_not_submit
             await pilot.press("right")
         assert line.segment_spans[line._cursor][0] == "approvals"
         await pilot.press("space")
-        await pilot.pause(0.1)
+        await _wait_until(
+            pilot, lambda: host.focused is not line, "focus to leave the status line"
+        )
 
         focused = host.focused
         assert getattr(focused, "id", None) != "approval-submit", (
             "focus landed on the commit control: Enter would approve an unread call"
         )
-        assert "approval-row-decision" in getattr(focused, "classes", set()), (
-            f"expected the row's decision Select, got {focused!r}"
+        assert isinstance(focused, ApprovalSummary), (
+            f"expected the card's neutral request summary, got {focused!r}"
         )
+        assert focused.id == "approval-request-summary"
 
 
 @pytest.mark.asyncio
@@ -854,7 +893,6 @@ async def test_console_left_rail_keeps_session_and_moves_staged_context_out():
 async def test_console_inspector_prioritizes_actionable_status_before_secondary_groups():
     app = _build_test_app()
     _configure_native_ready_console(app)
-    app.console_pending_approval_count = 1
     app.console_tool_count = 1
     app.console_chatbook_artifact_available = True
     host = ConsoleHarness(app)
@@ -862,6 +900,29 @@ async def test_console_inspector_prioritizes_actionable_status_before_secondary_
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
+        # TASK-41959: since 55f86c9538 (#2953) a mounted Console counts the
+        # controller's pending rounds plus a legacy tool card;
+        # `app.console_pending_approval_count` is only the no-controller
+        # fallback. So stage a real pending card, and open the Inspector:
+        # TASK-37000 holds a closed rail's rebuild for its opening.
+        await _stage_pending_tool_card(console, pilot)
+        await _open_console_inspector(console, pilot)
+        await _wait_until(
+            pilot,
+            lambda: _approval_card_displayed(console),
+            "the approval card to survive the rail opening",
+        )
+        # Staging a card refreshes only the task cards; nothing re-projects
+        # the Inspector from it. Without this sync, Review approval never
+        # enabled within 10 s, on head or on dev.
+        console._sync_console_rail_and_controls()
+        await _wait_until(
+            pilot,
+            lambda: (
+                not console.query_one("#console-inspector-review-approval").disabled
+            ),
+            "Review approval to enable",
+        )
 
         inspector = console.query_one("#console-run-inspector-state")
         ordered_ids = _children_in_display_order(inspector)
@@ -899,6 +960,10 @@ async def test_console_blocked_inspector_explains_impact_and_next_action():
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
+        # TASK-41959: d5e1a26ab3 (TASK-23197, #2233) stopped the 118-128
+        # column auto-open while the Context rail is open, so at 120 columns
+        # the Inspector stays closed until the user opens it.
+        await _open_console_inspector(console, pilot)
 
         inspector = console.query_one("#console-run-inspector-state")
         visible_text = " ".join(
