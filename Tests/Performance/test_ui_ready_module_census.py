@@ -196,8 +196,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: connections open between operations on Windows; `participants` binds it
 #: when a store first takes a connection, which is before ready.
 #: `Utils.textual_dispatch_fastpath` (cached handler lookup for Textual's
-#: message pump) is installed by `app.py` at import. Measured 1042; limit =
-#: measured, as the row above.
+#: message pump) is installed when the app object is created, not at import
+#: (the app-import row had no room: dev reads 687 of 688 there). Measured
+#: 1042 on Windows, 1041 on Linux CI; limit = measured, as the row above.
 MAX_TLDW_MODULES_AT_UI_READY = 1042
 
 #: Modules a thread other than the UI loop imports during boot, so whether
