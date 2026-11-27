@@ -292,15 +292,15 @@ transcript:
   next message is captured as usual. The same holds after the emergency stop or
   the turn budget ends an action's run right after a tool call. Rarely the
   reply is kept although nothing was sent. If the trace cannot tell whether the
-  action's call was reserved, each later captured message stops at **Trace
-  capture could not start** until Console restarts, and **Send without
-  capture** sends it. If only the undo could not be saved, your next message
-  after a Regenerate or Continue is captured as usual; after an Edit & resend
-  it may stop at **Trace capture could not start**, and **Send without
-  capture** sends it. **Resend** of a broken turn that starts again from your
-  message is captured the same way. An action that follows the chat's Capture
-  setting, captured or not, uses up the one-time **Next send** choice as a send
-  does.
+  action's call was reserved, or could not settle its reservation, each later
+  captured message stops at **Trace capture could not start** until Console
+  restarts, and **Send without capture** sends it. Otherwise, if only the undo
+  could not be saved, your next message after a Regenerate or Continue is
+  captured as usual; after an Edit & resend it may stop at **Trace capture
+  could not start**, and **Send without capture** sends it. **Resend** of a
+  broken turn that starts again from your message is captured the same way. An
+  action that follows the chat's Capture setting, captured or not, uses up the
+  one-time **Next send** choice as a send does.
 - Some actions still send with capture off, whatever the Capture setting:
   Edit & resend, Regenerate and Resend in a chat with a pinned response
   prefill (they send the prefill; a plain Continue sends none and is
