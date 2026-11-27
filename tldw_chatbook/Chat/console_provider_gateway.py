@@ -566,7 +566,10 @@ def _validate_request_trace_binding(
     if (
         route_descriptor is None
         or len(route_descriptors) != 1
-        or replace(route_descriptors[0], parent_revision_id=None) != route_descriptor  # child: turn checked by the adapter
+        # A child's turn is checked by the adapter; an action is checked by
+        # the trace runtime that plans it (TASK-42560).
+        or replace(route_descriptors[0], parent_revision_id=None, action=None)
+        != route_descriptor
     ):
         raise TraceProvenanceAlignmentError(
             "capture-on request route provenance is missing or mismatched"

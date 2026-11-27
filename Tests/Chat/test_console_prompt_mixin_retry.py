@@ -91,6 +91,16 @@ def capture_mode(monkeypatch, enabled):
         return ConsoleTurnPreparation(**kwargs)
 
     monkeypatch.setattr(module, "ConsoleTurnPreparation", preparation)
+    if not enabled:
+        # Edit & resend, Regenerate and Continue freeze their own capture
+        # mode (TASK-42560); a Capture Off journey keeps them off too.
+        from tldw_chatbook.Chat import console_action_capture
+
+        monkeypatch.setattr(
+            console_action_capture,
+            "_capture_mode",
+            lambda *_args: (ConsoleTraceCaptureMode.CAPTURE_OFF, None),
+        )
 
 
 @pytest.mark.asyncio

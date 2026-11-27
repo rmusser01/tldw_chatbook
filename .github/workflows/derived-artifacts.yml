@@ -1191,6 +1191,9 @@ jobs:
     # separate invocation. A fast file is gated whole; a slow file by the node
     # ids that pin the P0. The UI-census node ids stay in ui-fast-lane.
     # Tests/CI/test_console_p0_regression_gate.py pins where each one runs.
+    # One exception (TASK-42560, round 27): the restore step runs one
+    # bootstrap_profile file, the traced actions file, last in its single
+    # invocation, so no sandboxed target may follow it there.
     #
     # Historical combined budget: setup ~1 min (checkout 20 s, python 3 s, install 19 s
     # in run 38064483856) + sandboxed step ~3 min (6 private-profile app
@@ -1316,6 +1319,17 @@ jobs:
       # This profile ran at most 2.0 of its 35 min over 27 PR runs to
       # 2026-11-24, where dreams-tracking had about 4 min left with all three
       # round-24 branches' riders.
+      # TASK-42560 (round 27, 2026-11-27): the traced Edit & resend,
+      # Regenerate and Continue file (bootstrap_profile: the Console bridge
+      # reads the tool gates through config), last, after this step's
+      # sandboxed targets as in dreams-boundary. Not in the Dreams riders job
+      # (13.8-19.7 of its 20 min on CI since 2026-11-25) nor in dreams-boundary
+      # (its boundary step took median 18.6 / max 19.9 min over 28 CI runs to
+      # 2026-11-27; the file would take that job to about 33-36 of its 35).
+      # This profile took at most 3.6 of its 35 min over 15 CI runs to
+      # 2026-11-27. On ubuntu:24.04 with this job's install line and this
+      # step's flags, serial: 241 passed in 521.2 s (the file 440.7 s of it;
+      # alone, 182 passed in 524.0 s), so about 10.5-13 min a job on CI.
       - name: Run the restore Console P0 regression tests
         if: ${{ !cancelled() && matrix.profile == 'restore' }}
         run: |
@@ -1324,6 +1338,7 @@ jobs:
             Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_import_preparation_disables_only_qualified_selected_payload \
             "Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_historical_restore_migrates_only_disposable_copy[76]" \
             Tests/Backup_Recovery/test_registered_root_removed.py \
+            Tests/Chat/test_console_trace_action_calls.py \
             --timeout=180 \
             --tb=short
 
@@ -2112,7 +2127,8 @@ jobs:
       # after the Skills recovery controls file.
       # Round 27: TASK-42550's slot-drop file (bootstrap_profile, 35 tests;
       # 216.9 s alone under this step's flags at load 34-50; at 24 tests it
-      # was 148 s of a 51.7-min local run of the whole step), at the tail.
+      # was 148 s of a 51.7-min local run of the whole step), after the
+      # managed received-acceptance file.
       # Round 27: TASK-42556's child preset fallback file (bootstrap_profile,
       # on no lane before) follows the slot-drop file; timing in the task's notes.
       # Round 27: TASK-42552's four Console files, on no lane before. The

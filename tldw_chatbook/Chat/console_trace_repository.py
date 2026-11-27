@@ -3492,6 +3492,41 @@ class ConsoleTraceRepository:
         ).fetchone()
         return None if row is None else TraceEventRecord(*row)
 
+    #: A call settled not dispatched before it bound any surface row (a
+    #: canceled pause, a refused action; ADR-337 amendment 2026-11-26): it
+    #: reached no provider, changed no surface and ended no turn.
+    NEVER_SENT_CALL = "c.state = 'not_dispatched' AND c.surface_node_id IS NULL"
+
+    @classmethod
+    def latest_sent_call_boundary_sql(cls) -> str:
+        return (
+            cls._event_select() + " WHERE segment_id = ? AND event_type = "
+            "'call_boundary' AND (? IS NULL OR sequence < ?) AND NOT EXISTS ("
+            "SELECT 1 FROM console_trace_calls c WHERE c.call_id = "
+            "console_trace_events.call_id AND " + cls.NEVER_SENT_CALL + ")"
+            " ORDER BY sequence DESC LIMIT 1"
+        )
+
+    def get_latest_sent_call_boundary(
+        self, cursor: sqlite3.Cursor, segment_id: str, *, before_sequence: int | None = None
+    ) -> TraceEventRecord | None:
+        """Like :meth:`get_latest_call_boundary`, passing over a never-sent
+        call (:attr:`NEVER_SENT_CALL`)."""
+        row = cursor.execute(
+            self.latest_sent_call_boundary_sql(),
+            (segment_id, before_sequence, before_sequence),
+        ).fetchone()
+        return None if row is None else TraceEventRecord(*row)
+
+    def call_never_sent(self, cursor: sqlite3.Cursor, call_id: str) -> bool:
+        """Whether the call is a never-sent one (:attr:`NEVER_SENT_CALL`)."""
+        row = cursor.execute(
+            "SELECT 1 FROM console_trace_calls c WHERE c.call_id = ? AND "
+            + self.NEVER_SENT_CALL,
+            (call_id,),
+        ).fetchone()
+        return row is not None
+
     @staticmethod
     def _reconcile_call_reservation(
         expected: tuple[str, str, str, str, int, str, str],

@@ -951,14 +951,13 @@ def validate_completed_tool_turn(
             )
         ):
             raise ValueError("completed_tool_turn_reservation")
-        previous = cursor.execute(
-            """SELECT call_id FROM console_trace_events
-                   WHERE segment_id = ? AND event_type = 'call_boundary'
-                     AND sequence < ? ORDER BY sequence DESC LIMIT 1""",
-            (segment_id, latest.sequence),
-        ).fetchone()
-        latest_id = None if previous is None else previous[0]
+        previous = self.repository.get_latest_sent_call_boundary(
+            cursor, segment_id, before_sequence=latest.sequence
+        )
+        latest_id = None if previous is None else previous.call_id
     else:
+        # TASK-42560: a never-sent (canceled or refused) call ends no turn.
+        latest = self.repository.get_latest_sent_call_boundary(cursor, segment_id)
         latest_id = None if latest is None else latest.call_id
     chain_terminal = terminal
     # A llama.cpp resend terminal, with or without project context

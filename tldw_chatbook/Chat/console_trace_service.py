@@ -1908,6 +1908,10 @@ class ConsoleTraceService:
                 witness=surface_delta.rewritten_tail,
                 descriptors=descriptors,
                 current_turn_id=reserved_call.turn_id,
+                service=self,
+                segment_id=segment_id,
+                reserved_call_id=reserved_call.call_id,
+                removed_start=replacement.start_sequence,
             )
         saved_delta_pairs = tuple(
             (reference_key, value)
@@ -2517,6 +2521,8 @@ class ConsoleTraceService:
         reserved_call: TraceCallRecord | None = None,
         known_credentials: tuple[str, ...] = (),
         fallback_parent: TraceCallRecord | None = None,
+        action_user_index: int | None = None,
+        after_action: object | None = None,
     ) -> tuple[SurfaceDeltaAdmission, object]:
         """Plan an append, no-op, or one-item bounded surface replacement.
 
@@ -2544,6 +2550,11 @@ class ConsoleTraceService:
             known_credentials: Transient runtime secrets used only to compare
                 original provider artifacts with their filtered durable values.
                 They are never stored in the admission or trace ledger.
+            action_user_index: For the call of Edit & resend, Regenerate or
+                Continue, its turn's user row: the call re-records its turn
+                from there (ADR-337 amendment 2026-11-26). None otherwise.
+            after_action: For the send after such a call's run, the run's
+                evidence (``AfterActionCall``); its rows may be replaced.
 
         Returns:
             The admitted surface delta and its verification boundary.
@@ -2825,6 +2836,9 @@ class ConsoleTraceService:
         prefix = 0
         while prefix < min(len(active), len(descriptors)) and matches(prefix, prefix):
             prefix += 1
+        if action_user_index is not None:
+            # An action's call re-records its turn (TASK-42560).
+            prefix = min(prefix, action_user_index)
         if fallback_parent is not None and not prefix == len(active) == len(descriptors):
             # A fallback chain's first call may rewrite the run's tail
             # (ADR-337 amendment 2026-11-24, TASK-42525); nothing else may.
@@ -2867,6 +2881,7 @@ class ConsoleTraceService:
             )
             if prefix < len(active)
             and live_native_custody is None
+            and action_user_index is None
             and route_identity in {"agent_first", "fresh"}
             and (
                 completed_tool_turn is None
@@ -2888,7 +2903,9 @@ class ConsoleTraceService:
                 and completed_tool_turn.project_context_count is not None
             )
             while (
-                suffix < len(active) - prefix
+                action_user_index is None
+                and after_action is None
+                and suffix < len(active) - prefix
                 and suffix < len(descriptors) - prefix
                 # Project context is delivered anew for this turn, even when
                 # its bytes equal the previous turn's trailing context.
@@ -3019,11 +3036,28 @@ class ConsoleTraceService:
                     retained=descriptors[:prefix],
                     incoming=descriptors[prefix:],
                     current_turn_id=current_turn_id,
+                    user_index=(
+                        None
+                        if action_user_index is None
+                        else action_user_index - prefix
+                    ),
+                    after_action=after_action,
+                    segment_id=segment_id,
+                    removed_start=min(s for _, s, _ in active[prefix:]),
+                    policy_id=current_policy_id,
                 )
                 if not compound
-                and route_identity in {"agent_first", "fresh"}
+                and (
+                    route_identity in {"agent_first", "fresh"}
+                    or action_user_index is not None
+                )
                 and suffix == 0
-                and incoming_changed >= 2
+                and incoming_changed
+                >= (
+                    1
+                    if action_user_index is not None or after_action is not None
+                    else 2
+                )
                 and len(links) <= MAX_SURFACE_REPLACEMENT_CHAIN_LINKS
                 and current_policy_id is not None
                 and domains[prefix:] == ("messages_payload",) * incoming_changed
@@ -3045,6 +3079,8 @@ class ConsoleTraceService:
                 admitted_to = prefix + incoming_changed
             elif (
                 (incoming_changed != 1 and not compound and rewritten is None)
+                # An action's call is proven as a rewritten tail (TASK-42560).
+                or (action_user_index is not None and rewritten is None)
                 or active_changed < 1
                 # A rewritten tail's links bound it instead.
                 or (rewritten is None and active_changed > MAX_SURFACE_REPLACEMENT_SPAN)

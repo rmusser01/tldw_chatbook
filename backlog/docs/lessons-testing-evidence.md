@@ -6,6 +6,12 @@
 
 **What to do.** Before filing a "raises on a later Python" task from a warning's text, run the one-line statement on that later Python (Homebrew has 3.13 and 3.14 here). Remember that the Linux recipe's system Python, Ubuntu 24.04's 3.12.3, is older than CI's setup-python 3.12, so show a version-specific red/green in the container that has the old version.
 
+## A refusal test that patched the stream hid that the refused reply stays on the path (TASK-42560 review, 2026-11-26)
+
+**Incident.** TASK-42560's `test_a_refused_plain_path_action_fails_its_reply` made the trace refuse an Edit & resend by patching `_stream_assistant_response` to raise, and asserted the chat could still send; it did. The review asked for a real reservation refusal. Raising from the trace service instead (the real stream, gateway and boundary) showed the stream persists the empty reply before it reserves the call, so the refused action leaves a failed, empty reply on the path; every later captured send then paused at "Trace capture could not start". The patched version had never persisted that row.
+
+**What to do.** Inject a refusal at the layer that refuses in production (here the trace service under the boundary factory), not above the code that writes rows first, and assert on the send after it. A patch above the writer tests a state the app never reaches.
+
 ## Tracing a call the trace used to miss changes what the next send must prove (TASK-42555, 2026-11-26)
 
 **Incident.** TASK-42555's prototype gave Console's Retry the Capture-On request a send gets, so the trace recorded it as a new first call of its turn. Its own seven tests (plain chat, AGENTS.md, plain provider path, Capture Off, temporary chat; none with prompt mix-ins) passed with it, and six of them failed on dev; the Capture Off control passes on both. The covering run of every file that calls `retry_message` then turned up reds in the prompt mix-in files. Two probes with one mix-in enabled showed what happens: after the now-traced Retry, the next message stopped at "Trace capture could not start" (`completed_tool_turn_lineage` on the agent path, `completed_tool_turn_unavailable` on the plain path). On dev, where the Retry was invisible to the trace, that message was sent. `test_console_prompt_mixin_retry.py::test_retry_original_regenerate_current_and_clean_history[True]`, green on dev, failed the same way with the prototype. The completed-turn witness and the mix-in source proof follow one run per turn. The Retry answered in a second run, while the turn's transformed user row had been appended under the first. The AGENTS.md case could not show this: its next message was blocked on dev too, so it only looked like an old limit.
@@ -31,6 +37,12 @@
 - the ordinary tree (11d71e5db5) reserves and returns one operation at admission and one for MCP composition on every qualified send, so a "selected deny reserves nothing" count saw two, and a held `finish` blocked the event loop for 8 s before the hook started.
 
 **What to do.** Scope such a probe to the seam under test: a ContextVar set by a wrapper around the entry point (it propagates into `run_coroutine_threadsafe` and `to_thread` work), or the caller's frame code (`sys._getframe(1).f_code is Seam.__code__`). Then check the probe still sees the call it exists for: hold it and assert the test reaches its own check.
+
+## A trace change that makes a call own rows must be probed with that call failing; a green success matrix hid two refusals (TASK-42560, 2026-11-26)
+
+**Incident.** TASK-42560 made Edit & resend, Regenerate and Continue traced calls that re-record their turn. A 160-case probe matrix (each action, agent and plain path, llama.cpp and hosted, with and without AGENTS.md, with mix-ins, warm and after a trace-runtime restart, each followed by one more message) passed in full, with every request traced as sent. A separate probe then made the provider fail the action's reply (503 through the agent's in-place retries). The next message was refused after a failed Regenerate with AGENTS.md (`completed_tool_turn_unavailable`) and after every failed Continue (`surface_replacement_checkpoint_unavailable` or `unsupported_surface_change`), on paths where the base, with the actions uncaptured, had sent it. The re-record had made the failed call the owner of the turn's rows, and a failed owner bore no reply for the completed-turn witness to vouch for. Nothing in the success matrix could see it.
+
+**What to do.** When a change lets a new call write or own trace surface rows, rerun its journeys with the provider failing that call (all of the run's retries), then send one more message, on each path; compare with base. Count the failure path as part of the matrix, not an extra.
 
 ## Under the light tier, a red shared with dev still fails your PR: it inherits the reds of every test file it edits and of every file that imports one (TASK-33621.197, 2026-11-24)
 

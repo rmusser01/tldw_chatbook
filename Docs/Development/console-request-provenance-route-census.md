@@ -31,18 +31,23 @@ and Capture Off.
 
 The census's capture column records what a Capture-On chat's call on each
 route does today, and `Tests/Chat/test_console_route_census_capture.py`
-drives each user action through the real controller to check it. Retry,
-Continue, Regenerate, Edit & resend, Impersonate and citation repair carry no
-turn preparation or capture mode, so they dispatch Capture Off (Retry of a
-failed turn under Capture On is TASK-42555: the owner decided on 2026-11-26 to
-trace it as a new run of the same turn, built after PR #3717). A fresh send is traced; the
-test checks this on the agent and plain paths. The census rows for the agent's
-first call, the tool loop, direct prefill and the llama fallback describe a
-fresh send; each takes the capture mode of the action it serves. On the
-agent path every action's provider call carries the agent-first or tool-loop
-route, so an agent-path Regenerate, Edit & resend, Continue or Retry dispatches
-an agent-first call with capture off, and a Regenerate with a pinned prefill
-dispatches direct prefill with capture off.
+drives each user action through the real controller to check it. A fresh
+send is traced; the test checks this on the agent and plain paths. Edit &
+resend, Regenerate and Continue are traced as calls of their turn (ADR-337
+amendment 2026-11-26, TASK-42560). Retry, Impersonate and citation repair
+carry no turn preparation or capture mode, so they dispatch Capture Off
+(Retry of a failed turn under Capture On is TASK-42555: the owner decided on
+2026-11-26 to trace it as a new run of the same turn, built after PR #3717).
+
+The census rows for the agent's first call, the tool loop, direct prefill and
+the llama fallback describe a fresh send; each takes the capture mode of the
+action it serves. On the agent path every action's provider call carries the
+agent-first or tool-loop route. An agent-path Edit & resend, Regenerate or
+Continue dispatches a traced agent-first call whose route descriptor names
+the action; an agent-path Retry dispatches an agent-first call with capture
+off. An action with a pinned prefill (direct prefill), or in a chat whose
+provider replays its own continuation checkpoints, still sends with capture
+off.
 
 The explicitly excluded preparation owners are Console side chat, visual
 evaluation, and prompt improvement. Persona preview and character generation
@@ -65,13 +70,13 @@ provider wire payloads, authority, or tool permission.
 No schema migration is part of this slice. Current shadow request writes are
 covered here; exhaustive viewer/export ownership remains TASK-23113.6.
 
-The Slice A caller boundary is `admit_preparation_trace_provenance(...)`. It owns
-`trace_provenance_admission_transaction(database)` and invokes
-`admit_message_provenance(cursor, coordinator, message_ids)` inside it. Revision
-work and commit failures both roll back before becoming a content-free manual
-pause or autonomous `TraceProvenancePersistenceError`; neither retains the
-source exception. The dedicated manual pause exposes Retry, explicit one-shot
-Send without capture, or Cancel. Send without capture calls
+The Slice A caller boundary is `admit_preparation_trace_provenance(...)`. It
+owns `trace_provenance_admission_transaction(database)` and invokes
+`admit_message_provenance(cursor, coordinator, message_ids)` inside it.
+Revision work and commit failures both roll back before becoming a content-free
+manual pause or autonomous `TraceProvenancePersistenceError`; neither retains
+the source exception. The dedicated manual pause exposes Retry, explicit
+one-shot Send without capture, or Cancel. Send without capture calls
 `admit_one_shot_capture_off` with a new preparation ID and attempt ID. It
 returns a fresh `READY` preparation whose execution context carries the new
 attempt and whose `one_shot_capture_off` flag requires rebuilding from wholly
@@ -80,11 +85,11 @@ Capture-on callers then supply the frozen run policy and all four parallel
 descriptor sequences to `build_console_request`; supplying only some fails
 closed with `TraceProvenanceAlignmentError`. The explicit run policy means a
 saved-revision-only request can later attach provider thinking, continuation,
-or compaction intent without depending on an unrelated system/RAG artifact.
-The TASK-23113.4 shadow builder
-will wire this API at the controller/gateway dispatch boundary after native
-rows have been resolved to durable message IDs. Until that sealing slice,
-default preparation remains wholly Capture Off—never a partial Capture On.
+or compaction intent without depending on an unrelated system/RAG artifact. The
+TASK-23113.4 shadow builder will wire this API at the controller/gateway
+dispatch boundary after native rows have been resolved to durable message IDs.
+Until that sealing slice, default preparation remains wholly Capture Off—never
+a partial Capture On.
 
 ## Final provider-value boundary (TASK-23113.3 Slice B)
 

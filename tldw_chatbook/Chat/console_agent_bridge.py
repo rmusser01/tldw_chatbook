@@ -208,6 +208,7 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     OmittedTraceProvenance,
     ProviderArtifactTraceProvenance,
     RequestRouteTraceProvenance,
+    TRACED_ACTION_ROUTES,
     SavedRevisionTraceProvenance,
     TraceProvenance,
     TraceProvenanceAlignmentError,
@@ -3102,11 +3103,31 @@ class ConsoleAgentTraceRequestFactory:
                     actor_id=actor_id,
                     chain_id=chain_id,
                     parent_revision_id=self._turn_revision_id() if child else None,
+                    action=None if child else self._action(),
                 ),
             ),
             capture_policy=provenance.capture_policy,
             capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
         )
+
+    def _action(self) -> ConsoleRequestRoute | None:
+        """Name the traced action the admitted request was frozen for.
+
+        Edit & resend, Regenerate and Continue freeze their own route; the
+        run's calls carry it so the trace plans them as that action's
+        (ADR-337 amendment 2026-11-26, TASK-42560).
+        """
+        provenance = self.admitted_request.provenance
+        assert provenance is not None
+        route = next(
+            (
+                item.route
+                for item in provenance.metadata
+                if type(item) is RequestRouteTraceProvenance
+            ),
+            None,
+        )
+        return route if route in TRACED_ACTION_ROUTES else None
 
     def verify_child_route(self, prepared: Any) -> None:
         """Fail closed unless a prepared child request names the spawning turn.

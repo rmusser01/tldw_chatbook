@@ -269,17 +269,71 @@ transcript:
   removal. Earlier calls keep the system prompt as they sent it, and
   switching back to llama.cpp puts it back, as above. Here too only a
   message's first call can do this.
-- Edit & resend and Regenerate send their reply with capture off, so that reply
-  has no trace call of its own. Your next send in the chat is captured as usual.
-  It records the edited branch as one bounded replacement of the earlier trace
-  history, and it does not ask you to choose an action.
-- **Continue**, **Retry** on a failed reply, and **Impersonate** also send with
-  capture off, so the trace has no call for them. A citation repair ("Citations
-  repaired") is sent with capture off too; the reply it repairs keeps its own
-  trace call. Your next send in the chat is captured as usual.
+- **Edit & resend**, **Regenerate** and **Continue** are captured as calls of
+  their turn, with or without project instructions (AGENTS.md) and with prompt
+  mix-ins, on the agent path and on the plain provider path. The action's call
+  records its turn again from your message: the edited message for Edit &
+  resend, or the message that the replaced or continued reply answers. A
+  Continue's call also records the reply it extends and Console's "Continue and
+  extend the selected message." instruction after it. Earlier calls keep their
+  requests and replies, so a regenerated turn lists both calls. Your next
+  message is captured as usual, also when the action's own reply failed (even
+  with the partial text of a reply that stopped mid-stream, which is not sent
+  again), and an action on the turn after a failed reply is captured too. If the
+  trace refuses the action before anything is sent, the action is undone: its
+  empty reply (and, for Edit & resend, the edited message) is removed, the
+  transcript is as it was, and Console says "Not sent: trace capture could not
+  start. Choose Capture off for the next send, or turn Capture off for this
+  chat." (for Edit & resend, also "Your edit was not kept."). A one-time **Next
+  send** choice stays set, and your next message is captured as usual. On the
+  agent path the Run log still lists the failed run. If an earlier request of
+  the action had already been sent (a tool call, say), the reply is kept and
+  stops with "Trace capture could not be saved, so this reply stopped." (for
+  Regenerate, which shows the earlier reply again: "Trace capture could not be
+  saved, so the regenerated reply stopped. The earlier reply is shown."); your
+  next message is captured as usual. The same holds after the emergency stop or
+  the turn budget ends an action's run right after a tool call. Rarely the reply
+  is kept although nothing was sent. If the trace cannot tell whether the
+  action's call was reserved, or could not settle its reservation, later
+  captured messages may stop at **Trace capture could not start** until Console
+  restarts (after an Edit & resend they do; after a Regenerate or Continue with
+  project instructions on the agent path, too), and **Send without capture**
+  sends them. Even when your next message goes out, a further Regenerate of that
+  turn is not sent (and is undone) until Console restarts, and neither is a
+  Continue right after a kept Regenerate. A Continue of that turn after a kept
+  Continue, or once a later message was sent, continues a reply that is no
+  longer the chat's last message, so it sends with capture off; an Edit & resend
+  of the turn is captured as a new turn. Otherwise, if only the undo could not
+  be saved, your next message after a Regenerate or Continue is captured as
+  usual; after an Edit & resend it may stop at **Trace capture could not
+  start**, and **Send without capture** sends it. **Resend** of a broken turn
+  that starts again from your message is captured the same way. An action that
+  follows the chat's Capture setting, captured or not, uses up the one-time
+  **Next send** choice as a send does.
+- Some actions still send with capture off, whatever the Capture setting:
+  Edit & resend, Regenerate and Resend in a chat with a pinned response
+  prefill (they send the prefill; a plain Continue sends none and is
+  captured), any action in a chat whose provider replays its own reasoning
+  checkpoints (Kimi), and Continue of a message that has later messages
+  after it (its reply is added at the end of the chat; with project
+  instructions your next message then stops at **Trace capture could not
+  start**, as before, TASK-42586). These leave a one-time **Next send**
+  choice of Capture on for your next send. In a
+  temporary chat with Capture On, an action that would be captured asks you
+  to save the chat or turn Capture off first.
+- **Retry** of a failed reply also still sends with capture off. With project
+  instructions (AGENTS.md), your next message after a Retry of a failed reply
+  may stop at **Trace capture could not start**; after a Retry of a reply that
+  a captured Continue left failed it stops there with or without them.
+  **Send without capture** sends it. A captured Retry is planned in TASK-42555.
+- **Impersonate** sends with capture off, so the trace has no call for it. A
+  citation repair ("Citations repaired") is sent with capture off too; the
+  reply it repairs keeps its own trace call. Your next send in the chat is
+  captured as usual.
 - After Compact now, the next captured send on the Console's default agent path
-  records the compacted history the same way: the conversation memory replaces
-  the older turns it summarized. On the plain provider path (character chats,
+  records the compacted history as one bounded replacement of the earlier trace
+  history, without asking you to choose an action: the conversation memory
+  replaces the older turns it summarized. On the plain provider path (character chats,
   or `[console] agent_runtime = false`), a captured send still carries every
   older turn and no memory, so there is nothing to replace (TASK-37417).
   Old trace events are never rewritten.

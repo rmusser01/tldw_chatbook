@@ -169,15 +169,20 @@ class ConsoleRequestRouteRecord:
 
 #: ``capture`` is what a Capture-On chat's call on the route does today
 #: (``Tests/Chat/test_console_route_census_capture.py`` drives each action).
-#: Retry, Continue, Regenerate, Edit & resend, Impersonate and citation repair
-#: carry no turn preparation or capture mode, so they dispatch Capture Off
-#: (TASK-42552). The owner decided on 2026-11-26 that Retry of a failed turn
-#: under Capture On will be traced as a new run of the same turn (TASK-42555,
-#: built after PR #3717). The
-#: AGENT_FIRST, TOOL_LOOP, DIRECT_PREFILL and LLAMA_FALLBACK rows describe a
-#: fresh send; those routes take the capture mode of the action they serve, so
-#: an agent-path Regenerate, Edit, Continue or Retry dispatches AGENT_FIRST
-#: with capture off, and a Regenerate with a pinned prefill DIRECT_PREFILL.
+#: Edit & resend, Regenerate and Continue are traced as calls of their turn
+#: (ADR-337 amendment 2026-11-26, TASK-42560). Retry, Impersonate and citation
+#: repair carry no turn preparation or capture mode, so they dispatch Capture
+#: Off (TASK-42552). The owner decided on 2026-11-26 that Retry of a failed
+#: turn under Capture On will be traced as a new run of the same turn
+#: (TASK-42555, built after PR #3717).
+#:
+#: The AGENT_FIRST, TOOL_LOOP, DIRECT_PREFILL and LLAMA_FALLBACK rows describe
+#: a fresh send; those routes take the capture mode of the action they serve.
+#: An agent-path Edit & resend, Regenerate or Continue dispatches a traced
+#: AGENT_FIRST call that names the action; an agent-path Retry dispatches
+#: AGENT_FIRST with capture off. An action with a pinned prefill, or in a chat
+#: whose provider replays its own continuation checkpoints, still sends with
+#: capture off (DIRECT_PREFILL for a prefill).
 CONSOLE_REQUEST_ROUTE_CENSUS = (
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.FRESH,
@@ -207,7 +212,7 @@ CONSOLE_REQUEST_ROUTE_CENSUS = (
         "_continue_from_message_body",
         "route=ConsoleRequestRoute.CONTINUE,",
         "continue_requested",
-        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
+        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
     ),
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.REGENERATE,
@@ -217,7 +222,7 @@ CONSOLE_REQUEST_ROUTE_CENSUS = (
         "regenerate_message",
         "route=ConsoleRequestRoute.REGENERATE,",
         "regenerate_requested",
-        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
+        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
     ),
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.EDIT,
@@ -227,7 +232,7 @@ CONSOLE_REQUEST_ROUTE_CENSUS = (
         "edit_and_resend_message",
         "route=ConsoleRequestRoute.EDIT,",
         "edit_and_resend_requested",
-        ConsoleRouteCaptureDisposition.CAPTURE_OFF,
+        ConsoleRouteCaptureDisposition.CONVERSATION_TRACE,
     ),
     ConsoleRequestRouteRecord(
         ConsoleRequestRoute.DIRECT_PREFILL,
@@ -501,6 +506,24 @@ class SavedRevisionTraceProvenance:
         SemanticRevisionRef(self.revision_id)
 
 
+#: Actions traced as their own calls (ADR-337 amendment 2026-11-26).
+TRACED_ACTION_ROUTES = frozenset(
+    {
+        ConsoleRequestRoute.EDIT,
+        ConsoleRequestRoute.REGENERATE,
+        ConsoleRequestRoute.CONTINUE,
+    }
+)
+#: Routes whose descriptor may name the action they belong to.
+_ACTION_CARRIER_ROUTES = frozenset(
+    {
+        ConsoleRequestRoute.AGENT_FIRST,
+        ConsoleRequestRoute.TOOL_LOOP,
+        ConsoleRequestRoute.LLAMA_FALLBACK,
+    }
+)
+
+
 @dataclass(frozen=True, slots=True)
 class RequestRouteTraceProvenance:
     """Content-free logical route annotation outside value-parallel slots."""
@@ -512,10 +535,20 @@ class RequestRouteTraceProvenance:
     # A spawned child's call: the saved user revision of the spawning turn.
     # The child's own rows carry no saved revision (TASK-41310).
     parent_revision_id: str | None = field(default=None, repr=False)
+    # The action whose agent run, or llama.cpp resend, this call belongs to
+    # (ADR-337 amendment 2026-11-26, TASK-42560). A direct call's own route
+    # names its action instead.
+    action: ConsoleRequestRoute | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if type(self.route) is not ConsoleRequestRoute:
             raise ValueError("route must be a ConsoleRequestRoute")
+        if self.action is not None and (
+            self.action not in TRACED_ACTION_ROUTES
+            or self.route not in _ACTION_CARRIER_ROUTES
+            or self.parent_revision_id is not None
+        ):
+            raise TraceProvenanceAlignmentError("action does not match route")
         record = next(
             item for item in CONSOLE_REQUEST_ROUTE_CENSUS if item.route is self.route
         )
@@ -552,6 +585,7 @@ def request_route_provenance(
     actor_id: str | None = None,
     chain_id: str | None = None,
     parent_revision_id: str | None = None,
+    action: ConsoleRequestRoute | None = None,
 ) -> RequestRouteTraceProvenance:
     """Build the structural route descriptor from the closed route census."""
 
@@ -564,7 +598,15 @@ def request_route_provenance(
         actor_id=actor_id,
         chain_id=chain_id,
         parent_revision_id=parent_revision_id,
+        action=action,
     )
+
+
+def route_action(record: RequestRouteTraceProvenance) -> ConsoleRequestRoute | None:
+    """Return the traced action a call belongs to, if any (TASK-42560)."""
+    if record.route in TRACED_ACTION_ROUTES:
+        return record.route
+    return record.action
 
 
 def stream_fallback_route_provenance(
@@ -592,8 +634,11 @@ def stream_fallback_route_provenance(
             actor_id=original.actor_id,
             chain_id=original.chain_id,
             parent_revision_id=original.parent_revision_id,
+            action=original.action,
         )
-    return request_route_provenance(ConsoleRequestRoute.LLAMA_FALLBACK)
+    return request_route_provenance(
+        ConsoleRequestRoute.LLAMA_FALLBACK, action=route_action(original)
+    )
 
 
 @dataclass(frozen=True, slots=True)

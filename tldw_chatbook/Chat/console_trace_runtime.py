@@ -43,8 +43,14 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     completed_replay_source_revision_id,
     current_turn_source_revision_id,
     frozen_policy_from_provenance,
+    route_action,
     stream_fallback_route_provenance,
     saved_response_source_revision_id,
+)
+from tldw_chatbook.Chat.console_trace_action_calls import (
+    action_turn_revision_id,
+    after_action_call,
+    continued_turn_index,
 )
 from tldw_chatbook.Chat.console_trace_repository import (
     ConsoleTraceRepository,
@@ -435,6 +441,23 @@ class ConsoleTraceBoundaryFactory:
                 != "user"
             ):
                 raise ValueError("trace_turn_unavailable")
+        # ADR-337 amendment 2026-11-26 (TASK-42560): an action's call names
+        # its action. A Continue ends with an instruction after the saved
+        # reply it extends; the call belongs to the user that reply answers.
+        action = route_action(route_record)
+        first_action_call = action is not None and route_record.route in {
+            ConsoleRequestRoute.AGENT_FIRST,
+            action,
+        }
+        if first_action_call:
+            continued_user = continued_turn_index(
+                provenance.messages_payload,
+                request.messages_payload,
+                active_descriptor_index,
+                action,
+            )
+            if continued_user is not None:
+                active_descriptor_index = continued_user
         active_revision_ids = tuple(
             _saved_revision_ids(provenance.messages_payload[active_descriptor_index])
         )
@@ -444,6 +467,15 @@ class ConsoleTraceBoundaryFactory:
             # This candidate must match the durable chain origin below; it is
             # never sufficient on its own to admit continuation ownership.
             active_revision_ids = message_revision_ids[-1:]
+        if action is not None and not first_action_call:
+            # A later call of a Continue's run carries the reply after the
+            # user; the run's turn is still that user (rechecked below).
+            turn_revision_id = action_turn_revision_id(
+                provenance.messages_payload, request.messages_payload
+            )
+            active_revision_ids = (
+                () if turn_revision_id is None else (turn_revision_id,)
+            )
         if len(active_revision_ids) != 1:
             raise ValueError("trace_turn_unavailable")
         has_current_text_transform = False
@@ -584,11 +616,14 @@ class ConsoleTraceBoundaryFactory:
                 if (
                     owner is not None
                     and child_turn_revision_id is None
-                    and route_record.route
-                    in {
-                        ConsoleRequestRoute.FRESH,
-                        ConsoleRequestRoute.AGENT_FIRST,
-                    }
+                    and (
+                        route_record.route
+                        in {
+                            ConsoleRequestRoute.FRESH,
+                            ConsoleRequestRoute.AGENT_FIRST,
+                        }
+                        or first_action_call
+                    )
                     and self.repository.has_unresolved_call_for_turn(
                         cursor, owner_id=owner.owner_id, turn_id=turn_id
                     )
@@ -798,8 +833,22 @@ class ConsoleTraceBoundaryFactory:
                         ),
                     )
                 completed_tool_turn = None
+                # ADR-337 amendment 2026-11-26 (TASK-42560): after an action's
+                # run, its rows are replaced as a rewritten tail instead.
+                after_action = (
+                    after_action_call(
+                        self.service, cursor, segment_id=owner.root_segment_id
+                    )
+                    if child_turn_revision_id is None
+                    and not first_action_call
+                    and route_record.route
+                    in {ConsoleRequestRoute.AGENT_FIRST, ConsoleRequestRoute.FRESH}
+                    else None
+                )
                 if (
                     child_turn_revision_id is None
+                    and not first_action_call
+                    and after_action is None
                     and route_record.route
                     in {ConsoleRequestRoute.AGENT_FIRST, ConsoleRequestRoute.FRESH}
                     and active_descriptor_index >= 1
@@ -808,7 +857,7 @@ class ConsoleTraceBoundaryFactory:
                     )
                     == current_revision_id
                 ):
-                    latest = self.repository.get_latest_call_boundary(
+                    latest = self.repository.get_latest_sent_call_boundary(
                         cursor, owner.root_segment_id
                     )
                     terminal = (
@@ -959,6 +1008,10 @@ class ConsoleTraceBoundaryFactory:
                                 getattr(_resolution, "api_key", None) or "",
                             ),
                             fallback_parent=fallback,
+                            action_user_index=(
+                                active_descriptor_index if first_action_call else None
+                            ),
+                            after_action=after_action,
                         )
                     )
                 except ValueError as exc:
