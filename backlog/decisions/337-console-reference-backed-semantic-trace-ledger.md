@@ -1130,6 +1130,12 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    which the run ended: the emergency stop holding its tool turns, a
    breaker, the turn budget) bore no saved reply, so the run counts as
    bearing none; a saved response the trace cannot verify still refuses.
+   The completed-turn transition finds a turn's last call the same way,
+   passing over a call settled not dispatched before it bound any row: it
+   reached no provider and changed no surface. A canceled trace pause
+   leaves one too; on the agent path its next send was refused before
+   (`unsupported_surface_change`), and now it is planned as after the
+   turn before it.
    The replacement then:
    - removes only rows the run wrote after its user row, or from that row
      when it is a transform, whose saved source then leads the replacement;
