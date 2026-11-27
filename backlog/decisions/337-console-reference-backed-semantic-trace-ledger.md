@@ -1212,10 +1212,14 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    only when a call of the action's turn was dispatched. After a kept reply
    whose run was sent, the next captured send is planned by point 5 (its
    refused later call is passed over). A kept reply whose request was never
-   sent is one no rule names: each later captured message stops at "Trace
-   capture could not start", and Send without capture sends it (corrected
-   2026-11-27 after review; with an unknown reservation this lasts until
-   startup recovery settles the reserved call). Its Retry is Retry's
+   sent: with an unknown reservation, its reserved call stops each later
+   captured message at "Trace capture could not start" (Send without capture
+   sends it) until startup recovery settles the call. When only an undo write
+   failed, the next send after a kept Regenerate or Continue is planned as
+   usual, while a kept Edit & resend's edited branch is one no rule names, so
+   the next captured message after it may stop at "Trace capture could not
+   start" (Send without capture sends it). Corrected twice on 2026-11-27
+   after review. Its Retry is Retry's
    (TASK-42555).
 
    Owner decision (2026-11-26). The question was: "When the trace refuses
