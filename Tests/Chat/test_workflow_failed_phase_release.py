@@ -162,6 +162,24 @@ def test_unproven_read_refuses_approve_but_stop_still_applies(tmp_path):
     _run(tmp_path, "approve_under_unproven_read", "native", script=_SCRIPT, timeout=180)
 
 
+def test_a_phase_running_when_the_marker_is_set_fails_at_its_next_wave_boundary(
+    tmp_path,
+):
+    """Owner decision 2026-11-25 (TASK-41946, ADR-285): a phase already running
+    when the unproven-read marker is set does not keep running past its next
+    publication. The wave in flight finishes, its publication is refused, the
+    phase settles `failed` there, no later wave runs, and the chat stays held
+    until restart (TASK-41320: an unproven metadata read is released only by a
+    restart; consistent with TASK-40716)."""
+    _run(
+        tmp_path,
+        "phase_running_under_unproven_read",
+        "native",
+        script=_SCRIPT,
+        timeout=180,
+    )
+
+
 async def _started(rig):
     rig.provider.plan["phases"][0]["tasks"].append(
         dict(
@@ -1174,6 +1192,65 @@ async def approve_under_unproven_read(tmp_path):
         stopped = await rig.service.call(rig.service.get, rig.workflow.id)
         assert stopped.status == "stopped", stopped.status
     finally:
+        await _close_unresolved(rig, "workflow_original_metadata_shutdown_unresolved")
+
+
+async def phase_running_under_unproven_read(tmp_path):
+    import asyncio
+    import functools
+    import threading
+    from types import MethodType
+
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+
+    rig = await build_workflow_rig(tmp_path, None, WorkflowProvider(hold={"task-1"}))
+    try:
+        decision = await _started(rig)  # task-2 depends on task-1
+        service = rig.service
+        original = service.settle_execution_phase
+        outcomes = []
+
+        @functools.wraps(original)
+        def settle(self, phase, **kwargs):
+            outcomes.append(kwargs.get("outcome"))
+            return original(phase, **kwargs)
+
+        entered = rig.provider.entered.setdefault("task-1", threading.Event())
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(
+                service, "settle_execution_phase", MethodType(settle, service)
+            )
+            await rig.coordinator.approve(decision, command_id="approved-once")
+            run = rig.coordinator._runs[rig.workflow.id]
+            # task-1's provider call is in flight (held) when the marker is set.
+            assert await asyncio.to_thread(entered.wait, 60)
+            await _unproven_other_read(rig)
+            rig.provider.released.set()
+            await asyncio.wait({run.driver}, timeout=60)
+        assert run.driver.done()
+        # task-1 finished; the wave boundary's publication was refused, so the
+        # phase failed there and task-2 never ran.
+        assert [key for key, _ in rig.provider.calls] == ["planning", "task-1"]
+        assert outcomes == ["failed"], outcomes
+        stored = await service.call(service.get, rig.workflow.id)
+        assert [result.status for result in stored.results] == ["completed"]
+        # Its terminal publication is refused too: this run is retained, its
+        # chat stays held, and only a restart releases it (TASK-41320).
+        assert rig.coordinator._runs.get(rig.workflow.id) is run
+        assert run.status == "recovery_required"
+        _restart_only(
+            await _refused(rig, "workflow_return_unproven", "reconcile-boundary")
+        )
+        assert rig.coordinator._runs.get(rig.workflow.id) is run
+        held = await rig.controller.submit_draft(
+            "Still held", session_id="workflow-test-chat"
+        )
+        assert not held.accepted
+        # The run keeps the chat's intake claim.
+        assert held.visible_copy == "A turn is already preparing.", held.visible_copy
+    finally:
+        rig.provider.released.set()
+        # The other chat's marker alone makes shutdown report unresolved.
         await _close_unresolved(rig, "workflow_original_metadata_shutdown_unresolved")
 
 
