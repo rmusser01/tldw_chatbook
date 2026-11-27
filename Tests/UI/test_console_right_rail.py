@@ -2257,7 +2257,7 @@ async def test_reveal_is_dropped_when_the_sub_agents_finish_first(frozen_reveal_
     The section stays shown for its "Run history" summary, so a stale reveal
     would still scroll to it when the rail later opens itself.
     """
-    async with make_console_pilot(size=(140, 40)) as pilot:
+    async with make_console_pilot(size=(124, 40)) as pilot:
         screen = pilot.app.screen
         bridge = await _start_fleet_with_staged_tray(
             pilot, screen, tray_rows=6, history=True
@@ -2274,10 +2274,10 @@ async def test_reveal_is_dropped_when_the_sub_agents_finish_first(frozen_reveal_
         assert not section.rows and section.summary == "Run history"
         calls = _spy_fleet_scroll_visible(screen)
 
-        # An automatic opening: open, with no preference behind it.
-        state = replace(screen._current_console_rail_state(), right_open=True)
+        # Closing Context lets the Inspector open automatically at 124 columns.
+        state = screen._set_console_rail_preference(left_open=False)
+        assert state.right_open
         assert state.preferred_right_open is False
-        screen._sync_console_rail_visibility_if_changed(state)
         body = screen.query_one("#console-inspector-rail-body")
         await _wait_reveal(
             pilot,
@@ -2465,11 +2465,15 @@ async def test_a_landing_while_hidden_is_revealed_once_laid_out(frozen_reveal_cl
     The opening rebuilds inside `batch_update`, where after-refresh callbacks
     run without a layout, so the reveal finds no region at first and retries.
     """
-    async with make_console_pilot(size=(150, 40)) as pilot:
+    async with make_console_pilot(size=(140, 40)) as pilot:
         screen = pilot.app.screen
         await _start_fleet_with_staged_tray(pilot, screen, tray_rows=6)
-        _land(screen)  # while hidden
+        assert not _right_rail_open(pilot)
+        _land(screen)
         await pilot.pause()
+        assert not _right_rail_open(pilot)
+
+        await pilot.resize_terminal(150, 40)
         screen._sync_console_rail_visibility_if_changed(
             screen._current_console_rail_state()
         )
