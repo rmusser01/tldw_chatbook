@@ -208,6 +208,28 @@ def _word(name: str) -> re.Pattern[str]:
     return re.compile(rf"(?<![\w-]){re.escape(name)}(?![\w-])")
 
 
+def _component_before(text: str, start: int) -> str | None:
+    """The quoted path component right before the quoted folder at `start`:
+    `skills` in `"skills" / "review"`, or in a join's `"skills", "review"`. It
+    looks on the folder's line, or on the line above (less a `#` comment) when
+    the folder opens its line. A comma separates parts only in a join call."""
+    line = text.rfind("\n", 0, start) + 1
+    head = text[line:start]
+    if not head.endswith(("'", '"')):
+        return None
+    head = head[:-1].rstrip()
+    if not head and line:
+        above = text.rfind("\n", 0, line - 1) + 1
+        head = re.sub(r"#[^'\"\n]*$", "", text[above : line - 1]).rstrip()
+    part = re.search(r"""["']([\w.-]+)["']\s*([/,])$""", head)
+    if part is None or (
+        part.group(2) == ","
+        and not re.search(r"join(?:path)?\([^()]*$", head[: part.start()])
+    ):
+        return None
+    return part.group(1)
+
+
 def _readers(
     path: str,
     corpus: dict[str, str],
@@ -251,16 +273,14 @@ def _readers(
             rf"""{re.escape(target.name)}(?![\w-])"""
         )
         listed = re.compile(rf"""["']{re.escape(folder)}["']""")
-        # A quoted component before it (`"skills" / "review"`, or a join's
-        # `"x", "review"`) is a longer path too, so it must be the grandparent.
-        component = re.compile(r"""["']([\w.-]+)["']\s*[/,]\s*["']$""")
 
+        # A quoted component before the folder (`"skills" / "review"`) is a
+        # longer path too, so it must be the grandparent.
         def named_beside(text: str) -> bool:
             for match in beside.finditer(text):
-                previous = component.search(
-                    text, max(0, match.start() - 200), match.start()
-                )
-                if previous is None or previous.group(1) == parent:
+                if parent and text.startswith(f"{parent}/", match.start()):
+                    return True  # already through the grandparent
+                if _component_before(text, match.start()) in (None, parent):
                     return True
             return False
 

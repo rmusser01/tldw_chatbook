@@ -43,7 +43,7 @@ These cases should run the light tier with a capped, deterministic sample of the
 - [x] #17 Names match as whole words, a common data file name needs its folder named, and a conftest literal must end the path. Helpers met during the search are read by name too. A blocked change's first laned dependent takes a slot ahead of the PR's own overflow.
 - [x] #18 A PR never samples more than 8 files (an own-file lead does not count). A Tests/CI file reads a change only when it names it precisely. Name counts come from tracked files and include a deleted twin, and the common-name rule covers `.py` helpers without precise readers.
 - [x] #19 A common name needs its folder right before it, or a folder literal in a file that names the folder above it too. One tracked-file count serves the whole plan, and the counts survive a missing git binary.
-- [x] #20 A longer path before a common name's folder must go through its parent, quoted components included. The counts ignore an inherited git environment and include the PR's deletions under `Tests/` everywhere. A fixture copied by a distinctive folder name has the copying tests as readers; a conftest-time one sends the plan broad.
+- [x] #20 A longer path before a common name's folder must go through its parent, quoted components included (on the folder's line, or the line above when the folder opens its line; a comma separates parts only in a join). The counts ignore an inherited git environment and include the PR's deletions under `Tests/` everywhere. A fixture copied by a distinctive folder name has the copying tests as readers; a conftest-time one sends the plan broad.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -64,6 +64,7 @@ These cases should run the light tier with a capped, deterministic sample of the
 13. Fix round 7 (re-review m1, m2, nits): the folder right before the name, or a folder literal with its parent folder named; tests for T4 and T8; one count source; git fails safe.
 14. Fix round 8 (re-review m1, m2, nits): grandparent-only longer paths, a scrubbed git environment, the PR's deleted names in every count, a distinctive-folder fallback for fixture packages, tests for U2 and U3.
 15. Fix round 9 (re-review m1, nits): deletions under `Tests/` only, quoted components before a folder, the conftest check for folder readers, folders counted at every level, tests for F3 and F4, accurate precision claims.
+16. Fix round 10 (re-review nits): no synthetic `Tests/CI` literal naming a real file, a line-aware look-back for the quoted component, and a sweep table from one script at both trees.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -105,6 +106,14 @@ These cases should run the light tier with a capped, deterministic sample of the
     - folder names are counted at every level, so a same-named folder holding only subfolders makes the name shared;
     - tests pin the top-level rule (F3) and the `Tests/CI` exclusion (F4).
   - Round 9: a quoted component before the folder (`"skills" / "review" / "SKILL.md"`, `os.path.join("skills", "review", ...)`) must also be the grandparent. The reviewer found 4 such admissions, in `Tests/Plugins/test_coordinator.py` and `test_recovery.py`.
+  - Round 10 (look-back): the quoted component is looked for on the folder's line or, when the folder opens its line, on the line above, less a trailing `#` comment. Round 9 instead searched a 200-character window. A comma separates parts only inside a `join(` or `joinpath(` call. The reviewer's probe cases now all come out as wanted:
+    - `make("plugin", "review/SKILL.md")` and a list item on the next line read the file;
+    - a chain with a comment in it, or with 250 spaces in it, does not.
+
+    A match already through the grandparent (`"skills" / "custom/review/SKILL.md"`) is accepted without the check. Round 9 compared `skills` with `custom` there, which errs toward fewer tests.
+
+    **Left as is:** a join whose arguments span lines (`os.path.join(\n "skills",\n "review", ...)`) reads like a list, so its comma is not a separator and the file counts as read. Finding the open `join(` lines above would need a bracket scanner, and this case errs toward more tests. A comment above that itself contains a quote is not stripped either; the chain then looks unbroken and the file counts as read, again toward more tests.
+  - Round 10: `test_a_common_name_needs_its_folder_right_before_it` used `"Tests/README.md"`, which names the real file precisely, so the sweep said `Tests/CI covers Tests/README.md`. The pair is now `Tests/GUIDE.md` and `Tests/fixtures/sp/GUIDE.md`. The literal scan, with no prefix excluded, and the reviewer's `ci_tiered.py` agree: `Tests/CI/test_tiered_ci.py` names 16 real files. The 10 non-test ones are conftest files, conftest-loaded or conftest-named, or `Tests/Chat/hooks_v2_owned_rig.py`. The 6 test files are named on purpose, and the name fallback never runs for a test file.
   - Round 9's sweep then left `Tests/Plugins/fixtures/interop/cursor/picked/review/SKILL.md` read only by `Tests/CI/test_tiered_ci.py`, through a synthetic literal (`"picked/review/SKILL.md"`) that the real path ends with. Four more synthetic literals named real fixtures the same way (`custom/review/SKILL.md`, `skills/review/SKILL.md`, `.codex-plugin/plugin.json`, `codex/.codex-plugin/plugin.json`). Those tests now use an `audit` folder and an `acme` package, which no tracked `Tests/` path has, so `Tests/CI` no longer claims those fixtures.
   - Round 6 had accepted the folder anywhere on the line, or a bare folder literal. That admitted 98 readers through generic folders such as `review`, `package` or `Tests`, and counted `Tests/fixtures/superpowers_skills/README.md` as a reader of `Tests/README.md`. With round 7's rule, the reviewer's probe admits 428 readers. None of the 8 `superpowers_skills` fixtures loses `Tests/Skills/test_skills_import.py`: the 7 with common names keep it through the folder list plus the `superpowers_skills` parent, and `requesting-code-review/code-reviewer.md` is not a common name.
   - A deleted twin still counts as sharing (n3).
@@ -164,6 +173,7 @@ These cases should run the light tier with a capped, deterministic sample of the
   - The 9 round-1 cases fail on f8b476384b.
   - 7 round-2 tests, and the 2 whose reason wording changed, fail on 5c83750feb.
   - The 3 new round-3 tests, and the 6 updated for lanes or reason wording, fail on 280dc7b24f.
+  - 2 round-10 tests fail on 986eb4cb24.
   - 3 round-9 tests fail on 14f4af2b54.
   - 4 round-8 tests fail on ea45684b72.
   - 3 round-7 tests fail on 646b345fec. The T4 and T8 tests pin existing behaviour.
@@ -171,7 +181,7 @@ These cases should run the light tier with a capped, deterministic sample of the
   - 6 round-5 tests fail on ff7ec61bc0. Three more pin existing behaviour, to kill R4, R5 and R10.
   - 10 round-4 tests fail on 58421663. Three more pass on it by design: they pin behaviour that already existed, to kill the reviewer's mutations N7/N8, N10 and N16.
   - The determinism test also fails when only the corpus `sorted(` is removed.
-- **Mutations: all 64 killed on the final policy, in one run, each restored from a copy with a byte check.**
+- **Mutations: all 71 killed on the final policy, in one run, each restored from a copy with a byte check.**
   - a: no runnable filter.
   - b: cap before the runnable filter.
   - b2: the search counts every file.
@@ -212,6 +222,17 @@ These cases should run the light tier with a capped, deterministic sample of the
     - F4: `Tests/CI` folder readers count.
     - anc: only folders that hold files count.
     - m1a, retargeted to `named_beside`.
+  - Round 10:
+    - Qc: a comma always separates parts.
+    - Qn: a comma never does.
+    - Qa: no look at the line above.
+    - Qs: the line above even when the folder does not open its line.
+    - Qh: the comment above kept.
+    - Qw: a 200-character window on the line.
+    - Qt: no short-circuit through the grandparent.
+    - comp, retargeted to `_component_before`.
+
+    A first Qw (capping the line start at 200 characters back) survived as an equivalent mutant: the line-above step then reads back to the previous newline, which restores the same text. Qw now caps the looked-at text itself, and it is killed.
   - From round 9 on, mutation runs restore the policy from a byte copy (never `git checkout`) and check the restore byte for byte.
   - x and U3 survived the first round-8 run. The grandparent rule had made x's old case unreachable, and the comma-separated reader also passed through the folder-literal clause. A uniquely named data file written by the conftest under another folder now kills x; dropping the reader's comment leaves U3 only the comma.
   - ee survived again in round 7, because the adjacency rule already rejects the near-miss line. The generic folder list now names its parent folder only inside `fixtures-old`, which a hyphen must end.
@@ -259,7 +280,7 @@ These cases should run the light tier with a capped, deterministic sample of the
   - 1 light: no PR lane runs a dependent -> light: dependents run
 
   The one new broad in that round-5 run was `Tests/Backup_Recovery/fixtures/age_v1/README.md`, a false positive. An earlier version of this note called its reader real. `Tests/Packaging/test_backup_helper_distribution.py` names `.../age_v1/official.age` on one line and an unrelated `"README.md"` on another. Round 6 (n2) requires the folder and the name on the same line, so it is no longer read.
-- **The reviewer's round-9 sweep (`sweep8.py`), before (14f4af2b54) and after:**
+- **Sweep (the reviewer's `sweep9.py`: 1,217 single-file changes plus 280 data files), run at 14f4af2b54 and at the final tree with one script:**
 
 | Outcome | Before (14f4af2b54) | After |
 |---|---:|---:|
@@ -267,15 +288,22 @@ These cases should run the light tier with a capped, deterministic sample of the
 | broad: Named at conftest time | 10 | 10 |
 | broad: Only the full run reaches | 14 | 14 |
 | broad: Test file | 31 | 31 |
-| light: Tests/CI covers it | 1 | 1 |
-| light: dependents run | 867 | 867 |
+| light: Tests/CI covers it | 1 | 0 |
+| light: dependents run | 874 | 874 |
 | light: no PR lane runs a dependent | 43 | 43 |
 | light: no test file depends on it | 2 | 2 |
-| light: nothing imports or names it | 164 | 165 |
-| light: sampled (laned only) | 331 | 330 |
+| light: nothing imports or names it | 164 | 166 |
+| light: sampled (laned only) | 324 | 323 |
 | total | 1497 | 1497 |
 
-  One outcome moves, with no tier change: `Tests/Plugins/fixtures/interop/cursor/picked/review/SKILL.md` goes from sampled to "nothing imports or names". Its old readers, `Tests/Plugins/test_coordinator.py` and `test_recovery.py`, write the native package's `"skills" / "review" / "SKILL.md"`, which the quoted-component rule now rejects. A real reader, `Tests/Plugins/test_cursor_adapter.py` (`interop_package(dialect)` with `"picked"`), was not found before either; the nightly covers it. Six more rows keep their outcome and sampled files and skip fewer unlaned dependents: `codex/custom/review/SKILL.md` drops the same two files, and five `.cursor-plugin/plugin.json` fixtures drop `Tests/Plugins/test_source_service.py`, which writes its own manifest (`("cursor", ".cursor-plugin/plugin.json")`). The 9 folder-fallback rows are unchanged, so the 22 readers over 9 files stand.
+  Round 9's table was wrong. Its "before" column came from another run, and its script counted 7 under-the-cap plans as sampled. Their reasons say, for example, `sampled 6 of 6 importers of ..., skipping 1 the light job cannot run`: every runnable dependent runs. Both columns here come from one script and one categorizer, in which "sampled" means the reason says `a PR lane runs`, as in round 8. The 14f4af2b54 column reproduces round 8's "after".
+
+  Changes since 14f4af2b54, none of them a tier:
+  - `Tests/Plugins/fixtures/interop/cursor/picked/review/SKILL.md`: sampled -> "nothing imports or names". Its old readers, `Tests/Plugins/test_coordinator.py` and `test_recovery.py`, write the native package's `"skills" / "review" / "SKILL.md"`. A real reader, `Tests/Plugins/test_cursor_adapter.py` (`interop_package(dialect)` with `"picked"`), is found at neither head; the nightly covers it.
+  - `Tests/README.md`: "Tests/CI covers it" -> "nothing imports or names". Its only reader was the synthetic `"Tests/README.md"` in `Tests/CI/test_tiered_ci.py` (round 10).
+  - `codex/custom/review/SKILL.md` keeps its sampled files and skips 8 fewer unlaned dependents: the same two files and their importers.
+  - Round 9 dropped `Tests/Plugins/test_source_service.py` as a reader of five `.cursor-plugin/plugin.json` fixtures, and round 10 restores it. Its `("cursor", ".cursor-plugin/plugin.json")` is a tuple, and a comma now separates path parts only inside a join. That test writes its own manifest, so this is an over-match toward more tests.
+  - The 9 folder-fallback rows are unchanged, so 22 readers over 9 files stand.
 - **Cost.** A one-file plan takes about 2-3 s cold, most of it the one-off word index (2.2 s). The worst cold cases, the `Tests/Plugins/fixtures/**/guard.py` fixtures, take about 9-11 s; round 4's notes said 3.8 s, a figure measured with the index already built.
 - **Several changes at once (round 4, M-B),** cold, reviewer's `multi3`:
   - 30, 100 and 400 of the sweep's light rows took 7.1, 8.4 and 12.5 s, against 20, 55 and 134 s before. They end broad by the after-the-cut check, which runs after every search.
@@ -283,12 +311,12 @@ These cases should run the light tier with a capped, deterministic sample of the
 - **Conftest naming (round 4, M-D).** Of the 280 tracked data files under `Tests/` (guard data excluded), conftest-time files named 11 precisely in round 4, against 51 by file name only. All 11 were `SKILL.md` files; an earlier version of this note said "10 ... and one other", which was wrong. Round 5 (m2) requires the literal to end the path. 9 remain, all `SKILL.md` files under a `skills/review/` directory, which `Tests/Plugins/conftest.py`'s literal really ends; they stay broad as a conservative over-match.
 - **Hosted dev-light timing (round 4, M-E).** 33 successful "Dev smoke and affected contracts" jobs on PRs from 2026-11-24 to 2026-11-26 took 4.4 to 25.0 min (median 8.1). The largest selection was 12 files (90 targets, run 45435066859) in 9.9 min. The longest job was 25.0 min for 8 files (34 targets, run 45462985645). No hosted run has selected 20 files yet.
 - **Verification:**
-  - `Tests/CI/test_tiered_ci.py`: 153 passed.
-  - `Tests/CI -n 4`: 2070 passed, 2 skipped.
+  - `Tests/CI/test_tiered_ci.py`: 155 passed.
+  - `Tests/CI -n 4`: 2072 passed, 2 skipped.
   - `./scripts/preflight.sh` under a scratch HOME with `PYTHON=.venv/bin/python` (3.12.11): all derived-artifact checks passed.
   - These all pass: `ruff check tldw_chatbook --select F`; `ruff check scripts/ci Tests/CI/test_tiered_ci.py --select F`; `ruff format --check`; `Tests/lint/ruff_gate.py`.
 - **PR #3769** (base 434eb71f95, head 7a453d4d36, root = a detached worktree of the head) still runs **broad**, for one reason: `Schema input: tldw_chatbook/DB/assistant_generation_state.py`. With that file dropped, it runs light: 22 targets, 18 files. The reason is `8 sampled files in all; sampled 4 of 9+ importers of Tests/Chat/test_console_dispatch_recovery.py a PR lane runs, skipping 32+ no PR lane runs; sampled 4 of 9+ importers of Tests/UI/test_console_prompt_queue.py a PR lane runs, skipping 18+ no PR lane runs, skipping 1 the light job cannot run`. The UI `test_console_dispatch_recovery.py` runs both of its importers, under the cap.
-- **Last 60 first-parent dev merges** (through 5dcba48401), replayed against one tree (the #3769 head, so approximate): 26 run light under dev's policy and 35 under the final one; round 9's replay matches round 8's row for row. Round 4 had 34: 9fa2bf1b1d's own files overflow the 20-file cut, which removed the laned sample of `Tests/UI/test_console_hook_review_send_freeze.py`, so round 4's after-the-cut check sent it broad. Round 5's lead slot keeps that change's laned dependent ahead of the PR's own overflow, so it is light again, with the dropped own files named. The 25 broad runs: 21 change CI, build or test configuration, 2 their own HEAVY files, 1 its own file split across lane steps, and 1 its own deselected file.
+- **Last 60 first-parent dev merges** (through 5dcba48401), replayed against one tree (the #3769 head, so approximate): 26 run light under dev's policy and 35 under the final one; rounds 9 and 10 match round 8 row for row. Round 4 had 34: 9fa2bf1b1d's own files overflow the 20-file cut, which removed the laned sample of `Tests/UI/test_console_hook_review_send_freeze.py`, so round 4's after-the-cut check sent it broad. Round 5's lead slot keeps that change's laned dependent ahead of the PR's own overflow, so it is light again, with the dropped own files named. The 25 broad runs: 21 change CI, build or test configuration, 2 their own HEAVY files, 1 its own file split across lane steps, and 1 its own deselected file.
 - **Light runner, re-measured (round 3).** `scripts/ci/run_light.py` ran as the dev-light job runs it: `CI_TEST_TARGETS=<json> python scripts/ci/run_light.py`, Python 3.12.11, a scratch HOME/XDG/TMPDIR, on this 18-core Mac. The selection was the largest light plan of the 60 merges under the final caps: merge 1b9e3f8a55, 68 targets, 25 files, 26 pytest processes with `Tests/CI`.
   - None of my jobs ran alongside it. Another session's pytest runs were on the machine (load average 6.1 before, 11.5 after).
   - It took **20 min 14 s wall** (1,214 s), inside the job's 30-minute cap.

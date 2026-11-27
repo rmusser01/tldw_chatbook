@@ -1734,17 +1734,17 @@ def test_name_counts_come_from_tracked_files(tmp_path):
 
 
 def test_a_common_name_needs_its_folder_right_before_it(tmp_path):
-    """Round 7 (m1): `superpowers_skills/README.md` is not `Tests/README.md`."""
+    """Round 7 (m1): `superpowers_skills/GUIDE.md` is not `Tests/GUIDE.md`."""
     files = {
-        "Tests/README.md": "",
-        "Tests/fixtures/sp/README.md": "",
-        "Tests/Pkg/test_nested.py": 'P = "Tests/fixtures/sp/README.md"\n',
-        "Tests/Pkg/test_top.py": 'P = ROOT / "Tests" / "README.md"\n',
+        "Tests/GUIDE.md": "",
+        "Tests/fixtures/sp/GUIDE.md": "",
+        "Tests/Pkg/test_nested.py": 'P = "Tests/fixtures/sp/GUIDE.md"\n',
+        "Tests/Pkg/test_top.py": 'P = ROOT / "Tests" / "GUIDE.md"\n',
         # A generic folder literal with no parent folder named is no reader either.
-        "Tests/Pkg/test_review.py": 'KIND = "Tests"\nNAME = "README.md"\n',
+        "Tests/Pkg/test_review.py": 'KIND = "Tests"\nNAME = "GUIDE.md"\n',
     }
     root = _tree(tmp_path, files)
-    assert _sampled(policy.select_changes([("M", "Tests/README.md")], root)) == {
+    assert _sampled(policy.select_changes([("M", "Tests/GUIDE.md")], root)) == {
         "Tests/Pkg/test_top.py"
     }
 
@@ -1900,6 +1900,51 @@ def test_a_quoted_path_component_before_the_folder_must_be_its_parent(tmp_path):
     root = _tree(tmp_path, files)
     assert _sampled(policy.select_changes([("M", custom)], root)) == {
         "Tests/P/test_custom.py"
+    }
+
+
+def test_a_comma_separates_path_parts_only_in_a_join(tmp_path):
+    """Round 10: call arguments and list items are not a path; a join's are."""
+    custom = "Tests/P/fixtures/custom/audit/SKILL.md"
+    files = {
+        custom: "",
+        "Tests/P/fixtures/chosen/audit/SKILL.md": "",
+        "Tests/P/test_call.py": 'F = make("plugin", "audit/SKILL.md")\n',
+        "Tests/P/test_list.py": 'NAMES = [\n    "alpha",\n    "audit/SKILL.md",\n]\n',
+        "Tests/P/test_joinpath.py": 'F = root.joinpath("skills", "audit", "SKILL.md")\n',
+        # The folder does not open its line: the line above is not its path.
+        "Tests/P/test_join_arg.py": (
+            'F = os.path.join("skills",\n                 other, "audit", "SKILL.md")\n'
+        ),
+    }
+    root = _tree(tmp_path, files)
+    assert _sampled(policy.select_changes([("M", custom)], root)) == {
+        "Tests/P/test_call.py",
+        "Tests/P/test_list.py",
+        "Tests/P/test_join_arg.py",
+    }
+
+
+def test_the_look_back_takes_the_line_above_without_its_comment(tmp_path):
+    """Round 10: a chain split over lines, a comment or wide spacing in it."""
+    custom = "Tests/P/fixtures/custom/audit/SKILL.md"
+    files = {
+        custom: "",
+        "Tests/P/fixtures/chosen/audit/SKILL.md": "",
+        "Tests/P/test_above.py": 'F = ("skills" /\n     "audit" / "SKILL.md")\n',
+        "Tests/P/test_comment.py": (
+            'F = ("skills" /  # the skills folder\n     "audit" / "SKILL.md")\n'
+        ),
+        "Tests/P/test_spaces.py": 'F = "skills" /'
+        + " " * 250
+        + '"audit" / "SKILL.md"\n',
+        "Tests/P/test_two.py": 'A = "skills", "x"\nB = "audit/SKILL.md"\n',
+        "Tests/P/test_through.py": 'F = ROOT / "skills" / "custom/audit/SKILL.md"\n',
+    }
+    root = _tree(tmp_path, files)
+    assert _sampled(policy.select_changes([("M", custom)], root)) == {
+        "Tests/P/test_two.py",
+        "Tests/P/test_through.py",
     }
 
 
