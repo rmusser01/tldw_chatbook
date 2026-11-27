@@ -187,6 +187,10 @@ class ChangeReviewConsentService:
     """
 
     _PREPARING_REASON = "Preparing change history; this turn continues without it."
+    # A capture schedules nothing, so it must not promise preparation (TASK-42111).
+    _NOT_PREPARED_REASON = (
+        "Change history is not prepared yet; this turn continues without it."
+    )
     _FAILED_REASON = (
         "Change history preparation failed; this turn continues without it."
     )
@@ -342,6 +346,20 @@ class ChangeReviewConsentService:
             for binding in bindings:
                 entry = self._readiness.get((workspace_id, binding.locator))
                 if entry is None or entry.revision != consent.revision:
+                    # No readiness for this consent revision. A capture schedules
+                    # nothing, so it finds none after a restart (readiness is
+                    # memory-only) or a consent change; an admission finds none
+                    # when a concurrent one re-keyed the entry to a newer
+                    # revision. Either way the turn says it skipped the root
+                    # (TASK-42111).
+                    skipped.append(
+                        SkippedReviewRoot(
+                            binding.binding_id,
+                            self._PREPARING_REASON
+                            if schedule_missing
+                            else self._NOT_PREPARED_REASON,
+                        )
+                    )
                     continue
                 if entry.state is RootReadinessState.READY:
                     ready.append(binding.locator)
