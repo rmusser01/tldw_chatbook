@@ -351,15 +351,23 @@ def build_rewritten_tail_witness(
         memory_anchor = False
     elif (
         anchor is not None
-        and after_action is not None
-        and after_action.response_revision_id is None
+        and (
+            user_index is not None
+            or after_action is not None
+            and after_action.response_revision_id is None
+        )
         and retained_message is not None
         and unanswered_reply(
-            cursor, conversation_id=conversation_id, message_id=anchor
+            cursor,
+            conversation_id=conversation_id,
+            message_id=anchor,
+            text_allowed=after_action is None,
         )
         == retained_message
     ):
-        # The run's own reply failed with nothing in it; the request skips it.
+        # A reply that failed with nothing in it, after the last retained
+        # row: the run's own, or one before an action's turn (ADR-337
+        # amendment 2026-11-26, point 4); the request skips it.
         memory_anchor, unanswered = False, True
     elif anchor is not None and _active_memory_boundary(
         cursor, conversation_id, anchor
@@ -451,18 +459,19 @@ def validate_rewritten_tail(
             )
             or (witness.unanswered_anchor or witness.skipped_reply_id is not None)
             and after.response_revision_id is not None
-            or witness.unanswered_anchor
-            and (
-                after.response_revision_id is not None
-                or unanswered_reply(
-                    cursor,
-                    conversation_id=conversation_id,
-                    message_id=witness.anchor_message_id,
-                )
-                is None
-            )
         ):
             raise ValueError("rewritten_tail_unavailable")
+    if (
+        witness.unanswered_anchor
+        and unanswered_reply(
+            cursor,
+            conversation_id=conversation_id,
+            message_id=witness.anchor_message_id,
+            text_allowed=witness.after_call_id is None,
+        )
+        is None
+    ):
+        raise ValueError("rewritten_tail_unavailable")
     chain = _chain_messages(
         cursor,
         repository,

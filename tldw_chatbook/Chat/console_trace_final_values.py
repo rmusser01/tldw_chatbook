@@ -539,8 +539,9 @@ class RewrittenTailWitness:
             after an action's run, carries them.
         after_call_id: For the send after an action's run, the run's latest
             call; its rows after the re-recorded user are the range.
-        unanswered_anchor: True when ``anchor_message_id`` is that run's own
-            failed, empty reply, whose parent is the last retained row.
+        unanswered_anchor: True when ``anchor_message_id`` is a failed,
+            empty reply whose parent is the last retained row: that run's
+            own, or one before an action's own turn (2026-11-27).
         skipped_reply_id: For the send after an action's run that bore
             nothing, the run's failed, empty reply between its restored user
             (the one history row) and the current user, which hangs off it;
@@ -594,11 +595,7 @@ class RewrittenTailWitness:
             or type(self.unanswered_anchor) is not bool
             or (
                 self.unanswered_anchor
-                and (
-                    self.after_call_id is None
-                    or self.anchor_message_id is None
-                    or self.memory_anchor
-                )
+                and (self.anchor_message_id is None or self.memory_anchor)
             )
             or type(self.memory_anchor) is not bool
             or (self.memory_anchor and self.anchor_message_id is None)

@@ -353,6 +353,132 @@ async def test_an_action_on_an_earlier_message(tmp_path, monkeypatch):
         _assert_traced_as_sent(app)
 
 
+async def _after_a_skipped_failed_reply(app, replies, first, *, partial=False):
+    """Hello; then a reply fails empty (a send's provider outage, or a failed
+    Continue or Edit & resend), which the next request skips; then "One
+    more?" is sent and traced. With ``partial``, the failed reply keeps the
+    text of a stream that failed."""
+    from tldw_chatbook.Provider_Contract import ChatProviderError
+
+    outage = [ChatProviderError(provider="openai", message="outage", status_code=503)] * 3
+    await _send(app, "Hello")
+    if first == "send":
+        replies.extend(outage)
+        await app.controller.submit_draft("And now?", session_id=app.session.id)
+    else:
+        await _send(app, "And now?")
+        replies.extend(outage)
+        await _act(app, first)
+    replies.clear()
+    assert _last(app, "assistant").status == "failed"
+    if partial:
+        app.store.update_message_content(_last(app, "assistant").id, "partial text")
+    await _send(app, "One more?")
+    _assert_traced_as_sent(app, every_request=False)
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("plain_path", [False, True], ids=["agent", "plain_path"])
+@pytest.mark.parametrize("first", ["send", "continue", "edit"])
+@pytest.mark.parametrize("action", ACTIONS)
+async def test_an_action_on_the_turn_after_a_skipped_failed_reply(
+    tmp_path, monkeypatch, action, first, plain_path
+):
+    """The action's user row hangs off a failed reply that holds nothing,
+    which the request skips; that reply's parent is the last retained row,
+    so the action's call is admitted as the send after an action's run is
+    (ADR-337 amendment 2026-11-26, point 4). Before, every such action was
+    refused and undone."""
+    replies = []
+    async with _console(
+        tmp_path,
+        monkeypatch,
+        hosted=True,
+        project=False,
+        plain_path=plain_path,
+        replies=replies,
+    ) as app:
+        await _after_a_skipped_failed_reply(app, replies, first)
+
+        result = await _act(app, action)
+
+        assert result.accepted, result.visible_copy
+        _assert_traced_as_sent(app, every_request=False)
+        await _send(app, "And after?")
+        _assert_traced_as_sent(app, every_request=False)
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize(
+    "shape",
+    [
+        "two_failed_replies",
+        "edit_of_the_hanging_user",
+        "partial_content",
+        "agents_md",
+        "llama_cpp",
+    ],
+)
+async def test_an_action_after_a_skipped_failed_reply_in_other_shapes(
+    tmp_path, monkeypatch, shape
+):
+    """The siblings: two failed replies in a row (the action's user hangs off
+    the second, whose parent is the retained user before it); an Edit &
+    resend of the user that hangs off the failed reply; a failed reply that
+    kept partial text (the request skips it all the same); with AGENTS.md;
+    and on llama.cpp, where the first reply fails."""
+    from Tests.Chat.test_console_project_instruction_traces import _project_console
+    from tldw_chatbook.Provider_Contract import ChatProviderError
+
+    replies = []
+    if shape == "llama_cpp":
+        import httpx
+
+        async with _project_console(
+            tmp_path,
+            monkeypatch,
+            source_name="NOTES.md",
+            first_failure=lambda _request: httpx.Response(503, json={"error": "outage"}),
+            failures=3,  # every attempt of the first send fails
+        ) as app:
+            app.sent = app.http_payloads
+            app.wire = lambda: app.http_payloads[-1]["messages"]
+            await app.controller.submit_draft("Hello", session_id=app.session.id)
+            assert _last(app, "assistant").status == "failed"
+            await _send(app, "One more?")
+            _assert_traced_as_sent(app, every_request=False)
+
+            result = await _act(app, "regenerate")
+
+            assert result.accepted, result.visible_copy
+            _assert_traced_as_sent(app, every_request=False)
+        return
+    async with _console(
+        tmp_path,
+        monkeypatch,
+        hosted=True,
+        project=shape == "agents_md",
+        replies=replies,
+    ) as app:
+        await _after_a_skipped_failed_reply(
+            app, replies, "send", partial=shape == "partial_content"
+        )
+        if shape == "two_failed_replies":
+            outage = ChatProviderError(provider="openai", message="outage", status_code=503)
+            replies.extend([outage] * 3)
+            await app.controller.submit_draft("Again?", session_id=app.session.id)
+            replies.clear()
+            await _send(app, "Last one?")
+            _assert_traced_as_sent(app, every_request=False)
+
+        result = await _act(app, "edit" if shape == "edit_of_the_hanging_user" else "regenerate")
+
+        assert result.accepted, result.visible_copy
+        _assert_traced_as_sent(app, every_request=False)
+        await _send(app, "And after?")
+        _assert_traced_as_sent(app, every_request=False)
+
+
 @pytest.mark.usefixtures("shut_down_console_controllers")
 @pytest.mark.parametrize("project", [False, True], ids=["plain", "agents_md"])
 @pytest.mark.parametrize("ending", ["emergency_stop", "turn_budget"])

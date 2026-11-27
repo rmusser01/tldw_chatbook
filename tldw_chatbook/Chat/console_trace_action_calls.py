@@ -373,19 +373,26 @@ def earlier_reply(
 
 
 def unanswered_reply(
-    cursor: sqlite3.Cursor, *, conversation_id: str, message_id: str
+    cursor: sqlite3.Cursor,
+    *,
+    conversation_id: str,
+    message_id: str,
+    text_allowed: bool = False,
 ) -> str | None:
     """Return the parent of a failed reply that holds nothing, else None.
 
     A Continue or Edit & resend whose call failed leaves its empty failed
     reply on the active path; the next user hangs off it, and the next
-    request skips it.
+    request skips it. With ``text_allowed``, the failed reply may keep the
+    partial text of a stream that failed (the request skips it all the
+    same), for an action's own call on the turn after it.
     """
     row = cursor.execute(
         "SELECT parent_message_id FROM messages m WHERE id = ? "
         "AND conversation_id = ? AND deleted = 0 AND role = 'assistant' "
         "AND assistant_generation_state = 'failed' "
-        "AND coalesce(content, '') = '' AND image_data IS NULL "
+        + ("" if text_allowed else "AND coalesce(content, '') = '' ")
+        + "AND image_data IS NULL "
         "AND image_mime_type IS NULL AND provider_continuation_json IS NULL "
         "AND thinking_blocks_json IS NULL AND NOT EXISTS ("
         "SELECT 1 FROM message_attachments a WHERE a.message_id = m.id)",
