@@ -1108,7 +1108,14 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    parent of the next; the user is the call's own turn; a Continue's replies
    are saved assistant revisions; the oldest row hangs off the last retained
    saved row, an active memory's boundary, or the root; without it the call
-   is refused, even for a one-row replacement. The instruction and the
+   is refused, even for a one-row replacement. Engineering clarification
+   (2026-11-27, after review): the oldest row may instead hang off a failed
+   reply that holds nothing and whose parent is the last retained row; the
+   request skips that reply (a send's provider outage, or a failed Continue
+   or Edit & resend, before the turn the action works on), and the
+   dispatch-binding transaction rechecks that it is still failed and empty,
+   as for the send after an action's run (point 5). Before, an action on
+   the turn after such a reply was always refused. The instruction and the
    project rows are provider artifacts under the call's frozen policy.
    The replaced span keeps the 256-sequence and 256-link bounds (2026-11-06),
    and incoming rows count toward the 256-row bound. The planner proves it
