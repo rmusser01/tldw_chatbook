@@ -44,8 +44,6 @@
 
 **What to do.** When a change lets a new call write or own trace surface rows, rerun its journeys with the provider failing that call (all of the run's retries), then send one more message, on each path; compare with base. Count the failure path as part of the matrix, not an extra.
 
-## `wait_for_refresh` alone does not run a section's queued rebuild, so a "never called" check after it passes too early (TASK-41959 review, 2026-11-25)
-
 ## `is_mounted` stays True after a widget is removed in Textual 8.2.8 (TASK-41959 review, 2026-11-25)
 
 **Incident.** The fleet reveal's inner-scroll check skipped scroll areas that a rebuild had replaced, using `area.is_mounted and ...`, and the reveal itself guarded on `reveal.section.is_mounted`. A reviewer's mutations deleted both filters and every test stayed green. In Textual 8.2.8, `MessagePump._is_mounted` is set False in `__init__` and True on mount, and nothing ever resets it, so a removed widget still reports `is_mounted`. The filter did nothing: a replaced area was compared on its frozen last offset all along. That turned out to be the useful behaviour, since it also catches a user scroll followed by a rebuild.
