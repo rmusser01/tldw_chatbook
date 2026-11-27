@@ -15818,17 +15818,12 @@ class ConsoleChatController:
         kill-switch-on / compose-failed / empty-catalog paths; the eligible
         path publishes the real counts.
 
-        No separate UI refresh is triggered here by design -- piggybacking
-        on machinery the screen already runs, not a new mechanism:
-        ``_compose_mcp_provider`` always executes on the main loop while
-        this run's state is already STREAMING (set moments earlier by
-        ``_run_agent_reply``), so the screen's own active-run poll timer
-        (``ChatScreen._start_console_transcript_sync_timer``, already
-        ticking every 0.2s by the time this runs -- started before
-        ``submit_draft`` is even awaited) and the guaranteed post-
-        ``submit_draft`` sync (runtime custody)
-        both already re-derive inspector state from these attributes on
-        their own next pass.
+        The inspector uses its existing refreshes. ``_compose_mcp_provider`` runs
+        on the main loop after ``_run_agent_reply`` sets STREAMING. By then
+        ``ChatScreen._start_console_transcript_sync_timer`` already ticks every
+        0.2s because it starts before ``submit_draft`` is awaited. This timer
+        and the guaranteed post-``submit_draft`` sync (runtime custody) both
+        re-derive inspector state from these attributes on their next pass.
         """
         if self.app is None:
             return
@@ -15886,9 +15881,9 @@ class ConsoleChatController:
         def runtime_current():
             if not lifecycle.current():
                 return False
-            return all(
-                value == getattr(configuration, key)
-                for key, value in self._hook_authority_values(session_id).items()
+            values = self._hook_authority_values(session_id)
+            return all(key in values for key in _HOOK_AUTHORITY_KEYS) and all(
+                value == getattr(configuration, key) for key, value in values.items()
             )
 
         def current():
@@ -20995,23 +20990,19 @@ class ConsoleChatController:
             global_user_name=self._global_user_display_name,
         )
 
-    def _hook_authority_values(self, session_id: str) -> dict[str, Any]:
-        """Read current hook authority without assembling unrelated catalogs."""
-        keys = (
-            "workspace_roots",
-            "project_authority",
-            "tool_policy_profile_id",
-            "persona_policy_rules",
-        )
+    def _hook_authority_values(
+        self, session_id: str, *, _context_key_only: bool = False
+    ) -> dict[str, Any]:
+        """Read live hook authority for the lifecycle key or full invocation."""
         if self._turn_context_provider is not None:
             snapshot = self.resolve_turn_configuration_snapshot(session_id)
-            return {key: getattr(snapshot, key) for key in keys}
+            return {key: getattr(snapshot, key) for key in _HOOK_AUTHORITY_KEYS}
         session = next(item for item in self.store.sessions() if item.id == session_id)
         workspace_id = self.store.session_workspace_id(session_id)
         roots, _aliases, _skipped = read_session_change_review_admission(
             self.app, self.store, session_id
         )
-        return {
+        values: dict[str, Any] = {
             "workspace_roots": roots,
             "project_authority": capture_project_instruction_authority(
                 session,
@@ -21020,13 +21011,15 @@ class ConsoleChatController:
                     session, prefill=self.store.session_one_shot_prefill(session_id)
                 ),
             ),
-            "tool_policy_profile_id": resolve_turn_tool_policy_profile_id(
-                self.app, workspace_id
-            ),
-            "persona_policy_rules": resolve_turn_persona_policy_rules(
-                self.app, session
-            ),
         }
+        if not _context_key_only:
+            values["tool_policy_profile_id"] = resolve_turn_tool_policy_profile_id(
+                self.app, workspace_id
+            )
+            values["persona_policy_rules"] = resolve_turn_persona_policy_rules(
+                self.app, session
+            )
+        return values
 
     def prompt_mixin_service(self):
         """Compose the selection owner from this runtime's existing app services."""
@@ -28480,6 +28473,12 @@ class ConsoleChatController:
         )
 
 
+_HOOK_AUTHORITY_KEYS = (
+    "workspace_roots",
+    "project_authority",
+    "tool_policy_profile_id",
+    "persona_policy_rules",
+)
 _HOOK_AUTHORITY_VALUES_ORIGINAL = (
     ConsoleChatController,
     '_hook_authority_values',
