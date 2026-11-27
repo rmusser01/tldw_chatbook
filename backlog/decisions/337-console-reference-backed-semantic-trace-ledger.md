@@ -1110,11 +1110,13 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    saved row, an active memory's boundary, or the root; without it the call
    is refused, even for a one-row replacement. Engineering clarification
    (2026-11-27, after review): the oldest row may instead hang off a failed
-   reply that holds nothing and whose parent is the last retained row; the
-   request skips that reply (a send's provider outage, or a failed Continue
-   or Edit & resend, before the turn the action works on), and the
-   dispatch-binding transaction rechecks that it is still failed and empty,
-   as for the send after an action's run (point 5). Before, an action on
+   reply whose parent is the last retained row and that holds no image,
+   attachment, continuation or thinking (it may keep the partial text of a
+   stream that failed); the request skips that reply (a send's provider
+   outage, or a failed Continue or Edit & resend, before the turn the action
+   works on), and the dispatch-binding transaction rechecks it, as for the
+   send after an action's run (point 5), where the run's own failed reply
+   must also hold no text. Before, an action on
    the turn after such a reply was always refused. The instruction and the
    project rows are provider artifacts under the call's frozen policy.
    The replaced span keeps the 256-sequence and 256-link bounds (2026-11-06),
@@ -1224,7 +1226,10 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    capture could not start" (Send without capture sends them) until startup
    recovery settles the call: after an Edit & resend always, and after a
    Regenerate or Continue with project instructions on the agent path; other
-   shapes plan the next send as usual. When the reservation was settled and only a
+   shapes plan the next send as usual. Even where the next send goes out, a
+   further Regenerate or Continue of the turn that holds the reserved call
+   is refused (`trace_fresh_turn_requires_owned_recovery`) and undone until
+   startup recovery settles the call. When the reservation was settled and only a
    later undo write failed, the next send after a kept Regenerate or Continue is planned as
    usual, while a kept Edit & resend's edited branch is one no rule names, so
    the next captured message after it may stop at "Trace capture could not
