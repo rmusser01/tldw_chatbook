@@ -50,6 +50,19 @@ def _workspace(tmp_path: Path, *, home: bool = False) -> Path:
     return root
 
 
+def _make_home(monkeypatch, home: Path) -> None:
+    """Make ``home`` the worker host's home for the loopback child.
+
+    POSIX reads ``HOME``. Windows Python's ``Path.home()`` reads ``USERPROFILE``
+    and ignores ``HOME``, so with ``HOME`` alone the denylist never engaged
+    there: listing, searching and stat showed the stand-in ``.ssh``, and the two
+    read tests passed only while the file tool's read refused every file
+    (TASK-40608, 2026-11-27).
+    """
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+
 def _request(
     root: Path,
     operation: str,
@@ -116,7 +129,7 @@ def test_denylist_read_of_home_ssh_refused_via_loopback(
     tmp_path: Path, monkeypatch
 ) -> None:
     root = _workspace(tmp_path, home=True)
-    monkeypatch.setenv("HOME", str(root))
+    _make_home(monkeypatch, root)
     chain = _ping_chain(root)
 
     result = _loopback(
@@ -135,7 +148,7 @@ def test_denylist_write_into_home_ssh_refused_via_loopback(
     tmp_path: Path, monkeypatch
 ) -> None:
     root = _workspace(tmp_path, home=True)
-    monkeypatch.setenv("HOME", str(root))
+    _make_home(monkeypatch, root)
     chain = _ping_chain(root)
 
     result = _loopback(
@@ -158,7 +171,7 @@ def test_denylist_glob_never_lists_home_ssh_entries(
     tmp_path: Path, monkeypatch
 ) -> None:
     root = _workspace(tmp_path, home=True)
-    monkeypatch.setenv("HOME", str(root))
+    _make_home(monkeypatch, root)
     chain = _ping_chain(root)
 
     result = _loopback(
@@ -179,7 +192,7 @@ def test_denylist_stat_of_home_ssh_refused_via_loopback(
     tmp_path: Path, monkeypatch
 ) -> None:
     root = _workspace(tmp_path, home=True)
-    monkeypatch.setenv("HOME", str(root))
+    _make_home(monkeypatch, root)
     chain = _ping_chain(root)
 
     result = _loopback(root, chain, "stat_path", {"path": ".ssh"})
@@ -231,7 +244,7 @@ def test_denylist_root_at_filesystem_root_still_denies_home_ssh(
     """A binding pinned at ``ssh://host/`` (root ``/``) must not void the
     denylist: ``~/.ssh`` maps to a subtree refusal under the root."""
     home = _home_standin(tmp_path)
-    monkeypatch.setenv("HOME", str(home))
+    _make_home(monkeypatch, home)
     root = Path("/")
     chain = _ping_chain(root)
     rel_id_rsa = PurePosixPath(
@@ -257,7 +270,7 @@ def test_denylist_root_inside_a_denylisted_entry_refuses_outright(
     denylisted subtree: every operation refuses — nothing under it is
     reachable, not even an innocuous file the binding itself placed."""
     home = _home_standin(tmp_path)
-    monkeypatch.setenv("HOME", str(home))
+    _make_home(monkeypatch, home)
     root = home / ".ssh"
     (root / "harmless.txt").write_text("nothing to see\n", encoding="utf-8")
     chain = _ping_chain(root)
@@ -281,7 +294,7 @@ def test_denylist_root_at_the_real_target_of_a_symlinked_entry_refuses(
     that REAL location (not under the home) is still the denylisted
     subtree: every operation refuses, exactly as a root at ``~/.ssh``."""
     home = _home_standin(tmp_path)
-    monkeypatch.setenv("HOME", str(home))
+    _make_home(monkeypatch, home)
     real = tmp_path / "vault" / "ssh-keys"
     real.mkdir(parents=True)
     (real / "id_ed25519").write_text("PRIVATE KEY\n", encoding="utf-8")
@@ -307,7 +320,7 @@ def test_denylist_root_above_the_real_target_of_a_symlinked_entry_omits_it(
     """A root that CONTAINS the symlinked entry's real location hides that
     subtree under its real name too."""
     home = _home_standin(tmp_path)
-    monkeypatch.setenv("HOME", str(home))
+    _make_home(monkeypatch, home)
     vault = tmp_path / "vault"
     real = vault / "ssh-keys"
     real.mkdir(parents=True)
@@ -333,7 +346,7 @@ def test_denylist_root_inside_home_but_outside_entries_is_unaffected(
     normally (no catch-all, no void) — including its OWN ``.ssh`` fixture
     folder, which is not the home credential store."""
     home = _home_standin(tmp_path)
-    monkeypatch.setenv("HOME", str(home))
+    _make_home(monkeypatch, home)
     root = home / "projects"
     (root / ".ssh").mkdir(parents=True)
     (root / ".ssh" / "config").write_text("Host *\n", encoding="utf-8")
@@ -360,7 +373,7 @@ def test_denylist_grep_skips_home_ssh_content(
     tmp_path: Path, monkeypatch
 ) -> None:
     root = _workspace(tmp_path, home=True)
-    monkeypatch.setenv("HOME", str(root))
+    _make_home(monkeypatch, root)
     chain = _ping_chain(root)
 
     result = _loopback(

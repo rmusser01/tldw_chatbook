@@ -2369,12 +2369,13 @@ def _read_bounded_bytes(target: Path) -> bytes:
     if before.st_size > MAX_READ_FILE_BYTES:
         raise LocalToolError(f"'{target.name}' is too large to read")
 
-    def version(info: os.stat_result) -> tuple[int, ...]:
-        return (info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
-    flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
+    def version(info: os.stat_result, same_kind: bool=True) -> tuple[int, ...]:
+        return (info.st_dev, info.st_ino, info.st_mode if same_kind else stat_module.S_IFMT(info.st_mode), info.st_size, info.st_mtime_ns, info.st_ctime_ns if same_kind else 0)
+    flags = os.O_RDONLY | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
     descriptor = os.open(target, flags)
     try:
-        if version(os.fstat(descriptor)) != version(before):
+        opened = os.fstat(descriptor)
+        if version(opened, os.name != 'nt') != version(before, os.name != 'nt'):
             raise LocalToolError(f'file changed while opening: {target.name}')
         chunks: list[bytes] = []
         total = 0
@@ -2386,7 +2387,7 @@ def _read_bounded_bytes(target: Path) -> bytes:
             if total > MAX_READ_FILE_BYTES:
                 raise LocalToolError(f"'{target.name}' is too large to read")
             chunks.append(chunk)
-        if total != before.st_size or version(os.fstat(descriptor)) != version(before) or version(target.stat(follow_symlinks=False)) != version(before):
+        if total != before.st_size or version(os.fstat(descriptor)) != version(opened) or version(target.stat(follow_symlinks=False)) != version(before):
             raise LocalToolError(f'file changed while reading: {target.name}')
         return b''.join(chunks)
     finally:
@@ -5859,4 +5860,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("9e28a938943a5da970ff4003c5a49bd24a2011d0e99e1c1bc821f73830106dbc")
+BUNDLE_SHA256 = _enter_worker_exchange("5f351a3e1cce215225e41654b19e75d38c5197e33cda76cef08cc7d4b1c0eac4")

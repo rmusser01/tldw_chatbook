@@ -141,6 +141,24 @@ Status: **approved by the owner on 2026-11-21** ("Keep one spare").
 
 **Measured** (Windows 10, 2026-11-21, three interleaved journey pairs): launch to output per call 0.33-0.52 s before, 0.30-0.39 s after in two pairs (0.37-0.66 s in the third, on a loaded machine). The gain is the interpreter start, about 0.1 s per call after the first.
 
+## 2026-11-27 note (TASK-40608): the file tool's read took almost no real file on Windows
+
+Status: **a defect fix, not yet reviewed by the owner.** It is its own commit and can be moved to another task.
+
+**What was wrong.** `Tools/local_tool_impls.py::_read_bounded_bytes` serves `fs_read` (and the read ledger's digest). On Windows it refused:
+
+- every file with a CR LF or a Ctrl-Z byte. `os.open` reads in text mode there unless `O_BINARY` is given, so the bytes read never added up to the file's size: "file changed while reading";
+- every file changed after it was created. CPython 3.12.10 reports a path's creation time in `st_ctime_ns` but a descriptor's last change time, and the read compared the two: "file changed while opening". For a file written once the two times are sometimes equal, so the refusal also came and went;
+- every `.cmd` and `.bat` file (measured). A path stat gives a name with an executable extension execute bits; a descriptor stat never does.
+
+**How it stayed hidden.** The tracked journey `Tests/QA/test_project_chat_uat.py` failed on Windows with `fs_read failed: ERROR: file changed while reading: README.md` on clean `dev` and on this branch, and was filed as failing on both. The local journey that measured TASK-40608's times seeded its two fixture files LF-only with all four NTFS times set equal, so its reads were accepted.
+
+**What changed.** The descriptor is opened `O_BINARY`. A path stat is compared with a descriptor stat on device, file id, file type, size and modification time; path with path and descriptor with descriptor on every field, as before. So a rewrite during the read that restores size and modification time is still refused (the descriptor's change time moves), and so is a file swapped in between the stat and the open (its file id differs). POSIX compares every field in every pair, as before; `O_BINARY` does not exist there. The write path already read through the native file layer and is unchanged.
+
+**Two tests that had passed for the wrong reason.** `Tests/Tools/test_remote_worker_denylist.py` runs the worker bundle on this machine and names its stand-in home through `HOME`. Windows Python's `Path.home()` reads `USERPROFILE` and ignores `HOME`, so the home-relative denylist never engaged in those tests on Windows: listing, searching and stat showed the stand-in `.ssh` on clean `dev`, and the two tests that read `.ssh/id_rsa` passed only because every read failed. With the read fixed they failed (the read succeeded). The tests now set both variables, and the denylist refuses the read: 14 of 21 pass in that file against 8 on clean `dev`; the other 7 need the symlink privilege or the remote transport and fail on both trees. In the app itself the home is the real one and nothing changed.
+
+**Tests.** `Tests/Tools/test_bounded_read_ordinary_files.py`: 11 cases. Seven failed on Windows before the fix. Four mutations were run against them: no `O_BINARY`, descriptor compared without its change time (the in-place rewrite is then accepted, and the test for it fails), path and descriptor compared on every mode bit, and on `st_ctime_ns`; each fails the cases written for it.
+
 ## Links
 
 - [TASK-19637](../tasks/task-19637%20-%20Atomically-pin-local-tool-workspace-execution.md)
