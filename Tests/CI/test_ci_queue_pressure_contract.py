@@ -1365,6 +1365,9 @@ ADMISSION_4_TARGETS = (
     # admission. bootstrap_profile with native POSIX group custody; two cases,
     # about 1.7 s.
     "Tests/Agents/test_native_legacy_hooks.py::test_prompt_hook_runs_while_the_submit_task_holds_its_agent_admission",
+    # TASK-41943: a prepared legacy notification and a waiting PreToolUse refuse
+    # a hook source changed after capture. bootstrap_profile; 5 tests, 6.5 s.
+    "Tests/Agents/test_legacy_prepared_notification_source.py",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
