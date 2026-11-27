@@ -1115,8 +1115,7 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    stream that failed); the request skips that reply (a send's provider
    outage, or a failed Continue or Edit & resend, before the turn the action
    works on), and the dispatch-binding transaction rechecks it, as for the
-   send after an action's run (point 5), where the run's own failed reply
-   must also hold no text. Before, an action on
+   send after an action's run (point 5). Before, an action on
    the turn after such a reply was always refused. The instruction and the
    project rows are provider artifacts under the call's frozen policy.
    The replaced span keeps the 256-sequence and 256-link bounds (2026-11-06),
@@ -1154,9 +1153,13 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
      call of the same turn bore with a verified link (a failed Regenerate
      leaves the original reply on the path);
    - ends with the new user and its project context;
-   - may hang off the run's own failed reply when that reply is empty and its
-     parent is the last retained row (a failed Continue or Edit & resend;
-     the next request skips it), and only when the run bore no response.
+   - may hang off the run's own failed reply when that reply holds no image,
+     attachment, continuation or thinking (it may keep the partial text of
+     a stream that failed; corrected 2026-11-27 after review) and its parent
+     is the last retained row (a failed Continue or Edit & resend; the next
+     request skips it), and only when the run bore no response the trace
+     can name: a failed call's response link, partial or not, is never
+     carried.
    A reply the run did not bear, such as one a later Capture Off Retry wrote,
    is refused here: Retry is TASK-42555's. The dispatch-binding transaction
    recomputes the run from the call directly before the reserved one and
@@ -1227,9 +1230,15 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    recovery settles the call: after an Edit & resend always, and after a
    Regenerate or Continue with project instructions on the agent path; other
    shapes plan the next send as usual. Even where the next send goes out, a
-   further Regenerate or Continue of the turn that holds the reserved call
-   is refused (`trace_fresh_turn_requires_owned_recovery`) and undone until
-   startup recovery settles the call. When the reservation was settled and only a
+   further Regenerate of the turn that holds the reserved call is refused
+   (`trace_fresh_turn_requires_owned_recovery`) and undone until startup
+   recovery settles the call, and so is a Continue right after a kept
+   Regenerate. A Continue right after a kept Continue, and any Continue
+   once a later message was sent, continues a reply that is no longer the
+   chat's last message, so it is sent with Capture Off (point 1,
+   TASK-42586): no call is recorded and nothing is undone. An Edit & resend
+   of that turn is sent and traced as a new turn (corrected 2026-11-27
+   after review). When the reservation was settled and only a
    later undo write failed, the next send after a kept Regenerate or Continue is planned as
    usual, while a kept Edit & resend's edited branch is one no rule names, so
    the next captured message after it may stop at "Trace capture could not
@@ -1253,11 +1262,11 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    run that bore no response, when the run's user was a transform (prompt
    mix-ins), the replacement starts at the run's user row and restores the
    user's saved source as its one history row; the new user then hangs off
-   the run's failed reply, which holds nothing (no content, image,
-   attachment, continuation or thinking) and whose parent is that source.
-   The request skips that reply. The witness names it, and the
-   dispatch-binding transaction rechecks that it is still failed and empty
-   and still the user's parent. No other rewritten tail skips a reply: a
+   the run's failed reply, which holds no image, attachment, continuation
+   or thinking (it may keep a failed stream's partial text; 2026-11-27) and
+   whose parent is that source. The request skips that reply. The witness
+   names it, and the dispatch-binding transaction rechecks that it is still
+   failed and holds none of those, and is still the user's parent. No other rewritten tail skips a reply: a
    wider rule (any tail) admitted a legacy wrong-owner ledger that
    `test_legacy_artifact_history_remains_frozen_and_has_explicit_recovery`
    keeps frozen.
