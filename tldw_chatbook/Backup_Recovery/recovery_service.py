@@ -385,17 +385,17 @@ def issue_message(code: str) -> str:
     """Explain bounded local failures without rendering arbitrary exception text."""
     if code == "password_required":
         return "Enter the backup password and inspect again."
-    if code == "sqlite_version_unsupported":
-        import sqlite3
+    from .qualification import MINIMUM_SQLITE_VERSION, SQLITE_VERSION_UNSUPPORTED
 
-        from .qualification import MINIMUM_SQLITE_VERSION
+    if code == SQLITE_VERSION_UNSUPPORTED:
+        import sqlite3
 
         needed = ".".join(str(part) for part in MINIMUM_SQLITE_VERSION)
         return (
             f"Backup and restore need SQLite {needed} or newer, and this Python "
             f"uses SQLite {sqlite3.sqlite_version}. Run Chatbook with a Python "
-            "built with a newer SQLite, then try again. The rest of Chatbook "
-            "works as before."
+            "that has a newer SQLite (Docs/Backup-and-Recovery.md names some), "
+            "then try again. The rest of Chatbook works as before."
         )
     return _ISSUE_MESSAGES.get(
         code, "Review the recovery status and selected local paths before trying again."
@@ -480,8 +480,10 @@ def issue_code(error: Exception, *, kind: str = "") -> str:
         "recovery_operation_running",
         "recovered_review_changed",
         "recovered_asset_held",
-        "sqlite_version_unsupported",
     }
+    from .qualification import SQLITE_VERSION_UNSUPPORTED
+
+    known.add(SQLITE_VERSION_UNSUPPORTED)
     if (
         isinstance(error, ValueError)
         and len(error.args) == 1
@@ -649,6 +651,11 @@ class RecoveryService:
         self, operation_id, *, old_password, target, acknowledged_credential_issues=()
     ):
         """Authenticate a retained copy and expose its current replacement plan."""
+        # TASK-42546: the plan reads the live databases first, which an old
+        # SQLite cannot validate; refuse before that with the version.
+        from .qualification import require_supported_sqlite
+
+        require_supported_sqlite()
 
         def preview(operation, cancel):
             from .later_rollback import preview_rollback
@@ -867,8 +874,12 @@ class RecoveryService:
             check_isolated_parents,
             resolve_destinations,
         )
+        from .qualification import require_supported_sqlite
         from .restore_plan import plan_restore
 
+        # TASK-42546: both modes read the live databases before any
+        # capability check, and an old SQLite cannot validate them.
+        require_supported_sqlite()
         if choices.get("setup_parent") is not None:
             from .destinations import check_setup_parent
             from .service_storage import work_root
@@ -1585,8 +1596,11 @@ class RecoveryService:
         from .capture import _capture_options
         from .capture_service import _validate_backup_suffix
         from .profile_paths import lexical_path
+        from .qualification import require_supported_sqlite
         from .space import _MARGIN, _volume
 
+        # TASK-42546: an old SQLite would list valid stores as unavailable.
+        require_supported_sqlite()
         settings, selections, _, _ = _capture_options(options)
         destination = lexical_path(destination)
         _validate_backup_suffix(destination, encrypted=settings["encrypted"])

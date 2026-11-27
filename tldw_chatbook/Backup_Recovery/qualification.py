@@ -148,9 +148,14 @@ MINIMUM_SQLITE_VERSION = (3, 41, 0)
 SQLITE_VERSION_UNSUPPORTED = "sqlite_version_unsupported"
 
 
+def sqlite_supported() -> bool:
+    """Whether the linked SQLite can run backup and restore validation."""
+    return sqlite3.sqlite_version_info >= MINIMUM_SQLITE_VERSION
+
+
 def require_supported_sqlite() -> None:
     """Refuse a backup or restore before any work when SQLite is too old."""
-    if sqlite3.sqlite_version_info < MINIMUM_SQLITE_VERSION:
+    if not sqlite_supported():
         raise ValueError(SQLITE_VERSION_UNSUPPORTED)
 
 
@@ -324,7 +329,7 @@ def _release_for_roots(
     from .native_files import pinned_directory
     from .restore_plan import _ancestor
 
-    if sqlite3.sqlite_version_info < MINIMUM_SQLITE_VERSION:
+    if not sqlite_supported():
         return False, SQLITE_VERSION_UNSUPPORTED
     try:
         parents = tuple(dict.fromkeys(_ancestor(Path(path)) for path in product_roots))
@@ -401,6 +406,9 @@ def replacement_capability(plan, *, control_root: Path) -> tuple[bool, str]:
         and plan.local_snapshot.control_root != Path(control_root)
     ):
         return False, _RELEASE_UNAVAILABLE
+    # Before the dependency check, so an old SQLite is the one reason shown.
+    if not sqlite_supported():
+        return False, SQLITE_VERSION_UNSUPPORTED
     if required_rollback_dependencies(plan):
         return False, "rollback_dependency_selection_required"
     paths = tuple(

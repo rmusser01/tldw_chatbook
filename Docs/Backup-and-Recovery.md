@@ -8,9 +8,16 @@ system, or the application installer.
 Complete backup and replacement have separate availability checks. They require
 a matching qualified platform, the Python encryption backend, and supported storage
 locations. Backup and every restore also need the SQLite that your Python uses to be
-3.41.0 or newer: an older one cannot check a backup's databases, so Create backup and
-Replace restore show as unavailable, and an isolated restore refuses to start, each
-naming the SQLite version found. The rest of Chatbook works as before.
+3.41.0 or newer: an older one cannot check a backup's databases. With an older one,
+reviewing a backup, a restore or a rollback stops at once with "Backup and restore
+need SQLite 3.41.0 or newer, and this Python uses SQLite …", naming the version found.
+Inspecting a backup and extracting its files without restoring still work, and so does
+the rest of Chatbook. Check a Python with
+`python -c "import sqlite3; print(sqlite3.sqlite_version)"`. A Python that uses
+Debian 12's system SQLite, such as the `python:3.12-bookworm` image, has 3.40.1;
+Ubuntu 24.04's Python 3.12 has 3.45.1; and Pythons installed with
+`uv python install` ship their own SQLite instead of the system's (3.49.1 and 3.50.4
+in the macOS builds checked), so check the version there too.
 The screen shows availability alongside coverage and required space. Follow the
 operation's actual review and refusal messages; platform support alone does not
 establish that a particular selection can be captured or restored.
