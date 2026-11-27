@@ -1961,11 +1961,17 @@ async def test_run_sync_preserves_in_place_offsets_then_structural_shrink_clamps
             world_book_rows=(),
             world_book_actions=(),
         )
-        before_growth_recompose = inspector.recompose_count
-        inspector.sync_state(large_state)
-        await _wait_for_right_rail_condition(
-            pilot,
-            lambda: (
+        before_growth_recompose: int | None = None
+
+        def structural_growth_committed() -> bool:
+            nonlocal before_growth_recompose
+            if before_growth_recompose is None:
+                # A native resize sync can replace the fixture's dictionary rows.
+                if pilot.app.screen.console_pending_startup_work():
+                    return False
+                before_growth_recompose = inspector.recompose_count
+                inspector.sync_state(large_state)
+            return (
                 inspector.recompose_count > before_growth_recompose
                 and "value 0"
                 in str(
@@ -1973,7 +1979,11 @@ async def test_run_sync_preserves_in_place_offsets_then_structural_shrink_clamps
                         "#console-inspector-dictionaries-row-0", Static
                     ).renderable
                 )
-            ),
+            )
+
+        await _wait_for_right_rail_condition(
+            pilot,
+            structural_growth_committed,
             description="real structural Run owner growth committed",
         )
         section = rail.query_one(
