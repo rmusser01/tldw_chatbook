@@ -385,6 +385,18 @@ def issue_message(code: str) -> str:
     """Explain bounded local failures without rendering arbitrary exception text."""
     if code == "password_required":
         return "Enter the backup password and inspect again."
+    if code == "sqlite_version_unsupported":
+        import sqlite3
+
+        from .qualification import MINIMUM_SQLITE_VERSION
+
+        needed = ".".join(str(part) for part in MINIMUM_SQLITE_VERSION)
+        return (
+            f"Backup and restore need SQLite {needed} or newer, and this Python "
+            f"uses SQLite {sqlite3.sqlite_version}. Run Chatbook with a Python "
+            "built with a newer SQLite, then try again. The rest of Chatbook "
+            "works as before."
+        )
     return _ISSUE_MESSAGES.get(
         code, "Review the recovery status and selected local paths before trying again."
     )
@@ -468,6 +480,7 @@ def issue_code(error: Exception, *, kind: str = "") -> str:
         "recovery_operation_running",
         "recovered_review_changed",
         "recovered_asset_held",
+        "sqlite_version_unsupported",
     }
     if (
         isinstance(error, ValueError)
@@ -943,6 +956,10 @@ class RecoveryService:
         archive = self.inspection(inspection_id)
         if type(plan) is not RestorePlan or plan.archive_digest != archive.digest:
             raise ValueError("archive_plan_mismatch")
+        # TASK-42546: an isolated restore has no capability check of its own.
+        from .qualification import require_supported_sqlite
+
+        require_supported_sqlite()
         if plan.mode == "replace":
             from .replacement import require_rollback_password
 

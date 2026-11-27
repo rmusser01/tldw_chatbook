@@ -1845,6 +1845,15 @@ def _validate_candidate(
             "sqlite_resource_limit",
             "unsupported_sqlite_owner",
         }:
+            from .qualification import MINIMUM_SQLITE_VERSION
+
+            # TASK-42546: on an SQLite too old for trusted_schema=OFF with JSON
+            # functions, the security refusal is a version problem; say so.
+            if (
+                str(error) == "sqlite_security_unavailable"
+                and sqlite3.sqlite_version_info < MINIMUM_SQLITE_VERSION
+            ):
+                return (("sqlite_version_unsupported",), None)
             return ((str(error),), None)
         return (("sqlite_validation_unavailable",), None)
 

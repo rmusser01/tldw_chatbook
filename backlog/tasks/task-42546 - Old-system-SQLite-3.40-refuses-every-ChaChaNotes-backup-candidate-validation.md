@@ -4,12 +4,11 @@ title: "Old system SQLite (3.40) refuses every ChaChaNotes backup candidate vali
 status: To Do
 assignee: []
 created_date: 2026-11-24 23:44
-updated_date: 2026-11-24 23:44
+updated_date: 2026-11-27 17:10
 labels:
 - follow-up
 - backup-recovery
 - linux
-- needs-owner-decision
 priority: medium
 references:
 - tldw_chatbook/Backup_Recovery/sqlite_validation.py
@@ -40,7 +39,15 @@ This is a product decision, so nothing is implemented here. Options:
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The owner chooses the behaviour for an unsupported SQLite (refuse with clear copy, handle, or document as unsupported), recorded in the task
+- [x] #1 The owner chooses the behaviour for an unsupported SQLite (refuse with clear copy, handle, or document as unsupported), recorded in the task
 - [ ] #2 The minimum SQLite version that validates a current ChaChaNotes candidate under `trusted_schema=OFF` is measured, not assumed
 - [ ] #3 On an older SQLite the user sees the chosen outcome, with copy that names the SQLite version, not `sqlite_security_unavailable`; a test covers it (a stubbed version check is acceptable)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Owner decision (2026-11-27):** option 1, refuse with clear copy. On an SQLite too old for backup and restore validation, backup and restore refuse with copy that names the SQLite version found and the version needed, in place of `sqlite_security_unavailable` (which today reaches the user as the generic `backup_operation_failed`).
+
+**What fails on 3.40.1 (measured 2026-11-27, `python:3.12-bookworm`, offline probe of each construct in its own file database, reopened with `PRAGMA trusted_schema=OFF`):** every JSON scalar function used in the schema is refused as unsafe: `json_valid`, `json_type`, `json_extract`, `json_array_length` and `json` in CHECK constraints, `json_extract` in an index expression, and `json_object` and `json_set` in trigger bodies. The table-valued `json_each` in a trigger or view is accepted. SQLite 3.49.1 (macOS, uv's CPython 3.12.11) accepts all ten. So the refusal is not specific to `console_trace_request_headers`: any owner whose schema embeds a JSON scalar function is affected.
+<!-- SECTION:NOTES:END -->
