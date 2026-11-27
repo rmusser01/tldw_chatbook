@@ -546,6 +546,16 @@ runner = importlib.util.module_from_spec(runner_spec)
 runner_spec.loader.exec_module(runner)
 
 
+def test_light_job_installs_the_workers_its_runner_asks_for():
+    """TASK-42628: run_light.py passes `-n 4` to Tests/CI, which needs xdist."""
+    job = workflow("derived-artifacts.yml")["jobs"]["dev-light"]
+    install = next(
+        s for s in job["steps"] if s.get("name") == "Install smoke dependencies"
+    )
+    assert runner.CONTRACT_WORKERS == ["-n", "4"]
+    assert "pytest-xdist" in install["run"].split()
+
+
 def test_light_runner_gives_each_file_its_own_process_and_whole_files_win():
     """TASK-42521 review C1/M4: grouping is by file, and `f` beats `f::node`."""
     assert runner.plan(
@@ -589,6 +599,9 @@ def test_light_runner_fails_on_any_red_file_and_warns_on_an_empty_one(
     assert "::warning::Tests/a.py collected no tests" in out
     assert "Failed: Tests/b.py, Tests/c.py" in out
     assert all(argv[-2:] == ["--timeout=180", "--tb=short"] for argv in calls)
+    # TASK-42628: only the CI contracts run on xdist workers.
+    assert [argv[3] for argv in calls if "-n" in argv] == ["Tests/CI"]
+    assert calls[0][4:6] == ["-n", "4"]
     monkeypatch.setenv("CI_TEST_TARGETS", json.dumps(["Tests/a.py"]))
     assert runner.main(run=fake_run) == 0
 

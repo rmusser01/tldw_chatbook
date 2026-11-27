@@ -288,9 +288,10 @@ jobs:
         with:
           node-version: '24'
       - name: Install smoke dependencies
-        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2 hypothesis
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2 hypothesis pytest-xdist
       # TASK-42521: one pytest process per file, the console-p0-gate install
       # set and the lanes' plugin/timeout flags (scripts/ci/run_light.py).
+      # TASK-42628: Tests/CI runs on 4 xdist workers, so the install adds it.
       - name: Run CI contracts and selected smoke tests
         env:
           CI_TEST_TARGETS: ${{ needs.preflight.outputs.targets }}
