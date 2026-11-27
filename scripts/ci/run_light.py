@@ -1,7 +1,8 @@
 """Run the light tier's selected tests: one pytest process per file (TASK-42521).
 
 bootstrap_profile and sandboxed suites must not share a process (TASK-32873),
-so each file gets its own. Every failure is reported before the job fails.
+so each file gets its own. `Tests/CI` runs on 4 xdist workers (TASK-42628).
+Every failure is reported before the job fails.
 """
 
 from __future__ import annotations
@@ -12,6 +13,8 @@ import subprocess
 import sys
 
 NO_TESTS_COLLECTED = 5
+# TASK-42628: the CI contracts took about 10 min serially, most of a light run.
+CONTRACT_WORKERS = ["-n", "4"]
 
 
 def plan(targets: object) -> list[list[str]]:
@@ -36,8 +39,10 @@ def main(run=subprocess.run) -> int:
     failed = []
     for nodes in plan(json.loads(os.environ["CI_TEST_TARGETS"])):
         # Same flags as the PR lanes: plugin autoload on, 180 s per test.
+        workers = CONTRACT_WORKERS if nodes == ["Tests/CI"] else []
         code = run(
-            [sys.executable, "-m", "pytest", *nodes, "--timeout=180", "--tb=short"]
+            [sys.executable, "-m", "pytest", *nodes, *workers]
+            + ["--timeout=180", "--tb=short"]
         ).returncode
         if code == NO_TESTS_COLLECTED:
             print(f"::warning::{nodes[0]} collected no tests", flush=True)
