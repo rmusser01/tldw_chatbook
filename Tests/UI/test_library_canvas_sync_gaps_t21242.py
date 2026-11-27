@@ -323,7 +323,10 @@ async def test_no_owner_sync_projection_returns_focus_with_no_then() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
-async def test_armed_list_entry_focus_re_requested_after_canvas_scoped_sync() -> None:
+@pytest.mark.parametrize("controller_hosted", [False, True], ids=["screen", "notes-controller"])
+async def test_armed_list_entry_focus_re_requested_after_canvas_scoped_sync(
+    controller_hosted: bool,
+) -> None:
     """A canvas-scoped notes sync re-fires the armed entry-focus channel.
 
     ``compose_content`` re-requests a pending entry focus on every
@@ -338,6 +341,8 @@ async def test_armed_list_entry_focus_re_requested_after_canvas_scoped_sync() ->
         await _wait_for_library_shell(screen, pilot)
         await _goto_notes_list(screen, pilot)
 
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
         generation = screen._library_list_entry_focus_generation
         screen._library_pending_list_entry_focus = True
         screen._library_list_entry_focus_deadline = None  # no timer interplay
@@ -353,7 +358,8 @@ async def test_armed_list_entry_focus_re_requested_after_canvas_scoped_sync() ->
         with patch.object(
             screen, "_focus_library_list_entry_if_current", side_effect=_spy
         ):
-            assert _sync_library_canvas(screen, "notes") is True
+            receiver = screen._notes_controller if controller_hosted else screen
+            assert _sync_library_canvas(receiver, "notes") is True
             for _ in range(20):
                 await pilot.pause(0.02)
         assert calls, (

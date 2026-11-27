@@ -1153,6 +1153,7 @@ def _sync_library_canvas(
         # focus. The guarded continuation drops ticks whose arm generation
         # a disarm has superseded, exactly as the compose-time call does.
         armed_re_request: Callable[[], None] | None = None
+        focus_owner = getattr(screen, "_library_list_entry_focus_owner", screen)
         if kind in {
             "conversations",
             "media",
@@ -1160,23 +1161,19 @@ def _sync_library_canvas(
             "notes",
             "prompts",
             "skills",
-        } and getattr(screen, "_library_pending_list_entry_focus", False):
+        } and getattr(focus_owner, "_library_pending_list_entry_focus", False):
             _armed_generation = getattr(
-                screen, "_library_list_entry_focus_generation", 0
+                focus_owner, "_library_list_entry_focus_generation", 0
             )
 
             def _re_request_armed_list_entry_focus(
-                _screen: LibraryScreen = screen,
+                _owner: LibraryScreen = focus_owner,
                 _generation: int = _armed_generation,
             ) -> None:
-                # Resolved at fire time, not queue time: the receiver here
-                # can be one of the seven forwarding controllers (a bare
-                # ``self``); of those only the media controller exposes the
-                # guarded continuation (TASK-36952.3.3) -- an armed channel
-                # on a receiver without it does not re-request from this
-                # seam (the screen-level retry chain still covers it).
+                # Read the actual Screen callback at fire time, while the
+                # captured arm generation still guards this repaint's request.
                 focus_if_current = getattr(
-                    _screen, "_focus_library_list_entry_if_current", None
+                    _owner, "_focus_library_list_entry_if_current", None
                 )
                 if callable(focus_if_current):
                     focus_if_current(_generation)

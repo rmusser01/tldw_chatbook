@@ -84,6 +84,7 @@ def test_historical_candidate_migrates_without_touching_source(tmp_path, version
                 "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
             ).fetchone()[0]
             == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+            == 90
         )
         assert (
             read_attempt(connection.cursor(), cid, attempt_id="legacy").status

@@ -587,7 +587,7 @@ def _assert_detached_normalization_source(source: str, module: str) -> None:
         },
         "sqlite_validation": {
             "normalize_detached_candidate": "0958fde34420ac25689ef1b9162c3dc1e3e3401ad71b2b3a4de924c8a0d3093b",
-            "_validate_candidate": "498229ebd797b883dc172e2d13d91442c3c6215ebc876c3e8242c388a68134d8",
+            "_validate_candidate": "875691bb4d515e3f6328f4a33f9921f5e803286cac70e808e28a824b23d11f45",
             "_write_normalized_candidate": "29ee683bec2883fa9d4bb1b962819308b9630efb6c0c5b880373bda3a6bd3ed6",
         },
         "private_sqlite": {
