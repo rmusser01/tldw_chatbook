@@ -23,6 +23,7 @@ network is faked (the harness of ``test_console_compaction_live_session``).
 from __future__ import annotations
 
 from dataclasses import replace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -33,7 +34,10 @@ from Tests.Chat.test_console_compaction_live_session import (
     _system_rows,
 )
 from tldw_chatbook.Chat.console_context_budget_copy import MODEL_WINDOW_SETTING
-from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_context_policy import (
+    ContextCompactionMode,
+    ConsoleContextPolicyOverrides,
+)
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -68,6 +72,102 @@ class _UnknownWindowGateway(_LiveProviderGateway):
 
     def prepare_chat_request(self, resolution, messages, **kwargs):
         return self._real.prepare_chat_request(resolution, messages, **kwargs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", (ContextCompactionMode.ASK, ContextCompactionMode.AUTOMATIC))
+@pytest.mark.parametrize("ephemeral", (False, True), ids=("durable", "temporary"))
+async def test_buddy_overflow_gets_the_composer_reason_before_commit(tmp_path, monkeypatch, mode, ephemeral):
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Utils import token_counter
+
+    monkeypatch.setitem(token_counter.PROVIDER_CONTEXT_WINDOWS, "openai", 4096)
+    _db, store, controller, gateway = _live_controller(
+        tmp_path, gateway=_UnknownWindowGateway(),
+        overrides=ConsoleContextPolicyOverrides(compaction_mode=mode),
+    )
+    session_id = "session-1"
+    if ephemeral:
+        session_id = store.create_session(ephemeral=True).id
+        store.set_session_context_policy_overrides(
+            session_id, ConsoleContextPolicyOverrides(compaction_mode=mode)
+        )
+    composer = await controller.submit_draft(_OVERFLOWING_DRAFT, session_id=session_id)
+    assert not composer.accepted and "was not sent" in composer.visible_copy.lower()
+    store.set_session_draft(session_id, "My Console draft")
+    buddy = await controller.submit_draft(
+        _OVERFLOWING_DRAFT, session_id=session_id, preserve_composer=True
+    )
+
+    assert buddy.visible_copy == composer.visible_copy
+    assert not buddy.accepted and not buddy.should_clear_draft
+    assert store.session_draft(session_id) == "My Console draft"
+    assert store.dispatch_recovery_for_presentation(session_id) is None
+    assert all(message.role is ConsoleMessageRole.SYSTEM for message in store.messages_for_session(session_id))
+    assert gateway.stream_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_a_temporary_buddy_can_send_after_older_history_is_trimmed(tmp_path, monkeypatch):
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Utils import token_counter
+
+    monkeypatch.setitem(token_counter.PROVIDER_CONTEXT_WINDOWS, "openai", 4096)
+    _db, store, controller, gateway = _live_controller(tmp_path, gateway=_UnknownWindowGateway())
+    session_id = store.create_session(ephemeral=True).id
+    store.append_message(session_id, role=ConsoleMessageRole.USER, content=_OVERFLOWING_DRAFT)
+    store.append_message(session_id, role=ConsoleMessageRole.ASSISTANT, content="Earlier answer.")
+
+    result = await controller.submit_draft("New question.", session_id=session_id, preserve_composer=True)
+
+    assert result.accepted
+    assert gateway.stream_calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("assistant_kind", "prefill", "eligible"), [
+    ("console", None, True), ("console", "Pinned prefix", False), ("character", None, False),
+])
+async def test_capacity_probe_uses_the_dispatch_tool_eligibility(
+    tmp_path, monkeypatch, assistant_kind, prefill, eligible
+):
+    _db, store, controller, gateway = _live_controller(tmp_path)
+    owner = store.create_session(assistant_kind=assistant_kind)
+    monkeypatch.setattr(controller, "_agent_runtime_enabled", True)
+    monkeypatch.setattr(controller, "_agent_bridge", object())
+    probe = AsyncMock()
+    monkeypatch.setattr(controller, "_apply_conversation_memory_preflight", probe)
+    resolution = await gateway.resolve_for_send(None)
+
+    await controller._assess_context_compaction(
+        session_id=owner.id, resolution=resolution, provider_messages=[],
+        uncommitted_user_message_id=None, prefill=prefill,
+    )
+
+    assert probe.await_args.kwargs["agent_tools_enabled"] is eligible
+
+
+@pytest.mark.asyncio
+async def test_ask_refusal_on_a_user_row_names_resend(tmp_path, monkeypatch):
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_turn_preparation import ContextCompactionHold
+
+    _db, store, controller, gateway = _live_controller(
+        tmp_path, overrides=ConsoleContextPolicyOverrides(compaction_mode=ContextCompactionMode.ASK)
+    )
+    assert (await controller.submit_draft("An ordinary first message", session_id="session-1")).accepted
+    user = next(row for row in store.messages_for_session("session-1") if row.role is ConsoleMessageRole.USER)
+    hold = ContextCompactionHold(
+        session_id="session-1", used_tokens=1300, trigger_tokens=1200, budget_tokens=1500, estimated=False,
+    )
+    monkeypatch.setattr(controller, "_assess_context_compaction", AsyncMock(return_value=(hold, None)))
+    calls = gateway.stream_calls
+
+    result = await controller.continue_from_message(user.id)
+
+    assert not result.accepted
+    assert result.visible_copy.startswith("Not resent:")
+    assert gateway.stream_calls == calls
 
 
 @pytest.mark.asyncio
@@ -161,9 +261,9 @@ async def test_a_refused_send_reads_not_sent_and_names_the_working_path(
         overrides=ConsoleContextPolicyOverrides(),
     )
 
-    # A send that skips TASK-34350's pre-commit check (here one that keeps the
-    # composer, as a buddy-conversation send does) is refused by the context
-    # preflight after it was accepted, so it has a recovery owner.
+    # A missing admission assessment leaves the stream preflight responsible
+    # for refusing the accepted turn and retaining its recovery owner.
+    monkeypatch.setattr(controller, "_assess_context_compaction", AsyncMock(return_value=(None, None)))
     await controller.submit_draft(
         _OVERFLOWING_DRAFT, session_id="session-1", preserve_composer=True
     )
@@ -220,6 +320,7 @@ async def test_the_controller_itself_refuses_retry_for_a_refused_send(
         gateway=_UnknownWindowGateway(),
         overrides=ConsoleContextPolicyOverrides(),
     )
+    monkeypatch.setattr(controller, "_assess_context_compaction", AsyncMock(return_value=(None, None)))
     await controller.submit_draft(
         _OVERFLOWING_DRAFT, session_id="session-1", preserve_composer=True
     )

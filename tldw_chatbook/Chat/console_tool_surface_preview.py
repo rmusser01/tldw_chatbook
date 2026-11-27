@@ -446,7 +446,7 @@ def assess_request_capacity_only(
         resolution,
         surface.request_messages(provider_messages),
         tools=list(surface.tools),
-        apply_safety_window=False,
+        apply_safety_window=owner.ephemeral,
     )
     capacity = prepared.capacity
     try:

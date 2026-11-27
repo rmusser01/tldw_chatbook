@@ -20,9 +20,10 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from unittest.mock import AsyncMock
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Button, Static, TextArea
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_compaction_hold_flow import (
@@ -38,11 +39,14 @@ from tldw_chatbook.Chat.console_prompt_queue import (
     PromptQueueMode,
     PromptQueuePauseReason,
 )
+from tldw_chatbook.Persona_Buddy.interaction import BuddyBinding
 from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
     TraceCallRecoveryCallout,
 )
+from tldw_chatbook.UI.Navigation.buddy_conversation import open_buddy_conversation
 
 _FOLLOW_UP = "queued follow-up: and the last step?"
+_OVERFLOW_NOTICE = "This message is too long for the model. Shorten it or choose a larger model."
 
 
 async def _cancel_the_hold(console, pilot, controller, session):
@@ -83,9 +87,10 @@ def _rows(controller, session_id, role):
     ]
 
 
+@pytest.mark.parametrize("capacity_alert", [None, _OVERFLOW_NOTICE], ids=["ask", "overflow"])
 @private_profile_test
 async def test_a_queued_send_over_the_ask_trigger_returns_to_the_queue_not_failed(
-    request, monkeypatch, tmp_path
+    request, monkeypatch, tmp_path, capacity_alert
 ):
     """The second reply crosses the trigger while a follow-up waits in the queue.
 
@@ -145,6 +150,11 @@ async def test_a_queued_send_over_the_ask_trigger_returns_to_the_queue_not_faile
                     break
                 await pilot.pause(0.1)
             assert queued.total_count == 1, queued
+            if capacity_alert is not None:
+                monkeypatch.setattr(
+                    controller, "_assess_context_compaction",
+                    AsyncMock(return_value=(None, capacity_alert)),
+                )
             release.set()
             await asyncio.wait_for(second, 60)
             for _ in range(50):
@@ -178,8 +188,11 @@ async def test_a_queued_send_over_the_ask_trigger_returns_to_the_queue_not_faile
                 for row in _rows(controller, session.id, ConsoleMessageRole.SYSTEM)
             ]
             refusal = systems[-1]
-            assert refusal.startswith("Not sent from the queue:"), systems
-            assert "/compact" in refusal
+            if capacity_alert is None:
+                assert refusal.startswith("Not sent from the queue:"), systems
+                assert "/compact" in refusal
+            else:
+                assert refusal == capacity_alert
             frame = _frame(host)
             assert "waiting for dispatch" not in frame
             summary = console.query_one("#console-prompt-queue-summary", Static)
@@ -309,13 +322,7 @@ async def test_a_sigil_composer_send_without_capture_is_refused_before_commit(
 async def test_a_buddy_reply_over_the_ask_trigger_is_refused_before_commit(
     request, monkeypatch, tmp_path
 ):
-    """A Persona Buddy reply (``preserve_composer=True``) cannot show the card.
-
-    Buddy calls ``submit_draft(text, session_id=..., preserve_composer=True)``
-    (UI/Navigation/buddy_conversation.py) and keeps its own draft when the
-    result is not accepted. Over the Ask trigger the reply must be refused
-    with the reason, before commit, and leave the Console composer alone.
-    """
+    """Keep the user's text and show the Ask refusal in the mounted Buddy."""
     app, database, host, adapter, adapter_calls = await _held_console(
         monkeypatch, tmp_path
     )
@@ -335,26 +342,28 @@ async def test_a_buddy_reply_over_the_ask_trigger_is_refused_before_commit(
                 for row in _rows(controller, session.id, ConsoleMessageRole.ASSISTANT)
             )
 
-            result = await asyncio.wait_for(
-                controller.submit_draft(
-                    "buddy reply: thanks, continue.",
-                    session_id=session.id,
-                    preserve_composer=True,
-                ),
-                30,
-            )
-            await console._sync_native_console_chat_ui()
+            monkeypatch.setattr(app, "push_screen", host.push_screen)
+            buddy = open_buddy_conversation(app, BuddyBinding.for_session(session), allow_voice=False)
             await pilot.pause()
+            reply = buddy.query_one("#buddy-reply", TextArea)
+            draft = "buddy reply: thanks, continue."
+            reply.load_text(draft)
+            buddy.query_one("#buddy-send", Button).press()
+            notice = buddy.query_one("#buddy-reply-notice", Static)
+            for _ in range(100):
+                await pilot.pause(0.1)
+                if str(notice.renderable).startswith("Not sent:"):
+                    break
 
-            assert not result.accepted, result
-            assert result.visible_copy.startswith("Not sent:"), result.visible_copy
-            assert "/compact" in result.visible_copy
+            assert "Run /compact in Console" in str(notice.renderable)
+            assert "Chat settings" in str(notice.renderable)
+            assert reply.text == draft
             assert len(adapter_calls) == calls
             users = [
                 row.content
                 for row in _rows(controller, session.id, ConsoleMessageRole.USER)
             ]
-            assert "buddy reply: thanks, continue." not in users
+            assert draft not in users
             assert failed_before == sum(
                 row.status == "failed"
                 for row in _rows(controller, session.id, ConsoleMessageRole.ASSISTANT)

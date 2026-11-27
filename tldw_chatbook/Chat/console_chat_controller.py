@@ -10947,6 +10947,7 @@ class ConsoleChatController:
                 echoed_user=echoed_user,
                 queue_entry_id=queue_entry_id,
                 after_side_effects=False,
+                prefill=selected_prefill[0],
             )
             if stop is not None:
                 return stop
@@ -11312,6 +11313,7 @@ class ConsoleChatController:
                 echoed_user=echoed_user,
                 queue_entry_id=queue_entry_id,
                 after_side_effects=True,
+                prefill=prefill,
                 turn_skill_bindings=tuple(skill_bindings),
             )
             if stop is not None:
@@ -18220,7 +18222,7 @@ class ConsoleChatController:
         )
 
     async def _retry_message_body(
-        self, message_id, resolution, turn_context, hook_rows
+        self, message_id, resolution, turn_context, hook_rows, *, resend_cleanup: Callable[[], str | None] | None = None
     ):
         session_id = turn_context.session_id
         self._set_run_state(
@@ -18251,12 +18253,6 @@ class ConsoleChatController:
         ) = await self._apply_skill_substitution(provider_messages, turn_context)
         if refuse is not None:
             return self._block(session_id, refuse)
-        for note in skill_notes:
-            # An embedded skipped-skill note is never an abort: append the
-            # same system-row copy `_block` would, then let the turn proceed.
-            self.store.append_message(
-                session_id, role=ConsoleMessageRole.SYSTEM, content=note
-            )
         provider_messages = await self._apply_chat_dictionaries(
             provider_messages, session_id, turn_context
         )
@@ -18264,14 +18260,24 @@ class ConsoleChatController:
             provider_messages, session_id, turn_context
         )
         provider_messages = [*provider_messages, *hook_rows]
-        from tldw_chatbook.Chat.console_compaction_gate import refuse_at_ask_trigger
+        from tldw_chatbook.Chat.console_compaction_gate import refuse_turn_action
 
-        if refusal := await refuse_at_ask_trigger(
-            self, session_id, resolution, provider_messages, "retried",
+        prefill = self._pinned_prefill_for_session(session_id)
+        if refusal := await refuse_turn_action(
+            self, session_id, resolution, provider_messages,
+            "resent" if resend_cleanup is not None else "retried",
+            prefill=prefill,
             turn_skill_bindings=skill_bindings,
         ):
             return refusal  # TASK-33621.4: no new attempt to fail
-        prefill = self._pinned_prefill_for_session(session_id)
+        if resend_cleanup is not None and (refusal := resend_cleanup()):
+            return self._block(session_id, refusal)
+        for note in skill_notes:
+            # An embedded skipped-skill note is never an abort: append the
+            # same system-row copy `_block` would, then let the turn proceed.
+            self.store.append_message(
+                session_id, role=ConsoleMessageRole.SYSTEM, content=note
+            )
         return await self._stream_assistant_response(
             route=ConsoleRequestRoute.RETRY,
             mixin_anchor_id=mixin_anchor_id,
@@ -18420,10 +18426,16 @@ class ConsoleChatController:
         hook_rows,
         *,
         resend=False,
+        resend_cleanup: Callable[[], str | None] | None = None,
         mixin_retry_of_attempt_id=None,
         mixin_current=None,
     ):
         session_id = turn_context.session_id
+        action = (
+            "resent"
+            if resend or self.store.get_message(message_id).role is ConsoleMessageRole.USER
+            else "continued"
+        )
         if (
             resend
             and (
@@ -18459,12 +18471,6 @@ class ConsoleChatController:
             return refusal
         if refuse is not None:
             return self._block(session_id, refuse)
-        for note in skill_notes:
-            # An embedded skipped-skill note is never an abort: append the
-            # same system-row copy `_block` would, then let the turn proceed.
-            self.store.append_message(
-                session_id, role=ConsoleMessageRole.SYSTEM, content=note
-            )
         provider_messages = await self._apply_chat_dictionaries(
             provider_messages, session_id, turn_context
         )
@@ -18472,15 +18478,25 @@ class ConsoleChatController:
             provider_messages, session_id, turn_context
         )
         provider_messages = [*provider_messages, *hook_rows]
-        from tldw_chatbook.Chat.console_compaction_gate import refuse_at_ask_trigger
+        from tldw_chatbook.Chat.console_compaction_gate import refuse_turn_action
 
-        if refusal := await refuse_at_ask_trigger(
-            self, session_id, resolution, provider_messages, "continued",
+        prefill = self._pinned_prefill_for_session(session_id) if resend else None
+        if refusal := await refuse_turn_action(
+            self, session_id, resolution, provider_messages, action,
+            prefill=prefill,
             turn_skill_bindings=skill_bindings,
         ):
             return refusal  # TASK-33621.4: before commit, never Failed
         if refusal := self._current_mixin_refusal(session_id, mixin_current):
             return refusal
+        if resend_cleanup is not None and (refusal := resend_cleanup()):
+            return self._block(session_id, refusal)
+        for note in skill_notes:
+            # An embedded skipped-skill note is never an abort: append the
+            # same system-row copy `_block` would, then let the turn proceed.
+            self.store.append_message(
+                session_id, role=ConsoleMessageRole.SYSTEM, content=note
+            )
         assistant = self.store.append_message(
             session_id,
             role=ConsoleMessageRole.ASSISTANT,
@@ -18496,7 +18512,7 @@ class ConsoleChatController:
             resolution=resolution,
             provider_messages=provider_messages,
             assistant_message_id=assistant.id,
-            prefill=self._pinned_prefill_for_session(session_id) if resend else None,
+            prefill=prefill,
             skill_bindings=skill_bindings,
             skill_bundle_block=skill_bundle_block,
             turn_context=turn_context,
@@ -18669,16 +18685,17 @@ class ConsoleChatController:
         provider_messages = await self._apply_world_info(
             provider_messages, session_id, turn_context
         )
-        from tldw_chatbook.Chat.console_compaction_gate import refuse_at_ask_trigger
+        from tldw_chatbook.Chat.console_compaction_gate import refuse_turn_action
 
-        if refusal := await refuse_at_ask_trigger(
+        prefill = self._pinned_prefill_for_session(session_id)
+        if refusal := await refuse_turn_action(
             self, session_id, resolution, provider_messages, "regenerated",
+            prefill=prefill,
             turn_skill_bindings=skill_bindings,
         ):
             return refusal  # TASK-33621.4: before the sibling, never Failed
         if refusal := self._current_mixin_refusal(session_id, mixin_current):
             return refusal
-        prefill = self._pinned_prefill_for_session(session_id)
         self.clear_original_attempt(message_id)
         new_message = self.store.create_sibling(
             message_id,
@@ -19793,16 +19810,17 @@ class ConsoleChatController:
         provider_messages = await self._apply_world_info(
             provider_messages, session_id, turn_context
         )
-        from tldw_chatbook.Chat.console_compaction_gate import refuse_at_ask_trigger
+        from tldw_chatbook.Chat.console_compaction_gate import refuse_turn_action
 
-        if refusal := await refuse_at_ask_trigger(
+        prefill = self._pinned_prefill_for_session(session_id)
+        if refusal := await refuse_turn_action(
             self, session_id, resolution, provider_messages, "resent",
+            prefill=prefill,
             turn_skill_bindings=skill_bindings,
         ):
             return refusal  # TASK-33621.4: before the sibling, never Failed
         if refusal := self._current_mixin_refusal(session_id, mixin_current):
             return refusal
-        prefill = self._pinned_prefill_for_session(session_id)
 
         # Every transform succeeded: now (and only now) fork the edited USER
         # sibling and append the empty ASSISTANT node to stream into.
@@ -24238,17 +24256,17 @@ class ConsoleChatController:
         echoed_user: Any,
         queue_entry_id: str | None,
         after_side_effects: bool,
+        prefill: str | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
     ) -> ConsoleSubmitResult | None:
-        """Hold or refuse one composer send before commit (TASK-34350).
+        """Hold or refuse a send before commit under the compaction policy.
 
         Returns:
             The result to return for a held or refused send, else ``None``.
         """
 
-        # TASK-33621.4: a queued or Buddy send cannot show the hold card, nor
-        # can one with no preparation ("$"/"/" with capture off); at the Ask
-        # trigger each is refused here, before commit, never Failed.
+        # Both the composer and cardless replies can hit a capacity refusal.
+        # Only a prepared composer send can offer the Ask choices.
         card = (
             origin is ConsoleSubmissionOrigin.MANUAL
             and not preserve_composer
@@ -24264,13 +24282,13 @@ class ConsoleChatController:
             )
             or not isinstance(resolution, ConsoleProviderResolution)
             or mode is ContextCompactionMode.OFF
-            or (not card and mode is not ContextCompactionMode.ASK)
         ):
             return None
         hold, alert = await self._assess_context_compaction(
             session_id=session.id,
             resolution=resolution,
             provider_messages=provider_messages,
+            prefill=prefill,
             turn_skill_bindings=turn_skill_bindings,
             uncommitted_user_message_id=(
                 echoed_user.id if echoed_user is not None else None
@@ -24286,6 +24304,7 @@ class ConsoleChatController:
                 echoed_user=echoed_user,
                 origin=origin,
                 queue_entry_id=queue_entry_id,
+                alert=alert,
             )
         if not card:
             from tldw_chatbook.Chat.console_compaction_gate import refuse_without_card
@@ -24297,6 +24316,7 @@ class ConsoleChatController:
                 origin=origin,
                 queue_entry_id=queue_entry_id,
                 preserve_composer=preserve_composer,
+                alert=alert,
             )
         if alert is not None:
             # Compacting cannot make it fit: refuse before commit, so the
@@ -24325,14 +24345,17 @@ class ConsoleChatController:
         resolution: ConsoleProviderResolution,
         provider_messages: list[dict[str, Any]],
         uncommitted_user_message_id: str | None,
+        prefill: str | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
     ) -> tuple[ContextCompactionHold | None, str | None]:
         """Forward to the documented compaction preflight implementation."""
+        owner = next((row for row in self.store.sessions() if row.id == session_id), None)
         return await self._compaction_preflight._assess_context_compaction(
             session_id=session_id,
             resolution=resolution,
             provider_messages=provider_messages,
             uncommitted_user_message_id=uncommitted_user_message_id,
+            agent_tools_enabled=self._agent_dispatch_is_eligible(owner, prefill=prefill),
             turn_skill_bindings=turn_skill_bindings,
         )
 

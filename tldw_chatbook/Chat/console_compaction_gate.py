@@ -1,4 +1,4 @@
-"""Stop a non-composer turn before commit at the Ask trigger (TASK-33621.4).
+"""Apply the compaction admission result to turns without a hold card.
 
 A composer send over the Ask compaction trigger is held before commit and
 offered the hold card (TASK-34350). Continue, Regenerate and Retry cannot
@@ -39,16 +39,17 @@ from tldw_chatbook.Chat.console_context_policy import ContextCompactionMode
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 
 
-async def refuse_at_ask_trigger(
+async def refuse_turn_action(
     controller: Any,
     session_id: str,
     resolution: Any,
     provider_messages: Sequence[dict[str, Any]],
     action: str,
     *,
+    prefill: str | None = None,
     turn_skill_bindings: tuple[str, ...] = (),
 ) -> Any | None:
-    """Refuse this turn before commit when the Ask policy would hold it.
+    """Refuse an unavailable compaction hold or a request that cannot fit.
 
     Args:
         controller: The Console chat controller.
@@ -56,6 +57,7 @@ async def refuse_at_ask_trigger(
         resolution: The turn's resolved provider.
         provider_messages: The turn's assembled request.
         action: What did not happen, e.g. ``"continued"``.
+        prefill: Optional assistant prefix used by the replay.
         turn_skill_bindings: Exact admitted skill identities for this request.
 
     Returns:
@@ -65,19 +67,22 @@ async def refuse_at_ask_trigger(
     session = next(
         (row for row in controller.store.sessions() if row.id == session_id), None
     )
-    if (
-        session is None
-        or controller._compaction_mode_for(session) is not ContextCompactionMode.ASK
-    ):
+    if session is None:
         return None
-    hold, _alert = await controller._assess_context_compaction(
+    mode = controller._compaction_mode_for(session)
+    if mode is ContextCompactionMode.OFF:
+        return None
+    hold, alert = await controller._assess_context_compaction(
         session_id=session_id,
         resolution=resolution,
         provider_messages=list(provider_messages),
         uncommitted_user_message_id=None,
+        prefill=prefill,
         turn_skill_bindings=turn_skill_bindings,
     )
-    if hold is None:
+    if alert is not None:
+        return controller._block(session_id, alert)
+    if hold is None or mode is not ContextCompactionMode.ASK:
         return None
     return controller._block(
         session_id,
@@ -99,8 +104,9 @@ def refuse_without_card(
     origin: Any,
     queue_entry_id: str | None,
     preserve_composer: bool,
+    alert: str | None = None,
 ) -> Any | None:
-    """Refuse a queued or Buddy send at the Ask trigger, before commit.
+    """Refuse a queued or Buddy send before commit.
 
     Cancelling the preparation removes the send's transient echo. A queued
     send's result is not accepted, so the queue returns the entry to its head
@@ -113,12 +119,14 @@ def refuse_without_card(
         origin: The send's submission origin.
         queue_entry_id: The claimed queue entry, for a queued send.
         preserve_composer: True for a Buddy reply: the Console draft stays.
+        alert: Capacity refusal from the same probe the composer uses.
 
     Returns:
         The refusal to return, or None to go on.
     """
 
-    if hold is None:
+    visible_copy = _send_refusal_copy(hold, alert, origin)
+    if visible_copy is None:
         return None
     session_id = preparation.session_id
     draft = controller.store.session_draft(session_id)
@@ -127,7 +135,7 @@ def refuse_without_card(
     # a Buddy reply's text stays in Buddy, so give the composer its own back.
     if preserve_composer and controller.store.session_draft(session_id) != draft:
         controller.store.set_session_draft(session_id, draft)
-    return _refuse_send(controller, session_id, hold, origin, queue_entry_id)
+    return _refuse_send(controller, session_id, visible_copy, origin, queue_entry_id)
 
 
 def refuse_unprepared(
@@ -138,8 +146,9 @@ def refuse_unprepared(
     echoed_user: Any,
     origin: Any,
     queue_entry_id: str | None,
+    alert: str | None = None,
 ) -> Any | None:
-    """Refuse a send that has no preparation at the Ask trigger, before commit.
+    """Refuse a send that has no preparation, before commit.
 
     Without exchange capture a "$" or "/" draft gets no preparation, so it has
     no hold card. Its echo is dropped, the way cancelling a preparation drops
@@ -153,16 +162,18 @@ def refuse_unprepared(
         echoed_user: The send's uncommitted echo row, if any.
         origin: The send's submission origin.
         queue_entry_id: The claimed queue entry, for a queued send.
+        alert: Capacity refusal from the same probe the composer uses.
 
     Returns:
         The refusal to return, or None to go on.
     """
 
-    if hold is None:
+    visible_copy = _send_refusal_copy(hold, alert, origin)
+    if visible_copy is None:
         return None
     if echoed_user is not None:
         controller.store.delete_message(echoed_user.id)
-    return _refuse_send(controller, session_id, hold, origin, queue_entry_id)
+    return _refuse_send(controller, session_id, visible_copy, origin, queue_entry_id)
 
 
 async def pause_wake_at_ask_trigger(
@@ -235,29 +246,35 @@ async def pause_wake_at_ask_trigger(
     )
 
 
+def _send_refusal_copy(
+    hold: Any, alert: str | None, origin: ConsoleSubmissionOrigin
+) -> str | None:
+    if alert is not None:
+        return alert
+    if hold is None:
+        return None
+    return ask_trigger_refusal_copy(
+        action=(
+            "sent from the queue"
+            if origin is ConsoleSubmissionOrigin.QUEUED
+            else "sent"
+        ),
+        used_tokens=hold.used_tokens,
+        budget_tokens=hold.budget_tokens,
+        trigger_tokens=hold.trigger_tokens,
+        estimated=hold.estimated,
+    )
+
+
 def _refuse_send(
     controller: Any,
     session_id: str,
-    hold: Any,
-    origin: Any,
+    visible_copy: str,
+    origin: ConsoleSubmissionOrigin,
     queue_entry_id: str | None,
 ) -> Any:
-    """Block the send with the refusal copy and keep its queue identity."""
-
-    blocked = controller._block(
-        session_id,
-        ask_trigger_refusal_copy(
-            action=(
-                "sent from the queue"
-                if origin is ConsoleSubmissionOrigin.QUEUED
-                else "sent"
-            ),
-            used_tokens=hold.used_tokens,
-            budget_tokens=hold.budget_tokens,
-            trigger_tokens=hold.trigger_tokens,
-            estimated=hold.estimated,
-        ),
-    )
+    """Block the send and return its queue identity to the drain owner."""
+    blocked = controller._block(session_id, visible_copy)
     return replace(
         blocked, session_id=session_id, origin=origin, queue_entry_id=queue_entry_id
     )

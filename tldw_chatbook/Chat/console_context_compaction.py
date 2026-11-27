@@ -3425,10 +3425,9 @@ class ConsoleCompactionPreflight:
             else None
         )
         if not snapshots:
-            if assessment_sink is not None and not owner.ephemeral:
-                # TASK-34350: a durable chat's first message is assessed for
-                # capacity alone (nothing to compact yet), so a request that
-                # cannot fit is refused before commit, like a later one.
+            if assessment_sink is not None:
+                # First messages and temporary chats have no durable history
+                # to summarize. Check that their active request can fit.
                 assessor = self.read_controller__assess_request_capacity_only()
                 prepared = {}
                 surface = await self._preflight_tool_surface(
@@ -4045,6 +4044,7 @@ class ConsoleCompactionPreflight:
         resolution: ConsoleProviderResolution,
         provider_messages: list[dict[str, Any]],
         uncommitted_user_message_id: str | None,
+        agent_tools_enabled: bool,
         turn_skill_bindings: tuple[str, ...] = (),
     ) -> tuple[ContextCompactionHold | None, str | None]:
         """Probe whether this exact request would stop at Ask or cannot fit.
@@ -4058,6 +4058,7 @@ class ConsoleCompactionPreflight:
             resolution: The resolved provider for this send.
             provider_messages: The assembled request, current draft included.
             uncommitted_user_message_id: The send's own optimistic echo.
+            agent_tools_enabled: The eligible tool surface of the actual send.
 
         Returns:
             ``(hold, alert)``: the hold numbers when the decision is Ask, and
@@ -4083,10 +4084,7 @@ class ConsoleCompactionPreflight:
                 provider_messages=list(provider_messages),
                 assistant_message_id="",
                 turn_skill_bindings=turn_skill_bindings,
-                agent_tools_enabled=(
-                    self.read_controller__agent_runtime_enabled()
-                    and self.read_controller__agent_bridge() is not None
-                ),
+                agent_tools_enabled=agent_tools_enabled,
                 continuation_sidecar=continuation_sidecar,
                 continuation_target=continuation_target,
                 assessment_sink=lambda hold, decision, alert: captured.append(

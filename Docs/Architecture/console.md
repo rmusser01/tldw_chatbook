@@ -536,6 +536,13 @@ Confirmation cards retain the latest payload before their fixed controls mount, 
 
 Four separately-owned concepts: the model context window (server/model data with a 32,000-token fallback), the request builder's reservation/safety windowing, global defaults in Settings, and per-conversation overrides plus memory records. Compaction is tri-state (`[console] compaction_mode` = ask / automatic / off): trigger at token ratio 0.80, target 0.55; the summarizer runs as a content-free-ledger auxiliary call and is never inserted as a chat message; failure behavior is `stop_and_ask` or `omit_older_context`. Manual `/rewind` summarize actions create immutable prefix/range memory records. Micro-compaction runs fire-and-forget on a per-session cadence (`micro_compaction_every_turns`, 0 = off) with an in-flight guard.
 
+The admission probe runs before commit in Ask and Automatic modes. When
+compaction cannot make the request fit, the composer, queued and Buddy sends,
+and turn actions use the same capacity message. A refused queue entry waits at
+the head of the paused queue. A refused Buddy reply keeps its text in Buddy.
+When an Ask hold needs a choice, the prepared composer can show the hold card.
+Other entry points point the user to `/compact` in Console or Chat settings.
+
 The pre-send compaction forecast is owned by
 `UI/Console_Modules/context_spend.py`: the display estimator counts only current
 static mandatory prompt/greeting/draft/staged input. `ConsoleReadinessConfigProjection`

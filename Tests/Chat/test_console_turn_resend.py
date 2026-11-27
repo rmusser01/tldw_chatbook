@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -32,6 +33,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_context_policy import ContextCompactionMode, ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_conversation_hydration import (
     console_messages_from_conversation_tree,
@@ -824,6 +826,44 @@ def _all_db_rows(console) -> list[tuple]:
 
 def _path_snapshot(console) -> list[tuple]:
     return [(row.id, row.role, row.status, row.content) for row in _path(console)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["failed", "stopped"])
+@pytest.mark.parametrize("mode", (ContextCompactionMode.ASK, ContextCompactionMode.AUTOMATIC))
+async def test_capacity_refused_resend_keeps_its_existing_rows(tmp_path, databases, monkeypatch, shape, mode):
+    from tldw_chatbook.Chat.console_turn_preparation import ContextCompactionHold
+
+    console = _console(tmp_path, databases, "error")
+    if shape == "failed":
+        await console.controller.submit_draft("hello there")
+    else:
+        await _stopped_empty_turn(console)
+    console.store.set_session_context_policy_overrides(
+        console.session_id,
+        ConsoleContextPolicyOverrides(compaction_mode=mode),
+    )
+    notice = "This message is too long for the model."
+    assessment = (None, notice)
+    if mode is ContextCompactionMode.ASK:
+        hold = ContextCompactionHold(
+            session_id=console.session_id, used_tokens=1300, trigger_tokens=1200, budget_tokens=1500, estimated=False,
+        )
+        assessment = (hold, None)
+    monkeypatch.setattr(console.controller, "_assess_context_compaction", AsyncMock(return_value=assessment))
+    before_path, before_db = _path_snapshot(console), _all_db_rows(console)
+    calls = len(console.gateway.seen)
+
+    result = await resend_turn(console.controller, _user(console).id)
+
+    assert not result.accepted
+    if mode is ContextCompactionMode.ASK:
+        assert result.visible_copy.startswith("Not resent:")
+    else:
+        assert result.visible_copy == notice
+    assert _path_snapshot(console)[:len(before_path)] == before_path
+    assert set(before_db).issubset(_all_db_rows(console))
+    assert len(console.gateway.seen) == calls
 
 
 @pytest.mark.asyncio
