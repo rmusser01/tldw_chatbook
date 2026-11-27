@@ -348,6 +348,24 @@ async def _wait_for(pilot, predicate, description: str, attempts: int = 150):
     raise AssertionError(f"timed out waiting for {description}")
 
 
+async def _wait_for_undo_all(
+    pilot, screen, run_id: str
+) -> tuple[ConsoleTurnFileCard, Button]:
+    """Wait for the active card's header and snapshot rows to finish mounting."""
+
+    def ready() -> tuple[ConsoleTurnFileCard, Button] | None:
+        for card in screen.query(ConsoleTurnFileCard):
+            if card.run_id != run_id or not card.is_parent_active:
+                continue
+            buttons = card.query(".console-turn-file-undo-all-btn").results(Button)
+            button = next(buttons, None)
+            if button is not None and button.is_parent_active and not button.disabled:
+                return card, button
+        return None
+
+    return await _wait_for(pilot, ready, f"enabled Undo All for run {run_id}")
+
+
 def _record_real_turn(db, tracker, root: Path, run_id: str) -> None:
     handle = tracker.begin_turn([root])
     handle.await_baseline()
@@ -427,21 +445,7 @@ async def test_mounted_turn_card_confirms_cancels_then_undoes_real_files_off_thr
         )
         await screen._sync_native_console_chat_ui()
 
-        card = await _wait_for(
-            pilot,
-            lambda: (
-                list(screen.query(ConsoleTurnFileCard))[0]
-                if list(screen.query(ConsoleTurnFileCard))
-                else None
-            ),
-            "turn file card",
-        )
-        undo = card.query_one(".console-turn-file-undo-all-btn", Button)
-        await _wait_for(
-            pilot,
-            lambda: undo if not undo.disabled else None,
-            "enabled Undo All",
-        )
+        card, undo = await _wait_for_undo_all(pilot, screen, run_id)
 
         card.scroll_visible(animate=False)
         await pilot.pause()
@@ -563,21 +567,7 @@ async def test_mounted_duplicate_root_undo_refuses_inline_and_routes_to_review(
         )
         await screen._sync_native_console_chat_ui()
 
-        card = await _wait_for(
-            pilot,
-            lambda: (
-                list(screen.query(ConsoleTurnFileCard))[0]
-                if list(screen.query(ConsoleTurnFileCard))
-                else None
-            ),
-            "ambiguous turn file card",
-        )
-        undo = card.query_one(".console-turn-file-undo-all-btn", Button)
-        await _wait_for(
-            pilot,
-            lambda: undo if not undo.disabled else None,
-            "ambiguous card Undo All",
-        )
+        _, undo = await _wait_for_undo_all(pilot, screen, "run-1")
         changed_before = list(provider.changed_calls)
 
         undo.press()
@@ -635,21 +625,7 @@ async def test_mounted_partial_and_provider_failures_name_problem_and_allow_retr
         )
         await screen._sync_native_console_chat_ui()
 
-        card = await _wait_for(
-            pilot,
-            lambda: (
-                list(screen.query(ConsoleTurnFileCard))[0]
-                if list(screen.query(ConsoleTurnFileCard))
-                else None
-            ),
-            "partial-failure turn file card",
-        )
-        undo = card.query_one(".console-turn-file-undo-all-btn", Button)
-        await _wait_for(
-            pilot,
-            lambda: undo if not undo.disabled else None,
-            "partial-failure Undo All",
-        )
+        _, undo = await _wait_for_undo_all(pilot, screen, "run-1")
 
         undo.press()
         await _wait_for(
