@@ -42,6 +42,10 @@ from tldw_chatbook.Widgets.Console.console_status_chips import (
 HEADER_HOLD = "Held · emergency stop"
 STRIP_HOLD = "Emergency stop: runs and schedules held"
 SEND_HOLD = "Send held — emergency stop is on"
+HELD_TOOLTIP = (
+    "Send held — emergency stop is on. Clear it in the status strip or with "
+    "/emergency-stop clear."
+)
 
 # Mounted-app tests that build app config in their body keep the
 # collection-time profile (Tests/conftest.py ``bootstrap_profile``).
@@ -430,3 +434,267 @@ async def test_a_stop_cleared_elsewhere_lets_the_next_send_through(
         assert await _until(pilot, lambda: "Held" not in _header_status(chat))
         chips = chat.query_one("#console-status-chips", ConsoleStatusChips)
         assert not chips.segment_visible("estop")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (160, 45)], ids=["80x24", "160x45"])
+async def test_send_reads_held_at_every_width_and_send_again_once_lifted(
+    tmp_path, persisted_stop: Path, size
+) -> None:
+    """TASK-33620.1 AC#3 and TASK-33620.1.3 (owner decision 2026-11-20).
+
+    The decision: "Send button reads Held". At 80 columns the reason strip
+    beside Send has no legible budget (TASK-24415), so "Send held — emergency
+    stop is on" was hidden and the button read a greyed-out "Send" (live
+    2026-10-29, bd5/U02 fix-21). Now Send itself reads "Held" at every width
+    while the stop is active; the status strip's chip names the stop. A held
+    Send sends nothing, by click or Enter, and keeps the draft. Lifting the
+    stop puts Send back.
+    """
+    app, gateway = _console_app(tmp_path)
+    async with app.run_test(size=size, notifications=True) as pilot:
+        chat = await _reach_console(app, pilot, "explore_home")
+        assert await _until(pilot, lambda: "Held" in _header_status(chat))
+        send = chat.query_one("#console-send-message", Button)
+        assert await _until(
+            pilot, lambda: str(send.label) == "Held"
+        ), f"Send reads {str(send.label)!r} at {size} during an active stop"
+        composer = chat.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        composer.load_draft("say held")
+        await pilot.pause(0.2)
+        assert str(send.label) == "Held", "a typed draft turned Held back into Send"
+        assert send.disabled
+        # Review follow-up (2026-11-22): the tooltip says how to resume.
+        assert str(send.tooltip) == HELD_TOOLTIP, send.tooltip
+        # The chip beside it names the stop, on the strip's visible start.
+        chips = chat.query_one("#console-status-chips", ConsoleStatusChips)
+        assert chips.segment_text("estop") == STRIP_HOLD
+        line = chat.query_one("#console-status-text", ConsoleStatusText)
+        spans = {name: (start, end) for name, start, end in line.segment_spans}
+        assert spans["estop"][1] <= line.scrollable_content_region.width
+        # A held Send sends nothing: not by click, not by Enter.
+        await pilot.click("#console-send-message")
+        composer.focus()
+        await pilot.pause(0.1)
+        await pilot.press("enter")
+        await pilot.pause(0.5)
+        assert gateway.payloads == []
+        assert composer.draft_text() == "say held"
+        assert await _until(pilot, lambda: str(send.label) == "Held")
+        # Lifting the stop puts Send back, enabled for the kept draft.
+        await _click_strip_clear(chat, pilot)
+        assert await _until(pilot, lambda: "Held" not in _header_status(chat))
+        assert await _until(
+            pilot, lambda: str(send.label).startswith("Send")
+        ), f"Send reads {str(send.label)!r} after the stop was lifted"
+        assert not send.disabled
+        assert gateway.payloads == []
+    assert not read_emergency_stop(persisted_stop).active
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "other", ["none", "setup", "limits", "recovery", "wake", "attachment"]
+)
+async def test_a_held_send_names_the_stop_over_any_other_blocker(other) -> None:
+    """Review follow-up (2026-11-22): with a setup blocker or a pending
+    recovery as well, Send read "Held" while its tooltip and reason named the
+    other cause. The send gate checks the stop first, so all three name it.
+
+    "limits" (2026-11-24 rebase onto dev's TASK-34100.2 review v5r4): a full
+    context window's strip became a link to Chat settings' Max tokens. Under
+    the stop the strip names the stop, so it carries no such link.
+    """
+    from textual.app import App, ComposeResult
+
+    from tldw_chatbook.Chat.console_display_state import (
+        CONSOLE_BLOCKER_MODEL_LIMITS,
+        CONSOLE_BLOCKER_PROVIDER_SETUP,
+        ConsoleAttachmentBlock,
+        ConsoleBlockedReason,
+    )
+
+    class _Composer(App[None]):
+        def compose(self) -> ComposeResult:
+            yield ConsoleComposerBar(id="console-native-composer")
+
+    blocker = {
+        "none": {},
+        "setup": {
+            "setup_blocked_reason": ConsoleBlockedReason(
+                "Add an API key before sending.", code=CONSOLE_BLOCKER_PROVIDER_SETUP
+            )
+        },
+        "limits": {
+            "setup_blocked_reason": ConsoleBlockedReason(
+                "Send blocked — fix model limits to continue",
+                code=CONSOLE_BLOCKER_MODEL_LIMITS,
+            )
+        },
+        "recovery": {"dispatch_recovery_blocked": True},
+        "wake": {"wake_turn_active": True},
+        "attachment": {
+            "attachment_block": ConsoleAttachmentBlock(
+                notice="model-x can't accept images",
+                reason="model-x can't accept images; remove the image to send.",
+            )
+        },
+    }[other]
+    app = _Composer()
+    async with app.run_test(size=(160, 8)) as pilot:
+        composer = app.query_one(ConsoleComposerBar)
+        composer.load_draft("say held")
+        composer.sync_action_state(
+            has_draft=True,
+            run_active=False,
+            can_save_chatbook=False,
+            send_blocked=True,
+            queue_blocked_reason=SEND_HOLD,
+            send_label="Held",
+            **blocker,
+        )
+        await pilot.pause()
+        send = composer.query_one("#console-send-message", Button)
+        assert str(send.label) == "Held"
+        assert send.disabled
+        assert str(send.tooltip) == HELD_TOOLTIP, (other, send.tooltip)
+        reason = composer.query_one("#console-send-disabled-reason", Static)
+        assert str(reason.content) == SEND_HOLD, (other, reason.content)
+        assert not composer.has_class("console-composer-setup-blocked")
+        assert not composer.has_class("console-composer-limits-blocked")
+
+
+@pytest.mark.asyncio
+async def test_a_raw_cli_draft_reads_held_while_the_stop_is_active() -> None:
+    """TASK-33620.1, owner decision 2026-11-23 ("hold raw CLI too").
+
+    A physically typed ``! `` draft took its raw-command presentation even
+    while the stop held, so Send read "Run"/"Arm…"/"Locked" and stayed live.
+    Held means held: the button reads "Held" and its tooltip names the stop.
+    """
+    from textual.app import App, ComposeResult
+    from textual.events import Key
+
+    class _Composer(App[None]):
+        def compose(self) -> ComposeResult:
+            yield ConsoleComposerBar(id="console-native-composer")
+
+    app = _Composer()
+    async with app.run_test(size=(160, 8)) as pilot:
+        composer = app.query_one(ConsoleComposerBar)
+        assert composer.handle_console_key(Key("exclamation_mark", "!")) is True
+        assert composer.handle_console_key(Key("space", " ")) is True
+        composer.insert_pasted_text("printf held")
+        assert composer.draft_text() == "! printf held"
+        composer.sync_action_state(
+            has_draft=True,
+            run_active=False,
+            can_save_chatbook=False,
+            send_blocked=True,
+            queue_blocked_reason=SEND_HOLD,
+            send_label="Held",
+        )
+        await pilot.pause()
+        send = composer.query_one("#console-send-message", Button)
+        assert str(send.label) == "Held", send.label
+        assert send.disabled
+        assert str(send.tooltip) == HELD_TOOLTIP
+
+
+@pytest.mark.asyncio
+async def test_the_console_wires_the_stop_into_raw_commands(
+    tmp_path, persisted_stop: Path
+) -> None:
+    """The real Console's raw-command controller asks the stop, and Clear lifts it."""
+    app, _gateway = _console_app(tmp_path)
+    async with app.run_test(size=(160, 45), notifications=True) as pilot:
+        chat = await _reach_console(app, pilot, "explore_home")
+        assert await _until(pilot, lambda: "Held" in _header_status(chat))
+        refusal = chat._raw_cli._emergency_stop_refusal()
+        assert "/emergency-stop clear" in refusal, refusal
+        await _click_strip_clear(chat, pilot)
+        assert await _until(pilot, lambda: "Held" not in _header_status(chat))
+        assert chat._raw_cli._emergency_stop_refusal() == ""
+    assert not read_emergency_stop(persisted_stop).active
+
+
+@pytest.mark.asyncio
+async def test_a_raw_command_before_the_arrival_read_lands_is_held(
+    tmp_path, monkeypatch, persisted_stop: Path
+) -> None:
+    """Review 2026-11-23 (blocking 1): an unknown stop is not "off".
+
+    Right after the Console opens its view of the stop is unknown until the
+    arrival read lands. A raw command in that window ran on the reviewed head
+    (the raw check returned "" with no known path) while a send held. Here
+    the arrival read is kept in flight; the raw check resolves the stop
+    itself, refuses, and the view then shows the hold.
+    """
+    import threading
+
+    from tldw_chatbook.UI.Console_Modules import emergency_stop_hold
+
+    gate = threading.Event()
+    arrival = emergency_stop_hold._read_default_stop
+
+    def slow_arrival():
+        gate.wait(10)
+        return arrival()
+
+    monkeypatch.setattr(emergency_stop_hold, "_read_default_stop", slow_arrival)
+    app, _gateway = _console_app(tmp_path)
+    try:
+        async with app.run_test(size=(160, 45), notifications=True) as pilot:
+            chat = await _reach_console(app, pilot, "explore_home")
+            assert getattr(chat, "_console_emergency_stop_path", None) is None
+            refusal = chat._raw_cli._emergency_stop_refusal()
+            assert "/emergency-stop clear" in refusal, (
+                "a raw command could run before the arrival read landed",
+                refusal,
+            )
+            assert await _until(pilot, lambda: "Held" in _header_status(chat))
+    finally:
+        gate.set()
+    assert read_emergency_stop(persisted_stop).active
+
+
+@pytest.mark.asyncio
+async def test_a_raw_command_after_a_failed_arrival_read_is_held_until_a_reread(
+    tmp_path, monkeypatch, persisted_stop: Path
+) -> None:
+    """Review 2026-11-23 (blocking 1): a failed arrival read left the view
+    unknown for the whole session, and every raw command ran. Now a raw
+    command is refused while the stop cannot be read, and the refusal asks
+    for a re-read, which records the stop once it can."""
+    from tldw_chatbook.UI.Console_Modules import emergency_stop_hold
+
+    broken = [True]
+    calls = [0]
+    real_path = emergency_stop_hold.default_emergency_stop_path
+
+    def stop_path():
+        calls[0] += 1
+        if broken[0]:
+            raise OSError("data folder unavailable")
+        return real_path()
+
+    monkeypatch.setattr(emergency_stop_hold, "default_emergency_stop_path", stop_path)
+    app, _gateway = _console_app(tmp_path)
+    async with app.run_test(size=(160, 45), notifications=True) as pilot:
+        chat = await _reach_console(app, pilot, "explore_home")
+        assert await _until(pilot, lambda: calls[0] >= 1)  # the arrival read failed
+        await pilot.pause(0.2)
+        assert getattr(chat, "_console_emergency_stop_path", None) is None
+        refusal = chat._raw_cli._emergency_stop_refusal()
+        assert refusal, "a raw command ran while the stop could not be read"
+        assert "emergency stop" in refusal.lower(), refusal
+        broken[0] = False  # The folder is back; the re-read the refusal asked for lands.
+        assert await _until(
+            pilot,
+            lambda: getattr(chat, "_console_emergency_stop_path", None) is not None,
+        ), "the refusal did not ask for a re-read"
+        assert await _until(pilot, lambda: "Held" in _header_status(chat))
+        assert "/emergency-stop clear" in chat._raw_cli._emergency_stop_refusal()
+    assert read_emergency_stop(persisted_stop).active
+

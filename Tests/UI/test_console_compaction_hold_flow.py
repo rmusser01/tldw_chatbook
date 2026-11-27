@@ -502,7 +502,126 @@ async def test_a_held_send_reads_blocked_and_after_cancel_the_pause_is_forecast(
             assert console._native_run_status_copy() == "Pauses for compaction"
             chip = console._context_spend._build_console_cost_state()
             assert chip.label.startswith(COMPACTION_PAUSE_FORECAST_COPY)
-            assert "Next send pauses for compaction approval" in chip.tooltip
+            # The tooltip opens with the label's own words (dev's read
+            # "Estimated next send pauses for compaction approval", which
+            # this pin no longer matched), then says who decides.
+            assert "Next send pauses to compact (estimated ~" in chip.tooltip
+            assert "you approve before anything is summarized" in chip.tooltip
+    finally:
+        if console is not None:
+            await _dispose_runtime(console)
+        database.close()
+
+
+@private_profile_test
+async def test_a_default_agent_chat_reads_ready_then_may_pause_and_the_send_holds(
+    request, monkeypatch, tmp_path
+):
+    """TASK-33621.4 AC#3 as amended (owner decision 2026-11-20).
+
+    The decision: "ready, then may pause". The default chat runs the agent
+    runtime, whose tools the forecast does not count, so no exact forecast
+    exists. On dev, from the first exchange on, the header read "Compaction
+    forecast unavailable" and Inspect's Run line "Forecast unavailable".
+    Below the displayed trigger it now reads Ready. Once the estimated
+    history is over the trigger, the header, the Run line and the Context
+    chip read "May pause to compact", and the next send is held on the card.
+    The copy is pinned literally so this collects, and fails, on dev.
+    """
+    from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
+    from tldw_chatbook.UI.Console_Modules import console_spend_projection as spend
+    from tldw_chatbook.Widgets.Console.console_send_authority_summary import (
+        project_console_send_authority,
+    )
+
+    app, database, host, adapter, adapter_calls = await _held_console(
+        monkeypatch, tmp_path
+    )
+    console = None
+    try:
+        async with host.run_test(size=(160, 45)) as pilot:
+            console, controller, session, runtime, runtime_tasks = await _ask_console(
+                host, pilot, monkeypatch, adapter
+            )
+            # The default: the agent runtime and its bridge (light chat too).
+            assert controller._agent_runtime_enabled
+            assert controller._agent_bridge is not None
+
+            def run_line() -> str:
+                return project_console_send_authority(
+                    console._build_console_inspector_state(None)
+                ).run
+
+            def badge() -> str:
+                return str(console.query_one("#workbench-header-status", Static).content)
+
+            async def rendered() -> None:
+                # The forecast reads memory once it has warmed; render after.
+                memory = spend.ConsoleContextReadSnapshot.for_screen(
+                    console, max_age=1.0
+                )
+                assert await memory.warm(controller, session.id)
+                await _sync_console_control_bar_now(console)
+                for _ in range(5):
+                    await console._sync_native_console_chat_ui()
+                    await pilot.pause(0.1)
+
+            await _send(console, host, runtime_tasks, "question-0: say hello.")
+            assert len(adapter_calls) == 1
+            await rendered()
+            # Below the trigger (~230 of 1,440 tokens): Ready, no forecast word.
+            chip = console._context_spend._build_console_cost_state()
+            assert badge().startswith("Ready"), badge()
+            assert run_line() == "Ready"
+            shown = f"{chip.label}\n{chip.compact_label}\n{chip.tooltip}"
+            assert "unavailable" not in shown.lower(), shown
+            assert "May pause to compact" not in shown, shown
+
+            # Over it: one long exchange takes the history past 1,440 tokens.
+            controller.store.append_message(
+                session.id, role=ConsoleMessageRole.USER, content="more", persist=True
+            )
+            controller.store.append_message(
+                session.id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content="detail " * 1_500,
+                persist=True,
+            )
+            await rendered()
+            for _ in range(100):
+                if badge() == "May pause to compact":
+                    break
+                await console._sync_native_console_chat_ui()
+                await pilot.pause(0.1)
+            assert badge() == "May pause to compact", badge()
+            assert run_line() == "May pause to compact"
+            chip = console._context_spend._build_console_cost_state()
+            assert chip.label.startswith("May pause to compact · "), chip.label
+            assert "May pause to compact: the estimated history (~" in chip.tooltip
+            assert "you approve before anything is summarized" in chip.tooltip
+
+            # It does pause: the next send is held on the card, unsent.
+            calls = len(adapter_calls)
+            try:
+                await _send(console, host, runtime_tasks, "question-1: and then?")
+            except RuntimeError:
+                pass
+            await pilot.pause()
+            assert len(adapter_calls) == calls, "the send over the trigger was sent"
+            held = controller.store.preparation_for_session(session.id)
+            assert held is not None and held.pause_kind is (
+                ConsolePreparationPauseKind.CONTEXT_COMPACTION
+            ), (held, controller.run_state_for(session.id))
+            card = console.query_one(TraceCallRecoveryCallout)
+            # The card is shown by a later sync than the header's; wait on both.
+            for _ in range(100):
+                await console._sync_native_console_chat_ui()
+                await pilot.pause(0.1)
+                if badge() == "Blocked" and card.display:
+                    break
+            assert badge() == "Blocked"
+            assert run_line() == "Blocked — compaction ask"
+            assert card.display
     finally:
         if console is not None:
             await _dispose_runtime(console)

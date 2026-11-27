@@ -61,6 +61,76 @@ from tldw_chatbook.Provider_Contract.thinking_blocks import (
 #: TASK-33621.4 AC#3: the header badge and the Context chip's lead, once the
 #: chat is over its Ask trigger (Inspect's Run line spells it out in full).
 COMPACTION_PAUSE_FORECAST_COPY = "Next send pauses to compact"
+#: TASK-33621.4 AC#3, owner decision 2026-11-20 ("ready, then may pause"): the
+#: header badge, Inspect's Run line and the Context chip's lead (and an idle
+#: run chip) once an inexactly measured chat, such as an agent chat (the
+#: default), is over its displayed trigger: a pause is likely, not certain.
+COMPACTION_MAY_PAUSE_COPY = "May pause to compact"
+
+#: Review follow-up 2 (2026-11-22): the same surfaces when the static input
+#: alone leaves no conversation capacity, so the send is refused.
+COMPACTION_CANNOT_FIT_COPY = "Next send won't fit"
+#: Review 2026-11-23: the same, when only an estimated tool cost (remembered or
+#: borrowed from an earlier send) tips it over; the send may carry fewer tools.
+COMPACTION_MAY_NOT_FIT_COPY = "Next send may not fit"
+#: Owner decision 2026-11-23 ("short badge word"): the header badge below the
+#: single-pane width, where the long words do not fit.
+COMPACTION_BADGE_SHORT = {
+    COMPACTION_PAUSE_FORECAST_COPY: "Pauses",
+    COMPACTION_MAY_PAUSE_COPY: "May pause",
+    COMPACTION_MAY_NOT_FIT_COPY: "May not fit",
+    COMPACTION_CANNOT_FIT_COPY: "Blocked",
+}
+
+#: Review S1 (2026-11-22): what each inexact cause names in the tooltip.
+_MAY_PAUSE_CAUSES = {
+    "tools": "the agent's tools",
+    "tools-unknown": "the agent's tools (unmeasured until the next send)",
+    "limits": "this provider's input and output limits",
+    "prefill": "the response prefill",
+    "media": "images",
+    "memory": "the memory summary",
+}
+
+
+def compaction_may_pause_reason(
+    history_tokens: int, causes: Sequence[str], *, over: bool = True
+) -> str:
+    """The may-pause tooltip's reason, naming what is only estimated.
+
+    Args:
+        history_tokens: The estimated conversation tokens.
+        causes: Inexact inputs ("tools", "tools-unknown", "limits",
+            "prefill", "media", "memory"), in order; unknown names skip.
+        over: Whether the history is over the displayed trigger. Without it
+            (the agent's tools unmeasured), the trigger itself is unknown.
+
+    Returns:
+        Lower-case-led copy that follows "May pause to compact: ".
+    """
+    if not over:
+        return (
+            f"the agent's tools are not measured yet (a send measures them), so "
+            f"the trigger for this history (~{history_tokens:,} conversation "
+            "tokens) is unknown and the send itself checks."
+        )
+    named = [
+        _MAY_PAUSE_CAUSES[cause]
+        for cause in dict.fromkeys(causes)
+        if cause in _MAY_PAUSE_CAUSES
+    ]
+    reason = (
+        f"the estimated history (~{history_tokens:,} conversation tokens) is over "
+        "the trigger."
+    )
+    if not named:
+        return reason
+    listed = " and ".join(filter(None, (", ".join(named[:-1]), named[-1])))
+    singular = len(named) == 1 and named[0].endswith(("prefill", "summary"))
+    return (
+        f"{reason} {listed[0].upper()}{listed[1:]} {'is' if singular else 'are'} "
+        "only estimated here, so the send itself checks."
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,7 +264,11 @@ class ConsoleContextControlState:
     forecast_tokens: int | None = None
     forecast_units: int = 0
     forecast_unavailable_reason: str = ""
+    #: No exact forecast, and the estimated history is over the displayed
+    #: trigger: the next send may pause (COMPACTION_MAY_PAUSE_COPY).
     forecast_high_context: bool = False
+    #: Cannot-fit depends on an estimated tool cost: the static input alone fits.
+    compaction_fit_uncertain: bool = False
 
     @property
     def compaction_pause_forecast(self) -> CompactionPauseForecast | None:
@@ -221,6 +295,19 @@ class ConsoleContextControlState:
         if decision is not CompactionDecision.ASK:
             return None
         return CompactionPauseForecast(self.forecast_tokens, trigger, budget)
+
+    @property
+    def compaction_cannot_fit(self) -> bool:
+        """The counted static input leaves no conversation capacity.
+
+        Review follow-up 2 (2026-11-22): the send is then refused before any
+        provider call ("compacting older turns cannot make room"), so no
+        surface may read Ready.
+        """
+        return (
+            self.request_overhead_tokens is not None
+            and self.resolved_policy.available_conversation_capacity_tokens == 0
+        )
 
     @property
     def conversation_budget_tokens(self) -> int | None:
@@ -680,24 +767,46 @@ def build_console_context_cost_state(
     compact_part = "" if fullness == "unknown" else f"Ctx {fullness} · "
     # TASK-33621.4 AC#3: lead with it, so a clipped strip still shows it.
     forecast = getattr(context, "compaction_pause_forecast", None)
-    if forecast is not None:
+    if getattr(context, "compaction_cannot_fit", False):
+        uncertain = getattr(context, "compaction_fit_uncertain", False)
+        lead = COMPACTION_MAY_NOT_FIT_COPY if uncertain else COMPACTION_CANNOT_FIT_COPY
+        context_part = f"{lead} · {context_part}"
+        compact_part = f"{lead} · {compact_part}"
+        ceiling = format_context_tokens(context.safe_input_ceiling_tokens)
+        compaction_line += (
+            (
+                f" {lead}: with the agent's tools as an earlier send carried them, "
+                f"the system prompt, tools and attached context need more than the "
+                f"{ceiling} tokens the model's context window leaves for a request. "
+                "The send may carry fewer tools and fit; if not, it is refused. "
+            )
+            if uncertain
+            else (
+                f" {lead}: the system prompt, tools and attached context need more "
+                f"than the {ceiling} tokens the model's context window leaves for a "
+                "request, so compacting older turns cannot make room. "
+            )
+        ) + (
+            "Remove attached sources or tools, or lower Max tokens in Chat settings "
+            "▸ Model and generation (Ctrl+O)."
+        )
+    elif forecast is not None:
         context_part = f"{COMPACTION_PAUSE_FORECAST_COPY} · {context_part}"
         compact_part = f"Pauses to compact · {compact_part}"
         compaction_line += (
-            " Estimated next send pauses for compaction approval: "
+            f" {COMPACTION_PAUSE_FORECAST_COPY} (estimated "
             f"~{format_context_tokens(forecast.used_tokens)} of "
-            f"{format_context_tokens(forecast.budget_tokens)} conversation tokens."
+            f"{format_context_tokens(forecast.budget_tokens)} conversation tokens); "
+            "you approve before anything is summarized."
         )
-    elif context.forecast_unavailable_reason:
-        advisory = (
-            "High context · forecast unavailable"
-            if context.forecast_high_context
-            else "Compaction forecast unavailable"
-        )
-        context_part = f"{advisory} · {context_part}"
-        compact_part = f"{'High context · ' if context.forecast_high_context else ''}Forecast unavailable · {compact_part}"
+    elif context.forecast_high_context:
+        # Owner decision 2026-11-20: with no exact forecast the chip says
+        # nothing below the trigger (the chat reads Ready) and this above it.
+        context_part = f"{COMPACTION_MAY_PAUSE_COPY} · {context_part}"
+        compact_part = f"{COMPACTION_MAY_PAUSE_COPY} · {compact_part}"
         compaction_line += (
-            f" Compaction forecast unavailable: {context.forecast_unavailable_reason}"
+            f" {COMPACTION_MAY_PAUSE_COPY}: {context.forecast_unavailable_reason} "
+            "If it pauses, you approve before anything is summarized."
         )
     return replace(
         cost,

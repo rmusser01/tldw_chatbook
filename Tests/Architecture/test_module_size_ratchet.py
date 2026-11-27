@@ -98,7 +98,8 @@ _BUDGETS: dict[str, int] = {
     # size ratchet raises the row): /stop takes only its captured draft. 1567 -> 1571.
     # 2026-11-19: re-measured after rebasing onto dev a6df4d8d48 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 1571 -> 1564.
     # 2026-11-20: re-measured after rebasing onto dev d85e90bc9e (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 1564 -> 1568.
-    "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1568,
+    # 2026-11-25: re-measured after rebasing onto dev 1b9e3f8a55 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 1568 -> 1575.
+    "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1575,
     "tldw_chatbook/UI/Library_Modules/canvas_sync.py": 1314,
     "tldw_chatbook/Notes/notes_sync_startup.py": 34,
     "tldw_chatbook/UI/Console_Modules/session_prompt_seed.py": 109,
@@ -123,7 +124,14 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-23, PR #3517's port onto dev b31e3e9241 (round 24; owner decision
     # 2026-10-04, expand limits): dev measures 2,884, plus this branch's
     # +31, exact: 2,915.
-    "tldw_chatbook/Chat/console_display_state.py": 2915,
+    # 2026-11-21, TASK-33620.1 AC#3 (owner rule: raise by the change's own
+    # lines): 2884 -> 2886 (+2), Send's "Held" label (owner decision 2026-11-20).
+    # 2026-11-22, same task and rule: 2886 -> 2894 (+8), the Held Send's tooltip
+    # says how to resume, and its reason names the stop over other blockers.
+    # 2026-11-22, TASK-33621.4 (same rule): 2894 -> 2895 (+1), the Inspect
+    # field carries the forecast note ("May pause to compact" / "won't fit").
+    # 2026-11-24, rebased onto dev 9fa2bf1b1d: the row is the exact measured size.
+    "tldw_chatbook/Chat/console_display_state.py": 2926,
     "tldw_chatbook/Widgets/Console/console_selection.py": 379,
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
     # 244 -> 257 (+13), TASK-38585 renders labels literally, not as markup.
@@ -382,7 +390,10 @@ _BUDGETS: dict[str, int] = {
     # exact measurement (under dev's row of 22,244, so the row comes down).
     # 2026-11-23, port onto dev b31e3e9241: re-measured, dev's file is still
     # 22,231, so the row stays 22,242 (dev's 22,231 + the branch's 11).
-    "tldw_chatbook/Chat/console_chat_store.py": 22242,
+    # 2026-11-23, TASK-33620.1.10 (owner rule: raise by the change's own lines):
+    # 22244 -> 22258, a raw command anchors past unsaved System rows.
+    # 2026-11-24, rebased onto dev 9fa2bf1b1d: the row is the exact measured size.
+    "tldw_chatbook/Chat/console_chat_store.py": 22269,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).
@@ -1309,7 +1320,13 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-23, PR #3517's port onto dev b31e3e9241 (round 24; owner decision
     # 2026-10-04, expand limits): dev measures 7,208, plus this branch's
     # +35, exact: 7,243.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7243,
+    # 2026-11-22, TASK-33620.1 (owner rule: raise by the change's own lines):
+    # 7213 -> 7214, a Held Send's tooltip and setup link follow the stop (+6
+    # lines over dev's 7208, 5 of them inside the row's existing headroom).
+    # 2026-11-23, TASK-33620.1 (owner rule: raise by the change's own lines):
+    # 7214 -> 7217 (+3), the stop holds raw CLI drafts too (owner decision).
+    # 2026-11-24, rebased onto dev 9fa2bf1b1d: the row is the exact measured size.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7253,
     # TASK-33628.1 moves tab-close loss projection/copy into shared loss_inventory.
     # PR3303, 2026-10-31: explicit user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.

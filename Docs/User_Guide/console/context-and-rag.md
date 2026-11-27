@@ -165,22 +165,57 @@ in a chat the agent started), the clock runs again from then, and the rest of
 the wait counts. A goal run's iterations send the goal's handoff instead of
 the chat's history, so the trigger does not apply to them.
 
-For plain-provider requests with measured inputs, you can see an estimated pause coming. Once the chat's history is over its trigger
-under **Ask**, the header badge reads **Next send pauses to compact** (on
-narrow terminals the badge has no room for it), Inspect's "What happens if I
-send now?" Run line and the run chip at the start of the status strip read
-**Pauses for compaction**, and the Context chip starts with **Next send
-pauses to compact** (its tooltip gives the numbers). While a message is held,
-the badge reads **Blocked** and the Run line and run chip **Blocked —
-compaction ask**. F1 help lists the same in its **Context limit** group.
+You can see a pause coming. Once the chat's history is over its trigger
+under **Ask**, the header badge, Inspect's "What happens if I send now?" Run
+line and the Context chip say so, in one of two ways:
 
-The estimate includes current prompt/draft overhead and model input/output limits.
-Agent/tool-enabled chats show **Forecast unavailable**, including light chats with
-tools: tool availability can change between sends. Above the displayed estimated
-trigger, the Context chip retains a **High context · forecast unavailable**
-advisory. It does not promise that the next send will pause for compaction; the
-real next-send check still decides. Media, response prefills, unknown limits and
-unsupported memory shapes can also lack a forecast.
+- **Next send pauses to compact** when every input of the next send is
+  measured: the header badge reads it (on narrow terminals, a short
+  **Pauses**), the Run line and the run chip at the start of the status
+  strip read **Pauses for compaction**, and the Context chip starts with it.
+  Its tooltip gives the estimate ("Next send pauses to compact (estimated
+  ~1,656 of 1,500 conversation tokens)").
+- **May pause to compact** when some input is only estimated, as in an agent
+  chat, which is the default. The agent's tools (their definitions, or the
+  tool text a provider without native tool calls carries in the system
+  prompt) are counted from the largest send this session has measured with
+  the same model and tool settings, and the next send's tools may differ.
+  The pause is likely but not certain. The header badge, the Run line and
+  the Context chip read **May pause to compact**, and the tooltip gives the
+  estimated history and names what was estimated. Below the trigger such a
+  chat simply reads **Ready**. The measured figure is kept across restarts
+  for each combination of model and tool settings. Until a send has measured
+  the tools for the current combination (for example after you change the
+  model, a tool gate, the `[mcp]` settings in config.toml, the raw shell's
+  arming, the chat's Library access or an `[internal_prompts]` override, or
+  after an app update), the trigger is not known, so an agent chat with any
+  history reads **May pause to compact**. Servers added or removed in the MCP
+  hub, and the MCP kill switch, do not count as a change: the figure from
+  the last send stands until the next send measures again.
+- **Next send won't fit** when the system prompt and attached context alone
+  leave no room for the conversation. The send would be refused before
+  anything is sent, so the badge, the Run line and the Context chip say so
+  instead of Ready; the tooltip says what to remove. **Next send may not
+  fit** when only the agent's tools, as an earlier send carried them, tip it
+  over: the send may carry fewer tools and fit.
+
+Either way you approve before anything is summarized: the send that reaches
+the trigger is held on the card described above. While a message is held, the badge
+reads **Blocked** and the Run line and run chip **Blocked — compaction
+ask**. F1 help lists the same in its **Context limit** group.
+
+The estimate counts the system prompt and greeting, your draft, staged
+sources, a response prefill, and the model's input and output limits when
+they are known. Images, in the history or staged for the next message, count
+at the flat estimate the send itself uses (1,024 tokens each). Anything
+counted only approximately makes it **May pause to compact** rather than
+**Next send pauses to compact**: the agent's tools, a provider whose limits
+are not known (such as a custom endpoint), a prefill, images, or a memory
+summary of a range of turns (those turns are then counted in full). The
+send itself decides. Two cases show no forecast because the send never
+pauses to compact: a chat whose memory is an older (legacy) summary, and an
+Automatic budget on a model whose context window is unknown (set a custom
+budget to get a trigger).
 
 To compact without sending, type `/compact` or choose **Console: Compact
 context now** from the command palette (Ctrl+P). Both run the same summary as

@@ -376,6 +376,7 @@ from ...Provider_Contract import (
     ChatRateLimitError,
 )
 from ...Chat.console_display_state import (
+    CONSOLE_EMERGENCY_STOP_SEND_LABEL,
     CONSOLE_EMERGENCY_STOP_SEND_REASON,
     CONSOLE_BLOCKER_ARCHIVE_INFLIGHT,
     CONSOLE_BLOCKER_LIBRARY_EVIDENCE,
@@ -13057,7 +13058,7 @@ class ChatScreen(BaseAppScreen):
             ),
             run_blocked_reason=blocked_turn_reason(run_controller),
             compaction_pause_expected=self._context_spend.compaction_pause_expected(),
-            compaction_forecast_unavailable=self._context_spend.compaction_forecast_unavailable(),
+            compaction_forecast_note=self._context_spend.compaction_forecast_note(),
             provider_label=settings_readiness.provider_display_name or "Provider",
             model_label=model,
             provider_ready=provider_ready,
@@ -13742,7 +13743,7 @@ class ChatScreen(BaseAppScreen):
             else build_console_readiness_presentation(readiness[1]).primary_label,
             blocked_turn=blocked_turn_reason(controller),
             compaction_pause_expected=self._context_spend.compaction_pause_expected(),
-            compaction_forecast_unavailable=self._context_spend.compaction_forecast_unavailable(),
+            compaction_forecast_note=self._context_spend.compaction_forecast_note(),
         )
 
     def _console_provider_blocker_copy(
@@ -17445,10 +17446,11 @@ class ChatScreen(BaseAppScreen):
             )
             if acknowledgement:
                 return acknowledgement
-            if self._context_spend.compaction_forecast_unavailable() and (
+            note = self._context_spend.compaction_forecast_note()
+            if note and (
                 run_state is None or run_state.status is ConsoleRunStatus.IDLE
             ):
-                return "Forecast unavailable"
+                return note
             return acknowledgement or (
                 rule_status(rule_state) if rule_state is not None else ""
             )
@@ -21574,7 +21576,9 @@ class ChatScreen(BaseAppScreen):
                 else ""
             ),
             ephemeral=self._console_active_session_is_ephemeral(),
-            send_label=(
+            send_label=CONSOLE_EMERGENCY_STOP_SEND_LABEL  # owner decision 2026-11-20
+            if held_reason
+            else (
                 queue_presentation.send_label
                 if queue_presentation is not None
                 else "Send"

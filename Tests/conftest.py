@@ -416,6 +416,27 @@ def install_css_parse_cache() -> "Iterator[None]":
 
 
 @pytest.fixture(autouse=True)
+def console_tool_cost_file(monkeypatch, tmp_path):
+    """Every test saves Console agent tool costs to its own file (TASK-33621.4).
+
+    The Console keeps the largest measured agent tool cost per configuration
+    in the profile's data folder (owner decision B, 2026-11-23). The
+    bootstrap-profile tests share one data folder per pytest process, in
+    Tests/UI and outside it (Tests/Chat and others), so without this a figure
+    one test saved could be read by the next (reviews of 2026-11-23). The
+    store is a small top-level module, so patching it here loads no Console
+    code.
+    """
+    path = tmp_path / "console_agent_tool_costs.json"
+    try:
+        from tldw_chatbook import console_tool_costs
+    except ImportError:  # Older code has no saved costs to isolate.
+        return path
+    monkeypatch.setattr(console_tool_costs, "tool_cost_path", lambda: path)
+    return path
+
+
+@pytest.fixture(autouse=True)
 def reset_provider_session_registry() -> "Iterator[None]":
     """Drop the calling thread's provider HTTP sessions between tests.
 

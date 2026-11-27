@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import functools
+import hashlib
+import json
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
@@ -47,10 +51,15 @@ from ...Chat.console_trace_projection import ProjectedTraceCall
 from ...Chat.provider_readiness import provider_config_key
 from ...Chat.provider_usage import ProviderUsage
 from ...Widgets.Console import ConsoleSettingsSummary
+from ...Utils.token_counter import NON_TEXT_PART_TOKEN_ESTIMATE
 from ...Widgets.Console.console_context_controls import (
     ConsoleContextControlState,
     build_console_context_control_state,
+    COMPACTION_CANNOT_FIT_COPY,
+    COMPACTION_MAY_NOT_FIT_COPY,
+    COMPACTION_MAY_PAUSE_COPY,
     compaction_forecast_rows,
+    compaction_may_pause_reason,
 )
 from ...Widgets.Console.console_status_chips import ConsoleStatusChips
 from ..Console_Modules import console_spend_projection as spend
@@ -177,6 +186,82 @@ def _build_console_inspector_exchanges_loader(
     return _exchanges_loader
 
 
+def _tool_cost_key(signature: str) -> str:
+    """The saved figure's key: a digest, never the signature's config content."""
+    return hashlib.sha256(signature.encode("utf-8")).hexdigest()[:32]
+
+
+#: The internal prompts an agent's first request carries: its operating
+#: prompt, the light-surface hint, the fenced tool protocol and a tool's
+#: description. An override, a legacy key or a new shipped default changes
+#: the tool cost, so their resolved text is part of the tool signature.
+_AGENT_PROMPT_IDS = (
+    "agents.console_agent_operating",
+    "agents.console_light_surface_hint",
+    "agents.tool_protocol",
+    "agents.ask_user_tool_description",
+)
+
+
+def _agent_prompt_digest() -> str:
+    """A digest of the resolved agent prompts (override, legacy or default)."""
+    from ...Internal_Prompts.resolver import get_internal_prompt
+
+    digest = hashlib.sha256()
+    for prompt_id in _AGENT_PROMPT_IDS:
+        try:
+            text = get_internal_prompt(prompt_id)
+        except Exception:  # noqa: BLE001 -- an unresolved prompt is its own state
+            text = "\x00unresolved"
+        digest.update(f"{prompt_id}\x00{text}\x00".encode("utf-8"))
+    return digest.hexdigest()[:32]
+
+
+def _tool_costs_job(kind: str, snapshot: dict[str, int]) -> dict[str, int] | None:
+    """One read or write of the saved agent tool costs, on a worker thread.
+
+    Owner decision 2026-11-23 ("persist across restarts"); the store module is
+    imported here, off the UI loop and off the boot path.
+    """
+    from ... import console_tool_costs
+
+    if kind == "load":
+        return console_tool_costs.load_costs()
+    console_tool_costs.save_costs(snapshot)
+    return None
+
+
+def _forecast_history_images(messages: Sequence[Any], memory: Any) -> int:
+    """Image parts on the turns the compaction forecast counts.
+
+    Review B1 (2026-11-22): history media used to drop the forecast. The send
+    charges each image part a flat estimate; so does the forecast, for the
+    turns after a prefix memory's boundary (all turns for any other shape).
+    """
+    from ...Chat.console_context_compaction import EffectiveMemoryKind
+
+    record = memory.memory
+    start = 0
+    if memory.kind is EffectiveMemoryKind.GENERATED_PREFIX and record is not None:
+        start = next(
+            (
+                index + 1
+                for index, message in enumerate(messages)
+                if message.persisted_message_id == record.boundary_message_id
+            ),
+            0,
+        )
+    return sum(
+        len(getattr(message, "attachments", ()) or ())
+        for message in messages[start:]
+        if message.role is not ConsoleMessageRole.SYSTEM
+        and (
+            message.role is not ConsoleMessageRole.ASSISTANT
+            or message.status == "complete"
+        )
+    )
+
+
 class ConsoleContextSpendController:
     """Display-only Context/spend state; no DOM or independent authority."""
 
@@ -260,6 +345,14 @@ class ConsoleContextSpendController:
         self._console_estimate_cache_owners = None
         self._console_settled_context_cache = None
         self._console_compaction_forecast_cache = None
+        #: Review D2: session -> (accounting, tool signature, tool tokens).
+        self._console_tool_overhead_seen: dict[str, tuple[Any, str, int]] = {}
+        #: Owner decision 2026-11-23: persisted costs (None = not read yet).
+        self._console_tool_costs_disk: dict[str, int] | None = None
+        self._console_tool_costs_pending: dict[str, int] = {}
+        self._console_tool_costs_busy = False
+        self._console_tool_costs_dirty = False
+        self._console_agent_prompt_digest: tuple[int, str] | None = None
         self._console_settled_spend_cache = None
         self._console_cost_projection_tokens_cache = None
         self._last_console_context_control_state = None
@@ -623,19 +716,31 @@ class ConsoleContextSpendController:
             accounting = controller.context_breakdown_accounting(session_id)
         except Exception:  # noqa: BLE001 - Preserve optional accounting display fallback.
             accounting = None
-        forecast_tokens, forecast_units = self._console_compaction_forecast_inputs(
-            session_id, settings, overrides, global_overrides, memory
+        forecast_tokens, forecast_units, history_causes = (
+            self._console_compaction_forecast_inputs(
+                session_id, settings, overrides, global_overrides, memory
+            )
         )
-        mandatory = self._console_compaction_mandatory_estimate(
+        mandatory, causes = self._console_compaction_mandatory_estimate(
             session_id,
             settings,
             estimate,
             controller=controller,
         )
+        static_mandatory = mandatory
+        if "tools" in causes:
+            # Review B1/D1/D2 (2026-11-22): the agent's tool cost as prepared
+            # requests carried it; never previewed here (permission reads).
+            tools = self._console_agent_tool_overhead(session_id, settings, accounting)
+            if tools is None:
+                causes = tuple("tools-unknown" if c == "tools" else c for c in causes)
+            elif mandatory is not None:
+                static_mandatory, mandatory = mandatory, mandatory + tools
         caps = spend.model_token_caps_for_display(self._screen, settings)
+        causes = (*causes, *history_causes, *(() if caps is not None else ("limits",)))
         unavailable = ""
         estimated_history = forecast_tokens
-        if forecast_units and (mandatory is None or caps is None):
+        if forecast_units and (mandatory is None or causes):
             unavailable = "Current mandatory input or tool overhead is not measured."
             forecast_tokens = None
         state = build_console_context_control_state(
@@ -660,24 +765,213 @@ class ConsoleContextSpendController:
             provider_output_cap_tokens=caps[1] if caps is not None else None,
             forecast_unavailable_reason=unavailable,
         )
-        trigger = state.compaction_trigger_tokens
+        ceiling = state.safe_input_ceiling_tokens
         if (
-            unavailable
-            and estimated_history is not None
+            state.compaction_cannot_fit
+            and static_mandatory is not None
+            and ceiling is not None
+            and static_mandatory < ceiling
+        ):
+            # Review 2026-11-23: only an estimated tool cost tips it over, and
+            # the send's planner may carry fewer tools: "may not fit".
+            state = replace(state, compaction_fit_uncertain=True)
+        trigger = state.compaction_trigger_tokens
+        over = (
+            estimated_history is not None
             and trigger is not None
             and estimated_history >= trigger
+        )
+        if unavailable and estimated_history is not None and (
+            over or "tools-unknown" in causes
         ):
-            # An advisory about the displayed estimate, never an ASK verdict:
-            # unknown mandatory material may make compaction impossible.
+            # An advisory about the displayed estimate, never an ASK verdict.
+            # Owner decision 2026-11-20 ("ready, then may pause"): below the
+            # trigger an inexact forecast shows nothing; over it, this. With
+            # the agent's tools unmeasured (review D2) the trigger itself is
+            # unknown, so any history may pause: never a Ready that can hold.
             state = replace(
                 state,
                 forecast_high_context=True,
-                forecast_unavailable_reason=(
-                    "Estimated history reaches the displayed compaction trigger; "
-                    "next-send check unavailable."
+                forecast_unavailable_reason=compaction_may_pause_reason(
+                    estimated_history, causes, over=over
                 ),
             )
         return state
+
+    def _console_agent_tool_overhead(
+        self, session_id: str, settings: ConsoleSessionSettings, accounting: Any
+    ) -> int | None:
+        """The agent's tool cost per request, or None while it is unmeasured.
+
+        Review D1 (2026-11-22): tool schemas plus the system-prompt rendering
+        delta, which carries fenced tool definitions and agent guidance on
+        providers without native tool calls. Review D2: prepared requests are
+        remembered per session for this run only, so the largest figure from
+        any session under the current tool configuration stands in, and with
+        none the cost is unknown. Review follow-up 1: a figure counts only
+        under the configuration it was measured with (model, tool gates, MCP
+        and Console tool settings); a change makes it unknown until a send.
+
+        Args:
+            session_id: The session whose prepared request may be new.
+            settings: The session's settings (provider and model).
+            accounting: That session's last prepared-request accounting.
+
+        Returns:
+            Tokens, or None when nothing measured the current configuration.
+        """
+        signature = self._console_tool_signature(settings, session_id)
+        seen = self._console_tool_overhead_seen
+        if accounting is not None:
+            cost = sum(
+                max(0, int(getattr(accounting, name, 0) or 0))
+                for name in ("tool_schema_tokens", "system_prompt_delta_tokens")
+            )
+            entry = seen.get(session_id)
+            if entry is None or entry[0] is not accounting:
+                # The largest under one configuration: a later request without
+                # the tools (a /compact summary) must not lower it.
+                if entry is not None and entry[1] == signature:
+                    cost = max(cost, entry[2])
+                seen[session_id] = (accounting, signature, cost)
+        known = [cost for _acct, sig, cost in seen.values() if sig == signature]
+        # Owner decision 2026-11-23 ("persist across restarts"): the largest
+        # figure per configuration is kept on disk, read and written off the
+        # UI loop; until the read lands (or if it fails) only this run counts.
+        key = _tool_cost_key(signature)
+        stored = self._console_tool_costs_stored()
+        best = max(known, default=None)
+        if best is not None and best > stored.get(key, -1):
+            self._console_store_tool_cost(key, best)
+        if key in stored:
+            best = max(best or 0, stored[key])
+        return best
+
+    def _console_tool_costs_stored(self) -> dict[str, int]:
+        """The persisted costs, or {} while their off-loop read is pending."""
+        if self._console_tool_costs_disk is None:
+            self._console_tool_costs_io("load")
+            return {}
+        return self._console_tool_costs_disk
+
+    def _console_store_tool_cost(self, key: str, cost: int) -> None:
+        """Keep ``cost`` for ``key`` (LRU-bounded) and save it off the loop."""
+        costs = self._console_tool_costs_disk
+        if costs is None:
+            self._console_tool_costs_pending[key] = cost
+            return
+        from ...console_tool_costs import LIMIT
+
+        costs.pop(key, None)
+        costs[key] = cost
+        while len(costs) > LIMIT:
+            costs.pop(next(iter(costs)))
+        self._console_tool_costs_io("save")
+
+    def _console_tool_costs_io(self, kind: str) -> None:
+        """Run one read or write of the stored costs off the UI loop.
+
+        Fail-open: any error reads as "nothing stored" and drops the write.
+        One operation at a time; a save asked for meanwhile runs after it.
+        """
+        if self._console_tool_costs_busy:
+            self._console_tool_costs_dirty |= kind == "save"
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # No loop (a bare test double): this run's figures only.
+        snapshot = dict(self._console_tool_costs_disk or {})
+        work = functools.partial(_tool_costs_job, kind, snapshot)
+        self._console_tool_costs_busy = True
+        future = loop.run_in_executor(None, work)
+
+        def landed(done: Any) -> None:
+            self._console_tool_costs_busy = False
+            try:
+                result = done.result()
+            except Exception:  # noqa: BLE001 - fail open: nothing stored
+                result = {}
+            if kind == "load":
+                loaded = dict(result or {})
+                loaded.update(self._console_tool_costs_pending)
+                self._console_tool_costs_dirty |= bool(
+                    self._console_tool_costs_pending
+                )
+                self._console_tool_costs_pending.clear()
+                self._console_tool_costs_disk = loaded
+                with contextlib.suppress(Exception):
+                    self._refresh_settings_summary()
+            if self._console_tool_costs_dirty:
+                self._console_tool_costs_dirty = False
+                self._console_tool_costs_io("save")
+
+        future.add_done_callback(landed)
+
+    def _console_agent_prompts(self) -> str:
+        """The agent prompts' digest, resolved once per config publication.
+
+        The resolver reads the in-memory config (``[internal_prompts]`` never
+        reaches ``app_config``), so it is not re-run on every render: the
+        digest is kept until the runtime config generation changes.
+        """
+        from ... import config as config_module
+
+        generation = config_module.get_runtime_config_generation()
+        cached = self._console_agent_prompt_digest
+        if cached is None or cached[0] != generation:
+            cached = (generation, _agent_prompt_digest())
+            self._console_agent_prompt_digest = cached
+        return cached[1]
+
+    def _console_tool_signature(
+        self, settings: ConsoleSessionSettings, session_id: str | None = None
+    ) -> str:
+        """What decides the agent's tool set, from in-memory state only.
+
+        Config sections, plus two in-memory runtime facts (review 2026-11-23):
+        an armed raw shell and the conversation's assistant Library access.
+        The app version stands in for the built-in tool catalog, and a digest
+        of the resolved agent prompts covers an override, a legacy key and a
+        new shipped default: a figure saved before an upgrade or an override
+        can be smaller than today's tools (reviews of 2026-11-23). The MCP
+        kill switch and hub servers need a store read; see TASK-33621.4.4.
+        """
+        import tldw_chatbook
+
+        config = spend._screen_readiness_config(self._screen)
+        config = config if isinstance(config, Mapping) else {}
+        console = config.get("console")
+        console = console if isinstance(console, Mapping) else {}
+        raw_armed = None
+        with contextlib.suppress(Exception):
+            raw_armed = bool(self._screen.app_instance.raw_cli_runtime.armed)
+        library = None
+        if session_id is not None:
+            with contextlib.suppress(Exception):
+                library = str(
+                    self._ensure_console_chat_store()
+                    .session_library_policy_candidate(session_id)
+                    .assistant_access
+                )
+        return json.dumps(
+            [
+                settings.provider,
+                settings.model,
+                config.get("tools"),
+                config.get("mcp"),
+                {
+                    key: console.get(key)
+                    for key in ("agent_runtime", "local_tools_enabled")
+                },
+                raw_armed,
+                library,
+                getattr(tldw_chatbook, "__version__", None),
+                self._console_agent_prompts(),
+            ],
+            sort_keys=True,
+            default=str,
+        )
 
     def _console_compaction_mandatory_estimate(
         self,
@@ -686,36 +980,53 @@ class ConsoleContextSpendController:
         estimate: ConsoleSettingsContextEstimate,
         *,
         controller: ConsoleChatController,
-    ) -> int | None:
-        """Separate current static input from history; unknown tools stay unknown.
+    ) -> tuple[int | None, tuple[str, ...]]:
+        """Separate current static input from history, naming what is inexact.
 
-        Count only the current prompt, greeting, draft and staged evidence,
-        with the existing display estimator's single framing base. Historical
-        text is not re-tokenized here. Last-request accounting cannot qualify
-        an agent's current tool surface.
-        This never runs hooks, permission readers, or request previews.
+        Count the current prompt, greeting, draft, staged evidence, response
+        prefill and staged attachments (each at the send's flat per-part
+        estimate), with the existing display estimator's single framing base.
+        Historical text is not re-tokenized here. Last-request accounting
+        cannot qualify an agent's current tool surface: the caller adds its
+        tool schemas. This never runs hooks, permission readers, or request
+        previews.
+
+        Returns:
+            ``(tokens, causes)``. ``tokens`` is None only when nothing can be
+            counted (tokenizer cold). ``causes`` names the inputs counted only
+            approximately ("tools", "prefill", "media"); with any, the
+            forecast may pause rather than will (review B1, 2026-11-22: the
+            agent check used to drop the whole static estimate, a false Ready).
         """
         if estimate.used_tokens is None or not spend.console_tokenizer_display_ready(
             self._screen, settings.model, settings.provider
         ):
-            return None
-        if (
-            controller._agent_runtime_enabled and controller._agent_bridge is not None
-        ) or controller._resolve_submit_prefill(session_id)[0]:
-            return None
+            return None, ()
+        causes: list[str] = []
+        if controller._agent_runtime_enabled and controller._agent_bridge is not None:
+            causes.append("tools")
+        prefill = controller._resolve_submit_prefill(session_id)[0]
+        if prefill:
+            causes.append("prefill")
         store = self._ensure_console_chat_store()
-        if store.pending_attachments(session_id):
-            return None
+        images = sum(
+            1
+            for pending in store.pending_attachments(session_id)
+            if pending.insert_mode == "attachment" and pending.data is not None
+        )
+        if images:
+            causes.append("media")
         _key, messages, _history = self._console_display_history(
             store, session_id, controller
         )
-        if any(message.attachments for message in messages):
-            return None
         active = store.active_session_id == session_id
         composer = self._console_composer_or_none() if active else None
         draft = composer.draft_text() if composer is not None else ""
+        rows = [{"role": "user", "content": draft}] if draft.strip() else []
+        if prefill:
+            rows.append({"role": "assistant", "content": prefill})
         mandatory = self._build_context_estimate(
-            [{"role": "user", "content": draft}] if draft.strip() else [],
+            rows,
             settings.provider,
             settings.model,
             system_prompt=spend.fold_system_prompt(
@@ -726,7 +1037,11 @@ class ConsoleContextSpendController:
             if active
             else "",
         )
-        return mandatory.used_tokens
+        if mandatory.used_tokens is None:
+            return None, tuple(causes)
+        return mandatory.used_tokens + images * NON_TEXT_PART_TOKEN_ESTIMATE, tuple(
+            causes
+        )
 
     def _console_compaction_forecast_inputs(
         self,
@@ -735,15 +1050,22 @@ class ConsoleContextSpendController:
         overrides: Any,
         global_overrides: Any,
         memory: Any,
-    ) -> tuple[int | None, int]:
+    ) -> tuple[int | None, int, tuple[str, ...]]:
         """The next send's conversation tokens and turns, under Ask only.
 
         TASK-33621.4 AC#3. Counted from the rows ``compaction_forecast_rows``
         selects (memory text plus turns after its boundary, no system prompt,
         sources or draft), once per transcript/memory/model change. Nothing
         is measured until the memory read has warmed (``memory`` None).
+        History images count at the send's flat per-part estimate ("media").
+        A memory shape those rows do not model (a range, or a boundary off
+        this path) counts every turn in full ("memory", an over-count); a
+        legacy prefix never asks, so it forecasts nothing.
         """
-        from ...Chat.console_context_compaction import EffectiveMemoryResult
+        from ...Chat.console_context_compaction import (
+            EffectiveMemoryKind,
+            EffectiveMemoryResult,
+        )
         from ...Chat.console_context_policy import (
             ContextCompactionMode,
             merge_context_policy,
@@ -752,14 +1074,14 @@ class ConsoleContextSpendController:
         if not spend.console_tokenizer_display_ready(
             self._screen, settings.model, settings.provider
         ):
-            return None, 0
+            return None, 0, ()
         if not isinstance(memory, EffectiveMemoryResult) or (
             merge_context_policy(
                 global_overrides=global_overrides, conversation_overrides=overrides
             ).compaction_mode
             is not ContextCompactionMode.ASK
         ):
-            return None, 0
+            return None, 0, ()
         store = self._ensure_console_chat_store()
         history_key, messages, history = self._console_display_history(
             store, session_id, self._ensure_console_chat_controller()
@@ -781,14 +1103,25 @@ class ConsoleContextSpendController:
             for message in messages
             if history.request_ids is None or message.id in history.request_ids
         ]
+        causes: tuple[str, ...] = ()
         projected = compaction_forecast_rows(admitted, memory)
-        result: tuple[int | None, int] = (None, 0)
+        if projected is None and memory.kind is not EffectiveMemoryKind.LEGACY_PREFIX:
+            causes = ("memory",)
+            projected = compaction_forecast_rows(
+                admitted, EffectiveMemoryResult(EffectiveMemoryKind.RAW)
+            )
+        result: tuple[int | None, int, tuple[str, ...]] = (None, 0, ())
         if projected is not None:
             rows, units = projected
             estimate = self._build_context_estimate(
                 list(rows), settings.provider, settings.model
             )
-            result = (estimate.used_tokens, units)
+            images = _forecast_history_images(admitted, memory)
+            tokens = estimate.used_tokens
+            if tokens is not None and images:
+                tokens += images * NON_TEXT_PART_TOKEN_ESTIMATE
+                causes = (*causes, "media")
+            result = (tokens, units, causes)
         self._console_compaction_forecast_cache = (key, result)
         return result
 
@@ -797,10 +1130,24 @@ class ConsoleContextSpendController:
         state = self._last_console_context_control_state
         return state is not None and state.compaction_pause_forecast is not None
 
-    def compaction_forecast_unavailable(self) -> bool:
-        """Whether current tool/input facts cannot qualify a forecast."""
+    def compaction_forecast_note(self) -> str:
+        """What the header, Inspect and an idle run chip say before a send.
+
+        TASK-33621.4 AC#3, owner decision 2026-11-20 ("ready, then may
+        pause"): "May pause to compact" when an inexact forecast is over the
+        trigger or the agent's tools are unmeasured; review follow-up 2:
+        "Next send won't fit" when the static input leaves no room. Else "".
+        """
         state = self._last_console_context_control_state
-        return state is not None and bool(state.forecast_unavailable_reason)
+        if state is None:
+            return ""
+        if state.compaction_cannot_fit:
+            return (
+                COMPACTION_MAY_NOT_FIT_COPY
+                if state.compaction_fit_uncertain
+                else COMPACTION_CANNOT_FIT_COPY
+            )
+        return COMPACTION_MAY_PAUSE_COPY if state.forecast_high_context else ""
 
     def _build_console_settings_summary_state(self) -> ConsoleSettingsSummaryState:
         """Build compact summary state for the active Console session settings."""

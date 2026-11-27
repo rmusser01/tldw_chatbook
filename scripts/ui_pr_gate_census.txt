@@ -1998,7 +1998,7 @@ Tests/UI/test_console_compaction_hold_flow.py::test_deferred_compact_worker_neve
 Tests/UI/test_console_compaction_forecast.py::test_automatic_forecast_matches_real_preflight_with_overhead_and_cap
 Tests/UI/test_console_compaction_forecast.py::test_bound_skill_ask_gate_uses_its_overhead_before_regenerate_commits
 Tests/UI/test_console_compaction_forecast.py::test_cold_forecast_does_not_read_history_or_count
-Tests/UI/test_console_compaction_forecast.py::test_unavailable_forecast_is_honest_without_hiding_live_or_failed_work
+Tests/UI/test_console_compaction_forecast.py::test_an_agent_chat_reads_ready_below_the_trigger_and_may_pause_above
 Tests/UI/test_console_readiness_config_projection.py::test_model_caps_publish_only_for_current_chat_and_settings
 Tests/UI/test_console_compaction_forecast.py::test_the_context_chip_leads_with_the_forecast_and_explains_it
 # TASK-33621.11 (2026-10-30): the Send strip names a staged image's blocker by
@@ -3991,3 +3991,34 @@ Tests/UI/test_console_library_auto_outcome.py::test_shelf_action_on_a_timed_out_
 Tests/UI/test_console_library_auto_outcome.py::test_a_timed_out_send_says_why_and_each_card_action_does_what_it_says[retry-library-search]
 Tests/UI/test_console_library_auto_outcome.py::test_a_timed_out_send_says_why_and_each_card_action_does_what_it_says[send-once-without-library]
 Tests/UI/test_console_library_auto_outcome.py::test_a_timed_out_send_says_why_and_each_card_action_does_what_it_says[cancel-send]
+# TASK-33621.4, TASK-33620.1 (2026-11-22, review of the readiness-copy branch):
+# Send reads Held at 80 and 160 columns, and a Held Send names the stop over
+# any other blocker; an agent chat reads Ready, then May pause, and its send
+# holds; a prefill, staged or history images and unmodelled memory shapes
+# count and only may pause. Serially, plain flags, load ~10: Held 2 x 5.6 s,
+# agreement 5 x <1 s, agent chat 13.0 s, prefill/staged 3.3 s, the rest <1 s.
+Tests/UI/test_console_emergency_stop_hold.py::test_send_reads_held_at_every_width_and_send_again_once_lifted
+Tests/UI/test_console_emergency_stop_hold.py::test_a_held_send_names_the_stop_over_any_other_blocker
+Tests/UI/test_console_compaction_hold_flow.py::test_a_default_agent_chat_reads_ready_then_may_pause_and_the_send_holds
+Tests/UI/test_console_compaction_forecast.py::test_a_prefill_or_staged_image_is_counted_and_never_reads_a_false_ready
+Tests/UI/test_console_compaction_forecast.py::test_history_images_count_at_the_send_estimate_and_make_it_may
+Tests/UI/test_console_compaction_forecast.py::test_an_unmodelled_memory_shape_counts_its_turns_in_full
+# TASK-33621.4 delta review (2026-11-22): an agent chat's tool cost counts
+# (native schemas and fenced prompt text), unmeasured or stale tools may pause,
+# and a prompt that leaves no room reads "Next send won't fit". 7 cases in
+# 24.9 s serially, plain flags, load ~8.
+Tests/UI/test_console_compaction_forecast.py::test_an_agent_chats_tool_cost_counts_and_is_never_a_false_ready
+# TASK-33621.4 / TASK-33620.1 final delta review (2026-11-23): persisted agent
+# tool costs (round trip, bound, fail-open) and the stop holding raw CLI
+# drafts (controller refusal, Held label, real-Console wiring). Each under 6 s.
+Tests/UI/test_console_compaction_forecast.py::test_stored_tool_costs_round_trip_bounded_and_fail_open
+Tests/UI/test_console_raw_cli_send.py::test_an_active_emergency_stop_holds_a_raw_command_and_clear_lets_it_run
+Tests/UI/test_console_emergency_stop_hold.py::test_a_raw_cli_draft_reads_held_while_the_stop_is_active
+Tests/UI/test_console_emergency_stop_hold.py::test_the_console_wires_the_stop_into_raw_commands
+# TASK-33621.4 / TASK-33620.1 second delta review (2026-11-23): saved tool
+# costs merge across app instances and stay per test; a raw command is held
+# while the stop's state is unknown (arrival pending or failed).
+Tests/UI/test_console_compaction_forecast.py::test_a_save_keeps_another_app_instances_larger_figures
+Tests/UI/test_console_compaction_forecast.py::test_every_ui_test_saves_tool_costs_to_its_own_file
+Tests/UI/test_console_emergency_stop_hold.py::test_a_raw_command_before_the_arrival_read_lands_is_held
+Tests/UI/test_console_emergency_stop_hold.py::test_a_raw_command_after_a_failed_arrival_read_is_held_until_a_reread

@@ -289,6 +289,14 @@ CONSOLE_EMERGENCY_STOP_HEADER_SHORT_LABEL = "Held"
 CONSOLE_EMERGENCY_STOP_STRIP_LABEL = "Emergency stop: runs and schedules held"
 CONSOLE_EMERGENCY_STOP_CLEAR_LABEL = "Clear"
 CONSOLE_EMERGENCY_STOP_SEND_REASON = "Send held — emergency stop is on"
+#: Owner decision 2026-11-20: Send itself reads this, at every width. The send
+#: gate checks the stop first, so a Held Send's tooltip and reason name it over
+#: any other blocker, and the tooltip says how to resume (review, 2026-11-22).
+CONSOLE_EMERGENCY_STOP_SEND_LABEL = "Held"
+CONSOLE_EMERGENCY_STOP_SEND_TOOLTIP = (
+    "Send held — emergency stop is on. Clear it in the status strip or with "
+    "/emergency-stop clear."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -567,6 +575,8 @@ def build_console_disabled_reason(
     if action_id != "send":
         return ""
 
+    if send_blocked and send_label == CONSOLE_EMERGENCY_STOP_SEND_LABEL:
+        return CONSOLE_EMERGENCY_STOP_SEND_REASON
     if send_blocked and dispatch_recovery_blocked:
         return "Send blocked — resolve response recovery first"
     if send_blocked and wake_turn_active:
@@ -1716,9 +1726,10 @@ class ConsoleInspectorState:
     #: (paused for trace recovery); empty when no turn is blocked.
     run_blocked_reason: str = ""
     #: TASK-33621.4: the chat is over its Ask compaction trigger, so the next
-    #: send will pause for compaction approval.
+    #: send will pause for compaction approval; ``compaction_forecast_note``:
+    #: "May pause to compact" or "Next send won't fit", else "".
     compaction_pause_expected: bool = False
-    compaction_forecast_unavailable: bool = False
+    compaction_forecast_note: str = ""
     staged_source_count: int = 0
     pending_approval_count: int = 0
     scope_item_count: int | None = None
@@ -1877,7 +1888,7 @@ class ConsoleInspectorState:
         run_failure_reason: str = "",
         run_blocked_reason: str = "",
         compaction_pause_expected: bool = False,
-        compaction_forecast_unavailable: bool = False,
+        compaction_forecast_note: str = "",
         ephemeral: bool = False,
         change_review_available: bool = False,
         staged_source_count: int = 0,
@@ -2086,7 +2097,7 @@ class ConsoleInspectorState:
             run_failure_reason=_clean(run_failure_reason, ""),
             run_blocked_reason=_clean(run_blocked_reason, ""),
             compaction_pause_expected=bool(compaction_pause_expected),
-            compaction_forecast_unavailable=bool(compaction_forecast_unavailable),
+            compaction_forecast_note=_clean(compaction_forecast_note, ""),
             staged_source_count=coerce_non_negative_int(staged_source_count),
             pending_approval_count=normalized_approval_count,
             _pending_inputs=pending_inputs,

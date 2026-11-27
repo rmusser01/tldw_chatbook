@@ -41,10 +41,14 @@ Top to bottom:
   **Running** while a reply is generating. A few states take the readiness
   word's place: **Blocked** for a blocked turn, **Held · emergency stop**
   while an emergency stop holds new runs, **Next send pauses to compact**
-  when the next send will compact first, and **Compaction forecast
-  unavailable** when the current tools and input cannot be measured for a
-  compaction forecast. Below 84 columns, where the word does not fit, the
-  badge reads **Ready** or **Blocked**.
+  when the next send will compact first, and **May pause to compact** when
+  the history is over the compaction trigger but some input is only
+  estimated, as in an agent chat (the default), so the pause is not certain;
+  below the trigger the badge keeps the readiness word. **Next send won't
+  fit** says the system prompt, tools and attached context leave no room.
+  Below 84 columns, where the word does not fit, the badge reads **Ready**,
+  **Blocked** (also when the next send won't fit), or a short **Pauses**,
+  **May pause** or **May not fit**.
 - **Control bar** — one row of buttons: **New tab**, **Settings**, **⚓**
   (hook permissions), **Context rail**, **Search Library**, **Help**.
   (**Save as Chatbook** lives in the composer's **Menu** button, left of
@@ -1636,9 +1640,17 @@ than proceeding. While it is active the Console shows it until it is
 cleared, not just in the five-second toast: the header badge reads
 **Held · emergency stop** (just **Held** in a narrow window) instead of
 Ready, the status strip starts with **Emergency stop: runs and schedules
-held · Clear**, Send is disabled with the reason "Send held — emergency stop
-is on", and an empty chat says the stop is active. A send you try anyway is
-refused with a notice that names `/emergency-stop clear`. A stop still
+held · Clear**, the Send button reads **Held** and is disabled at every
+window width (where there is room beside it, the reason "Send held —
+emergency stop is on" shows too; its tooltip says to clear it in the status
+strip or with `/emergency-stop clear`), and an empty chat says the stop is
+active.
+Pressing **Held** does nothing; Enter is refused with a notice that names
+`/emergency-stop clear`, and your draft stays. This holds raw shell commands
+(`! ` drafts) too: they do not run, and the button reads **Held**. (Just
+after the Console opens, before it has read the stop, a raw draft can still
+read **Run**; Enter is refused all the same.) Once the stop is cleared the
+button reads **Send** again. A stop still
 active from an earlier session is announced once when the Console opens.
 Choose **Clear** on the status strip, or run `/emergency-stop clear`, to
 resume at once; no restart is needed. If the stop can't be saved (for

@@ -17,6 +17,8 @@ from tldw_chatbook.UI.Workbench.workbench_state import (
     WorkbenchState,
 )
 from tldw_chatbook.Widgets.Console.console_context_controls import (
+    COMPACTION_BADGE_SHORT,
+    COMPACTION_CANNOT_FIT_COPY,
     COMPACTION_PAUSE_FORECAST_COPY,
 )
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
@@ -36,7 +38,7 @@ def build_console_workbench_state(
     readiness_word: str = "",
     blocked_turn: str = "",
     compaction_pause_expected: bool = False,
-    compaction_forecast_unavailable: bool = False,
+    compaction_forecast_note: str = "",
 ) -> WorkbenchState:
     """Return a shared Workbench state snapshot for Console.
 
@@ -63,6 +65,9 @@ def build_console_workbench_state(
             (TASK-33621.2).
         compaction_pause_expected: The chat is over its Ask trigger, so the
             badge says the next send pauses to compact (TASK-33621.4).
+        compaction_forecast_note: "May pause to compact" (an inexact
+            forecast over the trigger, owner decision 2026-11-20) or "Next
+            send won't fit" (no room, review 2026-11-22); "" keeps Ready.
         density: Requested Workbench density, currently ``normal`` or ``compact``.
         ephemeral: Whether the active session is temporary. Retained for
             callers even though no top action reads it today: Save Chatbook
@@ -171,7 +176,14 @@ def build_console_workbench_state(
             # runs once past the blocker gate, so running takes precedence.
             status="running"
             if run_active
-            else ("blocked" if blocker or blocked_turn or held else "ready"),
+            else (
+                "blocked"
+                if blocker
+                or blocked_turn
+                or held
+                or compaction_forecast_note == COMPACTION_CANNOT_FIT_COPY
+                else "ready"
+            ),
             density=workbench_density,
             # TASK-33005.3: the badge is the status row's readiness word, so
             # the strip below keeps its width for the context/cost chip.
@@ -192,10 +204,14 @@ def build_console_workbench_state(
                     if blocked_turn
                     else COMPACTION_PAUSE_FORECAST_COPY
                     if compaction_pause_expected and readiness_word and not blocker
-                    else "Compaction forecast unavailable"
-                    if compaction_forecast_unavailable
-                    and readiness_word
-                    and not blocker
+                    else compaction_forecast_note
+                    if compaction_forecast_note and readiness_word and not blocker
+                    # Owner decision 2026-11-23: narrow widths get a short word,
+                    # a definite pause too (review 2026-11-23).
+                    else COMPACTION_BADGE_SHORT[COMPACTION_PAUSE_FORECAST_COPY]
+                    if compaction_pause_expected and not blocker
+                    else COMPACTION_BADGE_SHORT.get(compaction_forecast_note, "")
+                    if compaction_forecast_note and not blocker
                     else readiness_word
                 )
             ),

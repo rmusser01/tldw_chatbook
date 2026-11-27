@@ -31,6 +31,8 @@ Found during the TASK-41630..41655 follow-up burn-down (2026-11-18/19). Checked 
 - `Tests/UI/test_console_workbench_contract.py::test_console_inspector_prioritizes_actionable_status_before_secondary_groups`
 - `Tests/UI/test_console_workbench_contract.py::test_console_left_rail_keeps_session_and_moves_staged_context_out`
 - `Tests/UI/test_console_session_settings.py::test_console_inspector_hosts_staged_context_above_source_readiness`
+
+2026-11-23 (from TASK-33621.4's branch): `test_console_inspector_prioritizes_actionable_status_before_secondary_groups` is also flaky, not only red. Run alone 11 times each, it failed 1/11 on that branch's round-5 working tree and 0/11 on 9130078ee3. In whole-file runs it failed once on each side across two rounds. The failing assertion is `#console-inspector-review-approval` still disabled (`assert True is False`), a race on the approval button's disabled state after mount.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

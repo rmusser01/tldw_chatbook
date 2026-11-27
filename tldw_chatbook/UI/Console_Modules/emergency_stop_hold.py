@@ -50,6 +50,13 @@ CLEAR_ARGUMENTS = frozenset({"clear", "off", "resume"})
 #: What every Console surface says while the stop holds new work.
 HELD_COPY = EmergencyStopState(active=True).visible_copy()
 
+#: A raw command refused while the stop's state cannot be read (review
+#: 2026-11-23): unknown is not "off", and a re-read is under way.
+CHECKING_COPY = (
+    "Checking the emergency stop before running this command; try again in a "
+    "moment. Run /emergency-stop clear if it is on."
+)
+
 ACTIVATED_NOTICE = (
     "Emergency stop ACTIVE — new runs and scheduled dispatches are held. "
     "Run /emergency-stop clear to resume."
@@ -166,6 +173,48 @@ def still_held(screen: Any) -> bool:
     state = read_emergency_stop(path)  # Never raises: an unreadable file holds.
     note_state(screen, path, state)
     return state.active
+
+
+def raw_cli_refusal(screen: Any) -> str:
+    """The stop's refusal copy for a raw CLI draft, or "" when it may run.
+
+    TASK-33620.1, owner decision 2026-11-23 ("hold raw CLI too"): the stop
+    holds everything the composer can start. A held view re-reads the file
+    first (a stop cleared elsewhere lets the command run); an unheld view
+    reads it too, so a stop set elsewhere holds.
+
+    Review 2026-11-23: an unknown view is not "off". Until the arrival read
+    lands, or for the whole session when it failed, the path is resolved here
+    (one guarded config read per raw command, recorded once it succeeds). When
+    even that fails the command is refused with ``CHECKING_COPY`` and the
+    arrival read is asked for again, off the UI loop.
+    """
+    if held(screen):
+        return screen._console_emergency_stop_copy if still_held(screen) else ""
+    path = getattr(screen, "_console_emergency_stop_path", None)
+    if path is None:
+        try:
+            path = default_emergency_stop_path()
+        except Exception:  # noqa: BLE001 -- unknown holds; ask again off the loop
+            _reread(screen)
+            return CHECKING_COPY
+    state = read_emergency_stop(path)  # Never raises: an unreadable file holds.
+    note_state(screen, path, state, announce=True)
+    return (screen._console_emergency_stop_copy or HELD_COPY) if state.active else ""
+
+
+def _reread(screen: Any) -> None:
+    """Ask for the arrival read again (it failed, or never landed)."""
+    reread = refresh(screen)
+    try:
+        screen.run_worker(
+            reread,
+            exclusive=True,
+            group="console-emergency-stop-reread",
+            name="console-emergency-stop-reread",
+        )
+    except Exception:  # noqa: BLE001 -- the next raw command asks again
+        reread.close()
 
 
 async def run_command(screen: Any, parse: Any) -> bool:

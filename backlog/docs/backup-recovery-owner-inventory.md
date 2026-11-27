@@ -934,6 +934,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/app_entry.py | _generated_css_is_stale | open | 2 | unsupported | miscellaneous |
 | tldw_chatbook/app_entry.py | _generated_css_is_stale._sha256 | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/app_ingest_queue.py | _ingest_pool_real_stderr | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/console_tool_costs.py | save_costs | atomic_write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/app_entry.py | _load_css_build_manifest | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/app_entry.py | _save_css_build_manifest | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/app_entry.py | main_cli_runner | mkdir | 1 | unsupported | miscellaneous |

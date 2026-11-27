@@ -41,10 +41,12 @@ CONTEXT_LIMIT_HELP: tuple[str, tuple[tuple[str, str], ...]] = (
         ),
         (
             "Before it",
-            "when a qualified static-input estimate predicts an Ask hold, the header "
-            "reads Next send pauses to compact; Inspect/run chip: Pauses for compaction. "
-            "Agent/tool-dependent next-send forecasts are unavailable; high estimated "
-            "context may show an advisory",
+            "when a measured estimate predicts an Ask hold, the header reads Next "
+            "send pauses to compact; Inspect/run chip: Pauses for compaction. "
+            "When some input is only estimated (an agent chat's tools, images, a "
+            "prefill), it reads Ready below the trigger and May pause to compact "
+            "above it; with the tools not yet measured, any history may pause. "
+            "Next send won't fit: the prompt, tools and context leave no room",
         ),
         ("/compact", "summarize older turns now (one model call)"),
         ("/rewind", "Summarize up to here previews what would be summarized"),

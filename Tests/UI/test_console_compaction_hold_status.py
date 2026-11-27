@@ -90,10 +90,11 @@ async def test_f1_help_says_what_happens_at_the_context_limit() -> None:
         "Cancel send",
         "queued, Buddy or unprepared",
         "without a hold card",
-        "qualified static-input estimate",
+        "measured estimate",
         "Next send pauses to compact",
-        "Agent/tool-dependent next-send forecasts are unavailable",
-        "advisory",
+        # Owner decision 2026-11-20, "ready, then may pause" (agent chats).
+        "Ready below the trigger",
+        "May pause to compact above it",
         "/compact",
         "/rewind",
     ):
