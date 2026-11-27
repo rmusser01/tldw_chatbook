@@ -604,6 +604,16 @@ def apply_frozen_pii_masks(
 _SANITIZED_TEXT_MAX = 8192
 _SANITIZED_TEXT_MIN_LENGTH = 48
 _sanitized_text: OrderedDict[bytes, tuple[object, str | None]] = OrderedDict()
+#: Strings shorter than ``_SANITIZED_TEXT_MIN_LENGTH``, in a table of their own
+#: (TASK-40608, measured 2026-11-26). They were left out as cheap and never
+#: repeated. A provider request's tool list is thousands of them (schema keys
+#: and one-word values), filtered again for every request: 22,101 short strings
+#: in a six-request turn at about 13 microseconds each, against about 2 to find
+#: a remembered answer. Their own table, because a response stream's one-off
+#: chunks must never push out the long strings above. Same rules for an entry:
+#: a digest key and the filter's output, never the text.
+_SANITIZED_SHORT_TEXT_MAX = 4096
+_sanitized_short_text: OrderedDict[bytes, tuple[object, str | None]] = OrderedDict()
 _sanitized_text_lock = threading.Lock()
 _MISSING = object()
 
@@ -614,26 +624,32 @@ def _text_digest(scope: bytes, value: str) -> bytes:
     ).digest()
 
 
-def _remembered(key: bytes, projection: object) -> object:
+def _remembered(key: bytes, projection: object, *, short: bool = False) -> object:
+    table = _sanitized_short_text if short else _sanitized_text
     with _sanitized_text_lock:
-        found = _sanitized_text.get(key)
+        found = table.get(key)
         if found is None or found[0] is not projection:
             return _MISSING
-        _sanitized_text.move_to_end(key)
+        table.move_to_end(key)
         return found[1]
 
 
-def _remember(key: bytes, projection: object, result: str | None) -> None:
+def _remember(
+    key: bytes, projection: object, result: str | None, *, short: bool = False
+) -> None:
+    table = _sanitized_short_text if short else _sanitized_text
     with _sanitized_text_lock:
-        _sanitized_text[key] = (projection, result)
-        while len(_sanitized_text) > _SANITIZED_TEXT_MAX:
-            _sanitized_text.popitem(last=False)
+        table[key] = (projection, result)
+        limit = _SANITIZED_SHORT_TEXT_MAX if short else _SANITIZED_TEXT_MAX
+        while len(table) > limit:
+            table.popitem(last=False)
 
 
 def forget_sanitized_text() -> None:
     """Drop every remembered result (tests that replace a projection)."""
     with _sanitized_text_lock:
         _sanitized_text.clear()
+        _sanitized_short_text.clear()
 
 
 class CredentialSanitizer:
@@ -854,19 +870,20 @@ class CredentialSanitizer:
         return any(credential in key for credential in self._known_credentials)
 
     def _sanitize_text(self, value: str, *, include_known: bool = True) -> str:
-        if len(value) < _SANITIZED_TEXT_MIN_LENGTH:
-            # Streamed chunks and short fields: cheap to filter, never repeated.
-            return self._sanitize_text_now(value, include_known=include_known)
+        # Streamed chunks, schema keys and one-word fields have their own table.
+        short = len(value) < _SANITIZED_TEXT_MIN_LENGTH
         digest = _text_digest(self._memo_scopes[include_known], value)
         # Read the projection once: the result is remembered for the function
         # that will compute it, and only that function's results are reused.
         projection = _CREDENTIAL_PROJECTIONS[self._version]
-        found = _remembered(digest, projection)
+        found = _remembered(digest, projection, short=short)
         if found is _MISSING:
             result = self._sanitize_text_now(
                 value, include_known=include_known, projection=projection
             )
-            _remember(digest, projection, None if result == value else result)
+            _remember(
+                digest, projection, None if result == value else result, short=short
+            )
             return result
         return value if found is None else found  # type: ignore[return-value]
 
