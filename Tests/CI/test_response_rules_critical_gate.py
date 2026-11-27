@@ -49,6 +49,9 @@ INHERITED = {
         # TASK-34100.16.1 (round-24 port): the registered-root file, on no
         # lane before, rides this profile's headroom.
         "Tests/Backup_Recovery/test_registered_root_removed.py",
+        # TASK-42560 (round 27): the traced actions file (bootstrap_profile),
+        # last, after the sandboxed targets, on the same headroom.
+        "Tests/Chat/test_console_trace_action_calls.py",
         "--timeout=180",
         "--tb=short",
     ],
@@ -207,7 +210,6 @@ INHERITED = {
         "Tests/DB/test_sync_log_retention.py",  # TASK-39049
         "Tests/Backup_Recovery/test_console_sync_maintenance.py",  # TASK-39043
         "Tests/Chat/test_automatic_wake_recovery.py",  # TASK-39043
-        "Tests/Chat/test_console_trace_action_calls.py",  # TASK-42560, last
         "--storage-lease-guard",  # TASK-38986
         "--timeout=180",
         "--tb=short",

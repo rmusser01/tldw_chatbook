@@ -1316,6 +1316,17 @@ jobs:
       # This profile ran at most 2.0 of its 35 min over 27 PR runs to
       # 2026-11-24, where dreams-tracking had about 4 min left with all three
       # round-24 branches' riders.
+      # TASK-42560 (round 27, 2026-11-27): the traced Edit & resend,
+      # Regenerate and Continue file (bootstrap_profile: the Console bridge
+      # reads the tool gates through config), last, after this step's
+      # sandboxed targets as in dreams-boundary. Not in the Dreams riders job
+      # (13.8-19.7 of its 20 min on CI since 2026-11-25) nor in dreams-boundary
+      # (its boundary step took median 18.6 / max 19.9 min over 28 CI runs to
+      # 2026-11-27; the file would take that job to about 33-36 of its 35).
+      # This profile took at most 3.6 of its 35 min over 15 CI runs to
+      # 2026-11-27. On ubuntu:24.04 with this job's install line and this
+      # step's flags, serial: 241 passed in 521.2 s (the file 440.7 s of it;
+      # alone, 182 passed in 524.0 s), so about 10.5-13 min a job on CI.
       - name: Run the restore Console P0 regression tests
         if: ${{ !cancelled() && matrix.profile == 'restore' }}
         run: |
@@ -1324,6 +1335,7 @@ jobs:
             Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_import_preparation_disables_only_qualified_selected_payload \
             "Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_historical_restore_migrates_only_disposable_copy[76]" \
             Tests/Backup_Recovery/test_registered_root_removed.py \
+            Tests/Chat/test_console_trace_action_calls.py \
             --timeout=180 \
             --tb=short
 
@@ -1507,12 +1519,6 @@ jobs:
       # speech engine choice, Welcome copy) open the bootstrap block. Timed
       # 2026-11-24 with this step's flags, serial at load 10-14 on 18 CPUs:
       # 4.7, 4.6, 4.2, 13.6, 4.8, 47.7 and 33.2 s (113 s together).
-      # TASK-42560 (round 27, 2026-11-27): the traced Edit & resend,
-      # Regenerate and Continue file (bootstrap_profile: the Console bridge
-      # reads the tool gates through config), last. Not in the Dreams riders
-      # job: that one ran 13.8-19.7 of its 20 min on CI since 2026-11-25.
-      # 147 passed in 408.7 s on ubuntu:24.04 with this step's flags and
-      # install line; this job ran 19.8-23.7 of its 35 min over the same CI runs.
       - name: Run Dreams and Guardian boundary contracts
         if: ${{ !cancelled() }}
         run: |
@@ -1560,7 +1566,6 @@ jobs:
             Tests/DB/test_sync_log_retention.py \
             Tests/Backup_Recovery/test_console_sync_maintenance.py \
             Tests/Chat/test_automatic_wake_recovery.py \
-            Tests/Chat/test_console_trace_action_calls.py \
             --storage-lease-guard \
             --timeout=180 \
             --tb=short
