@@ -197,20 +197,6 @@ def _starts_with_user(
     return revision is not None and revision.normalized_role == "user"
 
 
-def _never_sent(
-    service: ConsoleTraceService, cursor: sqlite3.Cursor, call_id: str
-) -> bool:
-    from tldw_chatbook.Chat.console_trace_models import TraceCallState
-
-    call = service.repository.get_call(cursor, call_id)
-    return (
-        call is not None
-        and call.state is TraceCallState.NOT_DISPATCHED
-        and call.surface_node_id is None
-        and call.dispatch_started_at is None
-    )
-
-
 def after_action_call(
     service: ConsoleTraceService,
     cursor: sqlite3.Cursor,
@@ -247,7 +233,7 @@ def after_action_call(
         if not boundaries or boundaries[0][0] != before_call_id:
             return None
         boundaries = boundaries[1:]
-    while boundaries and _never_sent(service, cursor, boundaries[0][0]):
+    while boundaries and service.repository.call_never_sent(cursor, boundaries[0][0]):
         # A refused later call of the run, marked not dispatched before it
         # bound any row (ADR-337 amendment 2026-11-26, point 7).
         boundaries = boundaries[1:]

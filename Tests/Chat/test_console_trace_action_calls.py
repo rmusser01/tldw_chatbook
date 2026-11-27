@@ -976,6 +976,106 @@ async def test_after_a_never_sent_call_the_next_message_is_sent(
 
 
 @pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("action", ACTIONS)
+async def test_a_note_the_undo_cannot_remove_leaves_the_action_undone(
+    tmp_path, monkeypatch, action
+):
+    """The reply (and an edited message) is removed first; a skipped-skill
+    note whose removal then fails stays off the branch, and the action is
+    still undone (no failure row for a reply that is gone, no Regenerate
+    event)."""
+    from tldw_chatbook.Chat.console_action_capture import (
+        ACTION_NOT_SENT_COPY,
+        EDIT_NOT_SENT_COPY,
+    )
+
+    async with _console(tmp_path, monkeypatch) as app:
+        await _send(app, "Hello")
+        await _send(app, "And now?")
+        before, kinds = _transcript(app), _trajectory_kinds(app)
+        _skipped_skill_note(monkeypatch, app.controller)
+        _refuse_next_reservation(monkeypatch)
+        delete = app.store.delete_message
+        deleted = []
+
+        def note_fails(message_id):
+            deleted.append(message_id)
+            if len(deleted) == 2:
+                raise ValueError("fixture note delete failed")
+            return delete(message_id)
+
+        monkeypatch.setattr(app.store, "delete_message", note_fails)
+
+        result = await _act(app, action)
+
+        assert result.visible_copy == (
+            EDIT_NOT_SENT_COPY if action == "edit" else ACTION_NOT_SENT_COPY
+        )
+        assert _transcript(app)[0] == before[0]
+        assert "message_regenerated" not in _trajectory_kinds(app)[len(kinds) :]
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("action", ["regenerate", "continue"])
+async def test_a_refusal_whose_reservation_state_is_unknown_keeps_the_reply(
+    tmp_path, monkeypatch, action
+):
+    """The trace factory reserves the call and fails after its commit, so the
+    gateway's refusal carries no boundary and an unknown reservation. A call
+    of the turn was reserved since the action began, so the reply is kept and
+    fails (the reserved call is left to startup recovery, as for a canceled
+    pause whose reservation is unknown); nothing was sent, so a one-time
+    choice stays armed."""
+    from tldw_chatbook.Chat.console_action_capture import TRACE_REFUSED_COPY
+    from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
+
+    async with _console(tmp_path, monkeypatch) as app:
+        await _send(app, "Hello")
+        await _send(app, "And now?")
+        _one_time_capture(app, True)
+        before, sent = _transcript(app), len(app.sent)
+        factory = ConsoleTraceBoundaryFactory.__call__
+
+        def after_commit(self, *args, **kwargs):
+            monkeypatch.setattr(ConsoleTraceBoundaryFactory, "__call__", factory)
+            factory(self, *args, **kwargs)
+            raise RuntimeError("fixture failure after the reservation committed")
+
+        monkeypatch.setattr(ConsoleTraceBoundaryFactory, "__call__", after_commit)
+
+        result = await _act(app, action)
+
+        assert len(app.sent) == sent
+        assert result.visible_copy == TRACE_REFUSED_COPY
+        assert _transcript(app) != before
+        assert _calls(app)[-1][1] == "reserved"
+        assert _next_capture(app) is True
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+async def test_an_edit_whose_stream_raises_still_records_its_edit(
+    tmp_path, monkeypatch
+):
+    """The stream raises (a chat closed mid-action, say): the edit exists, so
+    its "message edited" event is still recorded."""
+    import asyncio
+
+    async with _console(tmp_path, monkeypatch) as app:
+        await _send(app, "Hello")
+        kinds = _trajectory_kinds(app)
+
+        async def cancelled(**_kwargs):
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(app.controller, "_stream_assistant_response", cancelled)
+
+        with pytest.raises(asyncio.CancelledError):
+            await _act(app, "edit")
+
+        assert "message_edited" in _trajectory_kinds(app)[len(kinds) :]
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
 @pytest.mark.parametrize(
     ("write", "action", "plain_path"),
     [
@@ -988,9 +1088,11 @@ async def test_after_a_never_sent_call_the_next_message_is_sent(
 async def test_an_undo_whose_write_fails_still_settles_the_run(
     tmp_path, monkeypatch, write, action, plain_path
 ):
-    """The undo's own write raises (a pending dispatch, a refused cursor
-    change, a database error): the reply is kept and fails with the trace
-    copy, and the run is settled, so the tab takes the next message."""
+    """The undo's own write raises before the reply is removed (a pending
+    dispatch, a refused cursor change, a database error): the reply is kept
+    on the active branch and fails with the trace copy, the run is settled,
+    and, as nothing was sent, a one-time choice stays armed; the tab takes
+    the next message."""
     import sqlite3
 
     from tldw_chatbook.Chat.console_action_capture import TRACE_REFUSED_COPY
@@ -998,6 +1100,7 @@ async def test_an_undo_whose_write_fails_still_settles_the_run(
     async with _console(tmp_path, monkeypatch, plain_path=plain_path) as app:
         await _send(app, "Hello")
         await _send(app, "And now?")
+        _one_time_capture(app, True)
         name, error = {
             "mark": ("mark_message_failed", sqlite3.OperationalError("database is locked")),
             "leaf": ("set_active_leaf", RuntimeError("Conversation cursor change was refused.")),
@@ -1029,6 +1132,12 @@ async def test_an_undo_whose_write_fails_still_settles_the_run(
         monkeypatch.setattr(app.store, name, original)
         assert result.visible_copy == TRACE_REFUSED_COPY
         assert app.controller.run_state.status.value == "failed"
+        assert _next_capture(app) is True
+        if action != "regenerate":  # a failed Regenerate restores its original
+            reply = _last(app, "assistant")
+            assert reply.status == "failed"
+            path = app.store.active_path_message_ids(app.session.id)
+            assert path[-2:] == [reply.id, _last(app, "system").id]
         following = await app.controller.submit_draft(
             "One more?", session_id=app.session.id
         )
@@ -1112,23 +1221,77 @@ async def test_the_undo_reads_only_the_actions_own_turn(tmp_path, monkeypatch):
 
     async with _console(tmp_path, monkeypatch) as app:
         await _send(app, "Hello")
-        turn = app.store.get_message(_last(app, "user").id).persisted_message_id
         undo = capture._Undo(
             root_id="unused",
             previous_leaf_id=None,
             note_ids=(),
-            turn_id=turn,
-            calls_before=capture._turn_calls(app.controller, turn),
+            conversation_id=next(
+                row for row in app.store.sessions() if row.id == app.session.id
+            ).persisted_conversation_id,
+            turn_id=app.store.get_message(_last(app, "user").id).persisted_message_id,
+            calls_before=None,
             copy=capture.ACTION_NOT_SENT_COPY,
         )
+        undo = replace(undo, calls_before=capture._turn_calls(app.controller, undo))
 
         await _send(app, "And now?")
 
-        assert capture._run_dispatched(app.controller, undo) is False
+        assert capture._since(app.controller, undo, dispatched=True) is False
         assert (
-            capture._run_dispatched(app.controller, replace(undo, calls_before=frozenset()))
+            capture._since(
+                app.controller, replace(undo, calls_before=frozenset()), dispatched=True
+            )
             is True
         )
+
+
+def test_the_undo_and_the_turn_boundary_reads_use_their_indexes(tmp_path):
+    """Both reads run on the UI loop or on every send's planning, so each
+    must search an index on a database that never ran ANALYZE (CLAUDE.md):
+    the turn's calls through the owner (idx_console_trace_calls_owner_order)
+    and the latest boundary by segment (idx_console_trace_events_segment_
+    order) with a correlated call lookup by primary key. Negative control:
+    the earlier forms scan console_trace_calls."""
+    from tldw_chatbook.Chat.console_action_capture import TURN_CALLS_SQL
+    from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    database = CharactersRAGDB(tmp_path / "plans.sqlite", "plans")
+    try:
+        cursor = database.get_connection().cursor()
+        assert (
+            cursor.execute(
+                "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'"
+            ).fetchone()
+            is None
+        )
+
+        def plan(sql, params):
+            return " | ".join(
+                str(row[-1])
+                for row in cursor.execute("EXPLAIN QUERY PLAN " + sql, params)
+            )
+
+        turn = plan(TURN_CALLS_SQL + " AND c.dispatch_started_at IS NOT NULL", ("a", "b"))
+        boundary = plan(
+            ConsoleTraceRepository.latest_sent_call_boundary_sql(), ("s", None, None)
+        )
+
+        assert "idx_console_trace_calls_owner_order (owner_id=? AND turn_id=?)" in turn
+        assert "SCAN" not in turn
+        assert "idx_console_trace_events_segment_order (segment_id=?)" in boundary
+        assert "CORRELATED" in boundary
+        assert "SCAN console_trace_calls" not in boundary
+        assert "SCAN" in plan(
+            "SELECT call_id FROM console_trace_calls WHERE turn_id = ?", ("b",)
+        )
+        assert "SCAN console_trace_calls" in plan(
+            "SELECT 1 FROM console_trace_events WHERE call_id NOT IN (SELECT call_id"
+            " FROM console_trace_calls WHERE state = 'not_dispatched')",
+            (),
+        )
+    finally:
+        database.close()
 
 
 @pytest.mark.parametrize(

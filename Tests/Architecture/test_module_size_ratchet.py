@@ -365,7 +365,11 @@ _BUDGETS: dict[str, int] = {
     # ids and its leaf from before them for an undo; Regenerate and Edit &
     # resend clear the original-attempt previews, and Edit records its
     # "message edited" event, only once the action is not undone.
-    "tldw_chatbook/Chat/console_chat_controller.py": 28875,
+    # 2026-11-27, TASK-42560 review fix round 2 (same rule): 28,875 -> 28,881
+    # (+6), exact measurement. Regenerate and Edit & resend take the
+    # original-attempt previews before streaming and put them back after an
+    # undo; Edit & resend records "message edited" in a finally.
+    "tldw_chatbook/Chat/console_chat_controller.py": 28881,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     # TASK-41637, 2026-11-18: +9, a round armed with no running app and no
     # answerable view fails closed instead of waiting forever (dev's row +
@@ -1550,7 +1554,11 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-27, TASK-42560 review fix round: 4040 -> 4055 (+15), exact
     # measurement. The latest call boundary that passes over a call settled
     # not dispatched before it bound a row (ADR-337 amendment 2026-11-26).
-    "tldw_chatbook/Chat/console_trace_repository.py": 4055,
+    # 2026-11-27, TASK-42560 review fix round 2: 4055 -> 4075 (+20), exact
+    # measurement. One shared never-sent predicate, a correlated NOT EXISTS
+    # for the latest sent boundary (no scan of console_trace_calls), and the
+    # per-call check the send-after rule uses.
+    "tldw_chatbook/Chat/console_trace_repository.py": 4075,
     # owner decision 2026-10-04 (expand limits), applied 2026-11-19 on the
     # rebase onto dev a6df4d8d48: TASK-34100.3 crosses 4000 at 4,069, exact
     # measurement (dev's 3,961 + 108). Each continuation-error exit names its

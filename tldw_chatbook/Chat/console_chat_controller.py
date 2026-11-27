@@ -295,6 +295,8 @@ from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaqu
 from tldw_chatbook.Chat.console_action_capture import (  # TASK-42560
     action_capture_refusal,
     action_dropped,
+    restore_original_attempts,
+    take_original_attempts,
     continues_earlier_message,
     saved_rows,
     stream_action,
@@ -18709,6 +18711,7 @@ class ConsoleChatController:
         prefill = self._pinned_prefill_for_session(session_id)
         if refusal := action_capture_refusal(self, session_id, resolution, prefill):
             return self._block(session_id, refusal)
+        taken = take_original_attempts(self, (message_id,))  # TASK-42560
         new_message = self.store.create_sibling(
             message_id,
             role=ConsoleMessageRole.ASSISTANT,
@@ -18738,8 +18741,8 @@ class ConsoleChatController:
             turn_context=turn_context,
         )
         if action_dropped(result):  # TASK-42560: the refused sibling is gone
+            restore_original_attempts(self, taken)
             return result
-        self.clear_original_attempt(message_id)
         try:
             persisted_sibling = self.store.get_message(new_message.id)
         except KeyError:
@@ -19851,6 +19854,7 @@ class ConsoleChatController:
         # sibling and append the empty ASSISTANT node to stream into.
         active_path = self.store.active_path_message_ids(session_id)
         anchor_index = active_path.index(message_id)
+        taken = take_original_attempts(self, active_path[anchor_index:])  # TASK-42560
         edited_message = self.store.create_sibling(
             message_id,
             role=ConsoleMessageRole.USER,
@@ -19874,46 +19878,48 @@ class ConsoleChatController:
             content="",
             persist=self.store.persistence is not None,
         )
-        result = await stream_action(
-            self,
-            trace_source_messages=trace_source,
-            user_id=edited_message.id,
-            previous_leaf_id=leaf,
-            note_ids=notes,
-            route=ConsoleRequestRoute.EDIT,
-            mixin_observation_revision=mixin_current.revision if mixin_current is not None else None,
-            mixin_anchor_id=mixin_anchor_id,
-            resolution=resolution,
-            provider_messages=provider_messages,
-            assistant_message_id=assistant.id,
-            variant_mode=False,
-            prefill=prefill,
-            skill_bindings=skill_bindings,
-            skill_bundle_block=skill_bundle_block,
-            turn_context=turn_context,
-            trusted_profile_user_message_id=edited_message.id,
-        )
+        result = None
+        try:
+            result = await stream_action(
+                self,
+                trace_source_messages=trace_source,
+                user_id=edited_message.id,
+                previous_leaf_id=leaf,
+                note_ids=notes,
+                route=ConsoleRequestRoute.EDIT,
+                mixin_observation_revision=mixin_current.revision if mixin_current is not None else None,
+                mixin_anchor_id=mixin_anchor_id,
+                resolution=resolution,
+                provider_messages=provider_messages,
+                assistant_message_id=assistant.id,
+                variant_mode=False,
+                prefill=prefill,
+                skill_bindings=skill_bindings,
+                skill_bundle_block=skill_bundle_block,
+                turn_context=turn_context,
+                trusted_profile_user_message_id=edited_message.id,
+            )
+        finally:
+            if not action_dropped(result):  # TASK-42560: the edit exists
+                self.store.record_trace_event(
+                    session_id,
+                    anchor_message_id=message_id,
+                    event_kind="message_edited",
+                    summary="Message edited and resent",
+                    status="completed",
+                    source_event_id=(
+                        f"message:{message.persisted_message_id}"
+                        if message.persisted_message_id is not None
+                        else None
+                    ),
+                    replacement_event_id=(
+                        f"message:{edited_message.persisted_message_id}"
+                        if edited_message.persisted_message_id is not None
+                        else None
+                    ),
+                )
         if action_dropped(result):  # TASK-42560: the edit was undone
-            return result
-        for replaced_message_id in active_path[anchor_index:]:
-            self.clear_original_attempt(replaced_message_id)
-        self.store.record_trace_event(
-            session_id,
-            anchor_message_id=message_id,
-            event_kind="message_edited",
-            summary="Message edited and resent",
-            status="completed",
-            source_event_id=(
-                f"message:{message.persisted_message_id}"
-                if message.persisted_message_id is not None
-                else None
-            ),
-            replacement_event_id=(
-                f"message:{edited_message.persisted_message_id}"
-                if edited_message.persisted_message_id is not None
-                else None
-            ),
-        )
+            restore_original_attempts(self, taken)
         return result
 
     def capture_personal_context_preview_guard(self, session_id: str) -> Callable[[], bool]:

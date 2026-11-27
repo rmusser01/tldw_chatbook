@@ -11,8 +11,8 @@ routed here.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -298,15 +298,23 @@ async def stream_action(
     assistant_id = stream["assistant_message_id"]
     # An Edit & resend also created its edited message.
     root_id = user_id if stream["route"] is ConsoleRequestRoute.EDIT else assistant_id
-    turn_id = controller.store.get_message(user_id).persisted_message_id
     undo = _Undo(
         root_id=root_id,
         previous_leaf_id=previous_leaf_id,
         note_ids=note_ids,
-        turn_id=turn_id,
-        calls_before=_turn_calls(controller, turn_id),
+        conversation_id=next(
+            (
+                row.persisted_conversation_id
+                for row in controller.store.sessions()
+                if row.id == session_id
+            ),
+            None,
+        ),
+        turn_id=controller.store.get_message(user_id).persisted_message_id,
+        calls_before=None,
         copy=EDIT_NOT_SENT_COPY if root_id == user_id else ACTION_NOT_SENT_COPY,
     )
+    undo = replace(undo, calls_before=_turn_calls(controller, undo))
     try:
         # The reply path composes the mix-ins too; composing them first
         # freezes the request with the body the provider receives.
@@ -371,59 +379,66 @@ class _Undo:
     root_id: str
     previous_leaf_id: str | None
     note_ids: tuple[str, ...]
+    conversation_id: str | None
     turn_id: str | None
     #: The turn's trace calls before the action; None if unreadable.
     calls_before: frozenset[str] | None
     copy: str
 
 
+#: The turn's calls, through the owner (``idx_console_trace_calls_owner_order``).
+TURN_CALLS_SQL = (
+    "SELECT c.call_id FROM console_trace_owners o JOIN console_trace_calls c "
+    "ON c.owner_id = o.owner_id WHERE o.conversation_id = ? AND c.turn_id = ?"
+)
+
+
 def _turn_calls(
-    controller: ConsoleChatController, turn_id: str | None, *, dispatched: bool = False
+    controller: ConsoleChatController, undo: _Undo, *, dispatched: bool = False
 ) -> frozenset[str] | None:
     """The turn's trace call ids (None if the ledger cannot be read, which
     keeps a refused reply)."""
     database = getattr(getattr(controller.store, "persistence", None), "db", None)
-    if database is None or turn_id is None:
+    if database is None or undo.conversation_id is None or undo.turn_id is None:
         return None
     try:
         with database.transaction() as cursor:
             rows = cursor.execute(
-                "SELECT call_id FROM console_trace_calls WHERE turn_id = ?"
-                + (" AND dispatch_started_at IS NOT NULL" if dispatched else ""),
-                (turn_id,),
+                TURN_CALLS_SQL
+                + (" AND c.dispatch_started_at IS NOT NULL" if dispatched else ""),
+                (undo.conversation_id, undo.turn_id),
             ).fetchall()
     except Exception:  # noqa: BLE001 -- unreadable: keep the reply
         return None
     return frozenset(str(row[0]) for row in rows)
 
 
-def _run_dispatched(controller: ConsoleChatController, undo: _Undo) -> bool:
-    """Whether a call of the action's turn reserved since it began reached
-    the provider (a call of another chat or turn never counts)."""
-    dispatched = _turn_calls(controller, undo.turn_id, dispatched=True)
-    return (
-        dispatched is None
-        or undo.calls_before is None
-        or bool(dispatched - undo.calls_before)
-    )
+def _since(controller: ConsoleChatController, undo: _Undo, **kwargs: bool) -> bool:
+    """Whether a call of the action's turn was reserved since it began (a
+    call of another chat or turn never counts); True if unreadable."""
+    calls = _turn_calls(controller, undo, **kwargs)
+    return calls is None or undo.calls_before is None or bool(calls - undo.calls_before)
 
 
-def _settle_refused_call(exc: Exception | None) -> bool:
+def _settle_refused_call(
+    controller: ConsoleChatController, undo: _Undo, exc: Exception | None
+) -> bool:
     """Mark a refused call's established reservation not dispatched, as a
     canceled trace pause does; False when that cannot be proven."""
     boundary = getattr(exc, "boundary", None)
-    if boundary is None:
-        return True
-    status = getattr(boundary, "reservation_status", "unknown")
-    if status == "not_established":
-        return True
-    if status != "established":
-        return False
-    try:
-        boundary.mark_not_dispatched()
-    except Exception:  # noqa: BLE001 -- unsaved: keep the reply
-        return False
-    return True
+    if boundary is not None:
+        status = getattr(boundary, "reservation_status", "unknown")
+        if status == "established":
+            try:
+                boundary.mark_not_dispatched()
+            except Exception:  # noqa: BLE001 -- unsaved: keep the reply
+                return False
+            return True
+        if status != "not_established":
+            return False
+    # The refusal holds no reservation. A factory that failed after its own
+    # commit leaves one anyway, of unknown state: keep the reply then.
+    return not _since(controller, undo)
 
 
 def _dispatch_may_have_started(exc: Exception) -> bool:
@@ -472,28 +487,32 @@ def _refused(
         ConsoleSubmitResult,
     )
 
-    if (
-        not _settle_refused_call(exc)
-        or _run_dispatched(controller, undo)
-        or not _holds_nothing(controller, assistant_id)
-    ):
-        _use_up_next_send_choice(controller, session_id, snapshot)
+    settled = _settle_refused_call(controller, undo, exc)
+    dispatched = _since(controller, undo, dispatched=True)
+    if not settled or dispatched or not _holds_nothing(controller, assistant_id):
+        if dispatched:  # a call of the turn reached the provider
+            _use_up_next_send_choice(controller, session_id, snapshot)
         return _fail_unsent(controller, session_id, assistant_id)
     try:
-        # A pending reply cannot be deleted; it never streamed. The leaf
-        # moves first, so a failure after it leaves the branch as it was.
+        # A pending reply cannot be deleted; it never streamed.
         controller.store.mark_message_failed(assistant_id)
         if undo.previous_leaf_id is not None:
             controller.store.set_active_leaf(session_id, undo.previous_leaf_id)
         controller.store.delete_message(undo.root_id)
-        for note_id in undo.note_ids[:1]:  # each note hangs off the one before
-            controller.store.delete_message(note_id)
     except KeyError:
         return controller._session_closed_result(session_id=session_id)
     except Exception as error:  # noqa: BLE001 -- settle the run whatever failed
         logger.bind(error_type=type(error).__name__).warning("action_undo_failed")
-        _use_up_next_send_choice(controller, session_id, snapshot)
+        try:  # the kept reply fails on the branch it is on
+            controller.store.set_active_leaf(session_id, assistant_id)
+        except Exception:  # noqa: BLE001 -- fail it where it is
+            pass
         return _fail_unsent(controller, session_id, assistant_id)
+    for note_id in undo.note_ids[:1]:  # each note hangs off the one before
+        try:
+            controller.store.delete_message(note_id)
+        except Exception as error:  # noqa: BLE001 -- the note stays off the branch
+            logger.bind(error_type=type(error).__name__).warning("action_note_kept")
     controller._set_run_state(ConsoleRunState.blocked(undo.copy), session_id=session_id)
     return ConsoleSubmitResult(
         False,
@@ -504,12 +523,41 @@ def _refused(
     )
 
 
-def action_dropped(result: ConsoleSubmitResult) -> bool:
+def take_original_attempts(
+    controller: ConsoleChatController, message_ids: Iterable[str]
+) -> tuple[tuple[str, str], ...]:
+    """Clear the citation-repair previews of the messages an action
+    replaces, as before it streams, and return them for an undo."""
+    message_ids = tuple(message_ids)
+    taken = tuple(
+        (message_id, body)
+        for message_id in message_ids
+        if (body := controller._original_attempts.get(message_id)) is not None
+    )
+    for message_id in message_ids:
+        controller.clear_original_attempt(message_id)
+    return taken
+
+
+def restore_original_attempts(
+    controller: ConsoleChatController, taken: tuple[tuple[str, str], ...]
+) -> None:
+    """Put back the previews an undone action cleared."""
+    for message_id, body in taken:
+        controller._remember_original_attempt(message_id, body)
+
+
+def action_dropped(result: ConsoleSubmitResult | None) -> bool:
     """Whether ``stream_action`` undid a refused action."""
-    return not result.accepted and result.visible_copy in {
-        ACTION_NOT_SENT_COPY,
-        EDIT_NOT_SENT_COPY,
-    }
+    return (
+        result is not None
+        and not result.accepted
+        and result.visible_copy
+        in {
+            ACTION_NOT_SENT_COPY,
+            EDIT_NOT_SENT_COPY,
+        }
+    )
 
 
 def _fail_unsent(
@@ -552,6 +600,8 @@ __all__ = [
     "TRACE_REFUSED_COPY",
     "action_capture_refusal",
     "action_dropped",
+    "restore_original_attempts",
+    "take_original_attempts",
     "continues_earlier_message",
     "saved_rows",
     "stream_action",
