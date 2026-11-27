@@ -462,6 +462,59 @@ def _pinned_walk_start(selected: Path):
     return pin_path, covered, generation
 
 
+#: The same rule for ``verify_trusted_directory``, kept apart because that
+#: walk checks more on each folder: once one of its full walks has checked the
+#: folders above a pin, a later one to that pin or below it may start at the
+#: folder holding the pin for ``_PINNED_ANCESTORS_SECONDS``. The pinned folder
+#: is then opened by name there and checked like every folder below it.
+#: Measured 2026-11-26: each SQLite connect verified its folder with a walk of
+#: 14 folders from the drive root (about 450 native calls), 23 times in the
+#: first Console turn. Values as in ``_pinned_ancestors``.
+_pinned_directory_walks: dict[str, tuple[int, float]] = {}
+
+
+def _pinned_directory_start(selected: Path):
+    """The pin a checked walk to ``selected`` itself passes through or ends at.
+
+    Returns:
+        ``(pin path, components covered, release generation)`` when a held pin
+        below the drive root's own folders is ``selected`` or a folder above
+        it under the same spelling, else None.
+    """
+    from .windows_files import pinned_start
+
+    found = pinned_start(selected)
+    if found is None:
+        return None
+    pin_path, covered, generation = found
+    if len(covered) < 2 or tuple(selected.parts[1 : 1 + len(covered)]) != covered:
+        return None
+    return pin_path, covered, generation
+
+
+def _open_above_pin(selected: Path, pinned, started: float) -> int | None:
+    """Open the folder holding the pin a recent full walk passed, or None."""
+    with _pinned_ancestors_lock:
+        known = _pinned_directory_walks.get(pinned[0])
+    if (
+        known is None
+        or known[0] != pinned[2]
+        or not started - known[1] < _PINNED_ANCESTORS_SECONDS
+    ):
+        return None
+    holder = Path(selected.anchor, *pinned[1][:-1])
+    try:
+        fd = _native_open(str(holder), _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
+    except OSError:
+        return None
+    # The pin must still be held: the folders above it stay put only while it
+    # is, and without it ``holder`` was just opened by name, unchecked.
+    if _pinned_directory_start(selected) != pinned:
+        _native_close(fd)
+        return None
+    return fd
+
+
 def _walk_verified_parent(
     selected: Path,
     *,
@@ -2694,13 +2747,22 @@ def verify_trusted_directory(
         )
 
     euid = os.geteuid()
-    current_fd = (_open or _native_open)(
-        selected.anchor, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW
+    pinned = (
+        _pinned_directory_start(selected)
+        if _WINDOWS_PLATFORM and _open is None and _close is None
+        else None
     )
+    started = time.monotonic()
+    current_fd = _open_above_pin(selected, pinned, started) if pinned is not None else None
+    skipped = 0 if current_fd is None else len(pinned[1]) - 1
+    if current_fd is None:
+        current_fd = (_open or _native_open)(
+            selected.anchor, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW
+        )
     try:
         current_stat = os.fstat(current_fd)
-        pending = list(parts[1:])
-        traversed: list[str] = []
+        pending = list(parts[1 + skipped :])
+        traversed: list[str] = list(parts[1 : 1 + skipped])
         symlink_hops = 0
         while pending:
             component = pending.pop(0)
@@ -2833,6 +2895,10 @@ def verify_trusted_directory(
                 if not transferred:
                     close(next_fd)
 
+        if pinned is not None and not skipped and symlink_hops == 0:
+            # This walk checked every folder above the pin.
+            with _pinned_ancestors_lock:
+                _pinned_directory_walks[pinned[0]] = (pinned[2], started)
         return PrivatePathResult(
             selected,
             PrivatePathStatus.TRUSTED_DIRECTORY,

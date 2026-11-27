@@ -208,6 +208,107 @@ def test_only_the_next_item_of_an_admitted_stream_uses_the_window(monkeypatch):
     assert operation.checks == [True, False, False, False, "closed"]
 
 
+def _counted_reconnect_history(monkeypatch):
+    """Stand-ins for a provider wrapper's storage; counts the history reads."""
+    from tldw_chatbook.LLM_Calls import recovery_review
+
+    state = {"reads": 0, "history": ()}
+
+    class Lease:
+        def close(self):
+            pass
+
+    def history(path, lease, *, fresh=True):
+        state["reads"] += 1
+        return state["history"]
+
+    monkeypatch.setattr(recovery_review, "acquire_storage", lambda path: Lease())
+    monkeypatch.setattr(recovery_review, "_history", history)
+    return recovery_review, state
+
+
+def test_a_provider_call_reads_the_reconnect_history_once_on_entry(monkeypatch):
+    """Entering a wrapped provider call read the history twice in a row.
+
+    ``_ordinary_operation`` read it, and ``_using`` read it again on the next
+    line: 6 of the 12 fresh reads of a Console turn, each observing every
+    evidence input (2026-11-26).
+    """
+    import asyncio
+
+    recovery_review, state = _counted_reconnect_history(monkeypatch)
+
+    inner = recovery_review.unqualified(lambda: "sent")
+    assert inner() == "sent"
+    assert state["reads"] == 1
+
+    state["reads"] = 0
+    outer = recovery_review.unqualified(lambda: inner())
+    assert outer() == "sent"
+    # The outer call makes the operation; the nested one checks the active one.
+    assert state["reads"] == 2
+
+    @recovery_review.unqualified
+    async def asynchronous():
+        return "sent"
+
+    @recovery_review.unqualified
+    async def stream():
+        yield "item"
+
+    async def items():
+        return [item async for item in stream()]
+
+    state["reads"] = 0
+    assert asyncio.run(asynchronous()) == "sent"
+    assert state["reads"] == 1
+    state["reads"] = 0
+    assert asyncio.run(items()) == ["item"]
+    assert state["reads"] == 1
+
+
+def test_a_history_change_after_entry_is_still_refused(monkeypatch):
+    recovery_review, state = _counted_reconnect_history(monkeypatch)
+    seen = []
+
+    def provider_call():
+        operation = recovery_review._current.get()[0]
+        operation.check()  # unchanged since entry
+        seen.append("unchanged")
+        state["history"] = ({"generation": "restored-meanwhile"},)
+        with pytest.raises(recovery_review.ProviderReconnectRequired):
+            operation.check()
+        with pytest.raises(recovery_review.ProviderReconnectRequired):
+            operation.check_request("https://example.invalid/chat/completions", "key")
+        seen.append("refused")
+        return "done"
+
+    assert recovery_review.unqualified(provider_call)() == "done"
+    assert seen == ["unchanged", "refused"]
+
+    # A nested call under the changed history is refused where it enters.
+    state["history"] = ()
+    nested = recovery_review.unqualified(lambda: "sent")
+
+    def changes_then_calls():
+        state["history"] = ({"generation": "restored-meanwhile"},)
+        return nested()
+
+    with pytest.raises(recovery_review.ProviderReconnectRequired):
+        recovery_review.unqualified(changes_then_calls)()
+
+
+def test_entering_with_a_closed_operation_is_refused_without_reading(monkeypatch):
+    recovery_review, state = _counted_reconnect_history(monkeypatch)
+    operation = recovery_review._Operation(recovery_review.bootstrap.effective_config_path())
+    state["reads"] = 0
+    operation.close()
+    with pytest.raises(recovery_review.ProviderReconnectRequired):
+        with recovery_review._using(operation, just_read=True):
+            pass
+    assert state["reads"] == 0
+
+
 def test_an_in_process_admission_write_ends_the_window_at_once(
     local_scope, settled, monkeypatch  # noqa: F811
 ):
