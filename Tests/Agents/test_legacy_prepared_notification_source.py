@@ -31,14 +31,17 @@ def bridge(native_hooks):
     """The Console's agent bridge over a file-backed AgentRuns database."""
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
 
-    db = AgentRunsDB(native_hooks.tmp_path / "agent_runs.sqlite", "test")
-    try:
-        yield ConsoleAgentBridge(
-            agent_runs_db=db, store=native_hooks.store, provider_gateway=None
-        )
-    finally:
-        db.close()
+    path = native_hooks.tmp_path / "agent_runs.sqlite"
+    with ConsoleExecutionOwner.acquire(path) as owner:
+        db = AgentRunsDB(path, "test", execution_owner=owner)
+        try:
+            yield ConsoleAgentBridge(
+                agent_runs_db=db, store=native_hooks.store, provider_gateway=None
+            )
+        finally:
+            db.close()
 
 
 def _prepare_stop(engine, bridge, session_id):
