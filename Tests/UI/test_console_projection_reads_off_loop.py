@@ -296,7 +296,11 @@ async def test_a_warm_up_rereads_a_display_near_expiry_so_its_render_accepts_it(
     at load 9-11). The warm-up now re-reads a display past half its life, the
     share the run poll's projections already refresh ahead at.
     """
+    from contextlib import ExitStack
+
+    from tldw_chatbook import config
     from tldw_chatbook.Backup_Recovery import storage_admission
+    from tldw_chatbook.Chat import console_preparation_reads
 
     clock = _install_clock(monkeypatch)
     host, gateway, _timeline = build()
@@ -309,8 +313,35 @@ async def test_a_warm_up_rereads_a_display_near_expiry_so_its_render_accepts_it(
             deadline = loop.time() + 30
             await until(lambda: not projection.pending, timeout=deadline - loop.time())
 
-            clock.now += projection.max_age - 0.01
-            assert await projection.warm()
+            prepare_read = console_preparation_reads.run_preparation_read
+            read_current = projection.read_current
+            locks = (config._settings_rebuild_lock(), config._config_file_lock())
+
+            async def read_without_config_contention(callback, *, creator, **kwargs):
+                if creator is not projection or callback is not read_current:
+                    return await prepare_read(callback, creator=creator, **kwargs)
+
+                def read_with_locks():
+                    # The stock read uses nonblocking probes. In this success
+                    # case, let its worker take the same locks first.
+                    with ExitStack() as held:
+                        for lock in locks:
+                            assert lock.acquire(
+                                timeout=max(0.0, deadline - loop.time())
+                            ), "the config locks remained busy during warm-up"
+                            held.callback(lock.release)
+                        return read_current()
+
+                return await prepare_read(read_with_locks, creator=creator, **kwargs)
+
+            with monkeypatch.context() as warming:
+                warming.setattr(
+                    console_preparation_reads,
+                    "run_preparation_read",
+                    read_without_config_contention,
+                )
+                clock.now += projection.max_age - 0.01
+                assert await projection.warm()
             assert projection.at == clock.now, "warm-up retained the aging display"
             clock.now += 0.05  # The FULL sync's own render takes time.
             status = spend._checked_display_status

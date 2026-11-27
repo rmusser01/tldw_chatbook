@@ -246,6 +246,37 @@ def _assert_send_budget(record_property, label, start, end, loop_cpu, budget=0.1
     )
 
 
+def _isolate_durable_attach_status(host, monkeypatch, loop, deadline):
+    """Let only the durable fixture's attach check wait for native admission."""
+    from tldw_chatbook.Backup_Recovery import storage_admission
+    from tldw_chatbook.UI.Console_Modules import console_spend_projection as spend
+
+    status = spend._checked_display_status
+    lock = storage_admission._lock
+    owner_thread = threading.get_ident()
+
+    def check(projection):
+        if (
+            type(projection) is not spend.ConsoleReadinessConfigProjection
+            or projection._display_proof is None
+            or threading.get_ident() != owner_thread
+            or projection.screen is not host.screen
+            or projection.screen._console_attach_reconciled
+        ):
+            return status(projection)
+        # Stop is measured after attach, outside this patch. The production
+        # check still decides from the same proof and installed participant.
+        assert lock.acquire(timeout=max(0.0, deadline - loop.time())), (
+            "the storage coordinator remained busy during durable fixture attach"
+        )
+        try:
+            return status(projection)
+        finally:
+            lock.release()
+
+    monkeypatch.setattr(spend, "_checked_display_status", check)
+
+
 @contextlib.asynccontextmanager
 async def _received_console_case(monkeypatch, name, *, durable=False):
     """Reuse the qualified mounted setup with exact reader/runtime teardown."""
@@ -291,13 +322,21 @@ async def _received_console_case(monkeypatch, name, *, durable=False):
     try:
         with _task_factory("eager"):
             async with host.run_test(size=(120, 40)) as pilot:
-                assert await _until(
-                    lambda: isinstance(host.screen, ChatScreen)
-                    and host.screen.is_mounted
-                    and host.screen._console_attach_reconciled
-                    and not host.screen._console_attach_reconcile_running,
-                    10,
-                )
+                with monkeypatch.context() as attaching:
+                    if durable:
+                        loop = asyncio.get_running_loop()
+                        _isolate_durable_attach_status(
+                            host, attaching, loop, loop.time() + 10
+                        )
+                    assert await _until(
+                        lambda: (
+                            isinstance(host.screen, ChatScreen)
+                            and host.screen.is_mounted
+                            and host.screen._console_attach_reconciled
+                            and not host.screen._console_attach_reconcile_running
+                        ),
+                        10,
+                    )
                 console = host.screen
                 # Receipt eligibility also requires the arrival stop read. A
                 # reconciled view may still be waiting for that native read;
