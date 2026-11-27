@@ -1585,6 +1585,7 @@ async def test_persistent_malformed_owner_drains_recovery_with_outer_fallback():
         await header.remove()
         rail.request_outer_reconcile()
         outer = rail.query_one("#console-inspector-rail-body")
+        # Each recovery pass waits for the rail's next committed layout.
         await _wait_for_right_rail_condition(
             pilot,
             lambda: (
@@ -1593,7 +1594,6 @@ async def test_persistent_malformed_owner_drains_recovery_with_outer_fallback():
                 and not rail._outer_reconcile_scheduled
             ),
             description="persistent malformed owner recovery drained",
-            attempts=10,
         )
 
         assert tuple(owner.children) == (malformed,)
