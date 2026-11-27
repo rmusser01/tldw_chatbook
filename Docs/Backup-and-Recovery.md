@@ -7,7 +7,11 @@ system, or the application installer.
 
 Complete backup and replacement have separate availability checks. They require
 a matching qualified platform, the Python encryption backend, and supported storage
-locations. The screen shows availability alongside coverage and required space. Follow the
+locations. Backup and every restore also need the SQLite that your Python uses to be
+3.41.0 or newer: an older one cannot check a backup's databases, so Create backup and
+Replace restore show as unavailable, and an isolated restore refuses to start, each
+naming the SQLite version found. The rest of Chatbook works as before.
+The screen shows availability alongside coverage and required space. Follow the
 operation's actual review and refusal messages; platform support alone does not
 establish that a particular selection can be captured or restored.
 

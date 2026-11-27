@@ -62,7 +62,10 @@ OpenAI-compatible endpoint.
 
 ### Requirements
 
-- Python `>=3.12`
+- Python `>=3.12`; for backup and restore, a Python whose SQLite is 3.41.0 or
+  newer (`python -c "import sqlite3; print(sqlite3.sqlite_version)"`; a Python
+  that uses Debian 12's system SQLite, such as the `python:3.12-bookworm`
+  image, has 3.40.1)
 - Windows, macOS, or Linux
 - A terminal with Unicode support
 - Either an API key for a hosted provider or a separately running local model
