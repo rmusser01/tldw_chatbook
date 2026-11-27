@@ -845,6 +845,65 @@ async def test_enter_sends_pressed_body_after_clear_and_type_before_paint_dispat
             case.probe.release.set()
 
 
+async def test_keys_typed_onto_the_shown_draft_after_enter_keep_the_send(
+    monkeypatch,
+):
+    """TASK-33620.15.25: typing straight after Enter never costs the send.
+
+    Live on dev 3be493413a (2026-10-27) the composer still showed the sent
+    text while the send prepared, so the next keystrokes were appended to it.
+    The session's draft changed, a later input check that still compared the
+    draft refused the turn with RecoveryRequired, nothing reached the
+    provider, and the composer kept the unsent text with the typing appended.
+    The press now carries its own inputs, so the later checks leave the draft
+    out of it (077e5bfa09; TASK-41643, 371407f1e4).
+    """
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    async with _received_console_case(
+        monkeypatch, "typeahead-append", durable=True
+    ) as case:
+        _install_received_wire_reply(monkeypatch, case)
+        _send(case, "enter")
+        record = await _held_received_record(case)
+        # Real key events, appended to the still-shown sent draft, while the
+        # send prepares.
+        for char in "xyz":
+            _key(case.host, char, char)
+        appended = case.draft + "xyz"
+        assert await _until(
+            lambda: case.composer.draft_text() == appended
+            and case.store.session_draft(case.session.id) == appended,
+            5,
+        ), (case.composer.draft_text(), case.store.session_draft(case.session.id))
+        assert record.received_intent.inputs.draft == case.draft
+        # The probe gives up holding after 8 s; past that the keys did not
+        # land while the send prepared, so the case proves nothing.
+        assert not case.probe.release_timed_out, (
+            "the preparation hold timed out before the typed keys landed"
+        )
+
+        case.probe.release.set()
+        await _turn_settles(case, record.task)
+
+        # AC#1: exactly one provider request, with the text pressed at Enter.
+        _assert_pressed_reply(case)
+        assert all(
+            "xyz" not in str(row) for row in case.provider_calls[0]["messages_payload"]
+        )
+        assert [
+            message.content
+            for message in case.store.messages_for_session(case.session.id)
+            if message.role is ConsoleMessageRole.USER
+        ] == [case.draft]
+        # AC#2: the keys typed after Enter are the next draft, on their own.
+        assert await _until(lambda: case.composer.draft_text() == "xyz", 5), (
+            case.composer.draft_text()
+        )
+        assert case.store.session_draft(case.session.id) == "xyz"
+        assert case.store.received_turn_for_session(case.session.id) is None
+
+
 async def test_navigation_after_receipt_keeps_original_turn_and_newer_session_draft(
     monkeypatch,
 ):

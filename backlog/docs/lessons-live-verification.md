@@ -787,6 +787,12 @@ the provider requests (a probe `post` record, or the timing relay's log)
 against the Enters, and treat a mismatch as a broken round. Leave a pause after
 Enter unless typing during the send is what you are measuring.
 
+**Fixed since (TASK-33620.15.25, 2026-11-21).** On dev dc371f0842 the same
+eager typing (first key at once, then one every 0.15 s) reached the provider
+5 of 5, and each round left only the new text in the composer. The refusal no
+longer explains a missing POST, but counting POSTs against Enters is still the
+check that tells you a round is broken.
+
 ## A per-round count of long callbacks is mostly boot: count per window around the trigger (TASK-33620.15.1.4, 2026-10-27)
 
 **Incident.** TASK-33620.15.1.4 was filed from live rounds that "still
