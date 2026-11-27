@@ -1153,13 +1153,32 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
    like any send.
 
 7. **Refusal.** A shape outside these rules is refused before the provider is
-   contacted. On the agent path the run fails as for any refused captured
-   call ("trace capture could not be saved, so this request was not sent");
-   on the plain path the reply fails with "Trace capture could not be saved,
-   so this request was not sent.", as it does for any other failure to
-   freeze the request; when the action's prompt mix-ins cannot be composed,
-   it is refused as the reply path refuses them ("Mix-in attempt could not
-   be saved; response was not sent."). Its Retry is Retry's (TASK-42555).
+   contacted. When the action's prompt mix-ins cannot be composed, it is
+   refused as the reply path refuses them ("Mix-in attempt could not be
+   saved; response was not sent."). Amended 2026-11-26 by the owner's
+   decision below: when the trace refuses the action's own call (its
+   reservation or dispatch binding) before anything is sent, or the
+   action's trace request cannot be frozen, on the agent path and the plain
+   path alike, the action is undone: its empty reply is removed (for an
+   Edit & resend, the edited message with it) and the active branch is the
+   one before the action, so the transcript is as it was. A one-time
+   next-send choice is left armed. The status line and a notification say
+   "Not sent: trace capture could not start. Try again, or turn Capture off
+   for this chat." The reply is kept, and fails with "Trace capture could
+   not be saved, so this request was not sent.", when it holds any content,
+   attachment or continuation, when a call of the action's run was
+   dispatched (a later tool-loop call refused), or when the refused call's
+   dispatch is unknown. Its Retry is Retry's (TASK-42555).
+
+   Owner decision (2026-11-26). The question was: "When the trace refuses
+   one of these actions' own call (rare), the empty reply it already saved
+   stays as a failed reply. Every later captured send in that chat then
+   stops at 'Trace capture could not start' until the user picks Send
+   without capture. Which fix should go in?" The answer was "Drop the empty
+   reply (Recommended)": "When the trace refuses before anything is sent,
+   remove the action's empty reply and say why. The chat is left as it was
+   before the action, so the user can try again or turn Capture off. Small,
+   and stays clear of PR #3717."
 
 8. **A skipped failed reply** (2026-11-26, after review). After an action's
    run that bore no response, when the run's user was a transform (prompt
@@ -1177,11 +1196,10 @@ unchanged: Retry is TASK-42555's; Impersonate never adds to the transcript.
 Still refused: an action call over provider continuations in the replaced
 range (as for any rewritten tail); a re-record whose matched prefix stops
 before history the rewritten tail cannot prove; project context in a
-rewritten tail of any other send; every captured send after an action the
-trace refused before dispatch, whose history runs through the action's
-failed, empty reply (each pauses at "Trace capture could not start", and
-Send without capture sends it); and every shape the rules above do not
-name. Out of scope: citation repair (TASK-42585).
+rewritten tail of any other send; and every shape the rules above do not
+name. An action the trace refused before dispatch no longer leaves a failed,
+empty reply on the path (point 7, 2026-11-26), so the sends after it are
+planned as after no action. Out of scope: citation repair (TASK-42585).
 
 ## Current-owner integration amendment (2026-10-13)
 
