@@ -21,6 +21,7 @@ from types import SimpleNamespace
 import pytest
 from loguru import logger
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Backup_Recovery.config_test_support import select_config_source
 from tldw_chatbook.Agents.agent_models import AgentDefinition
 from tldw_chatbook.Agents.full_agent_tools_upgrade import (
@@ -90,7 +91,7 @@ def profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def _runs_db(profile) -> AgentRunsDB:
-    return AgentRunsDB(profile.runs_path, client_id="upgrade-test")
+    return owned_agent_runs_db(profile.runs_path, client_id="upgrade-test")
 
 
 def _run(profile, **kwargs):
@@ -961,7 +962,7 @@ def test_the_served_companions_runs_database_counts_too(profile) -> None:
     the light surface -- so a companion user's tool use lives only there."""
     companion = profile.data / "mobile" / "runs.db"
     companion.parent.mkdir(mode=0o700)
-    runs = AgentRunsDB(companion, client_id="mobile-service")
+    runs = owned_agent_runs_db(companion, client_id="mobile-service")
     try:
         run_id = runs.create_run(conversation_id="phone-1", agent_kind="primary")
         runs.insert_steps_at_indices(run_id, [(0, {"index": 0, **_tool_call("web_fetch")})])
@@ -1530,7 +1531,7 @@ def test_the_boot_worker_body_reads_the_companion_runs_database(profile) -> None
     companion = Path(get_user_data_dir()) / "mobile" / "runs.db"
     assert profile.tmp_path in companion.parents  # never the real profile
     companion.parent.mkdir(mode=0o700)
-    runs = AgentRunsDB(companion, client_id="mobile-service")
+    runs = owned_agent_runs_db(companion, client_id="mobile-service")
     try:
         runs.create_run(conversation_id="phone-1", agent_kind="subagent")
     finally:
@@ -1621,10 +1622,10 @@ def _served_marker_recorded(served) -> bool:
         workspace_db.close()
 
 
-def _record_phone_run(served, *steps: dict) -> None:
-    """What a phone send leaves in the companion's own runs database."""
-    served.companion.parent.mkdir(mode=0o700, exist_ok=True)
-    runs = AgentRunsDB(served.companion, client_id="mobile-service")
+def _record_phone_run(path: Path, *steps: dict) -> None:
+    """Write the native runs and steps for a simulated phone send."""
+    path.parent.mkdir(mode=0o700, exist_ok=True)
+    runs = owned_agent_runs_db(path, client_id="mobile-service")
     try:
         run_id = runs.create_run(conversation_id="phone-1", agent_kind="primary")
         runs.insert_steps_at_indices(
@@ -1641,16 +1642,17 @@ def test_a_fresh_profile_first_used_through_tldw_serve_stays_light(
     """The failure G532-R2-1 found: a fresh profile first used through
     ``tldw-serve``, with ``read_file`` switched on by itself. The light
     surface offers that tool, so one phone send that reads a file left a
-    dispatched non-light call in ``mobile/runs.db``, and the app's first
-    launch afterwards read it as agent use and turned Full agent tools on
-    for a profile that never opted in. The server now records the check
-    before it accepts a connection, while the profile has no signal."""
+    dispatched non-light call and the app's first launch afterwards read
+    it as agent use and turned Full agent tools on for a profile that
+    never opted in. A current phone send writes the shared Console store.
+    The server records the check before it accepts a connection, while
+    the profile has no signal."""
     before = served.config_path.read_bytes()
     recorded_when_serving: list[bool] = []
 
     def phone_send() -> None:
         recorded_when_serving.append(_served_marker_recorded(served))
-        _record_phone_run(served, *_dispatched("read_file", "call_0"))
+        _record_phone_run(served.agent_runs, *_dispatched("read_file", "call_0"))
 
     _serve(monkeypatch, phone_send)
 
@@ -1680,7 +1682,7 @@ def test_a_phone_only_profile_from_before_the_light_surface_is_upgraded_at_serve
     replies ran ``web_fetch`` on the full surface) keeps Full agent tools:
     the server adds the one line before it accepts a connection, so the
     next phone send already plans the full surface."""
-    _record_phone_run(served, *_dispatched("web_fetch", "call_0"))
+    _record_phone_run(served.companion, *_dispatched("web_fetch", "call_0"))
     before = served.config_path.read_text(encoding="utf-8")
     when_serving: list[tuple[bool, str]] = []
 

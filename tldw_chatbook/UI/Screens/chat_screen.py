@@ -21244,10 +21244,8 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return None
 
-    #: Draft text `_sync_console_command_popup` last ran against, or
-    #: None before the first sync. A CLASS attribute, deliberately: the
-    #: hand-built `ChatScreen.__new__()` test fixtures never run `__init__`,
-    #: and this programme has shipped one fixture AttributeError per wave.
+    #: Last draft seen by `_sync_console_command_popup`, or None before sync.
+    #: Class default for `ChatScreen.__new__()` fixtures that skip `__init__`.
     _console_popup_synced_draft: str | None = None
 
     #: TASK-33620.1: the emergency stop's copy while it holds new runs, else

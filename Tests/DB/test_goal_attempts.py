@@ -74,13 +74,9 @@ def test_concurrent_prepares_accept_exactly_one_generation(tmp_path):
     )
 
     def prepare(_):
-        handle = owned_agent_runs_db(path)
-        try:
-            return handle.automatic_work.prepare_goal_iteration(
-                goal.id, owner_id="owner"
-            )
-        finally:
-            handle.close()
+        # Use each worker's native connection without racing schema setup.
+        with closing(db):
+            return ledger.prepare_goal_iteration(goal.id, owner_id="owner")
 
     with ThreadPoolExecutor(2) as pool:
         a, b = pool.map(prepare, range(2))

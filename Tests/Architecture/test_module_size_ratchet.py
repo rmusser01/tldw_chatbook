@@ -375,7 +375,8 @@ _BUDGETS: dict[str, int] = {
     # (+6), exact measurement. Regenerate and Edit & resend take the
     # original-attempt previews before streaming and put them back after an
     # undo; Edit & resend records "message edited" in a finally.
-    "tldw_chatbook/Chat/console_chat_controller.py": 28881,
+    # PR3345 measured after retaining the native and mobile paths.
+    "tldw_chatbook/Chat/console_chat_controller.py": 28641,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     # TASK-41637, 2026-11-18: +9, a round armed with no running app and no
     # answerable view fails closed instead of waiting forever (dev's row +
@@ -1581,7 +1582,8 @@ _BUDGETS: dict[str, int] = {
     # caps an action's prefix at its user row, skips the suffix and append
     # rules for it, requires its rewritten-tail proof, and passes the send
     # after an action's run to that proof (console_trace_action_calls.py).
-    "tldw_chatbook/Chat/console_trace_service.py": 7099,
+    # PR3345 measured after retaining the native and mobile paths.
+    "tldw_chatbook/Chat/console_trace_service.py": 6980,
     # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
     # approved child trace segments (ADR-337 amendment 2026-11-17): create and

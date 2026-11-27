@@ -13,7 +13,8 @@ send got ``spawn_subagent`` and the rest of the agent surface whatever Full
 agent tools said (pre-merge review, 2026-10-29). Nothing failed: a missing
 keyword argument is silent.
 
-So this guard reads the source. Every ``ConsoleAgentBridge(...)`` call under
+The app-owned runtime now builds the bridge for both phone and desktop.
+This guard reads the source. Every ``ConsoleAgentBridge(...)`` call under
 ``tldw_chatbook/`` must pass ``light_tool_surface=`` explicitly. Test
 harnesses live under ``Tests/`` and are not scanned: they build the bridge
 on purpose. A production subclass is refused too, because its constructions
@@ -99,18 +100,14 @@ def _scan_package() -> tuple[list[str], list[str]]:
 def test_every_production_bridge_is_built_with_a_light_surface_reader() -> None:
     constructions, violations = _scan_package()
 
-    # Non-vacuous: the two production builders are found -- the desktop
-    # Console's runtime and the served mobile companion.
-    built_in = {site.rsplit(":", 1)[0] for site in constructions}
-    assert {
+    assert [site.rsplit(":", 1)[0] for site in constructions] == [
         "tldw_chatbook/Chat/console_runtime.py",
-        "tldw_chatbook/Web_Server/mobile_service.py",
-    } <= built_in, constructions
+    ], constructions
     assert not violations, (
         "A production ConsoleAgentBridge without a light_tool_surface reader "
         "hands plain Console chat the full agent surface whatever Full agent "
         "tools says. Pass light_surface_configured (and the kill-switch "
-        "reader) as ConsoleRuntime.ensure_console_agent_bridge does:\n"
+        "reader) as ConsoleRuntime.ensure_agent_bridge does:\n"
         + "\n".join(violations)
     )
 

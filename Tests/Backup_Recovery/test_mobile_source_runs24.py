@@ -85,7 +85,7 @@ def test_actual_source_version_capture_identity_and_integrated_plan(
             ("legacy", "chat", 81),
             ("legacy", "workspaces", 8),
             ("legacy", "runs", version),
-            ("canonical", "chat", 87),
+            ("canonical", "chat", 89),
             ("canonical", "workspaces", 11),
             ("canonical", "runs", 33),
         )
@@ -184,9 +184,8 @@ def test_native_catalog_rejects_wrong_version_receipt_presence(
     original = _source_layout(monkeypatch, version, malformed=malformed)
     with prepared(tmp_path, monkeypatch) as values:
         _, _, _, _, preview, inventory, _ = values
-        expected = (
-            "unsupported_schema" if version == 24 else "unsupported_schema_version"
-        )
+        # A receipt-only table cannot make either legacy catalog an installed v32 layout.
+        expected = "unsupported_schema"
         assert expected in preview.issues
         assert not inventory.complete
         owner = next(a for a in recovery_adapters() if a.owner_id == "db.agent_runs")

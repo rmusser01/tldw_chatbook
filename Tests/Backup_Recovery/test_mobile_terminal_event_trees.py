@@ -190,8 +190,8 @@ def test_each_actual_dump_has_independent_full_tree_reservation(
     first, second = seen["event_dumps"]
     assert tuple(
         target["schema_version"] for target in first["evidence"]["targets"]
-    ) == (88, 11, 33)
-    for stale_version in (87, 89):
+    ) == (89, 11, 33)
+    for stale_version in (87, 88):
         stale = {
             **first["evidence"],
             "targets": [

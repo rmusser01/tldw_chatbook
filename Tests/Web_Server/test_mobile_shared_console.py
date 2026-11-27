@@ -293,6 +293,44 @@ async def test_two_clients_open_one_saved_console_owner(
 @pytest.mark.bootstrap_profile
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
+@pytest.mark.parametrize("phone_first", [True, False], ids=["phone-first", "desktop-first"])
+async def test_phone_and_desktop_share_native_light_surface_bridge(
+    shared_mobile_case, phone_first
+):
+    from tldw_chatbook.Agents.plain_chat_tool_surface import light_surface_configured
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    case = shared_mobile_case
+    runtime = case.app.console_runtime
+    assert runtime.agent_bridge is None
+
+    async def create_from_phone():
+        host = await case.service.bootstrap_host()
+        payload = {"workspace_id": "global"}
+        ticket = await case.service.issue_command_ticket("create", host, payload)
+        receipt = await case.service.submit_command(ticket["ticket"], payload)
+        assert receipt.state == "applied"
+        assert receipt.native_id == runtime.chat_store.sessions()[0].id
+        return runtime.chat_controller._agent_bridge
+
+    if phone_first:
+        phone = await create_from_phone()
+        desktop = ChatScreen(case.app)._ensure_console_agent_bridge()
+    else:
+        desktop = ChatScreen(case.app)._ensure_console_agent_bridge()
+        phone = await create_from_phone()
+
+    assert type(phone) is ConsoleAgentBridge
+    assert phone is desktop is runtime.agent_bridge
+    assert phone._light_tool_surface is light_surface_configured
+    assert case.host_start_count == 1
+    assert case.mobile_db_opens == []
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
 async def test_native_create_lost_ack_queries_original_without_replay(
     shared_mobile_case, monkeypatch
 ):

@@ -464,7 +464,7 @@ def test_private_lifecycle_verifies_fixed_native_partitions_before_owners(
                 key: versions(rollback)[key]
                 for key in ("db.chachanotes.primary", "db.workspaces", "db.agent_runs")
             } == {
-                "db.chachanotes.primary": 87,
+                "db.chachanotes.primary": 89,
                 "db.workspaces": 11,
                 "db.agent_runs": 33,
             }
@@ -1285,8 +1285,10 @@ def test_live_partition_refuses_copied_session_scope_journal_and_retirement(
             with pytest.raises(ValueError, match="mobile_native_partition_required"):
                 partition.check()
             partition.journal = journal
-        with pytest.raises(ValueError, match="mobile_source_claim_inactive"):
+        with pytest.raises(ValueError, match="^mobile_lifecycle_retired$"):
             lifecycle.check()
+        with pytest.raises(ValueError, match="^mobile_source_claim_inactive$"):
+            lifecycle.claim.check()
 
 
 def test_source_close_failure_keeps_real_lock_and_native_quarantine_until_process_exit(

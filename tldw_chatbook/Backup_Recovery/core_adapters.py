@@ -609,7 +609,7 @@ class _CoreAdapter:
             schemas += ((4, PROMPTS_V4_SCHEMA), (5, PROMPTS_V5_SCHEMA))
             versions += (4, 5)
             migration = (
-                Path(__file__).parent / "migrations" / "prompts_literal_mixins.sql"
+                Path(__file__).parents[1] / "DB" / "migrations" / "prompts_literal_mixins.sql"
             )
             statements = []
             pending = ""

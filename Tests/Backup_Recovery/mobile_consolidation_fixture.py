@@ -243,7 +243,7 @@ def _reconstruct_legacy_stores(
     )
 
     assert legacy_runs_version in (24, 25)
-    assert legacy_chat_version in (81, 82, 83, 84, 85, 86, 87)
+    assert legacy_chat_version in (81, 82, 83, 84, 85, 86, 87, 88)
     assert legacy_workspace_version in (8, 9, 10)
     for path, catalog, version in (
         (

@@ -3634,3 +3634,15 @@ The original private recovery refusal in qualifications1210/1217 reaches termina
 For the same live first-root recovery issuer, after authenticating the original captures, member/intent evidence and fresh publication parent/root custody, current installed metadata may refuse a name outside the exact publisher grammar. Derive only the publication root, checked structural prefix ancestors and authenticated member locations. Prepay the finite local set, path/string construction and current-name scan on the same issued read budget before allocation. No expected-name pruning of actual discovery is permitted.
 
 This is negative evidence only. A known name supplies no successful byte/inode proof, readiness, cached authority, reusable payment or permission. Valid names continue through every existing positive-path reservation, restored classification/scope digest, current-source/native-owner checks and later fresh AFiles whole/member byte and tree qualification. Existing uncertain-custody refusal and physical retirement remain authoritative. No budget reset/refund/increase, smaller coefficient, new owner role, public pair injection, deadline, buffer, worker or permission change is allowed. Qualify the unchanged original three-fault refusal and real public cold first-root recovery with all original preservation and native resource assertions.
+
+### 2026-11-26 integration of native message locator version 88
+
+Dev 9926834 owns ChaChaNotes v88 and its nine message and mix-in locator
+indexes. The unmerged mobile receipt migration follows at v89. It adds
+the existing receipt table to each exact native v88 lineage. Recovery keeps
+the exact v88 catalogs and their restricted index migration and validates
+the v89 receipt catalog and the shared Subscription stamp separately.
+Unmerged mobile v88 captures remain archived evidence for their matching
+build. A receipt-bearing v88 store is refused before writer setup.
+
+The [earlier mobile v87 draft SQL](../../Docs/superpowers/qa/2026-10-25-shared-console-mobile-supervision/retained-sources/chachanotes_v86_to_v87_mobile_consolidation.sql) is retained byte-for-byte as historical evidence. The live index census records both the native v88 plan test and the voice-promotion lookup test against the installed index names.

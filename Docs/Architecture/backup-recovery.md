@@ -562,7 +562,8 @@ retain the normal pending refusal.
 Legacy source history/artifacts and complete canonical rollback are fixed native
 partitions captured under that same exclusive session, without intervening owner
 writes. This preserves the native archive's one-version-per-owner contract:
-legacy81–85/8–10/(24 or25) and canonical87/11/33 have the same actual owner IDs.
+The exact legacy Chat 81–88, Workspace 8–10 and AgentRuns 24/25 catalogs
+share owner IDs with canonical Chat 89, Workspace 11 and AgentRuns 33.
 Generic mixed owner versions still refuse. Each archive uses native encrypted publication and
 verification, with typed intended/staged/verified identities. Interrupted
 publication can finish only the durable verified ciphertext inode at its exact
@@ -717,8 +718,10 @@ terminal recovery remain separate B qualification gates.
 `mobile_captured_sqlite._CapturedSQLite` context from the actual live maintenance
 operation. It requalifies fixed native partition declarations and exact logical
 members, authenticates the encrypted captures, and extracts only Chat, Workspace
-and AgentRuns snapshots. Legacy 81–85/8–10/(24 or25) and canonical 87/11/33 remain
-distinct. Native installed catalog, version, integrity, foreign-key and domain checks run on
+and AgentRuns snapshots. Supported legacy Chat 81–88, Workspace 8–10 and
+AgentRuns 24/25 remain distinct from canonical Chat 89, Workspace 11 and
+AgentRuns 33. A receipt-bearing draft v88 Chat database refuses before writer
+setup. Native installed catalog, version, integrity, foreign-key and domain checks run on
 restricted disposable descriptor-bound connections before row access; no live
 repository constructor, migration or destination connection participates.
 

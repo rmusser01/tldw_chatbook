@@ -53,6 +53,7 @@ def _main_wal(path):
     "family,version,marker",
     [
         ("chat", 82, "mobile_consolidation_batches"),
+        ("chat", 88, "mobile_consolidation_batches"),
         ("workspaces", 9, "mobile_import_authority_holds"),
         ("runs", 25, "console_command_receipts"),
         ("runs", 26, "mobile_consolidation_batches"),

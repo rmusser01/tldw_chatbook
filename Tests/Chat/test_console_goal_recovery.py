@@ -85,7 +85,11 @@ async def test_reopened_goal_chat_can_send_and_close(
         await runtime.close_session(
             session.id, expected_revision=impact.revision, timeout_seconds=0.01
         )
-        reopened = await coordinator.restore_session("goal", app=app)
+        reopened, peer = await asyncio.gather(
+            coordinator.restore_session("goal", app=app),
+            coordinator.restore_session("goal", app=app),
+        )
+        assert peer is reopened
         runtime._raise_if_disposed_or_session_fenced(reopened.id)
         assert reopened.id != session.id
         assert reopened.persisted_conversation_id == conversation_id

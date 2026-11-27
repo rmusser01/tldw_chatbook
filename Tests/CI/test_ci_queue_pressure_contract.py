@@ -489,6 +489,7 @@ DREAMS_BOUNDARY_TARGETS = (
     # TASK-39052 route-cycle node between them is a private-profile test that
     # runs in its own child process, so the in-process enrollment cannot reach it.
     "Tests/Web_Server/test_mobile_service.py",
+    "Tests/Web_Server/test_mobile_shared_console.py::test_phone_and_desktop_share_native_light_surface_bridge",
     # TASK-39049: the quit-time store retirement (TASK-38955, TASK-39047,
     # TASK-39048) and the retention pass's worker handles, in no PR lane.
     # Bootstrap profile (Tests/DB, keep_bootstrap_profile), guard-clean,

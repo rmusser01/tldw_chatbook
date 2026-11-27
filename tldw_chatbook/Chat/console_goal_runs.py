@@ -500,8 +500,8 @@ class ConsoleGoalCoordinator:
         from dataclasses import replace
 
         from tldw_chatbook.Chat.console_conversation_hydration import (
+            _hydrate_console_session,
             apply_resume_settings_overrides,
-            hydrate_console_session,
             load_console_conversation_tree,
         )
         from tldw_chatbook.Chat.console_session_settings import (
@@ -511,52 +511,52 @@ class ConsoleGoalCoordinator:
         goal = self.service.get(goal_id)
         if goal.request is None:
             raise ValueError("goal_payload_removed")
+        store = self.controller.store
         session_id = self._session_ids.get(goal_id, goal.conversation_id)
-        existing = next(
-            (
-                s
-                for s in self.controller.store.sessions()
-                if s.id == session_id
-            ),
-            None,
-        )
+        existing = next((s for s in store.sessions() if s.id == session_id), None)
         if existing is not None:
             if existing.persisted_conversation_id != goal.conversation_id:
                 raise ValueError("conversation_identity_conflict")
             self._require_open_session(session_id)
-            restored = await self.controller.store.resolve_saved_session(
+            session = await store.resolve_saved_session(
                 goal.conversation_id, session_id=session_id
             )
-            self._require_open_session(session_id)
-            return restored
-        tree = await load_console_conversation_tree(app, goal.conversation_id)
-        if tree is None:
-            raise ValueError("goal_conversation_missing")
-        settings = settings or default_console_session_settings(
-            getattr(app, "app_config", {})
-        )
-        settings = replace(
-            settings,
-            provider=goal.request.provider.provider,
-            model=goal.request.provider.model,
-        )
-        settings = apply_resume_settings_overrides(settings, tree["conversation"])
-        # Keep the old close generation latched for late callbacks. Saved
-        # history and automatic accounting still belong to the conversation.
-        session = await hydrate_console_session(
-            app=app,
-            store=self.controller.store,
-            conversation_id=goal.conversation_id,
-            tree=tree,
-            settings=settings,
-            target_workspace_id=goal.request.binding.workspace_id,
-            session_id=(
-                None
-                if session_id in self.controller._session_close_generations
-                else session_id
-            ),
-            activate=False,
-        )
+        else:
+            async def hydrate(operation):
+                tree = await load_console_conversation_tree(app, goal.conversation_id)
+                if tree is None:
+                    raise ValueError("goal_conversation_missing")
+                resume_settings = settings or default_console_session_settings(
+                    getattr(app, "app_config", {})
+                )
+                resume_settings = replace(
+                    resume_settings,
+                    provider=goal.request.provider.provider,
+                    model=goal.request.provider.model,
+                )
+                resume_settings = apply_resume_settings_overrides(
+                    resume_settings, tree["conversation"]
+                )
+                # The winning producer allocates the new live ID. Keep the
+                # old close generation for late callbacks to that session.
+                return await _hydrate_console_session(
+                    app=app,
+                    store=store,
+                    conversation_id=goal.conversation_id,
+                    tree=tree,
+                    settings=resume_settings,
+                    target_workspace_id=goal.request.binding.workspace_id,
+                    session_id=(
+                        str(uuid4())
+                        if session_id in self.controller._session_close_generations
+                        else session_id
+                    ),
+                    activate=False,
+                    _operation=operation,
+                )
+
+            session = await store.resolve_saved_session(goal.conversation_id, hydrate)
+        self._require_open_session(session.id)
         self._session_ids[goal_id] = session.id
         return session
 

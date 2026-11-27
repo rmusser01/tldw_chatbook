@@ -127,7 +127,7 @@ def test_historical_migrates_using_installed_sql_without_losing_history(
                     "assistant_message_id",
                 ),
                 (
-                    "idx_hook_continuation_receipts_parent_message",
+                    "idx_hook_continuation_receipts_parent_assistant_message",
                     "console_hook_continuation_receipts",
                     "parent_assistant_message_id",
                 ),
@@ -137,7 +137,7 @@ def test_historical_migrates_using_installed_sql_without_losing_history(
                     "assistant_message_id",
                 ),
                 (
-                    "idx_machine_followup_receipts_parent_message",
+                    "idx_machine_followup_receipts_parent_assistant_message",
                     "console_machine_followup_receipts",
                     "parent_assistant_message_id",
                 ),

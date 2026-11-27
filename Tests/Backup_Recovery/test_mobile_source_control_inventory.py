@@ -1,6 +1,7 @@
 """Native claim controls preserve discovery scope without granting authority."""
 
 import os
+from contextlib import contextmanager
 from threading import Event
 
 import pytest
@@ -12,6 +13,40 @@ from tldw_chatbook.Backup_Recovery.mobile_consolidation_apply import (
     _claim_source,
 )
 from tldw_chatbook.Backup_Recovery.models import DiscoverySelections
+
+
+@contextmanager
+def _verify_member_schedule(monkeypatch, captured, archive_attr, verify):
+    """Exercise schedule faults before the native reader publishes any handles."""
+    from tldw_chatbook.Backup_Recovery import mobile_captured_sqlite
+
+    native_members = mobile_captured_sqlite._members
+    seen = False
+
+    def inspect(scope):
+        nonlocal seen
+        assert not seen
+        seen = True
+        assert scope.captured is captured and scope.active
+        assert scope._row_data_owner is None
+        assert not scope._connections and scope.versions == ()
+        original_archive = getattr(scope, archive_attr)
+        partition, document, sealed = original_archive
+        schedules = native_members(scope)
+
+        def probe(changed):
+            with monkeypatch.context() as fault:
+                fault.setattr(scope, archive_attr, (partition, changed, sealed))
+                return native_members(scope)[partition.purpose]
+
+        verify(document, schedules[partition.purpose], probe, native_members.__code__)
+        assert getattr(scope, archive_attr) is original_archive
+        return native_members(scope)
+
+    with monkeypatch.context() as fault:
+        fault.setattr(mobile_captured_sqlite, "_members", inspect)
+        yield
+    assert seen
 
 
 def _prepare(values):
@@ -183,14 +218,7 @@ def test_native_alias_members_require_every_producer_payload_and_physical_proof(
 ):
     import sys
 
-    from tldw_chatbook.Backup_Recovery import (
-        mobile_captured_sqlite,
-        mobile_consolidation,
-    )
-    from tldw_chatbook.Backup_Recovery.archive_models import ArchiveManifest
-    from tldw_chatbook.Backup_Recovery.mobile_consolidation_apply import (
-        _MobileCapturePartition,
-    )
+    from tldw_chatbook.Backup_Recovery import mobile_consolidation
 
     with _capture_fixture(tmp_path, monkeypatch, distinct_selectors=True) as values:
         session, journal, _, _, preview, inventory, _ = values
@@ -206,27 +234,14 @@ def test_native_alias_members_require_every_producer_payload_and_physical_proof(
             password=b"test-private-mobile-rollback",
             cancel=Event(),
         ) as captured:
-            with captured.sqlite_reads(
-                password=b"test-private-mobile-rollback", cancel=Event()
-            ) as reads:
-                partition = next(
-                    row
-                    for row in session._scopes
-                    if type(row) is _MobileCapturePartition
-                    and row.purpose == "legacy"
-                    and row.claim is captured.claim
-                    and row.active
-                )
-                document = ArchiveManifest.model_validate_json(
-                    captured.source.manifest_bytes
-                )
+
+            def verify(document, native, probe, native_code):
                 aliases = [
                     row
                     for row in document.producer_inventory
                     if row.owner_id == "db.workspaces" and row.status == "included"
                 ]
                 assert len(aliases) == 2
-                native = mobile_captured_sqlite._members(reads, partition, document)
                 representative = next(
                     row[3] for row in native if row[0] == "workspaces"
                 )
@@ -253,9 +268,7 @@ def test_native_alias_members_require_every_producer_payload_and_physical_proof(
                             }
                         )
                         with pytest.raises(ValueError, match="inventory_changed"):
-                            mobile_captured_sqlite._members(
-                                reads, partition, document_copy
-                            )
+                            probe(document_copy)
                     missing = document.model_copy(
                         update={
                             "producer_inventory": tuple(
@@ -266,7 +279,7 @@ def test_native_alias_members_require_every_producer_payload_and_physical_proof(
                         }
                     )
                     with pytest.raises(ValueError, match="inventory_changed"):
-                        mobile_captured_sqlite._members(reads, partition, missing)
+                        probe(missing)
                     member = next(
                         row
                         for row in document.files
@@ -289,7 +302,7 @@ def test_native_alias_members_require_every_producer_payload_and_physical_proof(
                             }
                         )
                         with pytest.raises(ValueError, match=reason):
-                            mobile_captured_sqlite._members(reads, partition, changed)
+                            probe(changed)
                     missing = document.model_copy(
                         update={
                             "files": tuple(
@@ -300,7 +313,7 @@ def test_native_alias_members_require_every_producer_payload_and_physical_proof(
                         }
                     )
                     with pytest.raises(ValueError, match="member_changed"):
-                        mobile_captured_sqlite._members(reads, partition, missing)
+                        probe(missing)
                 path = preview.source_dir / "workspaces.db"
                 retained = path.with_name("test-retained-workspaces.db")
                 identity = mobile_consolidation._resource_identity
@@ -310,8 +323,7 @@ def test_native_alias_members_require_every_producer_payload_and_physical_proof(
                     actual = identity(selected)
                     if (
                         selected == path
-                        and sys._getframe(1).f_code
-                        is mobile_captured_sqlite._members.__code__
+                        and sys._getframe(1).f_code is native_code
                     ):
                         observed.append(actual)
                         if len(observed) == 1:
@@ -329,12 +341,22 @@ def test_native_alias_members_require_every_producer_payload_and_physical_proof(
                             replace_after_first_native_observation,
                         )
                         with pytest.raises(ValueError, match="alias_unproven"):
-                            mobile_captured_sqlite._members(reads, partition, document)
+                            probe(document)
                     assert len(observed) == 2 and observed[0] != observed[1]
                 finally:
                     if retained.exists():
                         path.unlink()
                         retained.rename(path)
+
+            with (
+                _verify_member_schedule(
+                    monkeypatch, captured, "_source_archive", verify
+                ),
+                captured.sqlite_reads(
+                    password=b"test-private-mobile-rollback", cancel=Event()
+                ),
+            ):
+                pass
 
 
 def test_distinct_alias_capture_preserves_source_and_canonical_bytes(
@@ -367,7 +389,7 @@ def test_distinct_alias_capture_preserves_source_and_canonical_bytes(
                 ("legacy", "chat", 81),
                 ("legacy", "workspaces", 8),
                 ("legacy", "runs", 25),
-                ("canonical", "chat", 87),
+                ("canonical", "chat", 89),
                 ("canonical", "workspaces", 11),
                 ("canonical", "runs", 33),
             )
@@ -385,12 +407,6 @@ def test_distinct_alias_capture_preserves_source_and_canonical_bytes(
 def test_distinct_alias_capture_preserves_native_optional_runs_absence(
     tmp_path, monkeypatch
 ):
-    from tldw_chatbook.Backup_Recovery import mobile_captured_sqlite
-    from tldw_chatbook.Backup_Recovery.archive_models import ArchiveManifest
-    from tldw_chatbook.Backup_Recovery.mobile_consolidation_apply import (
-        _MobileCapturePartition,
-    )
-
     with _capture_fixture(
         tmp_path,
         monkeypatch,
@@ -412,36 +428,8 @@ def test_distinct_alias_capture_preserves_native_optional_runs_absence(
         }
         output = tmp_path / "archives"
         output.mkdir(mode=0o700)
-        with (
-            _captured_mobile(
-                session,
-                journal,
-                preview,
-                inventory.scope_digest,
-                destination=output,
-                password=b"test-private-mobile-rollback",
-                cancel=Event(),
-            ) as captured,
-            captured.sqlite_reads(
-                password=b"test-private-mobile-rollback", cancel=Event()
-            ) as reads,
-        ):
-            assert ("canonical", "chat", 87) in reads.versions
-            assert ("canonical", "workspaces", 11) in reads.versions
-            assert not any(row[:2] == ("canonical", "runs") for row in reads.versions)
-            with pytest.raises(ValueError, match="member_absent"):
-                reads.page("canonical", "runs", "agent_runs")
-            partition = next(
-                row
-                for row in session._scopes
-                if type(row) is _MobileCapturePartition
-                and row.purpose == "canonical"
-                and row.claim is captured.claim
-                and row.active
-            )
-            document = ArchiveManifest.model_validate_json(
-                captured.canonical.manifest_bytes
-            )
+
+        def verify(document, canonical_members, probe, _native_code):
             producers = [
                 row
                 for row in document.producer_inventory
@@ -454,10 +442,7 @@ def test_distinct_alias_capture_preserves_native_optional_runs_absence(
                 row.logical_id in {item.logical_id for item in absent}
                 for row in document.files
             )
-            assert {
-                row[0]
-                for row in mobile_captured_sqlite._members(reads, partition, document)
-            } == {"chat", "workspaces"}
+            assert {row[0] for row in canonical_members} == {"chat", "workspaces"}
             for producer in producers:
                 mixed = document.model_copy(
                     update={
@@ -470,7 +455,28 @@ def test_distinct_alias_capture_preserves_native_optional_runs_absence(
                     }
                 )
                 with pytest.raises(ValueError, match="inventory_changed"):
-                    mobile_captured_sqlite._members(reads, partition, mixed)
+                    probe(mixed)
+
+        with (
+            _captured_mobile(
+                session,
+                journal,
+                preview,
+                inventory.scope_digest,
+                destination=output,
+                password=b"test-private-mobile-rollback",
+                cancel=Event(),
+            ) as captured,
+            _verify_member_schedule(monkeypatch, captured, "_canonical_archive", verify),
+            captured.sqlite_reads(
+                password=b"test-private-mobile-rollback", cancel=Event()
+            ) as reads,
+        ):
+            assert ("canonical", "chat", 89) in reads.versions
+            assert ("canonical", "workspaces", 11) in reads.versions
+            assert not any(row[:2] == ("canonical", "runs") for row in reads.versions)
+            with pytest.raises(ValueError, match="member_absent"):
+                reads.page("canonical", "runs", "agent_runs")
         assert not stores.run_path.exists()
         assert before == {path: path.read_bytes() for path in before}
         assert not tuple(output.glob(".mobile-read-*"))

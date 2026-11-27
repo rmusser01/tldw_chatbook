@@ -15,7 +15,7 @@ from tldw_chatbook.DB.recovery_operations import _AGENT_RUNS_SCHEMA, recovery_ad
 @pytest.mark.parametrize(
     "leaf,owner_id,old,new",
     [
-        ("chat.db", "db.chachanotes.primary", 81, 88),
+        ("chat.db", "db.chachanotes.primary", 81, 89),
         ("workspaces.db", "db.workspaces", 8, 11),
         ("runs.db", "db.agent_runs", 25, 33),
     ],
@@ -177,8 +177,8 @@ def test_all_registered_native_mobile_column_projections(tmp_path):
     )
 
     assert next(row[3:] for row in _FAMILIES if row[0] == "chat") == (
-        (81, 82, 83, 84, 85, 86, 87),
-        88,
+        (81, 82, 83, 84, 85, 86, 87, 88),
+        89,
     )
     specs = {(s.family, s.table): s for s in _TABLES}
     schemas = [
@@ -189,7 +189,7 @@ def test_all_registered_native_mobile_column_projections(tmp_path):
         for v, c in recovery_operations._WORKSPACES_SCHEMA
         if v in (8, 9, 10, 11)
     ]
-    for version in range(81, 89):
+    for version in range(81, 90):
         schemas += [
             ("chat", version, c, None)
             for c in getattr(recovery_core_schema, f"CHACHANOTES_V{version}_SCHEMAS")
@@ -202,7 +202,8 @@ def test_all_registered_native_mobile_column_projections(tmp_path):
         (85, "ARCHIVE_V85"),
         (86, "MIXINS_V86"),
         (87, "CHILD_SEGMENTS_V87"),
-        (88, "MOBILE_V88"),
+        (88, "LOCATOR_INDEXES_V88"),
+        (89, "MOBILE_V89"),
     ):
         for catalog in getattr(recovery_operations, f"_SUBSCRIPTIONS_{name}_SCHEMAS"):
             for subscriptions_version in (2, 3):
@@ -217,7 +218,7 @@ def test_all_registered_native_mobile_column_projections(tmp_path):
     for family, version, catalog, subscriptions_version in schemas:
         shared = family == "shared_subscriptions"
         projected_family = "chat" if shared else family
-        target = {"chat": 88, "workspaces": 11, "runs": 33}[projected_family]
+        target = {"chat": 89, "workspaces": 11, "runs": 33}[projected_family]
         purpose = "canonical" if version == target else "legacy"
         with closing(sqlite3.connect(":memory:")) as conn:
             _install_canvas_revision_payload_validator(conn)
@@ -328,7 +329,7 @@ def test_all_registered_native_mobile_column_projections(tmp_path):
 
 
 @pytest.mark.parametrize("route", ["runtime", "recovery"])
-def test_native_mixin_v86_migrates_to_mobile_v87_without_losing_attempts(
+def test_native_mixin_v86_migrates_to_mobile_v89_without_losing_attempts(
     tmp_path, route
 ):
     from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
@@ -345,7 +346,7 @@ def test_native_mixin_v86_migrates_to_mobile_v87_without_losing_attempts(
                 cursor, conversation_id, batch=attempt(), native_message_ids=messages
             )
     original = source.read_bytes()
-    candidate = tmp_path / "mobile-v87.sqlite"
+    candidate = tmp_path / "mobile-v89.sqlite"
     copy_private_sqlite("recovery.core.chachanotes", source, candidate)
     if route == "runtime":
         db = CharactersRAGDB(candidate, "mobile-mixin-migration")
@@ -362,7 +363,7 @@ def test_native_mixin_v86_migrates_to_mobile_v87_without_losing_attempts(
             connection.execute(
                 "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
             ).fetchone()[0]
-            == 88
+            == 89
         )
         assert (
             read_attempt(
@@ -381,17 +382,21 @@ def test_native_mixin_v86_migrates_to_mobile_v87_without_losing_attempts(
 
 
 @pytest.mark.parametrize("route", ["runtime", "recovery"])
-def test_populated_native_v87_child_history_reaches_exact_mobile_v88(tmp_path, route):
+@pytest.mark.parametrize("source_version", [87, 88])
+def test_populated_native_child_history_reaches_exact_mobile_v89(
+    tmp_path, route, source_version
+):
     from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
     from Tests.Chat.test_console_trace_graph_gc import _root_graph, _terminal_call
     from Tests.DB.test_chachanotes_v87_console_trace_child_segments import _child
     from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.DB.private_sqlite import copy_private_sqlite
+    from tldw_chatbook.DB.recovery_core_schema import CHACHANOTES_V88_LOCATOR_INDEXES
 
-    source = tmp_path / "native-child-v87.sqlite"
+    source = tmp_path / f"native-child-v{source_version}.sqlite"
     repository = ConsoleTraceRepository()
-    with chachanotes_db_at_version(source, 87) as db:
+    with chachanotes_db_at_version(source, source_version) as db:
         _, owner_id, _, policy_id, _ = _root_graph(db, repository)
         child = _child(db, repository, owner_id, "migration-turn")
         with db.transaction(immediate=True) as cursor:
@@ -415,7 +420,7 @@ def test_populated_native_v87_child_history_reaches_exact_mobile_v88(tmp_path, r
                 )
             }
     original = source.read_bytes()
-    candidate = tmp_path / "mobile-child-v88.sqlite"
+    candidate = tmp_path / "mobile-child-v89.sqlite"
     copy_private_sqlite("recovery.core.chachanotes", source, candidate)
     owner = next(
         item for item in core_adapters() if item.owner_id == "db.chachanotes.primary"
@@ -428,10 +433,16 @@ def test_populated_native_v87_child_history_reaches_exact_mobile_v88(tmp_path, r
         assert validate_candidate(owner, candidate, Event(), migrate=True) == ()
     with closing(sqlite3.connect(candidate)) as raw:
         assert raw.execute("SELECT version FROM db_schema_version").fetchall() == [
-            (88,)
+            (89,)
         ]
         for table, rows in before.items():
             assert raw.execute("SELECT * FROM " + table).fetchall() == rows
+        locators = dict(
+            raw.execute("SELECT name, tbl_name FROM sqlite_schema WHERE type='index'")
+        )
+        assert {key: locators.get(key) for key in CHACHANOTES_V88_LOCATOR_INDEXES} == (
+            CHACHANOTES_V88_LOCATOR_INDEXES
+        )
         assert raw.execute(
             "SELECT count(*) FROM mobile_consolidation_batches"
         ).fetchone() == (0,)
