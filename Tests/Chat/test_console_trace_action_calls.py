@@ -975,6 +975,44 @@ async def test_after_a_never_sent_call_the_next_message_is_sent(
         _assert_traced_as_sent(app, every_request=False)
 
 
+def test_the_kept_reply_copy_names_a_regenerate_s_earlier_reply():
+    from tldw_chatbook.Chat.console_action_capture import (
+        TRACE_REFUSED_COPY,
+        kept_reply_copy,
+    )
+
+    assert kept_reply_copy("edit") == kept_reply_copy("continue") == TRACE_REFUSED_COPY
+    assert kept_reply_copy("regenerate") == (
+        "Trace capture could not be saved, so the regenerated reply stopped. "
+        "The earlier reply is shown."
+    )
+    assert "[" not in kept_reply_copy("regenerate")
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
+async def test_an_undone_action_puts_previews_back_in_their_order(
+    tmp_path, monkeypatch
+):
+    """The citation-repair previews an undone Regenerate cleared go back in
+    the order they were in, so the eight-entry cache evicts as before."""
+    async with _console(tmp_path, monkeypatch) as app:
+        controller = app.controller
+        await _send(app, "Hello")
+        older = _last(app, "assistant").id
+        await _send(app, "And now?")
+        replaced = _last(app, "assistant").id
+        controller._remember_original_attempt(older, "older")
+        controller._remember_original_attempt(replaced, "replaced")
+        controller._remember_original_attempt("unrelated", "newest")
+        order = list(controller._original_attempts)
+        _refuse_next_reservation(monkeypatch)
+
+        result = await _act(app, "regenerate")
+
+        assert not result.accepted
+        assert list(controller._original_attempts) == order
+
+
 @pytest.mark.usefixtures("shut_down_console_controllers")
 @pytest.mark.parametrize("action", ACTIONS)
 async def test_a_note_the_undo_cannot_remove_leaves_the_action_undone(
@@ -1026,7 +1064,7 @@ async def test_a_refusal_whose_reservation_state_is_unknown_keeps_the_reply(
     fails (the reserved call is left to startup recovery, as for a canceled
     pause whose reservation is unknown); nothing was sent, so a one-time
     choice stays armed."""
-    from tldw_chatbook.Chat.console_action_capture import TRACE_REFUSED_COPY
+    from tldw_chatbook.Chat.console_action_capture import kept_reply_copy
     from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
 
     async with _console(tmp_path, monkeypatch) as app:
@@ -1046,7 +1084,10 @@ async def test_a_refusal_whose_reservation_state_is_unknown_keeps_the_reply(
         result = await _act(app, action)
 
         assert len(app.sent) == sent
-        assert result.visible_copy == TRACE_REFUSED_COPY
+        # A kept Regenerate shows its earlier reply again; its copy says so.
+        assert result.visible_copy == _last(app, "system").content == (
+            kept_reply_copy(action)
+        )
         assert _transcript(app) != before
         assert _calls(app)[-1][1] == "reserved"
         assert _next_capture(app) is True
@@ -1095,7 +1136,7 @@ async def test_an_undo_whose_write_fails_still_settles_the_run(
     the next message."""
     import sqlite3
 
-    from tldw_chatbook.Chat.console_action_capture import TRACE_REFUSED_COPY
+    from tldw_chatbook.Chat.console_action_capture import kept_reply_copy
 
     async with _console(tmp_path, monkeypatch, plain_path=plain_path) as app:
         await _send(app, "Hello")
@@ -1130,7 +1171,10 @@ async def test_an_undo_whose_write_fails_still_settles_the_run(
 
         monkeypatch.setattr(app.controller, "_stream_assistant_response", stream)
         monkeypatch.setattr(app.store, name, original)
-        assert result.visible_copy == TRACE_REFUSED_COPY
+        # A kept Regenerate shows its earlier reply again; its copy says so.
+        assert result.visible_copy == _last(app, "system").content == (
+            kept_reply_copy(action)
+        )
         assert app.controller.run_state.status.value == "failed"
         assert _next_capture(app) is True
         if action != "regenerate":  # a failed Regenerate restores its original
@@ -1167,7 +1211,7 @@ async def test_a_refusal_after_the_run_dispatched_keeps_the_reply(
         _NATIVE_TOOL_CALL,
     )
     from tldw_chatbook.Chat import console_trace_service
-    from tldw_chatbook.Chat.console_action_capture import TRACE_REFUSED_COPY
+    from tldw_chatbook.Chat.console_action_capture import kept_reply_copy
 
     replies = []
     async with _console(
@@ -1199,8 +1243,11 @@ async def test_a_refusal_after_the_run_dispatched_keeps_the_reply(
         result = await _act(app, action)
 
         assert len(app.sent) == sent + 1
-        assert result.visible_copy == TRACE_REFUSED_COPY
-        assert "not sent" not in TRACE_REFUSED_COPY
+        # A kept Regenerate shows its earlier reply again; its copy says so.
+        assert result.visible_copy == _last(app, "system").content == (
+            kept_reply_copy(action)
+        )
+        assert "not sent" not in kept_reply_copy(action)
         assert _transcript(app) != before
         if where == "binding":
             assert _calls(app)[-1][:2] == (None, "not_dispatched")

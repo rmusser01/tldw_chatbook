@@ -35,6 +35,11 @@ TEMPORARY_CAPTURE_COPY = (
 #: The kept reply's failure copy when a call of its run could not be traced;
 #: an earlier call of the run may have been sent.
 TRACE_REFUSED_COPY = "Trace capture could not be saved, so this reply stopped."
+#: The same for a Regenerate, whose earlier reply is back on the branch.
+REGENERATE_REFUSED_COPY = (
+    "Trace capture could not be saved, so the regenerated reply stopped. "
+    "The earlier reply is shown."
+)
 #: Why an action the trace refused before dispatch was undone (owner
 #: decision 2026-11-26).
 ACTION_NOT_SENT_COPY = (
@@ -271,7 +276,7 @@ async def stream_action(
     Returns:
         The stream's result. When the trace refuses the action before
         anything is sent, the action is undone (:func:`action_dropped`); a
-        reply that cannot be undone fails with :data:`TRACE_REFUSED_COPY`.
+        reply that cannot be undone fails with :func:`kept_reply_copy`.
         A mix-in composition failure is blocked with
         :data:`MIXIN_UNAVAILABLE_COPY`.
     """
@@ -298,6 +303,7 @@ async def stream_action(
     assistant_id = stream["assistant_message_id"]
     # An Edit & resend also created its edited message.
     root_id = user_id if stream["route"] is ConsoleRequestRoute.EDIT else assistant_id
+    kept_copy = kept_reply_copy(stream["route"])
     undo = _Undo(
         root_id=root_id,
         previous_leaf_id=previous_leaf_id,
@@ -313,6 +319,7 @@ async def stream_action(
         turn_id=controller.store.get_message(user_id).persisted_message_id,
         calls_before=None,
         copy=EDIT_NOT_SENT_COPY if root_id == user_id else ACTION_NOT_SENT_COPY,
+        kept_copy=kept_copy,
     )
     undo = replace(undo, calls_before=_turn_calls(controller, undo))
     try:
@@ -363,7 +370,7 @@ async def stream_action(
     except TraceCallPersistenceError as exc:
         if _dispatch_may_have_started(exc):
             _use_up_next_send_choice(controller, session_id, snapshot)
-            return _fail_unsent(controller, session_id, assistant_id)
+            return _fail_unsent(controller, session_id, assistant_id, kept_copy)
         return _refused(controller, session_id, snapshot, assistant_id, undo, exc)
     except BaseException:
         _use_up_next_send_choice(controller, session_id, snapshot)
@@ -384,6 +391,7 @@ class _Undo:
     #: The turn's trace calls before the action; None if unreadable.
     calls_before: frozenset[str] | None
     copy: str
+    kept_copy: str
 
 
 #: The turn's calls, through the owner (``idx_console_trace_calls_owner_order``).
@@ -492,7 +500,7 @@ def _refused(
     if not settled or dispatched or not _holds_nothing(controller, assistant_id):
         if dispatched:  # a call of the turn reached the provider
             _use_up_next_send_choice(controller, session_id, snapshot)
-        return _fail_unsent(controller, session_id, assistant_id)
+        return _fail_unsent(controller, session_id, assistant_id, undo.kept_copy)
     try:
         # A pending reply cannot be deleted; it never streamed.
         controller.store.mark_message_failed(assistant_id)
@@ -507,7 +515,7 @@ def _refused(
             controller.store.set_active_leaf(session_id, assistant_id)
         except Exception:  # noqa: BLE001 -- fail it where it is
             pass
-        return _fail_unsent(controller, session_id, assistant_id)
+        return _fail_unsent(controller, session_id, assistant_id, undo.kept_copy)
     for note_id in undo.note_ids[:1]:  # each note hangs off the one before
         try:
             controller.store.delete_message(note_id)
@@ -525,10 +533,12 @@ def _refused(
 
 def take_original_attempts(
     controller: ConsoleChatController, message_ids: Iterable[str]
-) -> tuple[tuple[str, str], ...]:
+) -> tuple[tuple[tuple[str, str], ...], tuple[str, ...]]:
     """Clear the citation-repair previews of the messages an action
-    replaces, as before it streams, and return them for an undo."""
+    replaces, as before it streams, and return them, with the cache's order,
+    for an undo."""
     message_ids = tuple(message_ids)
+    order = tuple(controller._original_attempts)
     taken = tuple(
         (message_id, body)
         for message_id in message_ids
@@ -536,15 +546,22 @@ def take_original_attempts(
     )
     for message_id in message_ids:
         controller.clear_original_attempt(message_id)
-    return taken
+    return taken, order
 
 
 def restore_original_attempts(
-    controller: ConsoleChatController, taken: tuple[tuple[str, str], ...]
+    controller: ConsoleChatController,
+    taken: tuple[tuple[tuple[str, str], ...], tuple[str, ...]],
 ) -> None:
-    """Put back the previews an undone action cleared."""
-    for message_id, body in taken:
+    """Put back the previews an undone action cleared, in their order."""
+    entries, order = taken
+    for message_id, body in entries:
         controller._remember_original_attempt(message_id, body)
+    rank = {message_id: index for index, message_id in enumerate(order)}
+    for message_id in sorted(
+        controller._original_attempts, key=lambda key: rank.get(key, len(rank))
+    ):
+        controller._original_attempts.move_to_end(message_id)
 
 
 def action_dropped(result: ConsoleSubmitResult | None) -> bool:
@@ -560,8 +577,20 @@ def action_dropped(result: ConsoleSubmitResult | None) -> bool:
     )
 
 
+def kept_reply_copy(route: ConsoleRequestRoute | str) -> str:
+    """The failure copy of an action's kept reply."""
+    return (
+        REGENERATE_REFUSED_COPY
+        if getattr(route, "value", route) == ConsoleRequestRoute.REGENERATE.value
+        else TRACE_REFUSED_COPY
+    )
+
+
 def _fail_unsent(
-    controller: ConsoleChatController, session_id: str, assistant_id: str
+    controller: ConsoleChatController,
+    session_id: str,
+    assistant_id: str,
+    copy: str = TRACE_REFUSED_COPY,
 ) -> ConsoleSubmitResult:
     """Keep and fail the reply of an action the trace refused."""
     from loguru import logger
@@ -582,24 +611,26 @@ def _fail_unsent(
     except Exception as error:  # noqa: BLE001
         logger.bind(error_type=type(error).__name__).warning("action_reply_not_failed")
     try:
-        controller._append_failure_system_row(session_id, TRACE_REFUSED_COPY)
+        controller._append_failure_system_row(session_id, copy)
     except Exception as error:  # noqa: BLE001
         logger.bind(error_type=type(error).__name__).warning("action_reply_not_failed")
     controller._set_run_state(
-        ConsoleRunState(ConsoleRunStatus.FAILED, TRACE_REFUSED_COPY),
+        ConsoleRunState(ConsoleRunStatus.FAILED, copy),
         session_id=session_id,
     )
-    return ConsoleSubmitResult(True, False, TRACE_REFUSED_COPY)
+    return ConsoleSubmitResult(True, False, copy)
 
 
 __all__ = [
     "ACTION_NOT_SENT_COPY",
     "EDIT_NOT_SENT_COPY",
     "MIXIN_UNAVAILABLE_COPY",
+    "REGENERATE_REFUSED_COPY",
     "TEMPORARY_CAPTURE_COPY",
     "TRACE_REFUSED_COPY",
     "action_capture_refusal",
     "action_dropped",
+    "kept_reply_copy",
     "restore_original_attempts",
     "take_original_attempts",
     "continues_earlier_message",
