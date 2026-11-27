@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  Select a note to edit it here.                   │
+│   a  │ Library notes · Updating notes…                        │  o                                                   │
+│   v  │ Notes (3)                                              │  t                                                   │
+│      │ These notes live in the Library's own database — for   │  e                                                   │
+│      │ notes that live in a folder on disk, switch to Folder  │  s                                                   │
+│      │ files. To copy or keep a folder synced, choose Add     │                                                      │
+│      │ from files.                                            │                                                      │
+│      │                                                        │                                                      │
+│      │ Filter                                                 │                                                      │
+│ ---> │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                      │
+│      │ ▊ Filter notes… (Enter)                              ▎ │                                                      │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                      │
+│      │                                                        │                                                      │
+│      │    ○ New     ○ Sort: Newest     ○ Select               │<---                                                  │
+│      │    View import     ○ Export                            │                                                      │
+│      │ Folders & placement                                    │                                                      │
+│      │    New folder     ○ Add to folder     ○ Move note      │                                                      │
+│      │    ○ Remove placement                                  │                                                      │
+│ ---> │ Note actions unavailable — select a note in the list   │                                                      │
+│      │                                                        │                                                      │
+│      │                                                        │                                                      │
+│      │  ▸ Agent_Lessons                                       │                                                      │
+│      │  ▾ Unfiled                                             │                                                      │
+│      │    Trip packing · 3m                                   │                                                      │
+│      │    Kitchen inventory · 3m                              │                                                      │
+│      │    Reading list · 3m                                   │                                                      │
+│      │   Recently deleted (25)                                │                                                      │
+│      └────────────────────────────────────────────────────────┘                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  typing in field | esc focus rail | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

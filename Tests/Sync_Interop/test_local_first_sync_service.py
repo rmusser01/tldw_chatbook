@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from tldw_profile_core import (
@@ -2907,3 +2908,237 @@ async def test_local_first_sync_once_requires_profile_device_dataset_and_dataset
         )
 
     assert server.calls == []
+
+
+# -- a purged note is never pushed (TASK-34000.29, final review C-1) ----------
+
+_SCOPE = {
+    "server_profile_id": "server-a",
+    "authenticated_principal_id": "user-a",
+    "workspace_scope": "workspace-1",
+}
+
+
+class _PurgedNotes:
+    """A real Notes database and scope service; three notes, one purged.
+
+    ``live`` is live, ``trash`` sits in Recently deleted, and ``gone`` was
+    deleted for good through ``NotesScopeService.purge_note`` with the
+    purge-time outbox discard FORCED TO RAISE, so the outbox still holds
+    its queued upsert when the sync runs -- the window C-1 names.
+    """
+
+    def __init__(self, tmp_path: Path, repo: SyncStateRepository, monkeypatch) -> None:
+        from Tests.Notes.test_notes_scope_service_purge import (
+            _Profile,
+            _Runtime,
+            _purge,
+        )
+        from tldw_chatbook.RAG_Search import ingestion_indexing
+
+        monkeypatch.setattr(
+            ingestion_indexing, "remove_purged_note_projection", lambda note_id: 1
+        )
+        self.profile = _Profile(tmp_path)
+        self.db = self.profile.db
+        self.live = self.profile.live_id
+        self.gone = self.profile.note_id
+        self.trash = self.db.add_note("Trash note", "kept for now")
+        self.db.soft_delete_note(
+            self.trash, self.db.get_note_by_id(self.trash)["version"]
+        )
+        self._runtime = _Runtime(False)
+        self._purge = _purge
+        self.profile.service.sync_v2_notes_producer = SimpleNamespace(
+            state_repository=repo
+        )
+
+    async def purge_with_a_failing_discard(self, repo: SyncStateRepository) -> None:
+        def failing_discard(note_id: str) -> int:
+            raise RuntimeError("outbox locked")
+
+        with pytest.MonkeyPatch.context() as held:
+            held.setattr(repo, "discard_sync_v2_note_history", failing_discard)
+            assert await self._purge(self.profile, self._runtime) is True
+        assert self.db.get_note_by_id(self.gone) is None
+
+
+def _purge_pins_seed(tmp_path, monkeypatch):
+    """The outbox: upserts for all three notes (both Notes domains for the
+    purged one), deletes for the two deleted ones; the purge after seeding."""
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
+    repo = _repo_with_profile(
+        tmp_path, capabilities={"supported_domains": ["notes", "notes.note"]}
+    )
+    notes = _PurgedNotes(tmp_path, repo, monkeypatch)
+    envelopes = {
+        "live upsert": builder.build_note_upsert(
+            note_id=notes.live, title="Live note", body="still here"
+        ),
+        "trash upsert": builder.build_note_upsert(
+            note_id=notes.trash, title="Trash note", body="kept for now"
+        ),
+        "trash delete": builder.build_note_delete(note_id=notes.trash),
+        "gone upsert": builder.build_note_upsert(
+            note_id=notes.gone, title="Gone note", body="secret body"
+        ),
+        "gone note.note upsert": builder.build_notes_note_upsert(
+            note_id=notes.gone, title="Gone note", content="secret body"
+        ),
+        "gone delete": builder.build_note_delete(note_id=notes.gone),
+    }
+    for envelope in envelopes.values():
+        repo.enqueue_sync_v2_outbox_envelope(
+            **_SCOPE, dataset_id="dataset-1", envelope=envelope
+        )
+    return dataset_key, builder, repo, notes, envelopes
+
+
+def _outbox_rows(repo: SyncStateRepository) -> set[tuple[str, str, str]]:
+    return {
+        (row["envelope"]["domain"], row["envelope"]["object_id"], row["envelope"]["operation"])
+        for row in repo.list_sync_v2_outbox_entries(**_SCOPE, dataset_id="dataset-1")
+    }
+
+
+def _organization_service_over(db: CharactersRAGDB) -> SimpleNamespace:
+    """The organization service's surface this cycle touches, over ``db``."""
+    return SimpleNamespace(
+        notes_repository=SimpleNamespace(db=db),
+        finalize_pending_note_organization_receipts=lambda **kwargs: None,
+        drain_pending_note_intents=lambda **kwargs: None,
+        drain_pending_intents=lambda **kwargs: None,
+        reconcile_acknowledgements=lambda **kwargs: None,
+    )
+
+
+@pytest.mark.parametrize("organization_service", ["present", "absent"])
+@pytest.mark.bootstrap_profile
+async def test_sync_once_never_pushes_a_purged_notes_queued_upsert(
+    tmp_path, monkeypatch, organization_service
+) -> None:
+    """C-1: after Delete forever, a queued upsert is skipped and healed.
+
+    The purge-time discard raised, so the outbox still holds the purged
+    note's title and text in BOTH Notes domains. The push carries neither;
+    the live note's upsert, the soft-deleted note's upsert and delete, and
+    the purged note's own delete still go out; and the skipped upserts are
+    gone from the outbox afterwards (healed through
+    ``discard_sync_v2_note_history``, so they are not retried forever).
+    RED at 29d2272b95 in both arms: the organization-service filter asks
+    ``is_note_dispatchable`` (receipts, not existence) and only for the
+    ``notes`` domain; without the service nothing is filtered at all.
+    """
+    dataset_key, _builder, repo, notes, envelopes = _purge_pins_seed(
+        tmp_path, monkeypatch
+    )
+    await notes.purge_with_a_failing_discard(repo)
+    assert ("notes", notes.gone, "upsert") in _outbox_rows(repo), (
+        "the forced discard failure should have left the upsert queued"
+    )
+    server = FakeLocalFirstServer()
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": dataset_key},
+        notes_organization_sync_service=(
+            _organization_service_over(notes.db)
+            if organization_service == "present"
+            else None
+        ),
+        note_exists=notes.db.note_ids_present,
+    )
+
+    result = await service.sync_once(**_SCOPE, domains=["notes", "notes.note"])
+
+    pushed = {envelope["client_envelope_id"] for envelope in server.calls[0][3]}
+    expected = {
+        envelopes[name].client_envelope_id
+        for name in ("live upsert", "trash upsert", "trash delete", "gone delete")
+    }
+    assert pushed == expected, sorted(pushed ^ expected)
+    assert result["outbox_drained"] == 4
+    assert _outbox_rows(repo) == {
+        ("notes", notes.live, "upsert"),
+        ("notes", notes.trash, "upsert"),
+        ("notes", notes.trash, "delete"),
+        ("notes", notes.gone, "delete"),
+    }
+
+
+@pytest.mark.bootstrap_profile
+async def test_sync_once_never_pushes_a_purged_notes_unsaved_upsert(
+    tmp_path, monkeypatch
+) -> None:
+    """C-1, the second site: an ``outgoing_envelopes`` upsert for a purged
+    note is skipped (it has no outbox row to heal); a live one goes."""
+    dataset_key, builder, repo, notes, _envelopes = _purge_pins_seed(
+        tmp_path, monkeypatch
+    )
+    await notes.purge_with_a_failing_discard(repo)
+    server = FakeLocalFirstServer()
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": dataset_key},
+        note_exists=notes.db.note_ids_present,
+    )
+    gone_again = builder.build_notes_note_upsert(
+        note_id=notes.gone, title="Gone note", content="secret body v2"
+    )
+    live_again = builder.build_notes_note_upsert(
+        note_id=notes.live, title="Live note", content="still here v2"
+    )
+
+    await service.sync_once(
+        **_SCOPE,
+        domains=["notes", "notes.note"],
+        outgoing_envelopes=[gone_again, live_again],
+    )
+
+    pushed = {envelope["client_envelope_id"] for envelope in server.calls[0][3]}
+    assert live_again.client_envelope_id in pushed
+    assert gone_again.client_envelope_id not in pushed
+    assert not any(
+        envelope["object_id"] == notes.gone and envelope["operation"] == "upsert"
+        for envelope in server.calls[0][3]
+    )
+
+
+@pytest.mark.bootstrap_profile
+async def test_sync_once_holds_note_upserts_back_when_the_notes_lookup_fails(
+    tmp_path, monkeypatch
+) -> None:
+    """A lookup that raises fails closed: no note upsert leaves the device
+    this cycle, nothing is healed (the rows wait), and the deletes go."""
+    dataset_key, _builder, repo, notes, envelopes = _purge_pins_seed(
+        tmp_path, monkeypatch
+    )
+    await notes.purge_with_a_failing_discard(repo)
+    before = _outbox_rows(repo)
+
+    def broken_lookup(note_ids):
+        raise RuntimeError("database is locked")
+
+    server = FakeLocalFirstServer()
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": dataset_key},
+        note_exists=broken_lookup,
+    )
+
+    await service.sync_once(**_SCOPE, domains=["notes", "notes.note"])
+
+    pushed = {envelope["client_envelope_id"] for envelope in server.calls[0][3]}
+    assert pushed == {
+        envelopes["trash delete"].client_envelope_id,
+        envelopes["gone delete"].client_envelope_id,
+    }
+    assert _outbox_rows(repo) == before

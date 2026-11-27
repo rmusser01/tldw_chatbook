@@ -99,7 +99,11 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-19: re-measured after rebasing onto dev a6df4d8d48 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 1571 -> 1564.
     # 2026-11-20: re-measured after rebasing onto dev d85e90bc9e (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 1564 -> 1568.
     "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1568,
-    "tldw_chatbook/UI/Library_Modules/canvas_sync.py": 1314,
+    # 2026-11-05, rebased onto dev 29592ecc9b: 1314 -> 1330 (polish-1b's
+    # own +16; same owner decision: expand limits, don't contort code).
+    # 2026-11-06, rebased onto dev 2684e5453f: 1314 -> 1330 (polish-1b's
+    # own +16; same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/UI/Library_Modules/canvas_sync.py": 1330,
     "tldw_chatbook/Notes/notes_sync_startup.py": 34,
     "tldw_chatbook/UI/Console_Modules/session_prompt_seed.py": 109,
     "tldw_chatbook/Widgets/Console/console_selection_geometry.py": 52,
@@ -1061,7 +1065,33 @@ _BUDGETS: dict[str, int] = {
     # store declaration and the method; measured, wc -l).
     # 2026-11-24, TASK-42517: 22566 -> 22573 (+7), the v87->v88 locator-index
     # step (through the shared DB/chachanotes_sql_steps.py) and its dispatch row.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22573,
+    # 2026-11-05, rebased onto dev 29592ecc9b: 25854 -> 26086 (polish-1b's
+    # own +232; same owner decision: expand limits, don't contort code).
+    # 2026-11-06, rebased onto dev 2684e5453f: 25870 -> 26102 (polish-1b's
+    # own +232; same owner decision: expand limits, don't contort code).
+    # 2026-11-06, PR #3423 Qodo fixes (same owner decision): 26102 -> 26150
+    # (measured): +12 the purge's and note-id lookups' error records name
+    # the note or count the ids (Qodo 1), +36 a purge cancels the note's
+    # pending Sync v2 link intents (Qodo 2).
+    # 2026-11-07, PR #3423 re-review 3 fixes (same owner decision: expand
+    # limits, don't contort code): 26150 -> 26171 (measured): +21 a purge
+    # keeps the note's pending unlink of a link the server holds (I-1, m-1);
+    # the log-key nit is line-neutral.
+    # 2026-11-07, PR #3423 re-review 4 fixes (same owner decision: expand
+    # limits, don't contort code): 26171 -> 26181 (measured): +10 a purge
+    # keeps a pending unlink only when it is the link's latest intent and,
+    # with no predecessor, has a bound base; a copied one is kept (I-A, m-A).
+    # 2026-11-12, rebased onto dev 26b2e677dd: 22552 -> 22863 (polish-1b's
+    # own +311; same owner decision: expand limits, don't contort code).
+    # 2026-11-19, rebased onto dev a6df4d8d48: 22544 -> 22855 (polish-1b's
+    # own +311; same owner decision: expand limits, don't contort code).
+    # 2026-11-24, rebased onto dev 9fa2bf1b1d: 22855 -> 22877 (dev measures
+    # 22566; polish-1b's own +311; same owner decision: expand limits,
+    # don't contort code).
+    # 2026-11-26, rebased onto dev 6e41919880: 22877 -> 22884 (dev measures
+    # 22573 after TASK-42517; polish-1b's own +311; same owner decision:
+    # expand limits, don't contort code).
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22884,
     # TASK-39147: the rebased report reader and workflow migrations cross 4000.
     # 2026-11-12, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +2, the store's @declare_store backup-participant declaration and import.
@@ -1228,7 +1258,11 @@ _BUDGETS: dict[str, int] = {
     # TASK-38982, 2026-11-06 (same waiver): 9835 -> 9873 (+38). ‹ Files keeps
     # focus, the narrow navigator offers Manage, and a failed refresh shows
     # on the authority line.
-    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9873,
+    # 2026-11-05, rebased onto dev 29592ecc9b: 9674 -> 9714 (polish-1b's
+    # own +40; same owner decision: expand limits, don't contort code).
+    # 2026-11-06, rebased onto dev 2684e5453f: 9873 -> 9913 (polish-1b's
+    # own +40; same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9913,
     # 2026-11-02: +3 shared store-error import (TASK-36949.5).
     # TASK-38714 re-review, 2026-11-05: 9429 -> 9436 (+7). A failed
     # connection build closes the connection it opened instead of leaking it.
@@ -1566,7 +1600,15 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-25: re-measured after rebasing onto dev 692acb43dc, whose
     # #3763 removed one line here: 5,239 -> 5,238, exact.
     "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5238,
-    "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
+    # 2026-11-05, rebased onto dev 29592ecc9b: 5167 -> 5220 (polish-1b's
+    # own +53; same owner decision: expand limits, don't contort code).
+    # 2026-11-06, rebased onto dev 2684e5453f: 5167 -> 5220 (polish-1b's
+    # own +53; same owner decision: expand limits, don't contort code).
+    # 2026-11-12, rebased onto dev 4b90eb860b: 5167 -> 5220 (polish-1b's
+    # own +53; same owner decision: expand limits, don't contort code).
+    # 2026-11-19, rebased onto dev a6df4d8d48: 5167 -> 5220 (polish-1b's
+    # own +53; same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/Notes/notes_sync_runtime.py": 5220,
     "tldw_chatbook/Personal_Context/repository.py": 4997,
     # owner decision 2026-11-06 (expand limits, never contort code): TASK-39040
     # fix rounds 2 and 3, 4968 -> 5138 (+170) -- a clip handed to the default
@@ -1602,7 +1644,14 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-31 PR3259: exact integrated measurement under the user size-limit waiver.
     # TASK-38981 re-review 3, 2026-11-06 (owner size waiver): 4738 -> 4742
     # (+4). The list's resize reshape keeps the user's focused control.
-    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4742,
+    # 2026-11-05, rebased onto dev 29592ecc9b: 4738 -> 5313 (polish-1b's
+    # own +575; same owner decision: expand limits, don't contort code).
+    # 2026-11-06, rebased onto dev 2684e5453f: 4742 -> 5317 (polish-1b's
+    # own +575; same owner decision: expand limits, don't contort code).
+    # 2026-11-21, PR #3423: 5317 -> 5322 (+5). TASK-34000.29 N-14's list-mode
+    # refocus yields to TASK-41128's armed list entry. Owner decision: expand
+    # limits, don't contort code.
+    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 5322,
     "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
     # 2026-11-03 TASK-36945.3: +9, [rag.service] constants read when used.
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):

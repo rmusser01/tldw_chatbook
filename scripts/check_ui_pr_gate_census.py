@@ -1341,6 +1341,106 @@ MINIMUM_FILES = 2766
 MINIMUM_FILES = 2769
 MINIMUM_FILES = 2778
 MINIMUM_FILES = 2785
+
+# 2026-10-26, TASK-34000.29 (polish-1b batch), appended at the tail, so no
+# existing entry changes shard:
+# - task 6: Tests/UI/test_library_note_editor_feedback_is_honest.py (four
+#   160x45 boots, ~26 s): 916 -> 917.
+# - task 6 fix round 1: Tests/UI/test_library_notes_focus_capture_and_export_
+#   outcomes.py (two 160x45 boots, ~27 s): 917 -> 918.
+# - task 7: Tests/UI/test_library_notes_select_mode_counts_and_bulk.py (four
+#   real-Library boots, ~27 s) and its `_extended` sibling (three boots,
+#   ~25 s alone, so it is gated too -- the task 5 R2-1 precedent): 918 -> 920.
+# - task 7 fix round 1 (2026-10-27): Tests/UI/test_library_notes_deferred_
+#   visit_reload.py (one real-Library boot, ~6 s; review R0 M-1, ruling
+#   T7-f): 920 -> 921.
+# - task 8 (2026-10-27, part 8a, ruling T8-b): Tests/UI/test_library_notes_
+#   trash_pages_and_purges.py (one real-Library boot, ~9 s alone): 921 -> 922.
+# - task 8 fix round 1 (2026-10-27, ruling T8-g): Tests/UI/test_library_notes_
+#   riders_trash.py (boot-free and canvas-only pins, ~7 s alone, no plugin): 922 -> 923.
+# - task 9 (2026-10-27, TASK-34000.40 N-33, ruling T9-b): Tests/UI/test_library_
+#   ctrl_s_saves_in_every_editor.py (four real-app boots: notes x2, prompts,
+#   Folder files, ~24 s alone), its `_media` sibling (one production-CSS boot,
+#   ~6 s) and its `_skills` sibling (one real-app boot, ~7 s): 923 -> 926.
+# - task 9 fix round 1 (2026-10-27, review R0, rulings T9-g..j): the notes
+#   file kept its two notes boots (~20 s alone); its prompt and Folder files
+#   arms moved to Tests/UI/test_library_ctrl_s_saves_in_every_editor_extended.py
+#   (~14 s alone), plus Tests/UI/test_library_ctrl_s_chip_follows_save_state.py
+#   (two boots, ~15 s) and the boot-free Tests/UI/test_library_ctrl_s_
+#   refusals.py (~2 s), all timed alone with no plugin: 926 -> 929.
+# - task 10 (2026-10-29, TASK-34000.40 N-34, ruling T10-a): Tests/UI/test_library_
+#   notes_import_escape_keeps_running.py (two production-CSS Library boots over
+#   a real import, ~9 s alone at load ~6 and ~24 s at load ~28, no plugin): 929 -> 930.
+# - task 8b (2026-10-29, TASK-34000.29 N-29, ruling T8b-f): Tests/UI/test_library_
+#   notes_trash_pages_and_purges_extended.py (Delete forever: two production-CSS
+#   Library boots over a real ChaChaNotes database and a real lasting-sync store,
+#   ~19 s alone at load ~11, no plugin; its sibling was already ~33 s): 930 -> 931.
+# - task 8b fix round 1 (2026-10-29, review R0 I-2): Tests/UI/test_library_notes_
+#   trash_focused_row_purge.py (Delete forever on the focused row only: one
+#   production-CSS Library boot at 120x36 over a real ChaChaNotes database,
+#   ~5 s alone at load ~5, no plugin): 931 -> 932.
+# - polish-1b final fix wave (2026-10-29, final review I-2/I-3/m-3): Tests/UI/
+#   test_library_notes_trash_during_import.py (the Trash's reads under a running
+#   import and the one interlock release: one production-CSS Library boot at
+#   120x36 over a real ChaChaNotes database and the real import executor,
+#   ~9 s alone at load ~7, w1b plugin): 932 -> 933.
+# - polish-1b final fix wave (2026-10-29, parked T7 pin): Tests/UI/
+#   test_library_notes_entry_focus_read_through.py (the entry reconcile's
+#   detach window reads through to the captured control: one production-CSS
+#   Library boot, ~8 s alone at load ~13, w1b plugin): 933 -> 934.
+# - polish-1b final fix wave (2026-10-29, the 8a Pilot split): Tests/UI/test_
+#   library_notes_trash_pages_and_purges.py measured 30.26 s alone with its
+#   three boots under load, over the 30 s budget, so its slowest boot (the
+#   160x45 paging and Restore-clamp arm, 10.78 s) moved by name to Tests/UI/
+#   test_library_notes_trash_pages_reach_every_deleted_note.py. Alone at load
+#   ~10-12: the original ~20 s (two 100x30 boots), the sibling ~12 s, with
+#   and without the w1b plugin: 934 -> 935.
+# - polish-1b final fix wave (2026-10-29, the live I-2 check's find): Tests/UI/
+#   test_library_notes_trash_x_under_import_keeps_its_row.py (``x`` under a
+#   held import keeps focus on its row through the release: one production-CSS
+#   Library boot at 120x36 over a real ChaChaNotes database and the real import
+#   executor, ~10-12 s alone at load ~17, with and without the w1b plugin; kept
+#   out of its ~10 s sibling so neither nears the budget): 935 -> 936.
+# Rebased 2026-11-24 onto dev 9fa2bf1b1d (2766 entries, floor 2766): the
+# polish-1b entries above, then PR #3423's 3 review-fix pins, stay
+# appended at the tail, so no existing slot moves; the floor is the
+# measured entry count: 2766 + 23 = 2789.
+# - PR #3423 re-review N-1/N-2/N-3 (2026-11-06): Tests/UI/test_library_notes_
+#   bulk_keyword_per_note.py (per-note commits under a ready Sync v2 profile:
+#   three production-CSS Library boots over a real ChaChaNotes database),
+#   appended at the tail: 2789 -> 2790.
+# - PR #3423 nav-home fix round 3 (2026-11-22): Tests/UI/test_library_resume_
+#   focus_every_route.py (a Library resuming over nothing focused lands its
+#   entry or its own rail row, on every rail row the shell builds and the
+#   hub: production-CSS Library boots over a real ChaChaNotes database) is
+#   about 55-60 s whole, over the 30 s per-file budget, so its nine tests go
+#   in by node id at the tail (the route walk split four ways, about 7-10 s
+#   each): 2790 -> 2799.
+# - PR #3423 review r11n3 N3-1 (2026-11-22): that file's pin for a refused
+#   entry write (one Library boot, about 3 s) goes in by node id at the tail:
+#   2799 -> 2800.
+# - PR #3423 r11n4 load flake (2026-11-22): that file's pin for a focus a
+#   reset parked on a pane grip (one Library boot, about 3 s), at the tail:
+#   2800 -> 2801.
+# - PR #3423 r11n4 load flake (2026-11-22): that file's pin for an Artifacts
+#   page read landing in a shell being removed (one boot, about 3 s), at the
+#   tail: 2801 -> 2802.
+# - PR #3423 review r11n4 N4-1 (2026-11-22): that file's pin for the re-check
+#   staying on its own route (one Library boot, about 4 s), at the tail:
+#   2802 -> 2803.
+# - PR #3423 rebase 16 (2026-11-23): that file's pin for a Media list entry
+#   landing on its already-focused row (one Library boot, about 4 s), at the
+#   tail: 2803 -> 2804.
+# - PR #3423 rebase 21 load flake (2026-11-24): Tests/UI/test_library_notes_
+#   trash_landing_settles_after_layout.py (a Trash landing settles only once
+#   its control is laid out: one production-CSS Library boot at 100x30 over a
+#   real ChaChaNotes database, about 12-20 s alone, w1b plugin), at the tail:
+#   2804 -> 2805.
+# - PR #3423 rebase 25 (2026-11-26): re-based onto dev 434eb71f95, whose
+#   census holds 2785 entries: 2785 + 39 = 2824.
+MINIMUM_FILES = 2824
+
+
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 

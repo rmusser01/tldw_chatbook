@@ -24949,12 +24949,17 @@ async def _enter_task8_navigator_state(screen, pilot, state: str) -> None:
         ),
         (
             "selection",
+            # TASK-34000.29 (N-14) / .82: the strip holds five actions now
+            # (Actions… joined Export). "Done All 2 Clear Export Actions…"
+            # needs 57 cells and this pane has 48, so the bulk pair takes a
+            # second row -- the guide's narrow-pane rule, never a clip -- and
+            # the tree pays that one row (8 -> 7).
             {
                 "#library-notes-header": 1,
                 "#library-notes-filter-row": 1,
-                "#library-notes-selection-actions": 1,
+                "#library-notes-selection-actions": 2,
                 "#library-notes-selection-status": 1,
-                "#library-notes-list": 8,
+                "#library-notes-list": 7,
             },
             "#library-notes-select-toggle",
         ),
@@ -34861,17 +34866,23 @@ async def test_notes_entry_waits_for_rows_that_are_still_loading(
             release.set()
 
 
-def test_library_note_ctrl_s_is_unavailable_while_save_remains_explicit() -> None:
-    notes_ctrl_s_bindings = [
-        binding
+def test_library_ctrl_s_is_one_gated_editor_save_binding() -> None:
+    """TASK-34000.40 (N-33): one Ctrl+S for every Library editor.
+
+    Rewritten 2026-10-27 from ``test_library_note_ctrl_s_is_unavailable_while_
+    save_remains_explicit``, which pinned the opposite (Notes had no Ctrl+S,
+    the skill editor owned the key) before the owner ruled that Ctrl+S saves
+    in every editor (ADR-299 refinement 2026-10-03). The Notes save action
+    is now reached through the one dispatcher (AC#4: nothing unreachable).
+    """
+    ctrl_s = [
+        (binding[:2] if isinstance(binding, tuple) else (binding.key, binding.action))
         for binding in LibraryScreen.BINDINGS
-        if (
-            binding[:2] if isinstance(binding, tuple) else (binding.key, binding.action)
-        )
-        == ("ctrl+s", "library_notes_save")
+        if (binding[0] if isinstance(binding, tuple) else binding.key) == "ctrl+s"
     ]
 
-    assert notes_ctrl_s_bindings == []
+    assert ctrl_s == [("ctrl+s", "library_editor_save")]
+    assert callable(LibraryScreen.action_library_editor_save)
     assert callable(LibraryScreen.action_library_notes_save)
 
 

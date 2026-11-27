@@ -967,6 +967,89 @@ _SEMANTIC_RESULT = {
 }
 
 
+class _NoteLiveness:
+    """``NotesScopeService.live_local_note_ids``'s seam, scripted."""
+
+    def __init__(self, live: set[str] | None = None, error: Exception | None = None):
+        self.live = live if live is not None else set()
+        self.error = error
+        self.asked: list[tuple[list[str], str | None]] = []
+
+    async def live_local_note_ids(self, note_ids, *, user_id=None):
+        self.asked.append((list(note_ids), user_id))
+        if self.error is not None:
+            raise self.error
+        return set(self.live)
+
+
+def _rag_app_over(notes_service, monkeypatch):
+    """A rag-mode app whose shared runtime answers one note chunk."""
+    from tldw_chatbook.Library import library_local_rag_search_service as svc
+
+    monkeypatch.setattr(svc, "embeddings_rag_deps_installed", lambda: True)
+    return SimpleNamespace(
+        _rag_service=FakeRagService(results=[_SEMANTIC_RESULT]),
+        notes_scope_service=notes_service,
+        notes_user_id="tester",
+    )
+
+
+# TASK-34000.29 (review R0 I-1) and final review m-1: the liveness check.
+@pytest.mark.asyncio
+async def test_semantic_note_hits_are_kept_only_while_the_notes_database_says_live(
+    monkeypatch,
+):
+    """One batched lookup per page: a live note's hit stays; a note that is
+    deleted for good (or in Recently deleted) is dropped -- and that is a
+    plain result, with no route note."""
+    from tldw_chatbook.Library.library_rag_state import LIBRARY_RAG_ROUTE_NOTES_KEY
+
+    live_service = _NoteLiveness(live={"note-1"})
+    service = LibraryLocalRagSearchService(_rag_app_over(live_service, monkeypatch))
+    result = await service.search("credential", ("notes",), "rag", top_k=5)
+    assert [row["source_id"] for row in result["results"]] == ["note-1"]
+    assert live_service.asked == [(["note-1"], "tester")]
+    assert LIBRARY_RAG_ROUTE_NOTES_KEY not in (result.get("diagnostics") or {})
+
+    gone_service = _NoteLiveness(live=set())
+    service = LibraryLocalRagSearchService(_rag_app_over(gone_service, monkeypatch))
+    result = await service.search("credential", ("notes",), "rag", top_k=5)
+    assert result["results"] == []
+    assert LIBRARY_RAG_ROUTE_NOTES_KEY not in (result.get("diagnostics") or {})
+
+
+@pytest.mark.asyncio
+async def test_a_failed_liveness_lookup_hides_note_hits_and_says_so(monkeypatch):
+    """Final review m-1: when the notes database does not answer, every note
+    hit on the page is withheld (never shown on a guess) AND the outcome
+    carries the route note -- it never reads as a plain "no results".
+    Rendered: "Note results hidden: the notes database did not answer."
+    RED at 29d2272b95: the rows were dropped with only a log line."""
+    from tldw_chatbook.Library.library_rag_state import (
+        LIBRARY_RAG_ROUTE_NOTES_KEY,
+        _route_note_sentence,
+    )
+
+    broken = _NoteLiveness(error=RuntimeError("database is locked"))
+    service = LibraryLocalRagSearchService(_rag_app_over(broken, monkeypatch))
+
+    result = await service.search("credential", ("notes",), "rag", top_k=5)
+
+    assert result["results"] == []
+    notes = (result.get("diagnostics") or {}).get(LIBRARY_RAG_ROUTE_NOTES_KEY) or []
+    assert any("the notes database did not answer" in note for note in notes), result
+    # (The constant is read only after the behaviour is asserted, so the
+    # base arm fails on the missing disclosure, not on a missing name.)
+    from tldw_chatbook.Library.library_local_rag_search_service import (
+        ROUTE_NOTE_NOTE_HITS_UNVERIFIED,
+    )
+
+    assert ROUTE_NOTE_NOTE_HITS_UNVERIFIED in notes
+    assert _route_note_sentence(ROUTE_NOTE_NOTE_HITS_UNVERIFIED) == (
+        "Note results hidden: the notes database did not answer."
+    )
+
+
 # AC #1: rag mode with deps installed and no app._rag_service initializes the
 # runtime through the shared factory instead of returning the RAG-unavailable
 # recovery state, and caches it on the app for subsequent queries/gates.

@@ -27,6 +27,8 @@ from ...Library.library_shell_state import (
     LIBRARY_DELETE_SELECTED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
+    LIBRARY_NOTES_SELECT_ACTIONS_DISABLED_TOOLTIP,
+    LIBRARY_NOTES_SELECT_ACTIONS_TOOLTIP,
     LIBRARY_ANALYZE_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_ANALYZE_SELECTED_TOOLTIP,
     LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP,
@@ -471,6 +473,20 @@ def _apply_library_row_toggle(
         # compose time -- notes spells the compact label differently, so
         # the patcher must not hard-code it.
         _patch_library_disabled_marker_label(export_button)
+        if kind == "notes":
+            # TASK-34000.29 (N-14): Actions… is the second bulk action on the
+            # Notes strip and follows the same count, in place. By query, so
+            # a strip composed before it existed cannot raise.
+            for actions in screen.query("#library-notes-select-actions"):
+                if not isinstance(actions, Button):
+                    continue
+                actions.disabled = selection.count == 0
+                actions.tooltip = (
+                    LIBRARY_NOTES_SELECT_ACTIONS_DISABLED_TOOLTIP
+                    if actions.disabled
+                    else LIBRARY_NOTES_SELECT_ACTIONS_TOOLTIP
+                )
+                _patch_library_disabled_marker_label(actions)
         # task-2853: Media is the only canvas with a "Delete selected" bulk
         # action today (conversations/notes are out of this task's scope) --
         # flip it in place too, same reason/action tooltip pair as export.
@@ -1222,17 +1238,16 @@ def _sync_library_canvas(
                 return False
         return True
         # NOTE (task-15457 review): a footer re-derivation was added here and
-        # then REMOVED after probing. Both footer tiers that a targeted sync
-        # can flip -- the Notes tier (select mode / sort-strip visibility) and
-        # the shared choice-strip tier -- are already kept honest by dev's own
-        # mechanism: ``LibraryScreen.refresh`` calls
-        # ``_apply_library_notes_footer_context()`` on EVERY refresh, not only
-        # on ``recompose=True``, and every footer-flipping sync has a focus
-        # follow-up whose ``set_focus``/``scroll_visible`` triggers one.
-        # Verified by disabling both branches: the Notes select-mode and the
-        # media type-strip footers both stayed current. Keeping an
-        # unfalsifiable branch is worse than the coupling it guards, so it is
-        # gone; the coupling itself is recorded in the task file's residuals.
+        # then REMOVED after probing. The Notes tier (select mode / sort-strip
+        # visibility) and the shared choice-strip tier stay honest because
+        # ``LibraryScreen.refresh`` calls ``_apply_library_notes_footer_context()``
+        # on EVERY refresh and their syncs' focus follow-ups trigger one (verified
+        # by disabling both branches). Not every flip moves focus: the import's
+        # CHECKING chip did not (UI Fast Lane 30, 2026-11-22), so
+        # ``_publish_library_note_import_snapshot`` re-derives the footer itself.
+        # A state that flips the footer without a focus move must do the same at
+        # its own publish seam; an unfalsifiable branch here would not catch it.
+        # The coupling itself is recorded in the task file's residuals.
 
     except Exception:
         # TASK-32089 (phase C): the design record's second ruling was to NARROW

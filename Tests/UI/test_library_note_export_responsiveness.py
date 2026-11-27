@@ -306,12 +306,27 @@ async def test_note_export_late_collision_keeps_precious_file_until_answer(
                 button = "#confirm-button" if answer == "replace" else "#cancel-button"
                 prompt.query_one(button, Button).focus()
                 await pilot.pause()
+                kept = f"Note export cancelled. {destination.name} was left unchanged."
+
+                def cancelled() -> bool:
+                    # T6-b (TASK-34000.29 review M-6): a kept file is the user's
+                    # cancel -- token released, one toast, no status line to read.
+                    return (
+                        screen._notes_controller._library_notes_operation is None
+                        and _notice_messages(host).count(kept) == 1
+                    )
+
+                if answer == "cancel":
+                    assert not cancelled(), "the cancel settled before Enter"
                 await pilot.press("enter")
                 await _wait_for_condition(
                     pilot,
                     lambda: host.screen is screen
-                    and ("Export complete." if answer == "replace" else "cancelled")
-                    in _note_status(screen),
+                    and (
+                        "Export complete." in _note_status(screen)
+                        if answer == "replace"
+                        else cancelled()
+                    ),
                     message="collision answer did not settle Notes feedback",
                 )
             await host.workers.wait_for_complete()
