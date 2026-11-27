@@ -3492,6 +3492,21 @@ class ConsoleTraceRepository:
         ).fetchone()
         return None if row is None else TraceEventRecord(*row)
 
+    def get_latest_sent_call_boundary(
+        self, cursor: sqlite3.Cursor, segment_id: str, *, before_sequence: int | None = None
+    ) -> TraceEventRecord | None:
+        """Like :meth:`get_latest_call_boundary`, passing over a call settled
+        not dispatched before it bound any row (a canceled pause, a refused
+        action; ADR-337 amendment 2026-11-26): it ended no turn."""
+        row = cursor.execute(
+            self._event_select() + " WHERE segment_id = ? AND event_type = "
+            "'call_boundary' AND (? IS NULL OR sequence < ?) AND call_id NOT IN "
+            "(SELECT call_id FROM console_trace_calls WHERE state = 'not_dispatched'"
+            " AND surface_node_id IS NULL) ORDER BY sequence DESC LIMIT 1",
+            (segment_id, before_sequence, before_sequence),
+        ).fetchone()
+        return None if row is None else TraceEventRecord(*row)
+
     @staticmethod
     def _reconcile_call_reservation(
         expected: tuple[str, str, str, str, int, str, str],

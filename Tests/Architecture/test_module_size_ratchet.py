@@ -1547,7 +1547,10 @@ _BUDGETS: dict[str, int] = {
     # child's open calls never block the parent's turn.
     # 2026-11-18, TASK-41650: 4021 -> 4040 (+19), exact measurement. The
     # owner-requested Trace view read of spawned children's calls.
-    "tldw_chatbook/Chat/console_trace_repository.py": 4040,
+    # 2026-11-27, TASK-42560 review fix round: 4040 -> 4055 (+15), exact
+    # measurement. The latest call boundary that passes over a call settled
+    # not dispatched before it bound a row (ADR-337 amendment 2026-11-26).
+    "tldw_chatbook/Chat/console_trace_repository.py": 4055,
     # owner decision 2026-10-04 (expand limits), applied 2026-11-19 on the
     # rebase onto dev a6df4d8d48: TASK-34100.3 crosses 4000 at 4,069, exact
     # measurement (dev's 3,961 + 108). Each continuation-error exit names its

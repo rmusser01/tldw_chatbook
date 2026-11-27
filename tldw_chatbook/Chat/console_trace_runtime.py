@@ -857,7 +857,7 @@ class ConsoleTraceBoundaryFactory:
                     )
                     == current_revision_id
                 ):
-                    latest = self.repository.get_latest_call_boundary(
+                    latest = self.repository.get_latest_sent_call_boundary(
                         cursor, owner.root_segment_id
                     )
                     terminal = (

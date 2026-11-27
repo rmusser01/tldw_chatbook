@@ -949,6 +949,33 @@ async def test_a_refused_action_leaves_the_chat_as_it_was(
 
 
 @pytest.mark.usefixtures("shut_down_console_controllers")
+@pytest.mark.parametrize("plain_path", [False, True], ids=["agent", "plain_path"])
+@pytest.mark.parametrize("refused", [*ACTIONS, "send_then_cancel"])
+async def test_after_a_never_sent_call_the_next_message_is_sent(
+    tmp_path, monkeypatch, refused, plain_path
+):
+    """A call settled not dispatched before it bound a row (an action the
+    trace refused at binding, undone; or a send whose trace pause was
+    canceled) reached no provider and changed no surface, so it ends no
+    turn: the next message is sent and traced."""
+    async with _console(tmp_path, monkeypatch, plain_path=plain_path) as app:
+        await _send(app, "Hello")
+        await _send(app, "And now?")
+        _refuse_next_binding(monkeypatch)
+        if refused == "send_then_cancel":
+            await app.controller.submit_draft("Refused?", session_id=app.session.id)
+            preparation = app.controller.trace_call_recovery_preparation()
+            app.controller.cancel_library_preparation(preparation.preparation_id)
+        else:
+            assert not (await _act(app, refused)).accepted
+        assert _calls(app)[-1][:2] == (None, "not_dispatched")
+
+        await _send(app, "One more?")
+
+        _assert_traced_as_sent(app, every_request=False)
+
+
+@pytest.mark.usefixtures("shut_down_console_controllers")
 @pytest.mark.parametrize(
     ("write", "action", "plain_path"),
     [
