@@ -34,8 +34,9 @@ ACTIONS = ("edit", "regenerate", "continue")
 def _close_idle_handles(monkeypatch, request):
     """Close the handles each test's databases opened on other threads.
 
-    The lane runs this file under ``--storage-lease-guard`` (TASK-38986); as
-    in ``test_console_trace_slot_drop.py``.
+    The file runs last in the restore Console P0 step, without
+    ``--storage-lease-guard`` (no pause test follows it there); it still
+    closes its handles, as ``test_console_trace_slot_drop.py`` does.
     """
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.DB.store_kernel import SQLiteStoreKernel

@@ -1191,6 +1191,9 @@ jobs:
     # separate invocation. A fast file is gated whole; a slow file by the node
     # ids that pin the P0. The UI-census node ids stay in ui-fast-lane.
     # Tests/CI/test_console_p0_regression_gate.py pins where each one runs.
+    # One exception (TASK-42560, round 27): the restore step runs one
+    # bootstrap_profile file, the traced actions file, last in its single
+    # invocation, so no sandboxed target may follow it there.
     #
     # Historical combined budget: setup ~1 min (checkout 20 s, python 3 s, install 19 s
     # in run 38064483856) + sandboxed step ~3 min (6 private-profile app
