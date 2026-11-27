@@ -687,6 +687,15 @@ async def test_an_image_only_enter_never_takes_text_typed_after_it():
                 )
 
             console._hooks.dispatch = hook_dispatch
+            # TASK-40608: this test is about the ordinary dispatch, which the
+            # stub above stands in for. The received route takes an Enter it
+            # meets before the keys below, sends the inputs it snapshots there
+            # (the composer still held "hi": probed 2026-11-23) and never calls
+            # ``dispatch``. Which came first was a race: dev lost it in 2 of 8
+            # runs, a faster send in 8 of 8. A replaced registered adapter
+            # declines that route (ADR-356 rule 4) whichever comes first.
+            current_session = console._hooks._session
+            console._hooks._session = lambda: current_session()
             press(host, "enter", "\r")
             press(host, "h", "h")
             press(host, "i", "i")

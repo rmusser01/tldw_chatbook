@@ -77,6 +77,9 @@ class ConsoleArchiveRecoveryView:
         self._rendered_sets: set[str] = set()
         self._rendered_receipts: set[str] = set()
         self._receipt_actions: dict[str, RecoveryOperationSnapshot] = {}
+        # What the last complete pass left when it had nothing to show:
+        # (transcript, store, session id, root, surface, cleared card).
+        self._idle: tuple | None = None
 
     def runtime(self) -> ArchiveRecoveryRuntime:
         return self.screen._console_runtime().ensure_archive_recovery()
@@ -125,6 +128,60 @@ class ConsoleArchiveRecoveryView:
             )
         )
 
+    def _still_idle(self, transcript: Any) -> bool:
+        """Whether a pass now would find nothing to show and change no widget.
+
+        The Console's 0.2 s poll runs ``sync`` on every tick of every run. With
+        no recovery in the chat, a pass searched the whole transcript about
+        ten times and reset the hidden confirmation card's six controls, to
+        leave everything as it was: over a quarter of the tick (TASK-40608,
+        measured 2026-11-23). This is true only while the last complete pass
+        ended with nothing to show, its widgets are the ones still mounted,
+        and every input a pass reads still says "nothing": no presentation,
+        no receipt, no pending confirmation, no imported recovery text.
+        """
+        idle = self._idle
+        if idle is None:
+            return False
+        known_transcript, store, session_id, root, surface, card = idle
+        if (
+            known_transcript is not transcript
+            or self.screen._console_chat_store is not store
+            or store.active_session_id != session_id
+            or self._session_id != session_id
+            or self._rendered_sets
+            or self._rendered_receipts
+            or self._receipt_actions
+        ):
+            return False
+        if not (
+            root.is_mounted
+            and root.is_attached
+            and root.display
+            and surface.parent is root
+            and not surface.display
+            and len(surface.children) == 1
+            and surface.children[0] is card
+            and card.is_mounted
+            and card.confirmation is None
+            and card.controls_cleared
+            and not card.display
+        ):
+            return False
+        runtime = self.runtime()
+        if runtime is None:
+            return False
+        snapshot = runtime.coordinator.snapshot(session_id)
+        return not (
+            runtime.presentations(session_id)
+            or runtime.coordinator.receipts(session_id)
+            or (snapshot and snapshot.confirmation)
+            or any(
+                "result_set_id" in text and "result_ref" in text
+                for text in visible_message_texts(store, session_id)
+            )
+        )
+
     async def sync(self, *, prepare: bool = False) -> None:
         """Project recovery or prepare its mounted controls for turn admission."""
         async with self._sync_lock:
@@ -133,6 +190,9 @@ class ConsoleArchiveRecoveryView:
             transcript = active_console_transcript(self.screen)
             if transcript is None:
                 return
+            if self._still_idle(transcript):
+                return
+            self._idle = None
             roots = transcript.query("#console-archive-recovery")
             if not roots:
                 return
@@ -245,6 +305,16 @@ class ConsoleArchiveRecoveryView:
                 or (snapshot and snapshot.confirmation)
                 or imported
             )
+            card = self._confirmation()
+            if (
+                not surface.display
+                and not presentations
+                and not receipts
+                and card is not None
+                and card.controls_cleared
+                and len(surface.children) == 1
+            ):
+                self._idle = (transcript, store, session_id, root, surface, card)
 
     def show_results(self, projection: ArchiveRecoveryPresentation) -> None:
         """Schedule a projection; runtime retains it if the view goes away."""

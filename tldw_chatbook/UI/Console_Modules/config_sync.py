@@ -687,6 +687,39 @@ def _cadence(screen: Any) -> _Cadence:
     return cadence
 
 
+def console_workflow_line(screen: Any) -> Any:
+    """Build the screen's one workflow line and remember that it has one."""
+    from .workflows import ConsoleWorkflowLine
+
+    screen._console_workflow_line = line = ConsoleWorkflowLine()
+    return line
+
+
+def console_workflow_line_is_mounted(screen: Any) -> bool:
+    """Whether the screen has its workflow line, without searching every widget.
+
+    The 0.2 s Console tick asks this. ``screen.query("#console-workflow-line")``
+    answered by matching the selector against every widget of the screen
+    (about 560): 6 ms a tick, 0.2 s of a turn, and with workflows off there is
+    no line to find (TASK-40608, measured 2026-11-23). Only
+    ``console_workflow_line`` builds one, so a screen that never called it has
+    none. One that did is searched only while that line is not attached under
+    it (a recompose, a teardown), so the answer is the search's answer.
+
+    Args:
+        screen: The Console screen whose tick is running.
+
+    Returns:
+        True when a workflow line is in the screen's widget tree.
+    """
+    line = screen.__dict__.get("_console_workflow_line")
+    if line is None:
+        return False
+    if line.is_attached and any(node is screen for node in line.ancestors):
+        return True
+    return bool(screen.query("#console-workflow-line"))
+
+
 async def run_periodic_console_sync(
     sync: Callable[..., Awaitable[Any]], *args: Any
 ) -> Any:

@@ -1111,3 +1111,79 @@ async def test_activity_projection_during_child_composition_eventually_renders(
         assert "Question answered" in str(
             disclosure.detail_stack.children[0].renderable
         )
+
+
+@pytest.mark.asyncio
+async def test_reapplying_unchanged_activity_copy_updates_no_widget(monkeypatch) -> None:
+    """TASK-40608: every transcript reconcile re-applies each activity row.
+
+    ``Static.update`` asks for a whole-screen layout even when handed the copy
+    it already shows, so an unchanged row must update nothing; each changed
+    part updates only its own widget.
+    """
+    from dataclasses import replace
+
+    tool = ConsoleActivityPresentation(
+        "tool",
+        "fs_read",
+        "success",
+        call_id="read-1",
+        arguments="{}",
+        result_preview="first line",
+        elapsed_seconds=1.0,
+    )
+    disclosure = ConsoleActivityDisclosure(
+        "steady", "fs_read", "success", tool_presentation=tool
+    )
+    app = ActivityHarness(disclosure)
+
+    def apply(label: str = "fs_read", presentation=tool) -> None:
+        disclosure.sync_activity(
+            label,
+            "success",
+            expanded=False,
+            selected=False,
+            tool_presentation=presentation,
+        )
+
+    async with app.run_test() as pilot:
+        apply()
+        await pilot.pause()
+        updated: list[Static] = []
+        update = Static.update
+
+        def recorded(widget, *args, **kwargs):
+            updated.append(widget)
+            return update(widget, *args, **kwargs)
+
+        monkeypatch.setattr(Static, "update", recorded)
+
+        apply()
+        assert updated == []
+
+        apply(label="fs_read again")
+        assert updated == [disclosure.header.label_widget]
+        assert disclosure.header.label_widget.content.plain == "fs_read again"
+        updated.clear()
+
+        slower = replace(tool, elapsed_seconds=2.0)
+        apply(label="fs_read again", presentation=slower)
+        assert updated == [disclosure.header.status_widget]
+        assert "2.0s" in disclosure.header.status_widget.content.plain
+        updated.clear()
+
+        apply(
+            label="fs_read again",
+            presentation=replace(slower, result_preview="second line"),
+        )
+        assert updated == [disclosure.preview]
+        assert disclosure.preview.content.plain == "second line"
+        updated.clear()
+
+        # The preview is wrapped to its width: a new width wraps again.
+        disclosure.preview._wrapped = ("second line", 3)
+        apply(
+            label="fs_read again",
+            presentation=replace(slower, result_preview="second line"),
+        )
+        assert updated == [disclosure.preview]
