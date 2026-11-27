@@ -8454,7 +8454,7 @@ def get_user_data_dir() -> Path:
         memo is not None
         and memo[0][0] is key[0]
         and memo[0][1:] == key[1:]
-        and memo[1] == _user_data_dir_stamps(stamped)
+        and profile_paths.data_dir_holds(memo, stamped, _user_data_dir_stamps)
     ):
         return memo[2]
     before = _user_data_dir_stamps(stamped)

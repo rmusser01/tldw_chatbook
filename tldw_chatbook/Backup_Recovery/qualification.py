@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import ctypes
 import platform
+import sys
 import threading
+import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Literal
@@ -231,6 +233,9 @@ def _platform_contract(identity: Mapping[str, str | int]) -> bool:
 _EvidenceStamp = tuple[int, int, int, int, int]
 _EVIDENCE_CACHE: tuple[Path, _EvidenceStamp, _Evidence] | None = None
 _EVIDENCE_CACHE_LOCK = threading.Lock()
+#: ``time.monotonic()`` when the look that last confirmed ``_EVIDENCE_CACHE``
+#: began. Guarded by ``_EVIDENCE_CACHE_LOCK``.
+_EVIDENCE_OBSERVED = float("-inf")
 
 
 def _evidence_stamp(info: os.stat_result) -> _EvidenceStamp:
@@ -238,14 +243,40 @@ def _evidence_stamp(info: os.stat_result) -> _EvidenceStamp:
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
 
 
+def _observation_window() -> float:
+    """How long a confirming look at the evidence file stands (0: look now).
+
+    The storage layer's window (owner decisions O1 and O3, ADR-126): one
+    second on Windows, where the look opens every folder down to this
+    package, none elsewhere, and none inside ``fresh_observation()``. Every
+    admission's folder check and every pause probe asked for this file: 88
+    to 174 looks in one Console turn, a sixth of all its native opens
+    (TASK-40608, counted 2026-11-27). Read through ``sys.modules`` because
+    the storage layer imports this module.
+    """
+    storage = sys.modules.get("tldw_chatbook.Backup_Recovery.storage_admission")
+    window = getattr(storage, "_observation_window", None)
+    return window() if window is not None else 0.0
+
+
 def _load_evidence() -> _Evidence:
     """Reuse parsing only while the same installed evidence generation remains."""
-    global _EVIDENCE_CACHE
+    global _EVIDENCE_CACHE, _EVIDENCE_OBSERVED
     path = Path(__file__).with_name("native_qualification.json")
+    window = _observation_window()
     with _EVIDENCE_CACHE_LOCK:
-        stamp = _evidence_stamp(os.stat(path, follow_symlinks=False))
         cached = _EVIDENCE_CACHE
+        began = time.monotonic()
+        if (
+            window
+            and cached is not None
+            and cached[0] == path
+            and began - _EVIDENCE_OBSERVED < window
+        ):
+            return cached[2]
+        stamp = _evidence_stamp(os.stat(path, follow_symlinks=False))
         if cached is not None and cached[:2] == (path, stamp):
+            _EVIDENCE_OBSERVED = began
             return cached[2]
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         with os.fdopen(fd, "rb") as stream:
@@ -258,6 +289,7 @@ def _load_evidence() -> _Evidence:
         if _evidence_stamp(os.stat(path, follow_symlinks=False)) != stamp:
             raise OSError("qualification_evidence_changed")
         _EVIDENCE_CACHE = (path, stamp, evidence)
+        _EVIDENCE_OBSERVED = began
         return evidence
 
 

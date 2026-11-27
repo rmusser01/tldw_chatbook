@@ -2,11 +2,13 @@
 
 import json
 import os
+import time
 from pathlib import Path
 
 import pytest
 
 from tldw_chatbook.Backup_Recovery import qualification
+from tldw_chatbook.Backup_Recovery import storage_admission as storage
 
 
 IDENTITY = {
@@ -17,6 +19,18 @@ IDENTITY = {
     "filesystem": "ext4",
     "flags": 0,
 }
+
+
+@pytest.fixture(autouse=True)
+def _no_observation_window(monkeypatch):
+    """These tests are about the check made on a call; the window has its own below.
+
+    On Windows one positive look at the evidence file covers a second
+    (TASK-40608, owner decisions O1 and O3), so a change made right after a
+    call is seen up to a second later. Every other platform looks every time.
+    """
+    monkeypatch.setattr(storage, "_EVIDENCE_OBSERVATION_SECONDS", 0.0)
+    monkeypatch.setattr(qualification, "_EVIDENCE_OBSERVED", float("-inf"))
 
 
 @pytest.fixture
@@ -172,3 +186,108 @@ def test_qualification_observes_native_identity_on_every_call(
         "operation_not_qualified",
     )
     assert qualification.qualified_for("admission", evidence_file.parent)[0]
+
+
+# --- the observation window (Windows; TASK-40608) ----------------------------
+
+
+def _count_looks(monkeypatch):
+    """Count the looks at the evidence file: each one takes one or more stamps."""
+    looks = []
+    original = qualification._evidence_stamp
+
+    def stamp(info):
+        looks.append(info)
+        return original(info)
+
+    monkeypatch.setattr(qualification, "_evidence_stamp", stamp)
+    return looks
+
+
+def test_inside_the_window_the_evidence_file_is_not_looked_at_again(
+    evidence_file, monkeypatch
+):
+    monkeypatch.setattr(storage, "_EVIDENCE_OBSERVATION_SECONDS", 30.0)
+    assert qualification._qualified_identity("admission", IDENTITY)[0]
+    looks = _count_looks(monkeypatch)
+
+    for _ in range(5):
+        assert qualification._qualified_identity("admission", IDENTITY)[0]
+        assert qualification._qualified_identity("publish_file", IDENTITY)[0]
+
+    assert not looks
+
+
+def test_with_the_window_off_every_call_looks(evidence_file, monkeypatch):
+    assert qualification._qualified_identity("admission", IDENTITY)[0]
+    looks = _count_looks(monkeypatch)
+
+    for _ in range(3):
+        assert qualification._qualified_identity("admission", IDENTITY)[0]
+
+    assert len(looks) == 3
+
+
+@pytest.mark.parametrize("replace", [False, True], ids=["in-place", "replacement"])
+def test_a_change_is_refused_once_the_window_ends(evidence_file, monkeypatch, replace):
+    monkeypatch.setattr(storage, "_EVIDENCE_OBSERVATION_SECONDS", 0.2)
+    assert qualification._qualified_identity("admission", IDENTITY)[0]
+    _invalidate(evidence_file, replace=replace)
+    # Inside the window the look that confirmed the evidence still stands.
+    assert qualification._qualified_identity("admission", IDENTITY)[0]
+
+    time.sleep(0.25)
+
+    assert qualification._qualified_identity("admission", IDENTITY) == (
+        False,
+        "qualification_evidence_invalid",
+    )
+
+
+def test_the_window_starts_when_the_confirming_look_began(evidence_file, monkeypatch):
+    """A slow look must not extend the time its result is believed."""
+    monkeypatch.setattr(storage, "_EVIDENCE_OBSERVATION_SECONDS", 0.2)
+    assert qualification._qualified_identity("admission", IDENTITY)[0]
+    time.sleep(0.25)
+    original = qualification.os.stat
+
+    def slow_stat(path, *args, **kwargs):
+        result = original(path, *args, **kwargs)
+        time.sleep(0.25)  # longer than the window
+        return result
+
+    monkeypatch.setattr(qualification.os, "stat", slow_stat)
+    assert qualification._qualified_identity("admission", IDENTITY)[0]
+    monkeypatch.setattr(qualification.os, "stat", original)
+    looks = _count_looks(monkeypatch)
+
+    assert qualification._qualified_identity("admission", IDENTITY)[0]
+
+    assert looks, "a look that began before the window is still believed"
+
+
+def test_a_fresh_observation_looks_whatever_the_window(evidence_file, monkeypatch):
+    monkeypatch.setattr(storage, "_EVIDENCE_OBSERVATION_SECONDS", 30.0)
+    assert qualification._qualified_identity("admission", IDENTITY)[0]
+    _invalidate(evidence_file, replace=False)
+
+    with storage.fresh_observation():
+        refused = qualification._qualified_identity("admission", IDENTITY)
+
+    assert refused == (False, "qualification_evidence_invalid")
+
+
+def test_a_failed_look_is_not_remembered_as_a_confirmation(evidence_file, monkeypatch):
+    monkeypatch.setattr(storage, "_EVIDENCE_OBSERVATION_SECONDS", 0.2)
+    assert qualification._qualified_identity("admission", IDENTITY)[0]
+    time.sleep(0.25)
+    evidence_file.unlink()
+
+    assert qualification._qualified_identity("admission", IDENTITY) == (
+        False,
+        "qualification_unavailable",
+    )
+    assert qualification._qualified_identity("admission", IDENTITY) == (
+        False,
+        "qualification_unavailable",
+    )

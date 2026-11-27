@@ -148,6 +148,56 @@ def posture_holds(config_path: Path, settings, posture: tuple, observe) -> bool:
     return True
 
 
+#: Windows (TASK-40608, owner decisions O1 and O3): (data-directory resolution
+#: memo, time.monotonic() when the look that confirmed it began). One immutable
+#: tuple, replaced whole, so any thread may read it.
+_data_dir_held = None
+_DATA_DIR_HELD_SECONDS = 1.0 if os.name == "nt" else 0.0
+
+
+def data_dir_holds(memo: tuple, paths: tuple, observe) -> bool:
+    """Whether the data-directory resolution ``memo`` still describes ``paths``.
+
+    ``memo[1]`` is the posture of every path component, stamped around the
+    resolution that produced ``memo``. Looking again costs one native open
+    per component on Windows: 32 opens a call and 23 to 58 calls in one
+    Console turn, a fifth of all its native opens (counted 2026-11-27). So
+    there one positive look covers every thread for a second, as for the
+    config path above. A changed setting, environment or config generation
+    makes the caller compare another memo, which never matches. There is no
+    window inside ``storage_admission.fresh_observation()`` or while the
+    storage layer's own window is off. Other platforms look on every call.
+
+    Args:
+        memo: ``config._USER_DATA_DIR_MEMO``: (key, stamps, directory).
+        paths: The components the stamps were taken for.
+        observe: ``config._user_data_dir_stamps``.
+
+    Returns:
+        True while the components have the stamped posture.
+    """
+    global _data_dir_held
+    import sys
+    import time
+
+    window = _DATA_DIR_HELD_SECONDS
+    if window:
+        storage = sys.modules.get("tldw_chatbook.Backup_Recovery.storage_admission")
+        current = getattr(storage, "_observation_window", None)
+        if current is not None and not current():
+            window = 0.0
+    began = time.monotonic()
+    held = _data_dir_held
+    if window and held is not None and held[0] is memo and began - held[1] < window:
+        return True
+    if memo[1] != observe(paths):
+        _data_dir_held = None
+        return False
+    if window:
+        _data_dir_held = (memo, began)
+    return True
+
+
 def user_folder_name(user_name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]", "_", user_name) or "default_user"
 

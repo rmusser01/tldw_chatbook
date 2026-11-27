@@ -26693,3 +26693,15 @@ and keep the first run and repeat beside the instrumented comparison.
 **Incident.** After the rebase a local Windows run counted 688 modules at `import tldw_chatbook.app` against a limit of fewer than 688. From that one count I told the owner the failure was Windows-only and wrote "it would have passed on POSIX" into a commit message. Perf Guard had failed the same test on Linux half an hour earlier (`assert 688 < 688`); the commit was amended. The same job stops at its first failing step, so four later steps (voice gates, keystroke census, the Console storage-unit ratchet, the compact-setup gates) had not run on the branch at all, and most of that job's 16 files had not been run locally since the rebase either.
 
 **What to do.** Before naming the platform of a failure, read the failed run's log (`gh run view <id> --log-failed`). When a job fails early, run the rest of its file list locally (the `pytest` lines of its workflow file, `.github/workflows/perf-guard.yml` here) instead of waiting for the next push to show the next failure.
+
+## A coroutine's start-to-return time is not its thread's time (TASK-40608, 2026-11-27)
+
+**Incident.** Timing named functions from start to return, `ChatScreen._sync_native_console_chat_ui` showed 0.64 s in ten calls between Send and the agent run, one of them 0.30 s, and I wrote in a progress note that it held the UI thread for up to 0.2 s at a time. It is a coroutine with four deliberate yields and several awaited reads; its start-to-return time is mostly other code running. The thread cycle counter around every event-loop callback put its own share at 0.01 to 0.05 s, and the UI thread's real largest item elsewhere (screen updates, 0.20 to 0.26 s).
+
+**What to do.** For anything `async`, read the time from a per-callback CPU ledger (one entry per resumption), never from start to return. Before naming a function as "holding the loop", open it and look for `await`.
+
+## A one-slot memo for a per-key question thrashes when callers alternate (TASK-40608, 2026-11-27)
+
+**Incident.** On 2026-11-21 I let a raw operation reuse a quiet "is maintenance waiting?" answer for a second and reported the pause probe as covered. The answer was kept in one module-level slot, keyed by the tuple of holds of the last caller. A Console turn interleaves operations on the config, chat and MCP sources, each with its own holds, so nearly every call found another caller's tuple in the slot and probed again: 49 to 80 native probes a turn, six days after the window was said to cover it. It was found by counting calls of the probed function (`Admission.pause_requested`), not by reading the window's code, which looked right.
+
+**What to do.** After adding a reuse rule, count the calls of the thing it is meant to save, in the real journey, and expect the number the rule implies (here: about one a second per hold). Key a memo by what the question is about, not by who asked last.

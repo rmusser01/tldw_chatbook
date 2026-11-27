@@ -757,29 +757,50 @@ def _pin_parent(state, anchor):
         raise
 
 
-#: Windows (TASK-40608 D1): (hold identities, time.monotonic()) of the last
-#: probe that found no maintenance request. The app's maintenance monitor asks
-#: the same native question once a second; a raw operation does not need to
-#: ask it again in between.
-_quiet_pause_probe = None
+#: Windows (TASK-40608 D1): id(hold) -> (weak reference to that hold,
+#: time.monotonic() when its last probe that found no maintenance request
+#: began). The app's maintenance monitor asks the same native question once a
+#: second; an operation does not need to ask it again in between. Kept per
+#: hold: while this was one slot for the last tuple of holds, two operations
+#: that alternate, each with its own holds, both probed every time (49 to 80
+#: probes in one Console turn, counted 2026-11-27). The reference is weak so an
+#: answer never keeps a hold alive, and it is compared with the hold asked
+#: about so a reused address is never taken for it.
+_quiet_pause_probes: dict = {}
+_QUIET_PAUSE_PROBES_MAX = 64
 
 
 def _raw_pause_requested(holds):
-    """``_raw_holds_pause_requested``, at most once a second on Windows."""
-    global _quiet_pause_probe
+    """``_raw_holds_pause_requested``, at most once a second per hold on Windows."""
     window = storage._EVIDENCE_OBSERVATION_SECONDS
     if not window:
         return _raw_holds_pause_requested(holds)
-    identity = tuple(id(hold) for hold in holds)
-    now = time.monotonic()
-    quiet = _quiet_pause_probe
-    if quiet is not None and quiet[0] == identity and now - quiet[1] < window:
+    began = time.monotonic()
+    quiet = _quiet_pause_probes
+    for hold in holds:
+        if hold is None:
+            continue
+        entry = quiet.get(id(hold))
+        if entry is None or entry[0]() is not hold or began - entry[1] >= window:
+            break
+    else:
         with storage._lock:
             if storage._pause is None:
                 return False
     requested = _raw_holds_pause_requested(holds)
-    _quiet_pause_probe = None if requested else (identity, now)
-    return requested
+    if requested:
+        for hold in holds:
+            quiet.pop(id(hold), None)
+        return True
+    if len(quiet) >= _QUIET_PAUSE_PROBES_MAX:
+        quiet.clear()
+    for hold in holds:
+        if hold is not None:
+            try:
+                quiet[id(hold)] = (weakref.ref(hold), began)
+            except TypeError:  # No weak reference: never remembered, asked every time.
+                pass
+    return False
 
 
 def _raw_holds_pause_requested(holds):
