@@ -2037,9 +2037,14 @@ jobs:
           python-version: '3.12'
           cache: pip
 
-      # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
+      # pr-fast-lane's line plus hypothesis (TASK-42545, round 27, 2026-11-26):
+      # the installed-restore validation tests import test_restore_plan inside
+      # their bodies (directly, and through test_publication_crashes'
+      # _publication/_replacement helpers), and test_restore_plan imports
+      # hypothesis at module level, so without it all 18 fail on that import
+      # (found by the round's Linux check with CI's install line).
       - name: Install fast-lane dependencies
-        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2 hypothesis
 
       # TASK-39043: the Console config-sync lifetime and Home citation
       # retirement suites (~86 s serial each). TASK-38976: the prompt
@@ -2122,6 +2127,11 @@ jobs:
       # join a cancelled close leaves no thread in, and the MCP grant that
       # stays current while it refreshes; bootstrap_profile file, under 1 s
       # each) follow last; times in the task's notes.
+      # Round 27: TASK-42545's installed-restore validation file (sandboxed,
+      # reads no config in-process; RecoveryRequired recorder) follows the
+      # deleted-root guards; timing in the task's notes. TASK-42544's index
+      # plan-pin checker tests (Tests/DB, so the bootstrap profile; they read
+      # no config) follow the goal attempts file.
       # test_closed_loop_pending_submit_is_emergency_detachment: deselected
       # 2026-11-12: red on dev e0186fa10a (console_send_diagnostic ContextVar
       # token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.
@@ -2164,6 +2174,7 @@ jobs:
             Tests/Backup_Recovery/test_same_session_retirement_capture.py \
             Tests/Backup_Recovery/test_effective_admission_roots.py \
             Tests/Backup_Recovery/test_config_companion_missing_record_evidence.py \
+            Tests/Backup_Recovery/test_installed_restore_validation.py \
             Tests/Chat/test_subscription_background_readiness.py \
             Tests/Wizards/test_first_run_subscription_readiness.py \
             Tests/Actor_Packs/test_actor_pack_export.py \
@@ -2189,6 +2200,7 @@ jobs:
             Tests/Chat/test_console_goal_dispatch.py \
             Tests/Chat/test_console_goal_recovery.py \
             Tests/DB/test_goal_attempts.py \
+            Tests/DB/test_check_index_plan_pins.py \
             Tests/Chat/test_console_rewind_summarize.py \
             Tests/Chat/test_console_run_state_per_session.py \
             Tests/Chat/test_console_edit_resend.py \

@@ -1303,3 +1303,35 @@ CORE_SCHEMAS = tuple(
 CHACHANOTES_LOCATOR_INDEXES_V87_TO_V88_SQL = (
     "UPDATE db_schema_version SET version=88 WHERE schema_name='rag_char_chat_schema' AND version=87",
 )
+
+
+# TASK-42544: v89 drops v56's partial response-revision index, superseded by
+# v72's exact index on the same column
+# (chachanotes_v88_to_v89_drop_superseded_response_revision_index.sql). The
+# removed declaration is exactly as every v88 catalog holds it; v88 stays
+# historical.
+CHACHANOTES_V89_REMOVALS = (
+    "CREATE INDEX idx_console_trace_response_revision\n  ON console_trace_response_links(semantic_revision_id)\n  WHERE semantic_revision_id IS NOT NULL",
+)
+#: Index name -> table for the restore sandbox's v88->v89 step, the only
+#: DROP INDEX it admits.
+CHACHANOTES_V89_DROPPED_INDEXES = {
+    sql.split()[2]: sql.split()[4].split("(")[0] for sql in CHACHANOTES_V89_REMOVALS
+}
+assert all(
+    set(CHACHANOTES_V89_REMOVALS) <= set(schema) for schema in CHACHANOTES_V88_SCHEMAS
+)
+CHACHANOTES_V89_SCHEMAS = tuple(
+    tuple(sql for sql in schema if sql not in CHACHANOTES_V89_REMOVALS)
+    for schema in CHACHANOTES_V88_SCHEMAS
+)
+CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_V89_SCHEMAS[1]
+CORE_SCHEMAS = tuple(
+    (owner, 89, CHACHANOTES_V89_SCHEMAS[0])
+    if owner == "db.chachanotes.primary"
+    else (owner, version, sql)
+    for owner, version, sql in CORE_SCHEMAS
+)
+CHACHANOTES_DROP_RESPONSE_REVISION_V88_TO_V89_SQL = (
+    "UPDATE db_schema_version SET version=89 WHERE schema_name='rag_char_chat_schema' AND version=88",
+)

@@ -326,9 +326,13 @@ def test_installed_validation_does_not_accept_empty_success_evidence(tmp_path):
         )
 
 
+@pytest.mark.parametrize("rollback_owner", ["ui.state", "models.artifacts"])
 def test_existing_owned_directory_metadata_uses_verified_node_rollback(
-    tmp_path, helper_resource_root, monkeypatch
+    tmp_path, helper_resource_root, monkeypatch, rollback_owner
 ):
+    # The live directory is ui.state's; a rollback whose directory producer is
+    # another owner's must not restore its metadata (TASK-42545).
+    from functools import partial
     from threading import Event
 
     from Tests.Backup_Recovery.test_restore_plan import producer, sealed
@@ -390,15 +394,21 @@ def test_existing_owned_directory_metadata_uses_verified_node_rollback(
     from Tests.Backup_Recovery.test_publication_crashes import _encrypted_rollback
 
     rollback = _encrypted_rollback(
-        tmp_path, optional, helper_resource_root, monkeypatch
+        tmp_path, optional, helper_resource_root, monkeypatch, owner=rollback_owner
     )
-    journal.verify_rollback(
+    verify = partial(
+        journal.verify_rollback,
         rollback,
         password=b"test-only-password",
         work_root=tmp_path / "verify",
         cancel=Event(),
         coverage={"root": "root"},
     )
+    if rollback_owner != "ui.state":
+        with pytest.raises(ValueError, match="rollback_coverage_mismatch"):
+            verify()
+        return
+    verify()
     publish_candidate(candidate, plan, journal, rollback)
     before = optional.stat()
     journal.validate_installed(candidate, plan)

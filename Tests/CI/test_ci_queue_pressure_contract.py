@@ -836,6 +836,10 @@ RECOVERED_SUITES_TARGETS = (
     "Tests/Backup_Recovery/test_same_session_retirement_capture.py",
     "Tests/Backup_Recovery/test_effective_admission_roots.py",
     "Tests/Backup_Recovery/test_config_companion_missing_record_evidence.py",
+    # TASK-42545: the installed-restore validation file, red on dev in no lane
+    # before (a rollback helper's directory owner drifted). Sandboxed, reads
+    # no config in-process.
+    "Tests/Backup_Recovery/test_installed_restore_validation.py",
     # TASK-38948: the subscription background-readiness file (sandboxed,
     # ~6 s serial), which ran on no PR lane.
     "Tests/Chat/test_subscription_background_readiness.py",
@@ -901,6 +905,10 @@ RECOVERED_SUITES_TARGETS = (
     # serial), which caught a regression this round and ran on no lane.
     "Tests/Chat/test_console_goal_recovery.py",
     "Tests/DB/test_goal_attempts.py",
+    # TASK-42544: the index plan-pin checker's own tests (its new `dropped`
+    # status), on no lane before. Tests/DB keeps the bootstrap profile; no
+    # config read.
+    "Tests/DB/test_check_index_plan_pins.py",
     # Round 13, all bootstrap_profile, red on no lane before: TASK-39154's
     # rewind/summarize and per-session run-state files, TASK-39164's
     # edit-and-resend and regenerate-branching files, and TASK-40097's
@@ -2150,9 +2158,14 @@ def test_recovered_suites_lane_is_one_serial_guarded_minimal_python_312_job() ->
     )
     assert setup["with"]["python-version"] == "3.12"
     install = _named_step(job, "Install fast-lane dependencies")["run"]
-    assert shlex.split(install) == shlex.split(
-        _named_step(workflow["jobs"]["pr-fast-lane"], "Install fast-lane dependencies")["run"]
-    )
+    # TASK-42545 (2026-11-26): the installed-restore validation file imports
+    # test_restore_plan's module-level hypothesis (through test_publication_crashes).
+    assert shlex.split(install) == [
+        *shlex.split(
+            _named_step(workflow["jobs"]["pr-fast-lane"], "Install fast-lane dependencies")["run"]
+        ),
+        "hypothesis",
+    ]
     step = _named_step(job, "Run the recovered suites")
     assert "if" not in step
     assert tuple(shlex.split(step["run"].replace("\\\n", " "), comments=True)) == (

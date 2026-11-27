@@ -674,6 +674,12 @@ addopts = "--ignore=STests --ignore=Docs --import-mode=importlib --durations=25 
 # the old split config, unmarked async tests silently DID NOT RUN in full runs
 # from the repo root (pytest-asyncio strict mode skips unmarked coroutines).
 asyncio_mode = "auto"
+# TASK-42581: a named sqlite3 placeholder (`:x`) bound to a sequence warns on
+# 3.12/3.13 and raises ProgrammingError on 3.14; 3.12.0-3.12.3 also warn for
+# `?NNN`. Make that warning an error in every test.
+filterwarnings = [
+    'error:Binding \d+ .* is a named parameter:DeprecationWarning',
+]
 # Default timeout for all tests (in seconds)
 timeout = 300
 # Timeout method: DELIBERATELY UNSET (TASK-22062). pytest-timeout picks

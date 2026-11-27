@@ -27,7 +27,7 @@ type='index'`, and neither is reliably visible to timing alone -- 118.8 ->
 
 So this checker makes the decision mechanical rather than remembered. It
 scans the schema-defining SQL for every ``CREATE INDEX`` name and requires
-each one to appear in ``scripts/index_plan_pin_census.tsv`` as either:
+each one to appear in ``scripts/index_plan_pin_census.tsv`` as one of:
 
 ``plan-pinned``
     A test names this index inside a file that also runs
@@ -42,7 +42,24 @@ each one to appear in ``scripts/index_plan_pin_census.tsv`` as either:
     retroactively -- the point is that the NEXT index cannot be added
     without someone typing one of these two words.
 
-A ``CREATE INDEX`` whose name is in neither list fails the check, as does a
+``dropped``
+    A historical migration still creates it, but a later one drops it, so no
+    plan is claimed (TASK-42544: v56's superseded response-revision index,
+    dropped in ChaChaNotes v89). Only versioned migration scripts count
+    (``<family>_v<from>_to_v<to>*.sql``), and each database family is its
+    own sequence: index names repeat across databases (``idx_sync_log_ts``
+    is in ChaChaNotes, Media and Prompts) and step numbers overlap. Every
+    family that creates the name must drop it later in the same family, by
+    ``<to>``, then by position when the drop and the create share one file;
+    a shared step in two files has no order, so it fails. A drop in a
+    family that never creates the name is ignored. No other source may
+    still create it: a fresh-schema ``.py`` string or an unversioned
+    ``.sql``. The recovery layer's frozen historical catalogs
+    (``_RECOVERY_CATALOGS``, listed by path) quote shipped declarations and
+    do not count. A drop-and-re-create, such as v81->v82's canvas sequence
+    index, stays live and needs a plan pin.
+
+A ``CREATE INDEX`` whose name has no census row fails the check, as does a
 census row naming an index nothing creates any more. Nothing is auto-added:
 the script prints the exact lines to paste, and choosing between the two
 statuses is the decision this file exists to force.
@@ -93,12 +110,37 @@ CENSUS = Path(__file__).resolve().parent / "index_plan_pin_census.tsv"
 
 PLAN_PINNED = "plan-pinned"
 PRE_CONVENTION = "pre-convention"
-VALID_STATUSES = {PLAN_PINNED, PRE_CONVENTION}
+DROPPED = "dropped"
+VALID_STATUSES = {PLAN_PINNED, PRE_CONVENTION, DROPPED}
 
 _CREATE_INDEX = re.compile(
     r"CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?"
     r"([A-Za-z_][A-Za-z0-9_]*)",
     re.IGNORECASE,
+)
+# ``(?!IF\b)``: ``f"DROP INDEX IF EXISTS {name}"`` names nothing; without
+# the guard the optional group backtracks and records an index ``IF``.
+_DROP_INDEX = re.compile(
+    r"DROP\s+INDEX\s+(?:IF\s+EXISTS\s+)?(?!IF\b)([A-Za-z_][A-Za-z0-9_]*)",
+    re.IGNORECASE,
+)
+#: A versioned migration script: ``<family>_v<from>_to_v<to>[_<what>].sql``.
+_MIGRATION_STEP = re.compile(r"^(.*?)_v(\d+)_to_v(\d+)(?=[_.])")
+#: The recovery layer's frozen historical catalogs (not live schema), by
+#: repository path. A new module is live until it is listed here on review.
+_RECOVERY_CATALOGS = frozenset(
+    f"tldw_chatbook/DB/{name}.py"
+    for name in (
+        "recovery_core",
+        "recovery_core_schema",
+        "recovery_dreams_guardian",
+        "recovery_goal_schema",
+        "recovery_operations",
+        "recovery_response_rules",
+        "recovery_review_boundary_schema",
+        "recovery_sqlite",
+        "recovery_workflow_schema",
+    )
 )
 _INDEX_IDENTIFIER = re.compile(r"\b(?:idx|uq)_[A-Za-z0-9_]+\b")
 
@@ -106,8 +148,10 @@ _INDEX_IDENTIFIER = re.compile(r"\b(?:idx|uq)_[A-Za-z0-9_]+\b")
 _PLAN_CALL = "EXPLAIN QUERY PLAN"
 _NO_STATS = "sqlite_stat1"
 
-_SQL_LINE_COMMENT = re.compile(r"--[^\n]*")
-_SQL_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+# One left-to-right pass: a ``/*----`` banner is a block comment, not a
+# ``--`` line comment that eats its ``----*/`` close (and with it the code up
+# to the next ``*/``; that hid three ChaChaNotes_DB.py creations).
+_SQL_COMMENT = re.compile(r"--[^\n]*|/\*.*?\*/", re.DOTALL)
 
 
 def _strip_sql_comments(text: str) -> str:
@@ -117,7 +161,7 @@ def _strip_sql_comments(text: str) -> str:
     ``-- Create index for feedback queries`` inside a schema string, and the
     first draft of this checker duly reported an index named ``for``.
     """
-    return _SQL_BLOCK_COMMENT.sub(" ", _SQL_LINE_COMMENT.sub(" ", text))
+    return _SQL_COMMENT.sub(" ", text)
 
 
 def _sql_texts(path: Path) -> list[str]:
@@ -141,8 +185,24 @@ def _sql_texts(path: Path) -> list[str]:
     ]
 
 
-def declared_indexes() -> dict[str, set[str]]:
+def _statements(pattern: re.Pattern[str]):
+    """Yield ``(name, path, offset)`` for each ``pattern`` match under ``DB/``."""
+    sources: list[tuple[Path, list[str]]] = []
+    for py in sorted(DB_DIR.rglob("*.py")):
+        sources.append((py, _sql_texts(py)))
+    for sql in sorted(DB_DIR.rglob("*.sql")):
+        sources.append((sql, [sql.read_text(encoding="utf-8")]))
+    for path, texts in sources:
+        for text in texts:
+            for match in pattern.finditer(_strip_sql_comments(text)):
+                yield match.group(1), path, match.start()
+
+
+def declared_indexes(pattern: re.Pattern[str] = _CREATE_INDEX) -> dict[str, set[str]]:
     """Find every index the schema sources under ``DB/`` create.
+
+    Args:
+        pattern: The statement to look for; ``_DROP_INDEX`` finds the drops.
 
     Returns:
         Index name -> the repository-relative source paths whose SQL
@@ -150,18 +210,62 @@ def declared_indexes() -> dict[str, set[str]]:
         string and a migration step, typically) maps to both.
     """
     found: dict[str, set[str]] = {}
-    sources: list[tuple[Path, list[str]]] = []
-    for py in sorted(DB_DIR.rglob("*.py")):
-        sources.append((py, _sql_texts(py)))
-    for sql in sorted(DB_DIR.rglob("*.sql")):
-        sources.append((sql, [sql.read_text(encoding="utf-8")]))
-
-    for path, texts in sources:
-        rel = str(path.relative_to(REPO_ROOT))
-        for text in texts:
-            for match in _CREATE_INDEX.finditer(_strip_sql_comments(text)):
-                found.setdefault(match.group(1), set()).add(rel)
+    for name, path, _offset in _statements(pattern):
+        found.setdefault(name, set()).add(path.relative_to(REPO_ROOT).as_posix())
     return found
+
+
+def _step(path: Path) -> tuple[str, int] | None:
+    """``(family, version it ends at)`` for a migration script, else None."""
+    match = _MIGRATION_STEP.match(path.name)
+    return (match[1], int(match[3])) if path.suffix == ".sql" and match else None
+
+
+def undropped_rows(census: dict[str, tuple[str, str]]) -> list[tuple[str, str]]:
+    """Check every ``dropped`` census row against the migration order.
+
+    Args:
+        census: The parsed census.
+
+    Returns:
+        ``(name, reason)`` for each ``dropped`` row whose index is still live:
+        a non-recovery source outside the versioned steps still creates it,
+        no versioned step creates it, or some family that creates it does not
+        drop it after its last create in that same family.
+    """
+    statements: dict[str, list[tuple[str, tuple[str, int] | None, str, int]]] = {}
+    for kind, pattern in (("create", _CREATE_INDEX), ("drop", _DROP_INDEX)):
+        for name, path, offset in _statements(pattern):
+            rel = path.relative_to(REPO_ROOT).as_posix()
+            statements.setdefault(name, []).append((kind, _step(path), rel, offset))
+    failures = []
+    for name in sorted(n for n, (status, _note) in census.items() if status == DROPPED):
+        rows = statements.get(name, [])
+        live = sorted(
+            {
+                rel
+                for kind, step, rel, _offset in rows
+                if kind == "create" and step is None and rel not in _RECOVERY_CATALOGS
+            }
+        )
+        families = sorted({step[0] for kind, step, _rel, _o in rows if kind == "create" and step})
+        if live:
+            failures.append((name, "still created by " + ", ".join(live)))
+        elif not families:
+            failures.append((name, "no versioned migration step creates it"))
+        for family in families if not live else ():
+            versioned = [(kind, step[1], rel, offset) for kind, step, rel, offset in rows if step and step[0] == family]
+            last_create = max(v for kind, v, _r, _o in versioned if kind == "create")
+            drops = [v for kind, v, _r, _o in versioned if kind == "drop"]
+            if not drops or max(drops) < last_create:
+                failures.append((name, f"{family}: no step drops it after v{last_create}"))
+            elif max(drops) == last_create:
+                same = [(kind, rel, offset) for kind, v, rel, offset in versioned if v == last_create]
+                if len({rel for _k, rel, _o in same}) > 1:
+                    failures.append((name, f"{family}: v{last_create} creates and drops it in different files"))
+                elif max(o for k, _r, o in same if k == "drop") < max(o for k, _r, o in same if k == "create"):
+                    failures.append((name, f"{family}: v{last_create} creates it again after its drop"))
+    return failures
 
 
 def read_census() -> dict[str, tuple[str, str]]:
@@ -295,7 +399,7 @@ def plan_pinning_files() -> dict[str, set[str]]:
             tree = ast.parse(source)
         except SyntaxError:
             continue
-        rel = str(path.relative_to(REPO_ROOT))
+        rel = path.relative_to(REPO_ROOT).as_posix()
         for text in _plan_evidence_strings(tree):
             stripped = _strip_sql_comments(text)
             names = set(_CREATE_INDEX.findall(stripped)) | set(
@@ -312,10 +416,11 @@ def plan_pinning_files() -> dict[str, set[str]]:
 def main() -> int:
     """Check the census against the tree and report every discrepancy.
 
-    Three failure classes are reported together rather than short-circuiting
+    Four failure classes are reported together rather than short-circuiting
     on the first: an index created but absent from the census, a census row
-    naming an index nothing creates any more, and a row recorded
-    ``plan-pinned`` that no test file positively pins.
+    naming an index nothing creates any more, a row recorded
+    ``plan-pinned`` that no test file positively pins, and a row recorded
+    ``dropped`` whose index is still live (see ``undropped_rows``).
 
     Returns:
         0 when the census covers the tree exactly, 1 otherwise.
@@ -331,6 +436,7 @@ def main() -> int:
         for name, (status, _note) in census.items()
         if status == PLAN_PINNED and name in declared and name not in pins
     )
+    undropped = undropped_rows(census)
 
     print(
         f"index plan pins: {len(declared)} index names declared under "
@@ -338,7 +444,7 @@ def main() -> int:
         f"{sum(1 for s, _ in census.values() if s == PLAN_PINNED)} plan-pinned."
     )
 
-    if not (missing or stale or unpinned):
+    if not (missing or stale or unpinned or undropped):
         print("check_index_plan_pins: OK")
         return 0
 
@@ -379,6 +485,15 @@ def main() -> int:
             f"the worked example) or change the row to {PRE_CONVENTION!r} with "
             "a reason."
         )
+
+    if undropped:
+        print(
+            f"\nFAIL: {len(undropped)} index(es) are recorded as {DROPPED!r} but "
+            "are still live (a dropped index needs a later versioned DROP INDEX "
+            "and nothing that creates it again):"
+        )
+        for name, reason in undropped:
+            print(f"    {name}   ({reason})")
 
     return 1
 

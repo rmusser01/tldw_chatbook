@@ -491,9 +491,11 @@ class _CoreAdapter:
             CHACHANOTES_V86_SCHEMAS,
             CHACHANOTES_V87_SCHEMAS,
             CHACHANOTES_V88_SCHEMAS,
+            CHACHANOTES_V89_SCHEMAS,
             CHACHANOTES_MIXINS_V85_TO_V86_SQL,
             CHACHANOTES_CHILD_SEGMENTS_V86_TO_V87_SQL,
             CHACHANOTES_LOCATOR_INDEXES_V87_TO_V88_SQL,
+            CHACHANOTES_DROP_RESPONSE_REVISION_V88_TO_V89_SQL,
             CHACHANOTES_ARCHIVE_V84_TO_V85_SQL,
             COLLECTIONS_V4_SCHEMA,
             COLLECTIONS_V4_TO_V5_SQL,
@@ -539,8 +541,9 @@ class _CoreAdapter:
             schemas += tuple((85, schema) for schema in CHACHANOTES_V85_SCHEMAS)
             schemas += tuple((86, schema) for schema in CHACHANOTES_V86_SCHEMAS)
             schemas += tuple((87, schema) for schema in CHACHANOTES_V87_SCHEMAS)
-            schemas += tuple((88, schema) for schema in CHACHANOTES_V88_SCHEMAS[2:])
-            versions += (87, 86, 85, 84, 83, 82, 81, 80, 79, 78, 77, 76, 75)
+            schemas += tuple((88, schema) for schema in CHACHANOTES_V88_SCHEMAS)
+            schemas += tuple((89, schema) for schema in CHACHANOTES_V89_SCHEMAS[2:])
+            versions += (88, 87, 86, 85, 84, 83, 82, 81, 80, 79, 78, 77, 76, 75)
             migrations = (
                 (76, 77, CHACHANOTES_NATIVE_V76_TO_V77_SQL),
                 (77, 78, CHACHANOTES_FLEET_V77_TO_V78_SQL),
@@ -554,6 +557,7 @@ class _CoreAdapter:
                 (85, 86, CHACHANOTES_MIXINS_V85_TO_V86_SQL),
                 (86, 87, CHACHANOTES_CHILD_SEGMENTS_V86_TO_V87_SQL),
                 (87, 88, CHACHANOTES_LOCATOR_INDEXES_V87_TO_V88_SQL),
+                (88, 89, CHACHANOTES_DROP_RESPONSE_REVISION_V88_TO_V89_SQL),
             )
         elif self.owner_id == "db.library_collections":
             versions = (5, 4)

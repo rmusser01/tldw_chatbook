@@ -1061,7 +1061,9 @@ _BUDGETS: dict[str, int] = {
     # store declaration and the method; measured, wc -l).
     # 2026-11-24, TASK-42517: 22566 -> 22573 (+7), the v87->v88 locator-index
     # step (through the shared DB/chachanotes_sql_steps.py) and its dispatch row.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22573,
+    # 2026-11-26, TASK-42544: 22573 -> 22580 (+7), the v88->v89 step dropping
+    # the superseded response-revision index, and its dispatch row.
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22580,
     # TASK-39147: the rebased report reader and workflow migrations cross 4000.
     # 2026-11-12, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +2, the store's @declare_store backup-participant declaration and import.

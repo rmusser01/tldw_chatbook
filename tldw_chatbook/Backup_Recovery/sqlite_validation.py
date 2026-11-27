@@ -114,6 +114,8 @@ class _Restrictions:
         self.child_segments_migration = False
         # TASK-42517 v87->v88: index name -> table, empty when off.
         self.locator_indexes = {}
+        # TASK-42544 v88->v89: the one index name -> table it drops.
+        self.dropped_indexes = {}
         self.canvas_sibling_migration = False
         self.portrait_migration = None
         self.archive_chronology_migration = False
@@ -729,6 +731,23 @@ class _Restrictions:
                         and second in {"type", "name", "tbl_name", "rootpage", "sql"}
                     )
                 )
+                # TASK-42544 v88->v89: exactly the superseded response-revision
+                # index, on its own table. SQLite's DROP INDEX deletes its
+                # sqlite_master row and may move a root page.
+                allowed |= (
+                    bool(self.dropped_indexes)
+                    and database == "main"
+                    and source is None
+                    and (
+                        action == sqlite3.SQLITE_DROP_INDEX
+                        and self.dropped_indexes.get(first) == second
+                        or action == sqlite3.SQLITE_DELETE
+                        and first == "sqlite_master"
+                        or action == sqlite3.SQLITE_UPDATE
+                        and first == "sqlite_master"
+                        and second == "rootpage"
+                    )
+                )
                 # ADR-224 v78->v79: the two normalization UPDATEs, the two
                 # new indexes, and the two conversations triggers the
                 # migration drops and recreates verbatim (sync update;
@@ -1285,6 +1304,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         CHACHANOTES_V86_SCHEMAS,
         CHACHANOTES_V87_SCHEMAS,
         CHACHANOTES_V88_SCHEMAS,
+        CHACHANOTES_V89_SCHEMAS,
         CORE_SCHEMAS,
     )
 
@@ -1314,6 +1334,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         *CHACHANOTES_V86_SCHEMAS,
         *CHACHANOTES_V87_SCHEMAS,
         *CHACHANOTES_V88_SCHEMAS,
+        *CHACHANOTES_V89_SCHEMAS,
         *(sql for _, sql in _SUBSCRIPTIONS_SCHEMA),
     )
     if schema not in frozen:
@@ -1590,6 +1611,8 @@ def _validate_candidate(
                         CHACHANOTES_V86_SCHEMAS,
                         CHACHANOTES_V87_SCHEMAS,
                         CHACHANOTES_V88_LOCATOR_INDEXES,
+                        CHACHANOTES_V88_SCHEMAS,
+                        CHACHANOTES_V89_DROPPED_INDEXES,
                     )
 
                     actual_sql = tuple(
@@ -1624,6 +1647,8 @@ def _validate_candidate(
                         and actual_sql in CHACHANOTES_V86_SCHEMAS
                         or version == 87
                         and actual_sql in CHACHANOTES_V87_SCHEMAS
+                        or version == 88
+                        and actual_sql in CHACHANOTES_V88_SCHEMAS
                     ):
                         return (("unsupported_schema_migration",), None)
                     shipped_checkpoint = actual_sql in CHACHANOTES_V76_SHIPPED_SCHEMAS
@@ -1666,14 +1691,16 @@ def _validate_candidate(
                                 shipped_checkpoint
                                 and version == 76
                                 or installed.owner_id == "db.chachanotes.primary"
-                                and version in (77, 78, 79, 80, 81, 84, 85, 86, 87)
+                                and version in (77, 78, 79, 80, 81, 84, 85, 86, 87, 88)
                             ):
                                 migration = (
                                     Path(__file__).resolve().parents[1]
                                     / "DB"
                                     / "migrations"
                                     / (
-                                        "chachanotes_v87_to_v88_message_locator_indexes.sql"
+                                        "chachanotes_v88_to_v89_drop_superseded_response_revision_index.sql"
+                                        if version == 88
+                                        else "chachanotes_v87_to_v88_message_locator_indexes.sql"
                                         if version == 87
                                         else "chachanotes_v86_to_v87_console_trace_child_segments.sql"
                                         if version == 86
@@ -1706,6 +1733,11 @@ def _validate_candidate(
                                 restrictions.locator_indexes = (
                                     CHACHANOTES_V88_LOCATOR_INDEXES
                                     if version == 87
+                                    else {}
+                                )
+                                restrictions.dropped_indexes = (
+                                    CHACHANOTES_V89_DROPPED_INDEXES
+                                    if version == 88
                                     else {}
                                 )
                                 try:
@@ -1746,6 +1778,7 @@ def _validate_candidate(
                                     restrictions.prompt_mixins_migration = False
                                     restrictions.child_segments_migration = False
                                     restrictions.locator_indexes = {}
+                                    restrictions.dropped_indexes = {}
                             restrictions.portrait_migration = (
                                 version
                                 if installed.owner_id == "db.chachanotes.primary"

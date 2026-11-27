@@ -633,8 +633,16 @@ def test_publication_uses_only_explicit_parent_containers(tmp_path):
 
 
 def _encrypted_rollback(
-    tmp_path, previous, helper_resource_root, monkeypatch, *, data=None
+    tmp_path,
+    previous,
+    helper_resource_root,
+    monkeypatch,
+    *,
+    data=None,
+    owner="models.artifacts",
 ):
+    # ``owner`` must match the live inventory the rollback covers: a directory
+    # producer from another owner is refused (``rollback_coverage_mismatch``).
     from threading import Event
 
     from Tests.Backup_Recovery.test_archive_writer import captured
@@ -646,7 +654,7 @@ def _encrypted_rollback(
     capture = captured(tmp_path, previous.read_bytes() if data is None else data)
     document = json.loads(capture.manifest_bytes)
     document["credential_policy"] = "rollback"
-    document["files"][0]["owner_id"] = "models.artifacts"
+    document["files"][0]["owner_id"] = owner
     info = previous.stat()
     document["files"][0]["metadata"] = {
         "version": 1,
@@ -686,7 +694,7 @@ def _encrypted_rollback(
                 "root_id": "root",
                 "parent_id": "old",
                 "relative_path": "obsolete/data",
-                "owner_id": "models.artifacts",
+                "owner_id": owner,
                 "payload": "payload/2",
                 "size": len(payload),
                 "sha256": hashlib.sha256(payload).hexdigest(),
@@ -705,12 +713,12 @@ def _encrypted_rollback(
         "mtime_ns": root_info.st_mtime_ns,
     }
     document["owners"] = [
-        {"owner_id": "models.artifacts", "schema_version": 0, "capabilities": []}
+        {"owner_id": owner, "schema_version": 0, "capabilities": []}
     ]
     document["producer_inventory"] = [
         {
             "logical_id": row["logical_id"],
-            "owner_id": "models.artifacts",
+            "owner_id": owner,
             "status": "included_directory",
             "dependencies": [row["parent_id"]] if row["parent_id"] else [],
             "shared_group": None,

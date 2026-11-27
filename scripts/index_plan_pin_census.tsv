@@ -7,6 +7,8 @@
 # `pre-convention` predates TASK-21593's guard. No pin is demanded
 #                  retroactively; the point is that the NEXT index cannot be
 #                  added without someone choosing between these two words.
+# `dropped`        a historical migration creates it and a later one drops it
+#                  (`DROP INDEX` under tldw_chatbook/DB); no plan is claimed.
 #
 # Why this file exists at all: scripts/check_index_plan_pins.py, and the two
 # measurements in its docstring where a textbook index was simply never
@@ -115,7 +117,7 @@ idx_console_trace_owners_root_segment	plan-pinned	Tests/DB/test_chachanotes_v56_
 idx_console_trace_redaction_artifact	plan-pinned	Tests/DB/test_chachanotes_v56_console_trace_query_plans.py
 idx_console_trace_redaction_revision	plan-pinned	Tests/DB/test_chachanotes_v56_console_trace_query_plans.py
 idx_console_trace_response_artifact	plan-pinned	Tests/DB/test_chachanotes_v56_console_trace_query_plans.py
-idx_console_trace_response_revision	plan-pinned	Tests/DB/test_chachanotes_v56_console_trace_query_plans.py::test_response_revision_index_served_its_locator_until_schema_72 (dead since schema 72: idx_console_trace_response_links_semantic_revision_exact wins every product query on the column; drop-or-keep is TASK-42544, recommendation drop; TASK-42517)
+idx_console_trace_response_revision	dropped	v56's partial index, superseded by idx_console_trace_response_links_semantic_revision_exact (schema 72) and dropped in schema 89 (TASK-42544); its v71 plan stays pinned by Tests/DB/test_chachanotes_v56_console_trace_query_plans.py::test_response_revision_index_served_its_locator_until_schema_72
 idx_console_trace_revision_bindings_artifact	plan-pinned	Tests/DB/test_chachanotes_v56_console_trace_query_plans.py
 idx_console_trace_retention_expiry	plan-pinned	Tests/DB/test_chachanotes_v63_console_trace_gc_guard_migration.py
 idx_console_trace_segments_parent_boundary	plan-pinned	Tests/DB/test_chachanotes_v56_console_trace_query_plans.py

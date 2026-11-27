@@ -179,7 +179,8 @@ def test_response_revision_index_served_its_locator_until_schema_72(tmp_path) ->
     Schema 72 added ``idx_console_trace_response_links_semantic_revision_exact``
     on the same column (ADR-338's completed-pair locators), and that full
     index wins the same plan on a current file (the parametrized pin above).
-    No product query plans through the v56 index any more (TASK-42517).
+    No product query plans through the v56 index any more (TASK-42517), and
+    schema 89 drops it (TASK-42544).
     """
 
     with chachanotes_db_at_version(tmp_path / "v71.sqlite", 71) as historical:
@@ -198,3 +199,78 @@ def test_response_revision_index_served_its_locator_until_schema_72(tmp_path) ->
             )
         )
     assert "idx_console_trace_response_revision" in plan, plan
+
+
+class _PlanCursor:
+    """Answers each product statement with its query plan instead of its rows."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self.connection = connection
+        self.plans: list[str] = []
+
+    def execute(self, sql: str, params=()) -> sqlite3.Cursor:
+        self.plans.append(
+            " | ".join(
+                str(row[-1])
+                for row in self.connection.execute("EXPLAIN QUERY PLAN " + sql, params)
+            )
+        )
+        return self.connection.execute("SELECT 1 WHERE 0")
+
+
+@pytest.mark.parametrize("origin", ["fresh", "upgraded_from_v88"])
+def test_response_revision_queries_keep_the_exact_index_after_v89(
+    tmp_path, origin
+) -> None:
+    """Schema 89 drops v56's partial index; no plan on the column changes.
+
+    Four reads of ``console_trace_response_links.semantic_revision_id`` plan
+    here with no ``sqlite_stat1``: this file's exact locator
+    (``RESPONSE_REVISION_LOCATOR``), and three product reads run through
+    their own methods -- the semantic-revision policy join, the
+    voice-promotion locator check and the completed-replay terminal lookup.
+    Each still plans through schema 72's exact index (TASK-42544).
+    """
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_semantic_revision import (
+        SemanticRevisionCoordinator,
+    )
+    from tldw_chatbook.Chat.console_trace_service import ConsoleTraceService
+
+    path = tmp_path / "response-revision.sqlite"
+    if origin == "upgraded_from_v88":
+        with chachanotes_db_at_version(path, 88, client_id="v88-response-revision"):
+            pass
+    db = CharactersRAGDB(path, "response-revision-plans")
+    try:
+        connection = db.get_connection()
+        assert (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'sqlite_stat1'"
+            ).fetchone()
+            is None
+        )
+        indexes = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            )
+        }
+        assert "idx_console_trace_response_revision" not in indexes
+        cursor = _PlanCursor(connection)
+        cursor.execute(RESPONSE_REVISION_LOCATOR, ("revision",))
+        SemanticRevisionCoordinator._reachable_policy_ids(cursor, "revision")
+        ChatPersistenceService._voice_promotion_locator_exists(
+            cursor,
+            locators=frozenset({("console_trace_response_links", "semantic_revision_id")}),
+            identifiers=("revision-a", "revision-b"),
+        )
+        # No row comes back, so the lookup stops at its first statement.
+        with pytest.raises(ValueError, match="completed_replay_terminal"):
+            ConsoleTraceService._completed_replay_values(None, cursor, "owner", "revision")
+        assert len(cursor.plans) == 4
+        for plan in cursor.plans:
+            assert "idx_console_trace_response_links_semantic_revision_exact" in plan, plan
+    finally:
+        db.close_connection()
