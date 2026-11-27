@@ -1278,6 +1278,7 @@ async def test_the_undo_reads_only_the_actions_own_turn(tmp_path, monkeypatch):
             turn_id=app.store.get_message(_last(app, "user").id).persisted_message_id,
             calls_before=None,
             copy=capture.ACTION_NOT_SENT_COPY,
+            kept_copy=capture.TRACE_REFUSED_COPY,
         )
         undo = replace(undo, calls_before=capture._turn_calls(app.controller, undo))
 
