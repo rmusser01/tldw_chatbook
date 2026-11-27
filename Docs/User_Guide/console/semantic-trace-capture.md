@@ -322,9 +322,10 @@ transcript:
   temporary chat with Capture On, an action that would be captured asks you
   to save the chat or turn Capture off first.
 - **Retry** of a failed reply also still sends with capture off. With project
-  instructions (AGENTS.md), your next message after any Retry of a failed
-  reply stops at **Trace capture could not start**; a captured Retry is
-  planned in TASK-42555.
+  instructions (AGENTS.md), your next message after a Retry of a failed reply
+  may stop at **Trace capture could not start**; after a Retry of a reply that
+  a captured Continue left failed it stops there with or without them.
+  **Send without capture** sends it. A captured Retry is planned in TASK-42555.
 - **Impersonate** sends with capture off, so the trace has no call for it. A
   citation repair ("Citations repaired") is sent with capture off too; the
   reply it repairs keeps its own trace call. Your next send in the chat is
