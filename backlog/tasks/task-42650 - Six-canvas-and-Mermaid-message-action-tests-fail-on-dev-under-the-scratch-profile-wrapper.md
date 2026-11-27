@@ -4,7 +4,7 @@ title: "Six canvas and Mermaid message-action tests fail on dev under the scratc
 status: To Do
 assignee: []
 created_date: 2026-11-27 18:00
-updated_date: 2026-11-27 18:38
+updated_date: 2026-11-27 18:51
 labels:
 - follow-up
 - tests
@@ -31,7 +31,7 @@ Found in round 27 (2026-11-27) while rerunning, on the stack's final top, the te
 
 They build `ConsoleMessageActionService()` without a `canvas_enabled_reader`, so the service uses `Canvas/config_policy.py::get_canvas_execution_enabled`. Inside these tests that reader raises `RecoveryRequired('raw_source_selection_changed')` (traced 2026-11-27 with the reader wrapped after conftest loads), and `ConsoleMessageActionService._read_canvas_enabled` turns any exception into "disabled". It is not the config default: the shipped default and the code default both turn Canvas on. Each test then sees Canvas as disabled: dispatch returns `blocked` with "Canvas is disabled. Restart Chatbook after re-enabling it.", discovery lists no canvas actions, and two get `None` where they expect a block reference (`AttributeError: 'NoneType' object has no attribute 'language'`).
 
-No PR lane runs the file whole (the fast PR contract runs four of its nodes). The workflows that do run it whole (`nightly-deep.yml`, and `test.yml`'s core tests) have not run in the last month (last runs 2026-09-27 and 2026-10-03), so whether the six are red on CI or only under the local wrapper is unknown.
+No PR lane runs the file whole (the fast PR contract runs four of its nodes). The workflows that do run it whole (`nightly-deep.yml`, and `test.yml`'s core tests) have not run in the last month (last runs 2026-09-27 and 2026-10-03), so whether the six are red on CI or only under the local wrapper is unknown. A scheduled `nightly-deep.yml` run tests `main` (scheduled workflows run on the default branch), so evidence for dev needs a run dispatched on `dev` or a PR lane.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
