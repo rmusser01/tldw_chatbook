@@ -3061,7 +3061,7 @@
     },
     {
       "call_count": 10,
-      "diagnostic_digest": "fed19a3536371c29ee23",
+      "diagnostic_digest": "35a5524fa4f8c3440e2a",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Tools/remote_worker_bundle.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -4426,7 +4426,7 @@
     },
     {
       "call_count": 9,
-      "diagnostic_digest": "5c87aa034fdb12365052",
+      "diagnostic_digest": "917bd20fa1f9b9a8eff6",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Utils/path_validation.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -10467,7 +10467,7 @@
     {
       "candidates": [
         {
-          "call_digest": "7d057cd12d6b9fcc",
+          "call_digest": "2e67df566630f22c",
           "method": "error",
           "path_expressions": [
             "user_path"
@@ -10476,16 +10476,16 @@
           "status": "legacy_unreviewed"
         },
         {
-          "call_digest": "8cf6b9c9afd5a866",
+          "call_digest": "18a65561d51bf340",
           "method": "warning",
           "path_expressions": [
-            "base_directory"
+            "full_path"
           ],
           "scope": "validate_path",
           "status": "legacy_unreviewed"
         },
         {
-          "call_digest": "ef2a971669d1b106",
+          "call_digest": "41c0e3153b109e11",
           "method": "warning",
           "path_expressions": [
             "full_path",
@@ -10495,10 +10495,10 @@
           "status": "legacy_unreviewed"
         },
         {
-          "call_digest": "fb98ba9c8fe67e4b",
+          "call_digest": "591561e67791e7bb",
           "method": "warning",
           "path_expressions": [
-            "full_path"
+            "base_directory"
           ],
           "scope": "validate_path",
           "status": "legacy_unreviewed"
@@ -11178,7 +11178,7 @@
     {
       "candidates": [
         {
-          "call_digest": "7d057cd12d6b9fcc",
+          "call_digest": "2e67df566630f22c",
           "method": "error",
           "path_expressions": [
             "user_path"
@@ -11187,7 +11187,17 @@
           "status": "legacy_unreviewed"
         },
         {
-          "call_digest": "b289d15680535be7",
+          "call_digest": "50a7e03dac2d4797",
+          "method": "warning",
+          "path_expressions": [
+            "full_path",
+            "user_path"
+          ],
+          "scope": "validate_path",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "82fa35e0a8979679",
           "method": "warning",
           "path_expressions": [
             "full_path"
@@ -11196,20 +11206,10 @@
           "status": "legacy_unreviewed"
         },
         {
-          "call_digest": "c3195a420e7b7a6b",
+          "call_digest": "bc53daf1c325ade5",
           "method": "warning",
           "path_expressions": [
             "base_directory"
-          ],
-          "scope": "validate_path",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "ee6b3cb1f3d75177",
-          "method": "warning",
-          "path_expressions": [
-            "full_path",
-            "user_path"
           ],
           "scope": "validate_path",
           "status": "legacy_unreviewed"

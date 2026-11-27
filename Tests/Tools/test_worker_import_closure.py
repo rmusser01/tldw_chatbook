@@ -102,3 +102,54 @@ def test_worker_import_closure_is_stdlib_only() -> None:
     )
 
     assert completed.returncode == 0, completed.stderr.decode(errors="replace")
+
+
+def test_a_validated_path_in_the_running_worker_keeps_the_closure_stdlib_only(tmp_path) -> None:
+    """TASK-40608: serving a request must not load what importing the worker avoids.
+
+    The gate above covers importing the worker. Each worker then serves one
+    request, and its first path validation used to fetch loguru's logger and
+    record metrics: 106 modules (loguru, psutil, asyncio, multiprocessing, ssl)
+    loaded on every local tool call, most of the call's time. The probe runs
+    the real choke point, ``resolve_workspace_path``, after importing the
+    worker as a fresh worker process has, and applies the same allowlist to
+    what the validation loaded, with the metrics module added to the refused
+    names.
+    """
+    (tmp_path / "notes.txt").write_text("x", encoding="utf-8")
+    probe = textwrap.dedent(
+        f"""
+        import sys
+        sys.path.insert(0, {str(_REPOSITORY_ROOT)!r})
+        import tldw_chatbook.Tools.workspace_tool_worker  # noqa: F401
+        from tldw_chatbook.Tools.local_tool_impls import resolve_workspace_path
+        from tldw_chatbook.Utils.sensitive_paths import SensitivePathContext
+        baseline = frozenset(sys.modules)
+        from pathlib import Path
+        root = Path(sys.argv[1])
+        # The parent sends the worker its deny set; an empty one keeps the probe
+        # off this machine's real configuration.
+        context = SensitivePathContext((), (), (), None, ())
+        resolved = resolve_workspace_path("notes.txt", root, intent="read", context=context)
+        assert resolved.name == "notes.txt", resolved
+        stdlib = sys.stdlib_module_names
+        pulled = sorted(set(sys.modules) - baseline)
+        offenders = sorted(
+            name
+            for name in pulled
+            if name.split(".")[0] not in stdlib
+            and not (name.split(".")[0] == "tldw_chatbook" and ".Metrics" not in name)
+        )
+        print("PULLED: " + ", ".join(offenders))
+        """
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-I", "-c", probe, str(tmp_path)],
+        capture_output=True,
+        timeout=120,
+        env=_probe_environment(),
+    )
+    assert completed.returncode == 0, completed.stderr.decode(errors="replace")
+    pulled = completed.stdout.decode(errors="replace").strip().splitlines()[-1]
+    assert pulled == "PULLED:", "one validation in the worker loaded third-party or metrics modules"

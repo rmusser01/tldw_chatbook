@@ -347,3 +347,77 @@ def test_validate_path_simple_still_refuses_an_unexpanded_tilde() -> None:
 
     with pytest.raises(ValueError, match="dangerous pattern: ~/"):
         validate_path_simple("~/Documents/x.txt")
+
+
+class TestQuietSuccessPath:
+    """TASK-40608: a successful validation fetches no logger, and the one-shot worker records no metrics."""
+
+    @pytest.fixture
+    def base(self, tmp_path):
+        # Resolved: the simple validator warns when a path resolves differently.
+        folder = tmp_path.resolve()
+        (folder / "inside.txt").write_text("x", encoding="utf-8")
+        return folder
+
+    def test_a_successful_validation_never_fetches_the_logger(self, base, monkeypatch):
+        from tldw_chatbook.Utils import path_validation
+
+        def fetched():
+            raise AssertionError("the logger was fetched for a successful validation")
+
+        monkeypatch.setattr(path_validation, "_logging_logger", fetched)
+        assert path_validation.validate_path("inside.txt", base) == (base / "inside.txt").resolve()
+        assert path_validation.validate_path_simple(str(base / "inside.txt")).name == "inside.txt"
+
+    def test_a_refusal_is_still_logged(self, base, monkeypatch):
+        from tldw_chatbook.Utils import path_validation
+
+        messages = []
+
+        class Recorder:
+            def warning(self, message, *args):
+                messages.append(("warning", message))
+
+            def error(self, message, *args):
+                messages.append(("error", message))
+
+        monkeypatch.setattr(path_validation, "_logging_logger", Recorder)
+        with pytest.raises(ValueError):
+            path_validation.validate_path("../outside.txt", base)
+        assert [level for level, _ in messages] == ["warning", "error"]
+        assert "traversal" in messages[0][1].lower()
+
+    @staticmethod
+    def _recorded(monkeypatch):
+        from tldw_chatbook.Metrics import metrics_logger
+
+        seen = []
+        monkeypatch.setattr(metrics_logger, "log_counter", lambda name, *rest: seen.append(name))
+        monkeypatch.setattr(metrics_logger, "log_histogram", lambda name, *rest: seen.append(name))
+        return seen
+
+    def test_an_ordinary_process_still_records_validation_metrics(self, base, monkeypatch):
+        seen = self._recorded(monkeypatch)
+        validate_path("inside.txt", base)
+        assert seen == [
+            "path_validation_validate_path_attempt",
+            "path_validation_validate_path_duration",
+            "path_validation_validate_path_success",
+        ]
+
+    def test_a_process_without_the_metrics_module_records_nothing_and_never_loads_it(
+        self, base, monkeypatch
+    ):
+        """The one-shot tool worker and the remote bundle: nothing reads a metric there."""
+        import sys
+
+        from tldw_chatbook.Utils import path_validation
+
+        seen = self._recorded(monkeypatch)
+        monkeypatch.delitem(sys.modules, path_validation._METRICS_MODULE)
+        assert validate_path("inside.txt", base) == (base / "inside.txt").resolve()
+        with pytest.raises(ValueError):
+            validate_path("../outside.txt", base)
+        assert path_validation.validate_path_simple(str(base / "inside.txt")).name == "inside.txt"
+        assert seen == []
+        assert path_validation._METRICS_MODULE not in sys.modules

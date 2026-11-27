@@ -138,10 +138,12 @@ escape allowed directories.
 """
 import os
 import stat
+import sys
 import time
 import unicodedata
 from pathlib import Path
 from typing import Optional, Sequence, Union
+_METRICS_MODULE = 'tldw_chatbook.Metrics.metrics_logger'
 
 def log_counter(name: str, value: int=1, labels: Optional[dict[str, str]]=None) -> None:
     """Record a counter metric, or do nothing where metrics are unavailable.
@@ -151,11 +153,9 @@ def log_counter(name: str, value: int=1, labels: Optional[dict[str, str]]=None) 
         value: Amount to add.
         labels: Optional metric labels.
     """
-    try:
-        raise ImportError("'..Metrics.metrics_logger' (importing log_counter) is not available inside the remote worker bundle")
-    except ImportError:
-        return
-    emit(name, value, labels)
+    emit = getattr(sys.modules.get(_METRICS_MODULE), 'log_counter', None)
+    if emit is not None:
+        emit(name, value, labels)
 
 def log_histogram(name: str, value: float, labels: Optional[dict[str, str]]=None) -> None:
     """Record a histogram observation, or do nothing where metrics are unavailable.
@@ -165,11 +165,9 @@ def log_histogram(name: str, value: float, labels: Optional[dict[str, str]]=None
         value: Observed value.
         labels: Optional metric labels.
     """
-    try:
-        raise ImportError("'..Metrics.metrics_logger' (importing log_histogram) is not available inside the remote worker bundle")
-    except ImportError:
-        return
-    emit(name, value, labels)
+    emit = getattr(sys.modules.get(_METRICS_MODULE), 'log_histogram', None)
+    if emit is not None:
+        emit(name, value, labels)
 
 class _NoOpLogger:
     """Silent stand-in for loguru's logger where loguru is not installed.
@@ -196,8 +194,8 @@ class _NoOpLogger:
 def _logging_logger():
     """Return loguru's logger, or a silent no-op when loguru is absent.
 
-    Same laziness rule as ``log_counter`` above: the import happens per
-    call, never at module scope, and the ImportError fallback exists for
+    The import happens per call, never at module scope, and callers call
+    this where they write a message. The ImportError fallback exists for
     the stdlib-only remote worker bundle (Phase 1d). In the parent, where
     loguru is an installed dependency, the return value is unchanged.
     """
@@ -301,7 +299,6 @@ def validate_path(user_path: Union[str, Path], base_directory: Union[str, Path],
     Raises:
         ValueError: If the path is invalid or attempts directory traversal
     """
-    logger = _logging_logger()
     start_time = time.time()
     log_counter('path_validation_validate_path_attempt')
     redacted_failure: str | None = None
@@ -316,9 +313,9 @@ def validate_path(user_path: Union[str, Path], base_directory: Union[str, Path],
             full_path.relative_to(base_directory)
         except ValueError:
             if redact_paths:
-                logger.warning('Path traversal attempt detected.')
+                _logging_logger().warning('Path traversal attempt detected.')
             else:
-                logger.warning(f'Path traversal attempt detected: {user_path} -> {full_path}')
+                _logging_logger().warning(f'Path traversal attempt detected: {user_path} -> {full_path}')
             log_counter('path_validation_security_violation', labels={'type': 'directory_traversal'})
             if redact_paths:
                 redacted_failure = 'Path is outside the allowed directory'
@@ -327,18 +324,18 @@ def validate_path(user_path: Union[str, Path], base_directory: Union[str, Path],
         relative_parts = full_path.relative_to(base_directory).parts
         if not allow_hidden and any((part.startswith('.') for part in relative_parts if part != '.')):
             if redact_paths:
-                logger.warning('Hidden file/directory access attempt detected.')
+                _logging_logger().warning('Hidden file/directory access attempt detected.')
             else:
-                logger.warning(f'Hidden file/directory access attempt: {full_path}')
+                _logging_logger().warning(f'Hidden file/directory access attempt: {full_path}')
             log_counter('path_validation_security_violation', labels={'type': 'hidden_file_access'})
             if redact_paths:
                 redacted_failure = 'Access to hidden files/directories is not allowed'
             raise ValueError('Access to hidden files/directories is not allowed')
         if not allow_hidden and base_directory.name.startswith('.'):
             if redact_paths:
-                logger.warning('Hidden base directory rejected.')
+                _logging_logger().warning('Hidden base directory rejected.')
             else:
-                logger.warning(f'Hidden base directory rejected: {base_directory}')
+                _logging_logger().warning(f'Hidden base directory rejected: {base_directory}')
             log_counter('path_validation_security_violation', labels={'type': 'hidden_file_access'})
             if redact_paths:
                 redacted_failure = 'Access to hidden files/directories is not allowed'
@@ -352,9 +349,9 @@ def validate_path(user_path: Union[str, Path], base_directory: Union[str, Path],
         log_histogram('path_validation_validate_path_duration', duration, labels={'status': 'error'})
         log_counter('path_validation_validate_path_error', labels={'error_type': type(e).__name__})
         if redact_paths:
-            logger.error('Path validation failed (category={}).', type(e).__name__)
+            _logging_logger().error('Path validation failed (category={}).', type(e).__name__)
         else:
-            logger.error(f"Path validation error for '{user_path}': {e}")
+            _logging_logger().error(f"Path validation error for '{user_path}': {e}")
         if redact_paths:
             raise ValueError(redacted_failure or 'Invalid path') from None
         if isinstance(e, ValueError):
@@ -481,7 +478,6 @@ def validate_path_simple(user_path: Union[str, Path], require_exists: bool=False
     Raises:
         ValueError: If the path contains security risks
     """
-    logger = _logging_logger()
     start_time = time.time()
     log_counter('path_validation_validate_path_simple_attempt')
     try:
@@ -501,7 +497,7 @@ def validate_path_simple(user_path: Union[str, Path], require_exists: bool=False
             if path.exists():
                 resolved = path.resolve()
                 if path.is_absolute() and resolved != path:
-                    logger.warning('Path resolution changed during validation')
+                    _logging_logger().warning('Path resolution changed during validation')
             elif require_exists:
                 raise ValueError('Path does not exist')
         elif require_exists:
@@ -2264,6 +2260,8 @@ def resolve_workspace_path(path: str, workspace_root: Path, *, intent: PathInten
     except ValueError as exc:
         raise LocalToolError(f"Path '{path}' is outside the workspace root ({workspace_root})") from exc
     verb = _INTENT_VERBS.get(intent, 'accessed')
+    if context is None and intent == 'write':
+        context = resolve_sensitive_context()
     if is_sensitive_path(resolved, context=context):
         raise LocalToolError(f"Refused: '{path}' is a protected path and cannot be {verb}")
     if intent == 'write' and is_git_metadata_write(resolved):
@@ -5594,8 +5592,8 @@ def run_workspace_worker(stdin: BinaryIO, stdout: BinaryIO, stderr: BinaryIO, *,
             worker has no bundle and reports the empty default.
     """
     del stderr
-    started = time.monotonic()
     raw = stdin.read(MAX_REQUEST_BYTES + 1)
+    started = time.monotonic()
     if len(raw) > MAX_REQUEST_BYTES:
         _emit(stdout, _failure('unknown', 'invalid_request', started))
         return 2
@@ -5861,4 +5859,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("b094fdb766253adef504085824245bc6db3aecf1058928138ba324f34eb0e70d")
+BUNDLE_SHA256 = _enter_worker_exchange("9e28a938943a5da970ff4003c5a49bd24a2011d0e99e1c1bc821f73830106dbc")
