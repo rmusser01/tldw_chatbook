@@ -451,7 +451,10 @@ def remove_sandbox_at_exit(root: Path) -> None:
     dies of the same signal, as before. ``SIGKILL`` and ``os._exit`` cannot be
     caught. A fork child inherits both but owns no root, so only the
     registering process removes it (terminating a fork child must not delete
-    its parent's live sandbox).
+    its parent's live sandbox), and the child gets the default disposition
+    back at fork (TASK-42651): Python runs a handler only between bytecodes,
+    so an inherited one let a SIGTERM that landed just before a blocking call
+    such as ``time.sleep`` wait that call out, where the default kills at once.
 
     Args:
         root: The sandbox root this process created and owns.
@@ -469,12 +472,20 @@ def remove_sandbox_at_exit(root: Path) -> None:
         signal.signal(signum, signal.SIG_DFL)
         os.kill(os.getpid(), signum)
 
-    for name in ("SIGTERM", "SIGHUP"):
-        sig = getattr(signal, name, None)
+    handled = [getattr(signal, n) for n in ("SIGTERM", "SIGHUP") if hasattr(signal, n)]
+    for sig in handled:
         # Leave a handler someone else installed; signal.signal raises
         # ValueError off the main thread.
-        if sig is not None and signal.getsignal(sig) is signal.SIG_DFL:
+        if signal.getsignal(sig) is signal.SIG_DFL:
             try:
                 signal.signal(sig, remove_then_die)
             except ValueError:
                 pass
+
+    def default_in_fork_child() -> None:
+        for sig in handled:
+            if signal.getsignal(sig) is remove_then_die:
+                signal.signal(sig, signal.SIG_DFL)
+
+    if hasattr(os, "register_at_fork"):
+        os.register_at_fork(after_in_child=default_in_fork_child)

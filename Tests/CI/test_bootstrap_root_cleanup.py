@@ -28,12 +28,16 @@ remove_sandbox_at_exit(root)
 """
 # A fork child inherits the atexit entry and the handlers but owns no root:
 # terminating it (Chunking's ebook_chapters strategy does, with a fork
-# context) must not remove the parent's live root (TASK-42145 review).
+# context) must not remove the parent's live root (TASK-42145 review). It gets
+# the default SIGTERM back (TASK-42651): with the inherited Python handler, a
+# SIGTERM that landed just before the sleep only ran it when the sleep ended,
+# after the join (17 of 1000 runs at -n 8).
 _TERMINATE_A_FORK_CHILD = """
 import multiprocessing, time
 ctx = multiprocessing.get_context("fork")
 ready = ctx.Event()
 def wait_forever():
+    print(f"default={signal.getsignal(signal.SIGTERM) is signal.SIG_DFL}", flush=True)
     ready.set()
     time.sleep(60)
 child = ctx.Process(target=wait_forever, daemon=True)
@@ -71,7 +75,7 @@ _POSIX = pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
             "",
             _TERMINATE_A_FORK_CHILD,
             0,
-            f"child={-signal.SIGTERM} kept=True",
+            f"default=True\nchild={-signal.SIGTERM} kept=True",
             id="fork-child-terminated",
             marks=_POSIX,
         ),
