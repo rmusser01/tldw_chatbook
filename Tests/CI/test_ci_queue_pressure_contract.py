@@ -55,16 +55,17 @@ FAST_LANE_TARGETS = (
     # The other three nodes bound the relabel: a tool that ran (any status
     # from success to failed, timed out or stopped) and a result plus diff
     # keep "Full output", and so does a cancelled or timed-out raw-CLI
-    # command whose header also reads `blocked`. No bootstrap profile. The
-    # action service reads the canvas setting from config (the per-test
-    # sandbox's), harmlessly, since a TOOL row has no canvas block; the
-    # raw-CLI nodes return before that read. 13 tests in 0.9 s serially.
-    # Beside the approval riders, not at the tail, so it does not contend
-    # with the tail appends.
-    "Tests/Chat/test_console_message_actions.py::test_full_output_tool_marker_keeps_full_output_label",
-    "Tests/Chat/test_console_message_actions.py::test_tool_marker_with_full_output_and_diff_keeps_full_output_label",
-    "Tests/Chat/test_console_message_actions.py::test_refused_tool_marker_says_the_body_went_to_the_model",
-    "Tests/Chat/test_console_message_actions.py::test_stopped_raw_cli_marker_keeps_full_output_label",
+    # command whose header also reads `blocked`. No bootstrap profile.
+    # TASK-42650 (2026-11-28): the whole file now, not those four nodes. Six
+    # canvas and Mermaid tests in it fail on CI too (a release-candidate core
+    # shard showed one, 2026-11-22): the service's default canvas reader loads
+    # config, the per-test profile redirect makes that load refuse
+    # (`raw_source_selection_changed`), and the service reads the refusal as
+    # Canvas off. They now pass an explicit reader. 137 tests in 5.4 s
+    # serially (load 10; the four nodes were 13 tests in 0.8 s). Beside the
+    # approval riders, not at the tail, so it does not contend with the tail
+    # appends.
+    "Tests/Chat/test_console_message_actions.py",
     "Tests/MCP/test_control_plane_bridge.py",
     "Tests/MCP/test_live_server_request_wiring.py",
     "Tests/MCP/test_mcp_import_shapes.py",
