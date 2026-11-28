@@ -1374,6 +1374,9 @@ class BackupRestoreScreen(Screen):
                 message += "\nAvailability: " + (
                     "available" if available else f"unavailable ({reason})"
                 )
+                # As the Replace restore review does: say why, not only the code.
+                if not available:
+                    message += "\n" + self.service.issue_message(reason)
         self.query_one("#backup-later-preview", Static).update(message)
         self.query_one("#backup-later-start", Button).disabled = (
             self._requires_recovery_restart()

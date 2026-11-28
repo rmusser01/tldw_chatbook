@@ -850,7 +850,10 @@ def _restore(service, args) -> int:
     if args.mode == "replace":
         available, reason = service.replacement_capability(plan)
         if not available:
+            from .recovery_service import issue_message
+
             print("Replacement unavailable: " + reason)
+            print(issue_message(reason))
             return 1
     if input("Type restore to apply this reviewed plan: ").strip() != "restore":
         return 0
@@ -955,7 +958,15 @@ def recovery_main(argv: Sequence[str] | None = None) -> int:
         password = None
         return 0 if _wait(service, operation)["state"] == "succeeded" else 1
     except (OSError, ValueError, RuntimeError, EOFError) as error:
-        print("Recovery refused: " + service.issue_code(error))
+        from .qualification import SQLITE_VERSION_UNSUPPORTED
+        from .recovery_service import issue_message
+
+        code = service.issue_code(error)
+        print("Recovery refused: " + code)
+        # TASK-42546: name the versions. Only this code: the plugin removal
+        # review has already printed its own help before it raises here.
+        if code == SQLITE_VERSION_UNSUPPORTED:
+            print(issue_message(code))
         return 1
     except KeyboardInterrupt:
         return 130

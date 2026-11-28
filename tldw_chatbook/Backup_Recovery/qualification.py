@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import platform
+import sqlite3
 import threading
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -135,6 +136,27 @@ _NEW_REPLACEMENT_FACTS: dict[NativeCell, frozenset[ProductFact]] = {
 }
 _RELEASE_AVAILABLE = "release_capability_available"
 _RELEASE_UNAVAILABLE = "release_capability_unavailable"
+# TASK-42546: every backup and restore validation reads the candidate with
+# PRAGMA trusted_schema=OFF, and SQLite before 3.41.0 then refuses every JSON
+# scalar function in a schema ("unsafe use of json_valid()"). Measured
+# 2026-11-27: SQLite 3.40.1 (Debian 12's, and the same release built from
+# source) refused json_valid, json_type, json_extract, json_array_length and
+# json in CHECKs, json_extract in an index and json_object and json_set in
+# triggers; 3.41.0, 3.41.2, 3.42.0, 3.43.0, 3.43.2, 3.44.0, 3.44.2, 3.45.0,
+# 3.45.1 and 3.45.3 accepted all of them.
+MINIMUM_SQLITE_VERSION = (3, 41, 0)
+SQLITE_VERSION_UNSUPPORTED = "sqlite_version_unsupported"
+
+
+def sqlite_supported() -> bool:
+    """Whether the linked SQLite can run backup and restore validation."""
+    return sqlite3.sqlite_version_info >= MINIMUM_SQLITE_VERSION
+
+
+def require_supported_sqlite() -> None:
+    """Refuse a backup or restore before any work when SQLite is too old."""
+    if not sqlite_supported():
+        raise ValueError(SQLITE_VERSION_UNSUPPORTED)
 
 
 def _source_product_facts(
@@ -307,6 +329,8 @@ def _release_for_roots(
     from .native_files import pinned_directory
     from .restore_plan import _ancestor
 
+    if not sqlite_supported():
+        return False, SQLITE_VERSION_UNSUPPORTED
     try:
         parents = tuple(dict.fromkeys(_ancestor(Path(path)) for path in product_roots))
         authorities = tuple(
@@ -382,6 +406,9 @@ def replacement_capability(plan, *, control_root: Path) -> tuple[bool, str]:
         and plan.local_snapshot.control_root != Path(control_root)
     ):
         return False, _RELEASE_UNAVAILABLE
+    # Before the dependency check, so an old SQLite is the one reason shown.
+    if not sqlite_supported():
+        return False, SQLITE_VERSION_UNSUPPORTED
     if required_rollback_dependencies(plan):
         return False, "rollback_dependency_selection_required"
     paths = tuple(

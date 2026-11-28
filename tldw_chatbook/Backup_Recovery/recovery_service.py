@@ -385,6 +385,18 @@ def issue_message(code: str) -> str:
     """Explain bounded local failures without rendering arbitrary exception text."""
     if code == "password_required":
         return "Enter the backup password and inspect again."
+    from .qualification import MINIMUM_SQLITE_VERSION, SQLITE_VERSION_UNSUPPORTED
+
+    if code == SQLITE_VERSION_UNSUPPORTED:
+        import sqlite3
+
+        needed = ".".join(str(part) for part in MINIMUM_SQLITE_VERSION)
+        return (
+            f"Backup and restore need SQLite {needed} or newer, and this Python "
+            f"uses SQLite {sqlite3.sqlite_version}. Run Chatbook with a Python "
+            "that has a newer SQLite (the \"Local backup and recovery\" guide names "
+            "some), then try again. The rest of Chatbook works as before."
+        )
     return _ISSUE_MESSAGES.get(
         code, "Review the recovery status and selected local paths before trying again."
     )
@@ -469,6 +481,9 @@ def issue_code(error: Exception, *, kind: str = "") -> str:
         "recovered_review_changed",
         "recovered_asset_held",
     }
+    from .qualification import SQLITE_VERSION_UNSUPPORTED
+
+    known.add(SQLITE_VERSION_UNSUPPORTED)
     if (
         isinstance(error, ValueError)
         and len(error.args) == 1
@@ -636,6 +651,11 @@ class RecoveryService:
         self, operation_id, *, old_password, target, acknowledged_credential_issues=()
     ):
         """Authenticate a retained copy and expose its current replacement plan."""
+        # TASK-42546: the plan reads the live databases first, which an old
+        # SQLite cannot validate; refuse before that with the version.
+        from .qualification import require_supported_sqlite
+
+        require_supported_sqlite()
 
         def preview(operation, cancel):
             from .later_rollback import preview_rollback
@@ -841,8 +861,12 @@ class RecoveryService:
         restore planner resolves it again against its current target inventory.
         Legacy Everything keeps its existing whole-archive planning path.
         """
+        from .qualification import require_supported_sqlite
         from .restore_groups import resolve_archive_groups
 
+        # TASK-42546: the restore review's first step, so an old SQLite stops
+        # it here rather than after a linked-group round.
+        require_supported_sqlite()
         doc = archive_reader.verify_sealed(self.inspection(inspection_id))
         if data_groups is None and doc.group_scope is None:
             return None
@@ -854,8 +878,12 @@ class RecoveryService:
             check_isolated_parents,
             resolve_destinations,
         )
+        from .qualification import require_supported_sqlite
         from .restore_plan import plan_restore
 
+        # TASK-42546: both modes read the live databases before any
+        # capability check, and an old SQLite cannot validate them.
+        require_supported_sqlite()
         if choices.get("setup_parent") is not None:
             from .destinations import check_setup_parent
             from .service_storage import work_root
@@ -943,6 +971,10 @@ class RecoveryService:
         archive = self.inspection(inspection_id)
         if type(plan) is not RestorePlan or plan.archive_digest != archive.digest:
             raise ValueError("archive_plan_mismatch")
+        # TASK-42546: an isolated restore has no capability check of its own.
+        from .qualification import require_supported_sqlite
+
+        require_supported_sqlite()
         if plan.mode == "replace":
             from .replacement import require_rollback_password
 
@@ -1568,8 +1600,11 @@ class RecoveryService:
         from .capture import _capture_options
         from .capture_service import _validate_backup_suffix
         from .profile_paths import lexical_path
+        from .qualification import require_supported_sqlite
         from .space import _MARGIN, _volume
 
+        # TASK-42546: an old SQLite would list valid stores as unavailable.
+        require_supported_sqlite()
         settings, selections, _, _ = _capture_options(options)
         destination = lexical_path(destination)
         _validate_backup_suffix(destination, encrypted=settings["encrypted"])

@@ -1024,3 +1024,206 @@ def test_prompt_v6_recovery_migration_denial_rolls_back(tmp_path, monkeypatch):
             ).fetchall()
             == []
         )
+
+
+def _old_sqlite(monkeypatch, info=(3, 40, 1)):
+    """TASK-42546: stand in for an SQLite too old for trusted_schema=OFF."""
+    monkeypatch.setattr(sqlite3, "sqlite_version_info", info)
+    monkeypatch.setattr(sqlite3, "sqlite_version", ".".join(map(str, info)))
+
+
+@pytest.mark.parametrize(
+    ("info", "refused"), [((3, 40, 1), True), ((3, 41, 0), False)]
+)
+def test_backup_and_replace_capability_refuse_sqlite_before_3_41(
+    monkeypatch, tmp_path, info, refused
+):
+    from tldw_chatbook.Backup_Recovery import qualification
+
+    _old_sqlite(monkeypatch, info)
+    verdict = qualification._release_for_roots(
+        "complete_capture", product_roots=(tmp_path,), admission_roots=(tmp_path,)
+    )
+    assert (verdict == (False, "sqlite_version_unsupported")) is refused
+
+
+def test_isolated_restore_refuses_sqlite_before_3_41_without_starting(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+    from tldw_chatbook.Backup_Recovery.restore_plan import RestorePlan
+
+    _old_sqlite(monkeypatch)
+    service = RecoveryService(tmp_path / "control")
+    try:
+        monkeypatch.setattr(
+            service, "inspection", lambda _id: SimpleNamespace(digest="d")
+        )
+        plan = RestorePlan("d", "isolated", (), (), (), "fingerprint")
+        with pytest.raises(ValueError, match="^sqlite_version_unsupported$"):
+            service.start_restore("inspection", plan)
+        assert service._futures == {}
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize(
+    ("info", "issue"),
+    [((3, 40, 1), "sqlite_version_unsupported"), ((3, 41, 0), "sqlite_security_unavailable")],
+)
+def test_validation_names_the_sqlite_version_not_a_security_refusal(
+    monkeypatch, tmp_path, info, issue
+):
+    owner, path = research_candidate(tmp_path)
+
+    def refuse(connection, cancel=None):
+        # What _restrict_connection raises on 3.40.1 for a JSON schema.
+        raise ValueError("sqlite_security_unavailable")
+
+    monkeypatch.setattr(validation, "_restrict_connection", refuse)
+    _old_sqlite(monkeypatch, info)
+    assert validate_candidate(owner, path, Event(), migrate=False) == (issue,)
+
+
+def test_sqlite_version_refusal_names_found_and_needed_versions(monkeypatch):
+    from tldw_chatbook.Backup_Recovery.recovery_service import (
+        issue_code,
+        issue_message,
+    )
+
+    _old_sqlite(monkeypatch)
+    code = issue_code(ValueError("sqlite_version_unsupported"), kind="backup")
+    assert code == "sqlite_version_unsupported"
+    message = issue_message(code)
+    assert "SQLite 3.41.0 or newer" in message
+    assert "uses SQLite 3.40.1" in message
+    assert 'the "Local backup and recovery" guide' in message
+
+
+@pytest.mark.parametrize("review", ["groups", "restore", "rollback", "backup"])
+def test_reviews_refuse_sqlite_before_3_41_before_reading_anything(
+    monkeypatch, tmp_path, review
+):
+    """Each review reads the live databases first, which 3.40 cannot validate."""
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+
+    _old_sqlite(monkeypatch)
+    service = RecoveryService(tmp_path / "control")
+
+    def no_reads(*_args, **_kwargs):
+        raise AssertionError("read before the SQLite check")
+
+    try:
+        monkeypatch.setattr(service, "inspection", no_reads)
+        monkeypatch.setattr(service, "preview_backup", no_reads)
+        calls = {
+            "groups": lambda: service.restore_group_requirements("inspection"),
+            "restore": lambda: service.preview_restore("inspection", mode="isolated"),
+            "rollback": lambda: service.start_rollback_preview(
+                "copy", old_password=b"x", target=None
+            ),
+            "backup": lambda: service.preview_backup_details(
+                (), options={}, destination=tmp_path / "out.tldw-backup.zip"
+            ),
+        }
+        with pytest.raises(ValueError, match="^sqlite_version_unsupported$"):
+            calls[review]()
+        assert service._futures == {}
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize(
+    ("info", "reason"),
+    [
+        ((3, 40, 1), "sqlite_version_unsupported"),
+        ((3, 41, 0), "rollback_dependency_selection_required"),
+    ],
+)
+def test_replace_names_old_sqlite_before_safety_copy_selection(
+    monkeypatch, tmp_path, info, reason
+):
+    from tldw_chatbook.Backup_Recovery import qualification, restore_plan
+    from tldw_chatbook.Backup_Recovery.restore_plan import RestorePlan
+
+    _old_sqlite(monkeypatch, info)
+    monkeypatch.setattr(
+        restore_plan, "required_rollback_dependencies", lambda _plan: ("copy",)
+    )
+    plan = RestorePlan("d", "replace", (), (), (), "fingerprint", target=object())
+    assert qualification.replacement_capability(
+        plan, control_root=tmp_path / "control"
+    ) == (False, reason)
+
+
+def test_recovery_cli_restore_names_both_sqlite_versions(monkeypatch, tmp_path):
+    import contextlib
+    import io
+
+    from tldw_chatbook.Backup_Recovery import launcher
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+
+    _old_sqlite(monkeypatch)
+    monkeypatch.setattr(launcher, "_inspect", lambda *_a, **_k: "inspection")
+    monkeypatch.setattr(RecoveryService, "summary", lambda _self, _id: {})
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        result = launcher.recovery_main(
+            [
+                "--control-root",
+                str(tmp_path / "control"),
+                "restore",
+                str(tmp_path / "backup.zip"),
+                "--isolated",
+            ]
+        )
+    shown = output.getvalue()
+    assert result == 1, shown
+    assert "Recovery refused: sqlite_version_unsupported\n" in shown, shown
+    assert "need SQLite 3.41.0 or newer" in shown, shown
+    assert "uses SQLite 3.40.1" in shown, shown
+
+
+async def test_rollback_review_says_why_replacement_is_unavailable(
+    monkeypatch, tmp_path
+):
+    """The rollback review's Availability line names the reason, as Replace does."""
+    from types import SimpleNamespace
+
+    from textual.widgets import Static
+
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+    from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
+
+    _old_sqlite(monkeypatch)
+    service = RecoveryService(tmp_path / "control")
+
+    class Harness(App):
+        def on_mount(self):
+            self.push_screen(BackupRestoreScreen(service, config_paths=()))
+
+    try:
+        app = Harness()
+        async with app.run_test(size=(100, 36)) as pilot:
+            await pilot.click("#backup-open-copies")
+            await pilot.pause()
+            screen = app.screen
+            screen._rollback_copy_id = "copy-1"
+            plan = SimpleNamespace(restore=(), retire=(), preserve=(), issues=())
+            screen._rollback_ready(
+                screen._revision,
+                "copy-1",
+                plan,
+                None,
+                availability=(False, "sqlite_version_unsupported"),
+            )
+            await pilot.pause()
+            text = str(screen.query_one("#backup-later-preview", Static).render())
+            assert "Availability: unavailable (sqlite_version_unsupported)" in text
+            assert "need SQLite 3.41.0 or newer" in text, text
+            assert screen.query_one("#backup-later-start").disabled
+    finally:
+        service.close()
