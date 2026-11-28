@@ -4,7 +4,7 @@ title: "Fork children inherit the app's termination handler, so terminate() may 
 status: To Do
 assignee: []
 created_date: 2026-11-28 17:29
-updated_date: 2026-11-28 18:06
+updated_date: 2026-11-28 18:51
 labels:
 - follow-up
 - shutdown
@@ -26,7 +26,7 @@ The app has the same shape:
 - `Utils/app_shutdown.py::install_termination_handlers` installs `_handle_termination_signal` for SIGTERM and SIGINT at startup (`app_entry.py`). It is a graceful shutdown on the first signal: it arms a grace timer, reads configuration and starts the app's shutdown.
 - `Chunking/engine/strategies/ebook_chapters.py::_run_finditer_process` forks a child (`mp.get_context("fork")`) to run a regex with a deadline. On timeout it calls `terminate()`, then `join(1)`, then raises.
 
-So the regex child inherits the app's handler. The regex engine checks for signals while it matches, so the handler runs promptly in the child. But fork copied the parent's shutdown state with the app and its loop registered, so the handler takes its graceful path there instead of the default action. It:
+So the regex child inherits the app's handler. The regex engine checks for signals while it matches, so the handler runs promptly in the child. But fork copied the parent's shutdown state with the app and its loop registered, so the handler's graceful path queues an exit on the copied loop and returns, instead of raising `SystemExit` as it does when no app is registered. (So `terminate()` fails to end the child only while an app is registered: a child forked before `register_running_app`, during startup, raises `SystemExit` and exits with 143. The lock risk below applies either way.) It:
 - counts the signal;
 - arms the child's own exit watchdog (the backstop, then `[general] shutdown_grace_seconds`);
 - reads configuration;
