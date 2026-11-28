@@ -1,3 +1,0 @@
-All checks passed!
-3 files already formatted
-Settings legacy module: baseline=116 current=116 new={}

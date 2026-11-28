@@ -1,2 +1,0 @@
-{'ruff': True, 'autopep8': False, 'pytest': True, 'yapf': False}
-{'ruff': None, 'black': None}

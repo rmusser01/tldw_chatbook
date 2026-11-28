@@ -1,1 +1,0 @@
-"""Environmental and nature-themed splash screen effects."""

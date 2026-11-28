@@ -1,5 +1,0 @@
-{
-  "kind": "automated",
-  "result_name": "Tests/UI/test_library_conversation_reader.py::test_conversations_mount_three_retained_roles_once",
-  "status": "PASS"
-}

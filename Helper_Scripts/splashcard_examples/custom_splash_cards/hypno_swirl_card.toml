@@ -1,6 +1,0 @@
-# Hypno Swirl example splash card
-type = "animated"
-effect = "hypno_swirl"
-style = "white on black"
-animation_speed = 0.05
-title = "tldw"

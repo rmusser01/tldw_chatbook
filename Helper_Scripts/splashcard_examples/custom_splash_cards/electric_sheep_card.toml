@@ -1,5 +1,0 @@
-# Electric Sheep example splash card
-type = "animated"
-effect = "electric_sheep"
-style = "black on black"
-animation_speed = 0.05

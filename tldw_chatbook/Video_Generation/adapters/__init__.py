@@ -1,1 +1,0 @@
-"""Video generation backend adapters."""

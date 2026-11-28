@@ -1,0 +1,62 @@
+name: Frozen first-send macOS comparison
+
+on:
+  push:
+    branches:
+      - codex/firstsend-macos-evidence
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    name: Eight first sends on one macOS runner
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      FIRSTSEND_ARTIFACTS: ${{ runner.temp }}/firstsend-artifacts
+      PYTHONDONTWRITEBYTECODE: '1'
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 3
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.11'
+
+      - name: Stage harness and exact source pair
+        run: |
+          set -euo pipefail
+          mkdir -p "$FIRSTSEND_ARTIFACTS"
+          cp -R harness "$RUNNER_TEMP/firstsend-kit"
+          test "$(git rev-parse HEAD^)" = 13f7aaec1e14ed07921acd7c7c88d046e1069f07
+          test "$(git rev-parse HEAD^^)" = 4155fb8298c63107cb0df99b79b963dbbd05e2a3
+          git switch -c codex/console-postsave-current31 13f7aaec1e14ed07921acd7c7c88d046e1069f07
+          test -z "$(git status --porcelain)"
+          printf 'FIRSTSEND_SOURCE=%s\n' "$(pwd -P)" >> "$GITHUB_ENV"
+
+      - name: Install the app and browser dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install . textual-serve==1.1.3 playwright==1.58.0 requests==2.32.5 prometheus_client==0.26.0
+          python -m playwright install chromium
+          python -m pip freeze --exclude tldw-chatbook > "$FIRSTSEND_ARTIFACTS/installed-dependencies.txt"
+          test -z "$(git status --porcelain)"
+          python "$RUNNER_TEMP/firstsend-kit/postsave-current31-config-guard-r4.py"
+          python "$RUNNER_TEMP/firstsend-kit/pr3023-matched-profile-preparation-r1.py" --self-check
+
+      - name: Run and qualify all eight first sends
+        run: python "$RUNNER_TEMP/firstsend-kit/run-ci.py"
+
+      - name: Preserve qualified or rejected evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: firstsend-macos-evidence
+          path: ${{ env.FIRSTSEND_ARTIFACTS }}
+          if-no-files-found: warn
+          retention-days: 30

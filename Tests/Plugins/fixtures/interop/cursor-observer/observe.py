@@ -1,1 +1,0 @@
-raise RuntimeError("FOREIGN_OBSERVER_MUST_NOT_RUN")

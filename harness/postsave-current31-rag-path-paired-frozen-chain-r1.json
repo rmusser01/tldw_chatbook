@@ -1,0 +1,22 @@
+{
+  "baseline_head": "4155fb8298c63107cb0df99b79b963dbbd05e2a3",
+  "candidate_head": "13f7aaec1e14ed07921acd7c7c88d046e1069f07",
+  "frozen_helpers": {
+    "expected-send.json": "b48934c4954914363fe894ae351c9f4ca70d0533b5291d533a08634ca2f24daf",
+    "fixture_environment.py": "19da2f2d27b5ae6e9933a6bb587d8564af596e75ccca318e85ce63dced3a4975",
+    "postsave-current31-config-guard-r4.py": "ce6ea09787f733a59f06c72267b6d86ea4453f7be0d9c8094c6ebc9b9e391f2d",
+    "postsave-current31-config-reference-r4.json": "8303e343bbd3c59b4008bffe0476e0114280b47c9425316df05f4ae3bb07d073",
+    "postsave-current31-rag-path-host-watch-r1.py": "cfba1e207715423b584bb70a8e1f41a4f6b5581cba7ab1c5287efa83a9b2cef3",
+    "postsave-current31-rag-path-python-prelaunch-r1.json": "464f436dea6a15070671f3b3c0d1e124567e23561c188135c64f9f862b1fb05a",
+    "postsave-current31-rag-path-qualify-pairs-r1.py": "9e9adf8c1270605c1c52de7cf9ec922d8e60c1269b5701384baf655261676e2a",
+    "postsave-current31-rag-path-quiet-host-r1.py": "8db935b76dc7e8f035f3723b85ad80eb954f2f1a6fcc4c242ca7b7cb2b65497f",
+    "pr3023-cdp-driver-preparation-r3.py": "26f307e0c408d860cb5215851b0b86703969eb8287068f6b682c0eed8aa4979e",
+    "pr3023-current-live-http-r2/sitecustomize.py": "242ec678487832bd991c7080406473c5dfefdab00dcab1cb0d7dbbc9fa11fc1f",
+    "pr3023-current-live-launch-r2.py": "b30cc93e757927ec33151ec0cefcc81e36a8ddef5ef287fec8f0dd87d2327b94",
+    "pr3023-matched-profile-preparation-r1.py": "860a4465bd70981bfb090e8a0b6b7bc0bcb0007e517b5673545c191d1a8c6fd0",
+    "pr3023-postsave-current31-rag-path-firstsend-live-audit-r1.py": "2ed2ee749526f70ec7c0b5c8fc43e5ab0492e50b303b941ddafc0cdfa9e3a1f4",
+    "pr3023-postsave-current31-rag-path-firstsend-live-launch-r1.py": "30e7c27cd216fd2a6b731eac6e10f266f3850fac3d79de975b549775e7543d51",
+    "pr3023-postsave-current31-rag-path-firstsend-measure-r1.py": "f763ea8ca9599560c1707338e3960bf5765a144850550e609ef21f2407d0731a"
+  },
+  "packet": "paired-postsave-current31-rag-path-firstsend-r1"
+}

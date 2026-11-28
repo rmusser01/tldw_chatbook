@@ -1,1 +1,0 @@
-"""Classic splash screen effects."""

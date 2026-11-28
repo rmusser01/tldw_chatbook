@@ -1,2 +1,0 @@
-https://huggingface.co/google/gemma-4-26B-A4B-it/raw/main/chat_template.jinja
-Retrieved 2026-09-10. Upstream template; retained for exact fingerprint and rendered-prompt regression checks.
