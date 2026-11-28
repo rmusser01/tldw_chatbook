@@ -691,6 +691,25 @@ serial job, and its cap rises from 20 to 30 min. Over 24 PR runs on
 2026-11-18/19, 19 took 16 min or more and 5 hit the old 20-min cap, 4 of them
 with no test failing. No runner is added.
 
+2026-11-28 (TASK-42779, owner decision 2026-11-28, "Move the file"):
+`Tests/Chat/test_workflow_planning_native.py` (27 tests, 315 s of the
+lane's 1,583 s at the median hosted runner) runs in the Console P0 gate's
+`admission-sensitive 2` profile, as its first target, instead of in
+`pr-fast-lane-admission-4`: same flags, same bootstrap profile, no cap
+changes, no job or runner added or removed, so the counts above stand.
+Lane 4 had grown from 9 to 21 targets in ten days and finished 97 times
+from 2026-11-26 at a median 25.4 / p90 32.2 / max 34.9 of its 35 min; PR
+#3777 then took `Tests/UI/test_console_right_rail.py` from 37 to 70 tests
+(2026-11-27), and timing the 82 runner speeds measured on other branches
+against that list gave median 27.7 / p90 32.4 / slowest 38.6, one job over
+the cap. Without the file: 22.5 / 26.2 / 31.2, 3.8 min under. The profile
+it joins ran median 17.2 / slowest 20.2 over 89 jobs and, timed with the
+file, ends median 22.3 / slowest 26.3 (8.7 min under). TASK-35575's margin
+for the admission-sensitive jobs (the slowest run at least 8 min under the
+cap) is not restored for lane 4 by this move; the owner's alternatives were
+a cap of 40 or 44 and a split (+1 runner), costed in
+`backlog/docs/ci-lane-headroom-2026-11-28.md`.
+
 ## Amendment (2026-11-24, TASK-42533): a fourth Console P0 profile
 
 Owner decision of 2026-11-24, "Split, +1 runner (Recommended)". Over 126 PR

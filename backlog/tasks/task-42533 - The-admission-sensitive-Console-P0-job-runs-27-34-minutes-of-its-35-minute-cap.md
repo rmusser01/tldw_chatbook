@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-24 09:14
-updated_date: 2026-11-28 11:15
+updated_date: 2026-11-28 12:00
 labels:
 - follow-up
 - ci
@@ -164,3 +164,5 @@ Destinations for option 2, from the same method: `admission-sensitive 2` with th
 **Not applied, and why.** Options 1 and 3 each need the owner (a limit or a runner); option 2 needs the owner's choice of destination, and a change under `.github/` starts the full CI run. The full table of lanes is in `backlog/docs/ci-lane-headroom-2026-11-28.md`.
 
 **How it was measured.** As in TASK-42779's note (same-test-count files, speeds against a complete log of today's list, each cancellation's annotation read).
+
+**2026-11-28, later: TASK-42779's choice changes option 2's destination.** The owner chose lane 4's one-file move (TASK-42779, option 3): `Tests/Chat/test_workflow_planning_native.py` (315 s) now runs first in `admission-sensitive 2`, which takes that profile from median 17.2 / slowest 20.2 to a modelled median 22.3 / slowest 26.3 (8.7 under). This task's three wrapped-collaborator files (235 s) would take it to 31.0 (4.0 under) if they went there too, so option 2's destination should now be the `restore` profile (about 24, a job-level estimate) or a job of its own. AC #1 stays open and unticked.
