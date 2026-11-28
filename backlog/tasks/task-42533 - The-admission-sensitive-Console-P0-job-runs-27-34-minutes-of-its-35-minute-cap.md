@@ -1,11 +1,11 @@
 ---
 id: TASK-42533
 title: "The admission-sensitive Console P0 job runs 27-34 minutes of its 35-minute cap"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-24 09:14
-updated_date: 2026-11-25 01:47
+updated_date: 2026-11-28 17:10
 labels:
 - follow-up
 - ci
@@ -29,7 +29,7 @@ Raised by the coordinator's review of TASK-42472 (2026-11-24).
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Over the next 10 PR runs after the change, the admission-sensitive profile's slowest run ends at least 8 minutes under its cap
+- [x] #1 Over the next 10 PR runs after the change, the admission-sensitive profile's slowest run ends at least 8 minutes under its cap
 - [x] #2 Each moved file passes in its new invocation, and a recorder shows no swallowed `RecoveryRequired` there (any file still needing `bootstrap_profile` stays out of sandboxed invocations)
 - [x] #3 `Tests/CI/test_response_rules_critical_gate.py` and `Tests/CI/test_console_p0_regression_gate.py` match the new lane lists
 <!-- AC:END -->
@@ -45,7 +45,7 @@ Raised by the coordinator's review of TASK-42472 (2026-11-24).
 
 ## Implementation Notes
 
-**Status.** AC#2 and AC#3 are met. AC#1 can only be read from the 10 PR runs after merge, so it stays open, and so does the task. On the slowest runner seen (the four runs cancelled at the cap), the projection below puts the head at up to about 18 min and the tail at up to about 25 min of 35: about 10 minutes under the cap, which meets AC#1's 8 with little to spare. Completed runs project lower (about 16 and 20 min).
+**Status.** All three criteria are met; AC#1 was read from the PR runs after merge (see **AC#1, measured** at the end). On the slowest runner seen (the four runs cancelled at the cap), the projection below puts the head at up to about 18 min and the tail at up to about 25 min of 35: about 10 minutes under the cap, which meets AC#1's 8 with little to spare. Completed runs project lower (about 16 and 20 min).
 
 **Owner decision.** 2026-11-24: asked about the split, the owner chose "Split, +1 runner (Recommended)".
 
@@ -123,3 +123,11 @@ Raised by the coordinator's review of TASK-42472 (2026-11-24).
 - `Tests/CI/test_ui_lane_shard_count_statements.py`
 - `backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md`: counts, plus a dated amendment
 - `scripts/ci/self_hosted/README.md`
+
+**AC#1, measured (2026-11-28).** The split merged as #3782 at 2026-11-26 04:27Z. Job times are read from GitHub's jobs API for the derived-artifacts PR runs since then (119 runs; completed jobs only, success or failure; a cancelled job is left out).
+- **The first 10 PR runs** (2026-11-26 04:29Z to 08:11Z): "admission-sensitive" was slowest at 26.8 min, 8.2 under the 35-minute cap, so AC#1 holds; "admission-sensitive 2" was slowest at 20.2.
+- **All 80 completed runs of each:**
+  - "admission-sensitive": median 23.2, p90 26.3, max 29.7 min. Three runs went above 27: 27.6, 29.7 and 27.1.
+  - "admission-sensitive 2": median 17.2, p90 19.4, max 20.2.
+- **Against the projection:** it was reversed. It put the head at up to about 18 min and the tail at up to about 25, but the head ("admission-sensitive") is the slower one by about 6 min. Moving about 3 min of files from the first profile to the second would balance them; TASK-42652 tracks that.
+
