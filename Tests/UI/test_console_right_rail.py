@@ -727,7 +727,7 @@ async def test_real_inspector_producer_variants_are_strictly_owned(monkeypatch):
         screen = pilot.app.screen
         store = screen._ensure_console_chat_store()
         initial = store.ensure_session()
-        store.append_message(
+        initial_message = store.append_message(
             initial.id,
             role=ConsoleMessageRole.USER,
             content="retained viewport fixture",
@@ -735,6 +735,16 @@ async def test_real_inspector_producer_variants_are_strictly_owned(monkeypatch):
         await screen._sync_native_console_chat_ui()
         await pilot.pause()
         surface = screen.query_one(ConsoleTranscriptSurface)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 5.0
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: screen._last_native_transcript_session_id == initial.id
+            and surface.transcript.display_message(initial_message.id) is not None
+            and surface._can_retain(surface.transcript),
+            description="initial transcript eligible for retention",
+            timeout=deadline - loop.time(),
+        )
         retained = surface.transcript
         target = store.create_session(title="Inspector target", activate=False)
         message = store.append_message(
@@ -745,6 +755,12 @@ async def test_real_inspector_producer_variants_are_strictly_owned(monkeypatch):
         await screen._session._activate_native_console_session(target.id)
         await screen._sync_native_console_chat_ui()
         await pilot.pause()
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: screen._last_native_transcript_session_id == target.id,
+            description="target transcript publication",
+            timeout=deadline - loop.time(),
+        )
         active = active_console_transcript(screen)
         assert active is not None and active is surface.transcript
         assert active is not retained and active.is_attached and active.display

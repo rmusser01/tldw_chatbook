@@ -537,7 +537,6 @@ DREAMS_TRACKING_RIDERS = (
     "Tests/Backup_Recovery/test_finite_db_retirement.py",
     # TASK-42516 (round 25): the native-76 compatibility file, whole (its one
     # node left console-p0-gate). Sandboxed, before the Workspaces riders.
-    "Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py",
     "Tests/Workspaces/test_console_workspace_create_handler.py",
     "Tests/Workspaces/test_console_workspace_reconcile.py",
     "Tests/Workspaces/test_workspace_create_modal.py",
@@ -562,7 +561,6 @@ DREAMS_TRACKING_RIDERS = (
     "Tests/Wizards/test_first_run_discovery_base_url.py",
     # TASK-42514 (round 25): every test is @private_profile_test, so
     # sandboxed; before Tool_Packs.
-    "Tests/Agents/test_durable_fleet_messages.py",
     # TASK-42513 (round 26): two Console trace files red on dev unseen. They
     # read no config in-process (RecoveryRequired recorder), so before
     # Tool_Packs; the GC file's one console-p0-gate node folded in here.
@@ -749,6 +747,8 @@ ARCH_REVIEW_TARGETS = (
     "Tests/Tools/test_document_expansion_tool.py::test_without_host_storage_every_source_reports_its_database_unavailable",
     "Tests/Tools/test_note_tool_user_id.py::test_registrar_storage_is_resolved_at_call_time",
     "Tests/Tools/test_note_tool_user_id.py::test_note_tools_without_a_host_database_report_it_unavailable",
+    "Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py",
+    "Tests/Agents/test_durable_fleet_messages.py",
     "Tests/App/test_chachanotes_fts_backfill_worker.py",
     # TASK-36948.3
     "Tests/Backup_Recovery/test_unsaved_editors.py::test_console_unknown_draft_shape_refuses_instead_of_clean",

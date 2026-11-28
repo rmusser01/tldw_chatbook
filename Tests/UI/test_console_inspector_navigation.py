@@ -1929,7 +1929,9 @@ async def test_local_offset_survives_collapse_reopen_without_extra_writes(
 
 
 @pytest.mark.asyncio
-async def test_run_sync_preserves_in_place_offsets_then_structural_shrink_clamps():
+async def test_run_sync_preserves_in_place_offsets_then_structural_shrink_clamps(
+    monkeypatch: pytest.MonkeyPatch,
+):
     async with make_console_pilot(size=(160, 60), css=RUN_OWNER_TEST_CSS) as pilot:
         rail = await _open_inspector(pilot)
         outer = rail.query_one("#console-inspector-rail-body")
@@ -1980,6 +1982,7 @@ async def test_run_sync_preserves_in_place_offsets_then_structural_shrink_clamps
             world_book_rows=(),
             world_book_actions=(),
         )
+        projected_state = large_state
         before_growth_recompose: int | None = None
 
         def structural_growth_committed() -> bool:
@@ -1989,6 +1992,13 @@ async def test_run_sync_preserves_in_place_offsets_then_structural_shrink_clamps
                 if pilot.app.screen.console_pending_startup_work():
                     return False
                 before_growth_recompose = inspector.recompose_count
+                # Native refreshes must publish the same snapshot as this
+                # geometry fixture, including during the second resize.
+                monkeypatch.setattr(
+                    pilot.app.screen,
+                    "_build_console_inspector_state",
+                    lambda _launch: projected_state,
+                )
                 inspector.sync_state(large_state)
             return (
                 inspector.recompose_count > before_growth_recompose
@@ -2060,6 +2070,7 @@ async def test_run_sync_preserves_in_place_offsets_then_structural_shrink_clamps
             ),
         )
         before_recompose = inspector.recompose_count
+        projected_state = updated_state
         inspector.sync_state(updated_state)
         await _wait_for_right_rail_condition(
             pilot,
@@ -2085,7 +2096,8 @@ async def test_run_sync_preserves_in_place_offsets_then_structural_shrink_clamps
         assert section.viewport.scroll_y == 4
         assert outer.scroll_y == 2
 
-        inspector.sync_state(replace(updated_state, dictionary_rows=large_rows[:2]))
+        projected_state = replace(updated_state, dictionary_rows=large_rows[:2])
+        inspector.sync_state(projected_state)
         await _wait_for_right_rail_condition(
             pilot,
             lambda: (
