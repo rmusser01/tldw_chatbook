@@ -221,3 +221,151 @@ def test_one_failing_path_reports_itself_and_the_rest_complete(turn):
     assert not by_path["not-in-this-turn.txt"].ok
     assert by_path["edit.txt"].ok, "an earlier exception stranded later paths"
     assert (root / "edit.txt").read_text() == "before\n"
+
+
+def _collect_previous_owner_during_admission(root):
+    """Force the observed finalizer ordering in an isolated Python process."""
+    import faulthandler
+    import gc
+    import os
+    import sys
+    import threading
+    import weakref
+
+    from Tests import real_profile_guard
+    from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission
+
+    real_profile_guard.install()
+
+    def profile(name):
+        home = root / name
+        config = home / ".config" / "tldw_cli" / "config.toml"
+        config.parent.mkdir(parents=True, mode=0o700)
+        os.environ.update(
+            HOME=str(home), USERPROFILE=str(home), TLDW_CONFIG_PATH=str(config)
+        )
+        return home / "runs.db"
+
+    first = owned_agent_runs_db(profile("first"), client_id="first")
+    first.close()
+    first_owner = first._execution_owner
+    first_ref = weakref.ref(first)
+    gc.disable()  # Choose the collection thread and boundary in this child.
+    cycle = [first]
+    cycle.append(cycle)
+    del cycle, first
+
+    second_path = profile("second")
+    second_bootstrap = str(bootstrap.default_bootstrap_root())
+    holder_entry = storage_admission._Hold._run.__code__
+
+    def collect_at_holder_entry(frame, event, _argument):
+        if event != "call" or frame.f_code is not holder_entry:
+            return
+        sys.setprofile(None)
+        assert frame.f_locals["self"].key[1] == second_bootstrap
+        assert first_ref() is not None
+        print("collecting previous owner on admission thread", flush=True)
+        gc.collect()
+        assert first_ref() is None
+        assert first_owner._stream.closed
+        print("previous owner released", flush=True)
+
+    threading.setprofile(collect_at_holder_entry)
+    faulthandler.dump_traceback_later(5)
+    try:
+        second = owned_agent_runs_db(second_path, client_id="second")
+        second_owner = second._execution_owner
+        second_owner.require_current(second_path)
+        second.close()
+        del second
+        assert second_owner._stream.closed
+    finally:
+        faulthandler.cancel_dump_traceback_later()
+        threading.setprofile(None)
+        gc.enable()
+    _check_reopen_during_retirement(second_path)
+
+
+def _check_reopen_during_retirement(path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from unittest.mock import patch
+
+    from Tests import agent_runs_owner
+
+    handles = [owned_agent_runs_db(path)]
+    old_owner = handles[0]._execution_owner
+    handles[0].close()
+    closing, allow_close, waiting = Event(), Event(), Event()
+    close = old_owner.close
+    wait = agent_runs_owner._changed.wait
+
+    def observe_close():
+        closing.set()
+        assert allow_close.wait(5)
+        close()
+
+    def observe_wait(timeout=None):
+        waiting.set()
+        return wait(timeout)
+
+    def open_peer():
+        db = owned_agent_runs_db(path)
+        db.close()
+        return db
+
+    with (
+        patch.object(old_owner, "close", observe_close),
+        patch.object(agent_runs_owner._changed, "wait", observe_wait),
+        ThreadPoolExecutor(max_workers=2) as threads,
+    ):
+        retirement = threads.submit(handles.clear)
+        try:
+            assert closing.wait(5)
+            reopening = threads.submit(open_peer)
+            assert waiting.wait(5)
+            assert not reopening.done() and not old_owner._stream.closed
+        finally:
+            allow_close.set()
+        retirement.result(timeout=5)
+        fresh = reopening.result(timeout=5)
+        fresh_owner = fresh._execution_owner
+        assert old_owner._stream.closed
+        assert fresh_owner is not old_owner
+        fresh_owner.require_current(path)
+        del reopening, fresh
+        assert fresh_owner._stream.closed
+    print("same-path reopen waited for owner retirement", flush=True)
+
+
+def test_owner_finalizer_cannot_block_new_native_admission(tmp_path):
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    entry = (
+        "from pathlib import Path; import sys; "
+        "from Tests.Workspaces.test_change_revert import "
+        "_collect_previous_owner_during_admission as probe; "
+        "probe(Path(sys.argv[1]))"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-B", "-c", entry, str(tmp_path)],
+            cwd=Path(__file__).resolve().parents[2],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        stdout = (error.stdout or b"").decode(errors="replace")
+        stderr = (error.stderr or b"").decode(errors="replace")
+        pytest.fail(stdout + stderr, pytrace=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines() == [
+        "collecting previous owner on admission thread",
+        "previous owner released",
+        "same-path reopen waited for owner retirement",
+    ]

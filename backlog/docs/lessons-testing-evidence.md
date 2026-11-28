@@ -1,5 +1,11 @@
 # Lessons: what counts as evidence a change works
 
+## Finalizers can run on the thread a fixture is waiting for (PR #3345)
+
+**Incident.** Hosted Fast Lane timed out in a Workspace revert fixture. The test held the shared fixture lock while waiting for native admission. Allocation on the admission thread triggered a previous fixture's weak-reference finalizer, which waited for that same lock. A bounded child reproduced the two stacks by collecting an earlier fixture on the next real admission thread.
+
+**What to do.** Keep fixture reference counts under a short registry lock. Separate constructor serialization from registry access, and perform native acquisition and close outside the registry lock. If the last close is in progress, a new handle for that path must wait for physical retirement. Force both thread orderings in an isolated child so a broken fixture reports its stacks and exits within the original case limit.
+
 ## Ubuntu 24.04's Python 3.12.3 warns about `?1` placeholders that 3.12.4+ and 3.14 accept (TASK-42581, 2026-11-26)
 
 **Incident.** Round 27's Linux check (ubuntu:24.04, Python 3.12.3) logged about 468 `DeprecationWarning: Binding 1 ('?1') is a named parameter ... Starting with Python 3.14 an sqlite3.ProgrammingError will be raised`. TASK-42581 was filed as a 3.14 failure on the warning's own word. Measured: `SELECT ?1, ?1` bound to `(1,)` under `-W error::DeprecationWarning` warns on 3.12.3, but is accepted on 3.12.11, 3.13.13 and 3.14.7. CPython gh-117995 (3.12.4) stopped treating `?NNN` as named. Only `:name`, `@name` or `$name` bound to a sequence raises on 3.14. The new red test could not go red locally: it was red only in the 3.12.3 container.

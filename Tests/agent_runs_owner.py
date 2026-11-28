@@ -6,22 +6,34 @@ closes it. Process-contention tests use the production constructor directly.
 
 import weakref
 from pathlib import Path
-from threading import RLock
+from threading import Condition, RLock
 
 AGENT_RUNS_MIGRATIONS = Path(__file__).parents[1] / "tldw_chatbook/DB/migrations"
 
 _owners = {}
-_lock = RLock()
+_retiring = set()
+_changed = Condition()
+_construction_lock = RLock()
 
 
 def _release(key):
-    with _lock:
+    with _changed:
         owner, count = _owners[key]
-        if count == 1:
-            owner.close()
-            del _owners[key]
-        else:
+        if count > 1:
             _owners[key] = owner, count - 1
+            return
+        _retiring.add(key)
+
+    closed = False
+    try:
+        owner.close()
+        closed = True
+    finally:
+        with _changed:
+            if closed:
+                del _owners[key]
+            _retiring.remove(key)
+            _changed.notify_all()
 
 
 def owned_agent_runs_db(db_path, *args, **kwargs):
@@ -34,19 +46,26 @@ def owned_agent_runs_db(db_path, *args, **kwargs):
     if db_path == ":memory:" or "execution_owner" in kwargs:
         return db_class(db_path, *args, **kwargs)
     path = lexical_path(db_path)
-    with _lock:
-        entry = _owners.get(path)
-        if entry is None:
-            owner, count = ConsoleExecutionOwner.acquire(Path(path)), 0
-        else:
-            owner, count = entry
-        _owners[path] = owner, count + 1
+
+    # Native admission can collect an older DB on its holder thread. Keep
+    # constructors serialized without making that finalizer wait for admission.
+    with _construction_lock:
+        owner = None
+        with _changed:
+            _changed.wait_for(lambda: path not in _retiring)
+            if path in _owners:
+                owner, count = _owners[path]
+                _owners[path] = owner, count + 1
+        if owner is None:
+            owner = ConsoleExecutionOwner.acquire(path)
+            with _changed:
+                _owners[path] = owner, 1
         try:
             db = db_class(db_path, *args, execution_owner=owner, **kwargs)
+            weakref.finalize(db, _release, path)
         except BaseException:
             _release(path)
             raise
-        weakref.finalize(db, _release, path)
         return db
 
 
