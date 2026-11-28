@@ -5,10 +5,11 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-24 09:14
-updated_date: 2026-11-25 01:47
+updated_date: 2026-11-28 11:15
 labels:
 - follow-up
 - ci
+- needs-owner-decision
 priority: medium
 references:
 - .github/workflows/derived-artifacts.yml
@@ -123,3 +124,43 @@ Raised by the coordinator's review of TASK-42472 (2026-11-24).
 - `Tests/CI/test_ui_lane_shard_count_statements.py`
 - `backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md`: counts, plus a dated amendment
 - `scripts/ci/self_hosted/README.md`
+
+---
+
+**2026-11-28, re-measured (AC #1).** The split reached dev with PR 3782 (merged 2026-11-26 04:27Z). AC #1 asks that the slowest run end at least 8 minutes under the cap. **It does not: over the 72 jobs on the split list the slowest ended at 29.7 minutes, 5.3 under.** Nothing is applied. AC #2 and AC #3 stay met; AC #1 is not ticked, and rewording it to the 4-minute floor of TASK-34986 is the owner's to do, not a fit to the result.
+
+**Awaiting the owner.** Which option below. The recommendation is option 2, three files out of the head. Raising a limit and adding a runner are both the owner's decision, so neither is applied.
+
+**Checked first.** This task is the only one on any ref about this profile's cap. Console P0's block is edited by 13 remote refs against their merge base with `origin/dev`: PR 3345 (`codex/shared-console-mobile-pr`, draft) moves one file into `admission-sensitive 2` (TASK-42779's option 3) and changes the install line to add `pytest-mock`; PR 3572 (`codex/console-validation-performance`, 2,253 commits behind dev) adds two targets to a profile it does not name, "runner cost not yet measured"; the rest are `runs-on` or `if` lines, old restructures, or `codex/wave2-pr3023-*` branches with no open PR. No open pull request changes the cap.
+
+**Measured.** GitHub API job records of the 258 `pull_request` runs of `derived-artifacts.yml` created from 2026-11-24 to 2026-11-28 17:42Z, each job execution counted once, and the logs of the 99 jobs of this profile that finished since 2026-11-26 00:00Z. None was cancelled at the cap (the one cancellation near it, job 140039303766 at 36.5 minutes, reads "canceled by @github-actions[bot]"). Ten of the 99 ran an older list before the split merged, between 00:22Z and 04:41Z (eight with 531 or 530 tests in 44 or 43 files, two with 296 tests: the split's own branches, head only). **The 34.2-minute job that makes this profile look at the cap since 2026-11-26 is one of the ten** (job 139663139270, run 45741860736, `fix/estop-holds-agent-tool-calls`, 03:36Z, 531 tests, Azure `eastus`). PR 3345's own 17 jobs ran a 485-test list. The 72 jobs on today's list (506 tests, 26 files):
+
+| | Median | p90 | Slowest |
+| --- | --- | --- | --- |
+| observed, 72 jobs on today's list | 24.4 | 26.3 | 29.7 |
+| modelled, all 99 runner speeds on today's list | 23.4 | 26.2 | 29.6 (5.4 under) |
+
+Reference job 139928504976: 1,379 s of tests plus 81 s of setup and collection. Runner speed over the 99 jobs runs 0.70 to 1.22 times the reference (1.74 times; AWS 0.70 to 0.82, Azure 0.73 to 1.22). The model reproduces the 72 observed jobs (median 24.3, p90 26.2, max 29.6). A lognormal fit puts the share over the cap at 0.02%.
+
+**Where the time goes** (reference log): `Chat/test_console_failed_call_retry_ownership.py` 589 s (43%, 210 tests; TASK-42525 put it last in the head (round 26, 2026-11-24 to 25), and its comment expected "about 24-27 of 35"), `UI/test_console_row_menu_action_sweep.py` 121 s, `Chat/test_console_send_wrapped_skill_collaborators.py` 96 s, `UI/test_console_skill_discovery_wrapped_collaborators.py` 93 s, `Chat/test_console_trace_rewritten_history.py` 54 s, `Chat/test_response_rules_write_contention.py` 49 s, `UI/test_console_received_route_wrapped_collaborators.py` 46 s, `UI/test_console_hook_review_send_freeze.py` 44 s, `UI/test_console_terminal_return_input.py` 39 s, the other 17 files 248 s. The notes above said the head would take up to about 18 minutes on the slowest runner; that was before the retry file joined it. The tail, `admission-sensitive 2`, ran median 17.2, p90 19.4, slowest 20.2 over 89 jobs (234 tests, 18 files, 955 s of tests): 14.9 minutes of room.
+
+**Options** (the 99 runner speeds on today's list; "Under" is the slowest against the cap):
+
+| | Change | Runners | Median | p90 | Slowest | Under | Over the cap |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 0 | none (cap 35) | 0 | 23.4 | 26.2 | 29.6 | 5.4 | 0 of 99 |
+| 1 | cap 35 to 40 | 0 | 23.4 | 26.2 | 29.6 | 10.4 | 0 |
+| 2 | the three wrapped-collaborator files (96 + 93 + 46 = 235 s) to another bootstrap profile | 0 | 19.6 | 22.0 | 24.8 | 10.2 | 0 |
+| 3 | the retry file (589 s) in a job of its own | +1 | 14.0 and 10.8 | 15.6 and 12.0 | 17.6 and 13.5 | 17.4 and 21.5 | 0 |
+
+Destinations for option 2, from the same method: `admission-sensitive 2` with the 235 s ends median 21.0, p90 23.7, slowest 24.8 (10.2 under); with TASK-42779's workflow-planning file (315 s) instead, 26.3 (8.7 under); **with both, 31.0 (4.0 under)**, so it can hold one of the two moves at the 8-minute margin and not both. The `restore` profile (median 17.1, max 19.5 over 32 jobs since 2026-11-27 15:00Z, after its traced actions file joined it in PR 3797) would end about 24 with the 235 s (a job-level estimate, 10 under); its four files are pinned as the restore selectors plus that file. Both are bootstrap-profile invocations, so isolation is unchanged, and no sandboxed target may follow a bootstrap-profile one in either.
+
+1. **Cap 40** meets AC #1's number (10.4) by raising the limit rather than by changing the work, and the profile has no cap hit to answer. No runner.
+2. **Three files out.** No runner, no limit; takes the head to median 19.6 and 24.8 at the slowest. It needs the two Console P0 contract files (`test_response_rules_critical_gate.py`'s `SELECTION` and `INHERITED`, `test_console_p0_regression_gate.py`'s lanes) and a dated ADR-103 note, and only a full CI run proves a moved bootstrap-profile file.
+3. **A job of its own for the retry file.** One more runner per PR (dev's tip counts 36 concurrent test runners, 37 with perf-guard; PR 3804's new job, the owner's pick of 2026-11-28, makes it 37 and 38; this one would make it 38 and 39, against the ceiling of 40 in ADR-103), about 1.5 more runner-minutes of setup per run. The owner chose a fourth profile for this job on 2026-11-24 ("Split, +1 runner").
+
+**Recommendation: option 2.** It restores AC #1's margin with no runner and no limit. Its destination competes with TASK-42779's recommended move for `admission-sensitive 2`; the two together leave that profile 4.0 under, so send one of them to `restore` or to a new job. If the owner would rather keep the profile map as it is, the alternative is to read AC #1 as the 4-minute floor (5.4 met), which only the owner can decide.
+
+**Not applied, and why.** Options 1 and 3 each need the owner (a limit or a runner); option 2 needs the owner's choice of destination, and a change under `.github/` starts the full CI run. The full table of lanes is in `backlog/docs/ci-lane-headroom-2026-11-28.md`.
+
+**How it was measured.** As in TASK-42779's note (same-test-count files, speeds against a complete log of today's list, each cancellation's annotation read).
