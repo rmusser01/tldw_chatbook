@@ -26729,3 +26729,15 @@ and keep the first run and repeat beside the instrumented comparison.
 **Incident.** A SQLite connect on Windows re-checks the database's folder and files every time. I asked the owner whether a connect to a database the process already has open might skip that, and recommended yes on the strength of the 2026-11-21 argument for kept handles ("nothing a reopen would check can change"). The owner allowed it only if it did not compromise security. Reading the code that would be skipped showed two things the argument does not cover. It also repairs: it sets SQLite's own `-wal` and `-shm` files private (a probe in a folder others may read showed 0o644 before the second connect and 0o600 after). And an open handle freezes only the name-to-file association, not permissions, owners, links or new files. The skip was not made; it would have been worth about 0.08 s a turn.
 
 **Rule.** Before proposing to skip, window or reuse a check, read all of the code that would no longer run and list what it does, repairs and creations included, not only what it verifies. Write down what the "it cannot change" argument actually covers, and probe the rest. Put that analysis in the question to the owner, and do not recommend an answer by analogy with an earlier decision.
+
+### A step's time on a worker thread is not its cost: record what the thread ran next to what passed (TASK-40608, 2026-11-27)
+
+**Incident.** A file tool call spent 0.12 to 0.21 s before the tool's own code, and I set out to find the slow function. Recording every function's start and end gave a different slow function in each run: the agent thread's work before the tool's thread started took 127 ms in one run and 8 ms in the next; one `acquire_storage` took 52 ms. Adding each thread's processor cycles (`QueryThreadCycleTime` through `ctypes.PyDLL`, read at every recorded event) showed why: that `acquire_storage` had used 1.4 ms of processor and a root-authority check 0.4 ms of its 74 ms. The thread was waiting for the interpreter lock after a native call, behind the screen's thread or a collector pass. What was stable from run to run was the count of what each step does, not its time.
+
+**Rule.** For a step on a worker thread, record the processor time the thread ran next to the time that passed, and report them apart. A step that mostly waited is not made faster by doing less inside it; what it waits behind is the finding. Size the step itself by exact counts of what it does.
+
+### A recorder that allocates per event changes the collector it shares the process with (TASK-40608, 2026-11-27)
+
+**Incident.** I counted garbage-collector passes per turn in a run that also recorded 685,000 function events, one tuple each. Both turns showed exactly 691 young passes. The same journey with only the collector watcher on showed 306 and 308: more than half of the passes in the first run were caused by the recorder's own allocations.
+
+**Rule.** Measure the collector in a run that records nothing else. When two unrelated turns give the same count, suspect the instrument before the program.

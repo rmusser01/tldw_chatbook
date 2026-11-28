@@ -1912,3 +1912,28 @@ So what an open handle makes certain is narrower than the sentence in the 2026-1
 What keeping the checks costs: after the evening's changes a turn makes 12 to 16 connects of about 5 to 10 ms each.
 
 Seen while probing and not changed here: in a folder others may read, the write-ahead log is readable by them from the moment SQLite creates it until the next connect to that database, and a rollback journal, which exists only during a write, for its whole life. The same probe on clean `dev` `585d8ab46a` gives the same modes. Keeping connections open (2026-11-21) and keeping pool work on fewer threads (this evening) make connects rarer, so the next connect comes later than on `dev`; the model-call thread still connects to the conversation database every turn and every tool call to the workspace database. Making those files private when they are created, rather than at the next connect, would close that gap and is the owner's to ask for.
+
+**2026-11-27, late night: what a file tool call does before its own code starts. Counted; nothing changed.**
+
+On the three quiet runs of midday, 0.12 to 0.21 s of every file tool call passed between the call being marked started and the workspace tool executor being entered: 0.32 s of the README turn's 0.64 s of file tools and 0.57 s of the edit turn's 1.03 s. That stretch was recorded with the exact start and end of every function on the path and each thread's processor cycles (`QueryThreadCycleTime`), three times, on a busy machine. The counts below are exact and were the same in every call. The times are from recorded runs on a busy machine and are not timings.
+
+**The order of work.** The agent's thread writes two rows to the run database (the "execution started" row and the "tool call" row, one transaction each) and calls the Console's two observers, validates the call, and starts a new thread for it. That thread then:
+
+1. admits the agent's storage sources again, as every worker thread must: 8 execution scopes, 16 activation checks;
+2. checks the workspace root's authority;
+3. reads the kill switch from the MCP permission store: 12 storage admissions, 19 witness checks, 82 requests for a resolved path;
+4. reads the tool's permission state from the same store, directly after: 12 storage admissions, 16 witness checks, 70 requests for a resolved path;
+5. checks the root's authority again;
+6. for `fs_read`, reads and hashes the target itself for the stale-write ledger (2 admissions, 36 requests for a resolved path, one resolution of the protected-path set); for `fs_edit`, the stale check does the same.
+
+Before the tool's own code, then, the call's thread makes 32 to 34 storage admissions, 35 witness checks and 184 to 221 requests for a resolved path. 24 of the admissions, all 35 witness checks and 152 of the requests belong to the two reads of one file in steps 3 and 4. Inside the one-second observation window a storage admission is served from recorded evidence and a path in a pinned folder from `_resolutions`; after a pause longer than that (a person reading an approval card) the first of each looks at the disk again.
+
+**Most of the stretch is waiting.** In the recorded runs the call's thread was on a processor for 30 to 51% of the stretch. Single calls show it: one `acquire_storage` took 52 ms and used 1.4 ms of processor; one root-authority check took 74 ms and used 0.4 ms. Each native file call gives up the interpreter lock, and the thread then waits for whoever holds it: the screen's thread, which repaints at exactly that moment because the approval card has just closed, or a collector pass. So the same step's time varies widely between runs: the agent thread's work between the first row and the start of the tool's thread took 127 ms in one run and 8 ms in the next.
+
+**Collector passes, measured again with the app's idle heap maintenance on** (one run each, busy machine, a watcher that records nothing else): with CPython's thresholds (700, 10, 10) a turn had 336 to 339 passes taking 0.46 to 0.67 s, 6 to 7% of the turn: about 307 young passes (0.11 to 0.14 s), 27 to 29 of the middle generation (0.13 to 0.26 s) and 2 or 3 full passes of 60 to 205 ms each (0.22 to 0.27 s). With (10000, 10, 10), set through the journey's own local switch, a turn had 17 or 18 passes and no full pass: 0.19 s of a 6.7 s README turn (3%), but 0.66 s of an edit turn that took 13.4 s on a machine that had become much busier (5%), where 17 young passes alone took 0.51 s. So the one pair says the passes become few and long, and does not say the turn gets shorter. Thresholds belong to ADR-198 (Decision 3: a change amends that ADR with measurements), and a quiet pair is still owed.
+
+**Not changed, and why.** Every step above is a protection, and none may be skipped (the owner's condition of the same night). What could change without removing one is the owner's to decide:
+
+- steps 3 and 4 read one store twice, back to back, and each read admits the MCP family's sources again (the config file and the local, permission, target and context stores); one admitted scope around both would let the second read use the first's leases, which is what a nested execution already does;
+- the two reads ask for a resolved path 6 to 7 times per storage admission (`storage_admission._resolved`; `_execution_selection_for` asks twice on every admission);
+- whether the native layer's short metadata calls should keep the interpreter lock instead of giving it up about ten times per checked stat. A local switch for that experiment exists in the journey's recorder; it has not been measured on a quiet machine, and a call that blocks on a slow disk would then hold the screen too.

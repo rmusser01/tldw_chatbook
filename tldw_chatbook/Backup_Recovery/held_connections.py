@@ -5,8 +5,8 @@ both sidecars with native handles, and an owned call
 (``DB.base_db.operation_owned_connection``) used to pay that on every call. A
 Console store's connection opened by an owned call now stays in its worker
 thread's cache. While it is open Windows refuses to rename, replace or delete
-the database file and its folders, so nothing a reopen would check can change
-(ADR-126, 2026-11-21 note).
+the database file and its folders, so the handle goes on reading the file that
+was checked. Permissions can still change: a NEW connect keeps every check.
 
 A local pause (backup, restore), app quit and an owner's explicit close retire
 the idle held handles through ``retire_held_connections``; a handle in use is
