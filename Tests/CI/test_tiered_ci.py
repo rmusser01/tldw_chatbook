@@ -6,7 +6,7 @@ import importlib.util
 import json
 import random
 import shlex
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import subprocess
 
 import pytest
@@ -198,6 +198,67 @@ def test_the_sample_is_the_same_whatever_order_the_tree_is_walked(
     assert _sampled(plans[0], shared) == set(users[: policy.IMPORTER_CAP])
 
 
+class _WindowsCheckout(type(Path())):
+    """A checkout as Windows presents it, on any platform (TASK-42689).
+
+    Its relative paths join their parts with a backslash, and a read that names
+    no encoding gets cp1252. CI runs these contracts on Linux only, where
+    neither default can differ from git's forward-slash paths and UTF-8 text,
+    so a regression would stay green there without this.
+    """
+
+    def relative_to(self, *args, **kwargs):
+        return PureWindowsPath(*super().relative_to(*args, **kwargs).parts)
+
+    def read_text(self, encoding=None, *args, **kwargs):
+        return super().read_text(encoding or "cp1252", *args, **kwargs)
+
+
+def test_a_windows_checkout_finds_the_dependents_a_linux_one_does(
+    tmp_path, monkeypatch
+):
+    """TASK-42689: keyed by `str(path)`, the tree had backslashes that no path
+    from git has, so on Windows a change had no importers and no package files."""
+    files = {
+        "Tests/Pkg/__init__.py": "",
+        "Tests/Pkg/test_in.py": "",
+        "Tests/Other/test_out.py": "from Tests.Pkg import thing\n",
+    }
+    root = _WindowsCheckout(_tree(tmp_path, files))
+    # The policy's own name logic, as Windows runs it.
+    monkeypatch.setattr(policy, "Path", PureWindowsPath)
+    plan = policy.select_changes([("M", "Tests/Pkg/__init__.py")], root)
+    assert _sampled(plan) == {"Tests/Pkg/test_in.py", "Tests/Other/test_out.py"}
+
+
+def test_a_windows_checkout_reads_the_tree_as_utf8(tmp_path):
+    """TASK-42689: read as cp1252, the bytes of a left quotation mark end in a
+    letter that joins the word after it, and an accented letter in a node id
+    becomes two other characters. Each of the policy's four reads is pinned."""
+    data = "Tests/UI/shortfall.tsv"
+    by_census = "Tests/UI/test_census.py::test_a[caf\u00e9]"
+    by_lane = "Tests/UI/test_lane.py::test_b[na\u00efve]"
+    schema = "tldw_chatbook/Feature/store.py"
+    changed = [by_census.split("::")[0], by_lane.split("::")[0]]
+    root = _WindowsCheckout(_tree(tmp_path, [data, *changed]))
+    texts = {
+        "Tests/UI/test_reader.py": '"""Reads \u201cshortfall.tsv\u201d."""\n',
+        "scripts/ui_pr_gate_census.txt": by_census + "\n",
+        ".github/workflows/derived-artifacts.yml": (
+            f"jobs:\n  ui-fast-lane:\n    steps:\n      - run: pytest '{by_lane}'\n"
+            "  derived-artifacts:\n    needs: [preflight, ui-fast-lane]\n"
+        ),
+        schema: "# \u201cCREATE TABLE things\u201d\n",
+    }
+    for name, text in texts.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(text, encoding="utf-8")
+    plan = policy.select_changes([("M", path) for path in (data, *changed)], root)
+    assert _sampled(plan, *changed) == {"Tests/UI/test_reader.py", by_census, by_lane}
+    plan = policy.select_changes([("M", schema)], root)
+    assert plan["full"] and plan["reason"] == f"Schema code: {schema}"
+
+
 def test_the_file_cap_keeps_the_prs_own_changed_files_first(tmp_path):
     """TASK-42626: over LIGHT_FILE_CAP, the PR's own files stay and importers go."""
     own = [f"Tests/Zeta/test_f{n:02d}.py" for n in range(policy.LIGHT_FILE_CAP - 4)]
@@ -343,7 +404,7 @@ def test_the_real_conftests_load_the_profile_harness_and_shared_doubles():
         "Loaded by conftest.py: Tests/network_guard.py"
     )
     corpus = {
-        str(f.relative_to(ROOT)): f.read_text(errors="replace")
+        f.relative_to(ROOT).as_posix(): policy._read(f)
         for f in (ROOT / "Tests").rglob("*.py")
     }
     assert {
@@ -390,10 +451,12 @@ def test_diff_preserves_deletions_and_odd_filenames(tmp_path, monkeypatch):
     git("add", ".")
     git("commit", "-qm", "before")
     base = git("rev-parse", "HEAD")
-    (tmp_path / "old.py").rename(tmp_path / "a\nb.py")
-    git("add", "-A")
-    git("commit", "-qm", "after")
-    changes = policy.changed_paths(base, git("rev-parse", "HEAD"))
+    # The rename is committed as git objects, never made on disk: Windows has no
+    # file name with a newline, and the diff reads commits, not the checkout.
+    entry = f"100644 blob {git('rev-parse', 'HEAD:old.py')}\ta\nb.py\0"
+    tree = subprocess.check_output(["git", "mktree", "-z"], input=entry.encode())
+    head = git("commit-tree", tree.decode().strip(), "-p", base, "-m", "after")
+    changes = policy.changed_paths(base, head)
     assert set(changes) == {("D", "old.py"), ("A", "a\nb.py")}
     with pytest.raises(ValueError):
         policy.changed_paths("--output=/tmp/no", base)
