@@ -492,9 +492,9 @@ def test_painted_label_walk_covers_every_shelf_projection_input() -> None:
     row, so it only holds if the walk reaches every state. The shelf once had
     a dispatch-recovery mode, entered only through the projection's
     ``dispatch_recovery=`` argument. Production never passed that argument
-    and the walk never exercised it. Fed the real checkpoint-free recovery
-    copy of the time (device-neutral since TASK-33621.30), it pushed Discard
-    to cell 102 on a 92-101 cell shelf. So every queue mode, and every projection argument
+    and the walk never exercised it. Fed the real 'Response delivery status is
+    unknown on the source device.' copy, it pushed Discard to cell 102 on a
+    92-101 cell shelf. So every queue mode, and every projection argument
     given a non-default value, must appear in the walk. Every parameter after
     the snapshot and the activity counts, whatever its kind: a new input
     added before the ``*`` must be walked too.
