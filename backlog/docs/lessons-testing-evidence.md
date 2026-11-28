@@ -1,5 +1,17 @@
 # Lessons: what counts as evidence a change works
 
+## The suite's temporary folders are private, so no test sees what a folder hands down (TASK-42749, 2026-11-28)
+
+**Incident.** On Windows SQLite created a database's `-wal` and `-shm` readable by the local Users group whenever the database's folder let them read, and the private seam made them private only at the next connect. The whole suite passed on `dev` with this gap: the private-profile runner makes its temp root 0o700, so every `tmp_path` folder hands nothing to other users and every file SQLite creates there is private anyway. A comparison of 4,938 tests that name these files then showed no difference with the fix in place, because none of them reached the new code either.
+
+**What to do.** A test about the access a new file gets must make the folder that gives it, and check that premise on every run: the TASK-42749 fixture grants `*S-1-5-32-545:(OI)(CI)RX` with `icacls`, asserts the folder reads 0o744, and asserts that a file written there without the seam reads 0o644 before the test does anything. A comparison run with clean `dev` is evidence that nothing else broke, not that the change works.
+
+## A crashed xdist worker drops tests from the run; compare test ids, not totals (TASK-42749, 2026-11-28)
+
+**Incident.** A `-n 4` run of `Tests/DB`, `Tests/Utils` and 78 more files printed `337 failed` on both the changed tree and clean `dev`, which looked like a match. The JUnit reports held 4,928 and 4,938 cases: `Tests/Utils/test_private_paths.py::test_create_private_text_zero_byte_write_fails_without_spinning` crashed a worker on both trees (`INTERNALERROR ... assert not crashitem`), and ten tests in two other files were never run in the changed run. Run alone, those two files gave 11 failures on each tree, the same ids.
+
+**What to do.** Write `--junitxml` for both trees and diff the sets of test ids and each one's outcome; equal failure counts can hide tests that only one run executed. Rerun the files with missing ids without xdist on both trees.
+
 ## Ubuntu 24.04's Python 3.12.3 warns about `?1` placeholders that 3.12.4+ and 3.14 accept (TASK-42581, 2026-11-26)
 
 **Incident.** Round 27's Linux check (ubuntu:24.04, Python 3.12.3) logged about 468 `DeprecationWarning: Binding 1 ('?1') is a named parameter ... Starting with Python 3.14 an sqlite3.ProgrammingError will be raised`. TASK-42581 was filed as a 3.14 failure on the warning's own word. Measured: `SELECT ?1, ?1` bound to `(1,)` under `-W error::DeprecationWarning` warns on 3.12.3, but is accepted on 3.12.11, 3.13.13 and 3.14.7. CPython gh-117995 (3.12.4) stopped treating `?NNN` as named. Only `:name`, `@name` or `$name` bound to a sequence raises on 3.14. The new red test could not go red locally: it was red only in the 3.12.3 container.

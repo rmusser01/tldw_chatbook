@@ -1879,17 +1879,16 @@ def _connect_registered_sqlite(
             )
             if private_paths._WINDOWS_PLATFORM:
                 deadline.remaining(5.0)
-                _prepare_artifact(
-                    selected, writable=request.writable,
-                    create_if_missing=request.create_if_missing,
-                    enforce_private_mode=not request.preserve_source_mode,
-                )
-                for suffix in _SIDECAR_SUFFIXES:
-                    _prepare_artifact(
+                absent = []  # Every existing name is checked before any is made (TASK-42749).
+                for suffix in ("", *_SIDECAR_SUFFIXES):
+                    if not _prepare_artifact(
                         Path(f"{selected}{suffix}"), writable=request.writable,
-                        create_if_missing=False, optional=True,
-                        enforce_private_mode=not request.preserve_source_mode,
-                    )
+                        create_if_missing=request.create_if_missing and not suffix,
+                        optional=bool(suffix), enforce_private_mode=not request.preserve_source_mode,
+                    ):
+                        absent.append(suffix)
+                if request.writable and not request.preserve_source_mode:
+                    private_paths.create_private_sqlite_logs(selected, absent, directory_result, request.create_if_missing)
             else:
                 prepare_in_helper(request, reservation=envelope, deadline=deadline)
             deadline.remaining(5.0)
@@ -2727,6 +2726,7 @@ def _restore_destination_mode(
             raise sqlite3.OperationalError(
                 f"SQLite refused to restore {journal_mode.upper()} mode"
             )
+        private_paths.create_private_sqlite_wal(destination, journal_mode)
     except sqlite3.OperationalError as exc:
         if restore:
             raise _restore_busy(exc) from exc
