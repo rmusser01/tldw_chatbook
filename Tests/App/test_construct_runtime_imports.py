@@ -106,6 +106,14 @@ ALLOWED_CONSTRUCT_IMPORTS: frozenset[str] = frozenset(
         # composition by `_publish_application_services`. Standard library
         # only at module level; every service type is a TYPE_CHECKING import.
         "tldw_chatbook.app_services",
+        # The message-pump fast path (TASK-40608), installed by
+        # `TldwCli.__init__`. It is imported there and not with the app
+        # because `test_app_import_weight.py` holds `import tldw_chatbook.app`
+        # under 688 package modules and dev reads 687. One module of 245
+        # lines; it imports the standard library and Textual, which is
+        # already loaded. Installing it at the app's Load event instead
+        # would remove this row.
+        "tldw_chatbook.Utils.textual_dispatch_fastpath",
     }
 )
 
