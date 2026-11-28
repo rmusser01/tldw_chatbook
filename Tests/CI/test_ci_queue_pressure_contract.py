@@ -1379,8 +1379,10 @@ ADMISSION_4_TARGETS = (
     "Tests/Agents/test_run_log_stats_slice_runtime_tools.py",
     "Tests/Agents/test_run_log_survivor_lifetime.py",
     "Tests/Chat/test_fleet_budget_boundary_probes.py",
-    # TASK-41314: native workflow planning custody (27 tests, 8.6 min serially).
-    "Tests/Chat/test_workflow_planning_native.py",
+    # TASK-41314's native workflow planning custody file (27 tests, 8.6 min
+    # serially) runs in console-p0-gate's admission-sensitive 2 profile since
+    # TASK-42779 (owner decision 2026-11-28): this lane's slowest runner draw
+    # needed 38.6 of its 35 min with it.
     # TASK-41315 / TASK-41316: a Console agent turn's original storage and MCP
     # sources, and the first-send survivor (6.0 min serially for the two).
     "Tests/Chat/test_console_agent_storage_sources.py",
@@ -2109,6 +2111,28 @@ def test_console_p0_gate_runs_four_serial_minimal_python_312_profiles() -> None:
     assert not set(_pytest_targets(admission["run"])) & set(
         _pytest_targets(admission_2["run"])
     )
+
+
+def test_workflow_planning_file_runs_once_first_in_console_p0_admission_2() -> None:
+    """TASK-42779: the file left admission lane 4 for Console P0, and runs nowhere else."""
+    target = "Tests/Chat/test_workflow_planning_native.py"
+    jobs = _workflow("derived-artifacts.yml")["jobs"]
+    owners = [
+        (job_name, step["name"])
+        for job_name, job in jobs.items()
+        for step in job.get("steps", [])
+        if str(step.get("run", "")).lstrip().startswith("pytest")
+        and target in _pytest_targets(step["run"])
+    ]
+    assert owners == [
+        ("console-p0-gate", "Run the admission-sensitive 2 Console P0 regression tests")
+    ]
+    step = _named_step(
+        jobs["console-p0-gate"],
+        "Run the admission-sensitive 2 Console P0 regression tests",
+    )
+    assert _pytest_targets(step["run"])[0] == target
+    assert target not in ADMISSION_4_TARGETS
 
 
 def test_architecture_review_lane_is_one_serial_minimal_python_312_job() -> None:

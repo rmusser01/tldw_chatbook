@@ -132,6 +132,9 @@ INHERITED = {
     # moved whole and in order into its own matrix profile.
     "Run the admission-sensitive 2 Console P0 regression tests": [
         "pytest",
+        # TASK-42779 (owner decision 2026-11-28): the native workflow planning
+        # file, moved whole from pr-fast-lane-admission-4.
+        "Tests/Chat/test_workflow_planning_native.py",
         # Round 16 (TASK-41508, TASK-41511): trace files and the capture file.
         "Tests/Chat/test_console_project_instruction_traces.py",
         # TASK-42472 (round 24, 2026-11-24): dev's captured-retry contract, on
