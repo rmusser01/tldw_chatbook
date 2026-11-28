@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-28 16:53
-updated_date: 2026-11-28 19:02
+updated_date: 2026-11-28 19:06
 labels:
 - follow-up
 - flake
@@ -104,8 +104,11 @@ The handler runs in every test session, and the test's own comment notes that Ch
   - Red on 3073335c5c's single slot: `inner True`, `parent True`. Red on the pop-in-the-child variant: `inner True`. Green now.
 - **A handler someone else installed.** New param `fork-child-keeps-a-foreign-sigterm-handler` (`SIG_IGN` set before the guard) expects `True False` (still `SIG_IGN`, not blocked). Red under a temporary unconditional reset (`False False`) and, before the crash, under a temporary unconditional block (`True True`). Both mutations were reverted.
 - **Machine crash, caused by this task (2026-11-28, about 18:16 UTC).** The first draft of `fork-inside-a-fork-window` set its once-flag after `os.fork()`. `os.fork()` runs every `before` hook again, this one included, so the hook recursed, and as the recursion unwound each level forked again. The per-user process table filled (about 10,800 processes) and the machine was rebooted. The flag is now set before the fork, with a comment saying why. Each new fork test was first run under `ulimit -u <current + 60>`.
-- **Fork cap.** Every child script now caps itself first. On POSIX it sets `RLIMIT_NPROC` to `min(hard, <user's count> + 16)`; the parent test measures that count right before the run (Linux: the uid's threads in `/proc`; elsewhere: `ps -axo ruid=`). A runaway fork then fails with EAGAIN.
-  - Proof, under `ulimit -u <current + 60>`, with the once-flag temporarily set after the fork again: the param failed in 2.4 s with `BlockingIOError: [Errno 35]`, surfaced in the assertion. The user's process count stayed at 520-557 against a baseline of about 530, and nothing was left running. Reverted.
+- **Fork cap.** Every child script now caps itself first. On POSIX it sets `RLIMIT_NPROC` to `min(hard, <user's count> + _FORK_HEADROOM)`, with `_FORK_HEADROOM = 64`. The parent test measures the count right before the run (Linux: the uid's threads in `/proc`; elsewhere: `ps -axo ruid=`). A runaway fork then fails with EAGAIN.
+  - The margin was first 16. It was raised so that a burst of other workers' threads on Linux CI cannot cause a false EAGAIN red.
+  - Proof, under `ulimit -u <current + 120>`, with the once-flag temporarily set after the fork again: the param failed in 6.9 s with `BlockingIOError: [Errno 35]`, surfaced in the assertion.
+  - The user's process count went from about 540 to a peak of about 618 (the cap plus pytest itself) for about 5 s, then back to about 545. Nothing was left running.
+  - Reverted, and checked with `cmp`. The earlier proof at a margin of 16, under `+ 60`: failed in 2.4 s, peak +27.
 - **Authorised serial run** (`-p no:xdist`, so the guard's hooks are installed in the pytest process) of `Tests/Tools/test_remote_session_serve.py`, `Tests/Chunking/test_security.py` and `Tests/Terminal/test_posix_backend.py`:
   - dev 2df861ec7d (a detached scratch worktree, removed afterwards): first run 8 failed, 87 passed, 1 skipped; second run 7 failed, 88 passed, 1 skipped.
   - Tip: 7 failed, 88 passed, 1 skipped in both runs.

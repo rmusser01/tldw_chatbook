@@ -20,6 +20,8 @@ _REPO = Path(__file__).resolve().parents[2]
 # Every child may make only a few processes: a fork that runs away (a hook that
 # forked before setting its once-flag filled the process table, TASK-42651)
 # then fails at once with EAGAIN (BlockingIOError) instead.
+# Others' new processes (Linux: threads) before the child forks; 16 risked EAGAIN.
+_FORK_HEADROOM = 64
 _CAP_FORKS = """
 import resource
 _hard = resource.getrlimit(resource.RLIMIT_NPROC)[1]
@@ -229,7 +231,7 @@ def test_owned_root_is_removed(
     cap = (
         ""
         if sys.platform == "win32"
-        else _CAP_FORKS.format(nproc=_user_task_count() + 16)
+        else _CAP_FORKS.format(nproc=_user_task_count() + _FORK_HEADROOM)
     )
     child = _CHILD.format(
         repo=str(_REPO), root=str(root), cap=cap, before=before, then=then
