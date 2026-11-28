@@ -1333,15 +1333,13 @@ async def test_conditional_demotion_does_not_steal_newer_context_focus() -> None
             "#console-run-inspector-state", ConsoleRunInspector
         )
         context_focus = screen.query_one("#console-context-rail-collapse", Button)
-        active_actions = tuple(
-            replace(action, enabled=True, disabled_reason="")
-            if action.widget_id == CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID
-            else action
-            for action in inspector.state.actions
-        )
-        active_state = replace(inspector.state, actions=active_actions)
+        # Stage availability at the source so native refreshes keep the
+        # promoted action alive through the focus request.
+        screen.app_instance.console_chatbook_artifact_available = True
         before_recompose = inspector.recompose_count
-        inspector.sync_state(active_state)
+        inspector.sync_state(
+            screen._build_console_inspector_state(screen._pending_console_launch_context)
+        )
         await _wait_for_right_rail_condition(
             pilot,
             lambda: (
@@ -1363,17 +1361,21 @@ async def test_conditional_demotion_does_not_steal_newer_context_focus() -> None
         await pilot.pause()
         assert pilot.app.focused is artifact_action
 
-        disabled_actions = tuple(
-            replace(action, enabled=False, disabled_reason="unavailable")
-            if action.widget_id == CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID
-            else action
-            for action in active_actions
+        screen.app_instance.console_chatbook_artifact_available = False
+        inspector.sync_state(
+            screen._build_console_inspector_state(screen._pending_console_launch_context)
         )
-        inspector.sync_state(replace(active_state, actions=disabled_actions))
         context_focus.focus()
         for _ in range(4):
             await pilot.pause()
 
+        demoted_action = inspector.query_one(
+            f"#{CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID}", Button
+        )
+        assert demoted_action is not artifact_action
+        assert demoted_action.disabled
+        more_body = inspector.query_one("#console-inspector-more-body")
+        assert more_body in demoted_action.ancestors
         assert pilot.app.focused is context_focus
 
 

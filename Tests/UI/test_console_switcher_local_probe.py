@@ -1051,7 +1051,9 @@ async def test_a_refused_active_llama_cpp_reaches_the_console_status_row(
         assert harness.screen is switcher
         assert _rail_text(console, "#workbench-header-status") == refused
         await switcher.action_dismiss_popover()
-        await _console_settled(console, pilot, lambda r: r.blocker is not None)
+        await _console_settled(
+            console, pilot, lambda r: r.blocker is not None, lambda _: refused
+        )
         assert _rail_text(console, "#workbench-header-status") == refused
         assert _rail_text(console, "#console-model-section-recovery") == refused
 

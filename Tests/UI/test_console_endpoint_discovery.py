@@ -1047,6 +1047,7 @@ async def test_shared_evidence_change_refreshes_the_console_once(request, monkey
     from Tests.UI.test_console_provider_apply_defaults_flow import (
         _ConsoleFlowHarness,
     )
+    from Tests.UI.test_console_switcher_local_probe import _fresh_readiness_display
     from Tests.UI.test_destination_shells import _wait_for_selector
     from tldw_chatbook.Chat.provider_endpoint_contract import (
         canonical_connection_identity,
@@ -1059,7 +1060,11 @@ async def test_shared_evidence_change_refreshes_the_console_once(request, monkey
     harness = _ConsoleFlowHarness(_persisted_console_app())
     async with harness.run_test(size=(211, 44)) as pilot:
         console = harness.screen
-        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        # A mounted summary can still owe its checked readiness display.
+        # Warm the real projection before measuring the evidence poll.
+        async with asyncio.timeout(2.0):
+            await _wait_for_selector(console, pilot, "#console-settings-summary")
+            await _fresh_readiness_display(console, pilot)
         console._stop_console_credential_poll_timer()
         console._poll_console_credential_readiness()
         refreshes = []
