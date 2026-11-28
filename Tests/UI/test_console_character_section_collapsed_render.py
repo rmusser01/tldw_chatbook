@@ -398,6 +398,7 @@ async def test_a_screen_tick_queued_before_the_opening_paints_no_old_chats(
     """
     from Tests.UI.test_console_composer_run_controls import _wait_for
     from Tests.UI.test_console_left_rail import make_console_pilot
+    from tldw_chatbook.UI.Console_Modules import wiring
 
     revision = [7]
     _install_loading_controller(monkeypatch, revision)
@@ -406,10 +407,32 @@ async def test_a_screen_tick_queued_before_the_opening_paints_no_old_chats(
         controller = screen._character_context
         await _collapse_loaded_character_section(pilot)
         browser = screen.query_one(ConsoleCharacterContext)
-        revision[0] = 8
-        assert await character_presentation_work(controller, screen) is True
+        request_refresh = wiring.request_console_character_context_refresh
+
+        def refresh_other_screens(current_screen, *, resumed=False):
+            if current_screen is not screen:
+                request_refresh(current_screen, resumed=resumed)
+
+        # Give the explicit refresh sole ownership of the new fixture revision.
+        # The actual queued tick below runs with native dispatch restored.
+        with monkeypatch.context() as preparation:
+            preparation.setattr(
+                wiring,
+                "request_console_character_context_refresh",
+                refresh_other_screens,
+            )
+            for worker in list(screen.workers):
+                if (
+                    worker.node is screen
+                    and worker.group == "console-character-context-refresh"
+                    and not worker.is_finished
+                ):
+                    await worker.wait()
+            revision[0] = 8
+            assert await character_presentation_work(controller, screen) is True
         await pilot.pause(0.3)
         assert browser._render_deferred, "precondition: a snapshot waits to render"
+        assert browser.state.data_revision == 8
 
         painted: list[list[str]] = []
         paint = Screen._compositor_refresh

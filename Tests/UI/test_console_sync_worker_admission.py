@@ -179,13 +179,30 @@ async def test_context_snapshot_native_publication_owns_deferred_refresh(
             screen = host.screen
             loop = asyncio.get_running_loop()
             deadline = loop.time() + 8
-            assert await until(
-                lambda: screen._console_attach_reconciled
-                and screen in startup
-                and startup[screen].state is WorkerState.SUCCESS
-                and not screen._console_sync_in_progress,
-                deadline - loop.time(),
-            ), "initial Console attachment did not settle"
+
+            def attachment_settled():
+                worker = startup.get(screen)
+                reconcile = getattr(screen, "_console_attach_reconcile_worker", None)
+                # A native replay can cancel the optional mount sync before
+                # entry. Its task retires even if WorkerState stays RUNNING.
+                return (
+                    screen._console_attach_reconciled
+                    and screen._console_attach_sync_complete
+                    and reconcile is not None
+                    and reconcile.state is WorkerState.SUCCESS
+                    and worker is not None
+                    and (worker.state is WorkerState.SUCCESS or worker.is_cancelled)
+                    and not screen._console_sync_in_progress
+                    and not any(
+                        pending.node is screen and pending.group == "console-sync"
+                        for pending in screen.workers
+                    )
+                )
+
+            assert await until(attachment_settled, deadline - loop.time()), (
+                "initial Console attachment did not settle. Pending work: "
+                f"{screen.console_pending_startup_work()}"
+            )
             controller = screen._ensure_console_chat_controller()
             store = controller.store
             session_id = store.active_session_id
