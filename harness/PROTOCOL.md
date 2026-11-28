@@ -20,7 +20,8 @@ permissions, and preparation contracts are frozen.
    still goes through the original observer and per-app budget. The fixture
    requires the expected prompt, model, stream, auth marker and schema count.
    No live provider credentials are read or supplied.
-4. Require the original continuous quiet window and host overlap receipt,
+4. Bind the idle fixture before the original continuous quiet window so
+   socket setup cannot age the launch receipt. Require the host overlap receipt,
    all eight original per-run audits and a closed stub with eight HTTP 200
    responses before paired statistics. Keep partial artifacts on failure.
 5. Report Enter-to-observed-POST and post-save timings for this runner. Keep

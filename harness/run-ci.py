@@ -56,20 +56,21 @@ def main():
             "transport": "loopback HTTP SSE",
         }
         (E / "runtime.json").write_text(json.dumps(runtime, indent=2) + "\n")
-        label = "hosted-" + uuid.uuid4().hex
-        quiet_status = child(f"{PREFIX}quiet-host-r1.py", "--label", label)
-        if quiet_status:
-            return quiet_status
-        data = (E / f"{PREFIX}quiet-{label}-r1.json").read_bytes()
-        quiet = json.loads(data)
-        age = datetime.now(timezone.utc) - datetime.fromisoformat(quiet["checked_utc"])
-        assert quiet["continuous_quiet_30s"] and 0 <= age.total_seconds() < 30
         for port in seal["ports_unused"]:
             require_closed_port(port)
-        with launch.open("xb") as handle:
-            handle.write(data)
-
         with serve(stub_receipt) as requests:
+            # Complete socket setup before issuing the 30-second launch receipt.
+            label = "hosted-" + uuid.uuid4().hex
+            quiet_status = child(f"{PREFIX}quiet-host-r1.py", "--label", label)
+            if quiet_status:
+                return quiet_status
+            data = (E / f"{PREFIX}quiet-{label}-r1.json").read_bytes()
+            quiet = json.loads(data)
+            age = datetime.now(timezone.utc) - datetime.fromisoformat(quiet["checked_utc"])
+            assert quiet["continuous_quiet_30s"] and 0 <= age.total_seconds() < 30
+            assert not requests, "Fixture received a request before launch"
+            with launch.open("xb") as handle:
+                handle.write(data)
             watch_status = child(f"{PREFIX}host-watch-r1.py")
         if watch_status:
             return watch_status
