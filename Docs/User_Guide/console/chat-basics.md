@@ -80,9 +80,17 @@ unknown**. This means the previous request may have reached the provider without
 a known outcome and needs a recovery decision; it does not mean a model is still
 running. The composer says **Send blocked — resolve response recovery first**,
 and the header, run chip and Inspector **Run** line read **Blocked**
-(`Blocked — recovery needed`). A conversation imported from another device says
-**Response delivery status is unknown on the source device** instead, and offers
-no actions here.
+(`Blocked — recovery needed`).
+
+Some replies have no recovery record on this device: a conversation synced or
+imported from another device, a reply another Console window is still sending,
+or a reply this device saved just before sending it. The card for such a
+reply cannot tell where the request came from, so it names no device and
+offers no actions. It reads **Response was accepted but its delivery wasn't
+confirmed. Send a new message to continue.**, or **Response delivery status is
+unknown; it may have reached the provider. Send a new message to continue.**
+when the request may already have gone out. Sending a new message is not
+blocked, and it replaces the card with the new turn.
 
 Use the recovery controls above the composer. **Retry anyway** may send a
 duplicate request because the previous delivery cannot be confirmed. (If the

@@ -857,7 +857,12 @@ version/hash contract, but never carry the device-local dispatch checkpoint.
 On another device or after import, `accepted` renders
 `Response accepted on another device; waiting for dispatch.` and
 `dispatch_started` renders
-`Response delivery status is unknown on the source device.` These states are
+`Response delivery status is unknown on the source device.` (Amended
+2026-11-24, TASK-33621.30: this device writes checkpoint-free `accepted`
+rows too, so the copy is now device-neutral:
+`Response was accepted but its delivery wasn't confirmed. Send a new message to continue.`
+and `Response delivery status is unknown; it may have reached the provider. Send a new message to continue.`)
+These states are
 inert: they cannot expose source-device Retry/Discard. An explicit **Retry as a
 new response** may create a sibling assistant variant without mutating or
 claiming the source owner. Terminal publication replaces the state through the

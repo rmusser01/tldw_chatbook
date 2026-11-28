@@ -499,6 +499,7 @@ class ConsoleDispatchRecoveryKind(str, Enum):
     DISPATCH_STARTED = "dispatch_started"
     EPHEMERAL_ACCEPTED = "ephemeral_accepted"
     EPHEMERAL_DISPATCH_STARTED = "ephemeral_dispatch_started"
+    # REMOTE_* = no local checkpoint; this device's own rows too (TASK-33621.30).
     REMOTE_ACCEPTED = "remote_accepted"
     REMOTE_DISPATCH_STARTED = "remote_dispatch_started"
     CONTINUATION = "continuation"
@@ -708,8 +709,8 @@ def console_dispatch_recovery_from_checkpoint(
         assistant_message_id=checkpoint.assistant_message_id,
         conversation_id=checkpoint.conversation_id,
         visible_copy=(
-            # TASK-33621.6 AC#3: this owner is this device's own send; "on
-            # the source device" is the imported (REMOTE_*) owner's copy.
+            # TASK-33621.6 AC#3: this owner is this device's own send, so
+            # its copy names no device (nor, since TASK-33621.30, REMOTE_*'s).
             CONSOLE_DISPATCH_UNKNOWN_COPY
             if started
             else "Response accepted; waiting for dispatch."

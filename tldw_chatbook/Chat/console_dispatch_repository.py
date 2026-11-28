@@ -582,8 +582,9 @@ class ConsoleDispatchRepository:
         """Reconcile one active dispatch/continuation owner before queue wake.
 
         The checkpoint table remains device-local.  With no local checkpoint,
-        synchronized ``accepted``/``dispatch_started`` values are therefore
-        inert source-device facts, never replay authority.
+        ``accepted``/``dispatch_started`` values -- synchronized, imported, or
+        this device's own pre-provider reply row -- are therefore inert
+        facts, never replay authority.
         """
 
         if type(conversation_id) is not str or not conversation_id.strip():
@@ -921,13 +922,19 @@ class ConsoleDispatchRepository:
             return None
         assistant_id = str(row["id"])
         state = row["assistant_generation_state"]
+        # TASK-33621.30 (owner decision 2026-11-23): without a checkpoint the
+        # row cannot say who sent it -- a synced or imported turn, another
+        # window's turn still streaming, or this device's own pre-provider
+        # reply row -- nor whether it reached the provider. The copy names no
+        # device, and the owner stays inert: no exact replay can be claimed.
         if state == "accepted":
             return ConsoleDispatchRecoveryState(
                 kind=ConsoleDispatchRecoveryKind.REMOTE_ACCEPTED,
                 assistant_message_id=assistant_id,
                 conversation_id=conversation_id,
                 visible_copy=(
-                    "Response accepted on another device; waiting for dispatch."
+                    "Response was accepted but its delivery wasn't confirmed. "
+                    "Send a new message to continue."
                 ),
                 actions=(),
             )
@@ -937,7 +944,8 @@ class ConsoleDispatchRepository:
                 assistant_message_id=assistant_id,
                 conversation_id=conversation_id,
                 visible_copy=(
-                    "Response delivery status is unknown on the source device."
+                    "Response delivery status is unknown; it may have reached "
+                    "the provider. Send a new message to continue."
                 ),
                 actions=(),
             )
