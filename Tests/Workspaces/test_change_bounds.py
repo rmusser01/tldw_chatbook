@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Workspaces.change_bounds import (
     DEFAULT_MAX_FILES,
     DEFAULT_RETENTION_DAYS,
@@ -284,13 +285,12 @@ class TestRetention:
         return run
 
     def test_prune_drops_old_rows_and_resets_rowless_repos(self, tracked, tmp_path):
-        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
         from tldw_chatbook.Workspaces.change_retention import (
             prune_change_history,
         )
 
         tracker, service, root = tracked
-        db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+        db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
         run = self._turn_row(tracked, db)
         repo = service.repo_for_root(root)
         objects_before = sum(
@@ -311,13 +311,12 @@ class TestRetention:
         )
 
     def test_recent_rows_and_their_repo_survive(self, tracked, tmp_path):
-        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
         from tldw_chatbook.Workspaces.change_retention import (
             prune_change_history,
         )
 
         tracker, service, root = tracked
-        db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+        db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
         run = self._turn_row(tracked, db)
 
         report = prune_change_history(db, service)
@@ -330,13 +329,12 @@ class TestRetention:
         import os as _os
         import time as _time
 
-        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
         from tldw_chatbook.Workspaces.change_retention import (
             prune_change_history,
         )
 
         tracker, service, root = tracked
-        db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+        db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
         repo = service.repo_for_root(root)
         repo.snapshot("registration")
         git_dir = repo.git_dir
@@ -352,14 +350,13 @@ class TestRetention:
         assert not git_dir.exists()
 
     def test_fresh_orphan_is_left_alone(self, tracked, tmp_path):
-        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
         from tldw_chatbook.Workspaces.change_retention import (
             prune_change_history,
         )
         import shutil as _shutil
 
         tracker, service, root = tracked
-        db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+        db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
         repo = service.repo_for_root(root)
         repo.snapshot("registration")
         _shutil.rmtree(root)
@@ -372,13 +369,12 @@ class TestRetention:
 
 class TestAppRetentionRunner:
     def test_runs_a_pass_against_the_sibling_runs_db(self, tracked, tmp_path):
-        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
         from tldw_chatbook.Workspaces.change_retention import (
             run_retention_for_app,
         )
 
         tracker, service, root = tracked
-        db = AgentRunsDB(tmp_path / "agent_runs.db", client_id="t")
+        db = owned_agent_runs_db(tmp_path / "agent_runs.db", client_id="t")
         run = db.create_run(conversation_id="c", agent_kind="primary")
         handle = tracker.begin_turn([root])
         handle.await_baseline()
@@ -395,7 +391,8 @@ class TestAppRetentionRunner:
                 "UPDATE change_snapshots SET created_at = '2020-01-01T00:00:00.000000Z'"
             )
 
-        report = run_retention_for_app(tmp_path / "chachanotes.db", service=service)
+        report = run_retention_for_app(tmp_path / "chachanotes.db", service=service,
+                                       execution_owner=db._execution_owner)
 
         assert report is not None and report.rows_pruned == 1
 
@@ -413,7 +410,6 @@ def test_old_schema_file_gains_the_oversize_column_on_open(tmp_path):
     import sqlite3
     from contextlib import closing
 
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     db_file = tmp_path / "old.db"
     with closing(sqlite3.connect(db_file)) as conn:
@@ -439,7 +435,7 @@ def test_old_schema_file_gains_the_oversize_column_on_open(tmp_path):
         )
         conn.commit()
 
-    db = AgentRunsDB(db_file, client_id="t")
+    db = owned_agent_runs_db(db_file, client_id="t")
     db.record_change_snapshot(
         run_id="r2",
         root="/tmp/x",
@@ -482,7 +478,6 @@ class TestReviewRoundHardening:
     ):
         import shutil as _shutil
 
-        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
         from tldw_chatbook.Workspaces.change_retention import (
             prune_change_history,
         )
@@ -490,7 +485,7 @@ class TestReviewRoundHardening:
 
         real_git = _shutil.which("git")
         tracker, service, root = tracked
-        db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+        db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
         run = db.create_run(conversation_id="c", agent_kind="primary")
         handle = tracker.begin_turn([root])
         handle.await_baseline()
@@ -525,13 +520,12 @@ class TestReviewRoundHardening:
         assert service.repo_for_root(root).git_dir.exists()
 
     def test_sweep_skips_a_container_another_process_holds(self, tracked, tmp_path):
-        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
         from tldw_chatbook.Workspaces.change_retention import (
             prune_change_history,
         )
 
         tracker, service, root = tracked
-        db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+        db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
         repo = service.repo_for_root(root)
         repo.snapshot("registration")
         # No rows -> the sweep would RESET this container; a held lock
@@ -798,7 +792,6 @@ class TestAutoSubRoots:
         import shutil as _shutil
         import time as _time
 
-        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
         from tldw_chatbook.Workspaces.change_retention import (
             prune_change_history,
         )
@@ -817,7 +810,7 @@ class TestAutoSubRoots:
         old = _time.time() - 90 * 86400
         _os.utime(container, (old, old))
         _os.utime(child_repo.git_dir, (old, old))
-        db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+        db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
 
         report = prune_change_history(db, service)
 

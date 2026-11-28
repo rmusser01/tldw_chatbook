@@ -36,6 +36,9 @@ def register(adapter: OwnerAdapter) -> None:
 def registered() -> tuple[OwnerAdapter, ...]:
     """Return an immutable, deterministically ordered installed-adapter snapshot."""
     with _lock:
+        from .mobile_preview_budget import reserve
+
+        reserve(128 + 64 * len(_adapters))
         return tuple(_adapters[key] for key in sorted(_adapters))
 
 

@@ -269,3 +269,115 @@ async def test_mounted_suspend_resume_rearms_after_old_reconcile_retires(monkeyp
         finally:
             release.set()
             await pending
+
+
+@pytest.mark.asyncio
+async def test_suspended_original_refresh_keeps_dirty_work_for_resume(monkeypatch):
+    from textual.screen import Screen
+
+    from Tests.UI.test_console_initial_draft_ownership import DeferredInitialConsole
+    from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+    from tldw_chatbook.UI.Console_Modules import config_sync
+    from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    host = DeferredInitialConsole(app, "")
+    async with _mounted_console(host) as pilot:
+        screen = host.screen
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        screen._console_sync_maintenance_resume()
+        for _ in range(100):
+            if (
+                screen._console_attach_reconciled
+                and not screen._console_sync_in_progress
+            ):
+                break
+            await pilot.pause(0.05)
+        assert screen._console_attach_reconciled
+        assert not screen._console_sync_in_progress
+        runtime = screen._console_runtime()
+        store = screen._console_chat_store
+        session_id = store.active_session_id
+        generation = runtime._attached_generation
+        hidden_passes, completions = [], []
+        entered, release = asyncio.Event(), asyncio.Event()
+        pending = None
+        original_prepare = config_sync.prepare_console_presentation_sync
+        original_started = screen._record_ui_worker_started
+        original_finished = runtime.finish_view_reconciliation
+
+        async def hold_original_preparation(current):
+            result = await original_prepare(current)
+            if current is screen and asyncio.current_task() is pending:
+                # Only this FULL waits here, after its original preparation retires.
+                entered.set()
+                await release.wait()
+            return result
+
+        def record_started(name):
+            if name == "console-sync" and not screen._is_active_console_screen():
+                hidden_passes.append(name)
+            return original_started(name)
+
+        def finish(view, attachment):
+            completions.append((view, attachment))
+            return original_finished(view, attachment)
+
+        monkeypatch.setattr(
+            config_sync, "prepare_console_presentation_sync", hold_original_preparation
+        )
+        monkeypatch.setattr(screen, "_record_ui_worker_started", record_started)
+        monkeypatch.setattr(runtime, "finish_view_reconciliation", finish)
+        async def refresh_until_admitted():
+            while True:
+                completed = await screen._sync_native_console_chat_ui()
+                if entered.is_set():
+                    return completed
+                assert completed is False
+                await asyncio.sleep(0.05)
+
+        pending = asyncio.create_task(refresh_until_admitted())
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            assert not pending.done()
+            await host.push_screen(Screen())
+            assert not screen._is_active_console_screen()
+            assert runtime.view is screen
+            assert runtime._attached_generation == generation
+            assert screen._console_runtime() is runtime
+            assert runtime.chat_store is store
+
+            store.set_session_draft(session_id, "older hidden revision")
+            assert await screen._sync_native_console_chat_ui() is False
+            store.set_session_draft(session_id, "latest hidden revision")
+            release.set()
+            assert await pending is False
+            # Let the existing 0.2s coalesced replay actually reach its timer.
+            await asyncio.sleep(0.25)
+            assert hidden_passes == [], (
+                "a suspended Console admitted another FULL refresh"
+            )
+            assert screen._console_sync_requested
+            assert completions == []
+
+            await host.pop_screen()
+            composer = screen.query_one(
+                "#console-native-composer", ConsoleComposerBar
+            )
+            for _ in range(100):
+                if (
+                    screen._console_attach_reconciled
+                    and composer.draft_text() == "latest hidden revision"
+                ):
+                    break
+                await pilot.pause(0.05)
+            assert screen._console_attach_reconciled
+            assert composer.draft_text() == "latest hidden revision"
+            assert completions == [(screen, generation)]
+            assert runtime.chat_store is store
+            assert store.active_session_id == session_id
+        finally:
+            release.set()
+            await pending

@@ -17,6 +17,7 @@ import io
 import json
 import os
 import socket
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -24,6 +25,7 @@ from unittest.mock import patch
 import pytest
 
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
 
 pytestmark = [
     pytest.mark.bootstrap_profile,
@@ -106,6 +108,7 @@ async def _spawn_turn(
     monkeypatch,
     task: str,
     *,
+    owned_console_databases,
     child_tool=False,
     tamper_parent=False,
     tasks=None,
@@ -131,6 +134,7 @@ async def _spawn_turn(
     import urllib3
 
     from Tests import network_guard
+    from Tests.Chat.test_console_agent_bridge import _join_fleet_threads
     from tldw_chatbook import config
     from tldw_chatbook.Agents.run_context import current_run_actor
     from tldw_chatbook.Chat import console_chat_controller, console_send_diagnostics
@@ -378,7 +382,33 @@ async def _spawn_turn(
         trace_call_boundary_factory=ConsoleTraceBoundaryFactory(chat),
     )
     store = ConsoleChatStore(persistence=ChatPersistenceService(chat))
-    runs = AgentRunsDB(tmp_path / "runs.db", client_id="spawntrace")
+    controller = None
+    retirement_started = retirement_finished = False
+
+    async def retire_children():
+        nonlocal retirement_started, retirement_finished
+        if retirement_finished:
+            return
+        assert not retirement_started, "child retirement was already uncertain"
+        retirement_started = True
+        assert controller is not None, "controller construction did not complete"
+        await controller.shutdown()
+        await asyncio.to_thread(_join_fleet_threads)
+        assert not any(
+            thread.is_alive() and thread.name.startswith(("fleet-", "child-loop-"))
+            for thread in threading.enumerate()
+        ), "native child threads remain after shutdown"
+        retirement_finished = True
+
+    runs_path = tmp_path / "runs.db"
+    execution_owner = ConsoleExecutionOwner.acquire(runs_path)
+    # A failed constructor retains its native lease until cleanup is proved.
+    runs = AgentRunsDB(
+        runs_path, client_id="spawntrace", execution_owner=execution_owner
+    )
+    owned_console_databases(
+        runs, execution_owner=execution_owner, retire=retire_children
+    )
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,
@@ -493,7 +523,7 @@ async def _spawn_turn(
         )
         return facts
     finally:
-        await controller.shutdown()
+        await retire_children()
         config.save_setting_to_cli_config(
             "custom_endpoints", "spawntrace", old_endpoint
         )
@@ -504,9 +534,16 @@ async def _spawn_turn(
         chat.close_connection()
 
 
-async def test_parent_follow_up_after_native_spawn_keeps_capture(tmp_path, monkeypatch):
+async def test_parent_follow_up_after_native_spawn_keeps_capture(
+    tmp_path, monkeypatch, owned_console_databases
+):
     """The parent's request after the spawn result is admitted and captured."""
-    facts = await _spawn_turn(tmp_path, monkeypatch, "Say child done.")
+    facts = await _spawn_turn(
+        tmp_path,
+        monkeypatch,
+        "Say child done.",
+        owned_console_databases=owned_console_databases,
+    )
     why = str(vars(facts))
     assert facts.result.accepted and facts.result.provider_started, why
     primary = [roles for kind, roles in facts.wire if kind == "primary"]
@@ -522,13 +559,17 @@ async def test_parent_follow_up_after_native_spawn_keeps_capture(tmp_path, monke
     [("Say child done.", False), (DRAFT, False), ("Say child done.", True)],
     ids=["own-task", "task-equals-user-message", "child-tool-loop"],
 )
-
-
 async def test_child_request_after_native_spawn_reaches_provider(
-    tmp_path, monkeypatch, task, child_tool
+    tmp_path, monkeypatch, task, child_tool, owned_console_databases
 ):
     """Capture On traces a spawned child in its own segment of the parent's turn."""
-    facts = await _spawn_turn(tmp_path, monkeypatch, task, child_tool=child_tool)
+    facts = await _spawn_turn(
+        tmp_path,
+        monkeypatch,
+        task,
+        child_tool=child_tool,
+        owned_console_databases=owned_console_databases,
+    )
     why = str(vars(facts))
     child_wire = [roles for kind, roles in facts.wire if kind == "subagent"]
     assert child_wire and child_wire[0][-1] == "user", why
@@ -553,11 +594,15 @@ async def test_child_request_after_native_spawn_reaches_provider(
 
 
 async def test_parent_surface_still_refuses_a_changed_history_beside_a_child(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, owned_console_databases
 ):
     """A child's segment never widens what the parent's own surface admits."""
     facts = await _spawn_turn(
-        tmp_path, monkeypatch, "Say child done.", tamper_parent=True
+        tmp_path,
+        monkeypatch,
+        "Say child done.",
+        tamper_parent=True,
+        owned_console_databases=owned_console_databases,
     )
     why = str(vars(facts))
     assert [kind for kind, _ in facts.wire].count("primary") == 1, why
@@ -576,29 +621,42 @@ async def test_parent_surface_still_refuses_a_changed_history_beside_a_child(
     [("Say child done.", "Say it again."), ("Say child done.", "Say child done.")],
     ids=["two-siblings", "respawn-same-task-text"],
 )
-
-
 async def test_sibling_children_each_get_their_own_segment_under_one_turn(
-    tmp_path, monkeypatch, tasks
+    tmp_path, monkeypatch, tasks, owned_console_databases
 ):
     """Two children of one turn never share a segment, even for equal task text."""
-    facts = await _spawn_turn(tmp_path, monkeypatch, tasks[0], tasks=tasks)
+    facts = await _spawn_turn(
+        tmp_path,
+        monkeypatch,
+        tasks[0],
+        tasks=tasks,
+        owned_console_databases=owned_console_databases,
+    )
     why = str(vars(facts))
     assert facts.boundary_errors == [] and facts.refusals == [], why
     assert [kind for kind, _ in facts.runs].count("subagent") == 2, why
     parent = [call for call in facts.owned_calls if call[0]]
     child = [call for call in facts.owned_calls if not call[0]]
     (owner_id, turn_id) = parent[0][1:3]
-    assert len(child) == 2 and {call[1:3] for call in child} == {(owner_id, turn_id)}, why
+    assert len(child) == 2 and {call[1:3] for call in child} == {(owner_id, turn_id)}, (
+        why
+    )
     assert len({call[3] for call in child}) == 2, why
     assert len({link[0] for link in facts.links}) == 2, why
     assert {link[1:3] for link in facts.links} == {(owner_id, turn_id)}, why
 
 
-async def test_a_child_cannot_spawn_a_grandchild(tmp_path, monkeypatch):
+async def test_a_child_cannot_spawn_a_grandchild(
+    tmp_path, monkeypatch, owned_console_databases
+):
     """Nested children are structurally unsupported: the child is never offered
     the spawn tool, so there is no grandchild call to trace."""
-    facts = await _spawn_turn(tmp_path, monkeypatch, "Say child done.")
+    facts = await _spawn_turn(
+        tmp_path,
+        monkeypatch,
+        "Say child done.",
+        owned_console_databases=owned_console_databases,
+    )
     why = str(vars(facts))
     parent_tools = [tools for kind, tools in facts.tools if kind == "primary"]
     child_tools = [tools for kind, tools in facts.tools if kind == "subagent"]
@@ -609,24 +667,37 @@ async def test_a_child_cannot_spawn_a_grandchild(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("tamper", [True, "missing"], ids=["drifted", "missing"])
 async def test_a_child_route_naming_another_turn_is_refused_before_dispatch(
-    tmp_path, monkeypatch, tamper
+    tmp_path, monkeypatch, tamper, owned_console_databases
 ):
     """The adapter re-derives the spawning turn and refuses a drifted or
     missing one, through the real ``chat_call_impl`` path."""
     facts = await _spawn_turn(
-        tmp_path, monkeypatch, "Say child done.", tamper_child_route=tamper
+        tmp_path,
+        monkeypatch,
+        "Say child done.",
+        tamper_child_route=tamper,
+        owned_console_databases=owned_console_databases,
     )
     why = str(vars(facts))
     assert [kind for kind, _ in facts.wire].count("subagent") == 0, why
-    assert not any(status == "done" for kind, status in facts.runs if kind == "subagent"), why
+    assert not any(
+        status == "done" for kind, status in facts.runs if kind == "subagent"
+    ), why
 
 
 @pytest.mark.parametrize("capture", ["capture_on", "capture_off"])
-async def test_child_native_tool_round_completes(tmp_path, monkeypatch, capture):
+async def test_child_native_tool_round_completes(
+    tmp_path, monkeypatch, capture, owned_console_databases
+):
     """TASK-41651: a child's own native tool call (a provider continuation)
     completes its round, Capture On and Off."""
     facts = await _spawn_turn(
-        tmp_path, monkeypatch, "Say child done.", child_native=True, capture=capture
+        tmp_path,
+        monkeypatch,
+        "Say child done.",
+        child_native=True,
+        capture=capture,
+        owned_console_databases=owned_console_databases,
     )
     why = str(vars(facts))
     child_wire = [roles for kind, roles in facts.wire if kind == "subagent"]
@@ -659,7 +730,7 @@ async def test_child_native_tool_round_completes(tmp_path, monkeypatch, capture)
 @pytest.mark.parametrize("fenced_spawn", [False, True], ids=["native", "fenced"])
 @pytest.mark.parametrize("capture", ["capture_on", "capture_off"])
 async def test_a_spawned_child_never_gets_the_chats_mix_ins(
-    tmp_path, monkeypatch, capture, fenced_spawn
+    tmp_path, monkeypatch, capture, fenced_spawn, owned_console_databases
 ):
     """TASK-41652 / ADR-286 rules 5-6: a mix-in composes only the user's current
     message, reused through the parent's tool continuations; a spawned child's
@@ -671,6 +742,7 @@ async def test_a_spawned_child_never_gets_the_chats_mix_ins(
         mixin=True,
         capture=capture,
         fenced_spawn=fenced_spawn,
+        owned_console_databases=owned_console_databases,
     )
     why = str(vars(facts))
     assert facts.boundary_errors == [] and facts.refusals == [], why
@@ -687,7 +759,7 @@ async def test_a_spawned_child_never_gets_the_chats_mix_ins(
 
 @pytest.mark.parametrize("capture", ["capture_on", "capture_off"])
 async def test_child_native_round_when_the_parent_endpoint_has_no_continuations(
-    tmp_path, monkeypatch, capture
+    tmp_path, monkeypatch, capture, owned_console_databases
 ):
     """TASK-41651: the parent's endpoint has no continuation protocol, so the
     adapter has no owner key; a child routed to an endpoint that has one still
@@ -699,6 +771,7 @@ async def test_child_native_round_when_the_parent_endpoint_has_no_continuations(
         child_native=True,
         capture=capture,
         parent_openai=True,
+        owned_console_databases=owned_console_databases,
     )
     why = str(vars(facts))
     child_wire = [roles for kind, roles in facts.wire if kind == "subagent"]
@@ -725,13 +798,20 @@ async def test_child_native_round_when_the_parent_endpoint_has_no_continuations(
         assert child == [("agent_first", "complete"), ("tool_loop", "complete")], why
 
 
-async def test_a_service_that_prepares_continuations_needs_a_child_owner_key(tmp_path):
+async def test_a_service_that_prepares_continuations_needs_a_child_owner_key(
+    tmp_path, owned_console_databases
+):
     """TASK-41651: without the key a child's native round would only refuse
     later ("Active provider continuation requires an owner"), so refuse now."""
     from tldw_chatbook.Agents.agent_service import AgentService
     from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 
-    runs = AgentRunsDB(tmp_path / "runs.db", client_id="spawntrace")
+    runs_path = tmp_path / "runs.db"
+    execution_owner = ConsoleExecutionOwner.acquire(runs_path)
+    runs = AgentRunsDB(
+        runs_path, client_id="spawntrace", execution_owner=execution_owner
+    )
+    owned_console_databases(runs, execution_owner=execution_owner)
     try:
         with pytest.raises(ValueError, match="child_continuation_owner_key"):
             AgentService(
@@ -747,7 +827,7 @@ async def test_a_service_that_prepares_continuations_needs_a_child_owner_key(tmp
 
 
 async def test_trace_view_lists_child_calls_under_the_spawning_turn(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, owned_console_databases
 ):
     """TASK-41650: the mounted Trace lists each child's calls under the turn
     that spawned it, labelled as a child's, never as the parent's."""
@@ -758,7 +838,13 @@ async def test_trace_view_lists_child_calls_under_the_spawning_turn(
 
     tasks = ("Say child done.", "Say it again.")
     facts = await _spawn_turn(
-        tmp_path, monkeypatch, tasks[0], tasks=tasks, child_tool=True, trace_view=True
+        tmp_path,
+        monkeypatch,
+        tasks[0],
+        tasks=tasks,
+        child_tool=True,
+        trace_view=True,
+        owned_console_databases=owned_console_databases,
     )
     why = str(vars(facts))
     child = [call for call in facts.owned_calls if not call[0]]
@@ -816,3 +902,92 @@ async def test_trace_view_lists_child_calls_under_the_spawning_turn(
     # prompt 10 and completion 5 on every reply).
     assert {tuple(cells[4:7]) for cells in child_rows} == {("10", "0", "5")}, rows
     assert landed[1] == "Child call", landed
+
+
+async def test_native_fixture_retirement_releases_the_physical_execution_lease(
+    tmp_path,
+):
+    from Tests.Chat.conftest import owned_console_databases as owner_fixture
+    from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionUnavailable
+
+    path = tmp_path / "retirement.db"
+    owner = ConsoleExecutionOwner.acquire(path)
+    database = AgentRunsDB(path, client_id="retirement", execution_owner=owner)
+    fixture = owner_fixture.__wrapped__()
+    register = await anext(fixture)
+    register(database, execution_owner=owner)
+    try:
+        with pytest.raises(StopAsyncIteration):
+            await anext(fixture)
+        with pytest.raises(
+            ConsoleExecutionUnavailable, match="execution_owner_expired"
+        ):
+            owner.require_current(path)
+        with ConsoleExecutionOwner.acquire(path) as successor:
+            successor.require_current(path)
+    finally:
+        await fixture.aclose()
+        database.close()
+        owner.close()
+
+
+async def test_native_fixture_retains_its_lease_for_an_open_transaction(tmp_path):
+    from Tests.Chat.conftest import owned_console_databases as owner_fixture
+    from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionBusy
+
+    path = tmp_path / "retained.db"
+    owner = ConsoleExecutionOwner.acquire(path)
+    database = AgentRunsDB(path, client_id="retirement", execution_owner=owner)
+    connection = database._held_connection()
+    connection.execute("BEGIN").close()
+    fixture = owner_fixture.__wrapped__()
+    register = await anext(fixture)
+    register(database, execution_owner=owner)
+    try:
+        with pytest.raises(
+            BaseExceptionGroup, match="Console test-owner retirement failed"
+        ) as refused:
+            await anext(fixture)
+        assert any(
+            str(error) == "connection_transaction_remained_active"
+            for error in refused.value.exceptions
+        )
+        owner.require_current(path)
+        assert connection.in_transaction
+        with pytest.raises(ConsoleExecutionBusy, match="console_execution_busy"):
+            ConsoleExecutionOwner.acquire(path)
+    finally:
+        await fixture.aclose()
+        connection.execute("ROLLBACK").close()
+        database.close()
+        owner.close()
+
+
+async def test_native_fixture_retains_explicitly_unproven_custody(tmp_path):
+    import sqlite3
+
+    from Tests.Chat.conftest import owned_console_databases as owner_fixture
+    from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionBusy
+
+    path = tmp_path / "unproven.db"
+    owner = ConsoleExecutionOwner.acquire(path)
+    database = AgentRunsDB(path, client_id="retirement", execution_owner=owner)
+    connection = database._held_connection()
+    fixture = owner_fixture.__wrapped__()
+    register = await anext(fixture)
+
+    async def retain():
+        return False
+
+    register(database, execution_owner=owner, retire=retain)
+    try:
+        with pytest.raises(StopAsyncIteration):
+            await anext(fixture)
+        owner.require_current(path)
+        assert sqlite3.Connection.in_transaction.__get__(connection) is False
+        with pytest.raises(ConsoleExecutionBusy, match="console_execution_busy"):
+            ConsoleExecutionOwner.acquire(path)
+    finally:
+        await fixture.aclose()
+        database.close()
+        owner.close()

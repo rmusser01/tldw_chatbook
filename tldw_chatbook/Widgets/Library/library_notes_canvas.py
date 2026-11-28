@@ -80,13 +80,12 @@ _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
 def notes_sort_is_blocked(*, tree_projection: object, filter_value: str) -> bool:
     """Whether Sort cannot own the rows currently projected (task-32172).
 
-    A filter window's rows come back from the FTS search seam in its own
-    order (grouped by folder path), so Sort is offered disabled there
-    rather than silently reordering nothing. Shared with the screen's
-    canvas-kwargs pass, which closes an OPEN chooser under exactly this
-    condition -- a chooser whose mode outlived what paints it left the
-    footer offering "choose sort" and spent the next Escape on nothing
-    (task-32128 review round 2).
+    A filter window's rows come back from the FTS search seam in its own order (grouped
+    by folder path), so Sort is offered disabled there rather than silently reordering
+    nothing. Shared with the screen's canvas-kwargs pass, which closes an OPEN chooser
+    under exactly this condition -- a chooser whose mode outlived what paints it left
+    the footer offering "choose sort" and spent the next Escape on nothing (task-32128
+    review round 2).
 
     Args:
         tree_projection: The projection about to be rendered, if any.
@@ -158,12 +157,11 @@ _TOOLBAR_STACK_MIN_WIDTH = 48
 def _toolbar_shape(pane_width: int, compact: bool) -> tuple[bool, bool]:
     """Return the two toolbar decisions one pane width drives.
 
-    A width of 0 means "not measured yet": the canvas is composed before the
-    reader shell it lives in exists, so the first frame of a Notes visit has
-    no resolved Items width. That frame takes the conservative shape -- one
-    row per group, neither merged nor stacked -- which is what the list
-    rendered before either threshold existed; the first state sync then
-    composes at the real width (task-32127, review round 2).
+    A width of 0 means "not measured yet": the canvas is composed before the reader
+    shell it lives in exists, so the first frame of a Notes visit has no resolved Items
+    width. That frame takes the conservative shape -- one row per group, neither merged
+    nor stacked -- which is what the list rendered before either threshold existed; the
+    first state sync then composes at the real width (task-32127, review round 2).
 
     Args:
         pane_width: Columns the list pane has, or 0 when unmeasured.
@@ -248,13 +246,12 @@ _HEADER_ONE_ROW_MIN_WIDTH = (
 def _header_shape(work_width: int, compact: bool) -> bool:
     """Whether the editor header stacks its save state and two action rows.
 
-    TASK-34000.8 (review N-05): from the shell's 120-column breakpoint up
-    the header was one horizontal strip regardless of how wide the EDITOR
-    pane was -- 48 cells at 120x36, 82 at 160x45 with the rail open --
-    so Save and Use in Console were painted past the pane edge and the save
-    state was squeezed to one column. The shape is now decided from the
-    pane the header lives in, the way ``_toolbar_shape`` decides the list
-    toolbar's from the Items width.
+    TASK-34000.8 (review N-05): from the shell's 120-column breakpoint up the header was
+    one horizontal strip regardless of how wide the EDITOR pane was -- 48 cells at
+    120x36, 82 at 160x45 with the rail open -- so Save and Use in Console were painted
+    past the pane edge and the save state was squeezed to one column. The shape is now
+    decided from the pane the header lives in, the way ``_toolbar_shape`` decides the
+    list toolbar's from the Items width.
 
     Args:
         work_width: Columns the editor pane has (the shell's
@@ -264,9 +261,8 @@ def _header_shape(work_width: int, compact: bool) -> bool:
             stacked shape, so this answers False there.
 
     Returns:
-        True when the header should be the stacked shape: the save state
-        on its own row, then [Edit · Preview · Info], then [Save · Use in
-        Console · Discard].
+        True when the header should be the stacked shape: the save state on its own row,
+        then [Edit · Preview · Info], then [Save · Use in Console · Discard].
     """
     return 0 < work_width < _HEADER_ONE_ROW_MIN_WIDTH and not compact
 

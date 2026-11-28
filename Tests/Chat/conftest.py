@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import warnings
+from contextlib import asynccontextmanager
 
 import pytest
 import pytest_asyncio
@@ -24,26 +25,44 @@ from Tests.console_provider_doubles import (
 )
 
 
-@pytest_asyncio.fixture
-async def owned_console_databases():
+@asynccontextmanager
+async def console_test_database_owners():
     """Retire explicitly registered test owners after supported shutdown.
 
     Yields:
-        Registration for an exact database and its optional controller.
+        Registration for an exact database, optional controller, execution
+        owner and async retirement callback. Uncertain cleanup retains its lease.
+        A False callback disposition retains both database and owner custody.
     """
     owners = []
 
-    def register(database, controller=None):
-        owners.append((database, controller))
+    def register(database, controller=None, *, execution_owner=None, retire=None):
+        owners.append((database, controller, execution_owner, retire))
 
     try:
         yield register
     finally:
         errors = []
-        for database, controller in reversed(owners):
+        for database, controller, execution_owner, retire in reversed(owners):
             try:
+                if retire is not None:
+                    disposition = await retire()
+                    if disposition is False:
+                        continue
                 if controller is not None:
                     await asyncio.wait_for(controller.shutdown(), 5)
+                if execution_owner is not None:
+                    registry = database._connection_quiescence
+                    assert registry is not None
+                    token = registry.begin_quiescence(timeout_seconds=5)
+                    try:
+                        registry.close_registered(token)
+                        database.close()
+                        assert registry.connection_count() == 0
+                    finally:
+                        registry.end_quiescence(token)
+                    execution_owner.close()
+                    continue
                 with database.quiesce_connections(timeout_seconds=5):
                     pass
                 assert database.registered_connection_count() == 0
@@ -51,6 +70,26 @@ async def owned_console_databases():
                 errors.append(error)
         if errors:
             raise BaseExceptionGroup("Console test-owner retirement failed", errors)
+
+
+@pytest_asyncio.fixture
+async def owned_console_databases():
+    async with console_test_database_owners() as register:
+        yield register
+
+
+def open_console_test_agent_runs(path, *, client_id):
+    """Return a real store and its separate native execution owner."""
+    from tldw_chatbook.Chat.console_execution_owner import ConsoleExecutionOwner
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    owner = ConsoleExecutionOwner.acquire(path)
+    try:
+        runs = AgentRunsDB(path, client_id=client_id, execution_owner=owner)
+    except BaseException:
+        owner.close()
+        raise
+    return runs, owner
 
 
 #: The one shutdown failure ``shut_down_console_controllers`` tolerates.

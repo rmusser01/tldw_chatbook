@@ -507,7 +507,7 @@ the entire Console P0 matrix to succeed. Each job uses the existing long-lane
 35-minute budget, below the 45-minute controller deadline. Dreams/Guardian
 also uses 35 minutes after reaching 91% of its final test group at its 20-minute
 cap. Per-test 180/300-second deadlines and test selection are unchanged.
-This adds one eligible job and follows ADR-359's disposable runner boundary.
+This adds one eligible job and follows ADR-367's disposable runner boundary.
 
 
 Follow-up in the same task: run 43496035687 passed Dreams in 21m08s and P0
@@ -573,7 +573,7 @@ shards, 19 at once". Round 14 appended 111 census entries (2145 in all), each
 charged its local serial time from its task's notes, about 36 pytest min.
 Replayed over the 25 latest PR runs whose 36 UI shards all finished
 (2026-11-14 03:20Z to 19:32Z: 17 on GitHub-hosted runners, 8 on the
-self-hosted runners of ADR-359), each entry at its slowest, the census carries
+self-hosted runners of ADR-367), each entry at its slowest, the census carries
 about 493 worst-case pytest min: a 13.7-min floor a shard at 36, so no re-deal
 of 36 keeps every job 5 min under the 20-min cap. At 38,
 `scripts/ui_lane_shard_replay.py --rebalance 13.0` (46 swaps) puts every
@@ -587,7 +587,7 @@ on GitHub-hosted runners and about 13.5 on self-hosted ones.
 
 The UI matrix runs 38 shards with `max-parallel: 19`: still two waves of UI
 jobs on GitHub-hosted runners, so no wall-clock change per PR there; on the
-self-hosted fleet (ADR-359, eight test slots) the slots, not this ceiling,
+self-hosted fleet (ADR-367, eight test slots) the slots, not this ceiling,
 bound how many run at once. From dev's counts before this change
 (30 concurrent test runners, 31 with perf-guard, 48 eligible test jobs), the
 two new shard jobs make 50 eligible test jobs per PR, and the one-higher
@@ -617,7 +617,7 @@ The unchanged required context depends on this job and rejects every result
 other than success through the existing fail-closed aggregate pattern. This
 adds one macOS application job per gate: 51 eligible test jobs, at most 32
 concurrent test runners (33 with perf-guard). The Linux shard matrix and the
-bounded self-hosted pool of ADR-359 stay unchanged. The broad, path-selected
+bounded self-hosted pool of ADR-367 stay unchanged. The broad, path-selected
 plugin-qualification workflow remains separate; running its entire three-OS
 suite is not necessary to qualify these two UI journeys.
 
@@ -636,7 +636,7 @@ per-process time from that task's notes (140 s).
 
 Replayed over the 33 latest PR runs whose 38 UI shards all finished and whose
 jobs GitHub served (2026-11-15 18:54Z to 2026-11-17 09:38Z: 27 on
-GitHub-hosted runners, 4 on the self-hosted runners of ADR-359, 2 with jobs
+GitHub-hosted runners, 4 on the self-hosted runners of ADR-367, 2 with jobs
 on both; 43898439593 is left out because it returned HTTP 502), each entry at
 its slowest, the census carries about 520 worst-case pytest min. That is a
 13.67-min floor a shard at 38, so no re-deal of 38 keeps every job 5 min
@@ -719,3 +719,55 @@ and a fold would put that risk back on the admission tests.
 
 One more job: 57 eligible test jobs per PR, 36 concurrent test runners, 37
 counting perf-guard, and about 1.5 runner-minutes of setup more per full run.
+
+## Application (2026-11-04, TASK-36769): conserve the row-menu P0 sweep in existing UI capacity
+
+Run 41799814461/job 126501087681 exhausted the Console P0 job's unchanged
+20-minute cap: setup 54 s, sandboxed 7m16s (249 passed), admission 12m04s at 98%,
+with three cases and the active case's remainder still outstanding. The old
+median 11.6/max 13.9-minute forecast no longer describes this roster. The complete
+conversation-row sweep occupied 145.26 s (21 cases, including its coverage guard).
+
+Move only its two existing selectors, the declared-action coverage guard and
+`test_conversation_row_action_never_ends_the_app` with all derived parameter
+cases, to the existing UI census. Append them after all 1,374 prior selectors,
+leaving every prior shard position unchanged; they reach shards 31/32. Preserve
+the original inherited roster in the CI contract, account explicitly for this
+relocation, and reject missing, commented or duplicate census enrollment. The
+coverage floor becomes 1,376, a stricter coverage requirement rather than a
+larger resource ceiling. The unscheduled workspace-row sibling is not added.
+
+Both original P0 pytest commands remain serial with the remaining argument
+order, profile split, conditions and 180/300-second command timeouts intact.
+Moved cases adopt the UI lane's stricter 180-second per-case limit. UI remains
+32 shards, max-parallel 17, the same dependencies and 20-minute job cap. The
+required aggregate, eligible runner count and peak concurrency are unchanged.
+No new job, runner, status substitute, filter, skip or timeout exception is
+introduced; this applies the existing bounded-lane policy.
+
+The retained current-head metadata records full UI job 31 at 577 s and job 32
+at 603 s, including setup and all existing test work; both completed with
+assertion failures, not timeout. Conservatively charging the entire 145.26 s
+sweep to each recipient projects 722.26 s and 748.26 s, below the unchanged 1,200 s
+cap. Existing replay plus exact roster conservation checks qualify this
+placement as a forecast. Original P0 commands and recipient shards still need
+current-source execution, and hosted final-head results remain required;
+these projections do not turn the retained assertion failures into passes.
+
+## 2026-11-05: retain complete MCP coverage within existing job budgets
+
+PR #3345 head `19fec5614b` automatic Derived job `127394826830` exceeded the unchanged 35-minute Fast Lane limit at 93% of 3,983 collected cases, confirmed by GitHub's annotation. Logs show advancing MCP progress, without an identified individual hang. The unchanged MCP workbench file passed 357 cases locally in 485.33 seconds. Its 279 unique function selectors move into the existing 32 UI shards; actual pytest collection proves all 357 parameter cases remain covered exactly once. The original 1,666-entry census prefix and positions stay intact, and floor 1,945 protects enrollment. A permanent membership Counter guard and missing, duplicate, whole-file and second-owner controls prevent a removed rider from becoming a coverage hole. Each relocated group also passes in isolation.
+
+Dependency installs, sandbox/profile rules, required aggregation and conditions are unchanged. The same 32 shards, maximum parallelism 17, 20-minute UI jobs and 180-second MCP/UI cases apply; Fast Lane remains 35 minutes and admission remains 35 minutes/300 seconds per case. Placement uses measured total setup/call/teardown costs. Local replay and isolation do not qualify hosted capacity: genuine new-head checks still decide landing. This redistributes required coverage under the existing decision, with no new runtime or ownership boundary.
+
+## 2026-11-05: conserve enrollment across the dev2959 rebase
+
+The next integration preserves the reviewed 1,945-entry prefix and every position,
+then appends all 22 unique incoming Settings, Agents and resend entries. The
+union is exactly 1,967 unique entries and the coverage floor tightens to 1,967.
+The 279 MCP selectors retain their positions and complete 357-case membership.
+Incoming entries receive new placements; their qualification is measured afresh,
+not inferred from the former dev positions. The same 32 shards/max-parallel 17,
+20-minute UI jobs,180-second cases and required aggregation remain unchanged.
+No new job or runner capacity is added. Perf retains its pre-rebase 15-minute
+cap with all incoming compact-setup controls; real new-head results remain gates.

@@ -32,6 +32,7 @@ from uuid import uuid4
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_console_compaction_live_session import (
     _MODEL,
     _OVERRIDES,
@@ -52,7 +53,6 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_context_policy import ContextCompactionMode
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat.prompt_history import PromptHistory
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -77,7 +77,9 @@ class _WakeRig:
     def __init__(self, tmp_path: Path) -> None:
         self.db_path = tmp_path / "chat.sqlite"
         self.db = CharactersRAGDB(self.db_path, client_id="task33621-80")
-        self.runs_db = AgentRunsDB(tmp_path / "runs.db", client_id="task33621-80")
+        self.runs_db = owned_agent_runs_db(
+            tmp_path / "runs.db", client_id="task33621-80"
+        )
         self.app = _AppStub(self.db)
         self.app.local_chat_conversation_service = ChatConversationService(self.db)
         self.store = ConsoleChatStore(persistence=ChatPersistenceService(self.db))

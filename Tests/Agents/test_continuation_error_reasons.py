@@ -912,6 +912,7 @@ def test_reason_codes_survive_trace_export_and_import(tmp_path, profile) -> None
     This drives the real runtime exits, the real AgentRunsDB rows and the
     real derive -> preflight -> build -> import path.
     """
+    from Tests.agent_runs_owner import owned_agent_runs_db
     from tldw_chatbook.Agents.agent_service import _safe_agent_step_record
     from tldw_chatbook.Chat.provider_continuation_diagnostics import (
         continuation_reasons,
@@ -922,7 +923,6 @@ def test_reason_codes_survive_trace_export_and_import(tmp_path, profile) -> None
         preflight_trace_export,
     )
     from tldw_chatbook.Chat.trajectory_import import load_imported_trace
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     failed = _run(
         [_pending_tool_turn()],
@@ -935,7 +935,7 @@ def test_reason_codes_survive_trace_export_and_import(tmp_path, profile) -> None
     assert failed.status == RUN_ERROR
     assert kept.status == RUN_DONE
 
-    db = AgentRunsDB(tmp_path / "agent_runs.db")
+    db = owned_agent_runs_db(tmp_path / "agent_runs.db")
     try:
         for steps in (failed.steps, [*kept.steps, *traced]):
             run_id = db.create_run(conversation_id="conv-34100", agent_kind="primary")

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
@@ -34,7 +35,6 @@ from tldw_chatbook.Chat.console_display_state import (
 )
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-
 
 # -- harness (mirrors test_console_agent_bridge.py's _ChunkGateway /
 # _bridge_with_gateway / _run shape) -----------------------------------
@@ -67,7 +67,7 @@ class _ExplodingGateway:
 
 
 def _bridge_with_gateway(tmp_path, gateway, *, db=None):
-    db = db if db is not None else AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = db if db is not None else owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -176,7 +176,7 @@ def _add_diff_line_note(
 
 
 def test_pending_notes_attach_stamp_and_disclose_on_success(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     gateway = _ChunkGateway([["Done."]])
     bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway, db=db)
 
@@ -255,7 +255,7 @@ def test_lost_race_pre_stamped_note_is_excluded_from_disclosure(tmp_path):
     re-stamping it, and the completion seam must disclose only the note
     it ACTUALLY (verifiably) delivered, not the whole captured set.
     """
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     gateway = _ChunkGateway([["Done."]])
     bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway, db=db)
 
@@ -298,7 +298,7 @@ def test_lost_race_pre_stamped_note_is_excluded_from_disclosure(tmp_path):
 
 
 def test_failed_run_leaves_notes_pending_and_appends_no_disclosure(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     gateway = _ExplodingGateway()
     bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway, db=db)
 
@@ -343,7 +343,7 @@ def test_no_user_message_leaves_notes_pending_and_appends_no_disclosure(tmp_path
     the outbound payload -- completion must not stamp/disclose feedback the
     model never saw.
     """
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     gateway = _ChunkGateway([["Fine."]])
     bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway, db=db)
 
@@ -387,7 +387,7 @@ def test_list_content_user_message_leaves_notes_pending_and_appends_no_disclosur
     which ``isinstance(content, str)`` correctly excludes as a carrier -- so
     again nothing was actually attached, and nothing may be stamped.
     """
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     gateway = _ChunkGateway([["Fine."]])
     bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway, db=db)
 
@@ -426,7 +426,7 @@ def test_list_content_user_message_leaves_notes_pending_and_appends_no_disclosur
 
 
 def test_note_created_mid_run_is_not_stamped_at_that_runs_completion(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     earlier_run = db.create_run(conversation_id="conv-1", agent_kind="primary")
     early_note_id = _add_note(
         db, earlier_run, path="a.py", note="captured before the run started"
@@ -471,7 +471,7 @@ def test_note_created_mid_run_is_not_stamped_at_that_runs_completion(tmp_path):
 
 
 def test_over_cap_only_included_stamped_and_second_run_delivers_the_rest(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     earlier_run = db.create_run(conversation_id="conv-1", agent_kind="primary")
     small_id = _add_note(
         db, earlier_run, path="a.py", excerpt="+small", note="small note"
@@ -538,7 +538,7 @@ def test_over_cap_only_included_stamped_and_second_run_delivers_the_rest(tmp_pat
 
 
 def test_no_pending_notes_leaves_payload_byte_identical(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     gateway = _ChunkGateway([["Done."]])
     bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway, db=db)
 
@@ -570,7 +570,7 @@ def test_no_pending_notes_leaves_payload_byte_identical(tmp_path):
 
 def test_pending_notes_participate_in_first_request_fit(tmp_path, monkeypatch):
     """A review-note rider can move the exact first request to discovery."""
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     gateway = _ChunkGateway([["Done."]])
     bridge, _db, _store, session, aid = _bridge_with_gateway(tmp_path, gateway, db=db)
     earlier_run = db.create_run(conversation_id="conv-1", agent_kind="primary")
@@ -633,7 +633,7 @@ def test_kill_switch_off_does_not_prevent_note_delivery(tmp_path, monkeypatch):
 
     monkeypatch.setattr(config_module, "get_cli_setting", _turn_file_cards_off)
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     gateway = _ChunkGateway([["Done."]])
     bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway, db=db)
 
@@ -661,7 +661,7 @@ def test_kill_switch_off_does_not_prevent_note_delivery(tmp_path, monkeypatch):
 
 
 def test_attach_query_failure_never_breaks_the_reply(tmp_path, monkeypatch):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     gateway = _ChunkGateway([["Fine."]])
     bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway, db=db)
 
@@ -679,7 +679,7 @@ def test_attach_query_failure_never_breaks_the_reply(tmp_path, monkeypatch):
 def test_stamp_failure_never_breaks_the_reply_and_leaves_note_pending(
     tmp_path, monkeypatch
 ):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     gateway = _ChunkGateway([["Fine."]])
     bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway, db=db)
 
@@ -714,7 +714,7 @@ def test_cancelled_run_with_partial_final_text_still_stamps_and_discloses(tmp_pa
     correct: "produced assistant output" is the spec's actual gate, and a
     cancelled-but-answered turn satisfies it.
     """
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     gateway = _ChunkGateway([["Cancelled but answered."]])
     bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway, db=db)
 
@@ -753,7 +753,7 @@ def test_cancelled_run_with_partial_final_text_still_stamps_and_discloses(tmp_pa
 
 
 def test_bundle_block_and_diff_feedback_block_stack_on_the_same_message(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     gateway = _ChunkGateway([["Done."]])
     bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway, db=db)
 
@@ -859,7 +859,7 @@ def test_mixed_kind_batch_attaches_one_block_stamps_and_discloses_all_three_kind
     mixed-batch proof the delivery MECHANICS (attach/stamp/cap/resume)
     never needed to change -- only the two shared formatters learned
     kinds."""
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     gateway = _ChunkGateway([["Done."]])
     bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway, db=db)
 

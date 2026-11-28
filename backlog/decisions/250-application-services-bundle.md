@@ -153,12 +153,14 @@ def open_profile_storage(
     prompts: Path | None = None,
     workspaces: Path | None = None,
     agent_runs: Path | None = None,
+    agent_runs_execution_owner: ConsoleExecutionOwner | None = None,
     seed_builtin_content: bool = False,
     check_integrity: bool = False,
 ) -> ProfileStorage: ...
 ```
 
 - **What it opens.** Each database whose path is given; the others stay `None`. If one fails, it closes the ones it already opened and raises.
+- **Writable AgentRuns.** When opening a file-backed `agent_runs` database, pass the caller's live execution owner from ADR-244 as `agent_runs_execution_owner`. The factory forwards that owner. The caller closes the storage before releasing the lease.
 - **Same options for every root.** The Console Library migration seed is always passed, and `check_integrity` is used as given. Built-in content is seeded only when `seed_builtin_content` is set, and only the TUI sets it.
 - **Openers.** One opener per database does the construction: `open_chachanotes_db(path, *, client_id, ...)` and the rest.
   - The factory and the openers are added by the first PR that calls them.
@@ -171,7 +173,7 @@ The MCP server, mobile and backfill rows move in one follow-up task, [TASK-36947
 | Entry point | How it gets its services |
 | --- | --- |
 | Standalone MCP server | `open_profile_storage(client_id=CLI_APP_CLIENT_ID, chachanotes=get_chachanotes_db_path(), media=get_media_db_path())`. It builds `NotesInteropService` and `MCPTools` from that storage, and `main()` (`MCP/server.py:1167`) closes it. |
-| Mobile engine | `open_profile_storage(client_id="mobile-service", chachanotes=data_dir / "chat.db", workspaces=data_dir / "workspaces.db", agent_runs=data_dir / "runs.db")`. These are the same isolated files (ADR-234), opened with the shared options. Shutdown keeps today's order (`mobile_service.py:1895-1916`): stop the controller, run `quiesce_connections(timeout_seconds=5)` on the chat database, then call `storage.close()`. Once TASK-36947.4 gives the controller slices, `HeadlessAppContext` is no longer needed. |
+| Mobile engine | `open_profile_storage(client_id="mobile-service", chachanotes=data_dir / "chat.db", workspaces=data_dir / "workspaces.db", agent_runs=data_dir / "runs.db", agent_runs_execution_owner=owner)`. These are the same isolated files (ADR-234), opened with the shared options. Shutdown keeps today's order (`mobile_service.py:1895-1916`): stop the controller, run `quiesce_connections(timeout_seconds=5)` on the chat database, then call `storage.close()`. Once TASK-36947.4 gives the controller slices, `HeadlessAppContext` is no longer needed. |
 | Mobile reading | `open_profile_storage(client_id="mobile-service", chachanotes=..., media=...)` on first read, as today. `shutdown()` (`mobile_service.py:1848`) calls `close()`. |
 | RAG backfill CLI | `open_profile_storage` with only the paths its item types need, closed in a `finally`. |
 | `doctor` | `run_doctor` gains an `integrity_fn` parameter and passes it on to `check_database_integrity` (`Utils/doctor.py:88`). `/doctor` supplies a callable over `services.storage.chachanotes` that raises when that database is `None`, as `_default_integrity_fn` does (`:141-146`). This is part of TASK-36947.6. |

@@ -3393,9 +3393,20 @@ def build_console_controllers(
         ),
         pending_launch_accessor=lambda: screen._pending_console_launch_context,
     )
+    def sync_draft_spend_summary() -> None:
+        from .config_sync import (
+            replay_whole_console_sync,
+            run_console_presentation_sync,
+        )
+
+        if not run_console_presentation_sync(
+            screen, screen._sync_console_settings_summary
+        ):
+            replay_whole_console_sync(screen)
+
     screen._console_draft_spend_refresh = ConsoleDraftSpendRefresh(
         schedule_timer=lambda delay, callback: screen.set_timer(delay, callback),
-        sync_settings_summary=lambda: screen._sync_console_settings_summary(),
+        sync_settings_summary=sync_draft_spend_summary,
         sync_cost_chip=lambda: screen._sync_console_cost_chip(),
     )
 

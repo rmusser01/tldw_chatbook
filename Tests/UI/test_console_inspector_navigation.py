@@ -1107,6 +1107,7 @@ async def test_navigation_focuses_first_enabled_visible_control_in_nonoverflow_t
 async def test_run_boundary_focus_never_leaks_to_sibling_group_control(
     target_mode: str,
     expected_selector: str,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     async with make_console_pilot(size=(160, 45)) as pilot:
         rail = await _open_inspector(pilot)
@@ -1139,20 +1140,23 @@ async def test_run_boundary_focus_never_leaks_to_sibling_group_control(
             CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
             CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
         }
-        inspector.sync_state(
-            replace(
-                inspector.state,
-                rows=(
-                    ConsoleDisplayRow("Tools", "ready"),
-                    ConsoleDisplayRow("Approvals", "none"),
-                ),
-                actions=actions,
-                dictionary_rows=(),
-                dictionary_actions=(),
-                world_book_rows=(),
-                world_book_actions=(),
-            )
+        state = replace(
+            inspector.state,
+            rows=(
+                ConsoleDisplayRow("Tools", "ready"),
+                ConsoleDisplayRow("Approvals", "none"),
+            ),
+            actions=actions,
+            dictionary_rows=(),
+            dictionary_actions=(),
+            world_book_rows=(),
+            world_book_actions=(),
         )
+        # A native control-bar refresh must keep this test's action state.
+        monkeypatch.setattr(
+            pilot.app.screen, "_build_console_inspector_state", lambda _launch: state
+        )
+        inspector.sync_state(state)
         await _wait_for_right_rail_condition(
             pilot,
             lambda: (
@@ -1556,7 +1560,9 @@ async def test_empty_owner_is_settled_absence_with_one_outer_fallback():
 
 
 @pytest.mark.asyncio
-async def test_persistent_malformed_owner_drains_recovery_with_outer_fallback():
+async def test_persistent_malformed_owner_drains_recovery_with_outer_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+):
     async with make_console_pilot(size=(160, 45)) as pilot:
         rail = await _open_inspector(pilot)
         sources = rail.query_one(
@@ -1581,6 +1587,24 @@ async def test_persistent_malformed_owner_drains_recovery_with_outer_fallback():
             section_id="persistent-malformed-owner",
         )
         await owner.mount(malformed, before=header)
+        # Pilot polls can outpace the rail's two refreshes per recovery pass.
+        # Count the original incident from removal, including any pass that
+        # runs before the final structural await returns.
+        native_passes = 0
+        reconcile = rail._reconcile_focus_recovery_state
+
+        def count_native_pass() -> None:
+            nonlocal native_passes
+            history = rail._section_focus_history.get(sources.section_id)
+            if sources.section_id in rail._pending_focus_recoveries or (
+                not source_action.is_attached
+                and history is not None
+                and history[0] is source_action
+            ):
+                native_passes += 1
+            reconcile()
+
+        monkeypatch.setattr(rail, "_reconcile_focus_recovery_state", count_native_pass)
         await sources.remove()
         await header.remove()
         rail.request_outer_reconcile()
@@ -1593,9 +1617,10 @@ async def test_persistent_malformed_owner_drains_recovery_with_outer_fallback():
                 and not rail._outer_reconcile_scheduled
             ),
             description="persistent malformed owner recovery drained",
-            attempts=10,
+            timeout=5.0,
         )
 
+        assert 0 < native_passes <= 10
         assert tuple(owner.children) == (malformed,)
         assert sources.section_id not in rail._section_focus_history
 
@@ -1692,20 +1717,39 @@ async def test_structural_run_recompose_restores_same_stable_action_id():
 
 
 @pytest.mark.asyncio
-async def test_structural_control_and_boundary_removal_recovers_without_stale_reentry():
+async def test_structural_control_and_boundary_removal_recovers_without_stale_reentry(
+    monkeypatch,
+):
     async with make_console_pilot(size=(160, 45)) as pilot:
         rail = await _open_inspector(pilot)
+        screen = pilot.app.screen
         inspector = rail.query_one("#console-run-inspector-state", ConsoleRunInspector)
         first = ConsoleInspectorAction("recompose-action-first", "First", True)
         middle = ConsoleInspectorAction("recompose-action-middle", "Middle", True)
         inserted = ConsoleInspectorAction("recompose-action-inserted", "Inserted", True)
         last = ConsoleInspectorAction("recompose-action-last", "Last", True)
-        initial_state = replace(
-            inspector.state,
-            dictionary_rows=(),
-            dictionary_actions=(first, middle, last),
+        dictionary_actions = ()
+        build_state = screen._build_console_inspector_state
+
+        def project_dictionary_state(state):
+            return replace(
+                state, dictionary_rows=(), dictionary_actions=dictionary_actions
+            )
+
+        def build_dictionary_state(pending_launch):
+            return project_dictionary_state(build_state(pending_launch))
+
+        def publish_dictionary_actions(*actions):
+            nonlocal dictionary_actions
+            dictionary_actions = actions
+            inspector.sync_state(project_dictionary_state(inspector.state))
+
+        # Startup can publish while the fixture moves through each phase.
+        # Keep only the dictionary projection consistent on both paths.
+        monkeypatch.setattr(
+            screen, "_build_console_inspector_state", build_dictionary_state
         )
-        inspector.sync_state(initial_state)
+        publish_dictionary_actions(first, middle, last)
         await _wait_for_right_rail_condition(
             pilot,
             lambda: bool(list(rail.query("#recompose-action-middle"))),
@@ -1722,9 +1766,7 @@ async def test_structural_control_and_boundary_removal_recovers_without_stale_re
             description="middle structural recovery control focused",
         )
 
-        inspector.sync_state(
-            replace(initial_state, dictionary_actions=(first, inserted, last))
-        )
+        publish_dictionary_actions(first, inserted, last)
         await _wait_for_right_rail_condition(
             pilot,
             lambda: (
@@ -1744,9 +1786,7 @@ async def test_structural_control_and_boundary_removal_recovers_without_stale_re
         assert pilot.app.focused is not current_last
         _assert_recovery_references_are_current(rail)
 
-        inspector.sync_state(
-            replace(initial_state, dictionary_actions=(), dictionary_rows=())
-        )
+        publish_dictionary_actions()
         await _wait_for_right_rail_condition(
             pilot,
             lambda: not list(rail.query("#console-bounded-section-chat-dictionaries")),
@@ -1910,7 +1950,9 @@ async def test_local_offset_survives_collapse_reopen_without_extra_writes(
 
 
 @pytest.mark.asyncio
-async def test_run_sync_preserves_in_place_offsets_then_structural_shrink_clamps():
+async def test_run_sync_preserves_in_place_offsets_then_structural_shrink_clamps(
+    monkeypatch: pytest.MonkeyPatch,
+):
     async with make_console_pilot(size=(160, 60), css=RUN_OWNER_TEST_CSS) as pilot:
         rail = await _open_inspector(pilot)
         outer = rail.query_one("#console-inspector-rail-body")
@@ -1961,11 +2003,25 @@ async def test_run_sync_preserves_in_place_offsets_then_structural_shrink_clamps
             world_book_rows=(),
             world_book_actions=(),
         )
-        before_growth_recompose = inspector.recompose_count
-        inspector.sync_state(large_state)
-        await _wait_for_right_rail_condition(
-            pilot,
-            lambda: (
+        projected_state = large_state
+        before_growth_recompose: int | None = None
+
+        def structural_growth_committed() -> bool:
+            nonlocal before_growth_recompose
+            if before_growth_recompose is None:
+                # A native resize sync can replace the fixture's dictionary rows.
+                if pilot.app.screen.console_pending_startup_work():
+                    return False
+                before_growth_recompose = inspector.recompose_count
+                # Native refreshes must publish the same snapshot as this
+                # geometry fixture, including during the second resize.
+                monkeypatch.setattr(
+                    pilot.app.screen,
+                    "_build_console_inspector_state",
+                    lambda _launch: projected_state,
+                )
+                inspector.sync_state(large_state)
+            return (
                 inspector.recompose_count > before_growth_recompose
                 and "value 0"
                 in str(
@@ -1973,7 +2029,11 @@ async def test_run_sync_preserves_in_place_offsets_then_structural_shrink_clamps
                         "#console-inspector-dictionaries-row-0", Static
                     ).renderable
                 )
-            ),
+            )
+
+        await _wait_for_right_rail_condition(
+            pilot,
+            structural_growth_committed,
             description="real structural Run owner growth committed",
         )
         section = rail.query_one(
@@ -2031,6 +2091,7 @@ async def test_run_sync_preserves_in_place_offsets_then_structural_shrink_clamps
             ),
         )
         before_recompose = inspector.recompose_count
+        projected_state = updated_state
         inspector.sync_state(updated_state)
         await _wait_for_right_rail_condition(
             pilot,
@@ -2056,7 +2117,8 @@ async def test_run_sync_preserves_in_place_offsets_then_structural_shrink_clamps
         assert section.viewport.scroll_y == 4
         assert outer.scroll_y == 2
 
-        inspector.sync_state(replace(updated_state, dictionary_rows=large_rows[:2]))
+        projected_state = replace(updated_state, dictionary_rows=large_rows[:2])
+        inspector.sync_state(projected_state)
         await _wait_for_right_rail_condition(
             pilot,
             lambda: (

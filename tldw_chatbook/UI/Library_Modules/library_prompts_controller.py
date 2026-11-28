@@ -1,25 +1,23 @@
 """Library Prompts canvas controller.
 
 Controller PR of the Prompts extraction series (wave-6 task 2 of
-``.superpowers/sdd/2026-09-05-library-decomposition-wave6-prompts``; prompts
-series 2/3; recipe: ``backlog/docs/library-decomposition-recipe.md``;
-``library_skills_controller.py`` -- the largest prior single-cluster move --
-and ``library_ingest_controller.py`` -- the newest -- are the templates this
-mirrors in shape). Owns the Prompts cluster: the list canvas's browse/
-filter/sort/pager/selection surface, the Import row, the prompt detail load
-and its failure/retry states, the editor (basic/advanced/info modes, block
-editor, dirty tracking, save/discard/back), the version-history region, the
-Prompt Collections membership surface, export/copy/duplicate, and the
-delete/undo batch flow. ``LibraryScreen`` keeps one-line delegators under
-**100 of these 139** original names; this series' own cleanup task (prompts
-series 3/3) pruned the other 39, whose delegators had zero references
-outside their own body anywhere in the repo -- see
+``.superpowers/sdd/2026-09-05-library-decomposition-wave6-prompts``; prompts series 2/3;
+recipe: ``backlog/docs/library-decomposition-recipe.md``;
+``library_skills_controller.py`` -- the largest prior single-cluster move -- and
+``library_ingest_controller.py`` -- the newest -- are the templates this mirrors in
+shape). Owns the Prompts cluster: the list canvas's browse/ filter/sort/pager/selection
+surface, the Import row, the prompt detail load and its failure/retry states, the editor
+(basic/advanced/info modes, block editor, dirty tracking, save/discard/back), the
+version-history region, the Prompt Collections membership surface,
+export/copy/duplicate, and the delete/undo batch flow. ``LibraryScreen`` keeps one-line
+delegators under **100 of these 139** original names; this series' own cleanup task
+(prompts series 3/3) pruned the other 39, whose delegators had zero references outside
+their own body anywhere in the repo -- see
 ``Tests/Architecture/test_library_prompts_wiring.py``'s own
-``_PROMPTS_CLUSTER_SCREEN_DELEGATOR_PRUNED`` for the list. The 100 that
-stay are 51 the recipe's transform whitelist keeps unconditionally (44
-``@on`` + 1 ``action_*`` + the 6 ``on_<message>`` handlers Textual
-dispatches BY NAME off ``Message.handler_name``, which a delete would
-silently unhook) plus 49 with a genuine external caller.
+``_PROMPTS_CLUSTER_SCREEN_DELEGATOR_PRUNED`` for the list. The 100 that stay are 51 the
+recipe's transform whitelist keeps unconditionally (44 ``@on`` + 1 ``action_*`` + the 6
+``on_<message>`` handlers Textual dispatches BY NAME off ``Message.handler_name``, which
+a delete would silently unhook) plus 49 with a genuine external caller.
 
 **Cluster derivation.** An ``ast`` census of every ``LibraryScreen``
 class-body method whose name contains ``"prompt"`` (case-insensitive), run
@@ -58,17 +56,15 @@ scale.
 
 1. **2 screen-identity exclusions -- recipe §3's sixth bypass shape, Form C
    (the identity check INLINED rather than routed through
-   ``_library_screen_is_current``).** ``_apply_library_prompts_import_status``
-   and ``_run_library_prompts_import`` each carry
-   ``self.app.screen is not self``. A moved body's ``self`` is the
-   CONTROLLER, and ``real_screen is controller`` can never be true, so the
-   guarded branch would silently take the "not current" path forever. This is
-   the exact shape the skills series' own second draft shipped and had to
-   revert after 8 ``Tests/Skills/`` tests failed; no accommodation exists
-   (identity cannot be satisfied by a proxy), so both methods stay
-   screen-resident, full-bodied, untouched. ``_run_library_prompts_import``
-   additionally trips exclusion class 4 below (it reads the bare module
-   global ``validate_path_simple``), so it is doubly disqualified.
+   ``_library_screen_is_current``).** ``_apply_library_prompts_import_status`` and
+   ``_run_library_prompts_import`` each carry ``self.app.screen is not self``. A moved
+   body's ``self`` is the CONTROLLER, and ``real_screen is controller`` can never be
+   true, so the guarded branch would silently take the "not current" path forever. This
+   is the exact shape the skills series' own second draft shipped and had to revert
+   after 8 ``Tests/Skills/`` tests failed; no accommodation exists (identity cannot be
+   satisfied by a proxy), so both methods stay screen-resident, full-bodied, untouched.
+   ``_run_library_prompts_import`` additionally trips exclusion class 4 below (it reads
+   the bare module global ``validate_path_simple``), so it is doubly disqualified.
 2. **14 unbound-fake-self test-bypass exclusions** (recipe §3's first
    documented shape). A repo-wide content grep across ALL of ``Tests/`` --
    never a ``-k``-filtered subset, per the seventh shape's own
@@ -97,34 +93,29 @@ scale.
      (``test_library_prompts_canvas.py:2876-2877``, called at ``:2914``).
      Found by the same non-call-reference census.
    - ``handle_library_prompts_empty_clear_filter``/``handle_library_prompts_
-     empty_all_prompts`` -- dispatched by **STRING NAME**,
-     ``getattr(LibraryScreen, handler_name)(fake, …)``
-     (``test_library_prompts_canvas.py:2044``, names supplied by the
-     parametrize table at ``:2016``/``:2022``). Found by a census of every
-     cluster method name appearing as a STRING LITERAL anywhere in
-     ``Tests/`` -- the "quoted-string form" sweep the wave-5 round-2 string
-     -loop incident added to this program's standing checklist, applied here
-     to METHOD names rather than field names.
+     empty_all_prompts`` -- dispatched by **STRING NAME**, ``getattr(LibraryScreen,
+     handler_name)(fake, …)`` (``test_library_prompts_canvas.py:2044``, names supplied
+     by the parametrize table at ``:2016``/``:2022``). Found by a census of every
+     cluster method name appearing as a STRING LITERAL anywhere in ``Tests/`` -- the
+     "quoted-string form" sweep the wave-5 round-2 string -loop incident added to this
+     program's standing checklist, applied here to METHOD names rather than field names.
 
    All 14 stay on ``LibraryScreen``, UNMOVED, full-bodied -- the recipe's
-   established accommodation for this shape (leave the method real; a mover
-   reaches it, where needed, through a named late-binding dependency that
-   re-reads ``screen.<name>`` at call time, which is exactly why every
-   ``SimpleNamespace`` fixture above keeps working unmodified after this
-   move). The 14: ``_apply_library_prompts_import_status`` (also class 1),
+   established accommodation for this shape (leave the method real; a mover reaches
+   it, where needed, through a named late-binding dependency that re-reads
+   ``screen.<name>`` at call time, which is exactly why every ``SimpleNamespace``
+   fixture above keeps working unmodified after this move). The 14:
+   ``_apply_library_prompts_import_status`` (also class 1),
    ``_build_library_prompts_state``, ``_settle_library_prompt_delete``,
-   ``_stage_library_prompt_for_console``,
-   ``handle_library_prompt_insert_console``, ``handle_library_prompt_row``,
-   ``handle_library_prompts_empty_new``,
+   ``_stage_library_prompt_for_console``, ``handle_library_prompt_insert_console``,
+   ``handle_library_prompt_row``, ``handle_library_prompts_empty_new``,
    ``handle_library_prompts_empty_all_prompts``,
    ``handle_library_prompts_empty_clear_filter``,
-   ``handle_library_prompts_filter``,
-   ``handle_library_prompts_page_next``,
-   ``handle_library_prompts_page_previous``,
-   ``handle_library_prompts_sort``, ``handle_library_prompts_sort_choice``,
+   ``handle_library_prompts_filter``, ``handle_library_prompts_page_next``,
+   ``handle_library_prompts_page_previous``, ``handle_library_prompts_sort``,
+   ``handle_library_prompts_sort_choice``,
    ``on_prompt_block_editor_apply_requested`` -- 15 rows because
-   ``_apply_library_prompts_import_status`` is counted under class 1, not
-   here.
+   ``_apply_library_prompts_import_status`` is counted under class 1, not here.
 3. **3 instance-attribute-monkeypatch exclusions** (recipe §3's second
    documented bypass shape; the skills series' own
    ``_request_library_skills_browse`` precedent, whose Prompts analogue is
@@ -442,6 +433,7 @@ class LibraryPromptsController:
         # -- general Library-wide shell helpers, not moved (group (a)).
         arm_library_list_entry_focus,
         focus_library_control,
+        land_stage_pick,
         library_entry_reconcile_is_current,
         library_entry_route_key,
         library_list_canvas_showing_list,
@@ -510,6 +502,7 @@ class LibraryPromptsController:
         self._prompts_state_accessor = prompts_state_accessor
         self._arm_library_list_entry_focus_fn = arm_library_list_entry_focus
         self._focus_library_control_fn = focus_library_control
+        self._land_stage_pick_fn = land_stage_pick
         self._library_entry_reconcile_is_current_fn = (
             library_entry_reconcile_is_current
         )
@@ -687,6 +680,10 @@ class LibraryPromptsController:
     @property
     def _focus_library_control(self) -> Any:
         return self._focus_library_control_fn
+
+    @property
+    def _land_stage_pick(self) -> Any:
+        return self._land_stage_pick_fn
 
     @property
     def _library_entry_reconcile_is_current(self) -> Any:
@@ -2196,7 +2193,7 @@ class LibraryPromptsController:
 
         def arm_editor() -> None:
             self._arm_library_prompt_editor()
-            self._screen._land_stage_pick(
+            self._land_stage_pick(
                 "prompts", prompt_id, "#library-prompts-reader-shell"
             )
             if (

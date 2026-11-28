@@ -63,8 +63,8 @@ HEAVY_TEST_FILES = {
 # sampled: only dependents a PR lane runs, breadth first, and at most this many
 # sampled files per PR in all; nightly and release run the rest.
 IMPORTER_CAP = 8
-# The PR's own selected files (its changed tests first, then the samples in
-# turn): more would not fit the light job's 30-minute cap run one by one.
+# The PR's own changed tests come first, followed by the capped samples.
+# Keep the light job within its existing 15-minute bound.
 LIGHT_FILE_CAP = 20
 # Application code that creates, alters or versions its own SQLite schema
 # (uppercase DDL and PRAGMA, as this codebase writes them; case-sensitive to

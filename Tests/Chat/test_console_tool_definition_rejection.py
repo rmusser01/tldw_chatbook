@@ -34,6 +34,7 @@ import pytest
 import requests
 from loguru import logger
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
 from tldw_chatbook.Agents.run_context import use_run_id
@@ -48,7 +49,6 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
 )
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
@@ -289,7 +289,7 @@ def _run_console_reply(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
     bridge = ConsoleAgentBridge(
-        agent_runs_db=AgentRunsDB(tmp_path / "runs.db", client_id="schema-conformance"),
+        agent_runs_db=owned_agent_runs_db(tmp_path / "runs.db", client_id="schema-conformance"),
         store=store,
         provider_gateway=ConsoleProviderGateway(),
     )

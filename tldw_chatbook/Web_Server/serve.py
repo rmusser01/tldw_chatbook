@@ -17,6 +17,8 @@ admit_startup()
 import asyncio
 import hashlib
 import html
+import json
+import os
 import re
 import secrets
 import signal
@@ -709,48 +711,13 @@ def _required_str(payload: dict, key: str) -> str:
     return value
 
 
-def _build_production_mobile_provider_gateway() -> Any:
-    """Construct the real provider gateway for the mobile surface (headless).
-
-    Production mirror of ``ConsoleRuntime.ensure_provider_gateway``
-    (``Chat/console_runtime.py``): the gateway resolves providers through
-    a ``config_provider`` callable over the guarded ``load_settings``
-    path — the same settings source ``create_server`` already trusts via
-    ``get_cli_setting`` — fenced exactly like ``console_runtime``
-    ``_provider_config_for_app``: a load that raises (e.g. the ADR-126
-    ``RecoveryRequired`` fence) yields an empty mapping, so a fenced or
-    unreadable config degrades to a clean provider error surfaced as
-    ``run_failed`` instead of crashing the send path. The trace boundary
-    factory is omitted on purpose: the mobile surface owns no trace
-    database, and the gateway's normalized-writes gate fails closed
-    without one.
-    """
-    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
-    from tldw_chatbook.Chat.console_capture_policy import runtime_capture_policy
-
-    def _config_provider() -> Mapping[str, object]:
-        try:
-            from tldw_chatbook.config import load_settings
-
-            fresh = load_settings()
-        except Exception:  # noqa: BLE001 - fence mirror of _provider_config_for_app
-            return {}
-        return fresh if isinstance(fresh, Mapping) and fresh else {}
-
-    return ConsoleProviderGateway(
-        config_provider=_config_provider,
-        normalized_writes_enabled=lambda: (
-            runtime_capture_policy().normalized_writes_enabled
-        ),
-    )
-
-
 class ChatbookWebServerMixin:
     """Textual web server with Chatbook-specific viewport resize hardening."""
 
     def __init__(
         self,
         *args,
+        app_argv: tuple[str, ...] | None = None,
         web_auth_policy: WebAuthPolicy | None = None,
         web_ssl_context: ssl.SSLContext | None = None,
         canvas_policy: CanvasConfigPolicy | None = None,
@@ -759,22 +726,16 @@ class ChatbookWebServerMixin:
         session_idle_timeout_seconds: float | None = None,
         session_absolute_timeout_seconds: float | None = None,
         mobile_service: Any | None = None,
-        mobile_provider_gateway: Any | None = None,
         webauthn_service: Any | None = None,
         **kwargs,
     ) -> None:
         """Initialize the served shell and its feature surfaces.
 
         Args:
+            app_argv: Exact child argv, required when a service starts.
             mobile_service: Injected mobile companion service (ADR-234).
                 ``None`` (the default) constructs ``MobileChatService``
                 lazily on the first ``/api/v1/mobile`` request.
-            mobile_provider_gateway: Optional provider gateway forwarded to
-                the lazily constructed ``MobileChatService`` — a test /
-                live-check seam. ``None`` (the default) constructs the
-                real ``ConsoleProviderGateway`` headless
-                (:func:`_build_production_mobile_provider_gateway`), so
-                production sends resolve providers without an override.
             webauthn_service: Injected WebAuthn ceremony service
                 (``Web_Server.webauthn_service.WebAuthnService``, ADR-354).
                 ``None`` (the default) means passkeys are unavailable:
@@ -784,6 +745,7 @@ class ChatbookWebServerMixin:
                 and passes ``None`` when RP derivation fails.
         """
         super().__init__(*args, **kwargs)
+        self._app_argv = app_argv
         if web_auth_policy is None:
             web_auth_policy = build_web_auth_policy(
                 host=self.host,
@@ -803,6 +765,11 @@ class ChatbookWebServerMixin:
         self._canvas_disabled_latched = not self._canvas_policy.enabled
         self._canvas_policy_watch_task: asyncio.Task[None] | None = None
         self._served_browser_children: dict[str, str] = {}
+        self._served_browser_attachments: dict[str, object] = {}
+        self._served_canvas_launch_lock = asyncio.Lock()
+        from .served_console_hosts import ServedConsoleHosts
+
+        self._served_console_hosts = ServedConsoleHosts(self._create_console_host)
         self._canvas_profile_snapshot = (
             canvas_profile_snapshot
             or load_application_profile_snapshot(loader=load_profile_snapshot)
@@ -813,7 +780,6 @@ class ChatbookWebServerMixin:
         )
         self._served_canvas_launches: dict[str, tuple[CanvasGatewayScope, object]] = {}
         self._mobile_service = mobile_service
-        self._mobile_provider_gateway = mobile_provider_gateway
         self._webauthn_service = webauthn_service
 
     def __repr__(self) -> str:
@@ -1597,72 +1563,63 @@ class ChatbookWebServerMixin:
             {"ok": removed}, headers={"Cache-Control": "no-store"}
         )
 
+    def _canonical_console_selection(self):
+        """Resolve only admitted server configuration; browsers select no storage."""
+        from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+            CanonicalConsoleStores,
+        )
+        from tldw_chatbook.Backup_Recovery.profile_paths import (
+            canonical_console_paths,
+            database_path,
+            legacy_mobile_dir,
+        )
+        from tldw_chatbook.config import get_atomic_config_snapshot
+
+        settings = get_atomic_config_snapshot().values
+        return (CanonicalConsoleStores(*canonical_console_paths(settings)),
+                database_path(settings, "media_db_path"), legacy_mobile_dir(settings))
+
     def _get_mobile_service(self) -> Any:
-        """Return the mobile companion service, constructing it on first use.
-
-        The real ``MobileChatService`` binds the parent-process Console
-        engine over the user data dir. Its ``provider_gateway`` is the
-        injected seam value when one was supplied
-        (``mobile_provider_gateway`` — tests and live checks); without an
-        override this constructs the REAL ``ConsoleProviderGateway``
-        headless (:func:`_build_production_mobile_provider_gateway`), so
-        every production send resolves providers instead of dying on a
-        ``None`` gateway.
-        """
+        """Return the canonical owner adapter without starting an execution host."""
         if self._mobile_service is None:
-            from .mobile_service import MobileChatService
-
-            gateway = self._mobile_provider_gateway
-            if gateway is None:
-                gateway = _build_production_mobile_provider_gateway()
-            self._mobile_service = MobileChatService(
-                data_dir=get_user_data_dir() / "mobile",
-                provider_gateway=gateway,
+            from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+                require_mobile_cutover,
             )
-        self._attach_mobile_relay(self._mobile_service)
+
+            from .mobile_service import CanonicalMobileReads, MobileChatService
+
+            stores, media_path, source_dir = self._canonical_console_selection()
+            def require_cutover():
+                from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+                from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+                    MobileConsolidationRefused,
+                )
+                from tldw_chatbook.Backup_Recovery.service_storage import (
+                    default_control_root,
+                )
+                try:
+                    require_mobile_cutover(source_dir, stores)
+                except (ValueError, RecoveryRequired) as error:
+                    raise MobileConsolidationRefused(str(error), control_root=default_control_root()) from error
+
+            self._mobile_service = MobileChatService(
+                hosts=self._served_console_hosts, storage_identity=stores.identity,
+                broker=self._canvas_control_broker,
+                readers=CanonicalMobileReads(stores.chat_path, media_path, stores.run_path),
+                require_cutover=require_cutover,
+            )
         return self._mobile_service
-
-    def _attach_mobile_relay(self, service: Any) -> None:
-        """Bind the desktop approval relay when both halves exist (ADR-236).
-
-        Lazy by construction: the service (mobile surface) is only built
-        on the first mobile-surface request, and the relay needs the
-        canvas control broker (``_canvas_control_broker`` — built at
-        startup only while canvas is enabled). The two inert cases stay
-        inert: mobile surface off → this method is never reached (the
-        mobile routes are not registered), and canvas disabled → the
-        broker is ``None`` and desktop approval rounds never leave the
-        child, so they stay invisible on the phone (documented
-        limitation). The child-id source reads the live browser-binding
-        registry (``_served_browser_children``, ``bind_served_browser`` /
-        ``unbind_served_browser``), so children appearing or disappearing
-        later are followed by the service's drainer. ``attach_relay`` is
-        idempotent and starts its drainer on the serving loop; rounds
-        raised before this first mobile use wait in the broker's bounded
-        per-child queue and are still picked up.
-        """
-        if getattr(service, "_relay_task", None) is not None:
-            return
-        broker = getattr(self, "_canvas_control_broker", None)
-        if broker is None:
-            return
-        children = self._served_browser_children
-        service.attach_relay(broker, child_ids=lambda: list(children.values()))
 
     async def on_startup(self, app) -> None:
         """Start the private loopback control broker before children spawn."""
 
-        if self._canvas_enabled():
-            self._canvas_control_broker = CanvasControlBroker(
-                runtime_snapshot_id=runtime_snapshot_id(self._canvas_profile_snapshot)
-            )
-            await self._canvas_control_broker.start()
-            self._canvas_policy_watch_task = asyncio.create_task(
-                self._watch_canvas_policy(),
-                name="chatbook-served-canvas-policy",
-            )
-        else:
-            self._canvas_control_broker = None
+        self._canvas_control_broker = CanvasControlBroker(
+            runtime_snapshot_id=runtime_snapshot_id(self._canvas_profile_snapshot)
+        )
+        await self._canvas_control_broker.start()
+        self._canvas_policy_watch_task = asyncio.create_task(
+            self._watch_canvas_policy(), name="chatbook-served-canvas-policy"
+        )
         await super().on_startup(app)
 
     async def on_shutdown(self, app) -> None:
@@ -1676,6 +1633,13 @@ class ChatbookWebServerMixin:
                 await policy_task
             except asyncio.CancelledError:
                 pass
+        hosts = getattr(self, "_served_console_hosts", None)
+        retirement_error = None
+        if hosts is not None:
+            try:
+                await hosts.aclose()
+            except Exception as exc:  # noqa: BLE001 - finish teardown, then re-raise
+                retirement_error = exc
         broker = getattr(self, "_canvas_control_broker", None)
         if broker is not None:
             await broker.aclose()
@@ -1683,6 +1647,7 @@ class ChatbookWebServerMixin:
         await self._served_canvas_gateway.aclose()
         self._served_canvas_launches.clear()
         self._served_browser_children.clear()
+        self._served_browser_attachments.clear()
         mobile_service = getattr(self, "_mobile_service", None)
         if mobile_service is not None:
             try:
@@ -1692,6 +1657,8 @@ class ChatbookWebServerMixin:
             self._mobile_service = None
         self._web_auth.revoke_all()
         await super().on_shutdown(app)
+        if retirement_error is not None:
+            raise retirement_error
 
     def _canvas_enabled(self) -> bool:
         """Read the global kill switch while honoring the restart latch."""
@@ -1711,18 +1678,11 @@ class ChatbookWebServerMixin:
         await self._disable_canvas_runtime()
 
     async def _disable_canvas_runtime(self) -> None:
-        """Idempotently revoke served Canvas control and browser delivery."""
+        """Revoke Canvas capabilities while retaining Console runtime control."""
 
-        if self._canvas_disabled_latched and getattr(
-            self, "_canvas_control_broker", None
-        ) is None:
-            self._served_canvas_launches.clear()
+        if self._canvas_disabled_latched:
             return
         self._canvas_disabled_latched = True
-        broker = getattr(self, "_canvas_control_broker", None)
-        self._canvas_control_broker = None
-        if broker is not None:
-            await broker.aclose()
         await self._served_canvas_gateway.aclose()
         self._served_canvas_launches.clear()
         # Terminal ownership survives Canvas revocation: those children remain
@@ -1783,7 +1743,9 @@ class ChatbookWebServerMixin:
             f"{session.session_id}:{page_ids[0]}" if page_ids else session.session_id
         )
 
-    def bind_served_browser(self, browser_session_id: str, child_id: str) -> None:
+    def bind_served_browser(
+        self, browser_session_id: str, child_id: str, *, attachment=None
+    ) -> None:
         """Bind one authenticated terminal scope to exactly one AppService child."""
 
         if not isinstance(browser_session_id, str) or not browser_session_id:
@@ -1804,12 +1766,21 @@ class ChatbookWebServerMixin:
         ):
             raise ServedCanvasUnavailable("child_session_already_bound")
         self._served_browser_children[browser_session_id] = child_id
+        self._served_browser_attachments[browser_session_id] = (
+            attachment if attachment is not None else object()
+        )
 
-    def unbind_served_browser(self, browser_session_id: str, child_id: str) -> None:
+    def unbind_served_browser(
+        self, browser_session_id: str, child_id: str, *, attachment=None
+    ) -> None:
         """Remove a binding only when its exact child incarnation still owns it."""
 
-        if self._served_browser_children.get(browser_session_id) == child_id:
+        if self._served_browser_children.get(browser_session_id) == child_id and (
+            attachment is None
+            or self._served_browser_attachments.get(browser_session_id) is attachment
+        ):
             self._served_browser_children.pop(browser_session_id, None)
+            self._served_browser_attachments.pop(browser_session_id, None)
             self._served_canvas_launches.pop(browser_session_id, None)
             self._served_canvas_gateway.revoke_browser_session(browser_session_id)
 
@@ -1825,7 +1796,9 @@ class ChatbookWebServerMixin:
         if not self._canvas_enabled():
             await self._disable_canvas_runtime()
             raise ServedCanvasUnavailable("canvas_disabled")
+        gateway = self._served_canvas_gateway
         child_id = self._served_browser_children.get(browser_session_id)
+        attachment = self._served_browser_attachments.get(browser_session_id)
         broker = getattr(self, "_canvas_control_broker", None)
         if child_id is None or broker is None:
             raise ServedCanvasUnavailable("canvas_session_unavailable")
@@ -1834,7 +1807,7 @@ class ChatbookWebServerMixin:
             child_id != expected_child_id
             or captured_launch is None
             or captured_launch[0] != expected_scope
-            or not self._served_canvas_gateway.has_shell_binding(browser_session_id)
+            or not gateway.has_shell_binding(browser_session_id)
         ):
             raise ServedCanvasUnavailable("canvas_session_unavailable")
 
@@ -1882,7 +1855,10 @@ class ChatbookWebServerMixin:
         # Do not recreate an unreachable shell for a departed page.
         if (
             self._served_browser_children.get(browser_session_id) != child_id
+            or self._served_browser_attachments.get(browser_session_id)
+            is not attachment
             or self._canvas_control_broker is not broker
+            or self._served_canvas_gateway is not gateway
             or not self._canvas_enabled()
         ):
             raise ServedCanvasUnavailable("canvas_session_unavailable")
@@ -1890,7 +1866,7 @@ class ChatbookWebServerMixin:
             self._served_browser_children.get(browser_session_id) != expected_child_id
             or self._served_canvas_launches.get(browser_session_id)
             is not captured_launch
-            or not self._served_canvas_gateway.has_shell_binding(browser_session_id)
+            or not gateway.has_shell_binding(browser_session_id)
             or state.get("conversation_session_id")
             != expected_scope.conversation_session_id
         ):
@@ -1917,21 +1893,41 @@ class ChatbookWebServerMixin:
             revision_id=revision_id,
             selection_generation=result["selection_generation"],
         )
-        existing = self._served_canvas_launches.get(browser_session_id)
-        if existing is None or not self._served_canvas_gateway.has_shell_binding(
-            browser_session_id
-        ):
-            launch = await self._served_canvas_gateway.open_shell(scope)
-            self._served_canvas_launches[browser_session_id] = (scope, launch)
-        else:
-            prior_scope, launch = existing
-            if prior_scope != scope:
-                self._served_canvas_gateway.change_selection(
-                    browser_session_id=browser_session_id,
-                    scope=scope,
-                    synchronize_only=True,
-                )
+        # Serialize only shell mint/selection publication. A suspended old
+        # launch cannot revoke a successor minted under the same page label.
+        async with self._served_canvas_launch_lock:
+            if (
+                self._served_browser_children.get(browser_session_id) != child_id
+                or self._served_browser_attachments.get(browser_session_id)
+                is not attachment
+                or self._canvas_control_broker is not broker
+                or self._served_canvas_gateway is not gateway
+                or not self._canvas_enabled()
+            ):
+                raise ServedCanvasUnavailable("canvas_session_unavailable")
+            existing = self._served_canvas_launches.get(browser_session_id)
+            if existing is None or not gateway.has_shell_binding(browser_session_id):
+                launch = await gateway.open_shell(scope)
+                if (
+                    self._served_browser_children.get(browser_session_id) != child_id
+                    or self._served_browser_attachments.get(browser_session_id)
+                    is not attachment
+                    or self._canvas_control_broker is not broker
+                    or self._served_canvas_gateway is not gateway
+                    or not self._canvas_enabled()
+                ):
+                    gateway.revoke_browser_session(browser_session_id)
+                    raise ServedCanvasUnavailable("canvas_session_unavailable")
                 self._served_canvas_launches[browser_session_id] = (scope, launch)
+            else:
+                prior_scope, launch = existing
+                if prior_scope != scope:
+                    gateway.change_selection(
+                        browser_session_id=browser_session_id,
+                        scope=scope,
+                        synchronize_only=True,
+                    )
+                    self._served_canvas_launches[browser_session_id] = (scope, launch)
         result["url"] = launch.browser_url
         return result
 
@@ -1958,75 +1954,165 @@ class ChatbookWebServerMixin:
             }
         return web.json_response(state, headers={"Cache-Control": "no-store"})
 
-    async def handle_websocket(self, request):
-        """Bind one browser websocket to exactly one authenticated child."""
+    def _create_console_host(self, _storage_identity: str):
+        from .served_console_hosts import ServedConsoleHost
 
+        service_class = self._chatbook_app_service_class
+        if service_class is None:
+            raise RuntimeError("served terminal app service is unavailable")
+        return ServedConsoleHost(
+            lambda **callbacks: service_class(
+                self.command,
+                app_argv=self._app_argv,
+                **callbacks,
+                download_manager=self.download_manager,
+                debug=self.debug,
+                canvas_control_broker=self._canvas_control_broker,
+            )
+        )
+
+    async def _process_attached_terminal(self, request, websocket, attachment) -> None:
+        """Keep socket writes outside the child's continuously draining callback."""
+        from .served_console_hosts import StaleTerminalAttachment
+
+        session = request.get("chatbook_browser_session")
+
+        async def output() -> None:
+            while True:
+                kind, data = await attachment.receive()
+                if kind == "bytes":
+                    await websocket.send_bytes(data)
+                else:
+                    await websocket.send_str(data)
+
+        async def input_messages() -> None:
+            from aiohttp import WSMsgType
+
+            async for message in websocket:
+                if message.type != WSMsgType.TEXT:
+                    continue
+                if session.revoked:
+                    return
+                self._web_auth.touch_session(session)
+                envelope = message.json()
+                if not isinstance(envelope, list) or not 1 <= len(envelope) <= 2:
+                    continue
+                kind = envelope[0]
+                data = envelope[1] if len(envelope) == 2 else None
+                try:
+                    if kind == "stdin" and isinstance(data, str):
+                        await attachment.send_bytes(data.encode("utf-8"))
+                    elif kind == "resize" and isinstance(data, dict):
+                        await attachment.resize(
+                            _web_dimension(data.get("width"), 80),
+                            _web_dimension(data.get("height"), 24),
+                        )
+                    elif kind == "ping":
+                        await websocket.send_json(["pong", data])
+                    elif kind in {"blur", "focus"}:
+                        await attachment.send_meta({"type": kind})
+                except StaleTerminalAttachment:
+                    if attachment.closed.is_set():
+                        return
+
+        tasks = [
+            asyncio.create_task(output()),
+            asyncio.create_task(input_messages()),
+            asyncio.create_task(attachment.closed.wait()),
+        ]
+        try:
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                task.result()
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await websocket.close()
+
+    async def handle_websocket(self, request):
+        """Attach one authenticated terminal to the retained profile child."""
         from aiohttp import web
 
         browser_session_id = self._served_terminal_scope(request)
-        websocket = web.WebSocketResponse(
-            heartbeat=15,
-            protocols=(WEBSOCKET_PROTOCOL,),
-        )
-        width = _web_dimension(request.query.get("width"), 80)
-        height = _web_dimension(request.query.get("height"), 24)
-        app_service = None
+        websocket = web.WebSocketResponse(heartbeat=15, protocols=(WEBSOCKET_PROTOCOL,))
+        session = request.get("chatbook_browser_session")
+        if session is None:
+            raise web.HTTPUnauthorized()
+        if not websocket.can_prepare(request).ok:
+            raise web.HTTPBadRequest(text="Invalid websocket upgrade")
+        attachment = None
+        host = None
+        expiry_task = None
+        unregister_channel = lambda: None
         try:
+            # Validate the upgrade first, but start heartbeat only after shared startup.
+            stores, _media_path, _source_dir = self._canonical_console_selection()
+            storage_identity = stores.identity
+            hosts = self._served_console_hosts
+            host = await hosts.get_or_start(storage_identity)
+            self._web_auth.touch_session(session)
+            if (
+                self._served_console_hosts is not hosts
+                or hosts._closed
+                or host._closed
+                or hosts.get_existing(storage_identity) is not host
+            ):
+                raise web.HTTPServiceUnavailable(text="Console unavailable")
             await websocket.prepare(request)
-            session = request.get("chatbook_browser_session")
-            unregister_channel = (
-                self._web_auth.register_channel(
-                    session,
-                    lambda: asyncio.create_task(websocket.close(code=4001)),
-                )
-                if session is not None
-                else (lambda: None)
+            unregister_channel = self._web_auth.register_channel(
+                session, lambda: asyncio.create_task(websocket.close(code=4001))
             )
-            expiry_task = (
-                asyncio.create_task(self._expire_websocket_session(session))
-                if session is not None
-                else None
+            expiry_task = asyncio.create_task(self._expire_websocket_session(session))
+            if session.revoked or websocket.closed:
+                return websocket
+            attachment = await host.attach_terminal(
+                browser_session_id,
+                _web_dimension(request.query.get("width"), 80),
+                _web_dimension(request.query.get("height"), 24),
+                on_detach=lambda old: self.unbind_served_browser(
+                    old.browser_session_id, host.service.app_service_id, attachment=old
+                ),
             )
-            app_service_class = getattr(self, "_chatbook_app_service_class", None)
-            broker = getattr(self, "_canvas_control_broker", None)
-            if app_service_class is None:
-                raise RuntimeError("served terminal app service is unavailable")
-            app_service = app_service_class(
-                self.command,
-                write_bytes=websocket.send_bytes,
-                write_str=websocket.send_str,
-                close=websocket.close,
-                download_manager=self.download_manager,
-                debug=self.debug,
-                canvas_control_broker=broker,
+            if (
+                session.revoked
+                or websocket.closed
+                or host.current_attachment is not attachment
+            ):
+                await attachment.detach()
+                return websocket
+            self.bind_served_browser(
+                browser_session_id, host.service.app_service_id, attachment=attachment
             )
-            child_id = app_service.app_service_id
-            if browser_session_id is not None:
-                self.bind_served_browser(browser_session_id, child_id)
-            await app_service.start(width, height)
-            try:
-                await self._process_authenticated_messages(
-                    websocket, app_service, session
-                )
-            finally:
-                await app_service.stop()
+            await self._process_attached_terminal(request, websocket, attachment)
+        except web.HTTPException:
+            raise
+        except AuthenticationError:
+            if not websocket.prepared:
+                raise web.HTTPUnauthorized(text="Authentication denied") from None
+            await websocket.close(code=4001)
         except asyncio.CancelledError:
-            await websocket.close()
-        except Exception as error:  # noqa: BLE001 - websocket boundary stays alive
-            # No traceback here: the spawn frame holds the per-child secret.
+            if websocket.prepared:
+                await websocket.close()
+            raise
+        except Exception as error:  # noqa: BLE001 - bounded websocket failure, no spawn secrets
             logger.error("Served terminal session failed type={}", type(error).__name__)
+            if not websocket.prepared:
+                raise web.HTTPServiceUnavailable(text="Console unavailable") from None
         finally:
-            expiry = locals().get("expiry_task")
-            if expiry is not None:
-                expiry.cancel()
-            unregister = locals().get("unregister_channel")
-            if unregister is not None:
-                unregister()
-            if app_service is not None:
-                child_id = getattr(app_service, "app_service_id", None)
-                if browser_session_id is not None and isinstance(child_id, str):
-                    self.unbind_served_browser(browser_session_id, child_id)
-                await app_service.stop()
+            if expiry_task is not None:
+                expiry_task.cancel()
+                await asyncio.gather(expiry_task, return_exceptions=True)
+            unregister_channel()
+            if attachment is not None:
+                self.unbind_served_browser(
+                    browser_session_id,
+                    host.service.app_service_id,
+                    attachment=attachment,
+                )
+                await attachment.detach()
+            if websocket.prepared:
+                await websocket.close()
         return websocket
 
     @property
@@ -2227,11 +2313,18 @@ def _web_dimension(value: object, default: int) -> int:
 
 
 def build_chatbook_app_service_class(textual_app_service_class: type) -> type:
-    """Extend only textual-serve's documented child-environment build seam."""
+    """Adapt textual-serve child metadata, environment and physical retirement."""
 
     class ChatbookAppService(textual_app_service_class):
-        def __init__(self, *args, canvas_control_broker, **kwargs):
+        def __init__(
+            self,
+            *args,
+            canvas_control_broker,
+            app_argv: tuple[str, ...] | None = None,
+            **kwargs,
+        ):
             super().__init__(*args, **kwargs)
+            self._app_argv = app_argv
             self._canvas_control_broker = canvas_control_broker
             self._canvas_control_environment: dict[str, str] = {}
             self._canvas_control_started = False
@@ -2241,6 +2334,9 @@ def build_chatbook_app_service_class(textual_app_service_class: type) -> type:
             environment.update(self._canvas_control_environment)
             # Launch identity survives disabled or unavailable Canvas transport.
             environment["CHATBOOK_SERVED_CHILD"] = "1"
+            environment["TEXTUAL_DRIVER"] = (
+                "tldw_chatbook.Web_Server.console_web_driver:ConsoleWebDriver"
+            )
             return environment
 
         async def start(self, width: int, height: int) -> None:
@@ -2256,17 +2352,87 @@ def build_chatbook_app_service_class(textual_app_service_class: type) -> type:
                 raise
             self._canvas_control_started = self._canvas_control_broker is not None
 
-        async def stop(self) -> None:
+        async def on_meta(self, data: bytes) -> None:
+            metadata = json.loads(data)
+            if metadata.get("type") in {
+                "console_attachment_begin",
+                "console_attachment_ready",
+            }:
+                await self.remote_write_str(json.dumps([metadata["type"], metadata]))
+                return
+            await super().on_meta(data)
+
+        async def run(self) -> None:
             try:
-                await super().stop()
+                await super().run()
             finally:
-                if self._canvas_control_started:
-                    self._canvas_control_started = False
-                    if self._canvas_control_broker is not None:
-                        await self._canvas_control_broker.revoke_child(
-                            self.app_service_id
-                        )
-                self._canvas_control_environment.clear()
+                await self.remote_close()
+
+        async def _open_app_process(self, width: int = 80, height: int = 24):
+            if not self._app_argv:
+                raise RuntimeError("served app launch argv is unavailable")
+            self._process = process = await asyncio.create_subprocess_exec(
+                *self._app_argv,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=self._build_environment(width, height),
+                start_new_session=os.name == "posix",
+            )
+            self._stdin = process.stdin
+            return process
+
+        async def stop(self) -> None:
+            retirement = getattr(self, "_retirement_task", None)
+            if retirement is None:
+                retirement = self._retirement_task = asyncio.create_task(self._retire())
+            await asyncio.shield(retirement)
+
+        async def _retire(self) -> None:
+            stopping = asyncio.create_task(super().stop())
+            process = getattr(self, "_process", None)
+            try:
+                await asyncio.wait_for(asyncio.shield(stopping), 5)
+                if process is not None:
+                    await asyncio.wait_for(process.wait(), 2)
+            except TimeoutError:
+                if process is None:
+                    raise
+                for force in (False, True):
+                    if process.returncode is not None:
+                        break
+                    try:
+                        if os.name == "posix":
+                            os.killpg(
+                                process.pid,
+                                signal.SIGKILL if force else signal.SIGTERM,
+                            )
+                        elif force:
+                            process.kill()
+                        else:
+                            process.terminate()
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        await asyncio.wait_for(process.wait(), 2)
+                        break
+                    except TimeoutError:
+                        if force:
+                            raise
+            finally:
+                # Only physical exit permits cancelling a lagging pipe observer.
+                # Otherwise keep draining; the live child still owns its lease.
+                self._stop_observer = stopping
+                if not stopping.done() and (
+                    process is None or process.returncode is not None
+                ):
+                    stopping.cancel()
+                    await asyncio.gather(stopping, return_exceptions=True)
+            if self._canvas_control_started:
+                self._canvas_control_started = False
+                if self._canvas_control_broker is not None:
+                    await self._canvas_control_broker.revoke_child(self.app_service_id)
+            self._canvas_control_environment.clear()
 
     ChatbookAppService.__name__ = "ChatbookAppService"
     return ChatbookAppService
@@ -2342,9 +2508,9 @@ def create_server(
         textual_app_service_class,
     )
 
-    # Create the command to run the app
-    # textual-serve expects a command string, not a list
-    command = f"{sys.executable} -m tldw_chatbook.app"
+    # textual-serve retains a display string; only the exact argv is executed.
+    app_argv = (sys.executable, "-m", "tldw_chatbook.app")
+    command = " ".join(app_argv)
 
     # Configure title
     if title is None:
@@ -2468,6 +2634,7 @@ def create_server(
     logger.info("Creating web server on {}:{}", host, port)
     server = chatbook_web_server_class(
         command=command,
+        app_argv=app_argv,
         host=host,
         port=port,
         title=title,

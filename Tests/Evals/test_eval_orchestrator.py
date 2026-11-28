@@ -217,6 +217,7 @@ class TestEvaluationOrchestrator:
         assert orchestrator.db is not None, "Database should be initialized"
         assert hasattr(orchestrator.db, "db_path"), "Database should have db_path"
 
+    @pytest.mark.bootstrap_profile
     def test_default_database_uses_secured_user_data_directory(
         self, monkeypatch, tmp_path
     ):

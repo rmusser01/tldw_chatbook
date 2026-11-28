@@ -1,16 +1,101 @@
 """Installed persistence maintenance participants (ADR-126)."""
 
-from contextlib import contextmanager
-from functools import wraps
+import inspect
 import sqlite3
 import threading
 import time
 import weakref
+from contextlib import contextmanager
+from functools import partial, wraps
+from types import MethodType
 from typing import Protocol
 
 from tldw_chatbook import DB as store_registry
 
 from .models import Inventory
+
+
+def _methods_unchanged(instance, record):
+    from .admission_runtime import (
+        callable_source_current,
+        direct_wrapped_callable,
+    )
+
+    owner, methods = record
+    if (
+        type(instance) is not owner
+        or inspect.getattr_static(owner, "__getattribute__")
+        is not object.__getattribute__
+    ):
+        return False
+    for name, descriptor, function, versions, wrapped in methods:
+        if (
+            inspect.getattr_static(instance, name, None) is not descriptor
+            or direct_wrapped_callable(function) is not wrapped
+            or any(not callable_source_current(version) for version in versions)
+        ):
+            return False
+    return True
+
+
+def native_scratch_writer(writer):
+    """Qualify the exact installed scratch manager and its original run writer."""
+    from tldw_chatbook.Agents.run_log import _RUN_LOG_SCRATCH_ORIGINAL
+    from tldw_chatbook.Chat.console_scratch_space import (
+        _SCRATCH_ADMISSION_ORIGINAL,
+        ConsoleScratchSnapshot,
+    )
+
+    from .admission_runtime import same_bound_callable
+
+    if not _methods_unchanged(writer, _RUN_LOG_SCRATCH_ORIGINAL):
+        return None
+    access = inspect.getattr_static(writer, "_access_scope", None)
+    if (
+        type(access) is not partial
+        or access.keywords
+        or len(access.args) != 1
+        or type(access.func) is not MethodType
+    ):
+        return None
+    manager, snapshot = access.func.__self__, access.args[0]
+    if (
+        not _methods_unchanged(manager, _SCRATCH_ADMISSION_ORIGINAL)
+        or not same_bound_callable(access.func, manager.lease)
+        or type(snapshot) is not ConsoleScratchSnapshot
+    ):
+        return None
+    manager._check_process()
+    with manager._condition:
+        record = manager._matching_record_locked(snapshot)
+        if record is None or record.snapshot is not snapshot:
+            return None
+    if inspect.getattr_static(writer, "_explicit_root", None) != snapshot.root:
+        return None
+    return manager, snapshot
+
+
+def native_prepared_scratch(manager, snapshot, session_id):
+    """Qualify the original held scratch before its writer is created."""
+    from tldw_chatbook.Chat.console_scratch_space import (
+        _SCRATCH_ADMISSION_ORIGINAL,
+        ConsoleScratchSnapshot,
+    )
+
+    if type(snapshot) is not ConsoleScratchSnapshot or not _methods_unchanged(
+        manager, _SCRATCH_ADMISSION_ORIGINAL
+    ):
+        return False
+    manager._check_process()
+    with manager._condition:
+        record = manager._matching_record_locked(snapshot)
+        return (
+            record is not None
+            and record.snapshot is snapshot
+            and record.session_id == session_id
+            and record.leases > 0
+            and manager._identity_matches(snapshot)
+        )
 
 
 class Participant(Protocol):
@@ -308,6 +393,8 @@ def core_access(repository):
     from . import storage_admission as storage
     from .bootstrap import RecoveryRequired
 
+    if storage._mobile_repository_scope(repository) is not None:
+        return
     participant = (
         repository_participant(repository)
         if type(repository) in repository_types()
@@ -332,7 +419,11 @@ def core_access(repository):
 @contextmanager
 def core_operation(repository):
     """Count an installed core scope without revoking its native borrowers."""
-    if repository.is_memory_db or type(repository) not in repository_types():
+    from . import storage_admission as storage
+
+    if storage._mobile_repository_scope(repository) is not None:
+        yield
+    elif repository.is_memory_db or type(repository) not in repository_types():
         core_access(repository)
         yield
     else:
@@ -449,9 +540,18 @@ def register_core_connection(repository, connection):
         policy_id = store_registry.store_declarations[participant.owner_id].policy_id(
             participant.read_only
         )
+        mobile = storage._mobile_repository_scope(repository)
         if (
             lease is None
-            or lease not in storage._live_leases
+            or (
+                lease not in storage._live_leases
+                and not (
+                    mobile is not None
+                    and type(lease) is storage._CaptureLease
+                    and lease.scope is mobile
+                    and lease in mobile.resources
+                )
+            )
             or lease.resource_policy is not _validated_owner_policy(policy_id)
             or lease.resource_path != participant.path
             or lease.resource_thread is not threading.current_thread()

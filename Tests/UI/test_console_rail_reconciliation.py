@@ -2200,11 +2200,14 @@ async def test_chat_screen_inspector_mutation_paths_delegate_one_owner_request(
                 "#console-staged-context-tray", ConsoleStagedContextTray
             )
             owner._on_reconcile = observe_outer
-            # TASK-42474: only the quiet wait protects this case; a Console sync
-            # after startup (a credential pass on a connection-evidence version
-            # bump) would still sync the other owners for this launch.
-            screen._pending_console_launch_context = ConsoleLiveWorkLaunch.from_values(
+            # Scope the probe to the tray so a later control-bar sync cannot
+            # project the same launch into the Run inspector.
+            launch = ConsoleLiveWorkLaunch.from_values(
                 source="owner-path", title="Sources ChatScreen probe"
+            )
+            state = screen._build_console_staged_context_state(launch)
+            monkeypatch.setattr(
+                screen, "_build_console_staged_context_state", lambda _launch: state
             )
             screen._sync_console_staged_context_tray()
         elif mutation_path == "settings":

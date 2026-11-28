@@ -78,7 +78,8 @@ FAST_LANE_TARGETS = (
     "Tests/DB/test_automatic_wake_attempts.py",
     "Tests/Model_Artifacts/test_operation_leases.py",
     "Tests/Model_Artifacts/test_operation_leases_process.py",
-    "Tests/UI/test_mcp_workbench.py",
+    # PR #3345: the complete MCP workbench rider now runs in the UI census;
+    # test_derived_artifacts_workflow pins all279 function selectors exactly once.
     "Tests/UI/test_mcp_tools_mode.py",
     "Tests/Widgets/test_detach_safe_text_area.py",
     "Tests/Web_Server/test_served_tab_isolation.py",
@@ -386,6 +387,11 @@ FAST_LANE_TARGETS = (
     # (Linux reports the folder as missing_parent). Not bootstrap_profile;
     # three cases, under 1 s.
     "Tests/Backup_Recovery/test_startup_unlock.py::test_fresh_profile_without_a_config_folder_starts_normally",
+    # PR3345 incoming audio, native BaseDB and MCP timeout/custody regressions.
+    "Tests/TTS/test_audio_player.py",
+    "Tests/DB/test_base_db_connection_lifecycle.py",
+    "Tests/MCP/test_stdio_request_timeout.py",
+    "Tests/MCP/test_stdio_settlement_hardening.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
@@ -483,6 +489,7 @@ DREAMS_BOUNDARY_TARGETS = (
     # TASK-39052 route-cycle node between them is a private-profile test that
     # runs in its own child process, so the in-process enrollment cannot reach it.
     "Tests/Web_Server/test_mobile_service.py",
+    "Tests/Web_Server/test_mobile_shared_console.py::test_phone_and_desktop_share_native_light_surface_bridge",
     # TASK-39049: the quit-time store retirement (TASK-38955, TASK-39047,
     # TASK-39048) and the retention pass's worker handles, in no PR lane.
     # Bootstrap profile (Tests/DB, keep_bootstrap_profile), guard-clean,
@@ -500,6 +507,10 @@ DREAMS_BOUNDARY_TARGETS = (
     # automatic wake recovery suite (bootstrap_profile, ~13 s serial).
     "Tests/Backup_Recovery/test_console_sync_maintenance.py",
     "Tests/Chat/test_automatic_wake_recovery.py",
+    # PR #3345: the two round-27 trace files keep their storage guard and
+    # bootstrap-profile placement, after the sandboxed suites.
+    "Tests/Chat/test_console_trace_slot_drop.py",
+    "Tests/Chat/test_console_child_preset_fallback_trace.py",
 )
 #: TASK-34929: the Dreams tracking tests, gated whole in their own job.
 DREAMS_TRACKING_TARGET = "Tests/Dreams/test_track_service.py"
@@ -526,7 +537,6 @@ DREAMS_TRACKING_RIDERS = (
     "Tests/Backup_Recovery/test_finite_db_retirement.py",
     # TASK-42516 (round 25): the native-76 compatibility file, whole (its one
     # node left console-p0-gate). Sandboxed, before the Workspaces riders.
-    "Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py",
     "Tests/Workspaces/test_console_workspace_create_handler.py",
     "Tests/Workspaces/test_console_workspace_reconcile.py",
     "Tests/Workspaces/test_workspace_create_modal.py",
@@ -551,7 +561,6 @@ DREAMS_TRACKING_RIDERS = (
     "Tests/Wizards/test_first_run_discovery_base_url.py",
     # TASK-42514 (round 25): every test is @private_profile_test, so
     # sandboxed; before Tool_Packs.
-    "Tests/Agents/test_durable_fleet_messages.py",
     # TASK-42513 (round 26): two Console trace files red on dev unseen. They
     # read no config in-process (RecoveryRequired recorder), so before
     # Tool_Packs; the GC file's one console-p0-gate node folded in here.
@@ -623,6 +632,9 @@ ARCHITECTURE_GUARD_TARGETS = (
     "Tests/Architecture/test_profile_owned_path_inventory.py::test_base_data_dir_census_detects_qualified_and_aliased_consumers",
     "Tests/Architecture/test_profile_owned_path_inventory.py::test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners",
     "Tests/Architecture/test_profile_owned_path_inventory.py::test_python_outside_the_package_and_tests_parses",
+    "Tests/Architecture/test_profile_owned_path_inventory.py::test_runtime_source_population_keeps_tooling_and_ignores_nonruntime_evidence",
+    "Tests/Architecture/test_profile_owned_path_inventory.py::test_runtime_constant_guard_rejects_new_runtime_owners",
+    "Tests/Architecture/test_profile_owned_path_inventory.py::test_runtime_constant_guard_does_not_swallow_runtime_parse_failure",
     "Tests/Architecture/test_progress_widget_clock_guard.py",
     "Tests/Architecture/test_recovery_entrypoints.py",
     "Tests/Architecture/test_task2062_3_legacy_downloader_retirement.py",
@@ -723,6 +735,7 @@ ARCH_REVIEW_TARGETS = (
     "Tests/test_config_load_settings_table_guard.py",
     "Tests/Performance/test_boot_css_byte_budget.py",
     "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+    "Tests/Chat/test_served_startup_authentication.py",
     # Phase 3 of the program, sandboxed: before the TASK-39114 files.
     # TASK-36953.1
     "Tests/Architecture/test_server_service_client_protocols.py",
@@ -734,6 +747,8 @@ ARCH_REVIEW_TARGETS = (
     "Tests/Tools/test_document_expansion_tool.py::test_without_host_storage_every_source_reports_its_database_unavailable",
     "Tests/Tools/test_note_tool_user_id.py::test_registrar_storage_is_resolved_at_call_time",
     "Tests/Tools/test_note_tool_user_id.py::test_note_tools_without_a_host_database_report_it_unavailable",
+    "Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py",
+    "Tests/Agents/test_durable_fleet_messages.py",
     "Tests/App/test_chachanotes_fts_backfill_worker.py",
     # TASK-36948.3
     "Tests/Backup_Recovery/test_unsaved_editors.py::test_console_unknown_draft_shape_refuses_instead_of_clean",
@@ -961,11 +976,6 @@ RECOVERED_SUITES_TARGETS = (
     "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[helper_body]",
     "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[metadata_body]",
     "Tests/Performance/test_console_managed_received_acceptance.py",
-    # Round 27 (2026-11-26): TASK-42550's slot-drop file (bootstrap_profile).
-    "Tests/Chat/test_console_trace_slot_drop.py",
-    # Round 27: TASK-42556's child preset fallback file (bootstrap_profile),
-    # on no lane before.
-    "Tests/Chat/test_console_child_preset_fallback_trace.py",
     # TASK-41061 review: the hook engine's two regression nodes, on no lane.
     "Tests/Agents/test_hooks_v2_execution.py::test_cancelled_close_leaves_no_thread_waiting_for_native_custody",
     "Tests/Agents/test_hooks_v2_execution.py::test_mcp_hook_permission_stays_current_to_other_jobs_while_it_refreshes",
@@ -1379,8 +1389,6 @@ ADMISSION_4_TARGETS = (
     "Tests/Agents/test_run_log_stats_slice_runtime_tools.py",
     "Tests/Agents/test_run_log_survivor_lifetime.py",
     "Tests/Chat/test_fleet_budget_boundary_probes.py",
-    # TASK-41314: native workflow planning custody (27 tests, 8.6 min serially).
-    "Tests/Chat/test_workflow_planning_native.py",
     # TASK-41315 / TASK-41316: a Console agent turn's original storage and MCP
     # sources, and the first-send survivor (6.0 min serially for the two).
     "Tests/Chat/test_console_agent_storage_sources.py",
@@ -1694,8 +1702,7 @@ def _assert_plugin_recovery_ui(workflow: dict) -> None:
     assert job["runs-on"] == "macos-latest"
     assert job["if"] == LANES
     assert job["needs"] == ["preflight"]
-    # Owner decision 2026-11-26: 25 min for the native hook and MCP event step.
-    assert job["timeout-minutes"] == 25
+    assert job["timeout-minutes"] == 15
     assert not job.get("continue-on-error", False)
     assert all(not step.get("continue-on-error", False) for step in job["steps"])
     setup = next(
@@ -2061,6 +2068,7 @@ def test_console_p0_gate_runs_four_serial_minimal_python_312_profiles() -> None:
         ".",
         "pytest",
         "pytest-asyncio",
+        "pytest-mock",
         "pytest-timeout",
         "packaging",
         "aiohttp-jinja2",
@@ -2105,7 +2113,9 @@ def test_console_p0_gate_runs_four_serial_minimal_python_312_profiles() -> None:
         )
     }
     assert not fast_targets & set(_pytest_targets(admission["run"]))
-    assert not fast_targets & set(_pytest_targets(admission_2["run"]))
+    admission_2_targets = _pytest_targets(admission_2["run"])
+    assert not fast_targets & set(admission_2_targets)
+    assert admission_2_targets[0] == "Tests/Chat/test_workflow_planning_native.py"
     assert not set(_pytest_targets(admission["run"])) & set(
         _pytest_targets(admission_2["run"])
     )
@@ -3026,6 +3036,7 @@ PERF_GUARD_LAST_STEP_TARGETS = (
 def test_perf_guard_runs_its_wall_clock_compact_gates_last() -> None:
     """Perf Guard runs the Console compact-setup gates only in its last pytest step."""
     (job,) = _workflow("perf-guard.yml")["jobs"].values()
+    assert job["timeout-minutes"] == 15
     *earlier, last = [step for step in job["steps"] if "pytest" in step.get("run", "")]
     assert _pytest_targets(last["run"]) == PERF_GUARD_LAST_STEP_TARGETS, last["name"]
     for step in earlier:
@@ -3238,3 +3249,31 @@ def test_dreams_required_placement_rejects_drift(name, mutation):
         step["run"] = step["run"].replace("--timeout=", "--timeout=1")
     with pytest.raises(AssertionError):
         _assert_dreams_required_steps(workflow)
+
+
+def test_eval_native_retirement_controls_keep_platform_recovery_enrollment():
+    workflow = _workflow("eval-recovery-regressions.yml")
+    paths = _triggers(workflow)["pull_request"]["paths"]
+    for source in (
+        "tldw_chatbook/RAG_Search/simplified/db_connection_pool.py",
+        "tldw_chatbook/RAG_Search/simplified/rag_service.py",
+        "Tests/RAG_Search/test_keyword_leg_db_resolution.py",
+    ):
+        assert any(_github_paths_match(pattern, source) for pattern in paths)
+    job = workflow["jobs"]["eval-recovery"]
+    assert job["timeout-minutes"] == 20
+    assert set(job["strategy"]["matrix"]["os"]) == {
+        "ubuntu-24.04",
+        "macos-15",
+        "windows-2022",
+    }
+    step = _named_step(job, "Verify override classification and recovery lifetimes")
+    assert "Tests/Backup_Recovery/test_eval_maintenance.py" in step["run"]
+    assert "Tests/Backup_Recovery/test_rag_manager_maintenance.py" in step["run"]
+    assert "Tests/Evals/test_orchestrator_offloop_writes.py" in step["run"]
+    assert "--timeout=180" in step["run"]
+    target = (
+        "Tests/RAG_Search/test_keyword_leg_db_resolution.py::"
+        "test_failed_last_user_close_retains_pool_for_maintenance"
+    )
+    assert _pytest_targets(step["run"]).count(target) == 1

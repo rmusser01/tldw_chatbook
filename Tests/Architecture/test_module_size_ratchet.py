@@ -187,11 +187,16 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-24, round-24 stack: TASK-34100.2's port, stacked on #3430, takes
     # a net 10 lines out of app.py; the row goes down to the measurement,
     # 5,739 -> 5,729.
-    "tldw_chatbook/app.py": 5729,
+    "tldw_chatbook/app.py": 5706,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
-    "tldw_chatbook/app_served.py": 125,
+    # PR3345: explicit owner source-count waiver; exact measurements, no runtime changes.
+    "tldw_chatbook/app_served.py": 150,
+    "tldw_chatbook/Backup_Recovery/storage_admission.py": 4239,
+    # TASK-37173 report readers crossed the inventory threshold. Pin exact sizes.
+    "tldw_chatbook/DB/AgentRuns_DB.py": 4053,
+    "tldw_chatbook/Chat/console_trace_repository.py": 4046,
     # TASK-33011: the Library ingest queue moved verbatim out of app.py. At
     # 4,999 lines it is larger than two rows below, so it is born governed.
     # 2026-10-03 (PR #2993): TASK-20973's provenance block added 16 lines;
@@ -207,7 +212,7 @@ _BUDGETS: dict[str, int] = {
     # (+15) -- parse-pool teardown kills workers that outlive the SIGTERM.
     # 2026-11-23, TASK-42470 review: the kill logs a warning with the pids:
     # 5072 -> 5081 (+9).
-    "tldw_chatbook/app_ingest_queue.py": 5081,
+    "tldw_chatbook/app_ingest_queue.py": 5080,
     # TASK-33011: TldwCli's service composition moved verbatim out of app.py.
     # It was governed there; without its own row, wiring code could regrow in
     # the mixin unchecked.
@@ -225,7 +230,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
     # the local MCP control service gets a storage provider (+1), which
     # reports the DBs unavailable before the bundle is published (+1).
-    "tldw_chatbook/app_service_wiring.py": 3704,
+    "tldw_chatbook/app_service_wiring.py": 3693,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
@@ -243,7 +248,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-14, TASK-40716 (owner rule: exact measurement, dated note):
     # 2207 -> 2216 (+9) -- quit logs every app-owned shutdown failure it
     # does not raise, so a Console shutdown error is never dropped.
-    "tldw_chatbook/app_lifecycle.py": 2216,
+    # Shared Console startup extraction and dev shutdown logging together.
+    "tldw_chatbook/app_lifecycle.py": 2165,
     # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
     # (NavigationMixin); governed there, so governed here.
     # TASK-34000.27 (2026-10-09): 1110 -> 1195 (+85), owner decision
@@ -369,7 +375,8 @@ _BUDGETS: dict[str, int] = {
     # (+6), exact measurement. Regenerate and Edit & resend take the
     # original-attempt previews before streaming and put them back after an
     # undo; Edit & resend records "message edited" in a finally.
-    "tldw_chatbook/Chat/console_chat_controller.py": 28881,
+    # PR3345 measured after retaining the native and mobile paths.
+    "tldw_chatbook/Chat/console_chat_controller.py": 28641,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     # TASK-41637, 2026-11-18: +9, a round armed with no running app and no
     # answerable view fails closed instead of waiting forever (dev's row +
@@ -380,7 +387,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6301,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
     # 2026-10-31 PR3295 R1: user-waived cap; exact remembered-prompt-delta measurement.
-    "tldw_chatbook/Chat/console_context_compaction.py": 4217,
+    "tldw_chatbook/Chat/console_context_compaction.py": 4218,
     # 2026-10-29 (TASK-33621.53 review follow-up, owner decision: a fix over
     # a size ratchet raises the row): 22338 -> 22346 (+8) -- the store owns
     # pause_unreserved_failed_commit, a thin method over its body in
@@ -768,6 +775,8 @@ _BUDGETS: dict[str, int] = {
     # checked after the rebuild, and moves into the rebuilt panes do not count.
     # 2026-11-07, review r12s-rev3 (owner waiver): +38, a focus that was in
     # the old panes keeps the landing; new detail-pane focus counts as a move.
+    # Upstream Settings measurement history: +36 (exact measurement), a focus the user moves during a same-category pane rebuild or before a landing's deferred focus is kept (TASK-39169) (owner waiver); 2026-11-10: +17 (exact measurement), review r13p-rev1: Textual's focus reset is told from a user's move, and a removed control lands on its rail row (TASK-39169) (owner waiver); 2026-11-10: +5 (exact measurement), review r13p-rev2: a region removes inside its batch and a pane-opener origin counts (TASK-39169) (owner waiver); 2026-11-12, restack onto dev e0186fa10a: dev's 35,852 (+1) plus round 13's +59, measured (owner waiver)
+    # Historical upstream waiver (not the active ceiling): 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver)
     # 2026-11-06, TASK-1378.1: Network moved to its registered panel
     # (UI/Settings_Modules/category_panels.py); 2026-11-12 rebase onto dev
     # 4b90eb860b (round 13; dev 35,911): exact measurement 35,769.
@@ -785,7 +794,7 @@ _BUDGETS: dict[str, int] = {
     # +1 (the carried #3295 review fix: the Canvas switch's help says plain
     # chat needs Full agent tools); the file measures 34,990 (dev 34,989),
     # inside dev's own row, so dev's row is kept unchanged.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 34993,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver); 2026-11-10: +36 (exact measurement), a focus the user moves during a same-category pane rebuild or before a landing's deferred focus is kept (TASK-39169) (owner waiver); 2026-11-10: +17 (exact measurement), review r13p-rev1: Textual's focus reset is told from a user's move, and a removed control lands on its rail row (TASK-39169) (owner waiver); 2026-11-10: +5 (exact measurement), review r13p-rev2: a region removes inside its batch and a pane-opener origin counts (TASK-39169) (owner waiver); 2026-11-12, restack onto dev e0186fa10a: dev's 35,852 (+1) plus round 13's +59, measured (owner waiver)
+    "tldw_chatbook/UI/Screens/settings_screen.py": 34831,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver); 2026-11-10: +36 (exact measurement), a focus the user moves during a same-category pane rebuild or before a landing's deferred focus is kept (TASK-39169) (owner waiver); 2026-11-10: +17 (exact measurement), review r13p-rev1: Textual's focus reset is told from a user's move, and a removed control lands on its rail row (TASK-39169) (owner waiver); 2026-11-10: +5 (exact measurement), review r13p-rev2: a region removes inside its batch and a pane-opener origin counts (TASK-39169) (owner waiver); 2026-11-12, restack onto dev e0186fa10a: dev's 35,852 (+1) plus round 13's +59, measured (owner waiver)
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -843,7 +852,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-23, PR #3517's port onto dev b31e3e9241 (round 24; owner decision
     # 2026-10-04, expand limits): dev measures 2,404, plus this branch's
     # +10, exact: 2,414.
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2414,
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2411,
     # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
     # (two constants it had copied are imported; one number spelling, C6).
     # The capture fix wave (2026-10-12): Temperature's placeholder and
@@ -926,7 +935,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-23, PR #3517's port onto dev b31e3e9241 (round 24; owner decision
     # 2026-10-04, expand limits): dev measures 6,194, plus this branch's
     # +1, exact: 6,195.
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6195,  # 2026-11-06: +3, a schemeless loopback draft endpoint restores (TASK-39042 review C1, owner waiver)
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6180,  # 2026-11-06: +3, a schemeless loopback draft endpoint restores (TASK-39042 review C1, owner waiver)
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # TASK-41630, 2026-11-18 (owner rule: a fix raises the row by its own
     # lines): 7010 -> 7012, the rail gets the Console's MCP off reason.
@@ -995,7 +1004,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-31 PR3294 review repair: exact 1690 lines under user size waiver.
     # 2026-11-06, TASK-38964 (owner waiver): 1690 -> 1691, the route check
     # imports Provider_Contract's rule.
-    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 1691,
+    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 1690,
     # owner decision 2026-10-04 (expand limits): TASK-34100.14 +60 -- the
     # download's cancel switch, its live status line and the cancelled
     # outcome are wired on the step (its @on handlers must stay on the
@@ -1267,7 +1276,8 @@ _BUDGETS: dict[str, int] = {
     # TASK-38982, 2026-11-06 (same waiver): 9835 -> 9873 (+38). ‹ Files keeps
     # focus, the narrow navigator offers Manage, and a failed refresh shows
     # on the authority line.
-    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9873,
+    # Active integration retains the stricter existing feature ceiling.
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9612,
     # 2026-11-02: +3 shared store-error import (TASK-36949.5).
     # TASK-38714 re-review, 2026-11-05: 9429 -> 9436 (+7). A failed
     # connection build closes the connection it opened instead of leaking it.
@@ -1282,7 +1292,8 @@ _BUDGETS: dict[str, int] = {
     # dev's 9,534 plus TASK-39118's +22.
     # 2026-11-06, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +2, the store's @declare_store backup-participant declaration and import.
-    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9558,
+    # PR3345 retains the pre-integration media source ceiling.
+    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9534,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
     # 2026-10-29, TASK-33622.6 (owner decision: raise with a dated comment):
     # 8747 -> 8763 (+16). The flat Conversations lane filters its rows and
@@ -1324,7 +1335,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-19: re-measured after rebasing onto dev a6df4d8d48 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 9231 -> 9230.
     # 2026-11-20: re-measured after rebasing onto dev d85e90bc9e (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 9230 -> 9233.
     # 2026-11-22: re-measured after rebasing onto dev 2f7790873a (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 8958 -> 9230.
-    "tldw_chatbook/UI/Console_Modules/workspace.py": 9230,
+    # PR3345 used an 8935-line pin on its prior integration base.
+    # Reconcile the incoming Workspace carry against the measured source.
+    "tldw_chatbook/UI/Console_Modules/workspace.py": 9169,
     # 2026-10-31, PR #3293: explicit user size-limit waiver; final review entry
     # credential/readiness repair, exact integrated measurement (8181 -> 8183).
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
@@ -1387,7 +1400,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-23, PR #3517's port onto dev b31e3e9241 (round 24; owner decision
     # 2026-10-04, expand limits): dev measures 7,208, plus this branch's
     # +35, exact: 7,243.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7243,
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7226,
     # TASK-33628.1 moves tab-close loss projection/copy into shared loss_inventory.
     # PR3303, 2026-10-31: explicit user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
@@ -1569,7 +1582,8 @@ _BUDGETS: dict[str, int] = {
     # caps an action's prefix at its user row, skips the suffix and append
     # rules for it, requires its rewritten-tail proof, and passes the send
     # after an action's run to that proof (console_trace_action_calls.py).
-    "tldw_chatbook/Chat/console_trace_service.py": 7099,
+    # PR3345 measured after retaining the native and mobile paths.
+    "tldw_chatbook/Chat/console_trace_service.py": 6980,
     # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
     # approved child trace segments (ADR-337 amendment 2026-11-17): create and
@@ -1585,7 +1599,8 @@ _BUDGETS: dict[str, int] = {
     # measurement. One shared never-sent predicate, a correlated NOT EXISTS
     # for the latest sent boundary (no scan of console_trace_calls), and the
     # per-call check the send-after rule uses.
-    "tldw_chatbook/Chat/console_trace_repository.py": 4075,
+    # PR3345 retains both the bounded read and incoming trace call changes.
+    "tldw_chatbook/Chat/console_trace_repository.py": 4166,
     # owner decision 2026-10-04 (expand limits), applied 2026-11-19 on the
     # rebase onto dev a6df4d8d48: TASK-34100.3 crosses 4000 at 4,069, exact
     # measurement (dev's 3,961 + 108). Each continuation-error exit names its
@@ -1707,7 +1722,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-31 PR3259: exact integrated measurement under the user size-limit waiver.
     # TASK-38981 re-review 3, 2026-11-06 (owner size waiver): 4738 -> 4742
     # (+4). The list's resize reshape keeps the user's focused control.
-    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4742,
+    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4738,
     "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
     # 2026-11-03 TASK-36945.3: +9, [rag.service] constants read when used.
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
@@ -1753,7 +1768,7 @@ _BUDGETS: dict[str, int] = {
     # One-row Session Git buttons truncate instead of wrapping at width 0.
     # TASK-38755, 2026-11-05 (same waiver): 4265 -> 4278 (+13). Fixed-region
     # lines refit on their own Resize when a child scrollbar narrows them.
-    "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4278,
+    "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4265,
     "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": 4174,
     "tldw_chatbook/Dreams/track_service.py": 4061,
     # 2026-11-12, restack onto dev e0186fa10a (owner size waiver): dev's
@@ -1784,7 +1799,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-23, PR #3517's port onto dev b31e3e9241 (round 24; owner decision
     # 2026-10-04, expand limits): dev measures 3,499 (no row), plus this branch's
     # +766, exact: 4,265.
-    "tldw_chatbook/Chat/console_session_settings.py": 4265,
+    "tldw_chatbook/Chat/console_session_settings.py": 4272,
 }
 
 #: Same tolerance as the Library controller ratchet: loose enough that

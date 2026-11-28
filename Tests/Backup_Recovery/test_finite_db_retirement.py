@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Backup_Recovery.test_participant_lifetimes import (
     local_root as local_root,  # noqa: PLC0414
 )
@@ -33,7 +34,6 @@ def worker_leases(db):
 @pytest.fixture(params=["subscriptions", "conversations", "owned_notes", "owned_runs", "owned_workspaces"])
 def offload(request, tmp_path, local_root, monkeypatch):
     if request.param.startswith("owned_"):
-        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
         from tldw_chatbook.DB.base_db import run_owned_db_call
         from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 
@@ -41,7 +41,7 @@ def offload(request, tmp_path, local_root, monkeypatch):
             db = CharactersRAGDB(tmp_path / "notes.db", "test")
             read = db.list_all_active_conversations
         elif request.param == "owned_runs":
-            db = AgentRunsDB(tmp_path / "runs.db")
+            db = owned_agent_runs_db(tmp_path / "runs.db")
             read = db.pending_wake_conversation_ids
         else:
             db = WorkspaceDB(tmp_path / "workspaces.db")
@@ -145,6 +145,9 @@ async def test_cancelled_awaiter_does_not_retire_running_native_work(offload):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fail", [False, True])
 async def test_app_retention_retires_its_constructed_database(tmp_path, local_root, monkeypatch, fail):
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
+
     observed = []
     run_ids = []
     report = change_retention.PruneReport(rows_pruned=7)
@@ -156,23 +159,27 @@ async def test_app_retention_retires_its_constructed_database(tmp_path, local_ro
             raise ValueError("prune failed")
         return report
 
-    monkeypatch.setattr(change_retention, "prune_change_history", prune)
-    # The pass prunes an existing runs DB only (TASK-34100.16.1).
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-
-    AgentRunsDB(tmp_path / "agent_runs.db").close()
-    result = await asyncio.to_thread(
-        change_retention.run_retention_for_app,
-        tmp_path / "chachanotes.db",
-        service=SimpleNamespace(available=True),
-    )
-    assert result is (None if fail else report)
-    assert not worker_leases(observed[0])
-    # Retirement leaves committed rows and the owner usable on a later call.
-    try:
-        assert observed[0].get_run(run_ids[0])["conversation_id"] == "kept"
-    finally:
-        observed[0].close()
+    runs_path = tmp_path / "agent_runs.db"
+    with ConsoleExecutionOwner.acquire(runs_path) as owner:
+        # Retire the seed's main-thread connection before launching the worker.
+        AgentRunsDB(runs_path, execution_owner=owner).close()
+        monkeypatch.setattr(change_retention, "prune_change_history", prune)
+        # The owned seed also satisfies the existing-file gate (TASK-34100.16.1).
+        assert (tmp_path / "agent_runs.db").is_file()
+        result = await asyncio.to_thread(
+            change_retention.run_retention_for_app,
+            tmp_path / "chachanotes.db",
+            service=SimpleNamespace(available=True),
+            execution_owner=owner,
+        )
+        assert result is (None if fail else report)
+        assert not worker_leases(observed[0])
+        # Retirement leaves committed rows and the owner usable on a later call.
+        try:
+            assert observed[0].get_run(run_ids[0])["conversation_id"] == "kept"
+        finally:
+            observed[0].close()
+    assert _local_pause_drains(), "retention left a storage lease open"
 
 
 def test_app_retention_never_creates_an_absent_runs_db(tmp_path, local_root):
@@ -366,6 +373,7 @@ def test_every_notes_scope_offload_retires_its_worker_handles():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_note_link_follow_read_retires_its_worker_connection(tmp_path, local_root):
     """Following a ``note://`` link leaves no pool-thread handle holding storage.
 

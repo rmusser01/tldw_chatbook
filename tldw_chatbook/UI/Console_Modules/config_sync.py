@@ -5,10 +5,13 @@ Also decides how often the 0.2 s poll pays for it (TASK-33620.15.1).
 
 import sys
 import time
+from asyncio import current_task
 from collections.abc import Awaitable, Callable
 from contextlib import ExitStack, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass
+from math import ceil, log2
+from threading import get_ident
 from typing import Any
 
 #: TASK-33620.15.1 (owner decision 2026-10-09): while the poll ticks (it
@@ -29,7 +32,12 @@ _clock = time.monotonic
 _POLL_TICK: ContextVar[bool] = ContextVar("console_poll_tick", default=False)
 #: The running sync is the poll's (set at its entry, for its own task).
 _POLL_SYNC: ContextVar[bool] = ContextVar("console_poll_sync", default=False)
-
+_FULL_RENDER_DEFERRAL: ContextVar[tuple[Any, Callable[[], bool]] | None] = (
+    ContextVar("console_full_render_deferral", default=None)
+)
+_TERMINAL_RENDER: ContextVar[tuple[Any, Any, str | None, int, Any] | None] = (
+    ContextVar("console_terminal_render", default=None)
+)
 
 def run_console_config_sync(
     sync: Callable[[], None],
@@ -326,15 +334,21 @@ async def prepare_console_presentation_sync(screen: Any) -> bool:
                     request.retire()
             if not warmed and not _same_readiness_key(key, projection._key()):
                 key = None  # A chat or model switch moved it mid-read.
-    # TASK-38696: the replay backs off only while one unmoved owner keeps
-    # refusing; a refusal for a switched chat or model starts over.
+    if not warmed:
+        _note_full_presentation_refusal(screen, key)
+    return warmed
+
+
+def _note_full_presentation_refusal(screen: Any, key: tuple | None) -> None:
+    from .console_spend_projection import _same_readiness_key
+
+    # A switched chat or model starts its own replay schedule.
     previous = getattr(screen, "_console_warm_refused_key", None)
     refusals = getattr(screen, "_console_warm_refusals", 0)
-    if not _same_readiness_key(key, previous):
-        refusals = 0
-    screen._console_warm_refused_key = None if warmed else key
-    screen._console_warm_refusals = 0 if warmed else refusals + 1
-    return warmed
+    screen._console_warm_refused_key = key
+    screen._console_warm_refusals = (
+        refusals + 1 if _same_readiness_key(key, previous) else 1
+    )
 
 
 async def rewarm_console_presentation(screen: Any) -> None:
@@ -361,15 +375,14 @@ async def rewarm_console_presentation(screen: Any) -> None:
         and not projection._retry_delay
     ):
         projection.run(lambda: None, life=projection.max_age)  # Expired only.
-        if projection.pending:
-            await projection._settled.wait()
+        await projection._wait_for_refresh()
 
 
 def full_sync_replay_delay(screen: Any) -> bool | float:
     """Delay for the whole-sync replay of a FULL that could not render.
 
-    TASK-38696: a refused warm-up used to replay every 0.2 s, starting another
-    config read each time, for as long as the refusal lasted. Each further
+    TASK-38696: a refusal used to replay every 0.2 s, starting another config
+    read each time, for as long as the refusal lasted. Each further
     consecutive refusal now doubles the wait, on TASK-38649's schedule (0.2 s
     up to 5 s). The first replay keeps the fixed 0.2 s timer (a cold mount's
     one refusal replays exactly as before), and so does a maintenance pause:
@@ -383,7 +396,9 @@ def full_sync_replay_delay(screen: Any) -> bool | float:
     refusals = getattr(screen, "_console_warm_refusals", 0)
     if refusals <= 1 or getattr(screen, "_console_sync_maintenance_paused", False):
         return True
-    return min(RETRY_FIRST_DELAY * 2 ** (refusals - 1), RETRY_MAX_DELAY)
+    cap_exponent = ceil(log2(RETRY_MAX_DELAY / RETRY_FIRST_DELAY))
+    delay = RETRY_FIRST_DELAY * 2 ** min(refusals - 1, cap_exponent)
+    return min(delay, RETRY_MAX_DELAY)
 
 
 def cut_replay_backoff(screen: Any, held: bool) -> None:
@@ -407,6 +422,8 @@ def cut_replay_backoff(screen: Any, held: bool) -> None:
         return
     if getattr(screen, "_console_replay_backoff_timer", None) is not None:
         screen._request_console_control_bar_sync()
+    elif getattr(screen, "_console_fixed_replay_backoff_at", None) is not None:
+        screen._console_fixed_replay_backoff_at = False
 
 
 def request_control_bar_sync(screen: Any, delayed: bool | float) -> None:
@@ -419,10 +436,18 @@ def request_control_bar_sync(screen: Any, delayed: bool | float) -> None:
     """
     backoff = getattr(screen, "_console_replay_backoff_timer", None)
     if getattr(screen, "_console_control_bar_sync_scheduled", False):
+        fixed = getattr(screen, "_console_fixed_replay_backoff_at", None)
+        if not delayed and fixed is not None:
+            screen._console_fixed_replay_backoff_at = False
+        elif delayed and delayed is not True and fixed is True:
+            # Keep the fixed callback for CORE, but it must not start FULL early.
+            screen._console_fixed_replay_backoff_at = time.monotonic() + delayed
         if delayed or backoff is None:
             return
         backoff.stop()  # Stopping a fired timer is a no-op; its run finds no replay.
     screen._console_replay_backoff_timer = None
+    # A fixed callback can adopt one deadline unless explicit work already needs it.
+    screen._console_fixed_replay_backoff_at = True if delayed is True else None
     screen._console_control_bar_sync_scheduled = True
     run = screen._run_coalesced_control_bar_sync
     if not delayed:
@@ -440,13 +465,18 @@ def run_console_presentation_sync(screen, sync: Callable[[], None]) -> bool:
         _screen_readiness_config,
     )
 
+    def defer():
+        full = _FULL_RENDER_DEFERRAL.get()
+        if full is None or full[0] is not screen or not full[1]():
+            screen._request_console_control_bar_sync(delayed=True)
+
     def render(projection=None):
         return run_console_config_sync(
             sync,
             maintenance_paused=getattr(
                 screen, "_console_sync_maintenance_paused", False
             ),
-            defer=lambda: screen._request_console_control_bar_sync(delayed=True),
+            defer=defer,
             checked_projection=projection,
         )
 
@@ -454,7 +484,7 @@ def run_console_presentation_sync(screen, sync: Callable[[], None]) -> bool:
     if getattr(screen, "_console_sync_maintenance_paused", False) or getattr(
         screen, "_closing", False
     ):
-        screen._request_console_control_bar_sync(delayed=True)
+        defer()
         return False
     value = _screen_readiness_config(screen)
     if not value or not screen._console_config_snapshot_is_disk_loaded(value):
@@ -463,7 +493,88 @@ def run_console_presentation_sync(screen, sync: Callable[[], None]) -> bool:
     return projection.run(lambda: render(projection))
 
 
-def replay_whole_console_sync(screen) -> bool:
+def _owns_full_presentation_replay(screen: Any) -> bool:
+    return (
+        getattr(screen, "_console_sync_in_progress", False)
+        and not _POLL_SYNC.get()
+        and getattr(screen, "_console_preparing_display_record", None) is None
+    )
+
+
+def _render_full_presentation(screen: Any, render: Callable[[], bool]) -> bool:
+    """Let the ordinary FULL pass own retry of its unfinished presentation."""
+    if not _owns_full_presentation_replay(screen):
+        return render() is not False or replay_whole_console_sync(screen)
+
+    from .console_spend_projection import (
+        ConsoleReadinessConfigProjection,
+        _same_readiness_key,
+        _screen_readiness_config,
+        _standard_readiness_projections,
+    )
+
+    projection = getattr(screen, "_console_readiness_config_projection", None)
+    stock = (
+        type(projection) is ConsoleReadinessConfigProjection
+        and projection in _standard_readiness_projections
+    )
+    attempted = projection.key if stock else None
+    thread, task = get_ident(), current_task()
+    active, deferred = True, False
+
+    def note_deferral() -> bool:
+        nonlocal deferred
+        # A child task can inherit this context, even after this pass exits.
+        if not active or get_ident() != thread or current_task() is not task:
+            return False
+        deferred = True
+        return True
+
+    token = _FULL_RENDER_DEFERRAL.set((screen, note_deferral))
+    failure = None
+    try:
+        rendered = render() is not False
+    except BaseException as error:
+        rendered, failure = False, error
+    finally:
+        active = False
+        _FULL_RENDER_DEFERRAL.reset(token)
+    if deferred and (rendered or failure is not None):
+        # The whole replay cannot retire this nested request on an error.
+        try:
+            screen._request_console_control_bar_sync(delayed=True)
+        except BaseException as retry_error:
+            if failure is None:
+                raise
+            raise failure from retry_error
+    if failure is not None:
+        raise failure
+    if rendered:
+        return True
+
+    delay = True
+    if (
+        stock
+        and not getattr(screen, "_console_sync_maintenance_paused", False)
+        and not getattr(screen, "_closing", False)
+        and screen._console_config_snapshot_is_disk_loaded(
+            _screen_readiness_config(screen)
+        )
+    ):
+        key = (
+            projection._key()
+            if getattr(screen, "_console_readiness_config_projection", None)
+            is projection
+            else None
+        )
+        _note_full_presentation_refusal(
+            screen, key if _same_readiness_key(attempted, key) else None
+        )
+        delay = full_sync_replay_delay(screen)
+    return replay_whole_console_sync(screen, delay=delay)
+
+
+def replay_whole_console_sync(screen, *, delay: bool | float = True) -> bool:
     """Hand the rest of a full UI sync to the coalesced control-bar replay.
 
     Returns:
@@ -471,7 +582,7 @@ def replay_whole_console_sync(screen) -> bool:
         the pass continue (``sync_console_core_state``) ignores it.
     """
     screen._console_control_bar_replay_whole_sync = True
-    screen._request_console_control_bar_sync(delayed=True)
+    screen._request_console_control_bar_sync(delayed=delay)
     return False
 
 
@@ -505,7 +616,37 @@ def settle_terminal_projection(
         or getattr(store, "active_session_id", None) != session_id
     ):
         return replay_whole_console_sync(screen)
-    return project_console_tick(screen)
+    token = _TERMINAL_RENDER.set(
+        (screen, store, session_id, get_ident(), current_task())
+    )
+    try:
+        return project_console_tick(screen)
+    finally:
+        _TERMINAL_RENDER.reset(token)
+
+
+def defer_terminal_send(
+    screen: Any, was_active: bool, stop_available: bool, send_label: str
+) -> bool:
+    """Hold the active composer's transition to Send until its transcript settles."""
+    if not was_active or stop_available or send_label != "Send":
+        return False
+    owner = terminal_projection_owner(screen)
+    if owner is None:
+        return False
+    store, session_id = owner
+    render = _TERMINAL_RENDER.get()
+    if (
+        render is not None
+        and render[0] is screen
+        and render[1] is store
+        and render[2] == session_id
+        and render[3] == get_ident()
+        and render[4] is current_task()
+    ):
+        return False
+    replay_whole_console_sync(screen)
+    return True
 
 
 def sync_console_core_state(screen) -> None:
@@ -613,6 +754,8 @@ def sync_config_unreadable_notice(screen) -> None:
 def run_coalesced_control_bar_sync(screen: Any, is_torn_down: Callable) -> None:
     """Service one accepted CORE handoff without reordering the original FULL."""
     screen._console_control_bar_sync_scheduled = False
+    fixed = getattr(screen, "_console_fixed_replay_backoff_at", None)
+    screen._console_fixed_replay_backoff_at = None
     if is_torn_down(screen):
         _abandon_console_config_handoffs(screen)
         screen._console_control_bar_replay_whole_sync = False
@@ -626,12 +769,21 @@ def run_coalesced_control_bar_sync(screen: Any, is_torn_down: Callable) -> None:
         if request is not None:
             request.retire()
     if whole:
-        if screen._console_sync_in_progress or paused:
+        deadline = fixed if type(fixed) is float else 0.0
+        busy = screen._console_sync_in_progress or paused
+        if busy or deadline > time.monotonic():
             request = getattr(screen, "_console_config_handoffs", {}).get("core")
             if not paused and request is not None and request.eligible():
                 sync_console_core_state(screen)
-            screen._request_console_control_bar_sync(delayed=True)
-            return
+            remaining = deadline - time.monotonic()
+            if not paused and remaining > 0:
+                screen._request_console_control_bar_sync(delayed=remaining)
+                return
+            if busy:
+                screen._request_console_control_bar_sync(delayed=True)
+                if fixed is False and screen._console_fixed_replay_backoff_at is True:
+                    screen._console_fixed_replay_backoff_at = False
+                return
         screen._console_control_bar_replay_whole_sync = False
         screen._console_sync_requested = False
         screen.run_worker(
@@ -653,14 +805,21 @@ def sync_console_rail_visibility(screen) -> bool:
     Returns:
         True after applying; False when the replay owns it.
     """
-    if run_console_presentation_sync(
-        screen,
-        lambda: screen._sync_console_rail_visibility_if_changed(
-            screen._current_console_rail_state()
-        ),
-    ):
-        return True
-    return replay_whole_console_sync(screen)
+
+    def render() -> bool:
+        return run_console_presentation_sync(
+            screen,
+            lambda: screen._sync_console_rail_visibility_if_changed(
+                screen._current_console_rail_state()
+            ),
+        )
+
+    if not _render_full_presentation(screen, render):
+        return False
+    if _owns_full_presentation_replay(screen):
+        screen._console_warm_refused_key = None
+        screen._console_warm_refusals = 0
+    return True
 
 
 class _Cadence:
@@ -1142,10 +1301,10 @@ def project_console_tick(screen: Any, *, force: bool = False) -> bool:
         if not force and unchanged and _clock() - cadence.at < RUN_BACKSTOP_SECONDS:
             cadence.owed = True
             return True
-        if screen._sync_console_rail_and_controls() is False:
-            # The tick's deferral: the coalesced whole-sync replay owns the
-            # render. A cold checked display defers without asking for one.
-            return replay_whole_console_sync(screen)
+        if not _render_full_presentation(
+            screen, screen._sync_console_rail_and_controls
+        ):
+            return False
     cadence.served = requested
     cadence.objects, cadence.values, cadence.at = objects, values, _clock()
     cadence.owed = False

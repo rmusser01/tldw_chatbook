@@ -420,7 +420,7 @@ def test_send_price_controller_is_constructed_with_late_bound_screen_edges(
     )
 
     settings = object()
-    store = object()
+    store = SimpleNamespace()
     launch = object()
     projection = object()
     screen._session._ensure_active_console_session_settings = lambda: settings
@@ -444,16 +444,29 @@ def test_send_price_controller_is_constructed_with_late_bound_screen_edges(
         )
 
 
-def test_draft_spend_refresh_is_wired_with_late_bound_screen_edges() -> None:
+def test_draft_spend_refresh_is_wired_with_late_bound_screen_edges(monkeypatch) -> None:
+    from tldw_chatbook.UI.Console_Modules import config_sync
+
     screen = _unmounted_console()
     controller = screen._console_draft_spend_refresh
     settings_calls: list[str] = []
     cost_calls: list[str] = []
+    admissions = []
+
+    def admitted_summary(owner, render):
+        admissions.append((owner, render))
+        render()
+        return True
+
+    # This wiring probe has no mounted screen or event loop. Mounted tests
+    # exercise the real gate for both accepted and deferred timer callbacks.
+    monkeypatch.setattr(config_sync, "run_console_presentation_sync", admitted_summary)
     screen._sync_console_settings_summary = lambda: settings_calls.append("settings")
     screen._sync_console_cost_chip = lambda: cost_calls.append("cost")
 
     controller.refresh()
 
+    assert admissions == [(screen, screen._sync_console_settings_summary)]
     assert settings_calls == ["settings"]
     assert cost_calls == ["cost"]
 
@@ -835,7 +848,7 @@ def test_current_chat_store_accessor_reads_the_live_attribute(
 ):
     """`lambda: self._console_chat_store` -- a bare attribute read, late."""
     screen = _unmounted_console()
-    sentinel = object()
+    sentinel = SimpleNamespace()
     with monkeypatch.context() as scoped:
         scoped.setattr(screen, "_console_chat_store", sentinel)
         accessor = getattr(getattr(screen, attr), accessor_name)

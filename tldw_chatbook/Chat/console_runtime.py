@@ -1,114 +1,27 @@
-"""App-owned Console runtime holder (task-15860, headless wake — Task 1).
+"""App-owned Console runtime holder for headless wake (TASK-15860).
 
-**This module changes WHO constructs the Console runtime objects, and
-nothing else.** It is the "pure ownership move" the owner made a staging
-condition for design A (`.superpowers/sdd/2026-08-14-headless-wake/
-DECISIONS.md`, owner answer (3)): separately reviewable and separately
-revertable from the semantics work that follows it.
+One lazy runtime on `app.console_runtime` owns the chat store and persistence,
+provider gateway, agent bridge and its AgentRunsDB, and chat controller. Fleet
+attention registers beside bridge construction and wake coordination inside
+the controller. The process-memory raw CLI refusal stash survives screen and
+controller replacement. Read-only accessors never construct missing services.
 
-## What it owns
+Navigation detaches only the exact mounted view. Its timers stay view-owned,
+and its disposal clears the enumerated `CONSOLE_VIEW_HOOK_SLOTS`, never the
+turn or its pending decisions. Incoming screens attach before the outgoing
+screen unmounts, so stale detach calls leave the new claim intact. Visibility,
+including covering modals, controls decision answerability (TASK-31520).
 
-One `ConsoleRuntime` per app owns the four objects `ChatScreen` used to
-build for itself:
+A newly created or detached runtime uses the viewless hooks. The three
+non-None defaults retain the unseen wake mark, decline user priority without
+a composer, and supply a display name. An in-progress wake re-arms its
+delivery UI hook on the next attachment. App exit refuses new wakes, then
+retires the controller before closing the gateway. Explicit user cancellation
+keeps its own turn boundary.
 
-- the `ConsoleChatStore` (with its `ChatPersistenceService`),
-- the `ConsoleProviderGateway`,
-- the `ConsoleAgentBridge` and the sibling `AgentRunsDB` file it is keyed
-  off, together with the `register_fleet_attention` fan-out registration
-  that `FleetDrainFanout.register`'s contract requires to sit next to
-  bridge construction (the wake coordinator's own registration travels
-  inside `ConsoleChatController.__init__`, so it moves with the
-  controller),
-- the `ConsoleChatController`.
-
-It also owns the process-memory raw CLI refusal stash bank so an exact draft
-survives replacement of the screen/controller that received the refusal.
-
-Each is built lazily, on first `ensure_*` call, from parameters the
-calling view supplies — the same parameters, in the same order, the
-screen's own `_ensure_*` methods passed before this module existed.
-
-## The lifetime landing (this file's second half)
-
-The runtime now **survives the screen's unmount**, and teardown is split
-in two:
-
-| Call | When | What it does |
-|---|---|---|
-| `leave_console_runtime` | every navigation AWAY from Console | detaches only that exact view claim and clears its disposable projections |
-| `dispose_console_runtime` | app exit (`_shutdown_app_owned_lifecycles`) | the permanent form — `controller.shutdown()` then `gateway.aclose()`, exactly the order `on_unmount` used to run |
-
-No turn is cancelled by `leave_console`: runtime custody and pending
-decisions outlive navigation. App disposal and explicit user cancellation
-remain the domain shutdown boundaries.
-
-TASK-31520 reuses and suspends Console during ordinary navigation. Actual
-visibility, including covering modals, controls decision answerability.
-
-## The view seam
-
-`attach_view` / `detach_view` are the ONE place a screen's callables meet
-the runtime, over the single enumerated `CONSOLE_VIEW_HOOK_SLOTS` list —
-set on attach, restored to viewless defaults on detach, same list both
-ways. They **replace** Task 1's `ConsoleRuntime.view` stand-in, which
-"protected" the overlapping-screens window by building a second runtime
-(i.e. by reproducing dispose-at-unmount). The real ordering is now
-explicit: `_complete_screen_navigation` constructs and `restore_state`s
-the INCOMING screen before `switch_screen` unmounts the outgoing one, so
-the incoming screen's `attach_view` runs FIRST and claims the runtime, and
-the outgoing screen's later `detach_view`/`leave_console` finds a
-different claimant and does nothing at all.
-
-Screen-owned TIMERS (transcript sync, fleet survivor tick, cost TTL) are
-not runtime state and are not in that list: they stay screen-owned and
-stay stopped at unmount.
-
-## What "viewless" MEANS (Task 4)
-
-The lifetime landing made every slot CLEARABLE; this one makes each
-cleared value semantically right, and says why next to it (`why` on each
-`ConsoleViewHookSlot`). Three slots are not `None`:
-`wake_conversation_in_view` (whose read site reads unwired as IN VIEW and
-would clear the ◈ mark for a delivery nobody could have seen),
-`wake_user_priority_probe` (no composer, so no user claim) and
-`_global_user_display_name` (called with no guard). Everywhere else
-`None` is kept only because the production read site's own guard makes it
-inert — or, for the two skill confirms, fail-closed-at-once.
-
-A runtime is viewless in two ways, and both are covered: after a detach,
-and from BIRTH (`ensure_chat_controller` with nothing attached — the
-wake-at-launch shape). `delivery_ui_hook` gets a third guarantee: it is
-re-armed by the next attach if a wake is still delivering, because a
-Console opened mid-delivery would otherwise never repaint the turn.
-
-## Why an app attribute rather than a global
-
-`app.console_runtime` follows `app.console_image_edit_operations`
-(`app.py`, Phase 1 of `TldwCli.__init__`): constructed on the app, and
-re-created lazily by the screen when a test's app object never had one
-(`ChatScreen._h3_image_edit_registry` is the shape copied here). Screens
-are never cached (`app.py` `_create_navigation_screen`), so anything that
-must outlive a navigation cannot live on one.
-
-## The wake gate (was: "still deliberately unchanged")
-
-- `_attempt` gates on `_disposed`: app exit refuses a wake; navigation does
-  not mutate the controller's cancellation event or pending decisions.
-
-## Continuity (task-15860 Task 3, landed)
-
-The store this holds is now the SINGLE source of truth for Console message
-history. `ChatScreen`'s `ScreenStateStore` snapshot no longer carries
-`sessions`, `messages_by_session` or `active_session_id`: it carries view
-state only (image view modes, task-resume projection, RAG source scope,
-staged live-work launch). Task 0's P3b executed why — with the runtime
-app-owned but the snapshot still carrying history, a wake turn that ran
-while Console was unmounted persisted four rows to ChaChaNotes and the
-returning user saw the two that predated the snapshot.
-
-Concretely: `_restore_native_console_state` no longer calls
-`ConsoleChatStore.restore_state`, so a returning view reads the live store
-it left behind — tree, active leaf, drafts, pending attachments and all.
+The live ConsoleChatStore owns message history, trees, drafts and attachments.
+Screen snapshots restore view state only, so a returning screen sees rows
+written by headless wake while it was away (TASK-15860, Tasks 3 and 4).
 """
 
 from __future__ import annotations
@@ -144,7 +57,6 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleViewHookSlot as ConsoleViewHookSlot,
 )
 from tldw_chatbook.Chat.console_display_state import console_sent_source_count
-from tldw_chatbook.Chat.console_hook_review import HookReviewResult, screen_hook_review_projection
 from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAssistantLibraryAccess,
     ConsoleAutoRetrieve,
@@ -160,6 +72,7 @@ from . import console_attention_preparation as _attention_preparation
 
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
+    from tldw_chatbook.Chat.console_hook_review import HookReviewResult
     from tldw_chatbook.Chat.console_voice_promotion import (
         VoicePromotionOwner,
         VoicePromotionQuitPermit,
@@ -171,7 +84,6 @@ if TYPE_CHECKING:
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 from tldw_chatbook.Provider_Contract.thinking_blocks import normalize_thinking_history_policy
 from tldw_chatbook.config import coerce_bool_setting
-from tldw_chatbook.Chat.console_capture_policy import runtime_capture_policy
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -183,6 +95,19 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
     from tldw_chatbook.Chat.console_worktree_recovery import ConsoleWorktreeRecovery
+
+
+def __getattr__(name: str) -> Any:
+    if name == "HookReviewResult":
+        from .console_hook_review import HookReviewResult
+
+        return HookReviewResult
+    if name == "runtime_capture_policy":
+        from .console_capture_policy import runtime_capture_policy
+
+        return runtime_capture_policy
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 #: The app attribute this module's helpers read and write. Named once so a
 #: test can assert on the protocol rather than on a string literal.
@@ -735,21 +660,13 @@ def _library_provider_for_app(
 ) -> Any | None:
     """Build one Library provider from frozen authority and app services.
 
-    The single builder for both Console entry points.
-    `ConsoleLibraryActivityController.build_provider` used to hold a
-    byte-for-byte copy of this body and delegates here instead
-    (TASK-32892 P0-1): the copies drifted when 5dd1077df6 retired
-    `LocalLibraryToolService`'s `collections_service` parameter and updated only
-    one of them, and because `ensure_chat_controller` binds THIS function over
-    whatever the screen passed, the stale copy was the one every shipped run
-    called -- raising `TypeError` on the default configuration and costing the
-    agent all 24 Library tools behind one swallowed warning.
+    Both Console entry points use this builder. Sharing it prevents the
+    provider-signature drift that disabled the Library tools (TASK-32892 P0-1).
 
     Args:
         app: Application instance whose local service attributes are read live.
         turn_context: Immutable production turn context, if available.
-        **activity_kwargs: Provider activity-capture bindings, when a view owns
-            one (`activity_attempt_id` / `activity_sink`).
+        **activity_kwargs: View-owned activity attempt and sink bindings.
 
     Returns:
         Configured provider, or ``None`` without a turn context.
@@ -854,48 +771,26 @@ def viewless_user_display_name() -> str:
 
 
 def viewless_conversation_in_view(conversation_id: str, session_id: str) -> bool:
-    """A runtime with no view is watching nothing. Always `False`.
+    """Keep unattended wakes unseen (TASK-15860, TASK-15971).
 
-    task-15860 Task 4, and the reason this function exists rather than a
-    `None`: `ConsoleFleetWakeCoordinator._conversation_in_view` reads an
-    UNWIRED probe as **in view** (the pre-screen rig's documented
-    clear-on-delivery), so a viewless default of `None` makes a wake that
-    nobody could possibly have watched commit as "seen" and CLEARS the
-    `FLEET_UNSEEN` ◈ mark. task-15971's whole point is the opposite: the
-    user must be able to learn that a supervisor turn ran and landed
-    while they were elsewhere.
+    The wake coordinator treats an unwired probe as in view and clears its
+    unseen mark. Returning False preserves the mark with no displayed chat.
 
     Args:
-        conversation_id: The delivered conversation (unused — no view
-            means no conversation is displayed).
-        session_id: The session the wake turn ran in (unused, same
-            reason).
-
-    Returns:
-        False, always.
+        conversation_id: Delivered conversation, unused without a view.
+        session_id: Wake session, unused without a view.
     """
     return False
 
 
 def viewless_user_priority_probe(session_id: str) -> bool:
-    """A runtime with no view has no user claim. Always `False`.
+    """Decline a user-priority claim when no composer is attached.
 
-    `_attempt`'s user-wins-ties gate asks the view whether the user is
-    mid-thought (a non-empty composer draft). With no view there is no
-    composer, so no user can hold a claim and a wake must not defer.
-
-    `None` happens to produce the same outcome today, because `_attempt`
-    guards with `callable(probe)` — but only by accident of that guard's
-    direction. The sibling probe above uses the OPPOSITE convention for
-    an unwired slot (uncertainty defers toward the badge), so leaving
-    this one's correctness resting on a `callable()` check one line of
-    someone else's refactor away is not a default, it is a coincidence.
+    The wake's tie-break checks for a nonempty composer draft. Return False
+    explicitly so the default does not depend on the caller's callable check.
 
     Args:
-        session_id: The session a wake would fire into (unused).
-
-    Returns:
-        False, always.
+        session_id: Wake session, unused without a composer.
     """
     return False
 
@@ -1180,9 +1075,12 @@ class ConsoleRuntime:
         self._response_rule_usage: dict[str, Any] = {}
         self._agent_bridge: Any | None = None
         self._worktree_recovery = None
+        self._execution_owner = None
+        self._remote_projection = None
+        self._remote_receipts = None
         self._agent_runs_db: Any | None = None
         self._activity_receipts: Any | None = None
-        self._activity_receipts_lock = Lock()
+        self._activity_receipts_lock = RLock()
         self._receipt_owner_thread_id = get_ident()
         self._activity_hydration_task: asyncio.Task[int] | None = None
         self._change_review_coordinator: Any | None = None
@@ -2113,6 +2011,9 @@ class ConsoleRuntime:
             self._retire_response_rules()
             self._response_rules = None
         self._chat_store = value
+        if value is not None:
+            value.on_persisted_identity = self.register_saved_conversation
+
         if value is not None and hasattr(value, "on_active_session_changed"):
             value.on_active_session_changed = self._on_active_session_changed
 
@@ -2585,6 +2486,145 @@ class ConsoleRuntime:
         sessions = store.sessions() if store is not None else ()
         return any(session.id == session_id for session in sessions)
 
+    def register_saved_conversation(self, session_id: str, conversation_id: str | None) -> None:
+        """Publish committed native identity without replacing a live reservation."""
+        identities = getattr(self, "_remote_saved_sessions", None)
+        if identities is None:
+            identities = self._remote_saved_sessions = {}
+        for saved, native in tuple(identities.items()):
+            if native == session_id and saved != conversation_id:
+                identities.pop(saved, None)
+        if conversation_id:
+            identities.setdefault(conversation_id, session_id)
+
+    async def open_remote_conversation(self, conversation_id: str):
+        """Open the one ready native saved owner, independently of desktop scope."""
+        from .console_conversation_hydration import (
+            _hydrate_console_session,
+            hydrate_console_generation_settings,
+            load_console_conversation_tree,
+        )
+        from .console_launch_wake import _ensure_launch_runtime
+
+        if self._workflow_closing:
+            raise RuntimeError("Console owner is shutting down.")
+        self._raise_if_disposed_or_session_fenced(None)
+        controller = _ensure_launch_runtime(self._app)
+        if controller is None:
+            raise RuntimeError("Console owner is unavailable.")
+        store = controller.store
+
+        async def hydrate(operation):
+            tree = await load_console_conversation_tree(self._app, conversation_id)
+            if self._workflow_closing:
+                raise RuntimeError("Console owner is shutting down.")
+            self._raise_if_disposed_or_session_fenced(None)
+            if tree is None:
+                raise ValueError("Saved conversation is unavailable.")
+            conversation = tree["conversation"]
+            try:
+                app_config = self._app.app_config
+            except AttributeError:
+                app_config = {}
+            settings = hydrate_console_generation_settings(
+                app_config or {}, conversation
+            )
+            session = await _hydrate_console_session(
+                app=self._app,
+                store=store,
+                conversation_id=conversation_id,
+                tree=tree,
+                settings=settings.settings,
+                generation_durable_snapshot=settings.durable_snapshot,
+                generation_metadata_status=settings.metadata_status,
+                target_scope_type="workspace"
+                if conversation.get("workspace_id")
+                else "global",
+                target_workspace_id=conversation.get("workspace_id"),
+                activate=False,
+                _operation=operation,
+            )
+            self.register_saved_conversation(session.id, conversation_id)
+            return session
+
+        return await store.resolve_saved_session(conversation_id, hydrate)
+
+    def ensure_remote_projection(self, host_identity):
+        """Bind private served projection to the authenticated parent incarnation."""
+        from tldw_chatbook.Chat.console_remote_models import ConsoleEventBuffer
+
+        from .console_remote_projection import ConsoleRemoteProjection
+
+        if self._disposed or self._workflow_closing:
+            raise RuntimeError("Console owner is shutting down.")
+        if self._remote_projection is None:
+            self._remote_projection = ConsoleRemoteProjection(
+                self, host_identity, ConsoleEventBuffer()
+            )
+        elif self._remote_projection.host_identity != host_identity:
+            raise ValueError("Console host identity changed.")
+        return self._remote_projection
+
+    def ensure_remote_receipts(
+        self, host_identity, *, configuration_metadata_loader: Callable[[], object]
+    ):
+        """Use the canonical native run store after its normal lazy admission."""
+        from .console_remote_commands import ConsoleRemoteCommands
+        from .console_remote_receipts import ConsoleRemoteReceipts
+
+        if self._disposed or self._workflow_closing or self._agent_runs_db is None:
+            raise RuntimeError("Console receipt owner is unavailable.")
+        self._agent_runs_db._require_execution_owner()
+        if self._remote_receipts is None:
+            self._remote_receipts = ConsoleRemoteReceipts(
+                ConsoleRemoteCommands(
+                    self,
+                    host_identity,
+                    configuration_metadata_loader=configuration_metadata_loader,
+                ),
+                self._agent_runs_db.command_receipts,
+                host_identity,
+            )
+        elif self._remote_receipts.host_identity != host_identity:
+            raise ValueError("Console host identity changed.")
+        return self._remote_receipts
+
+    def _observe_remote_custody(self, turn_id, *, state, native_id=None, reason=None):
+        receipts = self._remote_receipts
+        if receipts is None:
+            return
+        try:
+            receipts.observe(turn_id, state=state, native_id=native_id, reason=reason)
+            if self._remote_projection is not None:
+                sequence = self._remote_projection.events.publish("console.changed", {})
+                self._remote_projection.events.note_changed(sequence)
+        except Exception as error:  # noqa: BLE001 - a failed observer cannot retract native acceptance.
+            logger.warning(
+                "Console receipt observation failed (exception_type={})",
+                type(error).__name__,
+            )
+
+    def remote_project_decisions(self, session_id: str) -> tuple[dict, ...]:
+        """Expose retained reviews that require the terminal without leaking bodies."""
+        with self._project_decision_lock:
+            return tuple(
+                {
+                    "kind": kind,
+                    "round_id": decision.decision_id,
+                    "run_id": None,
+                    "supported": False,
+                    "answerable": False,
+                    "reason": "Open terminal to review project instructions.",
+                    "action": "open_terminal",
+                }
+                for kind, decisions in (
+                    ("project_instruction_binding", self._project_binding_decisions),
+                    ("project_instruction_dispatch", self._project_dispatch_decisions),
+                )
+                for decision in decisions.values()
+                if decision.session_id == session_id and not decision.completed.is_set()
+            )
+
     def resolve_project_instruction_binding(
         self, decision_id: str, action: str, binding_id: str | None
     ) -> bool:
@@ -2951,43 +2991,17 @@ class ConsoleRuntime:
         received_intent: Any = None,
     ) -> _ConsoleTurnCustodyRecord:
         """Retain one request before its task may begin running."""
-        identity = request if request is not None else received_intent
-        if identity.turn_id in self._turn_custody:
-            raise RuntimeError("Console turn is already in runtime custody.")
-        record = _ConsoleTurnCustodyRecord(
-            turn_id=identity.turn_id,
-            session_id=identity.session_id,
-            request=request,
-            store=store if store is not None else self._chat_store,
+        from .console_send_start import _register_custody
+
+        return _register_custody(
+            self,
+            request,
+            attachments,
+            staged_evidence_revision,
+            store=store,
             received_claim=received_claim,
             received_intent=received_intent,
-            inputs=_ConsoleTurnCustodyInputs(
-                attachments=attachments,
-                staged_evidence_revision=staged_evidence_revision,
-            ),
         )
-        self._turn_custody[record.turn_id] = record
-        self._clear_staged_evidence_receipt(record.session_id)
-        if self._app is not None and self._chat_store is not None:
-            session = next(
-                (
-                    item
-                    for item in self._chat_store.sessions()
-                    if item.id == identity.session_id
-                ),
-                None,
-            )
-            record.archive_conversation_id = (
-                session.persisted_conversation_id if session is not None else None
-            )
-            if record.archive_conversation_id:
-                reservations = getattr(self._app, "_conversation_send_inflight", None)
-                if reservations is None:
-                    reservations = self._app._conversation_send_inflight = {}
-                reservations[record.archive_conversation_id] = (
-                    reservations.get(record.archive_conversation_id, 0) + 1
-                )
-        return record
 
     def has_custodied_turns(self, session_id: str | None = None) -> bool:
         """Whether accepted work is in custody, even before its run starts.
@@ -3004,34 +3018,17 @@ class ConsoleRuntime:
             record.session_id == session_id for record in self._turn_custody.values()
         )
 
-    def _release_custody(self, turn_id: str) -> None:
-        """Drop the runtime's final references to an accepted turn."""
-        record = self._turn_custody.pop(turn_id, None)
-        if record is not None:
-            if (record.store is not None and record.received_claim is not None) and (
-                record.store.release_received_turn(record.received_claim)
-            ):
-                self._note_received_admission_changed(record.store, record.session_id)
-            record.store = None
-            record.received_claim = None
-            record.received_intent = None
-            if record.archive_conversation_id:
-                reservations = self._app._conversation_send_inflight
-                remaining = reservations.get(record.archive_conversation_id, 1) - 1
-                if remaining:
-                    reservations[record.archive_conversation_id] = remaining
-                else:
-                    reservations.pop(record.archive_conversation_id, None)
-                record.archive_conversation_id = None
-            if self._archive_recovery is not None and record.request is not None:
-                self._archive_recovery.release_user_proof(
-                    record.request.recovery_user_origin
-                )
-            record.request = None
-            record.inputs.attachments = ()
-            record.inputs.staged_evidence_revision = None
-            record.task = None
-            self._wake_first_send()
+    def _release_custody(
+        self, turn_id: str, *, user_proof_transferred: bool = False
+    ) -> None:
+        """Release turn inputs, preserving provenance already owned by the queue."""
+        from .console_send_start import _release_custody
+
+        return _release_custody(
+            self,
+            turn_id,
+            user_proof_transferred=user_proof_transferred,
+        )
 
     def _note_received_admission_changed(self, store, session_id: str) -> None:
         """Publish activity revision without copying the store's admission state."""
@@ -3106,7 +3103,6 @@ class ConsoleRuntime:
             and (not unpromoted_only or record.request is None)
             for record in self._turn_custody.values()
         )
-
 
     def cancel_received_intents(self, session_id: str | None = None) -> bool:
         """Cancel intake custody that is not yet durably accepted (TASK-33621.22)."""
@@ -3204,6 +3200,7 @@ class ConsoleRuntime:
         hook_read: Any = None,
         first_send_source: tuple,
     ) -> Any:
+        """Run one screen-free turn using only its frozen custody record."""
         from . import console_received_dispatch
 
         return await console_received_dispatch._run_custodied_turn(
@@ -3632,66 +3629,15 @@ class ConsoleRuntime:
         terminal_callback: Callable[[bool], None] | None,
     ) -> None:
         """Consume a task result and release its retained sensitive inputs."""
-        record = self._turn_custody.get(turn_id)
-        if record is not None and record.task is not task:
-            record = None
-        accepted = False
-        try:
-            result = task.result()
-            accepted = bool(getattr(result, "accepted", False))
-        except asyncio.CancelledError:
-            if (
-                record is not None
-                and recover_before_acceptance
-                and not record.inputs.durable_accepted
-                and self._chat_store is not None
-                and any(
-                    item.id == record.session_id for item in self._chat_store.sessions()
-                )
-            ):
-                self._record_turn_recovery(record)
-        except BaseException as exc:
-            if (
-                record is not None
-                and recover_before_acceptance
-                and not record.inputs.durable_accepted
-            ):
-                refused = isinstance(exc, _ConsoleTurnRefusedError)
-                self._record_turn_recovery(
-                    record,
-                    reason=exc.reason if refused else "",
-                    preparation_id=exc.preparation_id if refused else None,
-                    card_held=refused and exc.card_held,
-                )
-                if refused and exc.returned_draft_revision is not None:
-                    # TASK-33621.59: its attachments follow the text back.
-                    self.return_turn_recovery_to_draft(
-                        exc.preparation_id,
-                        expected_draft_revision=exc.returned_draft_revision,
-                    )
-            logger.warning(
-                "Console runtime turn ended with exception_type={}",
-                type(exc).__name__,
-            )
-        finally:
-            accepted = accepted or bool(
-                record is not None and record.inputs.durable_accepted
-            )
-            if record is not None:
-                self._release_custody(record.turn_id)
-            if terminal_callback is not None:
-                try:
-                    terminal_callback(accepted)
-                except Exception as exc:  # noqa: BLE001 -- terminal cleanup is final
-                    logger.warning(
-                        "Console runtime terminal callback failed "
-                        "(exception_type={})",
-                        type(exc).__name__,
-                    )
-            # Terminal rows and their exact unseen marks are committed by the
-            # store before the controller returns. Recompute once per turn,
-            # never from streaming/token callbacks.
-            self.request_console_attention_refresh()
+        from .console_send_start import _finish_custodied_turn
+
+        return _finish_custodied_turn(
+            self,
+            task,
+            turn_id=turn_id,
+            recover_before_acceptance=recover_before_acceptance,
+            terminal_callback=terminal_callback,
+        )
 
     def _ensure_canvas_profile_snapshot(self) -> Any:
         """Share one lazy process owner with an early served-child handshake."""
@@ -3846,6 +3792,7 @@ class ConsoleRuntime:
         return CanvasScope(
             session_id=session_id,
             conversation_id=session.persisted_conversation_id or session_id,
+            ephemeral=session.ephemeral,
             active_message_ids=active_ids,
             selected_canvas_id=None,
             selected_revision_id=None,
@@ -4388,6 +4335,7 @@ class ConsoleRuntime:
         """
         if self._chat_store is not None or self._disposed:
             return self._chat_store
+        console_runtime = _maintenance_source_sys.modules[__name__]
         from tldw_chatbook.Chat.chat_persistence_service import (
             ChatPersistenceService,
         )
@@ -4493,10 +4441,10 @@ class ConsoleRuntime:
                         read_normalized_calls if legacy_normalization_enabled else None
                     ),
                     normalized_reads_enabled=lambda: (
-                        runtime_capture_policy().normalized_reads_enabled
+                        console_runtime.runtime_capture_policy().normalized_reads_enabled
                     ),
                     normalized_writes_enabled=lambda: (
-                        runtime_capture_policy().normalized_writes_enabled
+                        console_runtime.runtime_capture_policy().normalized_writes_enabled
                     ),
                     compatibility_metrics=self.trace_compatibility_metrics,
                 )
@@ -4612,6 +4560,7 @@ class ConsoleRuntime:
         if callable(factory):
             self._provider_gateway = factory()
         else:
+            console_runtime = _maintenance_source_sys.modules[__name__]
             from tldw_chatbook.Chat.console_provider_gateway import (
                 ConsoleProviderGateway,
             )
@@ -4639,11 +4588,26 @@ class ConsoleRuntime:
                 ),
                 trace_call_boundary_factory=trace_call_boundary_factory,
                 normalized_writes_enabled=lambda: (
-                    runtime_capture_policy().normalized_writes_enabled
+                    console_runtime.runtime_capture_policy().normalized_writes_enabled
                 ),
                 trace_compatibility_metrics=self.trace_compatibility_metrics,
             )
         return self._provider_gateway
+
+    def ensure_execution_owner(self, run_store: Path):
+        """Lazily own execution for the canonical sibling run store."""
+        from tldw_chatbook.DB.console_execution_owner import (
+            ConsoleExecutionOwner,
+            ConsoleExecutionUnavailable,
+        )
+
+        with self._activity_receipts_lock:
+            if self._disposed:
+                raise ConsoleExecutionUnavailable("runtime_disposed")
+            if self._execution_owner is None:
+                self._execution_owner = ConsoleExecutionOwner.acquire(run_store)
+            self._execution_owner.require_current(run_store)
+            return self._execution_owner
 
     def ensure_activity_receipt_service(self) -> Any | None:
         """Create local result storage without constructing Console or a provider.
@@ -4665,9 +4629,21 @@ class ConsoleRuntime:
             db_path = getattr(db, "db_path", None) if db is not None else None
             if not db_path or str(db_path) == ":memory:":
                 return None
+            from tldw_chatbook.config import preflight_selected_console_stores
             from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-            runs_db = AgentRunsDB(Path(db_path).parent / "agent_runs.db")
+            try:
+                workspace_db = self._app.local_workspace_db
+            except AttributeError:
+                workspace_db = None
+            preflight_selected_console_stores(
+                chat_path=db_path,
+                workspace_path=getattr(workspace_db, "db_path", None),
+            )
+            run_store = Path(db_path).parent / "agent_runs.db"
+            runs_db = AgentRunsDB(
+                run_store, execution_owner=self.ensure_execution_owner(run_store)
+            )
             try:
                 service = _LazyConsoleActivityReceiptService(
                     runs_db,
@@ -4890,7 +4866,6 @@ class ConsoleRuntime:
         self._activity_hydration_task = task
         return task
 
-
     async def _drain_activity_hydration(self) -> bool:
         """Join the exact hydration owner, retaining cancellation until it settles."""
         task = self._activity_hydration_task
@@ -5056,7 +5031,6 @@ class ConsoleRuntime:
         )
         return await asyncio.shield(answer)
 
-
     def _hook_review_presentation_current(
         self,
         review_id: str,
@@ -5068,6 +5042,8 @@ class ConsoleRuntime:
             return False
         # The owning modal suspends the Console and clears reconciliation.
         # Its current token and attachment still identify an answerable review.
+        from .console_hook_review import screen_hook_review_projection
+
         try:
             projection = screen_hook_review_projection(view.app.screen)
         except (AttributeError, RuntimeError):
@@ -5079,7 +5055,6 @@ class ConsoleRuntime:
             and projection.presentation_token is token
             and projection.attachment_generation == self._attached_generation
         )
-
 
     @staticmethod
     async def _await_hook_review_work(task):
@@ -5097,7 +5072,6 @@ class ConsoleRuntime:
                 task.exception()
             raise cancelled
         return task.result()
-
 
     async def _execute_hook_review_operation(self, host, operation, expected, keys):
         snapshot = None
@@ -5155,7 +5129,6 @@ class ConsoleRuntime:
                     snapshot = producer.result()
             host.finish_hook_review_operation(operation, snapshot, error=error)
 
-
     def _start_hook_review_operation(self, host, operation, expected, keys):
         coroutine = self._execute_hook_review_operation(host, operation, expected, keys)
         try:
@@ -5179,7 +5152,6 @@ class ConsoleRuntime:
 
         task.add_done_callback(finished)
         return task
-
 
     async def apply_hook_review_action(
         self,
@@ -5211,7 +5183,6 @@ class ConsoleRuntime:
         task = self._start_hook_review_operation(host, operation, expected, keys)
         return await self._await_hook_review_work(task)
 
-
     def resolve_initial_hook_review(
         self,
         review_id: str,
@@ -5238,7 +5209,6 @@ class ConsoleRuntime:
             review_id, generation, result, presentation_token=presentation_token
         )
 
-
     async def _drain_hook_review_operations(self, session_id=None) -> bool:
         controller = self._chat_controller
         host = getattr(controller, "_interrupt_host", None)
@@ -5257,7 +5227,6 @@ class ConsoleRuntime:
                         ) from None
                     cancelled = True
         return cancelled
-
 
     def ensure_hook_permissions(self) -> HookPermissions:
         """Return the app-owned consent owner, independent of any view."""
@@ -5457,6 +5426,8 @@ class ConsoleRuntime:
                 derive = getattr(controller, "pending_decision_projection", None)
                 if callable(derive):
                     projection = derive(session_id)
+        from .console_hook_review import screen_hook_review_projection
+
         try:
             app = self.view.app
             visible_hook_review = any(
@@ -6284,25 +6255,17 @@ class ConsoleRuntime:
         *,
         timeout_seconds: float = CONSOLE_RUNTIME_SHUTDOWN_GRACE_SECONDS,
     ) -> None:
-        """Destroy the runtime. The permanent, app-exit form.
+        """Permanently retire the app-owned runtime at app exit.
 
-        Keeps the pre-15860 `ChatScreen.on_unmount` order exactly:
-        `await controller.shutdown()` (which tombstones the queue, sets the
-        cancellation Event permanently, and cancels/awaits EVERY session's
-        stream task) and then `await gateway.aclose()`. Reached from
-        `TldwCli._shutdown_app_owned_lifecycles`.
+        Keep the original order (TASK-15860): shut down the controller, which
+        tombstones the queue, latches cancellation and awaits every stream,
+        then close the gateway.
 
-        **The built objects are NOT dropped, and `_disposed` latches.**
-        `_shutdown_app_owned_lifecycles` runs BEFORE Textual closes screen
-        state, so a Console screen -- and its timers -- can still be live
-        while this runs, and there are ~75 `_ensure_console_chat_*` call
-        sites reachable from those. Dropping the references would let one
-        of them BUILD A FRESH CONTROLLER during quit, which nothing would
-        ever shut down; returning `None` instead would crash a tick that
-        has never had to handle it. Keeping the torn-down objects is the
-        only option that does neither: a shut-down controller already
-        refuses work through its permanently-set cancellation Event, which
-        is exactly the right answer at exit.
+        App lifecycle shutdown runs before Textual closes the Console and
+        its timers. Keep the retired instances and latch _disposed so those
+        callbacks can only reach the closed controller. Clearing references
+        could rebuild a live controller during quit, while returning None
+        would break existing timer callers.
         """
         controller = self._chat_controller
         recovery_owner = None
@@ -6338,6 +6301,8 @@ class ConsoleRuntime:
                         recovery_owner.dispose()
                     except BaseException as error:  # noqa: BLE001 - a failed fence cannot skip already-owned physical cleanup.
                         wake_fence_error = error
+            if self._remote_projection is not None:
+                self._remote_projection.close()
             coordinator = getattr(self, "_workflow_coordinator", None)
             if coordinator is not None:
                 from .console_workflow_runs import WorkflowShutdownRetained
@@ -6483,7 +6448,6 @@ class ConsoleRuntime:
             if cancelled:
                 raise asyncio.CancelledError
 
-
     async def _dispose_owned(
         self,
         *,
@@ -6492,7 +6456,6 @@ class ConsoleRuntime:
     ) -> None:
         """Run the existing teardown once under its original shared deadline."""
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + max(0.0, float(timeout_seconds))
         if self._change_review_consent_service is not None:
             self._change_review_consent_service.begin_close()
         if self._rule_helper_pool is not None:
@@ -6529,6 +6492,16 @@ class ConsoleRuntime:
         with self._execution_capacity_lock, self._canvas_native_lock:
             self._disposed = True
             self._canvas_native_view_binding = None
+        saved_cancelled = False
+        close_saved_operations = getattr(
+            self._chat_store, "close_saved_session_operations", None
+        )
+        if callable(close_saved_operations):
+            try:
+                await close_saved_operations()
+            except asyncio.CancelledError:
+                saved_cancelled = True
+        deadline = loop.time() + max(0.0, float(timeout_seconds))
         self._seal_hooks_v2()
         hook_host = getattr(self._chat_controller, "_interrupt_host", None)
         if hook_host is not None:
@@ -6748,7 +6721,7 @@ class ConsoleRuntime:
             self._bounded_wait(drain_tasks, timeout_seconds=remaining_seconds()),
             name="console-dispose-drain",
         )
-        cancel_requested = recovery_shutdown_cancelled
+        cancel_requested = saved_cancelled or recovery_shutdown_cancelled
         while True:
             try:
                 pending = await asyncio.shield(drain)
@@ -6850,9 +6823,10 @@ class ConsoleRuntime:
         # coordinator. Only after every trusted producer is tombstoned may
         # the shared Buddy sink release its remaining owner tokens.
         self._persona_buddy_sink.dispose()
+        coordinator_retired = coordinator is None
         if coordinator is not None:
             try:
-                await asyncio.to_thread(coordinator.shutdown, 2.0)
+                coordinator_retired = await asyncio.to_thread(coordinator.shutdown, 2.0)
             except Exception:  # noqa: BLE001 - quit must not die on teardown
                 logger.opt(exception=True).warning(
                     "Console runtime: Change Review shutdown failed at dispose."
@@ -6862,30 +6836,34 @@ class ConsoleRuntime:
 
         receipt_retirement_incomplete = not await retire_agent_runs_db(runs_db)
 
-        async def dispose_scratch() -> None:
+        async def dispose_scratch() -> bool:
             try:
-                await asyncio.to_thread(self._scratch_spaces.dispose)
+                return await asyncio.to_thread(self._scratch_spaces.dispose) is True
             except Exception as exc:  # noqa: BLE001 - quit must continue
                 logger.warning(
                     "Console runtime: scratch cleanup failed at dispose category={}",
                     type(exc).__name__,
                 )
+                return False
 
-        async def close_gateway() -> None:
+        async def close_gateway() -> bool:
             close = getattr(gateway, "aclose", None)
             if not callable(close):
-                return
+                return True
             try:
                 if inspect.iscoroutinefunction(close):
-                    await close()
-                    return
-                result = await asyncio.to_thread(close)
-                if inspect.isawaitable(result):
-                    await result
+                    result = await close()
+                else:
+                    result = await asyncio.to_thread(close)
+                    if inspect.isawaitable(result):
+                        result = await result
+                return result is not False
             except Exception:  # noqa: BLE001 - quit must continue
                 logger.opt(exception=True).warning(
                     "Console runtime: provider gateway close failed at dispose."
                 )
+                return False
+
         try:
             totals = self.trace_compatibility_snapshot()
             logger.info(
@@ -6923,6 +6901,28 @@ class ConsoleRuntime:
         for task in cleanup_pending:
             task.cancel()
             task.add_done_callback(self._consume_task_outcome)
+        # A bounded timeout is not proof that a thread/provider callback retired.
+        # Uncertain owners stay strongly retained until process exit (ADR-244).
+        if (
+            self._execution_owner is not None
+            and not pending
+            and not cleanup_pending
+            and coordinator_retired
+            and not receipt_retirement_incomplete
+            and all(
+                not task.cancelled()
+                and task.exception() is None
+                and task.result() is True
+                for task in cleanup_tasks
+            )
+            and all(
+                not task.cancelled()
+                and task.exception() is None
+                and task.result() is not False
+                for task in drain_tasks
+            )
+        ):
+            self._execution_owner.close()
         if (
             maintenance_cancelled
             or cancel_requested
@@ -6986,16 +6986,12 @@ def ensure_console_runtime(app: Any, *, view: Any | None = None) -> ConsoleRunti
     need lazy construction.
 
     Args:
-        app: The app object to read/attach the runtime on. `None` is
-            tolerated — a detached runtime is returned rather than raising,
-            because the screen's own accessors are reached from bare
-            `ChatScreen.__new__` fixtures.
-        view: The `ChatScreen` asking. The SAME runtime is shared across
-            views now (it outlives every one of them); a new view simply
-            claims it through `attach_view`, which opens a fresh visit.
+        app: App that owns the runtime. Bare-screen fixtures may pass None and
+            use a detached fallback.
+        view: Optional screen to claim the shared runtime for a new visit.
 
     Returns:
-        ConsoleRuntime: The runtime `view` should use.
+        The runtime for this app and view.
     """
     runtime = getattr(app, CONSOLE_RUNTIME_ATTR, None)
     try:

@@ -1089,6 +1089,15 @@ EXPECTED_TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "metadata",
         }
     ),
+    "mobile_consolidation_batches": frozenset(
+        {
+            "operation_id",
+            "source_fingerprint",
+            "batch_key",
+            "mapping_json",
+            "committed_at",
+        }
+    ),
     "note_folder_memberships": frozenset(
         {
             "id",

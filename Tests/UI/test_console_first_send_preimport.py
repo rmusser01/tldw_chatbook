@@ -1132,6 +1132,7 @@ def test_cold_send_load_recorder_observes_module_scope_external_dependencies(
     (tmp_path / "pr3339_recorder_failure.py").write_text(
         "raise ValueError('loader failure')\n", encoding="utf-8"
     )
+    importlib.invalidate_caches()
 
     with pytest.raises(ValueError, match="loader failure"):
         with _recording_cold_send_loads() as failed:

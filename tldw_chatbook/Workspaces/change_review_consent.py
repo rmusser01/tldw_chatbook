@@ -255,7 +255,6 @@ class ChangeReviewConsentService:
         """
         return self._admission_revision
 
-
     def _observe(self, workspace_id):
         with self._lock:
             if self._disposed or workspace_id in self._toggling:
@@ -450,8 +449,7 @@ class ChangeReviewConsentService:
                     self._queue.task_done()
         for work in discarded:
             if work.ticket is not None:
-                # returned() activates the ticket itself and still returns the
-                # slot when a changed source refuses that scope (TASK-41957).
+                # This exact queue pop proves its callback never started.
                 work.ticket.returned(worker=True, handoff=True)
 
     def shutdown(self, *, timeout: float = 1.0) -> None:
@@ -518,6 +516,7 @@ class ChangeReviewConsentService:
             return False
         finally:
             if ticket is not None and not queued:
+                # Admission returned its scopes and no queue owns this work.
                 ticket.returned(worker=True, handoff=True)
 
     def _work_current(self, work):
@@ -550,26 +549,57 @@ class ChangeReviewConsentService:
             try:
                 if work.source is not None:
                     from tldw_chatbook.Agents.execution_capacity import (
+                        CleanupUnprovenRefused,
                         run_on_custody_thread,
                     )
 
                     ticket = work.ticket or work.source.admit()
+                    work = replace(work, ticket=ticket)
 
                     def custody(ticket=ticket, work=work):
+                        primary = None
+                        pre_storage_refusal = [None]
                         try:
-                            with ticket.activate():
-                                self._run_work(work)
-                        finally:
-                            # Outside the activation, so a source that changed
-                            # while queued still returns its slot (TASK-41957).
+                            with ticket.activate(
+                                _pre_storage_refusal=pre_storage_refusal
+                            ):
+                                try:
+                                    self._run_work(work)
+                                except BaseException as error:
+                                    primary = ticket._return_primary = error
+                        except BaseException as error:
+                            if error is pre_storage_refusal[0]:
+                                primary = error
+                            else:
+                                ticket._return_error = error
+                                # Entry/exit without positive return proof stays held.
+                                ticket.operation.retain_unproven(
+                                    "Change Review initialization scope"
+                                ).hold()
+                                raise
+                        try:
                             ticket.returned(worker=True, handoff=True)
+                        except BaseException as error:
+                            if primary is not None:
+                                raise BaseExceptionGroup(
+                                    "Initialization body and retirement failed",
+                                    [primary, error],
+                                ) from None
+                            raise
+                        if primary is not None:
+                            raise primary
 
                     # An unproven Git cleanup holds this daemon worker until
                     # restart, never a pool thread, so it cannot stall other
                     # roots' preparation (TASK-41635).
-                    run_on_custody_thread(
-                        custody, lambda ticket=ticket: ticket.operation
-                    )
+                    try:
+                        run_on_custody_thread(
+                            custody, lambda ticket=ticket: ticket.operation
+                        )
+                    except CleanupUnprovenRefused as error:
+                        if ticket._return_error is not None:
+                            raise error from ticket._return_error
+                        raise
                 elif self._native_expected:
                     raise ValueError("native initialization source unavailable")
                 else:
@@ -593,6 +623,8 @@ class ChangeReviewConsentService:
                 work.source.initialize()
         except Exception as caught:  # noqa: BLE001 -- preserve initializer failure for its handoff
             error = caught
+            if work.ticket is not None:
+                work.ticket._return_primary = caught
         self._complete(work, error)
 
     def _complete(self, work, error):
@@ -621,6 +653,7 @@ class ChangeReviewConsentService:
                 if error is None
                 else RootReadinessState.FAILED,
                 "" if error is None else self._failed_reason(error),
+                work_token=work.token,
             )
 
     def _fail(self, work, error=None):
@@ -638,10 +671,22 @@ class ChangeReviewConsentService:
         else:
             reason = self._failed_reason(error)
         with self._lock:
-            if self._pending(work):
+            current = self._readiness.get((work.workspace_id, work.root))
+            failed_return = (
+                isinstance(error, CleanupUnprovenRefused)
+                and error.retention is not None
+                and work.ticket is not None
+                and error.retention.operation is work.ticket.operation
+                and not self._disposed
+                and work.generation == self._generation
+                and current is not None
+                and current.revision == work.revision
+                and current.work_token is work.token
+            )
+            if self._pending(work) or failed_return:
                 self._admission_revision += 1
                 self._readiness[(work.workspace_id, work.root)] = _ReadinessEntry(
-                    work.alias, work.revision, state, reason
+                    work.alias, work.revision, state, reason, work_token=work.token
                 )
 
     @classmethod

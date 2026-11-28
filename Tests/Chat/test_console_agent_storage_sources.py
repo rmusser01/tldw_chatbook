@@ -63,13 +63,24 @@ pytestmark = [
     ],
 )
 async def test_original_console_mcp_context_reaches_child_model(
-    mcp_case, hook_file, monkeypatch, tmp_path, mutation, workers
+    mcp_case,
+    hook_file,
+    monkeypatch,
+    tmp_path,
+    mutation,
+    workers,
+    owned_console_databases,
 ):
     from Tests.Agents.test_agent_service import fence
     from Tests.Agents.test_hook_permissions import _approve
     from Tests.Chat.test_console_hook_preparation_demand import _save_hooks
     from Tests.Chat.test_console_skill_substitution import _RecordingGateway
+    from tldw_chatbook.Agents import scratch_admission
     from tldw_chatbook.Agents.activation import _guard
+    from tldw_chatbook.Backup_Recovery.participants import (
+        native_prepared_scratch,
+        native_scratch_writer,
+    )
     from tldw_chatbook.Agents.agent_models import SPAWN_TOOL_NAME
     from tldw_chatbook.Agents.hooks_v2.mcp_executor import MCPHookExecutor
     from tldw_chatbook.Agents.mcp_tool_provider import MCPResultPermission
@@ -78,6 +89,7 @@ async def test_original_console_mcp_context_reaches_child_model(
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.Chat.console_agent_sources import current_agent_sources
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.Tools import workspace_file_roots
 
@@ -175,6 +187,8 @@ async def test_original_console_mcp_context_reaches_child_model(
     if mutation == "logging_disabled":
         monkeypatch.setenv("TLDW_AGENTS_RUN_LOG_ENABLED", "false")
     original_sources, model_sources, model_runs, child_threads = [], [], [], []
+    scratch_frames, scratch_cleanup = [], []
+    positive_source_tree = False
     thread_start = threading.Thread.start
 
     def observed_thread(thread):
@@ -201,6 +215,21 @@ async def test_original_console_mcp_context_reaches_child_model(
             self.payloads.append(messages)
             model_sources.append(_guard.captured_sources(None))
             model_runs.append(current_run_id())
+            active_source = original_sources[0]
+            if active_source.root == active_source.scratch.root:
+                manager, snapshot = active_source.scratch_manager, active_source.scratch
+                native = native_scratch_writer(active_source.writer)
+                assert native is not None
+                assert native[0] is manager and native[1] is snapshot
+                frame = scratch_admission._current.get()
+                assert frame is not None
+                assert frame.writer is active_source.writer
+                assert frame.manager is manager and frame.snapshot is snapshot
+                frame.check()
+                scratch_admission.check_prepared_scratch(
+                    manager, snapshot, active_source.session.id
+                )
+                scratch_frames.append(frame)
             if len(self.payloads) == 1:
                 source = original_sources[0]
                 assert (source.writer.log_dir is None) is (
@@ -292,8 +321,73 @@ async def test_original_console_mcp_context_reaches_child_model(
             else:
                 yield "parent completed"
 
+    retirement_started = retirement_finished = False
+    retirement_disposition = None
+
+    async def retire_runtime():
+        nonlocal retirement_started, retirement_finished, retirement_disposition
+        if retirement_finished:
+            return retirement_disposition
+        assert not retirement_started, "runtime retirement was already uncertain"
+        retirement_started = True
+        await case.runtime.close_hooks_v2()
+        await case.runtime.dispose()
+        assert not case.runtime.hooks_v2_cleanup_pending
+        for frame in scratch_frames:
+            assert not frame.live
+        retained_trees = set()
+        for source, manager, snapshot, receipt in scratch_cleanup:
+            tree = source.ordinary_tree
+            assert tree.source is source
+            assert tree.controller is rig.controller and tree.runtime is case.runtime
+            assert source.scratch_manager is manager and source.scratch is snapshot
+            assert tree.configuration.scratch_space is snapshot
+            if positive_source_tree:
+                assert tree.retired.done()
+            if tree.retired.done():
+                tree.retired.result()
+                assert tree.settled and tree.scratch_lease is None
+                assert receipt.outcome == "deleted"
+                assert not manager.is_live(snapshot)
+                assert not snapshot.root.exists()
+            else:
+                assert tree in case.runtime._ordinary_turns
+                assert tree.sealed and tree.unproven_only() and not tree.settled
+                assert tree.scratch_lease is not None
+                with tree.activity._lock:
+                    claim = tree.activity._claims.get(tree.claim.id)
+                    assert claim is not None and claim.custody is tree.claim
+                    assert tree.footprint._conflicts(claim.footprint)
+                    assert any(
+                        member.owner is tree.owner for member in claim.members.values()
+                    )
+                with manager._condition:
+                    record = manager._matching_record_locked(snapshot)
+                    assert record is not None and record.snapshot is snapshot
+                    assert record.tombstoned and record.leases > 0
+                    assert manager._identity_matches(snapshot)
+                assert receipt.outcome is None and snapshot.root.exists()
+                assert not manager.is_live(snapshot)
+                retained_trees.add(tree)
+        with case.runtime._execution_capacity_lock:
+            assert set(case.runtime._ordinary_turns) == retained_trees
+        if retained_trees:
+            execution_owner.require_current(runs_path)
+            replacement_owner.require_current(replacement_path)
+            retirement_disposition = False
+        retirement_finished = True
+        return retirement_disposition
+
     gateway = Gateway()
-    database = AgentRunsDB(tmp_path / "console-runs.sqlite", client_id="source-tree")
+    runs_path = tmp_path / "console-runs.sqlite"
+    execution_owner = ConsoleExecutionOwner.acquire(runs_path)
+    # A failed constructor retains its native lease until cleanup is proved.
+    database = AgentRunsDB(
+        runs_path, client_id="source-tree", execution_owner=execution_owner
+    )
+    owned_console_databases(
+        database, rig.controller, execution_owner=execution_owner, retire=retire_runtime
+    )
     bridge = ConsoleAgentBridge(
         agent_runs_db=database,
         store=rig.store,
@@ -306,8 +400,16 @@ async def test_original_console_mcp_context_reaches_child_model(
     rig.controller._agent_bridge = bridge
     rig.controller._agent_runtime_enabled = True
     rig.controller.provider_gateway = gateway
+    replacement_path = tmp_path / "replacement-runs.sqlite"
+    replacement_owner = ConsoleExecutionOwner.acquire(replacement_path)
     replacement_database = AgentRunsDB(
-        tmp_path / "replacement-runs.sqlite", client_id="source-tree"
+        replacement_path, client_id="source-tree", execution_owner=replacement_owner
+    )
+    owned_console_databases(
+        replacement_database,
+        rig.controller,
+        execution_owner=replacement_owner,
+        retire=retire_runtime,
     )
     sources, jobs = [], []
     start = MCPHookExecutor.start
@@ -317,6 +419,12 @@ async def test_original_console_mcp_context_reaches_child_model(
         jobs.append(job)
         sources.append(job.native_target.event.source)
         original_sources.append(current_agent_sources())
+        source = original_sources[-1]
+        manager, snapshot = source.scratch_manager, source.scratch
+        assert native_prepared_scratch(manager, snapshot, source.session.id)
+        scratch_cleanup.append(
+            (source, manager, snapshot, manager.observe_cleanup(snapshot))
+        )
         return job
 
     monkeypatch.setattr(MCPHookExecutor, "start", observed)
@@ -383,7 +491,12 @@ async def test_original_console_mcp_context_reaches_child_model(
             "db.chachanotes.primary",
             rig.store.persistence.db.db_path,
         ) in source.sources
-        assert ("agents.history", source.root) in source.sources
+        positive_source_tree = True
+        if source.root != source.scratch.root:
+            assert ("agents.history", source.root) in source.sources
+        else:
+            assert ("agents.history", source.root) not in source.sources
+            assert len(scratch_frames) == 3
         if mutation in {"workspace", "workspace_distinct_registry"}:
             assert len(project_notices) == 1
         assert source.root == (
@@ -412,6 +525,7 @@ async def test_original_console_mcp_context_reaches_child_model(
         assert len(case.service.execution_log.read_recent()) == 1
     finally:
         bridge._db = database
+        await retire_runtime()
         database.close()
         replacement_database.close()
         if global_registry is not rig.registry:

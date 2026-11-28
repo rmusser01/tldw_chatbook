@@ -42,14 +42,14 @@ def writer():
 thread=threading.Thread(target=writer)
 original=storage._PreviewScope._source_state
 calls=[]
-def interleaved(source):
+def interleaved(scope,source):
  if source==db.db_path:
   calls.append(True)
   if len(calls)==2:
    write.set();assert done.wait(5)
- return original(source)
+ return original(scope,source)
 thread.start()
-storage._PreviewScope._source_state=staticmethod(interleaved)
+storage._PreviewScope._source_state=interleaved
 try:
  with storage._preview_reads():
   after=core.discover(document)[0]
@@ -57,7 +57,7 @@ try:
   assets=[adapter.discover(document)[0] for adapter in asset_adapters()[:2]]
   stable=core.discover(document)[0]
 finally:
- storage._PreviewScope._source_state=staticmethod(original)
+ storage._PreviewScope._source_state=original
  _CoreAdapter.validate=original_validate
  write.set();thread.join(5)
  db.close_connection()

@@ -1788,7 +1788,9 @@ def test_budget_is_not_left_slack_after_a_wave(rel_path: str) -> None:
 #: callbacks became the host's shell-service protocols, which LibraryScreen
 #: implements (owner ruling 2026-11-22); its 30 accessor and setter lambdas
 #: remain.
-_LIBRARY_INIT_LAMBDAS = 354
+#: PR3345 current-dev integration: preserve the required Prompts landing
+#: callback with the native host protocols; exact measured count 355.
+_LIBRARY_INIT_LAMBDAS = 355
 #: Measured at dev 26b2e677dd by `_unbound_class_calls` over Tests/**/*.py:
 #: 724 in 59 files. TASK-36952.2 lowered it to 722 (still 59 files): the two
 #: `LibraryScreen.handle_library_media_reader_more(fake, ...)` calls now call

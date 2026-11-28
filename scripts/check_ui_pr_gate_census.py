@@ -1277,6 +1277,32 @@ MINIMUM_FILES = 2528
 # node at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2546
 
+# TASK-36769: the roster also includes both conversation-row P0 selectors.
+# Retain the post-attach native-read responsiveness case.
+# PR #3345: retain every relocated MCP workbench selector.
+MINIMUM_FILES = 2198
+# PR #3345: include both complete UI regression files.
+MINIMUM_FILES = 2200
+
+# PR3345 approved upstream retirement retains 2095 survivors plus five incoming cases.
+MINIMUM_FILES = 2100
+# Retain the seven incoming dev entries after the exact 2,100-entry prefix.
+MINIMUM_FILES = 2107
+# Current dev rebase: the whole preparation file owns the redundant node.
+MINIMUM_FILES = 2199
+# PR #3345 on dev 4b90eb8 retains all 117 incoming entries and the prior census.
+MINIMUM_FILES = 2316
+# Retain the reviewed PR census positions and append the incoming sync admission file.
+MINIMUM_FILES = 2317
+# Retain all six incoming Send and native shutdown selectors in the gate.
+MINIMUM_FILES = 2323
+# Include the seven incoming Plugin review and restore selectors.
+MINIMUM_FILES = 2330
+# Retain the 2,330 existing shard positions and all 35 incoming Workspace selectors.
+MINIMUM_FILES = 2365
+# The round-14 rebase keeps all 2,432 disjoint selectors (PR #3345).
+MINIMUM_FILES = 2432
+
 
 MINIMUM_FILES = 2038
 MINIMUM_FILES = 2045
@@ -1397,6 +1423,25 @@ MINIMUM_FILES = 2825
 MINIMUM_FILES = 2827
 # 2026-11-22: re-counted after rebasing onto dev ddd3c02052. The floor is the measured entry count.
 MINIMUM_FILES = 2832
+# Shared mobile integration: retain the full surviving census plus the new
+# stand-in controller file; deleting any older member must fail this floor.
+MINIMUM_FILES = 2818
+# PR3345 current-dev integration retains all 2818 prior entries and 146 new dev entries.
+MINIMUM_FILES = 2964
+# Current dev adds 89 entries to the intact 2,964-selector feature roster.
+MINIMUM_FILES = 3053
+# PR3345: preserve all 3,072 selectors after the dev census merge.
+MINIMUM_FILES = 3072
+# Preserve the exact 3,072-selector PR prefix and all twenty incoming dev selectors.
+MINIMUM_FILES = 3092
+# The combined dev and mobile roster has 3,098 distinct selectors.
+MINIMUM_FILES = 3098
+# Keep the reviewed shared-mobile roster and the incoming paint-hold case.
+MINIMUM_FILES = 3099
+# Reconcile the complete PR roster with the 20 incoming Workspace carry selectors.
+MINIMUM_FILES = 3119
+
+
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 

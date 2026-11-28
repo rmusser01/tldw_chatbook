@@ -87,8 +87,8 @@ def test_library_reservation_is_one_derived_immutable_union():
     reserved = _reservation()
 
     assert isinstance(reserved, frozenset)
-    assert len(LIBRARY_TOOL_DESCRIPTORS) == 24
-    assert len(reserved) == 25
+    assert len(LIBRARY_TOOL_DESCRIPTORS) == 21
+    assert len(reserved) == 22
     assert reserved == frozenset((*LIBRARY_TOOL_DESCRIPTORS.keys(), RAG_TOOL_NAME))
 
 
@@ -134,6 +134,7 @@ def test_every_reserved_skill_collision_is_filtered_without_registration(mode):
     assert not (reserved & skill_names)
 
 
+@pytest.mark.bootstrap_profile
 def test_reserved_skill_name_never_reaches_skill_runner_dispatch_when_blocked():
     context = {
         "available_skills": [

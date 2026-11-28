@@ -268,6 +268,45 @@ _UNJUDGED_SPAWNS = {
     ("Tests/ProductionApp/test_native_credential_recovery.py", "_transfer"): 1,
     ("Tests/test_config_library_defaults.py", "read_profile"): 1,
     ("Tests/test_tiktoken_vendored_cache.py", "_run_source_child"): 1,
+    # Both mobile fixtures forward the same _prepare_profile mapping. Its
+    # setup subprocess is checked above the tuple/fixture handoff and
+    # uses the private HOME and the explicit null keyring pin.
+    (
+        "Tests/Backup_Recovery/test_mobile_live_completion.py",
+        "test_completed_cutover_allows_native_wal_commits",
+    ): 1,
+    (
+        "Tests/Backup_Recovery/test_mobile_live_completion.py",
+        "test_completion_accounting_keeps_native_provenance_and_retirement",
+    ): 1,
+    (
+        "Tests/Backup_Recovery/test_mobile_live_completion.py",
+        "test_completion_close_or_cancellation_keeps_physical_custody",
+    ): 1,
+    (
+        "Tests/Web_Server/test_mobile_served_console_browser.py",
+        "test_actual_security_projection_and_mobile_off",
+    ): 1,
+    (
+        "Tests/Web_Server/test_mobile_served_console_browser.py",
+        "test_cold_phone_create_then_immediate_send",
+    ): 1,
+    (
+        "Tests/Web_Server/test_mobile_served_console_browser.py",
+        "test_owned_actual_served_process_lifecycle",
+    ): 2,
+    (
+        "Tests/Web_Server/test_mobile_served_console_browser.py",
+        "test_phone_lost_ack_queries_original_commands_without_replay",
+    ): 1,
+    (
+        "Tests/Web_Server/test_mobile_served_console_browser.py",
+        "test_phone_reconnect_keeps_the_same_console_run",
+    ): 1,
+    (
+        "Tests/Web_Server/test_mobile_served_console_browser.py",
+        "test_two_chats_workers_and_exact_phone_controls",
+    ): 1,
 }
 
 

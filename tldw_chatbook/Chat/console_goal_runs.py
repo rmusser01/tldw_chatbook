@@ -500,8 +500,8 @@ class ConsoleGoalCoordinator:
         from dataclasses import replace
 
         from tldw_chatbook.Chat.console_conversation_hydration import (
+            _hydrate_console_session,
             apply_resume_settings_overrides,
-            hydrate_console_session,
             load_console_conversation_tree,
         )
         from tldw_chatbook.Chat.console_session_settings import (
@@ -511,48 +511,52 @@ class ConsoleGoalCoordinator:
         goal = self.service.get(goal_id)
         if goal.request is None:
             raise ValueError("goal_payload_removed")
+        store = self.controller.store
         session_id = self._session_ids.get(goal_id, goal.conversation_id)
-        existing = next(
-            (
-                s
-                for s in self.controller.store.sessions()
-                if s.id == session_id
-            ),
-            None,
-        )
+        existing = next((s for s in store.sessions() if s.id == session_id), None)
         if existing is not None:
             if existing.persisted_conversation_id != goal.conversation_id:
                 raise ValueError("conversation_identity_conflict")
             self._require_open_session(session_id)
-            return existing
-        tree = await load_console_conversation_tree(app, goal.conversation_id)
-        if tree is None:
-            raise ValueError("goal_conversation_missing")
-        settings = settings or default_console_session_settings(
-            getattr(app, "app_config", {})
-        )
-        settings = replace(
-            settings,
-            provider=goal.request.provider.provider,
-            model=goal.request.provider.model,
-        )
-        settings = apply_resume_settings_overrides(settings, tree["conversation"])
-        # Keep the old close generation latched for late callbacks. Saved
-        # history and automatic accounting still belong to the conversation.
-        session = await hydrate_console_session(
-            app=app,
-            store=self.controller.store,
-            conversation_id=goal.conversation_id,
-            tree=tree,
-            settings=settings,
-            target_workspace_id=goal.request.binding.workspace_id,
-            session_id=(
-                None
-                if session_id in self.controller._session_close_generations
-                else session_id
-            ),
-            activate=False,
-        )
+            session = await store.resolve_saved_session(
+                goal.conversation_id, session_id=session_id
+            )
+        else:
+            async def hydrate(operation):
+                tree = await load_console_conversation_tree(app, goal.conversation_id)
+                if tree is None:
+                    raise ValueError("goal_conversation_missing")
+                resume_settings = settings or default_console_session_settings(
+                    getattr(app, "app_config", {})
+                )
+                resume_settings = replace(
+                    resume_settings,
+                    provider=goal.request.provider.provider,
+                    model=goal.request.provider.model,
+                )
+                resume_settings = apply_resume_settings_overrides(
+                    resume_settings, tree["conversation"]
+                )
+                # The winning producer allocates the new live ID. Keep the
+                # old close generation for late callbacks to that session.
+                return await _hydrate_console_session(
+                    app=app,
+                    store=store,
+                    conversation_id=goal.conversation_id,
+                    tree=tree,
+                    settings=resume_settings,
+                    target_workspace_id=goal.request.binding.workspace_id,
+                    session_id=(
+                        str(uuid4())
+                        if session_id in self.controller._session_close_generations
+                        else session_id
+                    ),
+                    activate=False,
+                    _operation=operation,
+                )
+
+            session = await store.resolve_saved_session(goal.conversation_id, hydrate)
+        self._require_open_session(session.id)
         self._session_ids[goal_id] = session.id
         return session
 
@@ -668,6 +672,17 @@ class ConsoleGoalCoordinator:
             self._resume_goal_id = None
             self.notify_goal_changed(goal_id)
 
+    def _imported_goal_allowed(self, goal) -> bool:
+        from tldw_chatbook.DB.mobile_import_authority import (
+            authority_allowed,
+            chain_allowed,
+        )
+
+        with self.service.db.connection() as conn:
+            return authority_allowed(conn, "goal", goal.id) and chain_allowed(
+                conn, goal.chain_id
+            )
+
     def start(self, goal_id: str) -> asyncio.Task[GoalSnapshot]:
         """Start one runtime-owned chain; await the task to observe its next rest state."""
         if self._closed or self.controller._disposed:
@@ -695,7 +710,7 @@ class ConsoleGoalCoordinator:
                 # during that read must remain observable even if the snapshot is old.
                 self._wake.clear()
                 goal = await self.service.call(self.service.get, goal_id)
-                if goal.status != "ready":
+                if goal.status != "ready" or not self._imported_goal_allowed(goal):
                     return goal
                 if goal.retry_at is not None:
                     try:
@@ -801,9 +816,19 @@ class ConsoleGoalCoordinator:
         """An explicit manual instruction pauses only this conversation’s successors."""
         with self.service.db.connection() as conn:
             row = conn.execute(
-                "SELECT id FROM goal_runs WHERE conversation_id=? AND status IN ('ready','pause_requested')",
+                "SELECT id, chain_id FROM goal_runs WHERE conversation_id=? AND status IN ('ready','pause_requested')",
                 (conversation_id,),
             ).fetchone()
+            if row:
+                from tldw_chatbook.DB.mobile_import_authority import (
+                    authority_allowed,
+                    chain_allowed,
+                )
+
+                if not authority_allowed(conn, "goal", row[0]) or not chain_allowed(
+                    conn, row[1]
+                ):
+                    return
         if row:
             self.service.pause(row[0])
 
@@ -940,6 +965,16 @@ class ConsoleGoalCoordinator:
             )
         if goal.status != "ready" or goal.request is None:
             return GoalIterationResult(goal_id, 0, None, None, None, "goal_not_ready")
+        if not await self.service.call(self._imported_goal_allowed, goal):
+            return GoalIterationResult(
+                goal_id,
+                0,
+                None,
+                None,
+                None,
+                "import_review_required",
+                reason_code="import_review_required",
+            )
         if not coerce_autowake_enabled(_setting("goal_runs_enabled", False)):
             return GoalIterationResult(
                 goal_id, 0, None, None, None, "goal_runs_disabled"
@@ -976,6 +1011,10 @@ class ConsoleGoalCoordinator:
         if session is None:
             return GoalIterationResult(
                 goal_id, 0, None, None, None, "goal_session_missing"
+            )
+        if not self.controller.store.saved_session_ready(session):
+            return GoalIterationResult(
+                goal_id, 0, None, None, None, "goal_session_loading"
             )
         if session.assistant_kind == "character":
             return GoalIterationResult(

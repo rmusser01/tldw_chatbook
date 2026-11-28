@@ -57,9 +57,11 @@ class BrowseApp(ConsolidatedCSSApp):
         )
 
 
-async def settled(pilot, screen):
+async def settled(pilot, screen, *, ready_button: Button | None = None):
     for _ in range(100):
         await pilot.pause(0.02)
+        if ready_button is not None and ready_button.has_class("-active"):
+            continue
         if not screen._loading and not screen._action_busy:
             return
     raise AssertionError("Plugins worker did not settle")
@@ -193,7 +195,11 @@ async def test_real_source_add_and_import_preview_are_keyboard_reachable(
         screen.query_one("#plugins-location", Input).value = str(package)
         screen.query_one("#plugins-submit", Button).focus()
         await pilot.press("enter")
-        await settled(pilot, screen)
+        # Both forms reuse this button. Textual ignores another key press
+        # while the original submit animation is active.
+        await settled(
+            pilot, screen, ready_button=screen.query_one("#plugins-submit", Button)
+        )
         assert screen.browse.view == "marketplaces"
         sources = app.plugin_source_service.list_sources()
         assert len(sources) == 1 and not sources[0].cached

@@ -40,6 +40,7 @@ def capture_personal_context_preview_guard(self, session_id: str) -> Callable[[]
                 None,
                 None,
                 f"preview:{session_id}",
+                ephemeral=temporary,
             )
             owner = controller.capture_interactive_owner(scope, temporary=temporary)
     except Exception:  # noqa: BLE001 - an unavailable owner denies inspection.

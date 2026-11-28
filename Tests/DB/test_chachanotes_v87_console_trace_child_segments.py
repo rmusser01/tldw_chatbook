@@ -415,3 +415,74 @@ def test_an_unresolved_child_call_never_blocks_the_parents_turn(db):
     assert blocked() is False
     reserve(root_id, "parent-run")
     assert blocked() is True
+
+
+def test_failed_mobile_v88_step_preserves_populated_native_v87(tmp_path, monkeypatch):
+    path = tmp_path / "native87-mobile88-atomic.sqlite"
+    repository = ConsoleTraceRepository()
+    with chachanotes_db_at_version(path, 87) as old:
+        _, owner_id, _, policy_id, _ = _root_graph(old, repository)
+        child = _child(old, repository, owner_id, "migration-turn")
+        with old.transaction(immediate=True) as cursor:
+            _terminal_call(
+                cursor,
+                repository,
+                owner_id=owner_id,
+                segment_id=child.segment_id,
+                policy_id=policy_id,
+                turn_id="migration-turn",
+                event_sequence=0,
+            )
+
+    def snapshot():
+        raw = sqlite3.connect(path)
+        try:
+            return {
+                "schema": raw.execute(
+                    "SELECT type,name,tbl_name,sql FROM sqlite_schema "
+                    "WHERE sql IS NOT NULL ORDER BY name"
+                ).fetchall(),
+                **{
+                    table: raw.execute("SELECT * FROM " + table).fetchall()
+                    for table in (
+                        "console_trace_child_segments",
+                        "console_trace_owners",
+                        "console_trace_calls",
+                        "console_trace_events",
+                        "db_schema_version",
+                    )
+                },
+            }
+        finally:
+            raw.close()
+
+    before = snapshot()
+    assert before["db_schema_version"] == [("rag_char_chat_schema", 87)]
+    original = CharactersRAGDB._execute_migration_statements
+    observed = []
+
+    def fail_mobile(self, cursor, script, label):
+        observed.append(label)
+        if label == "V87→V88":
+            script += "\nSELECT no_such_mobile_function();"
+        return original(self, cursor, script, label)
+
+    with monkeypatch.context() as changed:
+        changed.setattr(CharactersRAGDB, "_execute_migration_statements", fail_mobile)
+        with pytest.raises(Exception, match="V87→V88"):
+            CharactersRAGDB(path, "mobile-child-atomic")
+    assert observed == ["V87→V88"]
+    assert snapshot() == before
+
+    upgraded = CharactersRAGDB(path, "mobile-child-after-rollback")
+    try:
+        assert _rows(upgraded, "SELECT version FROM db_schema_version") == [(88,)]
+        for table, rows in before.items():
+            if table not in {"schema", "db_schema_version"}:
+                assert _rows(upgraded, "SELECT * FROM " + table) == rows
+        assert _rows(upgraded, "SELECT count(*) FROM mobile_consolidation_batches") == [
+            (0,)
+        ]
+        assert not _rows(upgraded, "PRAGMA foreign_key_check")
+    finally:
+        upgraded.close_connection()

@@ -5,11 +5,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -21,7 +21,7 @@ def test_chat_create_read_retires_only_its_worker_connection(
     tmp_path, monkeypatch, reader, borrowed, fail_sql
 ):
     """Read real parent/child rows without stranding a completed worker handle."""
-    db = AgentRunsDB(tmp_path / "runs.sqlite", client_id="chat-create-owner")
+    db = owned_agent_runs_db(tmp_path / "runs.sqlite", client_id="chat-create-owner")
     store = ConsoleChatStore()
     session = store.ensure_session()
     session.persisted_conversation_id = "conversation"

@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from tldw_chatbook.Utils.platform_files import fcntl, os
 
-from . import bootstrap
+from . import bootstrap, native_files
 from .native_files import create_private_directory, flush_directory, pinned_directory
 from .native_platform import flush_file
 from .qualification import _qualified_identity, native_identity, qualified_for
@@ -70,19 +70,80 @@ _LOCK_POLL_INTERVAL_SECONDS = 0.01
 _local = threading.local()
 
 
-def _deleted_file_roots(registry: _Registry) -> set[Path]:
+def _deleted_file_roots(
+    registry: _Registry, *, _read_budget=None, _custody=None
+) -> set[Path]:
     """TASK-42115's deleted file roots over a settled registry, else none.
 
     While any remap is pending or proposed, every missing root stays strict.
     """
     from .effective_roots import deleted_file_roots
+    from .mobile_preview_budget import read_options
 
+    _read_budget, _custody = read_options(_read_budget, _custody)
     if any(entry.pending or entry.proposed for entry in registry.entries.values()):
         return set()
+    _price_record(registry, _read_budget)
     return deleted_file_roots(
         (root for entry in registry.entries.values() for root in entry.roots),
         (entry.model_dump() for entry in registry.entries.values()),
+        _read_budget=_read_budget,
+        _custody=_custody,
     )
+
+
+def _price_record(value, budget):
+    """Price a native registry-model copy without first dumping its tree."""
+    if budget is None:
+        return
+    if type(value) in (_Entry, _Registry, _WriteIntent):
+        budget.reserve(256)
+        _price_record(value.__dict__, budget)
+    elif isinstance(value, dict):
+        budget.container(len(value))
+        for key, child in value.items():
+            budget.value(key)
+            _price_record(child, budget)
+    elif isinstance(value, (tuple, list)):
+        budget.container(len(value))
+        for child in value:
+            _price_record(child, budget)
+    else:
+        budget.value(value)
+
+
+def _price_serialization(value, budget):
+    if budget is not None:
+        from .mobile_runs_goal_budget import _serialization
+
+        _price_record(value, budget)
+        data = value.model_dump()
+        _serialization(data, budget, encoded=True)
+
+
+def _price_paths(values, budget, *, copies=1):
+    if budget is not None:
+        from .mobile_preview_budget import path_cost
+
+        budget.container(len(values))
+        for value in values:
+            if isinstance(value, Path):
+                budget.reserve(path_cost(value, copies=copies * (len(value.parts) + 1)))
+            else:
+                # Parsing, resolving and parent tuples are bounded by the actual
+                # input's component count, including non-ASCII display strings.
+                budget.reserve(
+                    copies * (value.count("/") + 2) * (256 + 16 * len(value))
+                )
+
+
+def _close_registration(fd, custody):
+    if custody is None:
+        os.close(fd)
+    else:
+        from .native_files import _close_owned
+
+        _close_owned(fd, custody)
 
 
 class Admission:
@@ -130,8 +191,8 @@ class Admission:
             return info.st_dev, info.st_ino
 
     @contextmanager
-    def _directory(self) -> Iterator[int]:
-        with pinned_directory(self.control_root) as fd:
+    def _directory(self, *, _custody=None) -> Iterator[int]:
+        with pinned_directory(self.control_root, _custody=_custody) as fd:
             allowed, reason = _qualified_identity("admission", native_identity(fd))
             if not allowed:
                 raise AdmissionError(reason)
@@ -164,11 +225,20 @@ class Admission:
         flush_directory(parent)
 
     def _discard_unpublished_locks(
-        self, parent: int, before: _Registry, created: dict[str, int]
+        self,
+        parent: int,
+        before: _Registry,
+        created: dict[str, int],
+        *,
+        _read_budget=None,
+        _custody=None,
     ) -> None:
         """Retire this attempt's private locks only before authority publication."""
         try:
-            if self._read(parent) != before:
+            if (
+                self._read(parent, _read_budget=_read_budget, _custody=_custody)
+                != before
+            ):
                 return
         except (AdmissionError, OSError):
             # An intent, unreadable state or changed generation retains evidence.
@@ -196,18 +266,23 @@ class Admission:
                 flush_directory(parent)
 
     @staticmethod
-    def _open(parent: int, name: str, flags: int) -> int:
+    def _open(parent: int, name: str, flags: int, *, _custody=None) -> int:
         fd = os.open(name, flags | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
-        info = os.fstat(fd)
-        if (
-            not stat.S_ISREG(info.st_mode)
-            or info.st_nlink != 1
-            or info.st_uid != os.geteuid()
-            or info.st_mode & 0o077
-        ):
-            os.close(fd)
-            raise AdmissionError("control_file_unsafe")
-        return fd
+        if _custody is not None:
+            _custody.fds.append(fd)
+        try:
+            info = os.fstat(fd)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_nlink != 1
+                or info.st_uid != os.geteuid()
+                or info.st_mode & 0o077
+            ):
+                raise AdmissionError("control_file_unsafe")
+            return fd
+        except BaseException:
+            _close_registration(fd, _custody)
+            raise
 
     @contextmanager
     def _lock(
@@ -217,8 +292,11 @@ class Admission:
         mode: int,
         deadline: float | None = None,
         cancel: threading.Event | None = None,
+        *,
+        _custody=None,
     ) -> Iterator[int]:
-        fd = self._open(parent, name, os.O_RDWR)
+        custody_options = {} if _custody is None else {"_custody": _custody}
+        fd = self._open(parent, name, os.O_RDWR, **custody_options)
         try:
             if deadline is None and cancel is None:
                 # An intentionally retained, uncancellable waiter can sleep in
@@ -234,7 +312,7 @@ class Admission:
                         time.sleep(_LOCK_POLL_INTERVAL_SECONDS)
             yield fd
         finally:
-            os.close(fd)
+            _close_registration(fd, _custody)
 
     @staticmethod
     def _check(deadline: float | None, cancel: threading.Event | None) -> None:
@@ -254,15 +332,22 @@ class Admission:
             raise ValueError("invalid_admission_timeout")
         return time.monotonic() + timeout
 
-    def _read_intent(self, parent: int) -> _WriteIntent | None:
+    def _read_intent(
+        self, parent: int, *, _read_budget=None, _custody=None
+    ) -> _WriteIntent | None:
+        custody_options = {} if _custody is None else {"_custody": _custody}
         try:
-            fd = self._open(parent, _INTENT_NAME, os.O_RDONLY)
+            fd = self._open(parent, _INTENT_NAME, os.O_RDONLY, **custody_options)
         except FileNotFoundError:
             return None
         try:
+            if _read_budget is not None:
+                _read_budget.reserve(64 + _INTENT_LIMIT + 1)
             raw = os.read(fd, _INTENT_LIMIT + 1)
             if len(raw) > _INTENT_LIMIT:
                 raise ValueError("intent_too_large")
+            if _read_budget is not None:
+                _read_budget.json(raw)
             intent = _WriteIntent.model_validate_json(raw)
             states = (
                 (intent.after,)
@@ -275,6 +360,8 @@ class Admission:
                 or any(c not in "0123456789abcdef" for c in intent.write_id)
             ):
                 raise ValueError("intent_invalid")
+            for state in states:
+                _price_serialization(state, _read_budget)
             if any(
                 state.version != 1
                 or len(state.model_dump_json().encode()) > _REGISTRY_LIMIT
@@ -285,16 +372,24 @@ class Admission:
         except (ValidationError, ValueError):
             raise AdmissionError("registry_publication_recovery_required") from None
         finally:
-            os.close(fd)
+            _close_registration(fd, _custody)
 
-    def _read(self, parent: int) -> _Registry:
-        if self._read_intent(parent) is not None:
+    def _read(self, parent: int, *, _read_budget=None, _custody=None) -> _Registry:
+        custody_options = {} if _custody is None else {"_custody": _custody}
+        if (
+            self._read_intent(parent, _read_budget=_read_budget, **custody_options)
+            is not None
+        ):
             raise AdmissionError("registry_publication_recovery_required")
-        fd = self._open(parent, "registry.json", os.O_RDONLY)
+        fd = self._open(parent, "registry.json", os.O_RDONLY, **custody_options)
         try:
+            if _read_budget is not None:
+                _read_budget.reserve(64 + _REGISTRY_LIMIT + 1)
             data = os.read(fd, _REGISTRY_LIMIT + 1)
             if len(data) > _REGISTRY_LIMIT:
                 raise AdmissionError("registry_too_large")
+            if _read_budget is not None:
+                _read_budget.json(data)
             result = _Registry.model_validate_json(data)
             if result.version != 1:
                 raise AdmissionError("registry_version_unsupported")
@@ -302,42 +397,65 @@ class Admission:
         except (ValidationError, ValueError):
             raise AdmissionError("registry_invalid") from None
         finally:
-            os.close(fd)
+            _close_registration(fd, _custody)
 
     @staticmethod
     @bootstrap.advances_admission_epoch
-    def _write_new_record(parent: int, name: str, data: bytes) -> None:
+    def _write_new_record(
+        parent: int, name: str, data: bytes, *, _read_budget=None, _custody=None
+    ) -> None:
         fd = os.open(
             name,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
             0o600,
             dir_fd=parent,
         )
+        if _custody is not None:
+            _custody.fds.append(fd)
         try:
+            if _read_budget is not None:
+                _read_budget.reserve(192)
             view = memoryview(data)
             while view:
-                view = view[os.write(fd, view) :]
+                if _read_budget is not None:
+                    _read_budget.reserve(256)
+                count = os.write(fd, view)
+                if _read_budget is not None and count <= 0:
+                    raise OSError("registry_write_unavailable")
+                view = view[count:]
             flush_file(fd)
         finally:
-            os.close(fd)
+            _close_registration(fd, _custody)
 
     @bootstrap.advances_admission_epoch
     def _write(
-        self, parent: int, registry: _Registry, *, initial: bool = False
+        self,
+        parent: int,
+        registry: _Registry,
+        *,
+        initial: bool = False,
+        _read_budget=None,
+        _custody=None,
     ) -> None:
         """Journal local authority before replacement; ambiguous writes stay fenced."""
         try:
-            before = self._read(parent)
+            before = self._read(parent, _read_budget=_read_budget, _custody=_custody)
         except FileNotFoundError:
             if not initial:
                 raise
             before = None  # Only initial construction may publish the first registry.
         if initial and before is not None:
             raise AdmissionError("registry_initialization_conflict")
+        if _read_budget is not None:
+            _read_budget.reserve(2048)
+            _price_record(registry, _read_budget)
+            _price_record(before, _read_budget)
         write_id = uuid.uuid4().hex
         intent = _WriteIntent(
             version=1, write_id=write_id, before=before, after=registry
         )
+        _price_serialization(registry, _read_budget)
+        _price_serialization(intent, _read_budget)
         data = registry.model_dump_json().encode()
         intent_data = intent.model_dump_json().encode()
         if (
@@ -348,15 +466,32 @@ class Admission:
             raise AdmissionError("registry_too_large")
         # Exclusive creation refuses any existing intent, even if it looks stale.
         # A failed/partial intent write is deliberately retained and fails closed.
-        self._write_new_record(parent, _INTENT_NAME, intent_data)
+        if _read_budget is None and _custody is None:
+            self._write_new_record(parent, _INTENT_NAME, intent_data)
+        else:
+            self._write_new_record(
+                parent,
+                _INTENT_NAME,
+                intent_data,
+                _read_budget=_read_budget,
+                _custody=_custody,
+            )
         flush_directory(parent)
         name = f"registry-{write_id}.tmp"
-        self._write_new_record(parent, name, data)
+        if _read_budget is None and _custody is None:
+            self._write_new_record(parent, name, data)
+        else:
+            self._write_new_record(
+                parent, name, data, _read_budget=_read_budget, _custody=_custody
+            )
         os.replace(name, "registry.json", src_dir_fd=parent, dst_dir_fd=parent)
         flush_directory(parent)
         # Only this successfully flushed generation permits intent retirement.
         # Cleanup failure either leaves evidence or exposes this durable mapping.
-        if self._read_intent(parent) != intent:
+        if (
+            self._read_intent(parent, _read_budget=_read_budget, _custody=_custody)
+            != intent
+        ):
             raise AdmissionError("registry_publication_recovery_required")
         os.unlink(_INTENT_NAME, dir_fd=parent)
         flush_directory(parent)
@@ -378,15 +513,18 @@ class Admission:
     def _key(namespace: str, kind: str) -> str:
         return hashlib.sha256(namespace.encode()).hexdigest() + "." + kind
 
-    def _tokens(self, roots: tuple[Path, ...]) -> set[str]:
+    def _tokens(
+        self, roots: tuple[Path, ...], *, _read_budget=None, _custody=None
+    ) -> set[str]:
         if type(roots) is not tuple or not roots:
             raise ValueError("invalid_roots")
+        _price_paths(roots, _read_budget, copies=8)
         result = set()
         for root in roots:
             if not root.is_absolute() or ".." in root.parts:
                 raise AdmissionError("absolute_root_required")
             resolved = root.resolve(strict=True)
-            with pinned_directory(resolved.parent) as parent:
+            with pinned_directory(resolved.parent, _custody=_custody) as parent:
                 info = os.stat(resolved.name, dir_fd=parent, follow_symlinks=False)
                 observed = os.stat(root)
                 if (info.st_dev, info.st_ino) != (
@@ -410,10 +548,22 @@ class Admission:
         return result
 
     def _groups(
-        self, registry: _Registry, names: tuple[str, ...], recovery_journal=None
+        self,
+        registry: _Registry,
+        names: tuple[str, ...],
+        recovery_journal=None,
+        *,
+        _read_budget=None,
+        _custody=None,
     ) -> tuple[str, ...]:
         if any(n not in registry.entries for n in names):
             raise AdmissionError("namespace_unregistered")
+        _price_record(registry, _read_budget)
+        if _read_budget is not None:
+            _read_budget.container(6 * len(registry.entries) + len(names))
+            for entry in registry.entries.values():
+                _price_paths(entry.roots, _read_budget, copies=5)
+                _price_paths(entry.proposed, _read_budget, copies=3)
         omitted = set()
         if recovery_journal is None and not any(
             entry.pending or entry.proposed for entry in registry.entries.values()
@@ -421,18 +571,31 @@ class Admission:
             from .bootstrap import _records, effective_roots
 
             declared = {
-                Path(root) for entry in registry.entries.values() for root in entry.roots
+                Path(root)
+                for entry in registry.entries.values()
+                for root in entry.roots
             }
             entries = tuple(entry.model_dump() for entry in registry.entries.values())
-            if declared - set(effective_roots(declared, entries)):
+            if declared - set(
+                effective_roots(
+                    declared, entries, _read_budget=_read_budget, _custody=_custody
+                )
+            ):
                 from .effective_roots import check_redundant_profiles
 
                 # Only complete fixed records prove every referencing profile
                 # already owns the independent native directory namespace.
-                _, profiles = _records(self.control_root.parent)
+                _, profiles = _records(
+                    self.control_root.parent, _budget=_read_budget, _custody=_custody
+                )
                 omitted = check_redundant_profiles(
-                    {key: entry.model_dump() for key, entry in registry.entries.items()},
+                    {
+                        key: entry.model_dump()
+                        for key, entry in registry.entries.items()
+                    },
                     profiles,
+                    _read_budget=_read_budget,
+                    _custody=_custody,
                 )
         tokens, missing = {}, {}
         deleted = None
@@ -445,13 +608,23 @@ class Admission:
                 if roots or not omitted.intersection(map(Path, entry.roots)):
                     # Malformed empty declarations remain invalid. Only a proved
                     # redundant alias contributes its unchanged history alone.
-                    tokens[name].update(self._tokens(roots))
+                    tokens[name].update(
+                        self._tokens(
+                            roots, _read_budget=_read_budget, _custody=_custody
+                        )
+                    )
             except FileNotFoundError:
                 if deleted is None:
-                    deleted = _deleted_file_roots(registry)
+                    deleted = _deleted_file_roots(
+                        registry, _read_budget=_read_budget, _custody=_custody
+                    )
                 for root in roots:
                     try:
-                        tokens[name].update(self._tokens((root,)))
+                        tokens[name].update(
+                            self._tokens(
+                                (root,), _read_budget=_read_budget, _custody=_custody
+                            )
+                        )
                     except FileNotFoundError:
                         if recovery_journal is not None:
                             # The journal proves the roots it moved first.
@@ -471,7 +644,9 @@ class Admission:
                 deleted=deleted or set(),
             )
             for root, (resolved, held) in aliases.items():
-                recovered = self._tokens(held) | {
+                recovered = self._tokens(
+                    held, _read_budget=_read_budget, _custody=_custody
+                ) | {
                     "path:" + str(root),
                     "path:" + str(resolved),
                 }
@@ -485,11 +660,20 @@ class Admission:
                     tokens[name].update(recovered)
         selected = set(names)
         while True:
+            if _read_budget is not None:
+                _read_budget.container(
+                    len(selected) + sum(len(tokens[n]) for n in selected)
+                )
+                _read_budget.container(2 * len(tokens) + len(selected))
             shared = set().union(*(tokens[n] for n in selected))
 
-            def overlaps(value: set[str]) -> bool:
+            def overlaps(value: set[str], shared=shared) -> bool:
+                if _read_budget is not None:
+                    _read_budget.container(min(len(value), len(shared)))
                 if value & shared:
                     return True
+                _price_paths(value, _read_budget, copies=3)
+                _price_paths(shared, _read_budget, copies=3)
                 paths = [Path(t[5:]) for t in value if t.startswith("path:")]
                 other_paths = [Path(t[5:]) for t in shared if t.startswith("path:")]
                 return any(
@@ -561,17 +745,41 @@ class Admission:
                 observed.add((resolved, all(kinds)))
         return tuple(sorted(observed))
 
-    def register(self, namespace: str, roots: tuple[Path, ...]) -> None:
+    def register(
+        self,
+        namespace: str,
+        roots: tuple[Path, ...],
+        *,
+        _read_budget=None,
+        _custody=None,
+        cancel=None,
+    ) -> None:
         """Register physically verified roots; busy alias introduction is refused."""
+        if _read_budget is not None:
+            from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
+
+            from .storage_admission import _CaptureFileDescriptors
+
+            if (
+                type(_read_budget) is not _TraceReadBudget
+                or type(_custody) is not _CaptureFileDescriptors
+            ):
+                raise ValueError("capture_registration_accounting_changed")
+            _read_budget.reserve(4096)
+            _read_budget.value(namespace, text_copies=4)
+        self._check(None, cancel)
         self._names((namespace,))
         with (
             self._nonnested(),
-            self._directory() as parent,
-            self._lock(parent, "registry.lock", fcntl.LOCK_EX),
+            self._directory(_custody=_custody) as parent,
+            self._lock(
+                parent, "registry.lock", fcntl.LOCK_EX, cancel=cancel, _custody=_custody
+            ),
         ):
-            before = self._read(parent)
+            before = self._read(parent, _read_budget=_read_budget, _custody=_custody)
+            _price_record(before, _read_budget)
             registry = before.model_copy(deep=True)
-            tokens = self._tokens(roots)
+            tokens = self._tokens(roots, _read_budget=_read_budget, _custody=_custody)
             if namespace in registry.entries:
                 if registry.entries[namespace].roots != [str(r) for r in roots]:
                     raise AdmissionError("remap_required")
@@ -580,40 +788,63 @@ class Admission:
 
             # TASK-42115: a file root also records the folder it sits in, so a
             # later deletion is told apart from a missing folder.
+            _price_paths(roots, _read_budget, copies=5)
+            if _read_budget is not None:
+                _read_budget.container(len(tokens) + 3 * len(roots) + 4)
             registry.entries[namespace] = _Entry(
                 roots=[str(r) for r in roots],
                 historical=sorted(tokens | file_root_tokens(roots)),
             )
-            group = self._groups(registry, (namespace,))
+            group = self._groups(
+                registry, (namespace,), _read_budget=_read_budget, _custody=_custody
+            )
             with ExitStack() as stack:
+                if _read_budget is not None:
+                    _read_budget.reserve(2048 + 2048 * len(group))
                 for name in group:
+                    self._check(None, cancel)
                     if name == namespace:
                         continue
                     if registry.entries[name].pending:
                         raise AdmissionError("remap_recovery_required")
                     # No waiting while holding registry authority.
                     fd = self._open(parent, self._key(name, "gate"), os.O_RDWR)
-                    stack.callback(os.close, fd)
+                    if _custody is not None:
+                        _custody.fds.append(fd)
+                    stack.callback(_close_registration, fd, _custody)
                     try:
                         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                         lease = self._open(parent, self._key(name, "lease"), os.O_RDWR)
-                        stack.callback(os.close, lease)
+                        if _custody is not None:
+                            _custody.fds.append(lease)
+                        stack.callback(_close_registration, lease, _custody)
                         fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     except BlockingIOError:
                         raise AdmissionError("namespace_busy") from None
+                self._check(None, cancel)
                 created: dict[str, int] = {}
                 try:
                     for kind in ("gate", "lease", "incompatible"):
                         self._create_lock(
                             parent, self._key(namespace, kind), created=created
                         )
-                    self._write(parent, registry)
+                    self._write(
+                        parent, registry, _read_budget=_read_budget, _custody=_custody
+                    )
                 except BaseException:
-                    self._discard_unpublished_locks(parent, before, created)
+                    self._discard_unpublished_locks(
+                        parent,
+                        before,
+                        created,
+                        _read_budget=_read_budget,
+                        _custody=_custody,
+                    )
                     raise
                 finally:
                     for fd in created.values():
-                        stack.callback(os.close, fd)
+                        if _custody is not None:
+                            _custody.fds.append(fd)
+                        stack.callback(_close_registration, fd, _custody)
 
     @contextmanager
     def _admit(
@@ -624,9 +855,12 @@ class Admission:
         cancel: threading.Event | None,
         incompatible: bool = False,
         recovery_journal=None,
+        *,
+        _custody=None,
     ) -> Iterator[None]:
+        custody_options = {} if _custody is None else {"_custody": _custody}
         names = self._names(namespaces)
-        with self._nonnested(), self._directory() as parent, ExitStack() as leases:
+        with self._nonnested(), self._directory(**custody_options) as parent, ExitStack() as leases:
             # Gate acquisition never waits under registry lock: established owners
             # can retire without consulting either registry or gate.
             while True:
@@ -635,9 +869,10 @@ class Admission:
                 blocked_request = None
                 try:
                     with self._lock(
-                        parent, "registry.lock", fcntl.LOCK_SH, deadline, cancel
+                        parent, "registry.lock", fcntl.LOCK_SH, deadline, cancel,
+                        **custody_options
                     ):
-                        registry = self._read(parent)
+                        registry = self._read(parent, **custody_options)
                         if not maintenance and not any(
                             entry.pending for entry in registry.entries.values()
                         ):
@@ -653,9 +888,12 @@ class Admission:
                             with ExitStack() as requested:
                                 for name in names:
                                     fd = self._open(
-                                        parent, self._key(name, "gate"), os.O_RDWR
+                                        parent, self._key(name, "gate"), os.O_RDWR, **custody_options
                                     )
-                                    requested.callback(os.close, fd)
+                                    if _custody is None:
+                                        requested.callback(os.close, fd)
+                                    else:
+                                        requested.callback(_close_registration, fd, _custody)
                                     self._observe_gate(parent, name, fd)
                                     try:
                                         fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
@@ -663,12 +901,28 @@ class Admission:
                                         blocked_request = name
                                         raise
                                     self._observe_gate(parent, name, fd)
-                        group = self._groups(registry, names, recovery_journal)
+                        stock_group_reader = (
+                            _custody is not None
+                            and _custody.entry_reader_verified
+                            and _pause_metadata_current(self, admission_entry=True)
+                        )
+                        try:
+                            group = self._groups(
+                                registry, names, recovery_journal, **custody_options
+                            )
+                        except BaseException as error:
+                            if _custody is not None and _custody.entry_error is None:
+                                _custody.entry_error = error
+                                _custody.entry_reader_verified = stock_group_reader
+                            raise
                         if any(registry.entries[n].pending for n in group):
                             raise AdmissionError("remap_recovery_required")
                         for name in group:
-                            fd = self._open(parent, self._key(name, "gate"), os.O_RDWR)
-                            trial.callback(os.close, fd)
+                            fd = self._open(parent, self._key(name, "gate"), os.O_RDWR, **custody_options)
+                            if _custody is None:
+                                trial.callback(os.close, fd)
+                            else:
+                                trial.callback(_close_registration, fd, _custody)
                             self._observe_gate(parent, name, fd)
                             fcntl.flock(
                                 fd,
@@ -687,6 +941,7 @@ class Admission:
                                         fcntl.LOCK_SH,
                                         deadline,
                                         cancel,
+                                        **custody_options,
                                     )
                                 )
                     break
@@ -705,6 +960,7 @@ class Admission:
                             fcntl.LOCK_SH,
                             deadline,
                             cancel,
+                            **custody_options,
                         ) as fd:
                             self._observe_gate(parent, blocked_request, fd)
                 except BaseException:
@@ -714,9 +970,12 @@ class Admission:
                 if maintenance:
                     for name in group:
                         fd = self._open(
-                            parent, self._key(name, "incompatible"), os.O_RDWR
+                            parent, self._key(name, "incompatible"), os.O_RDWR, **custody_options
                         )
-                        leases.callback(os.close, fd)
+                        if _custody is None:
+                            leases.callback(os.close, fd)
+                        else:
+                            leases.callback(_close_registration, fd, _custody)
                         try:
                             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                         except BlockingIOError:
@@ -729,17 +988,20 @@ class Admission:
                                 fcntl.LOCK_EX,
                                 deadline,
                                 cancel,
+                                **custody_options,
                             )
                         )
                     # The final scope is immutable during exclusive capture, but
                     # the registry was not held while waiting for retirement.
                     leases.enter_context(
                         self._lock(
-                            parent, "registry.lock", fcntl.LOCK_SH, deadline, cancel
+                            parent, "registry.lock", fcntl.LOCK_SH, deadline, cancel,
+                            **custody_options
                         )
                     )
-                    current = self._read(parent)
-                    if self._groups(current, names, recovery_journal) != group or any(
+                    current = self._read(parent, **custody_options)
+                    current_group = self._groups(current, names, recovery_journal, **custody_options)
+                    if current_group != group or any(
                         current.entries[n].pending for n in group
                     ):
                         raise AdmissionError("admission_scope_changed")
@@ -1014,8 +1276,8 @@ _ORDINARY_PAUSE_REQUEST_BINDING = (
 )
 
 
-def _pause_metadata_current(authority):
-    """Decline optional metadata reuse when its original readers changed."""
+def _pause_metadata_current(authority, *, admission_entry=False):
+    """Check native readers, and optionally the failed-entry admission path."""
     if any(owner.get(name) is not value for owner, name, value in _PAUSE_METADATA_BINDINGS):
         return False
     for cls, lookup, dictionary in _PAUSE_METADATA_CLASSES:
@@ -1025,16 +1287,24 @@ def _pause_metadata_current(authority):
     if type(authority) is not _PAUSE_METADATA_BINDINGS[0][2]:
         return False
     values = vars(authority)
-    if type(values) is not dict or any(
-        name in values for name in ("_read", "_read_intent", "_groups", "_tokens", "_open")
-    ):
+    names = _PAUSE_METADATA_METHODS
+    if admission_entry:
+        names += _ADMISSION_ENTRY_METHODS
+    if type(values) is not dict or any(name in values for name in names):
         return False
     for module, namespace, filename, spec, origin in _PAUSE_METADATA_MODULES:
         if (sys.modules.get(namespace["__name__"]) is not module
                 or vars(module) is not namespace or namespace.get("__file__") != filename
                 or namespace.get("__spec__") is not spec or getattr(spec, "origin", None) != origin):
             return False
-    for owner, name, descriptor, original, code, namespace, defaults, keywords, items, closure, values in _PAUSE_METADATA_READERS:
+    readers = _PAUSE_METADATA_READERS
+    if admission_entry:
+        readers += _ADMISSION_ENTRY_READERS
+    return _metadata_readers_current(readers)
+
+
+def _metadata_readers_current(readers):
+    for owner, name, descriptor, original, code, namespace, defaults, keywords, items, closure, values in readers:
         if (owner.get(name) is not descriptor or original.__code__ is not code
                 or original.__globals__ is not namespace or original.__defaults__ is not defaults
                 or original.__kwdefaults__ is not keywords or original.__closure__ is not closure
@@ -1057,30 +1327,43 @@ _PAUSE_METADATA_CLASSES = tuple(
     (cls, vars(cls).get("__getattribute__"), vars(cls).get("__dict__"))
     for cls in (Admission,)
 )
-_PAUSE_METADATA_READERS = tuple(
-    (row_owner, row_name, descriptor, function, function.__code__, function.__globals__,
-     function.__defaults__, function.__kwdefaults__, tuple((function.__kwdefaults__ or {}).items()),
-     function.__closure__, tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()))
-    for owner, names in (
-        (vars(Admission), ("_read", "_read_intent", "_groups", "_tokens", "_open")),
-        (globals(), ("pinned_directory", "_pause_metadata_current")),
-        (vars(bootstrap), (
-            "_records", "_control_records", "_registry", "_registry_read_lock",
-            "pinned_directory", "_read", "_strings", "_paths", "_key",
-            "_activation_witness", "_validate_ancestry_record",
-            "_open_verified_parent", "_native_close",
-            "effective_roots", "identity_view", "inode_token", "inode_token_for",
-        )),
+def _bind_metadata_readers(sources):
+    return tuple(
+        (row_owner, row_name, descriptor, function, function.__code__, function.__globals__,
+         function.__defaults__, function.__kwdefaults__, tuple((function.__kwdefaults__ or {}).items()),
+         function.__closure__, tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()))
+        for owner, names in sources
+        for name in names
+        for original in (owner[name],)
+        for callback in (original.__func__ if type(original) is staticmethod else original,)
+        for row_owner, row_name, descriptor, function in (
+            (owner, name, original, callback),
+            *(((vars(callback), "__wrapped__", callback.__wrapped__, callback.__wrapped__),)
+              if hasattr(callback, "__wrapped__") else ()),
+        )
     )
-    for name in names
-    for original in (owner[name],)
-    for callback in (original.__func__ if type(original) is staticmethod else original,)
-    for row_owner, row_name, descriptor, function in (
-        (owner, name, original, callback),
-        *(((vars(callback), "__wrapped__", callback.__wrapped__, callback.__wrapped__),)
-          if hasattr(callback, "__wrapped__") else ()),
-    )
+
+
+_PAUSE_METADATA_METHODS = ("_read", "_read_intent", "_groups", "_tokens", "_open")
+_ADMISSION_ENTRY_METHODS = (
+    "_admit", "_directory", "_lock", "_nonnested", "_observe_gate", "_names", "_key", "_check",
 )
+_PAUSE_METADATA_READERS = _bind_metadata_readers((
+    (vars(Admission), _PAUSE_METADATA_METHODS),
+    (globals(), ("pinned_directory", "_pause_metadata_current")),
+    (vars(bootstrap), (
+        "_records", "_control_records", "_registry", "_registry_read_lock",
+        "pinned_directory", "_read", "_strings", "_paths", "_key",
+        "_activation_witness", "_validate_ancestry_record",
+        "_open_verified_parent", "_native_close",
+        "effective_roots", "identity_view", "inode_token", "inode_token_for",
+    )),
+))
+_ADMISSION_ENTRY_READERS = _bind_metadata_readers((
+    (vars(Admission), _ADMISSION_ENTRY_METHODS),
+    (globals(), ("_close_registration",)),
+    (vars(native_files), ("_close_owned",)),
+))
 _PAUSE_METADATA_MODULES = tuple(
     (module, vars(module), module.__file__, module.__spec__, getattr(module.__spec__, "origin", None))
     for name in dict.fromkeys(row[5]["__name__"] for row in _PAUSE_METADATA_READERS)

@@ -18,6 +18,7 @@ import asyncio
 from pathlib import Path
 import subprocess
 import sys
+import threading
 from types import SimpleNamespace
 from typing import Any
 
@@ -225,7 +226,7 @@ async def test_send_failures_are_swallowed_and_drainer_survives() -> None:
 
 
 @pytest.mark.asyncio
-async def test_bounded_queue_drops_when_the_drainer_stalls() -> None:
+async def test_bounded_queue_resets_when_the_drainer_stalls() -> None:
     client = FakeRelayClient()
     client.gate = asyncio.Event()
     publisher = ServedRelayPublisher(client, max_pending=2)
@@ -239,8 +240,9 @@ async def test_bounded_queue_drops_when_the_drainer_stalls() -> None:
     client.gate.set()
     await _drain(publisher)
 
-    # One in-flight + two queued; the remaining three were dropped, not raised.
-    assert len(client.frames) == 3
+    # One in-flight + two queued + one reset; native state remains untouched.
+    assert len(client.frames) == 4
+    assert client.frames[1][0] == "console.changed"
     await publisher.aclose()
 
 
@@ -291,6 +293,125 @@ async def test_wait_idle_lets_an_idle_loop_sleep_until_the_send_finishes() -> No
         assert [kind for kind, _ in client.frames] == ["relay.run.status"]
     finally:
         await publisher.aclose()
+
+
+@pytest.mark.asyncio
+async def test_wait_idle_keeps_waiting_when_a_worker_queues_the_next_send_before_notify(
+    monkeypatch,
+) -> None:
+    """The next send can start before its thread-safe notification runs."""
+    loop = asyncio.get_running_loop()
+    loop_thread = threading.get_ident()
+    release_worker = threading.Event()
+    worker_posted = threading.Event()
+    worker_errors = []
+    delayed_wakes = []
+
+    class TwoSendClient(FakeRelayClient):
+        first_finished = False
+
+        async def send_relay_event(self, message_type, payload):
+            if payload["status"] == "first":
+                self.frames.append((message_type, dict(payload)))
+                self.first_finished = True
+                return
+            await super().send_relay_event(message_type, payload)
+
+    client = TwoSendClient()
+    client.gate = asyncio.Event()
+    publisher = ServedRelayPublisher(client)
+    original_lock = publisher._queue_lock
+    handoff_pending = True
+
+    class HandoffLock:
+        def __enter__(self):
+            original_lock.acquire()
+
+        def __exit__(self, *_exc):
+            nonlocal handoff_pending
+            original_lock.release()
+            if (
+                handoff_pending
+                and threading.get_ident() == loop_thread
+                and client.first_finished
+            ):
+                # Pause after the first send's settlement releases the lock,
+                # so a real worker can queue the next send before the dequeue.
+                handoff_pending = False
+                release_worker.set()
+                assert worker_posted.wait(1), "worker did not publish the next send"
+
+    publisher._queue_lock = HandoffLock()
+    original_wake = loop.call_soon_threadsafe
+
+    def delay_worker_notification(callback, *args, **kwargs):
+        if callback == publisher._notify and threading.get_ident() != loop_thread:
+            delayed_wakes.append((callback, args, kwargs))
+            return None
+        return original_wake(callback, *args, **kwargs)
+
+    monkeypatch.setattr(loop, "call_soon_threadsafe", delay_worker_notification)
+
+    def publish_next():
+        release_worker.wait()
+        try:
+            publisher.run_status("session-7", "second")
+        except BaseException as error:
+            worker_errors.append(error)
+        finally:
+            worker_posted.set()
+
+    worker = threading.Thread(target=publish_next, daemon=True)
+    waiter = None
+    publisher.attach()
+    worker.start()
+    try:
+        publisher.run_status("session-7", "first")
+        await asyncio.wait_for(client.in_flight.wait(), 1)
+        assert not worker_errors
+        assert len(delayed_wakes) == 1
+        assert not publisher._queue  # The real drainer already owns the second send.
+        assert [payload["status"] for _, payload in client.frames] == ["first"]
+
+        wait_entered = asyncio.Event()
+        wait_returned = asyncio.Event()
+        original_idle_wait = publisher._idle.wait
+
+        async def observe_idle_wait():
+            wait_entered.set()
+            await original_idle_wait()
+            wait_returned.set()
+
+        monkeypatch.setattr(publisher._idle, "wait", observe_idle_wait)
+        waiter = asyncio.create_task(publisher.wait_idle(timeout=2.0))
+        await asyncio.wait_for(wait_entered.wait(), 1)
+        # Event.wait returns synchronously for a set event. The observation
+        # therefore settles before this barrier resumes, without a timed sleep.
+        assert not wait_returned.is_set(), (
+            "wait_idle observed stale idle while the second send was in flight"
+        )
+        assert not waiter.done()
+
+        for callback, args, kwargs in delayed_wakes:
+            original_wake(callback, *args, **kwargs)
+        delayed_wakes.clear()
+        client.gate.set()
+        await asyncio.wait_for(waiter, 1)
+        assert [payload["status"] for _, payload in client.frames] == [
+            "first",
+            "second",
+        ]
+    finally:
+        release_worker.set()
+        client.gate.set()
+        worker.join(1)
+        for callback, args, kwargs in delayed_wakes:
+            original_wake(callback, *args, **kwargs)
+        await publisher.aclose()
+        if waiter is not None:
+            waiter.cancel()
+            await asyncio.gather(waiter, return_exceptions=True)
+        assert not worker.is_alive(), "publication worker did not retire"
 
 
 @pytest.mark.asyncio
@@ -472,7 +593,7 @@ assert "tldw_chatbook.Web_Server.served_relay_publisher" not in sys.modules
 
 
 @pytest.mark.asyncio
-async def test_app_approval_wrapper_with_publisher_keeps_original_and_relay() -> None:
+async def test_app_approval_wrapper_leaves_relay_to_runtime_projection() -> None:
     from tldw_chatbook.app_served import _served_relay_wrap_pending_approval
 
     client = FakeRelayClient()
@@ -488,10 +609,79 @@ async def test_app_approval_wrapper_with_publisher_keeps_original_and_relay() ->
         wrapped = _served_relay_wrap_pending_approval(
             SimpleNamespace(served_relay_publisher=publisher), original
         )
+        assert wrapped is original
         assert wrapped(CONSOLE_APPROVAL_PAYLOAD) == "card-mounted"
         assert calls == [CONSOLE_APPROVAL_PAYLOAD]
         await _drain(publisher)
-        assert [frame[0] for frame in client.frames] == ["relay.approval.raised"]
+        assert client.frames == []
+    finally:
+        await publisher.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stalled_publisher_marks_lost_clear_as_reset_with_bounded_handoff(
+    monkeypatch,
+):
+    client = FakeRelayClient()
+    client.gate = asyncio.Event()
+    publisher = ServedRelayPublisher(client, max_pending=2)
+    publisher.attach()
+    publisher.approval_raised(CONSOLE_APPROVAL_PAYLOAD)
+    await asyncio.wait_for(client.in_flight.wait(), 1)
+    callbacks = []
+    loop = asyncio.get_running_loop()
+    original_wake = loop.call_soon_threadsafe
+
+    def wake(callback, *args, **kwargs):
+        callbacks.append(callback)
+        return original_wake(callback, *args, **kwargs)
+
+    monkeypatch.setattr(loop, "call_soon_threadsafe", wake)
+    for index in range(1000):
+        publisher.run_status("session-7", f"state-{index}")
+    publisher.approval_cleared("round-42")
+    assert len(callbacks) == 1
+    client.gate.set()
+    await _drain(publisher)
+    assert any(
+        kind == "console.changed" and payload.get("reset_required") is True
+        for kind, payload in client.frames
+    )
+    assert len(client.frames) <= 4
+    await publisher.aclose()
+
+
+@pytest.mark.asyncio
+async def test_publisher_retains_only_bounded_mounted_round_metadata():
+    client = FakeRelayClient()
+    publisher = ServedRelayPublisher(client, max_pending=2)
+    publisher.attach()
+    for index in range(100):
+        round_id = f"round-{index}"
+        publisher.approval_raised({**CONSOLE_APPROVAL_PAYLOAD, "round_id": round_id})
+        publisher.approval_cleared(round_id)
+    assert not publisher._mounted_rounds
+    for index in range(100):
+        publisher.approval_raised(
+            {**CONSOLE_APPROVAL_PAYLOAD, "round_id": f"round-{index}"}
+        )
+    assert len(publisher._mounted_rounds) <= 2
+    await publisher.aclose()
+
+
+@pytest.mark.asyncio
+async def test_runtime_projection_invalidations_need_no_mounted_approval_callback():
+    client = FakeRelayClient()
+    publisher = ServedRelayPublisher(client, poll_interval=0.001)
+    revisions = iter((1, None, None))
+    source = SimpleNamespace(poll_changes=lambda: next(revisions, None))
+    publisher.attach(projection_source=lambda: source)
+    try:
+        for _ in range(20):
+            await asyncio.sleep(0.002)
+            if client.frames:
+                break
+        assert client.frames == [("console.changed", {"sequence": 1})]
     finally:
         await publisher.aclose()
 

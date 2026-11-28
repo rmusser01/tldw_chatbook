@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import tomllib
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -180,11 +181,15 @@ async def test_a_sub_agent_definition_beside_the_apps_chachanotes_keeps_full_age
     from tldw_chatbook.Agents.plain_chat_tool_surface import light_surface_configured
     from tldw_chatbook.config import save_setting_to_cli_config
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
 
     assert save_setting_to_cli_config("splash_screen", "enabled", False)
     data = _profile_dir(tmp_path)
-    runs = AgentRunsDB(data / "agent_runs.db", client_id="seed")
-    try:
+    runs_path = data / "agent_runs.db"
+    with (
+        ConsoleExecutionOwner.acquire(runs_path) as owner,
+        closing(AgentRunsDB(runs_path, client_id="seed", execution_owner=owner)) as runs,
+    ):
         runs.create_agent_definition(
             AgentDefinition(
                 name="researcher",
@@ -192,8 +197,6 @@ async def test_a_sub_agent_definition_beside_the_apps_chachanotes_keeps_full_age
                 instructions="Search, then summarize.",
             )
         )
-    finally:
-        runs.close()
 
     app = _app_with_file_backed_chachanotes(data)
     async with app.run_test() as pilot:

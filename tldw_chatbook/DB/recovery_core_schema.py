@@ -1335,3 +1335,21 @@ CORE_SCHEMAS = tuple(
 CHACHANOTES_DROP_RESPONSE_REVISION_V88_TO_V89_SQL = (
     "UPDATE db_schema_version SET version=89 WHERE schema_name='rag_char_chat_schema' AND version=88",
 )
+
+# ADR-244 adds mobile consolidation receipts to each exact native v89 catalog.
+from .mobile_import_authority import CHAT_MIGRATION
+
+CHACHANOTES_V90_SCHEMAS = tuple(
+    tuple(sorted(catalog + CHAT_MIGRATION, key=_installed_schema_order))
+    for catalog in CHACHANOTES_V89_SCHEMAS
+)
+CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_V90_SCHEMAS[1]
+CORE_SCHEMAS = tuple(
+    (owner, 90, CHACHANOTES_V90_SCHEMAS[0])
+    if owner == "db.chachanotes.primary"
+    else (owner, version, sql)
+    for owner, version, sql in CORE_SCHEMAS
+)
+CHACHANOTES_MOBILE_V89_TO_V90_SQL = CHAT_MIGRATION + (
+    "UPDATE db_schema_version SET version=90 WHERE schema_name='rag_char_chat_schema' AND version=89",
+)

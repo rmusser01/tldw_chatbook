@@ -25,7 +25,7 @@ The first full local CI gate fails because setup-python installs under the runne
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no
-ADR path: backlog/decisions/359-isolated-self-hosted-ci-runners.md
+ADR path: backlog/decisions/360-isolated-self-hosted-ci-runners.md
 Reason: Repair the guest image toolchain within the accepted runner boundary.
 
 1. Reproduce the sanitized-child import failure against the same official Python archive.
@@ -40,7 +40,7 @@ Corrected the disposable guest tool-cache location to /opt/hostedtoolcache using
 
 Added reproducible guest customization and qualification matching production cache:pip, plus child checks with LD_LIBRARY_PATH removed and HOME changed for pinned3.12.11 and current3.12. Independent review, YAML/shell validation and whitespace checks passed. Live qualification43487941053 succeeded. On full gate43487945840, job132103333488 passed Run project-chat UAT (2m34s), complete evidence validation, the missing-evidence negative control, and artifact retention. No current gate failures at19:16Z; remaining unrelated suites continue. Failed/cancelled attempts43482084755 and43485256104 are retained separately and are not successful full-gate timings.
 
-ADR required:no new ADR; direct repair within ADR-359. Full local suite not run. Bookkeeping is recorded locally without pushing a new head that would restart healthy CI; overall merge and full-gate duration remain under the active monitor.
+ADR required:no new ADR; direct repair within ADR-360. Full local suite not run. Bookkeeping is recorded locally without pushing a new head that would restart healthy CI; overall merge and full-gate duration remain under the active monitor.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

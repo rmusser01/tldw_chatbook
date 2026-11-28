@@ -2,15 +2,22 @@
 
 import sqlite3
 import threading
+from contextlib import closing
 
 import pytest
 
+from Tests.agent_runs_owner import (
+    AGENT_RUNS_MIGRATIONS,
+    install_agent_runs_v18,
+    owned_agent_runs_db,
+)
 from tldw_chatbook.Agents.agent_models import AgentDefinition, ToolResult
 from tldw_chatbook.Agents.agent_service import _call_with_timeout
 from tldw_chatbook.Agents.agent_worktree import _worktree_root_identity
 from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity, WorkOrigin
 from tldw_chatbook.DB.agent_worktrees import AgentWorktreeRepository
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
 
 
 def _record(repository, run_id, tmp_path, execution_id="exec-1", **overrides):
@@ -48,7 +55,7 @@ def _terminal_run(db, conversation_id, run_id):
 
 def test_structural_record_and_definition_cap_survive_reopen(tmp_path):
     path = tmp_path / "runs.db"
-    db = AgentRunsDB(path, client_id="seed")
+    db = owned_agent_runs_db(path, client_id="seed")
     definition_id = db.create_agent_definition(
         AgentDefinition(
             name="capped",
@@ -65,7 +72,7 @@ def test_structural_record_and_definition_cap_survive_reopen(tmp_path):
     )
     db.close()
 
-    reopened = AgentRunsDB(path, client_id="reopen")
+    reopened = owned_agent_runs_db(path, client_id="reopen")
     try:
         row = AgentWorktreeRepository(reopened).get_for_conversation(
             "run-1", "conversation-1"
@@ -93,7 +100,7 @@ def test_structural_record_and_definition_cap_survive_reopen(tmp_path):
 
 
 def test_unknown_duplicate_and_invalid_records_do_not_overwrite_ownership(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="validation")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="validation")
     repository = AgentWorktreeRepository(db)
     with pytest.raises(ValueError, match="run"):
         _record(repository, "missing", tmp_path)
@@ -116,7 +123,7 @@ def test_unknown_duplicate_and_invalid_records_do_not_overwrite_ownership(tmp_pa
 
 @pytest.mark.parametrize("branch", ["agent/.hidden", "-agent", "@"])
 def test_invalid_git_branch_shapes_are_rejected_without_inserting(tmp_path, branch):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="branch-validation")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="branch-validation")
     _terminal_run(db, "conversation-1", "run-1")
     repository = AgentWorktreeRepository(db)
 
@@ -130,7 +137,7 @@ def test_invalid_git_branch_shapes_are_rejected_without_inserting(tmp_path, bran
 def test_conversation_scope_bounded_listing_and_foreign_ids_leave_rows_unchanged(
     tmp_path,
 ):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="scope")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="scope")
     repository = AgentWorktreeRepository(db)
     for index, conversation in enumerate(
         ("conversation-1", "conversation-1", "conversation-2")
@@ -177,7 +184,7 @@ def test_conversation_scope_bounded_listing_and_foreign_ids_leave_rows_unchanged
 def test_recovery_listing_uses_scoped_keyset_index_without_statistics(
     tmp_path, after_index
 ):
-    db = AgentRunsDB(tmp_path / "listing-plan.db", client_id="listing-plan")
+    db = owned_agent_runs_db(tmp_path / "listing-plan.db", client_id="listing-plan")
     repository = AgentWorktreeRepository(db)
     try:
         _terminal_run(db, "seed", "seed")
@@ -263,7 +270,7 @@ def test_recovery_listing_uses_scoped_keyset_index_without_statistics(
 
 def test_competing_claims_and_stale_completion_are_transactional(tmp_path):
     path = tmp_path / "runs.db"
-    seed = AgentRunsDB(path, client_id="seed")
+    seed = owned_agent_runs_db(path, client_id="seed")
     _terminal_run(seed, "conversation-1", "run-1")
     repository = AgentWorktreeRepository(seed)
     _record(repository, "run-1", tmp_path)
@@ -274,7 +281,7 @@ def test_competing_claims_and_stale_completion_are_transactional(tmp_path):
     results = []
 
     def compete(operation_id):
-        database = AgentRunsDB(path, client_id=operation_id)
+        database = owned_agent_runs_db(path, client_id=operation_id)
         try:
             barrier.wait(3)
             results.append(
@@ -298,7 +305,7 @@ def test_competing_claims_and_stale_completion_are_transactional(tmp_path):
         assert not thread.is_alive()
     assert sorted(results) == [False, True]
 
-    verify = AgentRunsDB(path, client_id="verify")
+    verify = owned_agent_runs_db(path, client_id="verify")
     repository = AgentWorktreeRepository(verify)
     row = repository.get_for_conversation("run-1", "conversation-1")
     winner = row["operation_id"]
@@ -311,7 +318,7 @@ def test_competing_claims_and_stale_completion_are_transactional(tmp_path):
 
 def test_uncertain_writer_state_is_sticky_and_never_claimable_after_reopen(tmp_path):
     path = tmp_path / "runs.db"
-    db = AgentRunsDB(path, client_id="seed")
+    db = owned_agent_runs_db(path, client_id="seed")
     _terminal_run(db, "conversation-1", "run-1")
     repository = AgentWorktreeRepository(db)
     _record(repository, "run-1", tmp_path)
@@ -319,7 +326,7 @@ def test_uncertain_writer_state_is_sticky_and_never_claimable_after_reopen(tmp_p
     assert not repository.mark_writer_finished("run-1", "exec-1", cleanup_proven=True)
     db.close()
 
-    reopened = AgentRunsDB(path, client_id="reopen")
+    reopened = owned_agent_runs_db(path, client_id="reopen")
     repository = AgentWorktreeRepository(reopened)
     assert (
         repository.get_for_conversation("run-1", "conversation-1")["writer_state"]
@@ -336,7 +343,7 @@ def test_physical_drain_callback_persists_only_after_delayed_worker_finishes(
     tmp_path, cleanup_proven
 ):
     path = tmp_path / "runs.db"
-    db = AgentRunsDB(path, client_id="owner")
+    db = owned_agent_runs_db(path, client_id="owner")
     _terminal_run(db, "conversation-1", "run-1")
     repository = AgentWorktreeRepository(db)
     capacity = RuntimeCapacity()
@@ -380,7 +387,7 @@ def test_physical_drain_callback_persists_only_after_delayed_worker_finishes(
     )
     db.close()
 
-    reopened = AgentRunsDB(path, client_id="reopen")
+    reopened = owned_agent_runs_db(path, client_id="reopen")
     reopened_repository = AgentWorktreeRepository(reopened)
     assert (
         reopened_repository.get_for_conversation("run-1", "conversation-1")[
@@ -397,31 +404,31 @@ def test_physical_drain_callback_persists_only_after_delayed_worker_finishes(
     reopened.close()
 
 
+def _seed_v19_definition(path, name, wall_cap):
+    with closing(sqlite3.connect(path)) as connection:
+        install_agent_runs_v18(connection)
+        migration = AGENT_RUNS_MIGRATIONS / "agent_runs_v18_to_v19_definition_wall_seconds.sql"
+        connection.executescript(migration.read_text(encoding="utf-8"))
+        connection.execute(
+            """INSERT INTO agent_definitions
+               (id, name, instructions, max_wall_seconds, created_at, updated_at)
+               VALUES ('definition', ?, 'work', ?, 'then', 'then')""",
+            (name, wall_cap),
+        )
+        connection.commit()
+        assert connection.execute(
+            "SELECT MAX(version) FROM schema_version"
+        ).fetchone() == (19,)
+    path.chmod(0o600)
+    return "definition"
+
+
 def test_reference_migration_upgrades_real_v19_shape(tmp_path):
     path = tmp_path / "runs.db"
-    db = AgentRunsDB(path, client_id="seed")
-    definition_id = db.create_agent_definition(
-        AgentDefinition(
-            name="migration-cap",
-            instructions="work",
-            max_wall_seconds=7.25,
-        )
-    )
-    db.close()
-    connection = sqlite3.connect(path)
-    try:
-        connection.execute("DROP TABLE agent_worktrees")
-        connection.execute("DELETE FROM schema_version WHERE version >= 20")
-        for column in ("provider", "params_json"):
-            connection.execute(f"ALTER TABLE agent_definitions DROP COLUMN {column}")
-        for column in ("resolved_provider", "resolved_model", "resolved_base_url", "resolved_params_json"):
-            connection.execute(f"ALTER TABLE agent_runs DROP COLUMN {column}")
-        connection.commit()
-        migration = (
-            __import__("pathlib").Path(__file__).parents[2]
-            / "tldw_chatbook/DB/migrations/agent_runs_v19_to_v20_worktree_recovery.sql"
-        ).read_text(encoding="utf-8")
-        connection.executescript(migration)
+    definition_id = _seed_v19_definition(path, "migration-cap", 7.25)
+    with closing(sqlite3.connect(path)) as connection:
+        migration = AGENT_RUNS_MIGRATIONS / "agent_runs_v19_to_v20_worktree_recovery.sql"
+        connection.executescript(migration.read_text(encoding="utf-8"))
         assert (
             connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
             == 20
@@ -433,39 +440,15 @@ def test_reference_migration_upgrades_real_v19_shape(tmp_path):
             "SELECT max_wall_seconds FROM agent_definitions WHERE id=?",
             (definition_id,),
         ).fetchone() == (7.25,)
-    finally:
-        connection.close()
 
 
 def test_runtime_reopen_migrates_v19_and_preserves_definition_cap(tmp_path):
     path = tmp_path / "runs.db"
-    current = AgentRunsDB(path, client_id="build-v19")
-    definition_id = current.create_agent_definition(
-        AgentDefinition(
-            name="runtime-migration-cap",
-            instructions="work",
-            max_wall_seconds=9.5,
-        )
-    )
-    current.close()
-
-    connection = sqlite3.connect(path)
-    try:
-        connection.execute("DROP TABLE agent_worktrees")
-        connection.execute("DELETE FROM schema_version WHERE version >= 20")
-        for column in ("provider", "params_json"):
-            connection.execute(f"ALTER TABLE agent_definitions DROP COLUMN {column}")
-        for column in ("resolved_provider", "resolved_model", "resolved_base_url", "resolved_params_json"):
-            connection.execute(f"ALTER TABLE agent_runs DROP COLUMN {column}")
-        connection.commit()
-        assert connection.execute(
-            "SELECT MAX(version) FROM schema_version"
-        ).fetchone() == (19,)
-    finally:
-        connection.close()
-
-    migrated = AgentRunsDB(path, client_id="migrate-v19")
-    try:
+    definition_id = _seed_v19_definition(path, "runtime-migration-cap", 9.5)
+    with (
+        ConsoleExecutionOwner.acquire(path) as owner,
+        closing(AgentRunsDB(path, client_id="migrate-v19", execution_owner=owner)) as migrated,
+    ):
         assert migrated.get_agent_definition(definition_id)["max_wall_seconds"] == 9.5
         with migrated.connection() as connection:
             assert tuple(
@@ -476,5 +459,3 @@ def test_runtime_reopen_migrates_v19_and_preserves_definition_cap(tmp_path):
                     "SELECT name FROM sqlite_master WHERE name='agent_worktrees'"
                 ).fetchone()
             ) == ("agent_worktrees",)
-    finally:
-        migrated.close()

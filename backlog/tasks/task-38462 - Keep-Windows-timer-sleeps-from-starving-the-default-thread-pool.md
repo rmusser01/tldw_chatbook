@@ -12,6 +12,7 @@ labels:
 priority: medium
 references:
 - backlog/tasks/task-38206 - GGUF-source-mode-recompose-test-times-out-on-Windows-CI-intermittently.md
+updated_date: 2026-11-04 08:18
 ---
 
 ## Description
@@ -35,6 +36,18 @@ On Windows, Textual runs every timer sleep, and every timer cancellation, as a b
 3. Write failing unit tests first (simulated win32, runnable on macOS): long waits never touch the default executor; short waits run on a dedicated pool; cancellation returns at once and frees the pool; non-win32 is untouched. Also add a guard test that pins the Textual internals the fix replaces.
 4. Implement in `Utils/text_selection_crash_guard.py`, where `ThreadWorkerContextGuard.on_load` already owns the default executor. On win32 only, replace `textual.timer.sleep`: `asyncio.sleep` for coarse waits, and a dedicated pool for short high-resolution waits.
 5. Rerun the proxy timings with the fix. Run the touched and startup-heavy suites, ruff and preflight, then write the notes.
+
+Historical PR #3345 approach and qualification before inheriting dev's short-wait precision policy:
+
+ADR required: yes
+ADR path: backlog/decisions/354-windows-textual-timer-waits-use-the-event-loop.md
+Reason: Windows framework timer policy has process-global scope and a standard event-loop clock-resolution tradeoff.
+
+1. Preserve the actual PR3345 Windows job126398414464 diagnostic and read pinned Textual8.2.8/CPython sleep/executor source, prior TASK-38206 evidence and existing context-guard ownership. Source diagnosis: timer Future queued before callback entry, shared worker contention; do not attribute unsampled workers or DB execution cost.
+2. Wait for root's active migration acceptance process to physically close before executable/test/index/HEAD changes. Obtain independent review of the precise proposal. Add a meaningful original-three-second regression with real Textual Timer callbacks and cancellation under a controlled eight-worker Windows-sleeper proxy; all owned Events/jobs must be released and awaited. Preserve actual Windows startup assertions.
+3. In existing ThreadWorkerContextGuard.on_load, choose asyncio.sleep for textual.timer.sleep only on Windows, before its existing FreshContextExecutor early return. Keep executor identity/capacity, fresh job contexts, replaced-pool shutdown and all native Timer behavior. No added pool, global _time patch, forced DB callback, timeout increase or extra UI module.
+4. Verify new proxy/long-timer cancellation and non-Windows controls plus existing executor/context, original startup and relevant timer/architecture checks. Qualify actual Windows timing via the normal current-head hosted workflow; proxy evidence alone is not Windows-kernel evidence.
+5. Update ADR status, living App-shell docs, Task notes/ACs and source-bound QA evidence. Final shared Console mounted manual/whole15 browser UAT, exact-head independent review and all required hosted checks stay mandatory. Mark Done only when actual DoD holds.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -97,6 +110,11 @@ On Windows, Textual runs every timer sleep, and every timer cancellation, as a b
 - **Integration RED/GREEN.** All three CI nodes on 8c1e43ab7a under proxy + timer fix + 5 s creation: passed then ERROR "uncertain", join 3.002 s. After the fix, all 7 nodes of that CI step pass with no DB creation and 0.0 s joins.
 - **Size ratchet.** The `app_feature_glue.py` row was raised 742 -> 753 (dated).
 **Windows confirmation:** in run 41784255481 at d0d26a6fdc (2026-11-04), after the FTS-backfill skip (fe1470d27c), the Windows GGUF job passed all 7 full-app nodes in 13.4-23.8 s. That is faster than dev's 36-78 s, and there were no teardown errors.
+
+Historical PR #3345 approach and qualification before inheriting dev's short-wait precision policy:
+
+Implemented ADR-354 at the existing App compatibility seam: five added lines in ThreadWorkerContextGuard.on_load select asyncio.sleep for textual.timer.sleep on Windows before the installed-pool return. Executor capacity, fresh contexts, replacement shutdown and all native Timer lifecycle code remain unchanged. This fixes the concrete PR3345 Windows job126398414464 queued .1-second timer failure; its diagnostic did not establish that all eight workers were timer sleepers. Epoch336 first reproduced the original three-second failure with real Textual Timer and eight held native futures (1 failed, 2 non-Windows controls passed; 3.39s), then epoch337 passed all36 original startup, delivery/cancellation, context/executor and mouse-guard cases in15.76s. The long timer was awaited to retirement while the same eight workers stayed held; every owned proxy wait/cancel job was released and awaited even on RED. Both runs physically reaped with unchanged source. Epoch338 passed all287 final numeric/layer/approval/budget/ADR checks in40.03s; no cap changed. Scoped Ruff across all six changed Python files has zero introduced findings; inherited findings remain explicitly disclosed. Independent source/design/test review reports0 Critical/Important findings. App-shell architecture and the existing Windows testing lesson document process-global scope and standard event-loop clock precision. Actual current-head hosted Windows qualification and final committed-head review remain merge gates; task status remains In Progress pending final reconciliation.
+All three ACs are checked from the reviewed Windows-only shared timer selection, real-Timer/eight-held-native-worker mechanism and long-timer retirement, plus explicit unchanged Darwin/Linux slot controls. The original3s deadline and executor capacity remain unchanged. After final Console/Settings import corrections, exact Perf Guard346 passed116 cases with1 unchanged existing strict xfail; final mounted App and original complete15 browser UAT347 passed on the final source. No actual Windows-kernel timing pass is claimed yet: required current-head hosted Windows qualification and final committed-head independent review remain merge gates. Status stays In Progress pending that reconciliation. ADR354, App-shell architecture and the existing Windows lesson record process-global scope and standard event-loop timer resolution.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

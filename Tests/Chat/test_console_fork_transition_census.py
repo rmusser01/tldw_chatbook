@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import ast
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
 
 
 STORE_PATH = Path("tldw_chatbook/Chat/console_chat_store.py")
+SAVED_SESSIONS_PATH = Path("tldw_chatbook/Chat/console_saved_sessions.py")
 IMAGE_RECOVERY_PATH = Path("tldw_chatbook/UI/Console_Modules/image.py")
 RETRIEVAL_PATH = Path("tldw_chatbook/UI/Console_Modules/retrieval.py")
 HYDRATION_PATH = Path("tldw_chatbook/Chat/console_conversation_hydration.py")
@@ -174,11 +176,43 @@ def _store_methods() -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
         for node in tree.body
         if isinstance(node, ast.ClassDef) and node.name == "ConsoleChatStore"
     )
-    return {
+    methods = {
         node.name: node
         for node in store.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
+    methods["restore_persisted_session"] = _saved_session_restore(
+        methods["restore_persisted_session"],
+        ast.parse(SAVED_SESSIONS_PATH.read_text(encoding="utf-8")),
+    )
+    return methods
+
+
+def _saved_session_restore(
+    facade: ast.FunctionDef, tree: ast.Module
+) -> ast.FunctionDef:
+    implementations = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == facade.name
+    ]
+    assert len(implementations) == 1
+    implementation = implementations[0]
+    for node in (facade, implementation):
+        assert [arg.arg for arg in node.args.args] == ["self"]
+        assert not (node.args.posonlyargs or node.args.vararg or node.args.kwarg)
+        assert not node.decorator_list
+    names = [arg.arg for arg in facade.args.kwonlyargs]
+    assert names == [arg.arg for arg in implementation.args.kwonlyargs]
+    forwarding = ", ".join(f"{name}={name}" for name in names)
+    expected = ast.parse(
+        "from . import console_saved_sessions\n"
+        f"return console_saved_sessions.restore_persisted_session(self, {forwarding})"
+    )
+    body = facade.body[1:] if ast.get_docstring(facade) is not None else facade.body
+    assert ast.dump(ast.Module(body=body, type_ignores=[])) == ast.dump(expected)
+    # Keep the constructor classification while scanning its actual extracted body.
+    return implementation
 
 
 def _called_attributes(node: ast.AST) -> set[str]:
@@ -1371,6 +1405,66 @@ def test_every_public_direct_fork_field_assignment_is_fenced_or_classified() -> 
     assert mutation_routes - transitioned_assignments == (
         SAFE_NON_TRANSITION_ASSIGNMENTS | frozenset(DELEGATED_TRANSITION_ROUTES)
     )
+
+
+@pytest.mark.parametrize(
+    "change", ["missing", "target", "self", "keyword", "write", "duplicate"]
+)
+def test_saved_session_inventory_rejects_an_impure_or_misdirected_facade(change):
+    store = next(
+        node
+        for node in ast.parse(STORE_PATH.read_text()).body
+        if isinstance(node, ast.ClassDef) and node.name == "ConsoleChatStore"
+    )
+    facade = next(
+        node
+        for node in store.body
+        if getattr(node, "name", None) == "restore_persisted_session"
+    )
+    tree = ast.parse(SAVED_SESSIONS_PATH.read_text())
+    call = facade.body[-1].value
+    if change == "duplicate":
+        tree.body.append(
+            deepcopy(
+                next(
+                    node
+                    for node in tree.body
+                    if getattr(node, "name", None) == facade.name
+                )
+            )
+        )
+    elif change == "missing":
+        facade.body.pop()
+    elif change == "target":
+        call.func.attr = "restore_persisted_session_owned"
+    elif change == "self":
+        call.args[0] = ast.Name(id="other")
+    elif change == "keyword":
+        call.keywords[0].value = ast.Constant(value=None)
+    else:
+        facade.body.insert(-1, ast.parse("self.session.title = 'unexpected'").body[0])
+    with pytest.raises(AssertionError):
+        _saved_session_restore(facade, tree)
+
+
+def test_saved_session_inventory_scans_mutations_in_the_extracted_body():
+    implementation = deepcopy(_store_methods()["restore_persisted_session"])
+    mutation = ast.parse("self.session.title = 'scanner-pin'").body[0]
+    ast.increment_lineno(mutation, 100000)
+    implementation.body.append(mutation)
+    tree = ast.Module(body=[implementation], type_ignores=[])
+    store = next(
+        node
+        for node in ast.parse(STORE_PATH.read_text()).body
+        if isinstance(node, ast.ClassDef) and node.name == "ConsoleChatStore"
+    )
+    facade = next(
+        node
+        for node in store.body
+        if getattr(node, "name", None) == "restore_persisted_session"
+    )
+    resolved = _saved_session_restore(facade, tree)
+    assert any(line == mutation.lineno for line, _ in _mutation_events(resolved))
 
 
 def _rollback_contract(tree: ast.AST) -> tuple[tuple[str, tuple[str, ...], str], ...]:

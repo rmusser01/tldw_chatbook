@@ -713,6 +713,7 @@ class ConsoleLibraryMigrationSeed:
     "db.chachanotes.primary",
     closer="close_connection",
     finite_closer="retire_finite_worker_connection",
+    read_only_policy="db.chachanotes.read",
 )
 class CharactersRAGDB:
     """
@@ -741,7 +742,7 @@ class CharactersRAGDB:
     """
 
     _CURRENT_SCHEMA_VERSION = (
-        89  # TASK-42544: drop the superseded response-revision partial index.
+        90  # ADR-244 receipts follow TASK-42544's native index removal.
     )
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
@@ -2827,6 +2828,8 @@ DELETE FROM keywords
         client_id: str,
         check_integrity_on_startup: bool = False,
         console_library_migration_seed: ConsoleLibraryMigrationSeed | None = None,
+        *,
+        _read_only: bool = False,
     ):
         """
         Initializes the CharactersRAGDB instance.
@@ -2858,6 +2861,7 @@ DELETE FROM keywords
                                   a critical error.
             SchemaError: If schema migration or versioning issues occur.
         """
+        self._read_only = _read_only
         if isinstance(db_path, Path):
             self.is_memory_db = False
             self.db_path = lexical_path(db_path)
@@ -2888,7 +2892,22 @@ DELETE FROM keywords
             None if self.is_memory_db else self.db_path_str
         )
         try:
-            self._initialize_schema()
+            if self._read_only:
+                if self.is_memory_db:
+                    raise ValueError("Read-only inspection requires an existing file.")
+                row = (
+                    self._get_thread_connection()
+                    .execute(
+                        "SELECT version FROM db_schema_version WHERE schema_name = ?",
+                        (self._SCHEMA_NAME,),
+                    )
+                    .fetchone()
+                )
+                if row is None or row[0] != self._CURRENT_SCHEMA_VERSION:
+                    raise SchemaError("Existing database schema is incompatible.")
+            else:
+                reject_incompatible_preview(self.db_path_str)
+                self._initialize_schema()
 
             # Run integrity check if requested and not in-memory
             if check_integrity_on_startup and not self.is_memory_db:
@@ -2929,6 +2948,11 @@ DELETE FROM keywords
             raise CharactersRAGDBError(
                 f"Unexpected database initialization error: {exc}"
             ) from exc
+
+    @classmethod
+    def open_read_only(cls, db_path: Path):
+        """Read an existing current store without creating or migrating it."""
+        return cls(db_path, client_id="canonical-reader", _read_only=True)
 
     # --- Connection Management ---
     @core_getter
@@ -3033,9 +3057,9 @@ DELETE FROM keywords
 
             if not conn:
                 try:
-                    conn = connect_private_sqlite(
-                        "db.chachanotes.primary",
-                        self.db_path_str,
+                    connect_options = dict(
+                        read_only=self._read_only,
+                        must_exist=self._read_only,
                         detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
                         check_same_thread=False,  # Required for threading.local approach
                         timeout=15
@@ -3048,6 +3072,16 @@ DELETE FROM keywords
                         ),
                         factory=_QuiescentSQLiteConnection,
                     )
+                    if self._read_only:
+                        conn = connect_private_sqlite(
+                            "db.chachanotes.read", self.db_path_str, **connect_options
+                        )
+                    else:
+                        conn = connect_private_sqlite(
+                            "db.chachanotes.primary",
+                            self.db_path_str,
+                            **connect_options,
+                        )
                     opened_here = True
                     if not isinstance(conn, _QuiescentSQLiteConnection):
                         raise RuntimeError("quiescent_connection_factory")
@@ -3072,7 +3106,7 @@ DELETE FROM keywords
                         conn.set_progress_handler(
                             lambda: int(time.monotonic() >= operation_deadline), 100
                         )
-                    if not self.is_memory_db:
+                    if not self.is_memory_db and not self._read_only:
                         # Finish the statement: an active journal_mode PRAGMA is
                         # a writer that refuses every later COMMIT on this
                         # connection if anything retains its cursor.
@@ -8160,33 +8194,9 @@ DELETE FROM keywords
 
     def _migrate_from_v84_to_v85(self, conn: sqlite3.Connection) -> None:
         """Add local archive chronology while retaining shared sync events."""
-        self._require_migration_entry_version(conn, 84, "V84→V85")
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v84_to_v85_archive_chronology.sql"
-        )
-        try:
-            with self.transaction(immediate=True) as cursor:
-                self._execute_migration_statements(
-                    cursor, migration_path.read_text(encoding="utf-8"), "V84→V85"
-                )
-                updated = cursor.execute(
-                    "UPDATE db_schema_version SET version = 85 "
-                    "WHERE schema_name = ? AND version = 84",
-                    (self._SCHEMA_NAME,),
-                )
-                if updated.rowcount != 1:
-                    raise SchemaError(
-                        "Archive chronology migration version update failed"
-                    )
-            if self._get_db_version(conn) != 85:
-                raise SchemaError("Archive chronology migration version check failed")
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            raise SchemaError(
-                f"Migration from V84 to V85 failed for '{self._SCHEMA_NAME}': "
-                f"{type(exc).__name__}"
-            ) from exc
+        from . import chachanotes_recent_migrations
+
+        return chachanotes_recent_migrations._migrate_from_v84_to_v85(self, conn)
 
     def _migrate_from_v74_to_v75(self, conn: sqlite3.Connection) -> None:
         """Retain machine continuation dedup independently of checkpoints."""
@@ -8250,85 +8260,30 @@ DELETE FROM keywords
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v89_to_v90(self, conn: sqlite3.Connection) -> None:
+        """Install durable consolidation batch evidence."""
+        from . import chachanotes_recent_migrations
+
+        return chachanotes_recent_migrations._migrate_from_v89_to_v90(self, conn)
+
     def _migrate_from_v83_to_v84(self, conn: sqlite3.Connection) -> None:
         """Install independent source-bound regions and optional applied provenance."""
-        self._require_migration_entry_version(conn, 83, "V83→V84")
-        path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v83_to_v84_portrait_regions.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor, path.read_text(encoding="utf-8"), "V83→V84"
-                )
-                changed = cursor.execute(
-                    "UPDATE db_schema_version SET version=84 WHERE schema_name=? AND version=83",
-                    (self._SCHEMA_NAME,),
-                )
-                if changed.rowcount != 1:
-                    raise SchemaError("V83→V84 version update failed")
-        except (OSError, sqlite3.Error, CharactersRAGDBError) as exc:
-            raise SchemaError(f"Migration V83→V84 failed: {type(exc).__name__}") from exc
+        from . import chachanotes_recent_migrations
+
+        return chachanotes_recent_migrations._migrate_from_v83_to_v84(self, conn)
 
 
     def _migrate_from_v82_to_v83(self, conn: sqlite3.Connection) -> None:
         """Install source-bound local portrait sets without sync triggers."""
-        self._require_migration_entry_version(conn, 82, "V82→V83")
-        path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v82_to_v83_portrait_performance.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor, path.read_text(encoding="utf-8"), "V82→V83"
-                )
-                changed = cursor.execute(
-                    "UPDATE db_schema_version SET version=83 WHERE schema_name=? AND version=82",
-                    (self._SCHEMA_NAME,),
-                )
-                if changed.rowcount != 1:
-                    raise SchemaError("V82→V83 version update failed")
-        except (OSError, sqlite3.Error, CharactersRAGDBError) as exc:
-            raise SchemaError(f"Migration V82→V83 failed: {type(exc).__name__}") from exc
+        from . import chachanotes_recent_migrations
+
+        return chachanotes_recent_migrations._migrate_from_v82_to_v83(self, conn)
 
     def _migrate_from_v81_to_v82(self, conn: sqlite3.Connection) -> None:
         """Permit immutable sibling ties while preserving one root per Canvas."""
-        self._require_migration_entry_version(conn, 81, "V81→V82")
-        path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v81_to_v82_canvas_sibling_sequences.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                predecessor = cursor.execute(
-                    "SELECT sql FROM sqlite_master WHERE type = 'index' "
-                    "AND name = 'idx_canvas_revisions_canvas_sequence'"
-                ).fetchone()
-                if predecessor is None or predecessor[0] != (
-                    "CREATE UNIQUE INDEX idx_canvas_revisions_canvas_sequence\n"
-                    "  ON canvas_revisions(canvas_id, sequence)"
-                ):
-                    raise SchemaError("incompatible Canvas sequence predecessor schema")
-                self._execute_migration_statements(
-                    cursor, path.read_text(encoding="utf-8"), "V81→V82"
-                )
-                updated = cursor.execute(
-                    "UPDATE db_schema_version SET version = 82 WHERE schema_name = ? AND version = 81",
-                    (self._SCHEMA_NAME,),
-                )
-                if updated.rowcount != 1:
-                    raise SchemaError("V81→V82 version update failed")
-            if self._get_db_version(conn) != 82:
-                raise SchemaError("V81→V82 version check failed")
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            raise SchemaError(
-                f"Migration V81→V82 failed: {type(exc).__name__}"
-            ) from exc
+        from . import chachanotes_recent_migrations
+
+        return chachanotes_recent_migrations._migrate_from_v81_to_v82(self, conn)
 
     def _migrate_from_v80_to_v81(self, conn: sqlite3.Connection) -> None:
         """Install native local rules without adding sync or metadata payloads."""
@@ -8719,6 +8674,7 @@ DELETE FROM keywords
                     86: self._migrate_from_v86_to_v87,
                     87: self._migrate_from_v87_to_v88,
                     88: self._migrate_from_v88_to_v89,
+                    89: self._migrate_from_v89_to_v90,
                 }
 
                 if current_db_version == 0:
@@ -22578,3 +22534,34 @@ _CONSOLE_BROWSER_NOTES_RETIREMENT_SOURCE = (
         )
     ),
 )
+
+
+def reject_incompatible_preview(db_path: str | Path) -> None:
+    """Refuse unmerged preview metadata before any schema-ready writer access."""
+    import time
+
+    from .mobile_preview_lineage import (
+        _existing_preview_target,
+        _reject_preview_connection,
+    )
+    from .private_sqlite import connect_private_sqlite
+
+    target = _existing_preview_target(db_path)
+    if target is None:
+        return
+    selected, identity = target
+    deadline = time.monotonic() + 5.0
+    connection = connect_private_sqlite(
+        "db.chachanotes.read",
+        selected,
+        read_only=True,
+        must_exist=True,
+        immutable=False,
+        expected_identity=identity,
+        operation_deadline=deadline,
+        timeout=5.0,
+    )
+    try:
+        _reject_preview_connection(connection, "chat", deadline)
+    finally:
+        connection.close()

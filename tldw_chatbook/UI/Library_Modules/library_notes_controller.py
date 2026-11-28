@@ -913,6 +913,10 @@ class LibraryNotesController:
     # -- framework services: live-read properties, never snapshotted ------
 
     @property
+    def _library_list_entry_focus_owner(self) -> "LibraryScreen":
+        return self._screen
+
+    @property
     def _footer_shortcut_registration(self) -> Any:
         return self._screen._footer_shortcut_registration
 
@@ -975,7 +979,6 @@ class LibraryNotesController:
     @property
     def watch(self) -> Any:
         return self._screen.watch
-
 
     # -- shared shell state, read-only (group (b)) -------------------------
 
@@ -1049,7 +1052,6 @@ class LibraryNotesController:
     def _rag_search_state(self) -> Any:
         return self._rag_search_state_accessor()
 
-
     # -- shared shell state this cluster also writes (group (b')) ----------
 
     @property
@@ -1100,7 +1102,6 @@ class LibraryNotesController:
     def _pending_library_source_open(self, value: Any) -> None:
         self._set_pending_library_source_open_fn(value)
 
-
     # -- prior-extracted notes wiring coordinators (group (c)) -------------
 
     @property
@@ -1114,7 +1115,6 @@ class LibraryNotesController:
     @property
     def _library_notes_sync_controller(self) -> Any:
         return self._library_notes_sync_controller_accessor()
-
 
     # -- screen-resident callables, late-bound (groups (a) and (e)) --------
 

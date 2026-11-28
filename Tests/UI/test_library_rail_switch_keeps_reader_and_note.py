@@ -1330,7 +1330,8 @@ async def test_a_users_own_move_to_a_grip_disarms_the_list_entry(
 
 
 @pytest.mark.asyncio
-async def test_a_no_op_focus_reset_records_no_landing():
+@pytest.mark.parametrize("hold_page", [False, True], ids=["ordinary", "loading-page"])
+async def test_a_no_op_focus_reset_records_no_landing(monkeypatch, hold_page):
     """TASK-42473 review: Textual's reset does nothing for a widget that
     does not hold focus (a blur of an unfocused control), so it must not
     record whatever holds focus as a reset landing.
@@ -1343,13 +1344,72 @@ async def test_a_no_op_focus_reset_records_no_landing():
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
+        result_held, release = asyncio.Event(), asyncio.Event()
+        loading_attempts: list[None] = []
+        premature_fallback: list[None] = []
+        if hold_page:
+            browse = screen._library_media_browse_controller
+            search = browse._search
+            enter = screen._focus_library_list_entry
+            empty_target = screen._library_media_empty_list_fallback_target
+
+            async def hold_first_result(scope):
+                result = await search(scope)
+                if not result_held.is_set():
+                    assert result.items
+                    result_held.set()
+                    await release.wait()
+                return result
+
+            def record_empty_target():
+                if result_held.is_set() and browse.loading:
+                    premature_fallback.append(None)
+                return empty_target()
+
+            def observe_loading_entry():
+                controls = screen.query("#library-media-type-filter")
+                observed = (
+                    result_held.is_set()
+                    and browse.loading
+                    and screen._library_pending_list_entry_focus
+                    and not screen.query(".library-media-row")
+                    and any(
+                        control in screen.focus_chain
+                        and not control.disabled
+                        and not library_screen_module._library_entry_target_replaced(
+                            control
+                        )
+                        for control in controls
+                    )
+                )
+                enter()
+                if observed and not release.is_set():
+                    loading_attempts.append(None)
+                    release.set()
+
+            monkeypatch.setattr(browse, "_search", hold_first_result)
+            monkeypatch.setattr(
+                screen, "_library_media_empty_list_fallback_target", record_empty_target
+            )
+            monkeypatch.setattr(
+                screen, "_focus_library_list_entry", observe_loading_entry
+            )
+
         screen.query_one("#library-row-browse-media").press()
-        await _wait_for_condition(
-            pilot,
-            lambda: getattr(screen.focused, "id", None) == _FIRST_ROW["media"]
-            and not screen._library_pending_list_entry_focus,
-            message=lambda: f"Media entry never settled: {screen.focused!r}",
-        )
+        try:
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    getattr(screen.focused, "id", None) == _FIRST_ROW["media"]
+                    and not screen._library_pending_list_entry_focus
+                ),
+                message=lambda: f"Media entry never settled: {screen.focused!r}",
+            )
+        finally:
+            release.set()
+        if hold_page:
+            assert len(loading_attempts) == 1
+            assert not premature_fallback
         row = screen.focused
         screen._library_reset_landing = None
         screen.query_one("#library-browse-items-grip").blur()

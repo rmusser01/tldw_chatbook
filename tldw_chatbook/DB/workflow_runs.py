@@ -39,6 +39,12 @@ def _hash(payload: str) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+def _workflow_schema_version(conn, schema_version):
+    if schema_version is not None:
+        return schema_version
+    return conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+
+
 @dataclass(frozen=True)
 class _WindowPublication:
     store: object
@@ -72,7 +78,9 @@ class WorkflowRunsStore:
         return row
 
     @staticmethod
-    def _capacity(conn, workflow_id, amount):
+    def _capacity(conn, workflow_id, amount, *, schema_version=None):
+        schema_version = _workflow_schema_version(conn, schema_version)
+
         def retained(owner):
             total = 0
             for table, column in (
@@ -91,20 +99,20 @@ class WorkflowRunsStore:
                 + (" AND workflow_id=?" if owner else ""),
                 (owner,) if owner else (),
             ).fetchone()[0]
-            if conn.execute("SELECT 1 FROM schema_version WHERE version=28").fetchone():
+            if schema_version >= 29:
                 total += conn.execute(
                     "SELECT COALESCE(SUM(reserved_bytes),0) FROM workflow_change_windows"
                     + (" WHERE workflow_id=?" if owner else ""),
                     (owner,) if owner else (),
                 ).fetchone()[0]
             # Planning needs private result capacity before its first provider call.
-            if conn.execute("SELECT 1 FROM schema_version WHERE version=26").fetchone():
+            if schema_version >= 27:
                 total += conn.execute(
                     "SELECT COALESCE(SUM(result_bytes),0) FROM workflow_phase_attempts"
                     + (" WHERE workflow_id=?" if owner else ""),
                     (owner,) if owner else (),
                 ).fetchone()[0]
-            if conn.execute("SELECT 1 FROM schema_version WHERE version=29").fetchone():
+            if schema_version >= 30:
                 total += conn.execute(
                     "SELECT COALESCE(SUM(length(CAST(repair_instruction_sha256 AS BLOB))),0) FROM workflow_phase_attempts"
                     + (" WHERE workflow_id=?" if owner else ""),
@@ -809,8 +817,8 @@ class WorkflowRunsStore:
             )
 
     @staticmethod
-    def _recovery_reviewed(conn, workflow_id):
-        if conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] < 30:
+    def _recovery_reviewed(conn, workflow_id, *, schema_version=None):
+        if _workflow_schema_version(conn, schema_version) < 31:
             return False
         row = conn.execute(
             "SELECT recovery_reviewed_revision,control_revision,status FROM workflow_runs WHERE id=?",
@@ -821,14 +829,17 @@ class WorkflowRunsStore:
         )
 
     @staticmethod
-    def _active(conn, workflow_id):
+    def _active(conn, workflow_id, *, schema_version=None):
+        schema_version = _workflow_schema_version(conn, schema_version)
         parent = conn.execute(
             "SELECT status FROM workflow_runs WHERE id=?", (workflow_id,)
         ).fetchone()
         if (
             parent is not None
             and parent[0] in {"closed", "removed"}
-            and WorkflowRunsStore._recovery_reviewed(conn, workflow_id)
+            and WorkflowRunsStore._recovery_reviewed(
+                conn, workflow_id, schema_version=schema_version
+            )
         ):
             # Reviewed history keeps unknown charges without resurrecting workers.
             return (
@@ -841,7 +852,7 @@ class WorkflowRunsStore:
                 is not None
             )
         if (
-            conn.execute("SELECT 1 FROM schema_version WHERE version=28").fetchone()
+            schema_version >= 29
             and conn.execute(
                 "SELECT 1 FROM workflow_change_windows WHERE workflow_id=? AND state IN ('active','unresolved') LIMIT 1",
                 (workflow_id,),
@@ -858,13 +869,16 @@ class WorkflowRunsStore:
 
     @staticmethod
     def _required_results(
-        conn, workflow_id: str, *, status: str, chain_id: str
+        conn, workflow_id: str, *, status: str, chain_id: str, schema_version=None
     ) -> None:
         """Check from attempts so absent pairs cannot masquerade as empty history."""
+        schema_version = _workflow_schema_version(conn, schema_version)
         removed = status == "removed"
         if removed and (
-            WorkflowRunsStore._active(conn, workflow_id)
-            or not WorkflowRunsStore._recovery_reviewed(conn, workflow_id)
+            WorkflowRunsStore._active(conn, workflow_id, schema_version=schema_version)
+            or not WorkflowRunsStore._recovery_reviewed(
+                conn, workflow_id, schema_version=schema_version
+            )
             and conn.execute(
                 "SELECT 1 FROM automatic_work_chains WHERE id=? AND status='review_required' "
                 "UNION ALL SELECT 1 FROM automatic_work_reservations r JOIN automatic_work_chains c ON c.id=r.chain_id "
@@ -873,9 +887,7 @@ class WorkflowRunsStore:
             ).fetchone()
         ):
             raise ValueError("workflow_required_result_missing")
-        unused_tombstones = (
-            conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] >= 27
-        )
+        unused_tombstones = schema_version >= 27
         for row in conn.execute(
             "SELECT a.id,a.status,a.run_id,p.workflow_id AS reservation_owner,p.state AS reservation_state,"
             "r.workflow_id AS result_owner,r.attempt_id AS result_id FROM workflow_task_attempts a "

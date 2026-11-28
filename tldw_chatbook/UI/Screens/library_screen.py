@@ -797,6 +797,7 @@ from ..Library_Modules.canvas_sync import (
     _sync_library_canvas,
 )
 from ..Library_Modules.screen_helpers import (
+    land_stage_pick,
     _library_screen_is_current,
     library_note_persisted_title,
     _ingestible_file_filters,
@@ -3005,6 +3006,7 @@ class LibraryScreen(BaseAppScreen):
         self._prompts_controller = LibraryPromptsController(
             self,
             prompts_state_accessor=lambda: self._prompts_state,
+            land_stage_pick=lambda *a, **k: self._land_stage_pick(*a, **k),
             arm_library_list_entry_focus=(
                 lambda *a, **k: self._arm_library_list_entry_focus(*a, **k)
             ),
@@ -10677,6 +10679,9 @@ class LibraryScreen(BaseAppScreen):
                     if self.focused is control:
                         return
             if row_class == "library-media-row":
+                if self._library_media_browse_controller.loading:
+                    self._retry_library_list_entry_focus_while_armed()
+                    return
                 control = self._library_media_empty_list_fallback_target()
                 if control is not None:
                     if _library_entry_target_replaced(control):
@@ -24886,43 +24891,18 @@ class LibraryScreen(BaseAppScreen):
         )
         _sync_library_canvas(self, "prompts")
 
-    def _arm_stage_pick_landing(self, destination: str, item_id: object) -> None:
-        """Remember a pick from the list holding the stage (TASK-38981).
 
-        The pick rebuilds the list, and the opened item's controls mount only
-        once its detail lands, so focus would rest on whatever Textual's reset
-        chose. The destination's detail path calls
-        ``_land_stage_pick`` once those controls are mounted; the user's own
-        input in between withdraws the landing
-        (``_withdraw_library_notes_pending_focus_handoffs``).
-        """
+    def _arm_stage_pick_landing(self, destination: str, item_id: object) -> None:
+        """Remember a pick from the list holding the stage (TASK-38981)."""
         self._library_stage_pick_landing = (destination, str(item_id))
 
     def _land_stage_pick(
         self, destination: str, item_id: object, shell_selector: str
     ) -> None:
-        """Focus the opened item's first control, once, if still pending.
-
-        Until that control shows, the landing stays pending for the next
-        detail sync of the same item.
-        """
-        if self._library_stage_pick_landing != (destination, str(item_id)):
-            return
-        try:
-            shell = self.query_one(shell_selector, LibraryAdaptiveReaderShell)
-        except (NoMatches, QueryError):
-            return
-        target = next(
-            (
-                candidate
-                for candidate in self.focus_chain
-                if shell.work.display and shell.work in candidate.ancestors_with_self
-            ),
-            None,
+        """Land the current pending pick through the shared focus helper."""
+        return land_stage_pick(
+            self, destination, item_id, shell_selector, source=globals()
         )
-        if target is not None:
-            self._library_stage_pick_landing = None
-            self.set_focus(target)
 
     def _invalidate_library_prompt_detail_generation(self) -> None:
         return self._prompts_controller._invalidate_library_prompt_detail_generation()

@@ -236,6 +236,7 @@ async def test_file_notes_owner_failure_still_runs_textual_shutdown(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_app_shutdown_cancellation_waits_for_owner_before_textual_teardown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -278,6 +279,7 @@ async def test_app_shutdown_cancellation_waits_for_owner_before_textual_teardown
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure_phase", ["owner", "textual"])
+@pytest.mark.bootstrap_profile
 async def test_app_shutdown_cancellation_preserves_non_cancellation_failure(
     monkeypatch: pytest.MonkeyPatch,
     failure_phase: str,

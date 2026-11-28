@@ -60,8 +60,10 @@ class _ConfiguredPets(_RawDeclaration):
 
     def discover(self, config):
         from tldw_chatbook.Backup_Recovery.bootstrap import pinned_directory
+        from tldw_chatbook.Backup_Recovery.mobile_preview_budget import read_options
         from tldw_chatbook.Utils.platform_files import os
 
+        budget, custody = read_options()
         context = discovery_context(config)
         parent = context.config_path.parent
         if not os.path.lexists(parent):
@@ -78,8 +80,18 @@ class _ConfiguredPets(_RawDeclaration):
             )
         items = [self._item(config, parent / _CURRENT)]
         try:
-            with pinned_directory(parent) as fd:
-                names = sorted(os.listdir(fd))
+            pin = pinned_directory if custody is None else custody.pinned_directory
+            with pin(parent) as fd:
+                if budget is None:
+                    names = os.listdir(fd)
+                    if len(names) > 100000:
+                        raise ValueError("pet_inventory_limit")
+                else:
+                    from tldw_chatbook.Backup_Recovery.bootstrap import _bounded_names
+
+                    names = _bounded_names(fd, 100000, budget, custody)
+                    budget.container(len(names))
+                names.sort()
         except (OSError, ValueError, RuntimeError):
             return (
                 StorageItem(

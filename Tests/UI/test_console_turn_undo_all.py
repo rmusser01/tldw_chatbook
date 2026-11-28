@@ -12,6 +12,7 @@ from textual.widgets import Button, Static
 
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from tldw_chatbook.UI.Console_Modules import review_selection
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_change_review_screen import click_modal_button
 from Tests.UI.test_console_narrow_layout import _compositor_text
@@ -348,6 +349,11 @@ async def _wait_for(pilot, predicate, description: str, attempts: int = 150):
     raise AssertionError(f"timed out waiting for {description}")
 
 
+def _enabled_undo_all(card: ConsoleTurnFileCard) -> Button | None:
+    button = next(card.query(".console-turn-file-undo-all-btn").results(Button), None)
+    return button if button is not None and not button.disabled else None
+
+
 def _record_real_turn(db, tracker, root: Path, run_id: str) -> None:
     handle = tracker.begin_turn([root])
     handle.await_baseline()
@@ -381,7 +387,7 @@ async def test_mounted_turn_card_confirms_cancels_then_undoes_real_files_off_thr
     target.write_text("before\n")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="turn-undo-test")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="turn-undo-test")
     run_id = db.create_run(conversation_id=conversation_id, agent_kind="primary")
     _record_real_turn(db, tracker, root, run_id)
 
@@ -436,10 +442,9 @@ async def test_mounted_turn_card_confirms_cancels_then_undoes_real_files_off_thr
             ),
             "turn file card",
         )
-        undo = card.query_one(".console-turn-file-undo-all-btn", Button)
-        await _wait_for(
+        undo = await _wait_for(
             pilot,
-            lambda: undo if not undo.disabled else None,
+            lambda: _enabled_undo_all(card),
             "enabled Undo All",
         )
 
@@ -572,10 +577,9 @@ async def test_mounted_duplicate_root_undo_refuses_inline_and_routes_to_review(
             ),
             "ambiguous turn file card",
         )
-        undo = card.query_one(".console-turn-file-undo-all-btn", Button)
-        await _wait_for(
+        undo = await _wait_for(
             pilot,
-            lambda: undo if not undo.disabled else None,
+            lambda: _enabled_undo_all(card),
             "ambiguous card Undo All",
         )
         changed_before = list(provider.changed_calls)
@@ -644,10 +648,9 @@ async def test_mounted_partial_and_provider_failures_name_problem_and_allow_retr
             ),
             "partial-failure turn file card",
         )
-        undo = card.query_one(".console-turn-file-undo-all-btn", Button)
-        await _wait_for(
+        undo = await _wait_for(
             pilot,
-            lambda: undo if not undo.disabled else None,
+            lambda: _enabled_undo_all(card),
             "partial-failure Undo All",
         )
 

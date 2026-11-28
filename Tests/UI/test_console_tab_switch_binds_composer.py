@@ -1038,8 +1038,8 @@ async def test_workspace_switch_paths_bind_the_composer_during_a_sync_pass(
     and ``_resume_console_workspace_conversation`` all switch the store; with
     a sync pass in flight the composer kept B's draft under the new chat.
     (The browser open path is covered above.) The resume path loads its
-    saved conversation through a stand-in loader and hydrator: what is under
-    test is the switch after them.
+    saved conversation through a stand-in loader and native hydration: what
+    is under test is the draft binding after them.
     """
     host = _host()
     async with _running(host) as pilot:
@@ -1070,12 +1070,19 @@ async def test_workspace_switch_paths_bind_the_composer_during_a_sync_pass(
         elif path == "resume":
             from tldw_chatbook.UI.Console_Modules import workspace as workspace_module
 
-            saved = _add_chat(store, b, "Saved chat", "saved-own:")
+            saved = None
+            native_hydrate = workspace_module.hydrate_console_session
 
             async def load(_app, conversation_id):
-                return {"conversation": {"id": conversation_id}, "messages": []}
+                return {
+                    "conversation": {"id": conversation_id, "title": "Saved chat"},
+                    "messages": [],
+                }
 
-            async def hydrate(**_kwargs):
+            async def hydrate(**kwargs):
+                nonlocal saved
+                saved = await native_hydrate(**kwargs)
+                store.set_session_draft(saved.id, "saved-own:")
                 return saved
 
             monkeypatch.setattr(
@@ -1086,6 +1093,7 @@ async def test_workspace_switch_paths_bind_the_composer_during_a_sync_pass(
                 "conv-task-35640"
             )
             assert resumed is True
+            assert saved is not None
             target, own = saved.id, "saved-own:"
         else:
             await workspace._restore_console_session_after_failed_open(store, a.id)

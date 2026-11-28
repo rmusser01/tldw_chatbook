@@ -172,6 +172,7 @@ async def test_a_captured_switch_from_llamacpp_to_a_hosted_provider_is_sent(
         project=project,
         busy=0,
         groq_replies=[_NATIVE_TOOL_CALL] * tools,
+        retire_agent_runs=True,
     ) as (app, groq, hosted):
         first = await _send(app, "Hello")
         assert app.http_payloads[-1]["messages"][0]["role"] == "system"
@@ -217,7 +218,8 @@ async def test_switching_back_to_llamacpp_after_a_drop_puts_the_slot_back(
     app restart: the drop and the sends after it plan from the ledger alone.
     """
     async with _llamacpp_falls_back(
-        tmp_path, monkeypatch, tool_first=False, project=project, busy=0
+        tmp_path, monkeypatch, tool_first=False, project=project, busy=0,
+        retire_agent_runs=True,
     ) as (app, groq, hosted):
 
         async def send(text):
@@ -259,7 +261,8 @@ async def test_edit_and_resend_after_a_drop_keeps_the_next_send(
     covers the action and the next message with them.
     """
     async with _llamacpp_falls_back(
-        tmp_path, monkeypatch, tool_first=False, project=False, busy=0
+        tmp_path, monkeypatch, tool_first=False, project=False, busy=0,
+        retire_agent_runs=True,
     ) as (app, groq, hosted):
         first = await _send(app, "Hello")
         if path == "drop":
@@ -394,7 +397,8 @@ async def test_a_committed_slot_change_is_read_back_after_a_post_commit_failure(
     from dataclasses import replace as replaced
 
     async with _llamacpp_falls_back(
-        tmp_path, monkeypatch, tool_first=False, project=case != "drop_no_project", busy=0
+        tmp_path, monkeypatch, tool_first=False, project=case != "drop_no_project", busy=0,
+        retire_agent_runs=True,
     ) as (app, groq, hosted):
         if case == "restore":
             hosted.append(True)
@@ -458,7 +462,8 @@ async def test_a_committed_fallback_rewrite_is_read_back_after_a_post_commit_fai
     and the run completes.
     """
     async with _llamacpp_falls_back(
-        tmp_path, monkeypatch, tool_first=tool_first, project=project, busy=3
+        tmp_path, monkeypatch, tool_first=tool_first, project=project, busy=3,
+        retire_agent_runs=True,
     ) as (app, groq, hosted):
         state, outcomes = _fail_after_commit(
             monkeypatch, when=lambda persisted: persisted.removal is not None

@@ -50,6 +50,19 @@ def chat_call_impl(
         {"apply_safety_window": False} if review_admission is not None else {}
     )
     attributed = getattr(self._thread_loop, "run_scope", None)
+    from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
+    from tldw_chatbook.Agents.run_context import current_model_run_cancellation
+
+    native_cancellation = current_model_run_cancellation()
+    automatic_work = (
+        current_automatic_work() if native_cancellation is not None else None
+    )
+    if native_cancellation is None:
+        should_cancel = self._should_cancel
+    else:
+        if attributed is not None and attributed != native_cancellation[:2]:
+            raise ValueError("model_run_cancellation_unavailable")
+        should_cancel = native_cancellation[2]
     usage_sequence = getattr(self._thread_loop, "live_usage_sequence", None)
     if attributed is not None:
         usage_run_id, usage_agent_kind = attributed
@@ -147,10 +160,15 @@ def chat_call_impl(
     # truncate its turn with no redirect entry in ITS mailbox to
     # explain it. Never wired into LoopDeps.should_cancel: aborting
     # is not cancelling.
+    primary_stream = (
+        not is_subagent
+        if native_cancellation is None
+        else native_cancellation[1] == "primary"
+    )
     stream_cut = (
-        self._should_cancel
-        if is_subagent
-        else (lambda: self._should_cancel() or self._primary_stream_abort())
+        (lambda: should_cancel() or self._primary_stream_abort())
+        if primary_stream
+        else should_cancel
     )
     request_count = int(getattr(self._thread_loop, "request_count", 0))
     self._thread_loop.request_count = request_count + 1
@@ -530,6 +548,21 @@ def chat_call_impl(
         )
 
         stall_timeout = bridge._stall_timeout_seconds()
+        stop_poll = should_cancel
+        if automatic_work is not None:
+            from tldw_chatbook.Agents.activation import worker_guard
+
+            # The watchdog runs on this model loop without an asyncio Task.
+            # Reacquire the captured sources instead of borrowing this task's
+            # admission; the ledger worker guard owns any fresh DB handle.
+            admitted_stop = worker_guard(automatic_work.ledger)(should_cancel)
+
+            def stop_poll() -> bool:
+                try:
+                    return admitted_stop()
+                except Exception:  # Admission or physical return also fails closed.
+                    return True
+
         async for chunk in watch_content_stalls(
             self._gateway.stream_chat(
                 effective_resolution,
@@ -553,7 +586,7 @@ def chat_call_impl(
             # after a Stop, and the app's exit joins that thread. The
             # plain cancel, not stream_cut: a redirect is not a cancel
             # and still waits for the next chunk (TASK-28227).
-            should_stop=self._should_cancel,
+            should_stop=stop_poll,
         ):
             received_item = True
             synthetic = emission_synthetic is True
@@ -702,20 +735,21 @@ def chat_call_impl(
     workflow_preparation = current_workflow_preparation()
 
     @bridge.agent_async_worker_guard(self)
-    async def _consume():
-        from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
+    async def _consume() -> None:
+        with bridge.contextlib.ExitStack() as ownership:
+            if workflow_preparation is not None:
+                from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
 
-        if workflow_preparation is None:
+                if workflow_preparation.phase.attempt.purpose == "planning":
+                    ownership.enter_context(workflow_preparation._planning_storage_return())
+                ownership.enter_context(owned_goal_storage(workflow_preparation.service))
+                ownership.enter_context(workflow_preparation.activate_source())
+            if automatic_work is not None:
+                from tldw_chatbook.DB.base_db import operation_owned_connection
+
+                # Retire only the ledger handles this coroutine opens on its loop.
+                ownership.enter_context(operation_owned_connection(automatic_work.ledger._db))
             await _consume_body()
-        else:
-            with (
-                workflow_preparation._planning_storage_return()
-                if workflow_preparation.phase.attempt.purpose == "planning"
-                else bridge.contextlib.nullcontext(),
-                owned_goal_storage(workflow_preparation.service),
-                workflow_preparation.activate_source(),
-            ):
-                await _consume_body()
 
     if not is_subagent:
         # TASK-42472: after a failed call the run loop asks again into this

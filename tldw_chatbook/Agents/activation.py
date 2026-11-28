@@ -1,6 +1,7 @@
 """Recovery admission for installed agent runs and their native workers."""
 
 import inspect
+import sqlite3
 import sys
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
@@ -10,7 +11,11 @@ from types import FunctionType, ModuleType
 from typing import Any
 
 from tldw_chatbook.Backup_Recovery import bootstrap, profile_paths
-from tldw_chatbook.Backup_Recovery.admission_runtime import RecoveryAdmissionGuard
+from tldw_chatbook.Backup_Recovery.admission_runtime import (
+    RecoveryAdmissionGuard,
+    callable_source_current as callable_source_current,
+    capture_callable_source as capture_callable_source,
+)
 
 
 class AgentActivationRequired(PermissionError):
@@ -146,7 +151,9 @@ def sources_changed(captured: tuple, service: object = None) -> bool:
 
 def execution(service=None, *, sources=()):
     """Retain admission through final persistence in this native task/thread."""
-    return _guard.execution(service, sources=sources)
+    from .scratch_admission import execution as scratch_execution
+
+    return scratch_execution(_guard, service, sources)
 
 
 def selected_sources(service: object) -> tuple:
@@ -157,37 +164,6 @@ def selected_sources(service: object) -> tuple:
 def raw_cli_storage_execution(source):
     """Retain the exact source tuple already selected by the Raw CLI call."""
     return _guard.execution(source, resolve=lambda _: source.sources)
-
-
-def capture_callable_source(function):
-    return (
-        function,
-        function.__code__,
-        function.__defaults__,
-        function.__kwdefaults__,
-        tuple((function.__kwdefaults__ or {}).items()),
-        function.__closure__,
-        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
-    )
-
-
-def callable_source_current(record):
-    function, code, defaults, kwdefaults, entries, closure, cells = record
-    return (
-        type(function) is FunctionType
-        and function.__code__ is code
-        and function.__defaults__ is defaults
-        and function.__kwdefaults__ is kwdefaults
-        and (
-            kwdefaults is None
-            or len(kwdefaults) == len(entries)
-            and all(
-                key in kwdefaults and kwdefaults[key] is value for key, value in entries
-            )
-        )
-        and function.__closure__ is closure
-        and all(cell.cell_contents is value for cell, value in cells)
-    )
 
 
 def _explicit_writer_root(service):
@@ -332,29 +308,83 @@ def _worker_databases(service):
     )
 
 
+def _worker_connection_open(connection):
+    """Observe the native SQLite handle, without a cache or override probe."""
+    if connection is None:
+        return False
+    try:
+        sqlite3.Connection.in_transaction.__get__(connection)
+    except sqlite3.ProgrammingError:
+        return False
+    return True
+
+
 def worker_guard(service=None):
     """Capture sources, then acquire independently inside the actual worker."""
+    from .scratch_admission import capture_worker, worker_entry
+
     sources = _guard.captured_sources(service)
+    handoff = capture_worker()
 
     def decorate(function):
         @wraps(function)
         def call(*args, **kwargs):
-            with _guard.worker_isolation():
+            with worker_entry(handoff), _guard.worker_isolation():
                 with execution(service, sources=sources):
-                    existing = {
-                        db
+                    previous = {
+                        db: getattr(db._thread_local, "conn", None)
                         for db in _worker_databases(service)
-                        if getattr(db._thread_local, "conn", None) is not None
                     }
+                    borrowed = {
+                        db: connection
+                        for db, connection in previous.items()
+                        if _worker_connection_open(connection)
+                    }
+                    primary = None
                     try:
                         return function(*args, **kwargs)
+                    except BaseException as error:
+                        primary = error
+                        raise
                     finally:
-                        # These fresh native workers own their new thread-local
-                        # handles. Existing callers' handles stay caller-owned.
-                        # Failed close keeps the DB's actual native lease live.
+                        from tldw_chatbook.Backup_Recovery.participants import (
+                            core_cached_connection,
+                        )
+
+                        errors = []
                         for db in _worker_databases(service):
-                            if db not in existing:
+                            try:
+                                connection = getattr(db._thread_local, "conn", None)
+                                if connection is None or (
+                                    connection is borrowed.get(db)
+                                    and _worker_connection_open(connection)
+                                ):
+                                    continue
                                 db.close()
+                                if (
+                                    _worker_connection_open(connection)
+                                    or core_cached_connection(db, connection)
+                                    is not None
+                                ):
+                                    raise RuntimeError(
+                                        "native_worker_database_return_unproven"
+                                    )
+                            except BaseException as error:
+                                errors.append(error)
+                        if errors:
+                            if primary is not None:
+                                # Identity-based native callers must not mistake
+                                # a failed cleanup for the unchanged body error.
+                                raise BaseExceptionGroup(
+                                    "Native worker body and database cleanup failed",
+                                    [primary, *errors],
+                                ) from None
+                            elif len(errors) == 1:
+                                raise errors[0]
+                            else:
+                                raise BaseExceptionGroup(
+                                    "Native worker database cleanup failed", errors
+                                )
 
         return call
 
@@ -363,12 +393,15 @@ def worker_guard(service=None):
 
 def async_worker_guard(service=None):
     """Admit the Console provider coroutine on its actual model-call loop."""
+    from .scratch_admission import capture_worker, worker_entry
+
     sources = _guard.captured_sources(service)
+    handoff = capture_worker()
 
     def decorate(function):
         @wraps(function)
         async def call(*args, **kwargs):
-            with _guard.worker_isolation():
+            with worker_entry(handoff), _guard.worker_isolation():
                 with execution(service, sources=sources):
                     return await function(*args, **kwargs)
 

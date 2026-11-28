@@ -2,26 +2,20 @@ from __future__ import annotations
 
 import copy
 import json
-from pathlib import Path
 import threading
+from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import BaseModel
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_console_agent_bridge import (  # noqa: F401 - owned fixture
     _retire_original_run_databases,
 )
-from pydantic import BaseModel
-
 from tldw_chatbook.Agents.run_log import DEFAULT_MAX_RECORD_BYTES
 from tldw_chatbook.Agents.run_log_format import iter_records
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.Chat.console_raw_cli import (
-    LocalCommandResumeRecord,
-    LOCAL_COMMAND_RUN_LOG_DIR,
-    local_command_resume_marker,
-)
 from tldw_chatbook.Chat.console_agent_bridge import (
     ConsoleAgentBridge,
     inject_resume_agent_markers,
@@ -30,6 +24,12 @@ from tldw_chatbook.Chat.console_chat_models import (
     MAX_RAW_CLI_DISPLAY_FIELD_BYTES,
     ConsoleChatMessage,
     ConsoleMessageRole,
+)
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_raw_cli import (
+    LOCAL_COMMAND_RUN_LOG_DIR,
+    LocalCommandResumeRecord,
+    local_command_resume_marker,
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -357,7 +357,7 @@ def test_local_command_first_persists_real_session_under_durable_identity(
     chat_db = CharactersRAGDB(tmp_path / "chat.db", client_id="raw-cli-test")
     store = ConsoleChatStore(persistence=ChatPersistenceService(chat_db))
     session = store.create_session(session_id="native-session-1", title="Unsaved")
-    runs_db = AgentRunsDB(tmp_path / "agent-runs.db")
+    runs_db = owned_agent_runs_db(tmp_path / "agent-runs.db")
     runtime = _Runtime(tmp_path)
     assert session.persisted_conversation_id is None
 
@@ -466,7 +466,7 @@ def test_local_command_refuses_temporary_real_session_without_any_local_write(
         title="Temporary",
         ephemeral=True,
     )
-    runs_db = AgentRunsDB(tmp_path / "agent-runs.db")
+    runs_db = owned_agent_runs_db(tmp_path / "agent-runs.db")
     runtime = _Runtime(tmp_path)
     errors: list[str] = []
     restored: list[tuple[str | None, ConsoleDraftStash]] = []
@@ -512,7 +512,7 @@ def test_local_command_refuses_when_session_persistence_is_unavailable(
 ) -> None:
     store = ConsoleChatStore()
     session = store.create_session(session_id="native-session-1", title="Unsaved")
-    runs_db = AgentRunsDB(tmp_path / "agent-runs.db")
+    runs_db = owned_agent_runs_db(tmp_path / "agent-runs.db")
     runtime = _Runtime(tmp_path)
     restored: list[ConsoleDraftStash] = []
     stash = _stash()
@@ -536,7 +536,7 @@ def test_local_command_creates_run_before_execution_and_persists_result(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "agent-runs.db"
-    db = AgentRunsDB(db_path)
+    db = owned_agent_runs_db(db_path)
     runtime = _Runtime(
         tmp_path,
         db=db,
@@ -552,7 +552,7 @@ def test_local_command_creates_run_before_execution_and_persists_result(
     assert controller.start_user_command(_stash())
     workers.pop()()
 
-    reopened = AgentRunsDB(db_path)
+    reopened = owned_agent_runs_db(db_path)
     runs = reopened.list_runs(
         "durable-conversation-1",
         agent_kind="local_command",
@@ -565,7 +565,7 @@ def test_local_command_creates_run_before_execution_and_persists_result(
     assert run["status"] == "done"
     assert run["result"] is None
 
-    steps = AgentRunsDB(db_path).get_run(run["id"])["steps"]
+    steps = owned_agent_runs_db(db_path).get_run(run["id"])["steps"]
     assert [step["kind"] for step in steps] == ["tool_call", "tool_result"]
     assert steps[0]["args"]["command"] == "printf secret-command"
     assert steps[1]["result"] == "[stdout]\nok\n"
@@ -609,7 +609,7 @@ def test_local_command_separates_durable_and_private_output_caps(
         "configured_max_record_bytes",
         lambda: private_limit,
     )
-    db = AgentRunsDB(tmp_path / "agent-runs.db")
+    db = owned_agent_runs_db(tmp_path / "agent-runs.db")
     runtime = _Runtime(tmp_path, record_output=escape_heavy_output)
     controller, workers = _controller(
         tmp_path,
@@ -678,7 +678,7 @@ def test_local_command_terminalizes_created_row_when_initial_step_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    db = AgentRunsDB(tmp_path / "agent-runs.db")
+    db = owned_agent_runs_db(tmp_path / "agent-runs.db")
     runtime = _Runtime(tmp_path)
     errors: list[str] = []
 
@@ -708,7 +708,7 @@ def test_local_command_closes_writer_when_initial_log_append_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    db = AgentRunsDB(tmp_path / "agent-runs.db")
+    db = owned_agent_runs_db(tmp_path / "agent-runs.db")
     runtime = _Runtime(tmp_path)
     errors: list[str] = []
     updates: list[str] = []
@@ -756,7 +756,7 @@ def test_local_command_rejects_inactive_initial_writer_without_exception(
     monkeypatch: pytest.MonkeyPatch,
     failure_stage: str,
 ) -> None:
-    db = AgentRunsDB(tmp_path / "agent-runs.db")
+    db = owned_agent_runs_db(tmp_path / "agent-runs.db")
     runtime = _Runtime(tmp_path)
     errors: list[str] = []
     updates: list[str] = []
@@ -812,7 +812,7 @@ def test_local_command_reports_terminal_append_deactivation_without_exception(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    db = AgentRunsDB(tmp_path / "agent-runs.db")
+    db = owned_agent_runs_db(tmp_path / "agent-runs.db")
     runtime = _Runtime(tmp_path)
     errors: list[str] = []
     updates: list[str] = []
@@ -869,7 +869,7 @@ def test_local_command_terminal_persistence_failures_never_block_marker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    db = AgentRunsDB(tmp_path / "agent-runs.db")
+    db = owned_agent_runs_db(tmp_path / "agent-runs.db")
     runtime = _Runtime(tmp_path)
     errors: list[str] = []
     updates: list[str] = []

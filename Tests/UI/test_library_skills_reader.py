@@ -115,6 +115,7 @@ async def test_skills_mount_three_retained_roles_and_default_to_overview(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_skill_modes_preserve_list_work_and_one_live_draft(
     tmp_path,
 ) -> None:

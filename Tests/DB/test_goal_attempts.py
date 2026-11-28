@@ -9,7 +9,6 @@ import pytest
 from Tests.Agents.test_goal_models import request
 from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
 from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 @pytest.fixture(autouse=True)
@@ -17,13 +16,36 @@ def enabled_goal_policy(monkeypatch):
     monkeypatch.setenv("TLDW_AGENTS_GOAL_RUNS_ENABLED", "true")
 
 
+@pytest.fixture
+def open_runs_db(tmp_path):
+    """Own one native execution lease through the test's opens and worker joins."""
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
+
+    path = tmp_path / "runs.db"
+    owner = ConsoleExecutionOwner.acquire(path)
+    opened = []
+
+    def open_db():
+        db = AgentRunsDB(path, execution_owner=owner)
+        opened.append(db)
+        return db
+
+    try:
+        yield open_db
+    finally:
+        for db in reversed(opened):
+            db.close()
+        owner.close()
+
+
 def ready_goal(db):
     goal = db.goal_runs.create(request(), launch_id="launch")
     return db.goal_runs.set_provisioning(goal, status="ready")
 
 
-def test_goal_attempt_retry_is_bound_to_the_live_session(tmp_path):
-    with closing(AgentRunsDB(tmp_path / "runs.db")) as db:
+def test_goal_attempt_retry_is_bound_to_the_live_session(open_runs_db):
+    with closing(open_runs_db()) as db:
         goal = ready_goal(db)
         ledger = db.automatic_work
         attempt = ledger.prepare_goal_iteration(
@@ -64,9 +86,8 @@ def test_goal_attempt_retry_is_bound_to_the_live_session(tmp_path):
             context._read_attempt()
 
 
-def test_concurrent_prepares_accept_exactly_one_generation(tmp_path):
-    path = tmp_path / "runs.db"
-    db = AgentRunsDB(path)
+def test_concurrent_prepares_accept_exactly_one_generation(open_runs_db):
+    db = open_runs_db()
     goal = ready_goal(db)
     ledger = db.automatic_work
     assert callable(getattr(ledger, "prepare_goal_iteration", None)), (
@@ -74,13 +95,9 @@ def test_concurrent_prepares_accept_exactly_one_generation(tmp_path):
     )
 
     def prepare(_):
-        handle = AgentRunsDB(path)
-        try:
-            return handle.automatic_work.prepare_goal_iteration(
-                goal.id, owner_id="owner"
-            )
-        finally:
-            handle.close()
+        # Use each worker's native connection without racing schema setup.
+        with closing(db):
+            return ledger.prepare_goal_iteration(goal.id, owner_id="owner")
 
     with ThreadPoolExecutor(2) as pool:
         a, b = pool.map(prepare, range(2))
@@ -99,8 +116,8 @@ def test_concurrent_prepares_accept_exactly_one_generation(tmp_path):
     db.close()
 
 
-def test_kinds_owners_and_goal_link_are_checked_at_every_boundary(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db")
+def test_kinds_owners_and_goal_link_are_checked_at_every_boundary(open_runs_db):
+    db = open_runs_db()
     goal = ready_goal(db)
     ledger = db.automatic_work
     assert callable(getattr(ledger, "prepare_goal_iteration", None)), (
@@ -136,11 +153,11 @@ def test_kinds_owners_and_goal_link_are_checked_at_every_boundary(tmp_path):
 
 
 def test_goal_context_requires_current_accepted_attempt_and_independent_settings(
-    tmp_path, monkeypatch
+    open_runs_db, monkeypatch
 ):
     from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
 
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = open_runs_db()
     goal = ready_goal(db)
     ledger = db.automatic_work
     assert callable(getattr(ledger, "prepare_goal_iteration", None)), (
@@ -170,10 +187,10 @@ def test_goal_context_requires_current_accepted_attempt_and_independent_settings
     db.close()
 
 
-def test_goal_api_cannot_consume_a_fleet_claim(tmp_path):
+def test_goal_api_cannot_consume_a_fleet_claim(open_runs_db):
     from Tests.DB.test_automatic_wake_attempts import claim, survivor
 
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = open_runs_db()
     ledger = db.automatic_work
     chain = ledger.create_chain("conversation", root_submission_id="manual")
     claim(db, chain, [survivor(db, chain)])
@@ -191,8 +208,8 @@ def test_goal_api_cannot_consume_a_fleet_claim(tmp_path):
     db.close()
 
 
-def test_refunded_preparations_do_not_count_as_accepted_iterations(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db")
+def test_refunded_preparations_do_not_count_as_accepted_iterations(open_runs_db):
+    db = open_runs_db()
     try:
         goal = ready_goal(db)
         for ordinal in range(1, 4):
@@ -211,15 +228,14 @@ def test_refunded_preparations_do_not_count_as_accepted_iterations(tmp_path):
 
 
 def test_older_launch_without_optional_mcp_bindings_keeps_original_hash(
-    tmp_path, monkeypatch
+    open_runs_db, monkeypatch
 ):
     import hashlib
     import json
 
     from tldw_chatbook.Agents.goal_models import GoalRequest, GoalToolScope
 
-    path = tmp_path / "runs.db"
-    db = AgentRunsDB(path)
+    db = open_runs_db()
     req = request()
     canonical = GoalRequest.canonical_json
 
@@ -233,7 +249,7 @@ def test_older_launch_without_optional_mcp_bindings_keeps_original_hash(
         original = db.goal_runs.create(req, launch_id="old-start")
         original_bytes = old_canonical(req)
     db.close()
-    db = AgentRunsDB(path)
+    db = open_runs_db()
     try:
         restored = db.goal_runs.create(req, launch_id="old-start")
         assert restored.id == original.id
@@ -255,8 +271,8 @@ def test_older_launch_without_optional_mcp_bindings_keeps_original_hash(
 
 
 @pytest.mark.parametrize("corruption", ["session", "goal"])
-def test_goal_attempt_rejects_wrong_session_or_goal_link(tmp_path, corruption):
-    db = AgentRunsDB(tmp_path / "runs.db")
+def test_goal_attempt_rejects_wrong_session_or_goal_link(open_runs_db, corruption):
+    db = open_runs_db()
     try:
         goal = ready_goal(db)
         attempt = db.automatic_work.prepare_goal_iteration(goal.id, owner_id="owner")
@@ -281,9 +297,9 @@ def test_goal_attempt_rejects_wrong_session_or_goal_link(tmp_path, corruption):
 
 @pytest.mark.parametrize("setting", ["false", "invalid"])
 def test_goal_acceptance_rechecks_live_enablement_inside_ledger(
-    tmp_path, monkeypatch, setting
+    open_runs_db, monkeypatch, setting
 ):
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = open_runs_db()
     try:
         goal = ready_goal(db)
         attempt = db.automatic_work.prepare_goal_iteration(goal.id, owner_id="owner")

@@ -358,7 +358,7 @@ _OPENERS = frozenset(
 )
 AD_HOC_PROFILE_DB_CONSTRUCTIONS = {
     "Chat/console_runtime.py": 1,
-    "Chat/console_worktree_recovery.py": 2,
+    "Chat/console_worktree_recovery.py": 1,
     "Chat/document_generator.py": 1,
     "Chatbooks/chatbook_creator.py": 8,
     "Chatbooks/chatbook_importer.py": 9,
@@ -464,28 +464,35 @@ def test_open_profile_storage_opens_the_given_paths_and_closes_them(
 ) -> None:
     import tldw_chatbook.config as config
     from tldw_chatbook.app_services import open_profile_storage
+    from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
 
     seeded: list[object] = []
     monkeypatch.setattr(config, "seed_builtin_content", seeded.append)
-    storage = open_profile_storage(
-        client_id="factory-test",
-        chachanotes=tmp_path / "chachanotes.db",
-        media=tmp_path / "media.db",
-        prompts=tmp_path / "prompts.db",
-        workspaces=tmp_path / "workspaces.db",
-        agent_runs=tmp_path / "runs.db",
-    )
-    databases = [
-        storage.chachanotes,
-        storage.media,
-        storage.prompts,
-        storage.workspaces,
-        storage.agent_runs,
-    ]
-    assert seeded == []  # built-in content only when asked; only the TUI asks
-    assert all(_holds_connection(db) for db in databases)
-    storage.close()
-    assert not any(_holds_connection(db) for db in databases)
+    runs_path = tmp_path / "runs.db"
+    with ConsoleExecutionOwner.acquire(runs_path) as owner:
+        storage = open_profile_storage(
+            client_id="factory-test",
+            chachanotes=tmp_path / "chachanotes.db",
+            media=tmp_path / "media.db",
+            prompts=tmp_path / "prompts.db",
+            workspaces=tmp_path / "workspaces.db",
+            agent_runs=runs_path,
+            agent_runs_execution_owner=owner,
+        )
+        databases = [
+            storage.chachanotes,
+            storage.media,
+            storage.prompts,
+            storage.workspaces,
+            storage.agent_runs,
+        ]
+        try:
+            assert seeded == []  # built-in content only when asked; only the TUI asks
+            assert all(_holds_connection(db) for db in databases)
+        finally:
+            storage.close()
+        assert not any(_holds_connection(db) for db in databases)
+        owner.require_current(runs_path)
 
     only = open_profile_storage(
         client_id="factory-test",
@@ -495,6 +502,17 @@ def test_open_profile_storage_opens_the_given_paths_and_closes_them(
     assert seeded == [only.chachanotes]
     assert (only.media, only.prompts, only.workspaces, only.agent_runs) == (None,) * 4
     only.close()
+
+
+@pytest.mark.unit
+def test_open_profile_storage_requires_a_native_owner_for_run_store(tmp_path: Path) -> None:
+    from tldw_chatbook.app_services import open_profile_storage
+    from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionUnavailable
+
+    runs_path = tmp_path / "runs.db"
+    with pytest.raises(ConsoleExecutionUnavailable, match="execution_owner_required"):
+        open_profile_storage(client_id="factory-test", agent_runs=runs_path)
+    assert not runs_path.exists()
 
 
 @pytest.mark.unit

@@ -35,15 +35,6 @@ from tldw_chatbook.Chat.console_trace_provenance import (
 pytestmark = pytest.mark.bootstrap_profile
 
 
-@pytest.fixture
-def census_harness(harness):  # noqa: F811
-    """The shared harness; on the agent path, close the runs database it opens."""
-    yield harness
-    bridge = getattr(harness.controller, "_agent_bridge", None)
-    if harness.path == "agent" and bridge is not None:
-        bridge._db.close()
-
-
 async def _act(chat, action: str, first) -> None:
     controller = chat.controller
     if action == "fresh":
@@ -78,9 +69,9 @@ async def _act(chat, action: str, first) -> None:
     ],
 )
 async def test_a_captured_chats_action_is_traced_as_the_route_census_says(
-    census_harness, action, route, monkeypatch
+    harness, action, route, monkeypatch  # noqa: F811 - imported pytest fixture
 ):
-    chat = census_harness
+    chat = harness
     first, sent, reserved = await _send(chat, "q0")
     _assert_captured(chat, first, sent, reserved)
     if action == "retry":

@@ -68,6 +68,7 @@ VALID_TABLES = {
         "console_prompt_mixin_revisions",
         "console_prompt_mixin_attempts",
         "console_prompt_mixin_attempt_items",
+        "mobile_consolidation_batches",
         # TASK-19057 (v44->v45): the two Actor Pack tables. Their absence here
         # is what TASK-20971 was filed for.
         "actor_pack_persona_intents",

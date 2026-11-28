@@ -7,10 +7,13 @@ import threading
 
 import pytest
 
+from Tests.Performance.test_ui_latency_guardrails import (
+    _scratch_env as _populate_selected_profile,
+)
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_screen_reuse import (
     _boot_settled,
     _press_until_screen,
-    _scratch_env,
 )
 
 
@@ -26,11 +29,12 @@ async def _until(
 @pytest.mark.asyncio
 @pytest.mark.ui
 @pytest.mark.parametrize("kind", ("approval", "skill_install", "skill_script"))
+@private_profile_test
 async def test_hidden_finite_decisions_notify_once_and_remain_answerable(
-    monkeypatch, tmp_path, kind
+    monkeypatch, tmp_path, kind, request
 ):
     """A retained screen cannot spend the user's decision time or hide its notice."""
-    _scratch_env(monkeypatch, tmp_path)
+    _populate_selected_profile(monkeypatch)
     from textual.screen import ModalScreen
 
     from Tests.Chat.test_console_runtime_lifetime import _pending_call
@@ -90,13 +94,13 @@ async def test_hidden_finite_decisions_notify_once_and_remain_answerable(
                     "A hidden decision consumed its finite budget"
                 )
                 attention = [
-                    message for message in notices if "Open Console" in message
+                    message for message in notices if "Return to Console" in message
                 ]
                 assert len(attention) == 1
                 # Repeated visibility notifications must not repeat a round's notice.
                 console.on_screen_suspend()
                 assert (
-                    len([message for message in notices if "Open Console" in message])
+                    len([message for message in notices if "Return to Console" in message])
                     == 1
                 )
                 if away != "modal":
@@ -135,11 +139,12 @@ async def test_hidden_finite_decisions_notify_once_and_remain_answerable(
 @pytest.mark.asyncio
 @pytest.mark.ui
 @pytest.mark.parametrize("settlement", ("complete", "stop", "shutdown"))
+@private_profile_test
 async def test_navigation_preserves_real_stream_and_queue_without_retargeting(
-    monkeypatch, tmp_path, settlement
+    monkeypatch, tmp_path, settlement, request
 ):
     """Screen-worker cancellation or ambient session routing loses a real response."""
-    _scratch_env(monkeypatch, tmp_path)
+    _populate_selected_profile(monkeypatch)
     from textual.widgets import Button
 
     from Tests.UI.test_console_native_chat_flow import (

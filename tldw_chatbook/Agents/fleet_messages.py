@@ -155,6 +155,8 @@ class MessageStore:
     ) -> MessageInbox | None:
         """Bind authoritative state; nonblocking preparation retries outside owners."""
         _validate_text(conversation_id, MAX_IDENTITY_CHARS)
+        if repository is not None and saved_conversation_id is not None:
+            messages = repository.filter_restored(saved_conversation_id, messages)
         if not self._lock.acquire(blocking=blocking):
             return None
         try:

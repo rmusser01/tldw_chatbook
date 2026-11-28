@@ -275,7 +275,9 @@ def test_a_wizard_committed_custom_providers_console_send_asks_to_stream(
     ``[chat_defaults] streaming`` off and the same send asks for one plain
     reply, so the pin can see the value it guards."""
     import asyncio
+    from contextlib import closing
 
+    from Tests.agent_runs_owner import owned_agent_runs_db
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.Chat.console_chat_controller import (
         build_console_provider_selection_from_settings,
@@ -289,7 +291,6 @@ def test_a_wizard_committed_custom_providers_console_send_asks_to_stream(
     from tldw_chatbook.Chat.console_session_settings import (
         default_console_session_settings,
     )
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     with _ChatStub() as stub:
         config = _committed_config(stub.base_url)
@@ -317,22 +318,25 @@ def test_a_wizard_committed_custom_providers_console_send_asks_to_stream(
         assistant = store.append_message(
             session.id, role=ConsoleMessageRole.ASSISTANT, content=""
         )
-        bridge = ConsoleAgentBridge(
-            agent_runs_db=AgentRunsDB(tmp_path / "runs.db", client_id="te-r4-1"),
-            store=store,
-            provider_gateway=gateway,
-        )
-        _run_id, outcome = bridge.run_reply(
-            conversation_id="te-r4-1",
-            session_id=session.id,
-            resolution=resolution,
-            assistant_message_id=assistant.id,
-            model=resolution.model,
-            session_system_prompt="",
-            agent_messages=[{"role": "user", "content": "Capital of France?"}],
-            should_cancel=lambda: False,
-            provider_stream_signals=ConsoleProviderStreamSignals(),
-        )
+        with closing(
+            owned_agent_runs_db(tmp_path / "runs.db", client_id="te-r4-1")
+        ) as runs_db:
+            bridge = ConsoleAgentBridge(
+                agent_runs_db=runs_db,
+                store=store,
+                provider_gateway=gateway,
+            )
+            _run_id, outcome = bridge.run_reply(
+                conversation_id="te-r4-1",
+                session_id=session.id,
+                resolution=resolution,
+                assistant_message_id=assistant.id,
+                model=resolution.model,
+                session_system_prompt="",
+                agent_messages=[{"role": "user", "content": "Capital of France?"}],
+                should_cancel=lambda: False,
+                provider_stream_signals=ConsoleProviderStreamSignals(),
+            )
 
     assert outcome.status == "done"
     assert outcome.final_text == "Paris"

@@ -20,6 +20,14 @@ _IMAGE_IDENTITY = {**_HOST_IDENTITY, "flags": 76583448}
 _PRODUCT_FACTS = frozenset({"owner_coverage", "archive", "restore", "product_flow"})
 
 
+class _RecoveryMessages:
+    @staticmethod
+    def issue_message(code):
+        from tldw_chatbook.Backup_Recovery.recovery_service import issue_message
+
+        return issue_message(code)
+
+
 def _replacement_plan(*, local_snapshot=None):
     from tldw_chatbook.Backup_Recovery.restore_plan import RestorePlan
 
@@ -242,7 +250,7 @@ def test_capability_wrappers_select_actual_write_and_authority_roots(
 
     plan = replace(
         _replacement_plan(),
-        target=SimpleNamespace(),
+        target=SimpleNamespace(items=()),
         destinations=(("root", tmp_path / "image" / "destination"),),
         restore=(("file", tmp_path / "image" / "destination" / "file"),),
         retire=(("old", tmp_path / "host" / "old"),),
@@ -462,6 +470,10 @@ def test_cli_replacement_refuses_before_confirmation_and_new_password(monkeypatc
         def preview_backup(self, *_args, **_kwargs):
             return SimpleNamespace()
 
+        def summary(self, inspection):
+            assert inspection == "inspection"
+            return {"group_scope": None}
+
         def preview_restore(self, *_args, **_kwargs):
             return plan
 
@@ -474,6 +486,7 @@ def test_cli_replacement_refuses_before_confirmation_and_new_password(monkeypatc
         ask_password=False,
         mode="replace",
         target_config=Path("/target/config.toml"),
+        group=None,
         destination=(),
         profile_name=(),
         acknowledge_credential_issue=(),
@@ -501,7 +514,7 @@ async def test_ui_displays_backup_availability_separately_and_disables_create():
     from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 
-    class Service:
+    class Service(_RecoveryMessages):
         issue_code = staticmethod(lambda error: str(error))
 
         def current(self):
@@ -554,7 +567,7 @@ async def test_ui_replacement_and_later_refuse_before_reading_new_passwords(
     from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 
-    class Service:
+    class Service(_RecoveryMessages):
         issue_code = staticmethod(lambda error: str(error))
 
         def current(self):
@@ -727,7 +740,7 @@ async def test_ui_password_clear_preserves_only_current_worker_association(
         "result": {},
     }
 
-    class Service:
+    class Service(_RecoveryMessages):
         issue_code = staticmethod(lambda error: str(error))
 
         def current(self):
@@ -810,7 +823,7 @@ async def test_ui_replacement_password_clear_preserves_only_current_worker_assoc
         "result": {},
     }
 
-    class Service:
+    class Service(_RecoveryMessages):
         issue_code = staticmethod(lambda error: str(error))
 
         def current(self):
@@ -875,7 +888,7 @@ async def test_ui_password_clear_preserves_current_worker_refusal_message():
     release = threading.Event()
     refused = threading.Event()
 
-    class Service:
+    class Service(_RecoveryMessages):
         issue_code = staticmethod(lambda error: str(error))
 
         def current(self):

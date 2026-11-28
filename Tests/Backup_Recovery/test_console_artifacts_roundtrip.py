@@ -171,13 +171,14 @@ from tldw_chatbook.Backup_Recovery.isolated_restore import select_profile
 selected=json.loads((fixture/'restored.json').read_text());select_profile(selected['profile'],fixture/'control')
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.run_log_format import iter_records
 from tldw_chatbook.Utils.custom_tokenizers import get_tokenizer_manager
 async def main():
  app=TldwCli();runs=None
  try:
   receipt=json.loads((fixture/'capture.json').read_text());plan=json.loads((fixture/'plan.json').read_text());paths=dict(plan['restore'])
-  runs=AgentRunsDB(Path(app.chachanotes_db.db_path).parent/'agent_runs.db')
+  runs=owned_agent_runs_db(Path(app.chachanotes_db.db_path).parent/'agent_runs.db')
   restored_run=runs.get_run(receipt['run_id'])
   assert restored_run==receipt['run']
   assert restored_run['status']=='done' and restored_run['result']=='captured terminal answer'

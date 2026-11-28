@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import base64
+from contextlib import ExitStack
 
 import httpx
 import pytest
@@ -25,6 +26,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatProviderError,
 )
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+from tldw_chatbook.Chat.console_execution_owner import ConsoleExecutionOwner
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
@@ -82,14 +84,18 @@ def _server_failure():
 
 
 @pytest.fixture
-def hooks():
-    """The admitted bootstrap profile's real permission owner."""
-    owner = HookPermissions()
-    assert owner.snapshot().ready
-    try:
-        yield owner
-    finally:
-        owner.close()
+def hooks(tmp_path):
+    """Own native permissions and each exact file-backed run store until close."""
+    with ExitStack() as resources:
+        permission_owner = HookPermissions()
+        resources.callback(permission_owner.close)
+        assert permission_owner.snapshot().ready
+
+        path = tmp_path / "runs.db"
+        execution_owner = resources.enter_context(ConsoleExecutionOwner.acquire(path))
+        database = AgentRunsDB(path, client_id="copy", execution_owner=execution_owner)
+        resources.callback(database.close)
+        yield permission_owner, database
 
 
 def _console(tmp_path, hooks, call, *, agent: bool, bridge_type=ConsoleAgentBridge):
@@ -100,7 +106,7 @@ def _console(tmp_path, hooks, call, *, agent: bool, bridge_type=ConsoleAgentBrid
     extra = {}
     if agent:
         extra["agent_bridge"] = bridge_type(
-            agent_runs_db=AgentRunsDB(tmp_path / "runs.db", client_id="copy"),
+            agent_runs_db=hooks[1],
             store=store,
             provider_gateway=gateway,
         )
@@ -110,7 +116,7 @@ def _console(tmp_path, hooks, call, *, agent: bool, bridge_type=ConsoleAgentBrid
         provider="anthropic",
         model=MODEL,
         agent_runtime_enabled=agent,
-        hook_permissions_accessor=lambda: hooks,
+        hook_permissions_accessor=lambda: hooks[0],
         **extra,
     )
     session = store.create_session(title="Failure copy", ephemeral=True)

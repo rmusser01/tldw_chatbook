@@ -40,6 +40,7 @@ def replacement_case(
     extras=None,
     missing_selector=False,
     prepared=True,
+    config_metadata=None,
 ):
     owner = recovery_adapters()[0]
     live = tmp_path / "live"
@@ -97,6 +98,10 @@ def replacement_case(
         }
         for key, data in payloads.items()
     ]
+    if config_metadata is not None:
+        next(row for row in doc["files"] if row["owner_id"] == "config")["metadata"] = (
+            config_metadata
+        )
     doc["producer_inventory"] = [
         {
             "logical_id": f["logical_id"],

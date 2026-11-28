@@ -39,12 +39,15 @@ Rig notes:
 from __future__ import annotations
 
 import asyncio
+from contextlib import closing, contextmanager
 import gc
 import time
 import weakref
 from types import SimpleNamespace
 
 import pytest
+
+from Tests.agent_runs_owner import owned_agent_runs_db
 
 # These owners exercise native config participants selected at collection.
 pytestmark = pytest.mark.bootstrap_profile
@@ -68,12 +71,23 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
 CHILD_RESULT = "the child's finished answer"
 LAUNCH_REPLY = "LAUNCH-WAKE-REPLY"
 FLEET_UNSEEN = ConversationLocalMarksService.FLEET_UNSEEN
+
+
+@contextmanager
+def _fixture_runs(path, *, client_id):
+    """Return the native store and lease before the next simulated process."""
+    with ConsoleExecutionOwner.acquire(path) as owner:
+        with closing(
+            owned_agent_runs_db(path, client_id=client_id, execution_owner=owner)
+        ) as database:
+            yield database
 
 
 async def _settle(pilot, predicate, seconds: float = 15.0) -> bool:
@@ -527,9 +541,8 @@ async def test_a_second_launch_does_not_re_announce_a_delivered_wake(tmp_path):
         )
 
     # The control: a genuinely new completion IS delivered on a later launch.
-    runs_db = AgentRunsDB(tmp_path / "agent_runs.db", client_id="seed-2")
-    _terminal_subagent_run(runs_db, conversation_id, result="second child result")
-    runs_db.close()
+    with _fixture_runs(tmp_path / "agent_runs.db", client_id="seed-2") as runs_db:
+        _terminal_subagent_run(runs_db, conversation_id, result="second child result")
     app3, _marks3, gateway3 = _launch_app(tmp_path, real_service=True)
     async with app3.run_test(size=(120, 40)) as pilot:
         assert await _settle(pilot, lambda: bool(gateway3.payloads)), (
@@ -997,32 +1010,32 @@ async def test_a_crash_killed_child_swept_to_error_wakes_nobody_at_launch(tmp_pa
     app0 = _build_test_app("library")
     _attach_real_dbs(app0, tmp_path)
     app0.chachanotes_db.add_conversation({"id": "conv-crashed", "title": "Crashed"})
-    runs_db = AgentRunsDB(tmp_path / "agent_runs.db", client_id="seed")
-    parent_id = runs_db.create_run(conversation_id="conv-crashed", agent_kind="primary")
-    runs_db.set_status(parent_id, "done", "turn final")
-    child_id = runs_db.create_run(
-        conversation_id="conv-crashed",
-        agent_kind="subagent",
-        task="killed mid-flight",
-        parent_run_id=parent_id,
-    )
-    runs_db.close()
+    with _fixture_runs(tmp_path / "agent_runs.db", client_id="seed") as runs_db:
+        parent_id = runs_db.create_run(
+            conversation_id="conv-crashed", agent_kind="primary"
+        )
+        runs_db.set_status(parent_id, "done", "turn final")
+        child_id = runs_db.create_run(
+            conversation_id="conv-crashed",
+            agent_kind="subagent",
+            task="killed mid-flight",
+            parent_run_id=parent_id,
+        )
     # The restart sweep: a fresh AgentRunsDB over the same file, with the
     # per-process guard discarded the way Tests/DB/test_agent_runs_db.py
     # models a restart.
     AgentRunsDB._swept_paths.discard(str(tmp_path / "agent_runs.db"))
-    swept = AgentRunsDB(tmp_path / "agent_runs.db", client_id="sweep")
-    assert (swept.get_run(child_id) or {}).get("status") == "error", (
-        "harness precondition: the reconcile sweep must have marked the "
-        "crash-killed child as error"
-    )
-    assert [row["id"] for row in swept.undelivered_wake_runs("conv-crashed")] == [
-        child_id
-    ], (
-        "harness precondition: the ledger must consider this orphan OWED -- "
-        "otherwise the silence below proves nothing about the mark gate"
-    )
-    swept.close()
+    with _fixture_runs(tmp_path / "agent_runs.db", client_id="sweep") as swept:
+        assert (swept.get_run(child_id) or {}).get("status") == "error", (
+            "harness precondition: the reconcile sweep must have marked the "
+            "crash-killed child as error"
+        )
+        assert [row["id"] for row in swept.undelivered_wake_runs("conv-crashed")] == [
+            child_id
+        ], (
+            "harness precondition: the ledger must consider this orphan OWED -- "
+            "otherwise the silence below proves nothing about the mark gate"
+        )
 
     app, marks, gateway = _launch_app(tmp_path)
     assert marks.list_marked_conversation_ids(FLEET_UNSEEN) == (), (
@@ -1068,11 +1081,10 @@ async def test_the_kill_switch_silences_the_launch_fire_point_and_loses_nothing(
     assert marks_off.has_mark(conversation_id, FLEET_UNSEEN), (
         "the kill switch lost the ◈ mark"
     )
-    off_runs = AgentRunsDB(tmp_path / "agent_runs.db", client_id="check")
-    assert not (off_runs.get_run(run_id) or {}).get("wake_delivered_at"), (
-        "the kill switch stamped the ledger for a wake it never delivered"
-    )
-    off_runs.close()
+    with _fixture_runs(tmp_path / "agent_runs.db", client_id="check") as off_runs:
+        assert not (off_runs.get_run(run_id) or {}).get("wake_delivered_at"), (
+            "the kill switch stamped the ledger for a wake it never delivered"
+        )
 
     monkeypatch.setenv("TLDW_AGENTS_AUTOWAKE_ENABLED", "true")
     app_on, _marks_on, gateway_on = _launch_app(tmp_path, real_service=True)
@@ -1106,11 +1118,10 @@ async def test_an_unresolvable_ephemeral_mark_is_cleared_at_launch(tmp_path):
     app0 = _build_test_app("library")
     marks0 = _attach_real_dbs(app0, tmp_path)
     ephemeral_id = "console-session-9f3ac1"
-    runs_db = AgentRunsDB(tmp_path / "agent_runs.db", client_id="seed")
-    _parent, run_id = _terminal_subagent_run(
-        runs_db, ephemeral_id, result="work nobody can be shown"
-    )
-    runs_db.close()
+    with _fixture_runs(tmp_path / "agent_runs.db", client_id="seed") as runs_db:
+        _parent, run_id = _terminal_subagent_run(
+            runs_db, ephemeral_id, result="work nobody can be shown"
+        )
     marks0.set_mark(ephemeral_id, FLEET_UNSEEN)
     assert app0.chachanotes_db.get_conversation_by_id(ephemeral_id) is None, (
         "harness precondition: an ephemeral session id names no conversation"
@@ -1128,12 +1139,11 @@ async def test_an_unresolvable_ephemeral_mark_is_cleared_at_launch(tmp_path):
             "the launch tried to deliver into a conversation that does not "
             f"exist: {gateway.payloads!r}"
         )
-    check = AgentRunsDB(tmp_path / "agent_runs.db", client_id="check")
-    assert not (check.get_run(run_id) or {}).get("wake_delivered_at"), (
-        "clearing an unresolvable mark must not stamp the ledger -- the "
-        "result was never delivered to anyone"
-    )
-    check.close()
+    with _fixture_runs(tmp_path / "agent_runs.db", client_id="check") as check:
+        assert not (check.get_run(run_id) or {}).get("wake_delivered_at"), (
+            "clearing an unresolvable mark must not stamp the ledger -- the "
+            "result was never delivered to anyone"
+        )
 
 
 @pytest.mark.asyncio

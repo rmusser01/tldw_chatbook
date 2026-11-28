@@ -296,9 +296,9 @@ async def test_disposing_runtime_admits_no_new_view_agent_runs_read(
         _agent,
         _historical_bridge,
     )
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from Tests.agent_runs_owner import owned_agent_runs_db
 
-    database = AgentRunsDB(tmp_path / "quit-reads.sqlite", "quit-reads")
+    database = owned_agent_runs_db(tmp_path / "quit-reads.sqlite", "quit-reads")
     entered, release, retired = threading.Event(), threading.Event(), threading.Event()
     tasks = []
     try:
@@ -357,10 +357,10 @@ async def test_disposing_runtime_keeps_showing_published_agent_runs_values(
         _finish,
         _historical_bridge,
     )
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from Tests.agent_runs_owner import owned_agent_runs_db
     from tldw_chatbook.UI.Screens import chat_screen
 
-    database = AgentRunsDB(tmp_path / "quit-values.sqlite", "quit-values")
+    database = owned_agent_runs_db(tmp_path / "quit-values.sqlite", "quit-values")
     tasks = []
     try:
         bridge, child = _historical_bridge(database)
@@ -370,6 +370,7 @@ async def test_disposing_runtime_keeps_showing_published_agent_runs_values(
         render, empty = _view_agent_runs_reader(agent, bridge, reader)
         assert render() == empty
         await _finish(tasks)
+
         def shown():
             value = render()
             return value if reader == "counts" else [row.row_id for row in value]

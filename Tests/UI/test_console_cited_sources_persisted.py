@@ -199,6 +199,17 @@ def send_path(request, monkeypatch) -> _SendPath:
     return path
 
 
+class _CitedSourcesHarness(ConsoleHarness):
+    async def _shutdown(self) -> None:
+        # Finish this simulated app exit before a restart reopens the same store.
+        from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
+
+        try:
+            await super()._shutdown()
+        finally:
+            await dispose_console_runtime(self.app_instance)
+
+
 def _build_app(db_path: Path, send_path: _SendPath):
     """Build a factory app over a file-backed ChaChaNotes DB.
 
@@ -233,7 +244,7 @@ def _build_app(db_path: Path, send_path: _SendPath):
     app.chat_dictionary_scope_service.local_service = app.local_chat_dictionary_service
     gateway = _CitingGateway()
     app.console_provider_gateway_factory = lambda: gateway
-    host = ConsoleHarness(app)
+    host = _CitedSourcesHarness(app)
     return host, app, db, gateway
 
 

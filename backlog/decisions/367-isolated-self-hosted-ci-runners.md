@@ -1,7 +1,8 @@
-# ADR-359: Isolated self-hosted Linux CI runners
+# ADR-367: Isolated self-hosted Linux CI runners
 
 Status: Accepted; host qualified, workflow integration pending
 Date: 2026-11-13
+Renumbered from ADR-359 on 2026-11-14. The older Windows Textual timer decision retains 359.
 Task: TASK-40721
 
 ## Context
@@ -25,3 +26,14 @@ Moving to another CI platform does not remove the measured execution workload an
 One server is not highly available. Eight workers may still need more than an hour for the present gate; measure instead of claiming a sub-hour guarantee. Additional pool capacity is a measured follow-up. Test failures remain failures. No coverage reduction or merge-protection weakening is part of this change.
 
 Capacity qualification: the representative shard used 84% of one CPU and 619,888 KiB test-process RSS; after host preparation, 105 GiB RAM remained available. Increase the initial conservative four-slot proposal to eight test slots, retaining 2-vCPU/6-GiB guests. Bound the fleet to 64 GiB memory and 12 logical CPUs (of 16), with one separate control slot. This improves throughput against the measured 615 runner-minutes per gate; whole-gate and sustained-load latency remain to be measured.
+
+## Renumbering provenance (2026-11-23)
+
+Renumbered from ADR-360 to ADR-367 under the oldest-Date rule. ADR-360 remains
+the BeautifulSoup core-dependency decision dated 2026-10-11; this runner
+decision is dated 2026-11-13. It was originally added as ADR-359 in
+`1ffef9ffd399` and renamed 359 to 360 in `d78adf6c855d` (replayed as
+`3fd09ef45353`). A fresh current-tree filename inventory immediately before
+this repair found maximum 366, so 367 follows the highest-plus-one rule.
+Only identifiers and living links change; the accepted decision, status,
+routing and resource limits are unchanged.

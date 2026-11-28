@@ -13,6 +13,7 @@ import pytest
 from Tests.Agents.test_hook_permissions import _approve
 from Tests.Agents.test_hook_permissions import hook_file as _hook_file
 from Tests.Chat.test_console_hook_preparation_demand import _save_hooks
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.hooks_v2_process_support import child_argv
 from Tests.Plugins.test_native_components import install_components
 
@@ -300,7 +301,6 @@ async def test_installed_hook_aggregate_admission_and_teardown(
         BuiltinToolProvider,
         ToolCatalogRegistry,
     )
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     entered, release = tmp_path / "entered", tmp_path / "release"
     entered.mkdir()
@@ -343,7 +343,9 @@ async def test_installed_hook_aggregate_admission_and_teardown(
         )
     }
     pending = []
-    db = AgentRunsDB(tmp_path / "aggregate-runs.db", client_id="installed-aggregate")
+    db = owned_agent_runs_db(
+        tmp_path / "aggregate-runs.db", client_id="installed-aggregate"
+    )
 
     def event(name, runtime):
         return lifecycle_event(
@@ -910,7 +912,6 @@ async def test_installed_post_tool_checkpoint(
         BuiltinToolProvider,
         ToolCatalogRegistry,
     )
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     entered, release = tmp_path / "post-entered", tmp_path / "post-release"
     package = _package(
@@ -934,7 +935,7 @@ async def test_installed_post_tool_checkpoint(
     )
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
-    db = AgentRunsDB(tmp_path / "post-tool.db", client_id="owned-post")
+    db = owned_agent_runs_db(tmp_path / "post-tool.db", client_id="owned-post")
     chat = ScriptedChat([fence("calculator", {"expression": "6*7"}), "done"])
     terminal, published = [], []
     service = AgentService(
@@ -1008,7 +1009,6 @@ async def test_installed_post_child_checkpoint(
         make_inline_service,
     )
     from tldw_chatbook.Agents.agent_models import SPAWN_TOOL_NAME, WAIT_AGENTS_TOOL_NAME
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     entered, release = tmp_path / "child-entered", tmp_path / "child-release"
     package = _package(
@@ -1030,7 +1030,7 @@ async def test_installed_post_child_checkpoint(
     engine = await _native_engine(
         native_console.service, installed.installation_id, "child-session"
     )
-    db = AgentRunsDB(tmp_path / "post-child.db", client_id="owned-child")
+    db = owned_agent_runs_db(tmp_path / "post-child.db", client_id="owned-child")
     replies = [fence(SPAWN_TOOL_NAME, {"task": "child"})]
     if fleet:
         service, chat, _ = make_fleet_service(
@@ -1973,7 +1973,6 @@ async def test_installed_final_arguments_reach_normal_permission_and_dispatch(
     from Tests.Agents.test_hooks_v2_tool_pipeline import CFG
     from tldw_chatbook.Agents.agent_service import AgentService
     from tldw_chatbook.Chat.console_chat_controller import build_mcp_review_hook
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     order = tmp_path / "transform-order"
     payload = {"content": [{"type": "text", "text": "B payload"}]}
@@ -2085,7 +2084,9 @@ async def test_installed_final_arguments_reach_normal_permission_and_dispatch(
             return original_invoke(name, args, **kwargs)
 
         monkeypatch.setattr(case.registry, "invoke_by_name", observe)
-        db = AgentRunsDB(tmp_path / "final-args.db", client_id="installed-final")
+        db = owned_agent_runs_db(
+            tmp_path / "final-args.db", client_id="installed-final"
+        )
         chat = ScriptedChat(
             [
                 fence("load_tools", {"ids": [case.name]}),
@@ -2189,6 +2190,42 @@ async def test_installed_standalone_compact_now_releases_admission(
 async def test_installed_owned_mcp_post_compaction(
     native_console, native_package, tmp_path, monkeypatch, mode
 ):
+    from tldw_chatbook.Agents.hooks_v2.checkpoints import (
+        HookCheckpointError,
+        HookCheckpointStore,
+    )
+    from tldw_chatbook.Agents.hooks_v2.mcp_executor import MCPHookExecutor
+
+    observations = []
+    original_wait = MCPHookExecutor._wait_worker
+    original_accept = HookCheckpointStore.accept
+
+    async def observe_worker(executor, job):
+        # Capture the phase before the worker can install its result check.
+        phase = "invoke" if job.result_check is None else "revalidate"
+        result, failure = await original_wait(executor, job)
+        if job.event.event == "PostCompact":
+            observations.append(
+                (phase, round(job.active_used, 3), job.handler.timeout_seconds, failure)
+            )
+        return result, failure
+
+    def observe_checkpoint(store, token, outcome):
+        entry = store._entries[token]
+        original_accept(store, token, outcome)
+        if entry.event.event == "PostCompact":
+            observations.append(
+                (
+                    "checkpoint",
+                    entry.reason,
+                    tuple(failure.code for failure in outcome.failures),
+                    len(outcome.accepted),
+                    len(outcome.outstanding_cleanup),
+                )
+            )
+
+    monkeypatch.setattr(MCPHookExecutor, "_wait_worker", observe_worker)
+    monkeypatch.setattr(HookCheckpointStore, "accept", observe_checkpoint)
     cold_permission = mode != "warm"
     payload = {
         "content": [],
@@ -2221,15 +2258,19 @@ async def test_installed_owned_mcp_post_compaction(
             )
             assert case.unified._permission_store is None
             assert standard_console_sources(case.unified)
-        await _installed_compaction_case(
-            native_console,
-            native_package,
-            tmp_path,
-            "success" if mode in {"warm", "cold"} else mode,
-            standalone=True,
-            owned_case=case,
-            monkeypatch=monkeypatch,
-        )
+        try:
+            await _installed_compaction_case(
+                native_console,
+                native_package,
+                tmp_path,
+                "success" if mode in {"warm", "cold"} else mode,
+                standalone=True,
+                owned_case=case,
+                monkeypatch=monkeypatch,
+            )
+        except HookCheckpointError as error:
+            error.add_note(f"PostCompact worker/checkpoint observations: {observations!r}")
+            raise
 
         if mode == "cold":
             assert case.unified._permission_store is not None

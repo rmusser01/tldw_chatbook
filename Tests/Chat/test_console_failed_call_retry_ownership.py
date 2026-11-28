@@ -2579,6 +2579,7 @@ async def _llamacpp_falls_back(
     groq_replies=(),
     busy=3,
     next_steps=(),
+    retire_agent_runs=False,
 ):
     """A captured llama.cpp run that falls back to groq (TASK-42472's path).
 
@@ -2607,6 +2608,7 @@ async def _llamacpp_falls_back(
         source_name="AGENTS.md" if project else "NOTES.md",
         first_failure=_llama_script(*steps),
         failures=len(steps),
+        retire_agent_runs=retire_agent_runs,
     ) as app:
         llama, groq, replies, switched = (
             app.gateway.resolve_for_send,

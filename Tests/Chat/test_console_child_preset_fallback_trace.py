@@ -53,7 +53,7 @@ def _primary_follow_up(facts):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("capture", ["capture_on", "capture_off"])
 async def test_a_spawned_childs_preset_fallback_is_sent_and_traced(
-    tmp_path, monkeypatch, capture
+    tmp_path, monkeypatch, capture, owned_console_databases
 ):
     """The child falls back, its answer reaches the parent, and the parent's
     next message is sent. Under Capture On the fallback is a new chain of the
@@ -68,6 +68,7 @@ async def test_a_spawned_childs_preset_fallback_is_sent_and_traced(
         tmp_path,
         monkeypatch,
         "Say child done.",
+        owned_console_databases=owned_console_databases,
         preset_fallback=True,
         capture=capture,
         follow_up=True,
@@ -119,7 +120,7 @@ async def test_a_spawned_childs_preset_fallback_is_sent_and_traced(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("capture", ["capture_on", "capture_off"])
 async def test_an_alternate_that_keeps_the_target_is_a_visible_skip(
-    tmp_path, monkeypatch, capture
+    tmp_path, monkeypatch, capture, owned_console_databases
 ):
     """The trace records a child's fallback only as a change of target.
 
@@ -128,7 +129,12 @@ async def test_an_alternate_that_keeps_the_target_is_a_visible_skip(
     reservation, and the child ends on its own model's error.
     """
     facts = await _spawn_turn(
-        tmp_path, monkeypatch, "Say child done.", preset_fallback="same", capture=capture
+        tmp_path,
+        monkeypatch,
+        "Say child done.",
+        owned_console_databases=owned_console_databases,
+        preset_fallback="same",
+        capture=capture,
     )
     why = str(vars(facts))
     models, switched, skipped, calls = _child(facts)
@@ -148,7 +154,7 @@ async def test_an_alternate_that_keeps_the_target_is_a_visible_skip(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("where", ["adapter", "reservation", "binding"])
 async def test_a_child_fallback_the_rule_does_not_admit_is_never_sent(
-    tmp_path, monkeypatch, where
+    tmp_path, monkeypatch, where, owned_console_databases
 ):
     """Each check refuses before the fallback model is asked.
 
@@ -176,7 +182,11 @@ async def test_a_child_fallback_the_rule_does_not_admit_is_never_sent(
             console_trace_runtime, "child_fallback_admits", lambda *_a, **_k: None
         )
     facts = await _spawn_turn(
-        tmp_path, monkeypatch, "Say child done.", preset_fallback=True
+        tmp_path,
+        monkeypatch,
+        "Say child done.",
+        owned_console_databases=owned_console_databases,
+        preset_fallback=True,
     )
     why = str(vars(facts))
     models, switched, _skipped, calls = _child(facts)

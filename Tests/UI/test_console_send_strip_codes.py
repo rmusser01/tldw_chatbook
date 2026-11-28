@@ -12,6 +12,8 @@ do not list, so the real classifier refuses the image: nothing is stubbed.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from textual.widgets import Button, Static
 
@@ -19,6 +21,7 @@ from Tests.UI.test_console_dictation import (
     _mounted_console as _base_mounted_console,
     _ready_host,
 )
+from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
@@ -65,16 +68,24 @@ async def _synced_strip(console, composer, expected: str) -> Static:
     """
     from textual.geometry import Region
 
-    console._sync_console_control_bar()
     strip = composer.query_one("#console-send-disabled-reason", Static)
 
     def painted() -> str:
         region = Region(0, 0, strip.region.width, strip.region.height)
         return "".join(line.text for line in strip.render_lines(region)).strip()
 
-    settled = await _until(
-        lambda: strip.content.plain == expected and painted() == expected, 10
-    )
+    # Share the painted-readiness budget with the checked render.
+    budget = asyncio.timeout(10)
+    try:
+        async with budget:
+            await _sync_console_control_bar_now(console)
+            settled = await _until(
+                lambda: strip.content.plain == expected and painted() == expected, 10
+            )
+    except TimeoutError:
+        if not budget.expired():
+            raise
+        settled = False
     assert settled, (
         f"Send strip never painted {expected!r}: {strip.content.plain!r}, "
         f"painted {painted()!r}"
@@ -283,7 +294,7 @@ async def test_a_refused_enter_writes_plain_sentences_the_context_view_can_copy(
         session_id = store.ensure_session().id
         composer.load_draft("what colour is this leaf?")
         assert store.add_pending_attachment(session_id, _image())
-        console._sync_console_control_bar()
+        await _sync_console_control_bar_now(console)
         await pilot.pause()
         await _refused_enter(console, composer, pilot)  # the image blocks
 

@@ -388,12 +388,16 @@ def hooks_v2_context_key(self, session_id: str):
         and type(registry) is registry_class
         and type(database) is WorkspaceDB
         and not database.is_memory_db
-        and type(consent) is ChangeReviewConsentService
-        and consent._registry is registry
+        and (
+            consent is None
+            or type(consent) is ChangeReviewConsentService and consent._registry is registry
+        )
         and bindings_current()
     )
-    if not stock:
-        # Preserve the current custom callback's existing borrowed-safe scope.
+    if not stock or consent is None:
+        # With no consent service, retain the existing lazy Workspace scope.
+        # Custom authority readers still receive the original call.
+        options = {"_context_key_only": True} if stock else {}
         with (
             operation_owned_connection(getattr(store.persistence, "db", None)),
             operation_owned_connection(database),
@@ -401,12 +405,12 @@ def hooks_v2_context_key(self, session_id: str):
             if isinstance(source, _HookPreparationSource):
                 self._require_hook_preparation_source(source)
                 values = controller._run_owned_chat_db_operation(
-                    source.authority_reader, session_id
+                    source.authority_reader, session_id, **options
                 )
                 self._require_hook_preparation_source(source)
             else:
                 values = controller._run_owned_chat_db_operation(
-                    controller._hook_authority_values, session_id
+                    controller._hook_authority_values, session_id, **options
                 )
             return (
                 session.workspace_id,
@@ -459,7 +463,7 @@ def hooks_v2_context_key(self, session_id: str):
         require_current()
         # Invoke the qualified original instead of a later mutable lookup.
         values = controller._run_owned_chat_db_operation(
-            function, controller, session_id
+            function, controller, session_id, _context_key_only=True
         )
         require_current()
         result = (

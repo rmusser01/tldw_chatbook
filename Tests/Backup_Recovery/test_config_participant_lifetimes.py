@@ -8,6 +8,7 @@ import pytest
 from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
 from Tests.Backup_Recovery.test_participant_lifetimes import local_root
 from Tests.Backup_Recovery.test_admission import launch
+from Tests.private_profile import private_profile_test
 
 
 @pytest.fixture
@@ -881,3 +882,124 @@ def test_a_data_directory_check_with_every_root_absent_refuses(
     result = _verified_data_directory(tmp_path, monkeypatch, roots)
     assert isinstance(result, bootstrap.RecoveryRequired), result
     assert str(result) == "config_directory_selection_changed"
+
+
+def _missing_registered_folder(tmp_path, monkeypatch):
+    authority, _, _ = _registered_file(tmp_path)
+    folder = tmp_path / "folder"
+    folder.mkdir(mode=0o700)
+    selector = tmp_path / "selected.toml"
+    selector.write_text('[general]\nusers_name="fixture"\n')
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(selector))
+    authority.register("backup.source.folder", (folder,))
+    folder.rmdir()
+    return authority, selector
+
+
+def _assert_legacy_entry_refusal(path):
+    prior_holds = set(storage._retiring_holds)
+    with pytest.raises(bootstrap.RecoveryRequired, match="storage_admission_unavailable"):
+        storage.acquire_storage(path)
+    [hold] = storage._retiring_holds - prior_holds
+    assert isinstance(hold.error, FileNotFoundError)
+    assert hold.entry_custody is None
+    assert not hold.thread.is_alive()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("local_root")
+@pytest.mark.parametrize("fault", ["native_close_error", "replaced_closer"])
+@private_profile_test
+def test_group_refusal_retains_uncertain_native_close(request, tmp_path, monkeypatch, fault):
+    """Retain the hold if actual cleanup cannot finish on verified source."""
+    import errno
+    import os
+    from contextlib import ExitStack
+
+    authority, _ = _missing_registered_folder(tmp_path, monkeypatch)
+    if os.name != "posix":
+        _assert_legacy_entry_refusal(tmp_path / "app.db")
+        return
+    group_code = type(authority)._groups.__code__
+    admit_code = type(authority)._admit.__wrapped__.__code__
+    native_close, native_stat = os.close, os.fstat
+    registry_inode = (authority.control_root / "registry.lock").stat().st_ino
+    observed, callback_errors, stub_calls = [], [], []
+
+    def observe_unwind(code, _offset, primary):
+        if code is not group_code or not isinstance(primary, FileNotFoundError):
+            return
+        caller = sys._getframe(1).f_back
+        if caller is None or caller.f_code is not admit_code:
+            return
+        try:
+            assert caller.f_locals["stock_group_reader"] is True
+            custody = caller.f_locals["_custody"]
+            fd = custody.fds[-1]
+            assert native_stat(fd).st_ino == registry_inode
+            observed.append((primary, custody, fd))
+            if fault == "native_close_error":
+                native_close(fd)
+            else:
+                monkeypatch.setattr(storage.os, "close", stub_calls.append)
+        except BaseException as error:  # Preserve the actual refusal.
+            callback_errors.append(error)
+
+    monitoring = sys.monitoring
+    event = monitoring.events.PY_UNWIND
+    tool = next(i for i in range(6) if monitoring.get_tool(i) is None)
+    with ExitStack() as cleanup:
+        monitoring.use_tool_id(tool, "test_storage_entry_close")
+        cleanup.callback(monitoring.free_tool_id, tool)
+        monitoring.register_callback(tool, event, observe_unwind)
+        cleanup.callback(monitoring.register_callback, tool, event, None)
+        cleanup.callback(monitoring.set_events, tool, 0)
+        monitoring.set_events(tool, event)
+        with pytest.raises(bootstrap.RecoveryRequired, match="storage_admission_unavailable"):
+            storage.acquire_storage(tmp_path / "app.db")
+
+    assert not callback_errors
+    [(primary, custody, fd)] = observed
+    hold = custody.admission_owner
+    assert custody.entry_reader_verified
+    assert hold in storage._retiring_holds
+    assert not hold.thread.is_alive()
+    assert custody.close_failed and fd in custody.fds
+    assert hold.error.exceptions[0] is primary
+    error = hold.error.exceptions[1]
+    chain = []
+    while error is not None:
+        chain.append(error)
+        error = error.__cause__ or error.__context__
+    if fault == "native_close_error":
+        assert any(isinstance(error, OSError) and error.errno == errno.EBADF for error in chain)
+    else:
+        assert not stub_calls
+        assert any(str(error) == "capture_native_closer_changed" for error in chain)
+        assert native_stat(fd).st_ino == registry_inode
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("local_root")
+@private_profile_test
+def test_group_refusal_keeps_unverified_admission_in_drain(request, tmp_path, monkeypatch):
+    """Replacing admission cannot certify an undisclosed native resource."""
+    import os
+
+    authority, selector = _missing_registered_folder(tmp_path, monkeypatch)
+    admit = type(authority)._admit
+    resources = []
+
+    def admit_with_untracked_file(self, *args, **kwargs):
+        assert "_custody" not in kwargs
+        resources.append(os.open(selector, os.O_RDONLY))
+        return admit(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(authority), "_admit", admit_with_untracked_file)
+    try:
+        _assert_legacy_entry_refusal(tmp_path / "app.db")
+        [fd] = resources
+        assert os.fstat(fd).st_ino == selector.stat().st_ino
+    finally:
+        for fd in resources:
+            os.close(fd)

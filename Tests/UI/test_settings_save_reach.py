@@ -13,6 +13,8 @@ the real Settings save writer, and Ctrl+T in Console.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from textual.widgets import Collapsible, Input, Select, Static
 
@@ -514,8 +516,11 @@ async def test_saving_default_b_states_its_reach_and_a_new_chat_takes_it(
 @private_profile_test
 @pytest.mark.parametrize(
     "elsewhere",
-    [None, "settings", "context", "discovery"],
-    ids=["own-save", "settings-elsewhere", "context-elsewhere", "during-discovery"],
+    [None, "settings", "context", "discovery", "discovery-away-back"],
+    ids=[
+        "own-save", "settings-elsewhere", "context-elsewhere", "during-discovery",
+        "during-retry-away-and-back",
+    ],
 )
 async def test_a_blank_chats_settings_draft_survives_its_own_credential_save(
     request, monkeypatch, elsewhere
@@ -540,6 +545,7 @@ async def test_a_blank_chats_settings_draft_survives_its_own_credential_save(
     )
     from tldw_chatbook.Chat.provider_readiness import provider_config_key
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
     from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
     from tldw_chatbook.Widgets.Console.console_settings_modal import (
         ConsoleSettingsModal,
@@ -619,15 +625,57 @@ async def test_a_blank_chats_settings_draft_survives_its_own_credential_save(
         saved = config_module.load_settings(force_reload=True)["chat_defaults"]
         assert (saved["provider"], saved["model"]) == ("openai", "gpt-4.1")
         attempts: list[bool] = []
-        if elsewhere == "discovery":  # the chat moves again while models list
+        if elsewhere in ("discovery", "discovery-away-back"):
+            away = store.create_session(activate=False) if elsewhere == "discovery-away-back" else None
+            retry_target = None
             discover = console._providers_models_for_console_settings
             reopen = console._reopen_suspended_console_settings
+            consume = console._consume_pending_conversation_settings_return
+            set_timer = console.set_timer
+            resume_fired = asyncio.Event()
+            resume_overlapped = False
+            retained_draft = console._suspended_conversation_settings
+
+            def observe_resume_timer(delay, callback=None, **kwargs):
+                if (
+                    callback != consume
+                    or delay != console.CONSUMER_SETTLE_HEDGE_SECONDS
+                ):
+                    return set_timer(delay, callback, **kwargs)
+
+                def observe_consume():
+                    nonlocal resume_overlapped
+                    target = console._pending_conversation_settings_return_target
+                    claim = console._pending_conversation_settings_return_claim
+                    resume_overlapped = (
+                        console._conversation_settings_return_restore_in_progress
+                        and target is not None
+                        and claim is not None
+                        and claim.revision == target.return_revision
+                    )
+                    consume()
+                    resume_fired.set()
+
+                return set_timer(delay, observe_consume, **kwargs)
 
             async def discovering(*args, **kwargs):
+                nonlocal retry_target
                 if not attempts:
                     assert adapter.save_values("chat_defaults", {"max_tokens": 1234})
                     console._session._ensure_active_console_session_settings()
-                return await discover(*args, **kwargs)
+                    result = await discover(*args, **kwargs)
+                    await resume_fired.wait()
+                    return result
+                result = await discover(*args, **kwargs)
+                if away is not None and len(attempts) == 1:
+                    retry_target = console._pending_conversation_settings_return_target
+                    before_selection = store.active_session_epoch()
+                    store.switch_session(away.id)
+                    store.switch_session(chat_id)
+                    assert store.active_session_epoch() == before_selection + 2
+                return result
+
+            monkeypatch.setattr(console, "set_timer", observe_resume_timer)
 
             async def recording(*args, **kwargs):
                 attempts.append(await reopen(*args, **kwargs))
@@ -654,7 +702,42 @@ async def test_a_blank_chats_settings_draft_survives_its_own_credential_save(
                 app.screen is not first
             )
 
-        await _wait_until(pilot, lambda: was_refused() or reopened(), "Return")
+        if elsewhere == "discovery-away-back":
+            await _wait_until(
+                pilot,
+                lambda: reopened() or (
+                    len(attempts) >= 2
+                    and not console._conversation_settings_return_restore_in_progress
+                ),
+                "the superseded second discovery to retire",
+            )
+            assert retry_target is not None
+            assert not reopened(), "the old retry opened over a newer A-to-B-to-A selection"
+            # A scheduled consume from this visit can arrive after the
+            # first worker relinquishes its claim.
+            consume()
+            assert not console._conversation_settings_return_restore_in_progress
+            assert attempts == [False, False]
+            assert store.active_session_id == chat_id
+            assert console._suspended_conversation_settings is retained_draft
+            assert console._pending_conversation_settings_return_target is retry_target
+            assert app.pending_handoffs.exact_revision_status(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN, retry_target.return_revision
+            ) == "pending"
+            return
+
+        try:
+            await _wait_until(pilot, lambda: was_refused() or reopened(), "Return")
+        except AssertionError as error:
+            if elsewhere == "discovery":
+                error.add_note(
+                    f"Native resume seen={resume_fired.is_set()}, "
+                    f"overlapped={resume_overlapped}, attempts={attempts}, "
+                    f"pending={console._pending_conversation_settings_return_target is not None}, "
+                    f"worker_active={console._conversation_settings_return_restore_in_progress}, "
+                    f"draft_retained={console._suspended_conversation_settings is retained_draft}"
+                )
+            raise
         if elsewhere in ("settings", "context"):
             assert was_refused()
             assert not any(
@@ -1006,3 +1089,89 @@ async def test_an_invalid_context_edit_still_counts_after_the_round_trip(
         assert returned._unsaved_field_labels() == ("Context and memory",)
         await _gesture(pilot, "escape")
         assert app.screen is returned  # Esc asks instead of discarding
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("return_to_origin", [False, True], ids=["other-chat", "away-and-back"])
+async def test_settings_return_does_not_adopt_a_selection_from_its_initial_sync(request, monkeypatch, return_to_origin):
+    """A newer selection during a mounted return owns the chat and its focus."""
+    from textual.worker import NoActiveWorker, get_current_worker
+
+    from Tests.UI.test_console_native_chat_flow import (
+        _configure_native_ready_console,
+        _conversation_settings_return_snapshot,
+        _stage_console_settings_return,
+    )
+    from Tests.UI.test_destination_shells import _wait_for_selector
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    issued_sync_finished = asyncio.Event()
+    allow_return = asyncio.Event()
+    async with host.run_test(size=_SIZE) as pilot:
+        console = host.screen
+        await _wait_for_selector(console, pilot, "#console-native-composer", timeout=_MOUNT_TIMEOUT)
+        await _wait_until(pilot, lambda: not console.console_pending_startup_work(), "Console startup to settle")
+        store = console._ensure_console_chat_store()
+        origin = store.ensure_session()
+        prior = store.create_session(title="Chat before return")
+        other = store.create_session(title="New selection", activate=False)
+        assert store.active_session_id == prior.id
+
+        snapshot = _conversation_settings_return_snapshot()
+        console._suspended_conversation_settings = snapshot
+        console._suspended_conversation_settings_token = 1
+        target = _stage_console_settings_return(
+            app,
+            session_id=origin.id,
+            settings_revision=store.session_settings_revision(origin.id),
+            snapshot=snapshot,
+        )
+        synchronize = console._sync_native_console_chat_ui
+
+        async def hold_issued_sync(*args, **kwargs):
+            result = await synchronize(*args, **kwargs)
+            try:
+                return_worker = get_current_worker().group == "conversation-settings-return"
+            except NoActiveWorker:
+                return_worker = False
+            if return_worker and not issued_sync_finished.is_set():
+                assert store.active_session_id == origin.id
+                issued_sync_finished.set()
+                await allow_return.wait()
+            return result
+
+        monkeypatch.setattr(console, "_sync_native_console_chat_ui", hold_issued_sync)
+        console.apply_navigation_context(target.to_context())
+        try:
+            await _wait_until(pilot, issued_sync_finished.is_set, "issued return synchronization")
+            selected_epoch = store.active_session_epoch()
+            store.switch_session(other.id)
+            if return_to_origin:
+                store.switch_session(origin.id)
+            latest_session = origin if return_to_origin else other
+            latest_epoch = store.active_session_epoch()
+            assert latest_epoch > selected_epoch
+        finally:
+            allow_return.set()
+
+        await _wait_until(
+            pilot,
+            lambda: not console._conversation_settings_return_restore_in_progress,
+            "superseded return to release its claim",
+        )
+        assert host.screen is console
+        console._consume_pending_conversation_settings_return()
+        assert not console._conversation_settings_return_restore_in_progress
+        assert (store.active_session_id, store.active_session_epoch()) == (
+            latest_session.id,
+            latest_epoch,
+        )
+        assert console._suspended_conversation_settings is snapshot
+        assert console._pending_conversation_settings_return_target == target
+        assert app.pending_handoffs.exact_revision_status(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN, target.return_revision
+        ) == "pending"

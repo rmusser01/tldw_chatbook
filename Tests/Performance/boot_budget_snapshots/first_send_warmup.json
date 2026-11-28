@@ -1,7 +1,7 @@
 {
   "_comment": "First-send warm-up payload census (the pre-import pass's last step, after the screen routes), counted from app + chat: an upper bound on what the warm-up adds. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
-  "warmup_added_modules": 90,
-  "warmup_added_loc": 65443,
+  "warmup_added_modules": 93,
+  "warmup_added_loc": 68411,
   "listed": [
     "tldw_chatbook.UI.Console_Modules.send_acknowledgement",
     "tldw_chatbook.UI.Console_Modules.sent_draft",
@@ -15,6 +15,9 @@
     "tldw_chatbook.Agents.agent_lesson_promotion",
     "tldw_chatbook.Chat.console_send_start",
     "tldw_chatbook.Chat.console_received_turn",
+    "tldw_chatbook.Chat.console_saved_sessions",
+    "tldw_chatbook.DB.mobile_consolidation_receipts",
+    "tldw_chatbook.Agents.scratch_admission",
     "tldw_chatbook.Chat.console_send_diagnostics",
     "tldw_chatbook.Chat.console_automatic_submission",
     "tldw_chatbook.Chat.console_plugin_context",
@@ -99,14 +102,14 @@
   ],
   "entries": {
     "tldw_chatbook.UI.Console_Modules.send_acknowledgement": {
-      "loc": 1343,
+      "loc": 1346,
       "modules": [
         "tldw_chatbook.UI.Console_Modules.send_acknowledgement",
         "tldw_chatbook.UI.Console_Modules.sent_draft"
       ]
     },
     "tldw_chatbook.Chat.console_configuration_preparation": {
-      "loc": 2840,
+      "loc": 2881,
       "modules": [
         "tldw_chatbook.Chat.console_configuration_preparation"
       ]
@@ -124,7 +127,7 @@
       ]
     },
     "tldw_chatbook.MCP.console_snapshot": {
-      "loc": 1372,
+      "loc": 1384,
       "modules": [
         "tldw_chatbook.MCP.console_snapshot"
       ]
@@ -136,9 +139,27 @@
       ]
     },
     "tldw_chatbook.Chat.console_send_start": {
-      "loc": 151,
+      "loc": 340,
       "modules": [
         "tldw_chatbook.Chat.console_send_start"
+      ]
+    },
+    "tldw_chatbook.Chat.console_saved_sessions": {
+      "loc": 764,
+      "modules": [
+        "tldw_chatbook.Chat.console_saved_sessions"
+      ]
+    },
+    "tldw_chatbook.DB.mobile_consolidation_receipts": {
+      "loc": 1020,
+      "modules": [
+        "tldw_chatbook.DB.mobile_consolidation_receipts"
+      ]
+    },
+    "tldw_chatbook.Agents.scratch_admission": {
+      "loc": 274,
+      "modules": [
+        "tldw_chatbook.Agents.scratch_admission"
       ]
     },
     "tldw_chatbook.Chat.console_send_diagnostics": {
@@ -166,7 +187,7 @@
       ]
     },
     "tldw_chatbook.Agents.hook_permissions": {
-      "loc": 2971,
+      "loc": 3094,
       "modules": [
         "tldw_chatbook.Agents.hook_permissions",
         "tldw_chatbook.Agents.run_hooks"
@@ -180,13 +201,13 @@
       ]
     },
     "tldw_chatbook.Chat.console_references": {
-      "loc": 532,
+      "loc": 538,
       "modules": [
         "tldw_chatbook.Chat.console_references"
       ]
     },
     "tldw_chatbook.Agents.hooks_v2.lifecycle": {
-      "loc": 4229,
+      "loc": 4380,
       "modules": [
         "tldw_chatbook.Agents.hooks_v2",
         "tldw_chatbook.Agents.hooks_v2.budgets",
@@ -226,13 +247,13 @@
       ]
     },
     "tldw_chatbook.Chat.console_native_commit": {
-      "loc": 1487,
+      "loc": 1563,
       "modules": [
         "tldw_chatbook.Chat.console_native_commit"
       ]
     },
     "tldw_chatbook.Chat.console_prompt_mixin_service": {
-      "loc": 874,
+      "loc": 881,
       "modules": [
         "tldw_chatbook.Chat.console_prompt_mixin_service"
       ]
@@ -308,7 +329,7 @@
       ]
     },
     "tldw_chatbook.Chat.console_run_start_tools": {
-      "loc": 580,
+      "loc": 703,
       "modules": [
         "tldw_chatbook.Chat.console_run_start_tools"
       ]
@@ -375,7 +396,7 @@
       ]
     },
     "tldw_chatbook.Chat.console_agent_reply": {
-      "loc": 3778,
+      "loc": 3785,
       "modules": [
         "tldw_chatbook.Agents.execution_capacity",
         "tldw_chatbook.Agents.ordinary_tree",
@@ -414,7 +435,7 @@
       ]
     },
     "tldw_chatbook.Canvas.control_protocol": {
-      "loc": 1106,
+      "loc": 1251,
       "modules": [
         "tldw_chatbook.Canvas.control_protocol"
       ]
@@ -432,7 +453,7 @@
       ]
     },
     "tldw_chatbook.Canvas.native_authority": {
-      "loc": 1268,
+      "loc": 1295,
       "modules": [
         "tldw_chatbook.Canvas.native_authority"
       ]

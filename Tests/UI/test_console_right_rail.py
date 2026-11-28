@@ -28,6 +28,7 @@ from dataclasses import replace
 import asyncio
 import importlib
 import threading
+from time import monotonic
 from types import SimpleNamespace
 
 import pytest
@@ -599,6 +600,9 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
         def initial_geometry_is_stable() -> bool:
             return (
                 swap_reconcile_settled(1)
+                # The rail counts requests from every mounted owner. Finish
+                # startup work before measuring the second swap's one pass.
+                and not screen.console_pending_startup_work()
                 and not bounded._reconcile_scheduled
                 and not rail._outer_reconcile_scheduled
                 and bounded.desired_content_lines == before_demand
@@ -711,6 +715,11 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
 
 @pytest.mark.asyncio
 async def test_real_inspector_producer_variants_are_strictly_owned(monkeypatch):
+    from tldw_chatbook.Widgets.Console.console_background_effect import (
+        ConsoleTranscriptSurface,
+        active_console_transcript,
+    )
+
     ownership = importlib.import_module(
         "tldw_chatbook.Widgets.Console.console_inspector_ownership"
     )
@@ -718,14 +727,57 @@ async def test_real_inspector_producer_variants_are_strictly_owned(monkeypatch):
     async with make_console_pilot() as pilot:
         screen = pilot.app.screen
         store = screen._ensure_console_chat_store()
+        initial = store.ensure_session()
+        initial_message = store.append_message(
+            initial.id,
+            role=ConsoleMessageRole.USER,
+            content="retained viewport fixture",
+        )
+        await screen._sync_native_console_chat_ui()
+        await pilot.pause()
+        surface = screen.query_one(ConsoleTranscriptSurface)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 5.0
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: screen._last_native_transcript_session_id == initial.id
+            and surface.transcript.display_message(initial_message.id) is not None
+            and surface._can_retain(surface.transcript),
+            description="initial transcript eligible for retention",
+            timeout=deadline - loop.time(),
+        )
+        retained = surface.transcript
+        target = store.create_session(title="Inspector target", activate=False)
         message = store.append_message(
-            store.active_session_id,
+            target.id,
             role=ConsoleMessageRole.USER,
             content="selected producer message",
         )
+        await screen._session._activate_native_console_session(target.id)
         await screen._sync_native_console_chat_ui()
-        transcript = screen.query_one("#console-native-transcript")
+        await pilot.pause()
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: screen._last_native_transcript_session_id == target.id,
+            description="target transcript publication",
+            timeout=deadline - loop.time(),
+        )
+        active = active_console_transcript(screen)
+        assert active is not None and active is surface.transcript
+        assert active is not retained and active.is_attached and active.display
+        assert retained.is_attached and not retained.display
+        assert screen.query_one("#console-native-transcript") is retained
+        assert active.display_message(message.id) is not None
+        assert retained.display_message(message.id) is None
+        assert (
+            store.session_id_for_message(message.id)
+            == store.active_session_id
+            == target.id
+        )
+        transcript = active_console_transcript(screen)
+        assert transcript is active
         transcript.select_message(message.id)
+        assert transcript.selected_message_id == message.id
         screen._retrieval._active_dictionaries_summary = {
             "dictionaries": [{"name": "Producer dictionary", "source": "conversation"}]
         }
@@ -1153,7 +1205,7 @@ async def test_authority_focus_f1_discloses_all_five_complete_facts() -> None:
 
 
 @pytest.mark.asyncio
-async def test_authority_focus_f1_preserves_literal_rich_markup() -> None:
+async def test_authority_focus_f1_preserves_literal_rich_markup(monkeypatch: pytest.MonkeyPatch) -> None:
     async with make_console_pilot() as pilot:
         await click_inspect_rail_open(pilot)
 
@@ -1161,15 +1213,18 @@ async def test_authority_focus_f1_preserves_literal_rich_markup() -> None:
         summary = screen.query_one(
             "#console-send-authority-summary", ConsoleSendAuthoritySummary
         )
-        summary.sync_state(
-            ConsoleInspectorState(
-                rows=(
-                    ConsoleDisplayRow("Workspace", "[bold]literal[/bold]"),
-                    ConsoleDisplayRow("Selected conversation", "Chat"),
-                    ConsoleDisplayRow("Provider", "ready", status="ready"),
-                )
+        state = ConsoleInspectorState(
+            rows=(
+                ConsoleDisplayRow("Workspace", "[bold]literal[/bold]"),
+                ConsoleDisplayRow("Selected conversation", "Chat"),
+                ConsoleDisplayRow("Provider", "ready", status="ready"),
             )
         )
+        # The real control refresh also publishes the authority summary.
+        monkeypatch.setattr(
+            screen, "_build_console_inspector_state", lambda _launch: state
+        )
+        summary.sync_state(state)
         summary.focus()
         await pilot.pause()
         await screen.action_show_workbench_help()
@@ -1212,16 +1267,31 @@ async def test_more_toggle_disappearance_recovers_to_next_inspector_boundary(
             ),
         )
 
-        rows = tuple(
-            row
-            for row in inspector.state.rows
-            if row.label not in {"Tools", "Approvals", "Artifacts"}
-        ) + (
+        promoted_rows = (
             ConsoleDisplayRow("Tools", "1 ready"),
             ConsoleDisplayRow("Approvals", "1 pending", status="blocked"),
             ConsoleDisplayRow("Artifacts", "Chatbook available"),
         )
-        inspector.sync_state(replace(inspector.state, rows=rows))
+
+        def promote_groups(state: ConsoleInspectorState) -> ConsoleInspectorState:
+            rows = tuple(
+                row
+                for row in state.rows
+                if row.label not in {"Tools", "Approvals", "Artifacts"}
+            )
+            return replace(state, rows=rows + promoted_rows)
+
+        # A native control-bar refresh can publish between the synthetic
+        # promotion and its recompose. Project the same three rows there too.
+        build_state = screen._build_console_inspector_state
+
+        def build_promoted_state(pending_launch):
+            return promote_groups(build_state(pending_launch))
+
+        monkeypatch.setattr(
+            screen, "_build_console_inspector_state", build_promoted_state
+        )
+        inspector.sync_state(promote_groups(inspector.state))
         for _ in range(4):
             await pilot.pause()
 
@@ -1274,7 +1344,9 @@ async def test_more_disappearance_does_not_steal_newer_context_focus() -> None:
 
 
 @pytest.mark.asyncio
-async def test_conditional_demotion_does_not_steal_newer_context_focus() -> None:
+async def test_conditional_demotion_does_not_steal_newer_context_focus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async with make_console_pilot() as pilot:
         await click_inspect_rail_open(pilot)
 
@@ -1283,15 +1355,14 @@ async def test_conditional_demotion_does_not_steal_newer_context_focus() -> None
             "#console-run-inspector-state", ConsoleRunInspector
         )
         context_focus = screen.query_one("#console-context-rail-collapse", Button)
-        active_actions = tuple(
-            replace(action, enabled=True, disabled_reason="")
-            if action.widget_id == CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID
-            else action
-            for action in inspector.state.actions
-        )
-        active_state = replace(inspector.state, actions=active_actions)
+        # Stage availability at the source so native refreshes keep the
+        # promoted action alive through the focus request.
+        screen.app_instance.console_chatbook_artifact_available = True
+        deadline = monotonic() + 5.0
         before_recompose = inspector.recompose_count
-        inspector.sync_state(active_state)
+        inspector.sync_state(
+            screen._build_console_inspector_state(screen._pending_console_launch_context)
+        )
         await _wait_for_right_rail_condition(
             pilot,
             lambda: (
@@ -1313,17 +1384,37 @@ async def test_conditional_demotion_does_not_steal_newer_context_focus() -> None
         await pilot.pause()
         assert pilot.app.focused is artifact_action
 
-        disabled_actions = tuple(
-            replace(action, enabled=False, disabled_reason="unavailable")
-            if action.widget_id == CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID
-            else action
-            for action in active_actions
+        recovered = False
+        recover_focus = inspector._recover_conditional_focus
+
+        def observe_recovery(owner: str, focused_id: str | None) -> None:
+            nonlocal recovered
+            recover_focus(owner, focused_id)
+            if owner == "Artifacts" and focused_id == CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID:
+                recovered = True
+
+        monkeypatch.setattr(inspector, "_recover_conditional_focus", observe_recovery)
+        screen.app_instance.console_chatbook_artifact_available = False
+        inspector.sync_state(
+            screen._build_console_inspector_state(screen._pending_console_launch_context)
         )
-        inspector.sync_state(replace(active_state, actions=disabled_actions))
         context_focus.focus()
         for _ in range(4):
             await pilot.pause()
 
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: recovered,
+            description="conditional focus recovery after Artifacts demotion",
+            timeout=max(0.0, deadline - monotonic()),
+        )
+        demoted_action = inspector.query_one(
+            f"#{CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID}", Button
+        )
+        assert demoted_action is not artifact_action
+        assert demoted_action.disabled
+        more_body = inspector.query_one("#console-inspector-more-body")
+        assert more_body in demoted_action.ancestors
         assert pilot.app.focused is context_focus
 
 
@@ -2087,6 +2178,77 @@ async def test_fleet_auto_open_scrolls_the_agents_section_into_view(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "land_during_replay", [False, True], ids=["resize", "environment-during-resize"]
+)
+async def test_fleet_reveal_rechecks_the_committed_viewport(
+    frozen_reveal_clock, land_during_replay
+):
+    """Keep the fleet visible across a committed resize and an overlapping landing."""
+    async with make_console_pilot(size=(180, 50)) as pilot:
+        screen = pilot.app.screen
+        section = screen.query_one("#console-agent-section-subagents")
+        original = section.scroll_visible
+        resize_queued = False
+        resize_task = None
+        scrolls = 0
+        landing_delivered = False
+
+        def resize():
+            nonlocal resize_task
+            resize_task = asyncio.create_task(pilot.resize_terminal(180, 48))
+
+        def scroll(*args, **kwargs):
+            nonlocal resize_queued, scrolls
+            on_complete = kwargs.get("on_complete")
+            if on_complete is not None:
+                scrolls += 1
+                if land_during_replay and scrolls == 2:
+
+                    def complete_with_landing():
+                        nonlocal landing_delivered
+                        if not landing_delivered:
+                            landing_delivered = True
+                            _land(screen)
+                        on_complete()
+
+                    kwargs["on_complete"] = complete_with_landing
+            result = original(*args, **kwargs)
+            if not resize_queued and kwargs.get("on_complete"):
+                resize_queued = True
+                section.call_next(resize)
+            return result
+
+        section.scroll_visible = scroll
+        try:
+            await _start_fleet_with_staged_tray(
+                pilot, screen, tray_rows=12, open_rail=True
+            )
+            await _wait_reveal(
+                pilot,
+                lambda: (
+                    pilot.app.size.height == 48
+                    and _right_rail_open(pilot)
+                    and _fleet_section_inside_rail_body(screen)
+                ),
+                description=lambda: (
+                    f"Agents in the committed viewport: {_fleet_geometry(screen)}"
+                ),
+                stable_polls=3,
+            )
+            assert resize_task is not None
+            assert screen._last_console_rail_state.preferred_right_open is False
+            if land_during_replay:
+                assert landing_delivered
+                await _settle_landing(pilot, screen)
+                assert _fleet_section_inside_rail_body(screen), _fleet_geometry(screen)
+                assert scrolls == 1 + frozen_reveal_clock.FLEET_REVEAL_REPLAY_LIMIT
+        finally:
+            if resize_task is not None:
+                await resize_task
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(("size", "tray_rows"), [((150, 40), 6), ((180, 48), 12)])
 async def test_fleet_reveal_survives_the_first_environment_landing(
     size, tray_rows, frozen_reveal_clock
@@ -2207,7 +2369,7 @@ async def test_reveal_is_dropped_when_the_sub_agents_finish_first(frozen_reveal_
     The section stays shown for its "Run history" summary, so a stale reveal
     would still scroll to it when the rail later opens itself.
     """
-    async with make_console_pilot(size=(140, 40)) as pilot:
+    async with make_console_pilot(size=(124, 40)) as pilot:
         screen = pilot.app.screen
         bridge = await _start_fleet_with_staged_tray(
             pilot, screen, tray_rows=6, history=True
@@ -2224,10 +2386,10 @@ async def test_reveal_is_dropped_when_the_sub_agents_finish_first(frozen_reveal_
         assert not section.rows and section.summary == "Run history"
         calls = _spy_fleet_scroll_visible(screen)
 
-        # An automatic opening: open, with no preference behind it.
-        state = replace(screen._current_console_rail_state(), right_open=True)
+        # Closing Context lets the Inspector open automatically at 124 columns.
+        state = screen._set_console_rail_preference(left_open=False)
+        assert state.right_open
         assert state.preferred_right_open is False
-        screen._sync_console_rail_visibility_if_changed(state)
         body = screen.query_one("#console-inspector-rail-body")
         await _wait_reveal(
             pilot,
@@ -2415,11 +2577,15 @@ async def test_a_landing_while_hidden_is_revealed_once_laid_out(frozen_reveal_cl
     The opening rebuilds inside `batch_update`, where after-refresh callbacks
     run without a layout, so the reveal finds no region at first and retries.
     """
-    async with make_console_pilot(size=(150, 40)) as pilot:
+    async with make_console_pilot(size=(140, 40)) as pilot:
         screen = pilot.app.screen
         await _start_fleet_with_staged_tray(pilot, screen, tray_rows=6)
-        _land(screen)  # while hidden
+        assert not _right_rail_open(pilot)
+        _land(screen)
         await pilot.pause()
+        assert not _right_rail_open(pilot)
+
+        await pilot.resize_terminal(150, 40)
         screen._sync_console_rail_visibility_if_changed(
             screen._current_console_rail_state()
         )

@@ -23,6 +23,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.Web_Server.test_mobile_shared_console import (
+    shared_mobile_case as shared_mobile_case,
+)
 from Tests.Chat.test_console_agent_bridge import (
     _ChunkGateway,
     _FakeMCPProvider,
@@ -505,21 +508,20 @@ def test_a_hallucinated_runtime_tool_never_reaches_its_confirm_card(
     ]
 
 
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
 @pytest.mark.parametrize("full_agent_tools", [False, True], ids=["off", "on"])
 async def test_the_served_mobile_companion_plans_the_light_set(
-    tmp_path, full_agent_tools
+    full_agent_tools, shared_mobile_case
 ):
-    """Pre-merge review (2026-10-29): the served mobile companion built its
-    own ``ConsoleAgentBridge`` with no light-surface reader, and a bridge
-    without one keeps the full agent surface. Every phone send got
-    ``spawn_subagent`` and the rest of the agent surface whatever Full agent
-    tools said. Driven through ``MobileChatService.send`` and the real
-    engine it builds, as the phone's HTTP layer does."""
+    """Phone Send uses its retained native Console's real first tool plan."""
     import asyncio
 
     from Tests.console_provider_doubles import AgentModeGateway
-    from Tests.Web_Server.test_mobile_service import _shutdown, _subscribe, _wait_for
-    from tldw_chatbook.Web_Server.mobile_service import MobileChatService
+    from tldw_chatbook.Chat.console_remote_models import ConsoleTarget
+    from tldw_chatbook.Chat.console_session_settings import (
+        default_console_session_settings,
+    )
 
     class _NamesGateway(AgentModeGateway):
         """Records every advertised tool name; calls a light tool, then answers."""
@@ -535,33 +537,62 @@ async def test_the_served_mobile_companion_plans_the_light_set(
             async for item in super().stream_chat(resolution, messages, **kwargs):
                 yield item
 
-    if full_agent_tools:
-        assert save_setting_to_cli_config("tools", "full_agent_tools_enabled", True)
+    assert save_setting_to_cli_config(
+        "tools", "full_agent_tools_enabled", full_agent_tools
+    )
+    case = shared_mobile_case
     gateway = _NamesGateway()
-    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
-    got: list = []
-    subscriber = asyncio.create_task(_subscribe(service, got))
-    try:
-        session = await service.create_session(title="phone")
-        await service.send(session["id"], "Reply with just: hi")
-        await _wait_for(
-            lambda: any(event.type == "run_completed" for event in got),
-            timeout=30,
-            what="run_completed event",
+    case.app.console_runtime.set_provider_gateway(gateway)
+    async with case.app.run_test(size=(100, 32)):
+        host = await case.service.bootstrap_host()
+        payload = {"workspace_id": "global"}
+        ticket = await case.service.issue_command_ticket("create", host, payload)
+        receipt = await case.service.submit_command(ticket["ticket"], payload)
+        assert receipt.state == "applied"
+        runtime = case.app.console_runtime
+        controller, store = runtime.chat_controller, runtime.chat_store
+        session_id = receipt.native_id
+        store.replace_session_settings(
+            session_id,
+            default_console_session_settings(
+                case.app.app_config, "openai", "gpt-4o-mini"
+            ),
         )
-    finally:
-        await _shutdown(service, subscriber)
+        assert controller._interrupt_host.has_retained_decision_target(session_id)
+        row = next(
+            row for row in (await case.service.snapshot())["chats"]
+            if row["session_id"] == session_id
+        )
+        target = ConsoleTarget(
+            **host.model_dump(), session_id=session_id,
+            incarnation_id=row["incarnation_id"],
+        )
+        payload = {
+            "text": "Reply with just: hi",
+            "expected_revisions": row["expected_revisions"],
+        }
+        ticket = await case.service.issue_command_ticket("send", target, payload)
+        send = await case.service.submit_command(ticket["ticket"], payload)
+        assert send.state == "pending"
+
+        async def completed():
+            while not (
+                controller.run_state_for(session_id).status.value == "completed"
+                and any(
+                    gateway.final_answer in str(message.content)
+                    for message in store.messages_for_session(session_id)
+                )
+            ):
+                await asyncio.sleep(0.1)
+
+        await asyncio.wait_for(completed(), timeout=30)
 
     assert gateway.names_seen, "the provider was never called"
     if full_agent_tools:
         assert "spawn_subagent" in gateway.names_seen[0], sorted(gateway.names_seen[0])
+        assert LIGHT <= gateway.names_seen[0], sorted(gateway.names_seen[0])
     else:
-        # The light set less ``ask_user``: the headless phone engine has no
-        # view to show a question card on, so it never registers that tool
-        # (``ConsoleChatController._ask_user_wiring``), light or full.
-        assert gateway.names_seen[0] == LIGHT - {"ask_user"}, sorted(
-            gateway.names_seen[0]
-        )
+        assert gateway.names_seen[0] == LIGHT, sorted(gateway.names_seen[0])
 
 
 def test_a_skill_turn_keeps_the_agent_surface(tmp_path):

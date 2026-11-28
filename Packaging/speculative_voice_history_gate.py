@@ -81,12 +81,11 @@ def completed_pair_locator_inventory() -> dict[str, Any]:
 
 
 def _locator_distribution() -> list[dict[str, Any]]:
-    # Columns of one table share a physical row, so they share a count. Giving
-    # the two checkpoint columns 44 observations and the other 24 locators 38
-    # yields exactly 1,000 locator observations. A new locator changes the sum:
-    # re-split it here and re-pin the count in its test.
+    # Columns of one table share a physical row and use the same count.
+    # Two checkpoint columns at 50 and 25 other columns at 36 make 1,000
+    # observations, including the new mix-in result-revision locator.
     baseline = {
-        locator: 44 if locator[0] == _CHECKPOINT_TABLE else 38
+        locator: 50 if locator[0] == _CHECKPOINT_TABLE else 36
         for locator in _forbidden_locators()
     }
     if sum(baseline.values()) != BASELINE_LOCATOR_ROWS:
@@ -262,7 +261,9 @@ def _seed_unrelated_history(
                 connection.execute(str(sql))
         connection.execute("COMMIT")
         connection.execute("PRAGMA ignore_check_constraints = OFF")
-        connection.execute("ANALYZE")
+        # No ANALYZE (TASK-36510): no user database has sqlite_stat1, and with
+        # it the planner skip-scanned (conversation_id, message_id) for a bare
+        # message_id probe, hiding a missing leading index from the gate.
         return sum(next(iter(columns.values())) for columns in by_table.values())
     except BaseException:
         if connection.in_transaction:
@@ -273,6 +274,10 @@ def _seed_unrelated_history(
 
 
 def _query_plans(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+    if connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'"
+    ).fetchone():
+        raise RuntimeError("history gate plans must be read without sqlite_stat1")
     plans: list[dict[str, Any]] = []
     for table, column in _checked_locators():
         rows = connection.execute(

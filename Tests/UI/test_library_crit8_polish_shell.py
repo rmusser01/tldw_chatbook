@@ -6,19 +6,15 @@ and 32072 -- the polish-shell group of the critique-8 fix wave.
 
 from __future__ import annotations
 
+import os
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from textual import events
 from textual.widgets import Button, Input, Static, TextArea
 
-from tldw_chatbook import config as app_config
-from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
-from tldw_chatbook.Library.library_rail_state import LibraryLifecycle
-from tldw_chatbook.UI.Library_Modules.canvas_sync import _sync_library_canvas
-from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
-from tldw_chatbook.Widgets.Library import LibraryLandingCanvas
-from tldw_chatbook.Widgets.Library.library_note_work_pane import LibraryNoteWorkPane
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
@@ -28,10 +24,10 @@ from Tests.UI.test_destination_shells import (
 from Tests.UI.test_library_shell import (
     LibraryHarness,
     StaticLibraryNotesKeywordsService,
-    _FakeSkillsScopeService,
-    _LibraryEvidenceGates,
     _active_library_screen,
     _build_test_app,
+    _FakeSkillsScopeService,
+    _LibraryEvidenceGates,
     _new_library_onboarding_app,
     _seed_conversations,
     _two_conversations,
@@ -41,6 +37,13 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
     _wait_for_selector,
 )
+from tldw_chatbook import config as app_config
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
+from tldw_chatbook.Library.library_rail_state import LibraryLifecycle
+from tldw_chatbook.UI.Library_Modules.canvas_sync import _sync_library_canvas
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.Widgets.Library import LibraryLandingCanvas
+from tldw_chatbook.Widgets.Library.library_note_work_pane import LibraryNoteWorkPane
 
 #: The compact geometry the critique-8 live review ran at (register row 17).
 COMPACT_TEST_SIZE = (100, 30)
@@ -98,8 +101,9 @@ async def test_library_landing_canvas_paints_at_wide_widths():
 # --- task-32059: Get started survives a relaunch before the first visit ---
 
 
+@private_profile_test
 def test_get_started_survives_a_relaunch_before_the_first_library_visit(
-    tmp_path, monkeypatch
+    monkeypatch, request
 ) -> None:
     """task-32059: complete setup, quit, relaunch -- Get started must survive.
 
@@ -108,12 +112,8 @@ def test_get_started_survives_a_relaunch_before_the_first_library_visit(
     setup and quit before ever opening Library never saw the documented compact
     Get started rail. The lifecycle is now stamped at profile creation.
     """
-    config_path = tmp_path / "relaunch-profile" / "config.toml"
-    config_path.parent.mkdir(parents=True)
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-    monkeypatch.setattr(
-        app_config, "_FIRST_PROFILE_CREATED_THIS_SESSION", False, raising=False
-    )
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
+    assert app_config.first_profile_created_this_session() is True
     app_config._CONFIG_CACHE = None
     app_config._CONFIG_CACHE_SOURCE = None
     app_config._SETTINGS_CACHE = None

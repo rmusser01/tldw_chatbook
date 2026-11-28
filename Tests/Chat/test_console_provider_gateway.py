@@ -4529,7 +4529,7 @@ async def test_console_send_pins_configured_base_url_for_every_affected_provider
 async def test_console_send_leaves_base_url_unpinned_in_default_case(
     provider_key: str,
 ) -> None:
-    """TASK-2117 AC#3: with no api_base_url configured, nothing is pinned.
+    """TASK-2117 AC#3: preserve adapter-owned defaults for conditional pins.
 
     The kwarg stays absent so each adapter keeps resolving its own default
     (including any legacy-section endpoint) exactly as before the fix.
@@ -4563,8 +4563,7 @@ async def test_console_send_leaves_base_url_unpinned_in_default_case(
         ConsoleProviderSelection(provider=provider_key, streaming=False)
     )
     assert resolution.ready, resolution.visible_copy
-    # The resolution still carries the builtin fallback for display purposes;
-    # only the adapter kwarg must stay unset.
+    # Even conditional pins carry the builtin fallback in the resolution.
     assert resolution.base_url
 
     assert [
@@ -4578,6 +4577,8 @@ async def test_console_send_leaves_base_url_unpinned_in_default_case(
         assert calls[0]["api_base_url"] == resolution.base_url
     else:
         assert "api_base_url" not in calls[0]
+    if provider_key == "deepseek":
+        assert calls[0]["api_mode"] == resolution.api_mode == "chat_completions"
 
 
 @pytest.mark.asyncio

@@ -25,12 +25,15 @@ ADR-097: ``ChatScreen`` imports this only when a return arrives.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+import os
 from typing import TYPE_CHECKING
 
 from ..Navigation.conversation_settings_navigation import (
     ConsoleProviderReturnIntent,
     ConsoleProviderReturnTarget,
+    ConsoleSettingsReturnTarget,
+    ConversationSettingsReturnOutcome,
 )
 from ..Navigation.pending_handoff_store import (
     HandoffChannel,
@@ -39,6 +42,11 @@ from ..Navigation.pending_handoff_store import (
 )
 
 if TYPE_CHECKING:
+    from ...Chat.provider_readiness import ProviderReadiness
+    from ...Widgets.Console.console_settings_modal import (
+        ConsoleSettingsDraftSnapshot,
+        ConsoleSettingsModal,
+    )
     from ..Screens.chat_screen import ChatScreen
 
 STALE_RETURN_COPY = "This return from Settings is no longer current. Nothing changed."
@@ -146,3 +154,54 @@ async def _land(
             )
     finally:
         handoffs.acknowledge(claim)  # One landing; nothing is left to replay.
+
+
+async def mount_conversation_settings_return_status(
+    screen: ChatScreen,
+    target: ConsoleSettingsReturnTarget,
+    snapshot: ConsoleSettingsDraftSnapshot,
+    modal_type: type[ConsoleSettingsModal],
+    read_provider_readiness: Callable[..., ProviderReadiness],
+) -> None:
+    """Mount fixed return copy beside the modal's canonical readiness."""
+    from textual.widgets import Static
+
+    modal = screen.app.screen_stack[-1]
+    if not isinstance(modal, modal_type):
+        return
+    outcome_copy = {
+        ConversationSettingsReturnOutcome.CREDENTIAL_SAVED: (
+            "Credential saved — checking readiness"
+        ),
+        ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED: (
+            "Provider settings saved — checking readiness"
+        ),
+        ConversationSettingsReturnOutcome.WITHOUT_SAVING: (
+            "Returned without saving — readiness unchanged"
+        ),
+    }[target.outcome]
+    readiness = read_provider_readiness(
+        snapshot.settings.provider,
+        screen._provider_readiness_app_config(),
+        background_credentials=True,
+    )
+    recovery_copy = ""
+    if (
+        not readiness.ready
+        and readiness.env_var
+        and not os.environ.get(readiness.env_var)
+    ):
+        recovery_copy = (
+            f"Export {readiness.env_var}, then relaunch Chatbook before sending."
+        )
+    status = Static(
+        "\n".join(line for line in (outcome_copy, recovery_copy) if line),
+        id="console-settings-return-status",
+        classes="console-settings-modal-row",
+        markup=False,
+    )
+    readiness_widget = modal.query_one("#console-settings-readiness", Static)
+    await modal.query_one("#console-settings-modal").mount(
+        status,
+        before=readiness_widget,
+    )

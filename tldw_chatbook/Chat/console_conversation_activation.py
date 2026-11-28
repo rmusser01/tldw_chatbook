@@ -113,10 +113,12 @@ class ConsoleConversationActivationCoordinator(Generic[ConsoleStateT]):
             bool | Awaitable[bool],
         ],
         mutation_lock: asyncio.Lock | None = None,
+        commit_opened_target: Callable[[object], None] | None = None,
     ) -> None:
         self._capture_state = capture_state
         self._revalidate = revalidate
         self._open_target = open_target
+        self._commit_opened_target = commit_opened_target
         self._rollback_opened_target = rollback_opened_target
         self._restore_state = restore_state
         self._exact_target_visible = exact_target_visible
@@ -334,6 +336,8 @@ class ConsoleConversationActivationCoordinator(Generic[ConsoleStateT]):
                 else False
             )
             if opened_ok and visible:
+                if opened_token is not None and self._commit_opened_target is not None:
+                    self._commit_opened_target(opened_token)
                 self.phase = ConsoleActivationPhase.IDLE
                 return result
         except asyncio.CancelledError:

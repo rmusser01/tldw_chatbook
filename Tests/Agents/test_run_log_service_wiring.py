@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents import agent_service as agent_service_module
 from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Agents.agent_models import (
@@ -26,13 +27,12 @@ from tldw_chatbook.Agents.run_log_format import iter_records
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
 from tldw_chatbook.Chat.console_fleet_wake import compose_wake_notice
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 @pytest.fixture
 def wired(tmp_path, monkeypatch):
     monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = owned_agent_runs_db(tmp_path / "runs.db")
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
     return db, registry, tmp_path
@@ -195,7 +195,7 @@ def test_writer_failure_logs_do_not_persist_private_scratch_locator(
 def test_builtin_tool_result_log_does_not_persist_private_scratch_locator(tmp_path):
     scratch = tmp_path / "private-scratch"
     scratch.mkdir()
-    db = AgentRunsDB(tmp_path / "runs.db")
+    db = owned_agent_runs_db(tmp_path / "runs.db")
     registry = ToolCatalogRegistry()
     provider = BuiltinToolProvider(
         gate=type("AllowGate", (), {"check": lambda self, tool, run_id: None})(),

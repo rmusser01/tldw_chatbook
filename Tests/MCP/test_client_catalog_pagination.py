@@ -1239,7 +1239,7 @@ async def test_connect_deeply_detaches_server_metadata_cache(
 async def test_request_cancellation_always_removes_pending_request() -> None:
     connection = _bare_connection()
 
-    async def send(_payload: dict[str, Any]) -> None:
+    async def send(_payload: dict[str, Any], *, _dispatch=None) -> None:
         return None
 
     connection._send_message = send  # type: ignore[method-assign]

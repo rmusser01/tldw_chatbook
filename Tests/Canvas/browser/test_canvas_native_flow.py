@@ -945,6 +945,7 @@ async def test_native_temporary_promotion_reopens_and_unsaved_close_destroys(
             selected_canvas_id=None,
             selected_revision_id=None,
             run_id="temporary-import",
+            ephemeral=saved.ephemeral,
         )
         root = authority.import_html(
             session_id=saved.id,
@@ -983,6 +984,7 @@ async def test_native_temporary_promotion_reopens_and_unsaved_close_destroys(
                 selected_canvas_id=root.canvas_id,
                 selected_revision_id=renamed.scope.revision_id,
                 run_id="durable-reopen",
+                ephemeral=saved.ephemeral,
             )
             durable_scope = authority.gateway_scope(
                 session_id=saved.id,
@@ -1013,6 +1015,7 @@ async def test_native_temporary_promotion_reopens_and_unsaved_close_destroys(
                 selected_canvas_id=None,
                 selected_revision_id=None,
                 run_id="discard-import",
+                ephemeral=discarded.ephemeral,
             )
             doomed = authority.import_html(
                 session_id=discarded.id,
@@ -1060,6 +1063,7 @@ async def test_real_tool_publication_keeps_same_revision_pin_until_follow() -> N
             selected_canvas_id=None,
             selected_revision_id=None,
             run_id="interactive-root",
+            ephemeral=True,
         )
     }
     root = controller.interactive_create_canvas(
@@ -1210,6 +1214,7 @@ async def test_imported_archive_reopens_exact_branch_after_source_purge(
                 selected_canvas_id=None,
                 selected_revision_id=None,
                 run_id="archive-reopen",
+                ephemeral=False,
             )
         )
         canvas = next(item for item in canvases if item.title == "Planner alternate")
@@ -1220,6 +1225,7 @@ async def test_imported_archive_reopens_exact_branch_after_source_purge(
             selected_canvas_id=canvas.canvas_id,
             selected_revision_id=canvas.revision_id,
             run_id="archive-reopen",
+            ephemeral=False,
         )
         controller = ConsoleCanvasController(durable_service=repository)
         controller.activate_session(scope.session_id)
@@ -1279,6 +1285,7 @@ async def test_production_authority_import_selector_rename_and_hot_reload() -> N
             selected_canvas_id=None,
             selected_revision_id=None,
             run_id=f"interaction-{counter}",
+            ephemeral=True,
         )
 
     authority = NativeConsoleCanvasAuthority(
@@ -1366,6 +1373,9 @@ async def test_real_branch_transition_clears_unreachable_preview_until_reopened(
             selected_canvas_id=None,
             selected_revision_id=None,
             run_id="browser-branch-transition",
+            ephemeral=next(
+                item.ephemeral for item in store.sessions() if item.id == requested
+            ),
         )
 
     authority = NativeConsoleCanvasAuthority(
@@ -1522,6 +1532,7 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
             selected_canvas_id=None,
             selected_revision_id=None,
             run_id="confirmation-run",
+            ephemeral=True,
         )
 
     source = """<!doctype html><html><head><title>Bridge tools</title></head><body>
@@ -1846,6 +1857,7 @@ async def test_trusted_shell_bounds_and_compares_structured_presentation_lossles
             selected_canvas_id=None,
             selected_revision_id=None,
             run_id="numeric-collision-run",
+            ephemeral=True,
         )
 
     authority = NativeConsoleCanvasAuthority(

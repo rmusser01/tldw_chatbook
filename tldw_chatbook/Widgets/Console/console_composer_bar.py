@@ -2236,12 +2236,7 @@ class ConsoleComposerBar(Horizontal):
         self._hidden_input_mirror = canonical
 
     def _sync_interaction_classes(self) -> None:
-        """Mirror focus-within and draft presence onto stable CSS state classes.
-
-        TASK-33620.15.8: a change restyles only the bar and
-        `INTERACTION_STYLED_DESCENDANTS`, the nodes rules keyed on these
-        classes style, instead of the bar's whole subtree.
-        """
+        """Mirror focus-within and draft presence onto the bounded CSS state classes."""
         focused, has_draft = self.INTERACTION_CLASSES
         wanted = {
             focused: bool(self.has_focus_within),
@@ -2253,16 +2248,10 @@ class ConsoleComposerBar(Horizontal):
         self._sync_raw_cli_state()
 
     def watch_has_focus(self, _has_focus: bool) -> None:
-        """Restyle only the bar and `INTERACTION_STYLED_DESCENDANTS`.
-
-        TASK-36511.2: Textual's focus watcher restyled the bar's whole subtree
-        (27 nodes, 8-13 ms of CPU per focus change in an attach). The focus
-        rules keyed on the bar style only those nodes too.
+        """Restyle only the bar and INTERACTION_STYLED_DESCENDANTS (TASK-36511.2).
 
         Args:
-            _has_focus: Textual's new focus state. Unused: the restyle reads
-                ``self.has_focus`` through the stylesheet.
-        """
+            _has_focus: New focus state; the stylesheet reads self.has_focus directly."""
         nodes: list[Widget] = [self]
         for selector in self.INTERACTION_STYLED_DESCENDANTS:
             nodes.extend(self.query(selector))
@@ -2283,19 +2272,13 @@ class ConsoleComposerBar(Horizontal):
                 node.refresh()
 
     def has_sendable_payload(self) -> bool:
-        """Return whether a Send now would carry anything: Send's readiness input.
+        """Return the live Send-readiness rule shared by both sync sites.
 
-        TASK-33620.15.22: the one rule for both of Send's sync sites (this
-        composer's resync and the screen's sync), so whichever runs last
-        agrees with the other. Draft text counts. With an empty draft only a
-        staged item the send gate would send counts, asked live of the
-        screen: the label may still show an image a Send has already taken,
-        and the gate refuses every other staged kind unsent.
+        Draft text counts; otherwise ask the screen about staged content. A stale
+        attachment label alone grants no sendability (TASK-33620.15.22).
 
         Returns:
-            True when the draft has text or the screen reports a staged item
-            the send gate sends on its own; False with no provider installed.
-        """
+            Whether draft text or a sendable staged item exists; False without a provider."""
         if self.draft_text().strip():
             return True
         provider = self._sendable_attachment_provider
@@ -5852,34 +5835,17 @@ class ConsoleComposerBar(Horizontal):
     def _row_index_for_canonical_offset(
         line_slices: list[_DraftLineSlice], offset: int
     ) -> int:
-        """Return the row an UNSPLICED source offset visually belongs to.
+        """Return the wrapped row holding an unspliced source offset.
 
-        The row with the greatest `start <= offset`. `line_slices` is always
-        in non-decreasing `start` order and rows never overlap, so this
-        single rule covers three cases at once:
+        Select the latest row start at or before the offset. Row starts are
+        ordered and rows do not overlap. An offset inside a row stays there,
+        and a soft-wrap join belongs to the following row, where the painted
+        caret follows the next word. A gap between explicit-newline rows
+        belongs to the preceding row, at its end.
 
-        - strictly inside a row (`start <= offset < end`) -> that row: no
-          later row's `start` can also be `<= offset`, since the next row's
-          `start` is always `>= end`;
-        - a CONTIGUOUS soft-wrap boundary (row N's `end` == row N+1's
-          `start`, no separator between them) -> row N+1 -- matching
-          `_row_index_for_source_offset`'s own existing convention for the
-          same boundary shape, and how a real caret glyph actually paints
-          there (`_draft_renderable`'s own wrap pushes it onto the
-          following row, attached to that row's next word);
-        - a GAP between two explicit-newline-separated rows (row N's `end`
-          is the newline character's own offset, strictly less than row
-          N+1's `start`) -> row N, i.e. "the end of that row", which is
-          where a caret sitting there visually belongs. This is the case
-          `_row_index_for_source_offset` gets wrong for this caller: its
-          fallback (`len(line_slices) - 1`, unconditionally the LAST row)
-          is only ever exercised by ITS OWN production callers against
-          caret-SPLICED text, where a real character always occupies the
-          exact offset being looked up and a gap is therefore never
-          actually reachable. Called against genuinely unspliced text (this
-          method's whole point), a gap offset is an expected, common input
-          -- not an edge case -- so it needs its own correct handling
-          rather than reuse of a fallback tuned for a different caller.
+        The caret-spliced callers of `_row_index_for_source_offset` always
+        place a character at the lookup offset and cannot hit a gap. Its
+        last-row fallback therefore cannot serve this unspliced lookup.
         """
         row_index = 0
         for index, line_slice in enumerate(line_slices):

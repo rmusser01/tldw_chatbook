@@ -1,11 +1,11 @@
 {
   "_comment": "Boot-parsed CSS byte census. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
-  "total": 602633,
+  "total": 602689,
   "per_source": {
     "screen_css_scoped.tcss": 12290,
     "screen_css_self.tcss": 2318,
     "tldw_cli_modular.tcss": 429173,
-    "widget_defaults_scoped.tcss": 75536,
+    "widget_defaults_scoped.tcss": 75592,
     "widget_defaults_self.tcss": 83316
   },
   "per_segment": {
@@ -142,7 +142,7 @@
     "widget_defaults_scoped.tcss::MCPAuditMode (UI/MCP_Modules/mcp_audit_mode.py)": 1173,
     "widget_defaults_scoped.tcss::MCPInspector (UI/MCP_Modules/mcp_inspector.py)": 1885,
     "widget_defaults_scoped.tcss::MCPPermissionsMode (UI/MCP_Modules/mcp_permissions_mode.py)": 1189,
-    "widget_defaults_scoped.tcss::MCPRail (UI/MCP_Modules/mcp_rail.py)": 426,
+    "widget_defaults_scoped.tcss::MCPRail (UI/MCP_Modules/mcp_rail.py)": 482,
     "widget_defaults_scoped.tcss::MCPServersMode (UI/MCP_Modules/mcp_servers_mode.py)": 893,
     "widget_defaults_scoped.tcss::MCPToolsMode (UI/MCP_Modules/mcp_tools_mode.py)": 1198,
     "widget_defaults_scoped.tcss::MCPWorkbench (UI/MCP_Modules/mcp_workbench.py)": 1130,

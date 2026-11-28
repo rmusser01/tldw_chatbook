@@ -329,6 +329,7 @@ class _InspectorOuterBody(VerticalScroll):
         *,
         on_geometry_changed: Callable[[], None],
         on_scrolled: Callable[[], None],
+        on_viewport_resize: Callable[[_InspectorOuterBody], None] | None,
         layout_settling: Callable[[], bool],
     ) -> None:
         super().__init__(
@@ -338,6 +339,7 @@ class _InspectorOuterBody(VerticalScroll):
         )
         self._on_geometry_changed = on_geometry_changed
         self._on_scrolled = on_scrolled
+        self._on_viewport_resize = on_viewport_resize
         self._layout_settling = layout_settling
         #: TASK-41959: counts the user's gestures inside the body -- focus
         #: moving in, a mouse press, a section collapse toggle. The fleet
@@ -389,6 +391,8 @@ class _InspectorOuterBody(VerticalScroll):
 
     def on_resize(self, _event: Resize) -> None:
         self._on_geometry_changed()
+        if self._on_viewport_resize is not None:
+            self._on_viewport_resize(self)
 
     def _size_updated(
         self,
@@ -493,6 +497,7 @@ class ConsoleInspectorRail(Vertical):
         environment_open: bool = True,
         tasks_open: bool = True,
         agent_fleet_section_state: ConsoleInspectorSectionState | None = None,
+        on_viewport_resize: Callable[[VerticalScroll], None] | None = None,
         **kwargs,
     ) -> None:
         """Create the right rail from pre-computed display data.
@@ -575,6 +580,7 @@ class ConsoleInspectorRail(Vertical):
                 directly after the Tasks section, always collapsed
                 (``open=False``) on first paint, matching the left rail's
                 prior behavior.
+            on_viewport_resize: Notify the owner of a committed Inspector viewport resize.
             kwargs: Forwarded to ``Vertical``.
         """
         super().__init__(
@@ -616,6 +622,7 @@ class ConsoleInspectorRail(Vertical):
         self._outer_reconcile_dirty = False
         self._outer_reconcile_owner_demand = False
         self._outer_owner_reconcile_count = 0
+        self._on_viewport_resize = on_viewport_resize
         self._library_activity_focus_pending = False
         #: (P1-C final fix round, M2) ``screen.focused`` when the activity
         #: focus was requested; a retry that finds focus moved to another
@@ -1734,6 +1741,7 @@ class ConsoleInspectorRail(Vertical):
         with _InspectorOuterBody(
             on_geometry_changed=self._request_outer_geometry_reconcile,
             on_scrolled=self._handle_outer_scrolled,
+            on_viewport_resize=self._on_viewport_resize,
             layout_settling=self._outer_layout_settling,
         ):
             # task-9: Environment and Tasks sections -- mounted FIRST, ahead

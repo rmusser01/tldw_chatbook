@@ -23,7 +23,6 @@ from textual.widgets import Button, Input, Static
 
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
-from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
@@ -248,9 +247,13 @@ async def test_a_switch_that_clears_the_block_leaves_the_keyboard_in_the_draft(
     went nowhere. Instrumented, two of three harness runs took that order.
     This replays it in one tick, through the real dismissal restore.
     """
+    import asyncio
     import weakref
 
     from tldw_chatbook.Chat import attachment_core
+    from tldw_chatbook.UI.Console_Modules.config_sync import (
+        prepare_console_presentation_sync,
+    )
     from tldw_chatbook.Widgets.modal_dismissal import _restore_focus_after_dismissal
 
     capable = {"on": False}
@@ -260,14 +263,15 @@ async def test_a_switch_that_clears_the_block_leaves_the_keyboard_in_the_draft(
     _app, host = _ready_host()
     async with host.run_test(size=(235, 52)) as pilot:
         console = await _mounted_console(host, pilot)
-        composer, store, session_id = await _stage_image(
-            console, pilot, draft="describe it"
-        )
-        switch = console.query_one("#console-attachment-block-switch-model", Button)
-        switch.focus()
-        await pilot.pause()
-        # Warm readiness before the dismissal/sync pair must run in one tick.
-        await _sync_console_control_bar_now(console)
+        async with asyncio.timeout(5):
+            composer, store, session_id = await _stage_image(
+                console, pilot, draft="describe it"
+            )
+            switch = console.query_one("#console-attachment-block-switch-model", Button)
+            switch.focus()
+            await pilot.pause()
+            # Warm before changing capability, keeping the focus race in one tick.
+            assert await prepare_console_presentation_sync(console)
         assert host.focused is switch
 
         capable["on"] = True  # the picked model reads images

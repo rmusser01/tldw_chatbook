@@ -1153,3 +1153,37 @@ async def test_a_stock_select_whose_label_composes_after_app_exit_keeps_its_valu
             assert select.value == "b"
         finally:
             app._exit = False
+
+
+@pytest.mark.asyncio
+async def test_app_exit_before_archive_scope_child_mount_does_not_raise(monkeypatch):
+    from textual.containers import Vertical
+    from textual.widget import Widget
+    from textual.widgets._select import SelectOverlay
+
+    class HostApp(App):
+        def compose(self):
+            yield Vertical(id="console-archive-recovery")
+
+    mount_all = Widget.mount_all
+    exit_before_mount = []
+
+    def mount_at_exit(node, widgets, **kwargs):
+        if node.id == "recovery-scope":
+            widgets = tuple(widgets)
+            assert any(isinstance(child, SelectOverlay) for child in widgets)
+            node.app.exit()
+            assert node.app._exit and not node._pruning and not node._closing
+            await_mount = mount_all(node, widgets, **kwargs)
+            assert not node.children
+            exit_before_mount.append(node)
+            return await_mount
+        return mount_all(node, widgets, **kwargs)
+
+    monkeypatch.setattr(Widget, "mount_all", mount_at_exit)
+    app = HostApp()
+    async with app.run_test():
+        surface = app.query_one("#console-archive-recovery")
+        await surface.mount(ArchiveRecoveryConfirmCard())
+        assert len(exit_before_mount) == 1
+    assert app._exception is None

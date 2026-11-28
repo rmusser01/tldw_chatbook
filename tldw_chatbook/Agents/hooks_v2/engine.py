@@ -14,6 +14,7 @@ import os
 import time
 from collections import Counter
 from collections.abc import Callable
+from concurrent.futures import Future
 from dataclasses import dataclass, field
 from threading import RLock
 
@@ -99,6 +100,8 @@ class _ExecutionState:
     busy: bool = False
     dependencies: dict[str, tuple[bool, str | None]] = field(default_factory=dict)
     native: object | None = None
+    notification_worker: tuple[object | None] | None = None
+    notification_entries: list[Future[bool]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -177,6 +180,8 @@ class _Delivery:
     job: object | None = None
     mcp_context: object | None = None
     native_target: object | None = None
+    native_worker: tuple[object | None] | None = None
+    native_admission: Future[bool] | None = None
 
 
 class HookEngine:
@@ -819,15 +824,24 @@ class HookEngine:
     async def _deliver(self, delivery, handler, event, execution, value):
         target = delivery.native_target
         from ..activation import _guard
+        from ..scratch_admission import worker_entry
 
         try:
             with (
+                worker_entry(delivery.native_worker[0])
+                if delivery.native_worker is not None
+                else contextlib.nullcontext(),
                 _guard.worker_isolation()
                 if target is not None
                 else contextlib.nullcontext(),
                 self._continuation_scope(execution),
                 target.activate() if target is not None else contextlib.nullcontext(),
             ):
+                if (
+                    delivery.native_admission is not None
+                    and not delivery.native_admission.done()
+                ):
+                    delivery.native_admission.set_result(True)
                 outcome = await self._deliver_current(
                     delivery, handler, event, execution, value
                 )
@@ -841,6 +855,11 @@ class HookEngine:
                 failures=(self._failure(handler, event, "native_source_changed"),)
             )
         finally:
+            if (
+                delivery.native_admission is not None
+                and not delivery.native_admission.done()
+            ):
+                delivery.native_admission.set_result(False)
             if delivery.job is None:
                 if target is not None:
                     execution.native.plans[handler.id].producer_returned()
@@ -1054,6 +1073,55 @@ class HookEngine:
     ) -> bool:
         return self._notify(event, teardown=True, execution=_execution)
 
+    def _capture_notification_worker(self, execution):
+        """Capture native scratch on the actual producer before task dispatch."""
+        state = self._execution_state(execution)
+        if state is None or state.closed:
+            raise ValueError("invalid event execution")
+        if state.native is not None and state.notification_worker is None:
+            from ..scratch_admission import capture_worker
+
+            # A captured None still means an original producer with no scratch.
+            state.notification_worker = (capture_worker(),)
+
+    async def _join_notification_admissions(self, execution):
+        """Join entry or refusal, never an optional handler's completion."""
+        from .ownership import join_hook_worker
+
+        cancelled = None
+        for entry in tuple(execution._state.notification_entries):
+            try:
+                await join_hook_worker(asyncio.wrap_future(entry))
+            except asyncio.CancelledError as error:
+                cancelled = error
+        return cancelled
+
+    def _wait_notification_admissions(self, execution, completion=None):
+        """Hold the native producer until entry/refusal or its original deadline."""
+        state = self._execution_state(execution)
+        if (
+            state is None
+            or state.notification_worker is None
+            or state.notification_worker[0] is None
+        ):
+            return
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            current = None
+        if current is self.loop:
+            raise RuntimeError("native admission must be awaited on the owner loop")
+        entries = (
+            (completion,)
+            if completion is not None
+            else tuple(state.notification_entries)
+        )
+        for entry in entries:
+            try:
+                entry.result(timeout=max(0, execution.deadline - time.monotonic()))
+            except TimeoutError:
+                return  # The original event deadline authorizes no later command.
+
     def _notify(self, event, *, teardown, planned=None, execution=None):
         # Reserve every matching handler synchronously so queue capacity bounds
         # submissions even when called faster than the owner loop can dispatch.
@@ -1081,6 +1149,8 @@ class HookEngine:
                 state.deadline = previous.deadline
                 state.dependencies = dict(previous.dependencies)
                 state.native = previous.native
+                state.notification_worker = previous.notification_worker
+                state.notification_entries = previous.notification_entries
         except ValueError:
             return False
         # Snapshot the exact host view before acquiring the engine lock: its
@@ -1097,6 +1167,8 @@ class HookEngine:
         if state.native is not None:
             try:
                 plans = self.plan_handlers(execution, event)
+                if any(p.phase == "observe" for p in plans):
+                    self._capture_notification_worker(execution)
                 state.native.admit(
                     tuple(p.handler_id for p in plans if p.phase == "observe")
                 )
@@ -1165,12 +1237,17 @@ class HookEngine:
                 except (ValueError, PermissionError, BudgetExceeded):
                     self.notification_omissions += 1
                     continue
+                entry = Future() if native_target is not None else None
+                if entry is not None:
+                    state.notification_entries.append(entry)
                 delivery = _Delivery(
                     ticket,
                     asyncio.Event(),
                     execution.teardown,
                     mcp_context=mcp_context,
                     native_target=native_target,
+                    native_worker=state.notification_worker,
+                    native_admission=entry,
                 )
                 if native_target is not None:
                     native_target.started = True
@@ -1188,6 +1265,11 @@ class HookEngine:
                         try:
                             self._consume_notification(done)
                         finally:
+                            if (
+                                d.native_admission is not None
+                                and not d.native_admission.done()
+                            ):
+                                d.native_admission.set_result(False)
                             if d.native_target is not None:
                                 s.native.host_done()
 
@@ -1216,6 +1298,8 @@ class HookEngine:
                     admitted = True
                 else:
                     self.notification_omissions += 1
+                    if delivery.native_admission is not None:
+                        delivery.native_admission.set_result(False)
                     delivery.ticket.release()
                     self._deliveries.discard(delivery)
         if planned is None and state.native is not None:

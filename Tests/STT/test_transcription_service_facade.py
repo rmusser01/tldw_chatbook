@@ -768,6 +768,7 @@ def test_facade_preserves_backend_exception_identity(
     assert caught.value is failure
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("audio_path", "cause_text"),
     [
