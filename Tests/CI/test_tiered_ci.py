@@ -201,13 +201,17 @@ def test_the_sample_is_the_same_whatever_order_the_tree_is_walked(
 class _WindowsCheckout(type(Path())):
     """A checkout as Windows presents it, on any platform (TASK-42689).
 
-    Its relative paths join their parts with a backslash. CI runs these
-    contracts on Linux only, where `str(path)` cannot differ from git's
-    forward-slash paths, so a regression would stay green there without this.
+    Its relative paths join their parts with a backslash, and a read that names
+    no encoding gets cp1252. CI runs these contracts on Linux only, where
+    neither default can differ from git's forward-slash paths and UTF-8 text,
+    so a regression would stay green there without this.
     """
 
     def relative_to(self, *args, **kwargs):
         return PureWindowsPath(*super().relative_to(*args, **kwargs).parts)
+
+    def read_text(self, encoding=None, *args, **kwargs):
+        return super().read_text(encoding or "cp1252", *args, **kwargs)
 
 
 def test_a_windows_checkout_finds_the_dependents_a_linux_one_does(
@@ -225,6 +229,34 @@ def test_a_windows_checkout_finds_the_dependents_a_linux_one_does(
     monkeypatch.setattr(policy, "Path", PureWindowsPath)
     plan = policy.select_changes([("M", "Tests/Pkg/__init__.py")], root)
     assert _sampled(plan) == {"Tests/Pkg/test_in.py", "Tests/Other/test_out.py"}
+
+
+def test_a_windows_checkout_reads_the_tree_as_utf8(tmp_path):
+    """TASK-42689: read as cp1252, the bytes of a left quotation mark end in a
+    letter that joins the word after it, and an accented letter in a node id
+    becomes two other characters. Each of the policy's four reads is pinned."""
+    data = "Tests/UI/shortfall.tsv"
+    by_census = "Tests/UI/test_census.py::test_a[caf\u00e9]"
+    by_lane = "Tests/UI/test_lane.py::test_b[na\u00efve]"
+    schema = "tldw_chatbook/Feature/store.py"
+    changed = [by_census.split("::")[0], by_lane.split("::")[0]]
+    root = _WindowsCheckout(_tree(tmp_path, [data, *changed]))
+    texts = {
+        "Tests/UI/test_reader.py": '"""Reads \u201cshortfall.tsv\u201d."""\n',
+        "scripts/ui_pr_gate_census.txt": by_census + "\n",
+        ".github/workflows/derived-artifacts.yml": (
+            f"jobs:\n  ui-fast-lane:\n    steps:\n      - run: pytest '{by_lane}'\n"
+            "  derived-artifacts:\n    needs: [preflight, ui-fast-lane]\n"
+        ),
+        schema: "# \u201cCREATE TABLE things\u201d\n",
+    }
+    for name, text in texts.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(text, encoding="utf-8")
+    plan = policy.select_changes([("M", path) for path in (data, *changed)], root)
+    assert _sampled(plan, *changed) == {"Tests/UI/test_reader.py", by_census, by_lane}
+    plan = policy.select_changes([("M", schema)], root)
+    assert plan["full"] and plan["reason"] == f"Schema code: {schema}"
 
 
 def test_the_file_cap_keeps_the_prs_own_changed_files_first(tmp_path):
@@ -372,7 +404,7 @@ def test_the_real_conftests_load_the_profile_harness_and_shared_doubles():
         "Loaded by conftest.py: Tests/network_guard.py"
     )
     corpus = {
-        f.relative_to(ROOT).as_posix(): f.read_text(errors="replace")
+        f.relative_to(ROOT).as_posix(): policy._read(f)
         for f in (ROOT / "Tests").rglob("*.py")
     }
     assert {

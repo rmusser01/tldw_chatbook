@@ -95,6 +95,13 @@ def _is_test_file(path: str) -> bool:
     )
 
 
+def _read(path: Path) -> str:
+    """The file's text, decoded as UTF-8 on every machine. A locale's own
+    encoding changes what a pattern sees: read as cp1252, Windows' default, the
+    bytes of a left quotation mark end in a letter that joins the next word."""
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
 def _full_reason(status: str, path: str) -> str | None:
     """Why this change needs the broad run on the PR itself, or None."""
     parts = Path(path).parts
@@ -443,7 +450,7 @@ def _lanes(root: Path) -> tuple[dict[str, set[str]], set[str], set[str]]:
     """What the PR lanes run: target -> step ids, the ids they deselect, and the
     targets other jobs (push to dev, nightly) name."""
     path = root / LANE_WORKFLOW
-    workflow = path.read_text(errors="replace") if path.is_file() else ""
+    workflow = _read(path) if path.is_file() else ""
     parts = re.split(r"(?m)^  ([A-Za-z0-9_-]+):[ \t]*\n", workflow)
     jobs = dict(zip(parts[1::2], parts[2::2], strict=True))
     needs = re.search(r"needs:\s*\[([^\]]*)\]", jobs.get("derived-artifacts", ""))
@@ -469,7 +476,7 @@ def _lanes(root: Path) -> tuple[dict[str, set[str]], set[str], set[str]]:
                     other.add(word)
     census = root / UI_CENSUS
     if census.is_file():
-        for line in census.read_text(errors="replace").splitlines():
+        for line in _read(census).splitlines():
             if line.strip().startswith("Tests/"):
                 steps.setdefault(line.strip(), set()).add("ui-census")
     return steps, deselected, other
@@ -499,7 +506,7 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
             # sorted, so every machine draws the same sample.
             corpus.update(
                 sorted(
-                    (f.relative_to(root).as_posix(), f.read_text(errors="replace"))
+                    (f.relative_to(root).as_posix(), _read(f))
                     for f in (root / "Tests").rglob("*.py")
                 )
             )
@@ -634,9 +641,7 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
             status != "D" and path.startswith("tldw_chatbook/") and path.endswith(".py")
         ):
             source = root / path
-            if source.is_file() and SCHEMA_TEXT.search(
-                source.read_text(errors="replace")
-            ):
+            if source.is_file() and SCHEMA_TEXT.search(_read(source)):
                 return broad(f"Schema code: {path}")
 
     targets = set(BASE_TESTS)
