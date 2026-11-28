@@ -11,10 +11,10 @@ import errno
 import functools
 import stat
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import BinaryIO, Callable, Iterator, TextIO, TypeAlias
+from typing import BinaryIO, Callable, Iterable, Iterator, TextIO, TypeAlias
 
 from tldw_chatbook.Utils.platform_files import os
 
@@ -64,6 +64,10 @@ class PrivatePathResult:
         offender_mode: Diagnostics-only ``stat.S_IMODE`` value of the
             refusing entry, when it was stat'd; lets callers reason about
             the write bits without parsing ``offender_detail``.
+        directory_mode: ``stat.S_IMODE`` of the directory a successful
+            ``verify_trusted_directory`` walk ended on. Never consulted to
+            admit anything; ``create_private_sqlite_logs`` reads it only to
+            skip extra privacy work in a folder that gives others nothing.
     """
 
     lexical_path: Path
@@ -72,6 +76,7 @@ class PrivatePathResult:
     offender_path: Path | None = None
     offender_detail: str | None = None
     offender_mode: int | None = None
+    directory_mode: int | None = field(default=None, compare=False)
 
     @property
     def verified_private(self) -> bool:
@@ -2778,6 +2783,7 @@ def verify_trusted_directory(
             selected,
             PrivatePathStatus.TRUSTED_DIRECTORY,
             reason="trusted_existing_directory",
+            directory_mode=stat.S_IMODE(current_stat.st_mode),
         )
     except PrivatePathError:
         raise
@@ -2785,3 +2791,158 @@ def verify_trusted_directory(
         raise _private_path_error_from_oserror(selected, exc) from None
     finally:
         close(current_fd)
+
+
+# TASK-42749: on Windows SQLite creates its write-ahead log and the log's index
+# with whatever access the folder hands down. Both are created privately here
+# first; SQLite treats a zero-length log or index as absent and opens it in
+# place. The rollback journal is not covered (ADR-126, 2026-11-28 note).
+_SQLITE_LOG_SUFFIXES = ("-wal", "-shm")
+_SQLITE_HEADER_BYTES = 100
+_SQLITE_LOG_ATTEMPTS = 4
+
+
+def create_private_sqlite_logs(
+    database: PathInput,
+    absent: Iterable[str],
+    folder: PrivatePathResult | None = None,
+    new_database_allowed: bool = True,
+) -> tuple[str, ...]:
+    """Create a missing ``-wal``/``-shm`` privately before SQLite creates it.
+
+    Windows only. This adds protection and replaces no check: the caller has
+    already checked the database's folder and every existing name beside it.
+    Nothing is created when the folder gives other users nothing (its mode
+    has no group or other bits), when the database is a rollback-journal
+    database, or when it is empty and the caller did not allow a new
+    database (a ``must_exist`` connect to an empty temporary).
+
+    Args:
+        database: The database file, already prepared by the caller.
+        absent: Suffixes the caller found absent; only ``-wal`` and ``-shm``
+            are acted on.
+        folder: The caller's ``verify_trusted_directory`` result for the
+            database's folder. When it shows a folder that gives others
+            nothing, no further walk is made.
+        new_database_allowed: Whether an empty database file is a new
+            database the connection may put in WAL mode.
+
+    Returns:
+        The suffixes created here.
+
+    Raises:
+        PrivatePathError: A name created or found here is not a private
+            regular file of this user, or kept changing.
+    """
+    if not _WINDOWS_PLATFORM or not _posix_guards_available():
+        return ()
+    wanted = [suffix for suffix in _SQLITE_LOG_SUFFIXES if suffix in absent]
+    if not wanted:
+        return ()
+    selected = lexical_path(database)
+    if (
+        folder is not None
+        and folder.lexical_path == selected.parent
+        and folder.directory_mode is not None
+        and not folder.directory_mode & 0o077
+    ):
+        return ()
+    parent_fd, leaf = _open_verified_parent(selected, missing_leaf_allowed=False)
+    try:
+        if not stat.S_IMODE(os.fstat(parent_fd).st_mode) & 0o077:
+            return ()
+        if not _sqlite_may_use_wal(parent_fd, leaf, new_database_allowed):
+            return ()
+        return tuple(
+            suffix
+            for suffix in wanted
+            if _create_private_log(parent_fd, leaf + suffix, Path(f"{selected}{suffix}"))
+        )
+    except PrivatePathError:
+        raise
+    except OSError as exc:
+        raise _private_path_error_from_oserror(selected, exc) from None
+    finally:
+        _native_close(parent_fd)
+
+
+def create_private_sqlite_wal(connection, journal_mode: str) -> tuple[str, ...]:
+    """Create the log privately after the seam switches a connection to WAL.
+
+    Backup and restore switch a WAL destination to DELETE (SQLite removes
+    the log) and back. In the exclusive locking mode they hold, SQLite keeps
+    the log's index in memory, so only the log itself is created.
+
+    Args:
+        connection: The seam's own destination connection.
+        journal_mode: The journal mode just set on it.
+
+    Returns:
+        The suffixes created here.
+    """
+    if journal_mode != "wal" or not _WINDOWS_PLATFORM:
+        return ()
+    row = connection.execute("PRAGMA database_list").fetchone()
+    if not row or not row[2]:
+        return ()
+    return create_private_sqlite_logs(row[2], ("-wal",))
+
+
+def _sqlite_may_use_wal(parent_fd: int, leaf: str, new_database_allowed: bool) -> bool:
+    """Read the database header: WAL (bytes 18-19 are 2), or a new empty file."""
+    descriptor = os.open(leaf, _PRIVATE_FILE_OPEN_FLAGS, dir_fd=parent_fd)
+    try:
+        header = os.read(descriptor, _SQLITE_HEADER_BYTES)
+    finally:
+        os.close(descriptor)
+    if not header:
+        return new_database_allowed
+    return len(header) == _SQLITE_HEADER_BYTES and header[18:20] == b"\x02\x02"
+
+
+def _create_private_log(parent_fd: int, leaf: str, selected: Path) -> bool:
+    """Create one name privately, or check and harden one that appeared first."""
+    create_flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _NONBLOCK | _NOCTTY
+    for _attempt in range(_SQLITE_LOG_ATTEMPTS):
+        try:
+            descriptor = os.open(leaf, create_flags, _PRIVATE_FILE_MODE, dir_fd=parent_fd)
+            created = True
+        except FileExistsError:
+            try:
+                descriptor = os.open(leaf, _PRIVATE_FILE_OPEN_FLAGS, dir_fd=parent_fd)
+            except FileNotFoundError:
+                continue  # SQLite removed it between the two opens.
+            created = False
+        try:
+            opened = os.fstat(descriptor)
+            rejected = _classify_private_file_stat(opened, expected_uid=os.geteuid())
+            if rejected is not None:
+                raise PrivatePathError(
+                    PrivatePathResult(selected, rejected, reason="unsafe_sqlite_artifact")
+                )
+            if stat.S_IMODE(opened.st_mode) != _PRIVATE_FILE_MODE:
+                os.fchmod(descriptor, _PRIVATE_FILE_MODE)
+            try:
+                holds = _private_file_postcondition_holds(
+                    descriptor, parent_fd, leaf, expected_identity=opened
+                )
+            except FileNotFoundError:
+                continue  # SQLite removed it after its last connection closed.
+            if not holds:
+                raise PrivatePathError(
+                    PrivatePathResult(
+                        selected,
+                        PrivatePathStatus.OPERATION_FAILED,
+                        reason="private_sqlite_log_postcondition_failed",
+                    )
+                )
+            return created
+        finally:
+            os.close(descriptor)
+    raise PrivatePathError(
+        PrivatePathResult(
+            selected,
+            PrivatePathStatus.OPERATION_FAILED,
+            reason="optional_sqlite_generation_churn",
+        )
+    )

@@ -1114,6 +1114,8 @@ operational activation stay explicit dependencies. See [core qualification](back
 | tldw_chatbook/DB/private_sqlite.py | _connect_registered_sqlite | connect | 2 | generic_boundary | generic |
 | tldw_chatbook/DB/private_sqlite.py | _open_artifact_fd | open | 1 | generic_boundary | generic |
 | tldw_chatbook/DB/private_sqlite.py | _prepare_windows_artifact | open | 1 | generic_boundary | generic |
+| tldw_chatbook/Utils/private_paths.py | _create_private_log | open | 2 | generic_boundary | generic |
+| tldw_chatbook/Utils/private_paths.py | _sqlite_may_use_wal | open | 1 | generic_boundary | generic |
 | tldw_chatbook/DB/private_sqlite.py | migrate_profile_store_to_candidate | connect_private_sqlite_descriptor | 1 | generic_boundary | generic |
 | tldw_chatbook/DB/private_sqlite.py | open_canonical_profile_migration_destination | secure_private_directory | 1 | generic_boundary | generic |
 | tldw_chatbook/DB/private_sqlite.py | open_profile_migration_boundary_destination | secure_private_directory | 1 | generic_boundary | generic |
