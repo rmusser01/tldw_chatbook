@@ -44,9 +44,9 @@ The job's own structure suggests a split: one invocation runs the sandboxed suit
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 The recovered suites' projected worst case is at least 5 minutes under the cap of every job they run in, measured over at least 20 non-cancelled PR runs after the change (or projected from per-target serial times when fewer runs exist), with the numbers in the notes
-- [ ] #2 Every target that ran in the job before the change still runs in a required PR lane, with the same flags (`--storage-lease-guard`, the sandboxed-then-bootstrap order) wherever it runs
-- [ ] #3 `RECOVERED_SUITES_TARGETS` and the other lane contracts in `Tests/CI/test_ci_queue_pressure_contract.py` match the workflow, and `Tests/CI` passes
-- [ ] #4 The workflow note for the recovered suites states its current headroom, so the next addition can be checked against it
+- [x] #2 Every target that ran in the job before the change still runs in a required PR lane, with the same flags (`--storage-lease-guard`, the sandboxed-then-bootstrap order) wherever it runs
+- [x] #3 `RECOVERED_SUITES_TARGETS` and the other lane contracts in `Tests/CI/test_ci_queue_pressure_contract.py` match the workflow, and `Tests/CI` passes
+- [x] #4 The workflow note for the recovered suites states its current headroom, so the next addition can be checked against it
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -62,9 +62,9 @@ The job's own structure suggests a split: one invocation runs the sandboxed suit
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-2026-11-28, re-measured. Plan steps 1 to 4 are done. Step 5 waits for the owner. The pull request that carries this note leaves the workflow unchanged, so its own CI is the light tier. The PR Fast Lane is TASK-38716's, which holds the method in full (how jobs were counted, how a cut log is sorted into slow or hung, how runner speed is read); this note gives the recovered suites' numbers.
+2026-11-28, re-measured. Plan steps 1 to 4 are done, and step 5 was applied the same day (below). The first commit of the pull request that carries this note left the workflow unchanged, so its own CI was the light tier; the second applies the owner's choice, which makes it the full run. The PR Fast Lane is TASK-38716's, which holds the method in full (how jobs were counted, how a cut log is sorted into slow or hung, how runner speed is read); this note gives the recovered suites' numbers.
 
-**Awaiting the owner.** Which option below. The recommendation is option 2, a cap raise from 30 to 40 minutes. A cap raise and an added runner are both the owner's decision, so neither is applied. (AC #1 is the measured headroom after the change, so it stays open.)
+**Owner decision, 2026-11-28: "Apply my picks".** The pick here was option 2: `timeout-minutes` of `recovered-suites` from 30 to 40, with the pin in `Tests/CI/test_ci_queue_pressure_contract.py`, the job's comment (which now states its headroom: AC #4) and ADR-103's dated note. No runner is added. AC #1 is the measured headroom after the change, so it stays open until 20 full pull-request runs have been read.
 
 **Checked first.** This task is the only one on any ref about this job's cap. No open pull request (41) changes the cap. Of 236 remote refs with the workflow file, six edit the job's block against their merge base with `origin/dev`: `codex/shared-console-mobile-pr` (PR 3345, a draft pushed today) takes the slot-drop and child-preset-fallback files out and puts them in `dreams-boundary`; `ci/task-33620.15.61-catalog-tests-in-pr-lanes` adds four catalog files dev already has; and PR 3579 and three `codex/light-ci-*-20261118` diagnostic branches change the `if` line and carry targets dev already has. Nothing but this note changes the cap.
 
@@ -119,7 +119,9 @@ No file is more than 12% of it: `Tests/Chat/test_trace_v2_collaboration.py` 207.
 
 **Recommendation: option 2.** It is the smallest change and meets AC #1's 5 minutes (6.3), it adds no runner, and the owner chose a cap raise for this job on 2026-11-19 (and, per PR 3803's description, for the Dreams riders job, TASK-42719, on 2026-11-28). Option 3 is free and worth taking with it. If the owner would rather stop raising this cap, option 5 is the structural answer, and it should come with a dated note of the headroom (AC #4).
 
-**Not applied, and why.** Options 1, 2 and 5 each need the owner: a limit or a runner. Edits to this job's block in PR 3345 overlap any workflow change made for it, so whichever lands second must be rebased by hand.
+**Applied (2026-11-28): option 2.** Options 1, 3, 4 and 5 are not. PR 3345 edits this job's block too (it moves the slot-drop and child-preset-fallback files out), so whichever lands second must be rebased by hand. Past 40 the next step is the split (option 5), because a cap stops at 44, under the self-hosted controller's 45-minute deadline.
+
+**Verification of the applied change (2026-11-28; local Windows, Python 3.12.10, the private-profile runner).** `Tests/CI` on the edited tree: 54 failed, 2,036 passed, 16 skipped; the 54 are the nodes that fail on untouched dev here (53 in `test_tiered_ci.py` and 1 symlink-privilege node), and nothing new fails (the full account is in TASK-38716's note). The six contract files that pin these jobs: 1,077 passed, with `test_recovered_suites_lane_is_one_serial_guarded_minimal_python_312_job` pinning the 40-minute cap. The targets are unchanged, so `RECOVERED_SUITES_TARGETS` still equals the workflow's step exactly (AC #2 and #3). AC #1 stays open: it needs 20 full pull-request runs after this lands, with the slowest under 35 minutes (the model gives 33.7 at the slowest runner speed seen).
 
 **How it was measured.** As in TASK-38716's note: job records and annotations from the GitHub API; per-file times from the 89 job logs of this job; runner speed against the complete log of the current list. The tools, the per-log speed table and the tables above are in the session's notes folder (`ci-lane-cap-tools/`, `ci-lane-cap-data/`).
 <!-- SECTION:NOTES:END -->

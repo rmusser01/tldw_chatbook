@@ -317,6 +317,17 @@ jobs:
     # step alone (plus the ~0.8 min of setup) the same 90 runs replay at
     # median 16.1 / max 20.8 min, 14 min under the cap. Add a job (a shard),
     # not minutes, when either nears its cap again.
+    # TASK-38716 (owner decision 2026-11-28, "Apply my picks"): did that again.
+    # From 2026-11-26 this job was cancelled at its cap in 11 of 86 jobs: six on
+    # slow hosted runners (35.1-38.5 min needed on today's list; runner speeds
+    # 0.66-1.12 of a reference log, AWS fastest) and five in one branch's hang.
+    # One file was 28% of its 1,957 s of tests, Tests/UI/test_mcp_workbench.py
+    # (555 s, 357 tests, in no other PR lane), and with test_mcp_tools_mode.py
+    # (50 s) it runs in pr-fast-lane-mcp-workbench. Timed against the list before
+    # the move, the 81 measured runner speeds gave median 31.3 / p90 34.6 /
+    # slowest 38.5 min; without the pair 22.1 / 24.4 / 27.2, 7.8 min under this
+    # unchanged cap. Re-measure in CI before adding more (a raise stops at 44:
+    # the self-hosted controller's busy-job deadline is 45, ADR-359).
     timeout-minutes: 35  # B1 (TASK-33910.2): owner decision 2026-10-09, raised 30 -> 35 to fit B1's mounted Roleplay suites (27m46s worst case at the merge-time re-read: worst run 23m40s + B1's files 4m06s)
 
     steps:
@@ -371,8 +382,6 @@ jobs:
             Tests/DB/test_automatic_wake_attempts.py \
             Tests/Model_Artifacts/test_operation_leases.py \
             Tests/Model_Artifacts/test_operation_leases_process.py \
-            Tests/UI/test_mcp_workbench.py \
-            Tests/UI/test_mcp_tools_mode.py \
             Tests/Widgets/test_detach_safe_text_area.py \
             Tests/Web_Server/test_served_tab_isolation.py \
             Tests/STT/test_parakeet_diagnostics.py \
@@ -2046,7 +2055,17 @@ jobs:
     # Owner decision (2026-11-19): 30 min, still one serial job. Over 24 PR
     # runs (2026-11-18/19), 19 took 16 min or more and 5 hit the old 20-min
     # cap, 4 of them with no test failing.
-    timeout-minutes: 30
+    # Owner decision (2026-11-28, TASK-42413, "Apply my picks"): 40 min, still
+    # one serial job. Round 27 added twelve targets on 2026-11-27 (2,024 ->
+    # 2,274 tests, 22% of the test time), and 6 of 89 jobs from 2026-11-26 hit
+    # the 30-min cap, each at 97-100% of its tests and none hung. Timed against
+    # today's list, the 89 measured runner speeds (0.64-1.13 of a reference log,
+    # AWS fastest) give median 27.4 / p90 30.8 / slowest 33.7 min, 16 of 89 at
+    # 30 or more. 40 leaves 6.3 min at the slowest runner seen: about 6 min of
+    # new work at that speed. Re-measure in CI before adding more. A raise stops
+    # at 44 (the self-hosted controller's busy-job deadline is 45, ADR-359); past
+    # that the next step is a split (TASK-42413 option 5).
+    timeout-minutes: 40
 
     steps:
       - uses: actions/checkout@v4
@@ -2261,6 +2280,49 @@ jobs:
             --timeout=180 \
             --tb=short
 
+  pr-fast-lane-mcp-workbench:
+    needs: [preflight]
+    # Owner decision (2026-11-28, TASK-38716, "Apply my picks"): the two MCP
+    # workbench files, moved out of pr-fast-lane unchanged (same targets, same
+    # order, same --timeout). From 2026-11-26 pr-fast-lane was cancelled at its
+    # 35-min cap in 11 of 86 jobs: six on slow hosted runners (35.1-38.5 min
+    # needed on today's list) and five in one branch's hang. One file was 28%
+    # of its 1,957 s of tests: Tests/UI/test_mcp_workbench.py, 555 s for 357
+    # tests, in no other PR lane since the lane's first commit, with
+    # test_mcp_tools_mode.py's 50 s. Timed against the list before the move,
+    # the 81 measured runner speeds gave pr-fast-lane median 31.3 / p90 34.6 /
+    # slowest 38.5 min of its 35; without the pair 22.1 / 24.4 / 27.2, which is
+    # 7.8 min under the unchanged cap. This job takes about 13 of its 20 min at
+    # the slowest runner seen (setup and collection about 1.5 min, 605 s times
+    # 1.12). Same minimal dependency set and serial pytest as the other lanes;
+    # both files keep the collection-time profile (Tests/conftest.py's
+    # bootstrap list) and nothing follows them here. One more runner per PR
+    # (ADR-103 note, 2026-11-28).
+    name: PR Fast Lane (MCP workbench)
+    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
+      - name: Install fast-lane dependencies
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
+
+      - name: Run the MCP workbench tests
+        run: |
+          pytest \
+            Tests/UI/test_mcp_workbench.py \
+            Tests/UI/test_mcp_tools_mode.py \
+            --timeout=180 \
+            --tb=short
+
   derived-artifacts:
     permissions:
       actions: read
@@ -2268,7 +2330,7 @@ jobs:
     # required status checks. Renaming it silently detaches the gate, so keep it
     # stable.
     name: Derived artifacts reproduce from their sources
-    needs: [preflight, dev-light, release-qualification, pr-fast-lane, pr-fast-lane-admission, pr-fast-lane-admission-2, pr-fast-lane-admission-3, pr-fast-lane-admission-4, ui-fast-lane, plugins-recovery-ui, console-p0-gate, dreams-boundary, dreams-tracking, architecture-guards, pr-fast-lane-arch, recovered-suites]
+    needs: [preflight, dev-light, release-qualification, pr-fast-lane, pr-fast-lane-admission, pr-fast-lane-admission-2, pr-fast-lane-admission-3, pr-fast-lane-admission-4, ui-fast-lane, plugins-recovery-ui, console-p0-gate, dreams-boundary, dreams-tracking, architecture-guards, pr-fast-lane-arch, recovered-suites, pr-fast-lane-mcp-workbench]
     if: ${{ always() }}
     # Keep the immutable Python build available as ubuntu-latest advances.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_CONTROL_RUNNER || 'ubuntu-latest' }}
@@ -2414,6 +2476,15 @@ jobs:
         run: |
           echo "PR lane (recovered suites) result: ${{ needs.recovered-suites.result }}"
           echo "::error::The required recovered suites did not succeed."
+          exit 1
+
+      # Owner decision 2026-11-28 (TASK-38716): same shape again, for the MCP
+      # workbench files moved out of the PR Fast Lane.
+      - name: Require successful PR fast lane (MCP workbench)
+        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.pr-fast-lane-mcp-workbench.result != 'success' }}
+        run: |
+          echo "PR Fast Lane (MCP workbench) result: ${{ needs.pr-fast-lane-mcp-workbench.result }}"
+          echo "::error::The required MCP workbench tests did not succeed."
           exit 1
 
       # TASK-38100: diagnostics only; every verdict above remains fail-closed.
