@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-17 05:27
-updated_date: 2026-11-28 11:30
+updated_date: 2026-11-28 12:15
 labels:
 - follow-up
 - ci
@@ -48,7 +48,7 @@ Found by plgb (round 15, TASK-41104 and TASK-41217). The macOS plugin-qualificat
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-2026-11-28, re-measured. Plan steps 1 to 4 are done; step 5 waits for the owner. AC #1 and AC #2 (per-child times and caps) are TASK-41104's follow-through and are not touched here; the numbers for AC #3 are below. The pull request that carries this note changes no workflow, so its own CI is the light tier.
+2026-11-28, re-measured. Plan steps 1 to 4 are done; step 5 waits for the owner. AC #1 and AC #2 (per-child times and caps) are TASK-41104's follow-through and are not touched here; the numbers for AC #3 are below. The pull request that carries this note also applies TASK-42779's move in `derived-artifacts.yml`, so its CI is the full run (its preflight chose the full tier on a411112e1c). It changes neither this job nor `plugin-qualification.yml`, and nothing in this task is applied.
 
 **Which job.** `qualify (macos-latest)` of `.github/workflows/plugin-qualification.yml` (`timeout-minutes: 30`, a three-OS matrix, `max-parallel: 3`), which runs on pull requests that touch the plugin paths. It is not a required check: the only required context on `dev` is "Derived artifacts reproduce from their sources" (strict, `enforce_admins`), so a cap hit costs a runner and a rerun, not a merge. The repository is public, so hosted minutes are free. No `Tests/CI` test pins the 30 (`test_plugin_qualification_workflow.py` does not mention it).
 
@@ -60,23 +60,23 @@ Found by plgb (round 15, TASK-41104 and TASK-41217). The macOS plugin-qualificat
 
 The job is one pytest step ("Exercise explicit lifecycle and regression boundaries": about 834 tests of `Tests/Plugins`, the hook v2 files, the startup performance file and the private-SQLite inventory) of median 23.4 and max 28.1 minutes over the 55 finished jobs; the other steps together take about 1.7 minutes (checkout 0.7, setup-python 0.2, install 0.4). In the 7 logs the same tests ran 17.4 to 28.3 minutes of pytest time (1,045 to 1,699 s), all on `MacCloud` region `westus`: a spread of 1.63 times, with the runner-capacity notice ("jobs targeting macOS arm64 runners may experience longer queue times") on the cancelled jobs. The median log's 10 slowest tests are 454 s of its 1,432 s (`test_recovery.py::test_plugin_backup_restores_in_place_and_waits_for_authority_recovery` 99.9 s, three `test_private_sqlite_inventory.py` census tests 125 s, `test_git_acquisition.py::test_https_host_helpers_tls_and_exact_origin` 80 s, `test_source_service.py::test_selected_remote_entry_requires_exact_displayed_origin_before_network` 41 s, `test_owned_hook_acceptance.py::test_installed_hook_aggregate_admission_and_teardown` 39.5 s); no file dominates. Per-file times cannot be read from these logs (the progress lines carry no file names).
 
-AC #3 asks that the job's typical time have 5 minutes of margin: the median has 5.0, the p90 1.3, the slowest finished 0.4.
+AC #3 asks that the job's typical time have at least 5 minutes of margin. Over all 57 jobs, the two cut ones at 30.1, the median is 25.3, which leaves 4.7 under cap 30; over the 55 finished jobs alone it is 25.0 and leaves exactly 5.0. Over all 57 the p90 leaves 1.0, and the slowest finished job left 0.4.
 
 **Options.** Observed over the 57 jobs, the two cut jobs at the 30.1 minutes they needed; no runner speed model (the logs have no per-file times):
 
 | | Change | Runners | Median | p90 | Slowest | Under the cap | Over the cap |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0 | none (cap 30) | 0 | 25.0 | 28.7 | 30.1 | -0.1 | 2 of 57 |
-| 1 | cap 30 to 35 | 0 | 25.0 | 28.7 | 30.1 | 4.9 | 0 |
-| 2 | cap 30 to 40 | 0 | 25.0 | 28.7 | 30.1 | 9.9 | 0 |
+| 0 | none (cap 30) | 0 | 25.3 | 29.0 | 30.1 | -0.1 | 2 of 57 |
+| 1 | cap 30 to 35 | 0 | 25.3 | 29.0 | 30.1 | 4.9 | 0 |
+| 2 | cap 30 to 40 | 0 | 25.3 | 29.0 | 30.1 | 9.9 | 0 |
 
-1. **Cap 35.** Leaves 4.9 minutes on the slowest job seen, below the 5 of AC #3, and the macOS spread is 1.63 times on identical tests.
+1. **Cap 35.** Meets AC #3 (9.7 minutes over the 57-job median) and leaves 4.9 on the slowest job seen. The macOS spread is 1.63 times on identical tests, so a slower draw than any seen would use that up.
 2. **Cap 40.** One line in the workflow. No runner, no required check at risk, nothing pinned. A hung job holds its macOS runner 10 minutes longer, which the per-child caps of AC #2 are meant to prevent. Stays below the 45-minute busy-job deadline of the self-hosted controller (ADR-359), which does not apply to hosted macOS.
 3. **Fewer files on the macOS leg** (for example the private-SQLite inventory's 125 s, which also runs on Linux in `pr-fast-lane-arch`) is not costed: the matrix shares one pytest list, and what the macOS leg qualifies ("only executed passing boundaries qualify") would change.
 
-**Recommendation: option 2.** The two hits finished their tests, so it is a slow runner draw and not a hang, the lane is not required, and a cap is the smallest change. AC #2 stays open and should be done first if the owner would rather keep the cap and shorten a hang.
+**Recommendation: option 2, for the room it leaves a slow draw. AC #3 does not separate the two caps: both meet it.** The two hits finished their tests, so it is a slow runner draw and not a hang, the lane is not required, and a cap is the smallest change. If the owner would rather bound a hung job sooner, option 1 also meets AC #3. AC #2 stays open and should be done first if the owner would rather keep the cap and shorten a hang.
 
-**How it was measured.** Job records, annotations and step times from the GitHub API; pytest's own summary and slowest-25 tables from the logs. The tools and per-job tables are in the session notes folder (`ci-near-cap-tools/`, `ci-near-cap-data/`).
+**How it was measured.** Job records, annotations and step times from the GitHub API; pytest's own summary and slowest-25 tables from the logs. The scripts and per-job tables are not in the repository.
 
 2026-11-28, later: PR 3805, which added the note above, was combined into PR 3804 at the owner's request ("Combine them"); the open decision is unchanged.
 <!-- SECTION:NOTES:END -->
