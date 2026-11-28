@@ -26,7 +26,7 @@ def hold(db, *authorities):
 
 
 def test_installed_heads_have_atomic_batch_receipts():
-    for cls, version in ((AgentRunsDB, 27), (WorkspaceDB, 11), (CharactersRAGDB, 87)):
+    for cls, version in ((AgentRunsDB, 33), (WorkspaceDB, 11), (CharactersRAGDB, 90)):
         database = cls(":memory:", client_id="import-test")
         try:
             assert cls._CURRENT_SCHEMA_VERSION == version
