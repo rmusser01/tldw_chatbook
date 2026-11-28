@@ -4467,6 +4467,7 @@ async def test_export_cancel_releases_captured_artifact(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_audio_export_rejects_unsafe_dialog_destination(
     audio_cpp_playground: FakeTTSService,

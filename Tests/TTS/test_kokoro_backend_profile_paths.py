@@ -102,7 +102,13 @@ def test_configured_blend_directory_rejects_dangerous_path_syntax(
     unsafe = tmp_path / "a" / "b" / ".." / ".." / "unsafe-blends"
 
     with pytest.raises(ValueError, match="dangerous pattern"):
-        KokoroTTSBackend(config={"KOKORO_VOICE_BLENDS_DIR": unsafe})
+        KokoroTTSBackend(
+            config={
+                "KOKORO_MODEL_PATH": str(tmp_path / "model.onnx"),
+                "KOKORO_VOICES_JSON_PATH": str(tmp_path / "voices.bin"),
+                "KOKORO_VOICE_BLENDS_DIR": unsafe,
+            }
+        )
 
     assert not unsafe.exists()
 
