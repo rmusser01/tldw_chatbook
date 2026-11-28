@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-11-27 22:30'
-updated_date: '2026-11-27 23:30'
+updated_date: '2026-11-28 08:35'
 labels:
   - ci
 dependencies:
@@ -27,7 +27,7 @@ The "Dreams tracking tests and unlaned riders" job (`dreams-tracking` in `.githu
 <!-- AC:BEGIN -->
 - [x] #1 Where the job's time goes is measured from CI runs: per file, and between fast and slow runs of the same tests
 - [x] #2 The owner has the options with the measured cost of each, and a recommendation
-- [ ] #3 The option the owner chooses is applied, and the contract tests in `Tests/CI` pin it
+- [x] #3 The option the owner chooses is applied, and the contract tests in `Tests/CI` pin it
 - [ ] #4 Over at least 20 full pull-request runs after the change, the job is never cancelled at its cap and its slowest run ends at least 4 minutes under it
 - [ ] #5 No test leaves the required check
 <!-- AC:END -->
@@ -45,11 +45,11 @@ The "Dreams tracking tests and unlaned riders" job (`dreams-tracking` in `.githu
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Steps 1 to 4 are done. Step 5 waits for the owner. The workflow is unchanged in this pull request, so its own CI is the light tier (the tier policy returns `full: false` for these two paths) and no full run is spent on it.
+Steps 1 to 5 are done except the 20-run measurement (AC #4), which needs 20 full pull-request runs after this lands. The pull request first carried only these notes, so its CI was the light tier. The workflow change came in a second commit after the owner's answer, so from then on it runs the full CI.
 
-**Awaiting the owner.** Which of options 1 to 3 below. The recommendation is option 1, a 30-minute cap. Raising a limit needs the owner's OK, so it is not applied.
+**Decision.** The owner chose option 1 on 2026-11-28, answering "Raise to 30 min" to "Raise the riders job's cap from 20 to 30 minutes?". It is applied. Options 2 and 3 stay below as the alternatives if the job's cap is hit again.
 
-**What option 1 changes, checked locally.** One line in the workflow (`timeout-minutes: 20` to `30` in the `dreams-tracking` job, line 1733 on dev 2df861ec7d), the job's comment, the pin `assert job["timeout-minutes"] == 20` in `Tests/CI/test_ci_queue_pressure_contract.py`, and a dated ADR-103 note, as for the recovered suites (9b4c574416, 2026-11-19). With only the cap line changed, `Tests/CI` on Windows fails the 54 nodes that fail on untouched dev 2df861ec7d (53 in `test_tiered_ci.py`, which PR 3802 addresses, and 1 symlink-privilege node) plus exactly one more, `test_dreams_tracking_lane_is_one_serial_minimal_python_312_job`, the pin above. The job's `needs`, verdict step, runner count and ADR counts do not change. A change under `.github/` starts the full CI run on the pull request that carries it.
+**What changed.** One line in the workflow (`timeout-minutes: 20` to `30` in the `dreams-tracking` job, line 1733 on dev 2df861ec7d), the job's comment, the pin `assert job["timeout-minutes"] == 20` in `Tests/CI/test_ci_queue_pressure_contract.py`, and a dated ADR-103 note, as for the recovered suites (9b4c574416, 2026-11-19). With only the cap line changed, `Tests/CI` on Windows fails the 54 nodes that fail on untouched dev 2df861ec7d (53 in `test_tiered_ci.py`, which PR 3802 addresses, and 1 symlink-privilege node) plus exactly one more, `test_dreams_tracking_lane_is_one_serial_minimal_python_312_job`, the pin above. The job's `needs`, verdict step, runner count and ADR counts do not change. A change under `.github/` starts the full CI run on the pull request that carries it.
 
 **Options.** Headroom is measured against the slowest run seen, which would have needed about 21 minutes. The house floor is 4 minutes under the cap (TASK-34986).
 
@@ -65,7 +65,7 @@ Steps 1 to 4 are done. Step 5 waits for the owner. The workflow is unchanged in 
 3. **A move into Console P0 (sandboxed).** That profile has the same flags and install line, and finished 90 times since 2026-11-26 at a median of 6.9 and a max of 8.5 of its 35 minutes. The Dreams tracking file alone is 272 to 433 s (253 tests), so the job would end near 13.7 minutes at worst and Console P0 (sandboxed) near 15.7 of 35. Moving 16 riders instead (the create dialog, fleet messages, the contention table and the 13 first-chat files, 208 to 322 s) keeps the job's name and leaves 4.5 minutes under the cap. No runner and no limit changes. Costs: pins change in the Console P0 lane table and the sole-owner checks, the job's name stops matching its contents if the Dreams file leaves, and the moved files share a process with that gate's files for the first time, which only a full CI run shows.
 4. **xdist.** Not measured: there is no Linux host here, and a number needs a full CI run. The job's own comment says a Tool_Packs file that read config in-process "would pass at -n 4 locally (another worker) and fail only here, serially" (TASK-32873), so workers would hide a check the serial process makes. It would also change the pinned argv and the install line.
 
-**Recommendation: option 1.** It is the smallest change, it cannot break a test, and it adds no runner. This job never sets the required check's wall clock (below), so a longer cap costs nothing there. Option 2 is the choice if the 20-minute caps should stay.
+**Recommendation, taken: option 1.** It is the smallest change, it cannot break a test, and it adds no runner. This job never sets the required check's wall clock (below), so a longer cap costs nothing there. Option 2 is the choice if the 20-minute caps should stay.
 
 **In flight: nothing.** None of the 40 open pull requests changes this job's cap or target list. Of the 252 remote refs, which include the heads of 39 of those pull requests, five edit the job's block against their merge base with dev, and each edits one line that is not its cap or targets: `runs-on` on `codex/fix-eval-recovery-ci` (PR 3342, a draft) and the `if` line on `codex/light-ci-release-qualification` (PR 3579, a draft) and three `codex/light-ci-*-20261118` diagnostic branches. PR 3345 edits other jobs of the workflow, and PR 3575's branch does not change the workflow file. `git log origin/dev -S"unlaned riders"` on the workflow finds only e0f517f393, which named the job. No task about this cap exists on dev or on any remote ref. The highest task id cited anywhere is 42689 (PR 3802), so 42719 is that plus the 30-id lead.
 
@@ -105,5 +105,7 @@ Steps 1 to 4 are done. Step 5 waits for the owner. The workflow is unchanged in 
 
 **Seen in the same data, not part of this task.** Since 2026-11-26, by annotation: the PR Fast Lane was cancelled at its 35-minute cap 11 times of 86 (finished: median 31.2, max 34.7 minutes), and the recovered suites at their 30-minute cap 6 times of 89. One UI shard job in about 3,200 was cancelled at its cap.
 
-Files: this task and `backlog/docs/lessons-testing-evidence.md`.
+**Measuring AC #4 after this lands.** List the `pull_request` runs of `derived-artifacts.yml` (`gh api repos/<owner>/<repo>/actions/workflows/derived-artifacts.yml/runs?event=pull_request`), read each run's jobs (`runs/<id>/attempts/<n>/jobs`) and take this job's `started_at` and `completed_at`. Confirm a cancellation from the job's annotation (`check-runs/<job id>/annotations`): a run cancelled by hand also ends near a cap. The criterion holds when 20 full runs show no cancellation at the cap and the slowest took 26 minutes or less.
+
+Files: `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md`, `backlog/docs/lessons-testing-evidence.md` and this task.
 <!-- SECTION:NOTES:END -->

@@ -2357,7 +2357,9 @@ def test_dreams_tracking_lane_is_one_serial_minimal_python_312_job() -> None:
     assert job["name"] == "Dreams tracking tests and unlaned riders"
     assert job["if"] == LANES
     assert job["runs-on"] == PR_TEST_RUNNER
-    assert job["timeout-minutes"] == 20
+    # TASK-42719 (owner decision 2026-11-28): raised from 20; the slowest hosted
+    # runner needed about 21 min of the same tests.
+    assert job["timeout-minutes"] == 30
     assert "strategy" not in job
     assert len(job["steps"]) == 4
     setup = next(
