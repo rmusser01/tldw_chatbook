@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-28 16:53
-updated_date: 2026-11-28 19:19
+updated_date: 2026-11-28 19:25
 labels:
 - follow-up
 - flake
@@ -106,18 +106,20 @@ The handler runs in every test session, and the test's own comment notes that Ch
   - Review round 2 found a gap: a mutation that blocks and records every handled signal (`ours = set(handled)`) still passed, because the mask was read only after the guard's own unblock. The param now also reads the mask inside the window, from a hook registered before the guard's, and expects `False\nTrue False`.
   - Under that mutation it is red (`True` read inside the window); the previous version of the param passed it. All mutations were reverted.
 - **Machine crash, caused by this task (2026-11-28, about 18:16 UTC).** The first draft of `fork-inside-a-fork-window` set its once-flag after `os.fork()`. `os.fork()` runs every `before` hook again, this one included, so the hook recursed, and as the recursion unwound each level forked again. The per-user process table filled (about 10,800 processes) and the machine was rebooted. The flag is now set before the fork, with a comment saying why. Each new fork test was first run under `ulimit -u <current + 60>`.
-- **Fork cap.** Every child script now caps itself first. On POSIX it sets `RLIMIT_NPROC` to `min(hard, <user's count> + _FORK_HEADROOM)`, with `_FORK_HEADROOM = 64`. The parent test measures the count right before the run (Linux: the uid's threads in `/proc`; elsewhere: `ps -axo ruid=`). A runaway fork then fails with EAGAIN.
-  - The margin was first 16. It was raised so that a burst of other workers' threads on Linux CI cannot cause a false EAGAIN red.
-  - Proof, under `ulimit -u <current + 120>`, with the once-flag temporarily set after the fork again: the param failed in 6.9 s with `BlockingIOError: [Errno 35]`, surfaced in the assertion.
-  - The user's process count went from about 540 to a peak of about 618 (the cap plus pytest itself) for about 5 s, then back to about 545. Nothing was left running.
-  - Reverted, and checked with `cmp`. The earlier proof at a margin of 16, under `+ 60`: failed in 2.4 s, peak +27.
+- **Fork budget** (this replaces an `RLIMIT_NPROC` cap; see below). Every child script starts by wrapping `os.fork` with a per-lineage counter. After `_FORK_BUDGET = 3` calls in one lineage, the wrapper raises `BlockingIOError(EAGAIN, "test fork budget spent")`.
+  - A forked child inherits the count, so any runaway tree is bounded at about 2**3 processes, on every platform and in any PID namespace.
+  - No param forks more than twice in one lineage, the maximum being `fork-inside-a-fork-window`. Checked: at a budget of 2 all 11 passed; at 1 only that param failed, with the budget error. 3 is just above that maximum.
+  - Only `os.fork()` is counted. `multiprocessing`'s fork context calls it at call time, so it is covered; `subprocess` and `posix_spawn` are not, which the comment says.
+  - The test's stdout assertion now also shows the child's stderr, so a spent budget is visible whichever assertion fails.
+  - **Proof,** under `ulimit -u <current + 120>`, with the once-flag temporarily set after the fork again: the param failed in 0.43 s with `BlockingIOError: [Errno 35] test fork budget spent`. The user's process count stayed at 502-514, against a baseline of about 505. Reverted and checked with `cmp`; nothing was left running.
+  - **Runaway probe:** every process, children included, tried 300 forks. The tree stopped at 8 processes (7 forks), all reaped.
+  - **Why not RLIMIT_NPROC.** Rounds 1 and 2 of the review had capped each child at `RLIMIT_NPROC = <the uid's counted tasks> + _FORK_HEADROOM` (16, then 64), with an `RLIM_INFINITY` fix and a PID-namespace skip. The coordinator found, in a real `ubuntu:24.04` container, that `NSpid:` shows a single pid (it is relative to the procfs's own namespace), so the skip never triggered. The undercount that turns every fork into a false red remained, and counting from inside a namespace cannot be made reliable. That cap and its counting were removed.
 - **Review round 2 (five Minor items).**
-  - The cap now sets the soft limit to the count whenever the hard limit is `RLIM_INFINITY`. Linux reports an unlimited hard limit as -1, and `min(-1, n)` had left the cap off there. Checked with a fake `resource` module, since this Mac has a finite hard limit (10666): before the fix `min(-1, 600)` gave -1, now the soft limit is 600.
-  - `_fork_cap()` skips the cap in a Linux child PID namespace (`NSpid:` lists more than one pid). There `/proc` shows only the container's tasks while the kernel counts all of the uid's, so the cap would fail every fork. Its docstring states that such runs have no runaway guard. Checked with a faked `/proc/self/status`: skipped for `4242\t17`, set for `4242`. Neither case can be run on this Mac.
-  - The foreign-handler param, as above.
-  - The guard's docstring now says that a `KeyboardInterrupt` at any of the hooks' bytecode checks outside the reset can leave the signals blocked, in the child or on the parent's forking thread. The review's `kiparent.py` shows the parent case: the interrupt fires at `unblock_in_parent`'s entry.
-  - The test file's cap comment now reads "at most about `_FORK_HEADROOM` more processes than the user had when the test counted".
-  - The review's probes ran under `ulimit -u <current + 120>`: `params2.py` passed all 11 params against this guard, and `runaway.py` stopped at 72 forks with `BlockingIOError`, all of them reaped.
+  - Items 1 and 2 (the `RLIM_INFINITY` handling and the PID-namespace skip) were done, then superseded by the fork budget above.
+  - Item 3: the foreign-handler param, as above.
+  - Item 4: the guard's docstring now says that a `KeyboardInterrupt` at any of the hooks' bytecode checks outside the reset can leave the signals blocked, in the child or on the parent's forking thread. The review's `kiparent.py` shows the parent case: the interrupt fires at `unblock_in_parent`'s entry.
+  - Item 5: the test file's comment on the guard was rewritten. It now describes the fork budget.
+  - The review's `params2.py` passed all 11 params against the round-2 guard under `ulimit -u <current + 120>`.
 - **Authorised serial run** (`-p no:xdist`, so the guard's hooks are installed in the pytest process) of `Tests/Tools/test_remote_session_serve.py`, `Tests/Chunking/test_security.py` and `Tests/Terminal/test_posix_backend.py`:
   - dev 2df861ec7d (a detached scratch worktree, removed afterwards): first run 8 failed, 87 passed, 1 skipped; second run 7 failed, 88 passed, 1 skipped.
   - Tip: 7 failed, 88 passed, 1 skipped in both runs.

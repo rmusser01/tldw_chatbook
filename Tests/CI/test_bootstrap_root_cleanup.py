@@ -17,64 +17,25 @@ from pathlib import Path
 import pytest
 
 _REPO = Path(__file__).resolve().parents[2]
-# A child may make at most about _FORK_HEADROOM more processes than the user had
-# when the test counted: a fork that runs away (a hook that forked before
-# setting its once-flag filled the process table, TASK-42651) then fails at
-# once with EAGAIN (BlockingIOError) instead.
-# Others' new processes (Linux: threads) before the child forks; 16 risked EAGAIN.
-_FORK_HEADROOM = 64
-# Linux reports an unlimited hard limit as RLIM_INFINITY (-1): min() would keep it.
-_CAP_FORKS = """
-import resource
-_hard = resource.getrlimit(resource.RLIMIT_NPROC)[1]
-_soft = {nproc} if _hard == resource.RLIM_INFINITY else min(_hard, {nproc})
-resource.setrlimit(resource.RLIMIT_NPROC, (_soft, _hard))
-"""
-
-
-def _fork_cap() -> str:
-    """The cap a child script starts with, or "" where it cannot be set safely.
-
-    None on Windows (no fork). None in a Linux child PID namespace (a container
-    that shares the host's user namespace): its /proc lists only its own tasks
-    while the kernel counts all of the uid's, so a cap from that count would
-    fail every fork. Runs there have no runaway guard.
-    """
-    if sys.platform == "win32":
-        return ""
-    try:
-        status = Path("/proc/self/status").read_text()
-        if len(status.split("\nNSpid:")[1].split("\n")[0].split()) > 1:
-            return ""
-    except (OSError, IndexError):
-        pass  # no /proc (macOS), or a kernel without NSpid
-    return _CAP_FORKS.format(nproc=_user_task_count() + _FORK_HEADROOM)
-
-
-def _user_task_count() -> int:
-    """What RLIMIT_NPROC counts for this real uid: threads on Linux, else processes."""
-    uid = str(os.getuid())
-    if not Path("/proc/self/task").is_dir():
-        listing = subprocess.run(
-            ["ps", "-axo", "ruid="], capture_output=True, text=True, check=True
-        ).stdout
-        return sum(line.strip() == uid for line in listing.splitlines())
-    count = 0
-    for entry in os.scandir("/proc"):
-        if not entry.name.isdigit():
-            continue
-        try:
-            status = Path(entry.path, "status").read_text()
-            if status.split("\nUid:\t")[1].split("\t")[0] == uid:
-                count += int(status.split("\nThreads:\t")[1].split("\n")[0])
-        except (OSError, IndexError, ValueError):
-            continue  # gone, or a zombie without those lines
-    return count
-
-
+# Every child script starts with a fork budget per lineage: a fork that runs
+# away (a hook that forked before setting its once-flag filled the process
+# table, TASK-42651) then fails at once with EAGAIN instead, at most about
+# 2**_FORK_BUDGET processes in, on any platform or PID namespace. A forked child
+# inherits its parent's count. No param forks more than twice in one lineage
+# (fork-inside-a-fork-window). Only os.fork() is counted, which multiprocessing's
+# fork context calls at call time; subprocess and posix_spawn are not.
+_FORK_BUDGET = 3
 _CHILD = """
-import os, pathlib, signal, sys
-{cap}
+import errno, os, pathlib, signal, sys
+if hasattr(os, "fork"):
+    _real_fork, _forks = os.fork, 0
+    def _budgeted_fork():
+        global _forks
+        if _forks >= {budget}:
+            raise BlockingIOError(errno.EAGAIN, "test fork budget spent")
+        _forks += 1
+        return _real_fork()
+    os.fork = _budgeted_fork
 sys.path.insert(0, {repo!r})
 from Tests.real_profile_guard import remove_sandbox_at_exit
 root = pathlib.Path({root!r})
@@ -257,14 +218,14 @@ def test_owned_root_is_removed(
     root = tmp_path / "tldw_test_config_probe"
     (root / "home").mkdir(parents=True)
     child = _CHILD.format(
-        repo=str(_REPO), root=str(root), cap=_fork_cap(), before=before, then=then
+        repo=str(_REPO), root=str(root), budget=_FORK_BUDGET, before=before, then=then
     )
     finished = subprocess.run(
         [sys.executable, "-c", child], capture_output=True, text=True, timeout=120
     )
     # A SIGTERM still ends the process by that signal, as the default did.
     assert finished.returncode == returncode, finished.stderr
-    assert finished.stdout.strip() == output
+    assert finished.stdout.strip() == output, finished.stderr
     assert not root.exists()
 
 
