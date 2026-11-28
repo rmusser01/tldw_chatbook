@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-28 16:53
-updated_date: 2026-11-28 19:25
+updated_date: 2026-11-28 19:39
 labels:
 - follow-up
 - flake
@@ -108,26 +108,34 @@ The handler runs in every test session, and the test's own comment notes that Ch
 - **Machine crash, caused by this task (2026-11-28, about 18:16 UTC).** The first draft of `fork-inside-a-fork-window` set its once-flag after `os.fork()`. `os.fork()` runs every `before` hook again, this one included, so the hook recursed, and as the recursion unwound each level forked again. The per-user process table filled (about 10,800 processes) and the machine was rebooted. The flag is now set before the fork, with a comment saying why. Each new fork test was first run under `ulimit -u <current + 60>`.
 - **Fork budget** (this replaces an `RLIMIT_NPROC` cap; see below). Every child script starts by wrapping `os.fork` with a per-lineage counter. After `_FORK_BUDGET = 3` calls in one lineage, the wrapper raises `BlockingIOError(EAGAIN, "test fork budget spent")`.
   - A forked child inherits the count, so any runaway tree is bounded at about 2**3 processes, on every platform and in any PID namespace.
-  - No param forks more than twice in one lineage, the maximum being `fork-inside-a-fork-window`. Checked: at a budget of 2 all 11 passed; at 1 only that param failed, with the budget error. 3 is just above that maximum.
+  - No param forks more than twice in one lineage, the maximum being `fork-inside-a-fork-window`. Checked: at a budget of 2 all 10 params passed (the file's eleventh test, `--version`, makes no child script); at 1 only that param failed, with the budget error. 3 is just above that maximum.
   - Only `os.fork()` is counted. `multiprocessing`'s fork context calls it at call time, so it is covered; `subprocess` and `posix_spawn` are not, which the comment says.
   - The test's stdout assertion now also shows the child's stderr, so a spent budget is visible whichever assertion fails.
   - **Proof,** under `ulimit -u <current + 120>`, with the once-flag temporarily set after the fork again: the param failed in 0.43 s with `BlockingIOError: [Errno 35] test fork budget spent`. The user's process count stayed at 502-514, against a baseline of about 505. Reverted and checked with `cmp`; nothing was left running.
   - **Runaway probe:** every process, children included, tried 300 forks. The tree stopped at 8 processes (7 forks), all reaped.
-  - **Why not RLIMIT_NPROC.** Rounds 1 and 2 of the review had capped each child at `RLIMIT_NPROC = <the uid's counted tasks> + _FORK_HEADROOM` (16, then 64), with an `RLIM_INFINITY` fix and a PID-namespace skip. The coordinator found, in a real `ubuntu:24.04` container, that `NSpid:` shows a single pid (it is relative to the procfs's own namespace), so the skip never triggered. The undercount that turns every fork into a false red remained, and counting from inside a namespace cannot be made reliable. That cap and its counting were removed.
+  - **Why not RLIMIT_NPROC.** Rounds 1 and 2 of the review had capped each child at `RLIMIT_NPROC = <the uid's counted tasks> + _FORK_HEADROOM` (16, then 64), with an `RLIM_INFINITY` fix and a PID-namespace skip. The coordinator found, in a real `ubuntu:24.04` container, that `NSpid:` shows a single pid (it is relative to the procfs's own namespace), so the skip never triggered. The container cannot be detected that way. For a non-root uid whose other tasks live outside the container, the undercount still turned every fork into a false red. Root is exempt from `RLIMIT_NPROC`, so in a default `docker run` (root, unlimited hard limit) the cap did nothing. Counting from inside a namespace cannot be made reliable, so that cap and its counting were removed.
 - **Review round 2 (five Minor items).**
   - Items 1 and 2 (the `RLIM_INFINITY` handling and the PID-namespace skip) were done, then superseded by the fork budget above.
   - Item 3: the foreign-handler param, as above.
   - Item 4: the guard's docstring now says that a `KeyboardInterrupt` at any of the hooks' bytecode checks outside the reset can leave the signals blocked, in the child or on the parent's forking thread. The review's `kiparent.py` shows the parent case: the interrupt fires at `unblock_in_parent`'s entry.
   - Item 5: the test file's comment on the guard was rewritten. It now describes the fork budget.
-  - The review's `params2.py` passed all 11 params against the round-2 guard under `ulimit -u <current + 120>`.
+  - The review's `params2.py` passed all 10 params against the round-2 guard under `ulimit -u <current + 120>`.
 - **Authorised serial run** (`-p no:xdist`, so the guard's hooks are installed in the pytest process) of `Tests/Tools/test_remote_session_serve.py`, `Tests/Chunking/test_security.py` and `Tests/Terminal/test_posix_backend.py`:
   - dev 2df861ec7d (a detached scratch worktree, removed afterwards): first run 8 failed, 87 passed, 1 skipped; second run 7 failed, 88 passed, 1 skipped.
   - Tip: 7 failed, 88 passed, 1 skipped in both runs.
   - The 7 are `test_security.py` cases failing with the known local `RecoveryRequired: raw_source_selection_changed`, on both trees.
   - Dev's extra failure in its first run was `test_app_crash_master_close_hangs_up_ordinary_child_but_not_detached_limit` (crash report not written within 8 s, load about 9). Alone it passed 3 of 3 on dev and 3 of 3 on the tip, so it is not a difference between the trees.
-- **Soak**, capped by the new process rules: the original node 400 of 400 at `-n 4` (load 9-10, 816-834 processes).
+- **Soak**, capped by the new process rules: the original node 400 of 400 at `-n 4` on the review-round-1 tree, 0fed76b144 (load 9-10, 816-834 processes). On the final tree, the review's soak of every param in rotation passed 400 of 400 at 4 concurrent (load 7.8, 821-822 processes).
 
-**Checks (final tree).** `Tests/CI` at `-n 4`: 2086 passed, 2 skipped (load 12-14). `Tests/CI/test_bootstrap_root_cleanup.py` and `Tests/test_real_profile_guard.py` at `-n 4`: 76 passed, 2 skipped. `./scripts/preflight.sh` passed. `ruff check` and `ruff format --check` on both files passed. `Tests/lint/ruff_gate.py`: RATCHET OK.
+**Checks (final tree, ea2ec487df plus this docs commit).**
+- On this Mac:
+  - `Tests/CI` at `-n 4`: 2086 passed, 2 skipped (load 7-9).
+  - `Tests/CI/test_bootstrap_root_cleanup.py` and `Tests/test_real_profile_guard.py` at `-n 4`: 76 passed, 2 skipped; the review got the same.
+  - `./scripts/preflight.sh` passed. `ruff check` and `ruff format --check` passed. `Tests/lint/ruff_gate.py`: RATCHET OK.
+- On Linux, run by the coordinator in `ubuntu:24.04` as non-root uid 1001 (Python 3.12.3, hard `RLIMIT_NPROC` unlimited), with ea2ec487df installed through pip:
+  - `Tests/CI/test_bootstrap_root_cleanup.py`: 11 passed serially under `ulimit -u 400`.
+  - `Tests/test_real_profile_guard.py` at `-n 4`: 4 failed, 61 passed, 2 skipped. The failures are the three `test_an_xdist_workers_session_end_refusal_fails_the_run` params and `test_the_incidents_own_dir_fd_writer_cannot_replace_the_profile_file`.
+  - The same 4 fail the same way on dev 2df861ec7d in that container, so this change did not cause them. That file runs in no CI lane, and a follow-up was proposed.
 
 **Files.** `Tests/real_profile_guard.py`, `Tests/CI/test_bootstrap_root_cleanup.py`, `backlog/docs/lessons-testing-evidence.md` (new entry).
 <!-- SECTION:NOTES:END -->

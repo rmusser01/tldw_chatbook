@@ -23,7 +23,8 @@ _REPO = Path(__file__).resolve().parents[2]
 # 2**_FORK_BUDGET processes in, on any platform or PID namespace. A forked child
 # inherits its parent's count. No param forks more than twice in one lineage
 # (fork-inside-a-fork-window). Only os.fork() is counted, which multiprocessing's
-# fork context calls at call time; subprocess and posix_spawn are not.
+# fork context calls at call time; subprocess, posix_spawn, os.forkpty and
+# C-level forks are not.
 _FORK_BUDGET = 3
 _CHILD = """
 import errno, os, pathlib, signal, sys
