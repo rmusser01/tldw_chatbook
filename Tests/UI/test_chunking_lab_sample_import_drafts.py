@@ -401,7 +401,10 @@ async def test_pending_sample_read_retains_unrelated_recipe_edit(
             try:
                 await entered_read(entered)
                 maximum.focus()
-                await pilot.press("home", "shift+end", *"512")
+                # Textual handles navigation on the app pump and digits on
+                # the input pump. Let the selection settle before typing.
+                await pilot.press("home", "shift+end")
+                await pilot.press(*"512")
                 await pilot.pause()
                 await screen.drain_edits()
                 await settle_lab(host, screen, pilot)
