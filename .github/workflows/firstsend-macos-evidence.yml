@@ -14,14 +14,13 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 40
     env:
-      FIRSTSEND_ARTIFACTS: ${{ runner.temp }}/firstsend-artifacts
       PYTHONDONTWRITEBYTECODE: '1'
       PIP_DISABLE_PIP_VERSION_CHECK: '1'
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 3
+          fetch-depth: 12
           persist-credentials: false
 
       - uses: actions/setup-python@v5
@@ -31,10 +30,12 @@ jobs:
       - name: Stage harness and exact source pair
         run: |
           set -euo pipefail
+          FIRSTSEND_ARTIFACTS="$RUNNER_TEMP/firstsend-artifacts"
           mkdir -p "$FIRSTSEND_ARTIFACTS"
+          printf 'FIRSTSEND_ARTIFACTS=%s\n' "$FIRSTSEND_ARTIFACTS" >> "$GITHUB_ENV"
           cp -R harness "$RUNNER_TEMP/firstsend-kit"
-          test "$(git rev-parse HEAD^)" = 13f7aaec1e14ed07921acd7c7c88d046e1069f07
-          test "$(git rev-parse HEAD^^)" = 4155fb8298c63107cb0df99b79b963dbbd05e2a3
+          git merge-base --is-ancestor 13f7aaec1e14ed07921acd7c7c88d046e1069f07 HEAD
+          test "$(git rev-parse 13f7aaec1e14ed07921acd7c7c88d046e1069f07^)" = 4155fb8298c63107cb0df99b79b963dbbd05e2a3
           git switch -c codex/console-postsave-current31 13f7aaec1e14ed07921acd7c7c88d046e1069f07
           test -z "$(git status --porcelain)"
           printf 'FIRSTSEND_SOURCE=%s\n' "$(pwd -P)" >> "$GITHUB_ENV"
@@ -57,6 +58,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: firstsend-macos-evidence
-          path: ${{ env.FIRSTSEND_ARTIFACTS }}
+          path: ${{ runner.temp }}/firstsend-artifacts
           if-no-files-found: warn
           retention-days: 30
