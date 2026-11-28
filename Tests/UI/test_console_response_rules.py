@@ -793,9 +793,24 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                 assert region is not None
                 region.sync_recovery()
                 assert not expired.is_set(), watch.failure("passive recovery")
+                draft_callback_returned = asyncio.Event()
+                if deferral == "maintenance":
+                    draft_refresh = case.console._console_draft_spend_refresh
+                    draft_refresh.schedule()
+                    timer = draft_refresh.timer
+                    assert timer is not None
+                    timer.pause()
+                    try:
+                        await timer._tick(next_timer=time.monotonic(), count=0)
+                        case.console.call_next(draft_callback_returned.set)
+                    finally:
+                        timer.stop()
                 stop.press()
                 await _until(
-                    lambda: case.rules.state(case.session_id).phase == "idle"
+                    lambda: (
+                        deferral != "maintenance" or draft_callback_returned.is_set()
+                    )
+                    and case.rules.state(case.session_id).phase == "idle"
                     and not (
                         _run_visible(case.console)
                         and "Testing rule" in _run_text(case.console)
@@ -804,6 +819,9 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                     timeout=1,
                 )
                 assert not expired.is_set(), watch.failure("Stop")
+                if deferral == "maintenance":
+                    assert draft_refresh.timer is None
+                    assert case.console._console_control_bar_replay_whole_sync
                 assert not release.is_set()
                 assert holder.is_alive()
                 assert not _run_visible(case.console) or (

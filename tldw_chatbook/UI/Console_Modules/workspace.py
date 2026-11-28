@@ -599,9 +599,8 @@ class ConsoleTickWorkspaceBuilds:
     syncs use live reads (TASK-36511.2). Each outer scope clears its build
     cache on exit, including failure.
 
-    A matching run-tick build can carry once into the next tick while at most
-    0.4 seconds old. A build outside the run tick clears the carry. Changes
-    outside the carry key may need one additional 0.2-second tick to repaint.
+    A matching build can carry once to the next run tick at most 0.4 seconds later.
+    An outside build clears it. Omitted inputs can repaint one 0.2-second tick later.
     """
 
     __slots__ = (

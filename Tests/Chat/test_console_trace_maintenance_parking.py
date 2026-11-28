@@ -421,11 +421,28 @@ async def test_a_signal_woken_real_pass_opens_only_its_write_transaction(
     monkeypatch.setattr(LegacyTraceMaintenance, "run_batch", bracketed_run_batch)
     monkeypatch.setattr(db, "transaction", recording_transaction)
     runtime = _fast_runtime(monkeypatch)
+    # Tag the real parked-sleep call without changing its numeric delay.
+    park_delay = float(str(runtime_module.LEGACY_TRACE_MAINTENANCE_PARK_POLL_SECONDS))
+    monkeypatch.setattr(
+        runtime_module, "LEGACY_TRACE_MAINTENANCE_PARK_POLL_SECONDS", park_delay
+    )
+    parked = asyncio.Event()
+    fast_sleep = runtime_module.asyncio.sleep
+
+    async def observe_park(delay, *args, **kwargs):
+        if (
+            delay is park_delay
+            and asyncio.current_task() is runtime._legacy_trace_maintenance_task
+        ):
+            parked.set()
+        await fast_sleep(delay, *args, **kwargs)
+
+    monkeypatch.setattr(runtime_module.asyncio, "sleep", observe_park)
 
     runtime._schedule_legacy_trace_maintenance(db, lambda: LegacyTraceNormalizer(db))
     try:
         await _until(lambda: LegacyTraceNormalizer(db).read_calls(first))
-        await _until_parked(passes)
+        await _until(parked.is_set, timeout=10.0)
         woken_at = len(passes)
         second = _message(db, conversation_id, "answer-1")
         _append_exchange(db, second, 1)

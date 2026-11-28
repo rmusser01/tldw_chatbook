@@ -1314,7 +1314,6 @@ async def test_active_edit_cancels_an_already_armed_idle_cost_timer(monkeypatch)
 async def test_keyboard_send_cancels_idle_refresh_before_run_starts(monkeypatch):
     gateway = _AnthropicReadinessWaitingGateway()
     app = _build_test_app()
-    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)

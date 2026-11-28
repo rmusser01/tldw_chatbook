@@ -1044,11 +1044,14 @@ async def test_refused_chat_settings_test_blocks_console_until_one_retry(
 async def test_shared_evidence_change_refreshes_the_console_once(request, monkeypatch):
     """TASK-33005.2 (AC#6): a result settled elsewhere reaches the Console
     through the idle poll's existing gate, in exactly one refresh."""
+    from contextlib import ExitStack
+
     from Tests.UI.test_console_provider_apply_defaults_flow import (
         _ConsoleFlowHarness,
     )
     from Tests.UI.test_console_switcher_local_probe import _fresh_readiness_display
     from Tests.UI.test_destination_shells import _wait_for_selector
+    from tldw_chatbook import config
     from tldw_chatbook.Chat.provider_endpoint_contract import (
         canonical_connection_identity,
     )
@@ -1057,55 +1060,86 @@ async def test_shared_evidence_change_refreshes_the_console_once(request, monkey
         provider_connection_evidence,
     )
 
+    from tldw_chatbook.UI.Console_Modules.config_sync import run_console_presentation_sync
+
     harness = _ConsoleFlowHarness(_persisted_console_app())
     async with harness.run_test(size=(211, 44)) as pilot:
         console = harness.screen
-        # A mounted summary can still owe its checked readiness display.
-        # Warm the real projection before measuring the evidence poll.
-        async with asyncio.timeout(2.0):
-            await _wait_for_selector(console, pilot, "#console-settings-summary")
-            await _fresh_readiness_display(console, pilot)
-        console._stop_console_credential_poll_timer()
-        console._poll_console_credential_readiness()
         refreshes = []
         real_sync = console._sync_console_settings_summary
-        console._sync_console_settings_summary = lambda: (
-            refreshes.append(1),
-            real_sync(),
-        )
-
-        snapshot = console._console_credential_snapshot
-        console._console_sync_maintenance_close_admission()
         store = ProviderTestEvidenceStore(lambda: harness)
-        store.settle(
-            store.begin(
-                ProviderDraftIdentity(
-                    provider_key="llama_cpp",
-                    connection_identity=canonical_connection_identity(
-                        "llama_cpp", "http://127.0.0.1:9099"
-                    ),
-                    credential_source="none",
-                    credential_revision=0,
-                    draft_generation=0,
+
+        def exercise_evidence_poll():
+            if not (
+                console._console_attach_reconciled
+                and console.is_attached
+                and console.is_current
+            ):
+                return False
+            with ExitStack() as acquired:
+                for lock in (
+                    config._settings_rebuild_lock(),
+                    config._config_file_lock(),
+                ):
+                    if not lock.acquire(blocking=False):
+                        return False
+                    acquired.callback(lock.release)
+                if not run_console_presentation_sync(console, lambda: None):
+                    return False
+                console._stop_console_credential_poll_timer()
+                console._poll_console_credential_readiness()
+                snapshot = console._console_credential_snapshot
+                pre_gate = console._console_credential_pre_gate
+                if (
+                    snapshot is None
+                    or snapshot[2] != provider_connection_evidence(harness).version
+                    or pre_gate is None
+                    or pre_gate != console._console_credential_pre_gate_seen
+                ):
+                    return False
+
+                console._sync_console_settings_summary = lambda: (
+                    refreshes.append(1),
+                    real_sync(),
                 )
-            ),
-            ProviderProbeResult("unreachable", (), "timeout"),
-        )
-        for _ in range(3):
-            console._poll_console_credential_readiness()
-        assert not refreshes
-        assert console._console_credential_snapshot == snapshot
-        console._console_sync_maintenance_resume()
-        for _ in range(3):
-            console._poll_console_credential_readiness()
-        assert len(refreshes) == 1  # Counted before any other tick can run.
+                console._console_sync_maintenance_close_admission()
+                try:
+                    store.settle(
+                        store.begin(
+                            ProviderDraftIdentity(
+                                provider_key="llama_cpp",
+                                connection_identity=canonical_connection_identity(
+                                    "llama_cpp", "http://127.0.0.1:9099"
+                                ),
+                                credential_source="none",
+                                credential_revision=0,
+                                draft_generation=0,
+                            )
+                        ),
+                        ProviderProbeResult("unreachable", (), "timeout"),
+                    )
+                    for _ in range(3):
+                        console._poll_console_credential_readiness()
+                    assert not refreshes
+                    assert console._console_credential_snapshot == snapshot
+                finally:
+                    console._console_sync_maintenance_resume()
+                for _ in range(3):
+                    console._poll_console_credential_readiness()
+                assert len(refreshes) == 1  # Counted before any other tick can run.
+                return True
+
+        # Only the untouched setup can wait. The evidence is settled once and
+        # the original pause/resume burst runs under the same native state.
+        async with asyncio.timeout(2.0):
+            await _wait_for_selector(console, pilot, "#console-settings-summary")
+            await _fresh_readiness_display(console, pilot, exercise_evidence_poll)
 
         await pilot.pause()
         assert _rail_text(console, "#console-settings-readiness-row") == (
             "Not ready · timed out"
         )
 
-        from tldw_chatbook import config
         from tldw_chatbook.Backup_Recovery import storage_admission
 
         identity = console._active_console_settings_readiness()[1].connection
