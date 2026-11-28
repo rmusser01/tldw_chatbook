@@ -20,6 +20,7 @@ TEST_JOBS = (
     "architecture-guards",
     "pr-fast-lane-arch",
     "recovered-suites",
+    "pr-fast-lane-mcp-workbench",
 )
 ROUTES = [
     ("derived-artifacts.yml", job, "test", "ubuntu-latest") for job in TEST_JOBS

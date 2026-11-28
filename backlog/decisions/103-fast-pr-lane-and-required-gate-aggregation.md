@@ -158,11 +158,13 @@ cron entry on `dev`.
   Fast Lane's admission-sensitive half (two jobs since TASK-35575, three since Roleplay frame B2b), the Dreams
   tracking tests, the Dreams and Guardian boundary contracts, the
   Architecture guard contracts, the architecture-review tests, the
-  recovered suites and native plugin recovery UI are jobs of their own
+  recovered suites, the MCP workbench files and native plugin recovery UI are
+  jobs of their own
   (TASK-34916, TASK-34929, TASK-34986, TASK-38989, PR #3399, owner decision
-  2026-11-06, TASK-41217, owner decision 2026-11-18), so an
+  2026-11-06, TASK-38716, owner decision 2026-11-28, TASK-41217, owner decision
+  2026-11-18), so an
   ordinary unlabeled,
-  non-GGUF PR now requests 36 test runners in parallel, 37 with perf-guard
+  non-GGUF PR now requests 37 test runners in parallel, 38 with perf-guard
   (see the dated notes below).
 - That figure is not a global maximum. The two path-scoped GGUF
   evidence matrices can add six jobs, and a synchronize event on a PR carrying
@@ -410,7 +412,7 @@ Even ideal balance at 27 shards has a lower-bound forecast of 1027.70 seconds un
 
 ## Amendment (2026-10-28, TASK-37266..37268): enroll native publication and export controls
 
-Current UI lane: 42 shards. The current total is 57 eligible test jobs per PR
+Current UI lane: 42 shards. The current total is 58 eligible test jobs per PR
 (2026-11-02: includes the third admission-sensitive lane; 2026-11-06: and the
 Architecture guard contracts job, TASK-38989, and the architecture-review
 tests' own job, `pr-fast-lane-arch`, split out of the PR Fast Lane at its
@@ -418,7 +420,8 @@ tests' own job, `pr-fast-lane-arch`, split out of the PR Fast Lane at its
 shards, below; 2026-11-13: and two more Console P0 profile jobs, TASK-40724;
 2026-11-15: and two more UI shards and native plugin recovery UI, below;
 2026-11-17: and four more UI shards, below; 2026-11-24: and a fourth Console
-P0 profile job, TASK-42533, below).
+P0 profile job, TASK-42533, below; 2026-11-28: and the MCP workbench files'
+own job, `pr-fast-lane-mcp-workbench`, TASK-38716, below).
 As of this amendment, the `max-parallel: 17` ceiling (18 since 2026-11-07,
 19 since 2026-11-15, 21 since 2026-11-17, below), minimal dependencies, serial execution, 20-minute job cap,
 180-second test timeout and fail-closed required aggregation remain unchanged.
@@ -688,6 +691,25 @@ serial job, and its cap rises from 20 to 30 min. Over 24 PR runs on
 2026-11-18/19, 19 took 16 min or more and 5 hit the old 20-min cap, 4 of them
 with no test failing. No runner is added.
 
+2026-11-28 (TASK-42779, owner decision 2026-11-28, "Move the file"):
+`Tests/Chat/test_workflow_planning_native.py` (27 tests, 315 s of the
+lane's 1,583 s at the median hosted runner) runs in the Console P0 gate's
+`admission-sensitive 2` profile, as its first target, instead of in
+`pr-fast-lane-admission-4`: same flags, same bootstrap profile, no cap
+changes, no job or runner added or removed, so the counts above stand.
+Lane 4 had grown from 9 to 21 targets in ten days and finished 97 times
+from 2026-11-26 at a median 25.4 / p90 32.2 / max 34.9 of its 35 min; PR
+#3777 then took `Tests/UI/test_console_right_rail.py` from 37 to 70 tests
+(2026-11-27), and timing the 82 runner speeds measured on other branches
+against that list gave median 27.7 / p90 32.4 / slowest 38.6, one job over
+the cap. Without the file: 22.5 / 26.2 / 31.2, 3.8 min under. The profile
+it joins ran median 17.2 / slowest 20.2 over 89 jobs and, timed with the
+file, ends median 22.3 / slowest 26.3 (8.7 min under). TASK-35575's margin
+for the admission-sensitive jobs (the slowest run at least 8 min under the
+cap) is not restored for lane 4 by this move; the owner's alternatives were
+a cap of 40 or 44 and a split (+1 runner), costed in
+`backlog/docs/ci-lane-headroom-2026-11-28.md`.
+
 ## Amendment (2026-11-24, TASK-42533): a fourth Console P0 profile
 
 Owner decision of 2026-11-24, "Split, +1 runner (Recommended)". Over 126 PR
@@ -719,3 +741,46 @@ and a fold would put that risk back on the admission tests.
 
 One more job: 57 eligible test jobs per PR, 36 concurrent test runners, 37
 counting perf-guard, and about 1.5 runner-minutes of setup more per full run.
+
+2026-11-28 (TASK-42719, owner decision 2026-11-28): `dreams-tracking` keeps its single
+serial job, and its cap rises from 20 to 30 min. From 2026-11-25 to 2026-11-28 it
+finished 107 times at a median of 17.1 and a max of 19.9 min, and 7 of 114 hit the
+old cap with no test failing; the same tests took up to 1.6 times as long on the
+slowest hosted runner as on the fastest. No runner is added.
+
+## Amendment (2026-11-28, TASK-38716, TASK-42413): a job for the MCP workbench files, and 40 minutes for the recovered suites
+
+Owner decision of 2026-11-28, "Apply my picks": the recommendations of PR 3804
+for the two jobs that were being cancelled at their caps. From 2026-11-26 the PR
+Fast Lane was cancelled at its 35-minute cap in 11 of 86 jobs and the recovered
+suites at their 30-minute cap in 6 of 89, each read from the job's annotation.
+Five of the eleven PR Fast Lane cancellations were one branch's hang (PR 3345,
+silent at 98% until the cap); the rest were slow hosted runners. Over 81 jobs
+the runner speed ran 0.66 to 1.12 of a reference complete log (about 1.7 times;
+AWS-hosted jobs fastest), so each cut job, scaled from the files it had
+finished, would have needed 35.1 to 38.5 minutes.
+
+`Tests/UI/test_mcp_workbench.py` and `Tests/UI/test_mcp_tools_mode.py` were 605
+of the PR Fast Lane's 1,957 s of tests (31%; the first alone 555 s for 357
+tests) and ran in no other PR lane. They now run in `pr-fast-lane-mcp-workbench`
+("PR Fast Lane (MCP workbench)", 20-min cap, `--timeout=180`), moved unchanged
+with the same install line; the required check `needs` it and fails when it is
+not `success`. The PR Fast Lane keeps its 35-minute cap. Timed against the list
+before the move, the 81 measured runner speeds gave the lane median 31.3 / p90
+34.6 / slowest 38.5 min; without the pair they give 22.1 / 24.4 / 27.2, which is
+7.8 min under the cap, and the new job takes about 13 of its 20 min at the
+slowest runner. One more job: 58 eligible test jobs per PR, 37 concurrent test
+runners, 38 counting perf-guard, and about 1.4 runner-minutes of setup more per
+full run, against the account's ceiling of forty.
+
+`recovered-suites` keeps its single serial job and its cap rises from 30 to 40
+min. Round 27 added twelve targets on 2026-11-27 (2,024 to 2,274 tests, 22% of
+the test time), and all six cancellations ran that list, cut at 97 to 100% of
+their tests with none hung. Timed against today's list, the 89 measured runner
+speeds give median 27.4 / p90 30.8 / slowest 33.7 min, 16 of 89 at 30 or more,
+so 40 leaves 6.3 min at the slowest runner seen. No runner is added. 40 stays
+under the 45-minute busy-job deadline of the self-hosted runner controller
+(ADR-359). Neither job is ever the last lane of a run (a UI shard was, in 333 of
+335 full-run attempts), so the longer cap and the new job delay no required
+check. Measurements, the per-cancellation list and the options not taken are in
+TASK-38716 and TASK-42413.

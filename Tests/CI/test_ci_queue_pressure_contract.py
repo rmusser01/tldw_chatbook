@@ -78,8 +78,8 @@ FAST_LANE_TARGETS = (
     "Tests/DB/test_automatic_wake_attempts.py",
     "Tests/Model_Artifacts/test_operation_leases.py",
     "Tests/Model_Artifacts/test_operation_leases_process.py",
-    "Tests/UI/test_mcp_workbench.py",
-    "Tests/UI/test_mcp_tools_mode.py",
+    # The two MCP workbench files left for pr-fast-lane-mcp-workbench (TASK-38716,
+    # owner decision 2026-11-28): they were 31% of this lane's test time.
     "Tests/Widgets/test_detach_safe_text_area.py",
     "Tests/Web_Server/test_served_tab_isolation.py",
     "Tests/STT/test_parakeet_diagnostics.py",
@@ -763,6 +763,14 @@ ARCH_REVIEW_TARGETS = (
     # TASK-41136 (bootstrap_profile); whole file, no deselects (TASK-40413).
     "Tests/Chat/test_console_provider_gateway.py",
 )
+#: Owner decision (2026-11-28, TASK-38716): the two MCP workbench files, moved
+#: out of pr-fast-lane (where they were 31% of its test time) into their own
+#: job. Both keep the collection-time profile (Tests/conftest.py's bootstrap
+#: list), and nothing follows them in the job.
+MCP_WORKBENCH_TARGETS = (
+    "Tests/UI/test_mcp_workbench.py",
+    "Tests/UI/test_mcp_tools_mode.py",
+)
 #: Owner decision (2026-11-06): suites runnable again after being red in no PR
 #: lane, in their own job, serial under --storage-lease-guard. Sandboxed suites
 #: first, then the bootstrap_profile ones (TASK-32873), except a sandboxed suite
@@ -1379,8 +1387,10 @@ ADMISSION_4_TARGETS = (
     "Tests/Agents/test_run_log_stats_slice_runtime_tools.py",
     "Tests/Agents/test_run_log_survivor_lifetime.py",
     "Tests/Chat/test_fleet_budget_boundary_probes.py",
-    # TASK-41314: native workflow planning custody (27 tests, 8.6 min serially).
-    "Tests/Chat/test_workflow_planning_native.py",
+    # TASK-41314's native workflow planning custody file (27 tests, 8.6 min
+    # serially) runs in console-p0-gate's admission-sensitive 2 profile since
+    # TASK-42779 (owner decision 2026-11-28): this lane's slowest runner draw
+    # needed 38.6 of its 35 min with it.
     # TASK-41315 / TASK-41316: a Console agent turn's original storage and MCP
     # sources, and the first-send survivor (6.0 min serially for the two).
     "Tests/Chat/test_console_agent_storage_sources.py",
@@ -1544,6 +1554,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         "architecture-guards",
         "pr-fast-lane-arch",
         "recovered-suites",
+        "pr-fast-lane-mcp-workbench",
     ]
     assert required["if"] == "${{ always() }}"
     assert not required.get("continue-on-error", False)
@@ -1580,6 +1591,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         ("architecture-guards", "Require successful Architecture guard contracts"),
         ("pr-fast-lane-arch", "Require successful PR fast lane (architecture-review tests)"),
         ("recovered-suites", "Require successful PR lane (recovered suites)"),
+        ("pr-fast-lane-mcp-workbench", "Require successful PR fast lane (MCP workbench)"),
     ):
         verdict = _named_step(required, step_name)
         assert not verdict.get("continue-on-error", False)
@@ -1599,6 +1611,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         "architecture-guards",
         "pr-fast-lane-arch",
         "recovered-suites",
+        "pr-fast-lane-mcp-workbench",
     ):
         job = workflow["jobs"][job_name]
         assert not job.get("continue-on-error", False)
@@ -2111,6 +2124,28 @@ def test_console_p0_gate_runs_four_serial_minimal_python_312_profiles() -> None:
     )
 
 
+def test_workflow_planning_file_runs_once_first_in_console_p0_admission_2() -> None:
+    """TASK-42779: the file left admission lane 4 for Console P0, and runs nowhere else."""
+    target = "Tests/Chat/test_workflow_planning_native.py"
+    jobs = _workflow("derived-artifacts.yml")["jobs"]
+    owners = [
+        (job_name, step["name"])
+        for job_name, job in jobs.items()
+        for step in job.get("steps", [])
+        if str(step.get("run", "")).lstrip().startswith("pytest")
+        and target in _pytest_targets(step["run"])
+    ]
+    assert owners == [
+        ("console-p0-gate", "Run the admission-sensitive 2 Console P0 regression tests")
+    ]
+    step = _named_step(
+        jobs["console-p0-gate"],
+        "Run the admission-sensitive 2 Console P0 regression tests",
+    )
+    assert _pytest_targets(step["run"])[0] == target
+    assert target not in ADMISSION_4_TARGETS
+
+
 def test_architecture_review_lane_is_one_serial_minimal_python_312_job() -> None:
     """The architecture-review tests run in their own bounded job, once."""
     workflow = _workflow("derived-artifacts.yml")
@@ -2138,6 +2173,45 @@ def test_architecture_review_lane_is_one_serial_minimal_python_312_job() -> None
     assert not set(ARCH_REVIEW_TARGETS) & set(FAST_LANE_TARGETS)
 
 
+def test_mcp_workbench_lane_is_one_serial_minimal_python_312_job() -> None:
+    """Owner decision (2026-11-28, TASK-38716): the MCP workbench files' own job.
+
+    They were 31% of pr-fast-lane's test time, and that job was being
+    cancelled at its 35-minute cap (11 of 86 jobs from 2026-11-26). Same
+    targets, order and flags they had there, one invocation, the PR Fast
+    Lane's install line, and in no other lane.
+    """
+    workflow = _workflow("derived-artifacts.yml")
+    job = workflow["jobs"]["pr-fast-lane-mcp-workbench"]
+
+    assert job["name"] == "PR Fast Lane (MCP workbench)"
+    assert job["needs"] == ["preflight"]
+    assert job["if"] == LANES
+    assert job["runs-on"] == PR_TEST_RUNNER
+    # About 13 of 20 min at the slowest of 81 measured runner speeds (setup and
+    # collection 1.5 min, 605 s of tests times 1.12).
+    assert job["timeout-minutes"] == 20
+    assert "strategy" not in job
+    assert len(job["steps"]) == 4
+    install = _named_step(job, "Install fast-lane dependencies")["run"]
+    assert shlex.split(install) == shlex.split(
+        _named_step(workflow["jobs"]["pr-fast-lane"], "Install fast-lane dependencies")["run"]
+    )
+    step = _named_step(job, "Run the MCP workbench tests")
+    assert "if" not in step
+    assert _pytest_targets(step["run"]) == MCP_WORKBENCH_TARGETS
+    assert tuple(shlex.split(step["run"].replace("\\\n", " "), comments=True)) == (
+        "pytest",
+        *MCP_WORKBENCH_TARGETS,
+        "--timeout=180",
+        "--tb=short",
+    )
+    # Moved, not copied: pr-fast-lane no longer runs them.
+    assert not set(MCP_WORKBENCH_TARGETS) & set(FAST_LANE_TARGETS)
+    fast_run = _named_step(workflow["jobs"]["pr-fast-lane"], "Run fast PR contract")["run"]
+    assert not set(MCP_WORKBENCH_TARGETS) & set(_pytest_targets(fast_run))
+
+
 def test_recovered_suites_lane_is_one_serial_guarded_minimal_python_312_job() -> None:
     """Owner decision (2026-11-06): the recovered suites' own bounded job.
 
@@ -2153,7 +2227,11 @@ def test_recovered_suites_lane_is_one_serial_guarded_minimal_python_312_job() ->
     assert job["if"] == LANES
     assert job["runs-on"] == PR_TEST_RUNNER
     # Owner decision (2026-11-19): raised from 20 (runs took 16.5-19 min of pytest).
-    assert job["timeout-minutes"] == 30
+    # Owner decision (2026-11-28, TASK-42413): raised from 30. Round 27's twelve
+    # targets took the list from 2,024 to 2,274 tests; on that list the slowest
+    # of 89 measured runner speeds needs 33.7 min. 40 stays under the 45-minute
+    # busy-job deadline of the self-hosted runner controller (ADR-359).
+    assert job["timeout-minutes"] == 40
     assert "strategy" not in job
     assert len(job["steps"]) == 4
     setup = next(
@@ -2357,7 +2435,9 @@ def test_dreams_tracking_lane_is_one_serial_minimal_python_312_job() -> None:
     assert job["name"] == "Dreams tracking tests and unlaned riders"
     assert job["if"] == LANES
     assert job["runs-on"] == PR_TEST_RUNNER
-    assert job["timeout-minutes"] == 20
+    # TASK-42719 (owner decision 2026-11-28): raised from 20; the slowest hosted
+    # runner needed about 21 min of the same tests.
+    assert job["timeout-minutes"] == 30
     assert "strategy" not in job
     assert len(job["steps"]) == 4
     setup = next(
@@ -2741,6 +2821,9 @@ def test_required_aggregation_contract_rejects_a_dropped_admission_lane(lane: st
         ("pr-fast-lane-arch", None),
         ("pr-fast-lane-arch", "Run the architecture-review tests"),
         ("derived-artifacts", "Require successful PR fast lane (architecture-review tests)"),
+        ("pr-fast-lane-mcp-workbench", None),
+        ("pr-fast-lane-mcp-workbench", "Run the MCP workbench tests"),
+        ("derived-artifacts", "Require successful PR fast lane (MCP workbench)"),
         ("dreams-tracking", None),
         ("dreams-tracking", "Run the Dreams tracking tests and unlaned riders"),
         ("derived-artifacts", "Require successful Dreams tracking tests and unlaned riders"),
