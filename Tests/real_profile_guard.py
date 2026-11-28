@@ -451,7 +451,19 @@ def remove_sandbox_at_exit(root: Path) -> None:
     dies of the same signal, as before. ``SIGKILL`` and ``os._exit`` cannot be
     caught. A fork child inherits both but owns no root, so only the
     registering process removes it (terminating a fork child must not delete
-    its parent's live sandbox).
+    its parent's live sandbox), and the child gets the default disposition
+    back at fork (TASK-42651): Python runs a handler only between bytecodes,
+    so an inherited one let a SIGTERM that landed just before a blocking call
+    such as ``time.sleep`` wait that call out, where the default kills at once.
+    The signals stay blocked from just before the fork until that reset: one
+    that landed earlier tripped the inherited handler and was dropped
+    (CPython clears pending signals in a fork child). A held signal is
+    delivered at the unblock, by the default in the child and to this handler
+    in the parent. The child unblocks even if its reset raises, except when a
+    ``KeyboardInterrupt`` from a pending ``SIGINT`` fires at one of these hooks'
+    own bytecode checks outside the reset, which Python cannot guard against;
+    then the signals stay blocked, in the child (exec included) or on the
+    parent's forking thread.
 
     Args:
         root: The sandbox root this process created and owns.
@@ -469,12 +481,46 @@ def remove_sandbox_at_exit(root: Path) -> None:
         signal.signal(signum, signal.SIG_DFL)
         os.kill(os.getpid(), signum)
 
-    for name in ("SIGTERM", "SIGHUP"):
-        sig = getattr(signal, name, None)
+    handled = [getattr(signal, n) for n in ("SIGTERM", "SIGHUP") if hasattr(signal, n)]
+    for sig in handled:
         # Leave a handler someone else installed; signal.signal raises
         # ValueError off the main thread.
-        if sig is not None and signal.getsignal(sig) is signal.SIG_DFL:
+        if signal.getsignal(sig) is signal.SIG_DFL:
             try:
                 signal.signal(sig, remove_then_die)
             except ValueError:
                 pass
+
+    # The mask is per thread: the hooks run on the forking thread, which is the
+    # child's only thread. Only signals a ``before`` blocked are unblocked. Each
+    # thread keeps a stack, because a hook can fork again: the parent closes
+    # its innermost window, a child (in every window at once) closes them all.
+    fork = threading.local()
+
+    def windows() -> list[set[signal.Signals]]:
+        return vars(fork).setdefault("windows", [])
+
+    def block_across_fork() -> None:
+        ours = {sig for sig in handled if signal.getsignal(sig) is remove_then_die}
+        windows().append(ours - signal.pthread_sigmask(signal.SIG_BLOCK, ours))
+
+    def unblock_in_parent() -> None:
+        stack = windows()
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, stack.pop() if stack else ())
+
+    def default_in_fork_child() -> None:
+        try:
+            for sig in handled:
+                if signal.getsignal(sig) is remove_then_die:
+                    signal.signal(sig, signal.SIG_DFL)
+        finally:
+            stack = windows()
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, set().union(*stack))
+            stack.clear()
+
+    if hasattr(os, "register_at_fork"):
+        os.register_at_fork(
+            before=block_across_fork,
+            after_in_parent=unblock_in_parent,
+            after_in_child=default_in_fork_child,
+        )
