@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-28 16:53
-updated_date: 2026-11-28 17:26
+updated_date: 2026-11-28 17:44
 labels:
 - follow-up
 - flake
@@ -32,6 +32,7 @@ The handler runs in every test session, and the test's own comment notes that Ch
 - [x] #1 The race is named with evidence (a forced-delay or load reproduction), and the notes say whether the inherited handler affects real test sessions or only this test
 - [x] #2 It is fixed where it lives, and the test still asserts that a terminated fork child ends by SIGTERM while the parent's root is kept
 - [x] #3 A soak under load passes where the unfixed version fails at a measured rate
+- [x] #4 A SIGTERM or SIGHUP sent to a fork child before its at-fork reset runs still kills it (the signals stay blocked across fork in a process that holds the guard's handler, and are unblocked after the reset)
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -41,6 +42,7 @@ The handler runs in every test session, and the test's own comment notes that Ch
 2. Name the race from the reproduction and say which real sessions inherit the handler.
 3. Fix it in `Tests/real_profile_guard.py` if the inherited handler is the cause; keep the test's `child=-15 kept=True` assertion.
 4. Soak the unfixed and fixed trees at the same load; run `Tests/CI` at `-n 4` and preflight.
+5. (AC#4, added 2026-11-28 17:31) Block the guard's signals across fork in `before`, unblock them in `after_in_parent` and after the reset in `after_in_child`; pin a signal sent in the fork window, on both sides, with deterministic tests; re-measure the fork-window probe and rerun the soak and checks.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -53,7 +55,7 @@ The handler runs in every test session, and the test's own comment notes that Ch
 - Other candidates:
   - `ready.set()` returning early: ruled out. `Event.wait` cannot return before the child has released the condition's lock.
   - The handler's `remove()`: ruled out. It is a no-op in a child.
-  - The window around fork: real, but not this test's race, because `ready` orders the SIGTERM after the child is running Python. With `start(); terminate()` at once, 79 of 300 children survived the unfixed guard, 12 of 300 the fixed one, and 0 of 300 with no handler. Listed as a follow-up.
+  - The window around fork: real, but not this test's race, because `ready` orders the SIGTERM after the child is running Python. Fixed under AC#4 below.
 
 **Real sessions.** The root conftest installs the handler in a process that owns its root and is not an xdist worker: a serial session or the xdist controller. `Tests/UI/conftest.py` does the same for runs rooted at `Tests/UI`. So in every `-p no:xdist` run (the UI lane, the recovered and admission-sensitive suites, local serial runs), the fork children that tests make inherit it. xdist workers do not install it. Chunking's `ebook_chapters` (`_run_finditer_process`: a fork context, then `terminate()` and `join(1)`) is one such caller. The fix covers every fork child, because it acts where the handler is inherited. It does not cover spawn children between fork and exec (TASK-42470), which run no at-fork hook. The app's own `install_termination_handlers` has the same inheritance and is not changed here (follow-up).
 
@@ -63,6 +65,36 @@ The handler runs in every test session, and the test's own comment notes that Ch
 - Unfixed: 3 of 40 failed at `-n 4` (load 6-12), 2 of 200 and 17 of 1000 at `-n 8` (load 9-11), and 8 of 1000 at `-n 16` (load 11-13).
 - Fixed: 1000 of 1000 and 3000 of 3000 passed at `-n 8` (load 9-12), and 1000 of 1000 at `-n 16` (load 12-13).
 - The final tree, with the new pin: 2000 of 2000 at `-n 8` (load 8-13) and 1000 of 1000 at `-n 16` (load 13-14).
+
+**The window around fork (AC#4, added at the coordinator's request).**
+- **Cause.** A SIGTERM sent to a fork child before its at-fork reset ran tripped the inherited C handler and was dropped. CPython clears a fork child's pending Python signals (`_PySignal_AfterFork`) before the at-fork hooks run, and once the reset has run, a flag still set for SIGTERM is skipped because the handler is now `SIG_DFL`.
+- **Fix.** The guard's at-fork hooks now hold its signals across the fork:
+  - `before` blocks every handled signal whose handler is still `remove_then_die` and that is not already blocked;
+  - `after_in_parent` unblocks them, and `after_in_child` unblocks them after the reset.
+  - The mask is per thread. The hooks run on the forking thread, which is the child's only thread, and keep what they blocked in a `threading.local`. A handler someone else installed is neither blocked nor reset.
+  - A SIGTERM to the parent inside the window stays pending and is delivered at the unblock to `remove_then_die`, which removes the root and dies.
+- **Tests.** Three new params, each with a hook registered before the guard's, so it runs inside the window:
+  - `fork-child-sigterm-before-its-reset` and `fork-child-sighup-before-its-reset`: the child signals itself, prints `held`, then ends by that signal (`-15`, `-1`) with the root kept.
+  - `parent-sigterm-as-it-forks`: the parent signals itself in `before`, prints `held`, then ends -15 with its root removed.
+  - Red on the reset-only tree: `'' == 'held'`, `'child=-15 kept=True' == 'held\nchild=-15 kept=True'`, and the same with `-1`. On that tree these signals still killed, because the Python handler ran at once; the red shows they were not held. The drop itself happens before CPython's clear, which no Python hook can reach, so the probe below measures it.
+  - Green with the block: 8 passed. 300 repeats of each new param at `-n 8`: 900 passed (load 17-19).
+- **Fork-window probe** (`start(); terminate(); join(2)`, a 5 s sleep as the target), 300 runs each, back to back at load 10-12:
+
+  | Guard | Survived |
+  |---|---|
+  | Unfixed | 78 of 300 |
+  | Reset only | 71 of 300 (12 of 300 in an earlier run at load ~6) |
+  | Reset plus block | 0 of 300 |
+  | No handler | 0 of 300 |
+
+- **Other probes.**
+  - `subprocess` with and without `preexec_fn`: the exec'd `sh` still ends -15, so no blocked mask leaks into an exec.
+  - The parent's mask is empty after forks.
+  - Forks from a non-main thread: 0 of 100 children survived `terminate()` at once, and the thread's mask was restored.
+  - A parent forking in a loop and sent SIGTERM from outside: 100 of 100 ended -15 with the root removed.
+- **Soak of the original node on the final tree:** 2000 of 2000 at `-n 8` (load 10-15) and 1000 of 1000 at `-n 16` (load 15-18).
+
+**Checks (final tree).** `Tests/CI` at `-n 4`: 2083 passed, 2 skipped (load 11-18). `Tests/test_real_profile_guard.py` at `-n 4`: 65 passed, 2 skipped. `./scripts/preflight.sh` passed. `ruff check` and `ruff format --check` on both files passed. `Tests/lint/ruff_gate.py`: RATCHET OK.
 
 **Files.** `Tests/real_profile_guard.py`, `Tests/CI/test_bootstrap_root_cleanup.py`, `backlog/docs/lessons-testing-evidence.md` (new entry).
 <!-- SECTION:NOTES:END -->

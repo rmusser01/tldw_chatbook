@@ -455,6 +455,11 @@ def remove_sandbox_at_exit(root: Path) -> None:
     back at fork (TASK-42651): Python runs a handler only between bytecodes,
     so an inherited one let a SIGTERM that landed just before a blocking call
     such as ``time.sleep`` wait that call out, where the default kills at once.
+    The signals stay blocked from just before the fork until that reset: one
+    that landed earlier tripped the inherited handler and was dropped
+    (CPython clears pending signals in a fork child). A held signal is
+    delivered at the unblock, by the default in the child and to this handler
+    in the parent.
 
     Args:
         root: The sandbox root this process created and owns.
@@ -482,10 +487,26 @@ def remove_sandbox_at_exit(root: Path) -> None:
             except ValueError:
                 pass
 
+    # The mask is per thread: the hooks run on the forking thread, which is the
+    # child's only thread. Only signals this call blocked are unblocked.
+    fork = threading.local()
+
+    def block_across_fork() -> None:
+        ours = {sig for sig in handled if signal.getsignal(sig) is remove_then_die}
+        fork.blocked = ours - signal.pthread_sigmask(signal.SIG_BLOCK, ours)
+
+    def unblock_after_fork() -> None:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, getattr(fork, "blocked", ()))
+
     def default_in_fork_child() -> None:
         for sig in handled:
             if signal.getsignal(sig) is remove_then_die:
                 signal.signal(sig, signal.SIG_DFL)
+        unblock_after_fork()
 
     if hasattr(os, "register_at_fork"):
-        os.register_at_fork(after_in_child=default_in_fork_child)
+        os.register_at_fork(
+            before=block_across_fork,
+            after_in_parent=unblock_after_fork,
+            after_in_child=default_in_fork_child,
+        )

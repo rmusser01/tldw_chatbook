@@ -47,6 +47,28 @@ child.terminate()
 child.join(30)
 print(f"child={child.exitcode} kept={root.exists()}")
 """
+# The guard's signals stay blocked from just before a fork until the child's
+# reset (TASK-42651: one landing earlier tripped the inherited handler and was
+# dropped). These hooks are registered before the guard's, so they run inside
+# that window: their signal is held ("held"), then the default kills the
+# child, or the parent's own handler removes the root and dies.
+_FORK = """
+pid = os.fork()
+if pid == 0:
+    os._exit(0)
+"""
+_SIGNAL_THE_CHILD_BEFORE_ITS_RESET = (
+    "os.register_at_fork(after_in_child=lambda: "
+    "(os.kill(os.getpid(), signal.{sig}), print('held', flush=True)))"
+)
+_SIGNAL_THE_PARENT_AS_IT_FORKS = (
+    "os.register_at_fork(before=lambda: "
+    "(os.kill(os.getpid(), signal.SIGTERM), print('held', flush=True)))"
+)
+_REAP_THE_CHILD = (
+    'print(f"child={os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1])} '
+    'kept={root.exists()}")'
+)
 _POSIX = pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
 
 
@@ -77,6 +99,25 @@ _POSIX = pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
             0,
             f"default=True\nchild={-signal.SIGTERM} kept=True",
             id="fork-child-terminated",
+            marks=_POSIX,
+        ),
+        *(
+            pytest.param(
+                _SIGNAL_THE_CHILD_BEFORE_ITS_RESET.format(sig=sig.name),
+                _FORK + _REAP_THE_CHILD,
+                0,
+                f"held\nchild={-sig} kept=True",
+                id=f"fork-child-{sig.name.lower()}-before-its-reset",
+                marks=_POSIX,
+            )
+            for sig in (signal.SIGTERM, getattr(signal, "SIGHUP", signal.SIGTERM))
+        ),
+        pytest.param(
+            _SIGNAL_THE_PARENT_AS_IT_FORKS,
+            _FORK + 'print("parent lived")',
+            -signal.SIGTERM,
+            "held",
+            id="parent-sigterm-as-it-forks",
             marks=_POSIX,
         ),
     ],
