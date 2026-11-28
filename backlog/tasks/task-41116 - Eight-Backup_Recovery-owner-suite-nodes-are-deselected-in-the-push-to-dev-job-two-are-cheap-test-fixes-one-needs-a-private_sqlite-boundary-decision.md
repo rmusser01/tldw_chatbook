@@ -4,7 +4,7 @@ title: "Eight Backup_Recovery owner-suite nodes are deselected in the push-to-de
 status: In Progress
 assignee:
 - '@claude'
-updated_date: '2026-11-17 02:20'
+updated_date: 2026-11-28 17:38
 created_date: 2026-11-15 02:20
 labels:
 - follow-up
@@ -84,4 +84,10 @@ Commits 6673ea6661, 146f5156af, 7d9c3988b1, a7816ce8b5, 829b7d3047. Net, five no
 **Roundtrip capture nodes deselected again (5 deselected).** A run with the job's flags (`-n 4 --timeout=300`, load 69-87) showed the 810 s marks take effect: `[remove-include]` 417 s, `[link-include]` 358 s and the known-profiles node 332 s all passed. The plan-shared node failed at 111 s in its bind child: `RecoveryRequired: close_unenrolled_clients_and_restart`. `control_records._enrollment` gives `authority.maintenance((UNBOUND_NAMESPACE,), 0.1)` only 0.1 s when no session is passed, and under load something still holds the unbound namespace at that moment. Both nodes share that bind child, and it refused once before (round 15, load ~100). They are green when the bind wins, but not stably, so both are deselected again with that cause; their marks stay for re-admission. Follow-up: identify the holder (probably the preview's own private-SQLite helpers still exiting), then make the bind wait for it or pass the session.
 
 **Review r15bt-rev2: the bind fixture fixed, both roundtrip nodes re-admitted.** The refusal came from the fixture, not the product: production's `replacement.py` binds inside `authority.maintenance(names, 30)` and passes `session=`, while the `_BIND` child called `bind_profile` with no session, and with no session `_enrollment` waits only 0.1 s. The child now binds inside `authority.maintenance((UNBOUND_NAMESPACE, *names), 30)` with `session=`. With the job's flags (`-n 4 --timeout=300`, marks 840 s), both nodes passed 3 of 3 runs at load 46-62 (calls 178-190 s). Their deselects, Tests/CI pin entries and the workflow comment are gone, and ADR-103 says 3. Still deselected: the native-content node (same fixture, but `native_package` setup takes 140-150 s at load ~100 and the node has no measured mark yet), the f9 node, and the plain-config node.
+
+**`test_inventory.py::test_normal_config_and_pure_resolvers_agree`, traced (round 29, 2026-11-28, during TASK-42650).** TASK-41127 did not take this node, so it is still this task's.
+- **What raises:** the test calls the guarded `config.get_user_data_dir()` directly. Under the per-test `TLDW_CONFIG_PATH` redirect that read raises `RecoveryRequired('raw_source_selection_changed')`, because conftest's import-time config reads recorded the bootstrap path as `tldw_chatbook.config`'s raw selection.
+- **Same failure as TASK-42650,** but this node has no injectable reader to substitute.
+- **A `bootstrap_profile` marker alone is not enough** (tried, reverted): the test then fails with `config_directory_selection_changed`, because it patches `get_cli_setting` to move `data_dir`.
+- **What it needs:** a selected config source (`select_config_source` with a real config file) that holds that `data_dir`.
 
