@@ -528,7 +528,7 @@ def validate_path_simple(
     require_exists: bool = False,
     *,
     probe_existing: bool = True,
-    reject_shell_metacharacters: bool = True,
+    reject_shell_metacharacters: bool = False,
 ) -> Path:
     """
     Simple path validation that checks for common security issues without requiring a base directory.
@@ -538,12 +538,16 @@ def validate_path_simple(
         require_exists: Whether to require the path exists
         probe_existing: Whether to inspect and resolve an existing selected path.
             Disable this when a later no-follow boundary owns link validation.
-        reject_shell_metacharacters: Reject ``| ; && || ` $( ${`` in the path.
-            These are COMMAND-INJECTION guards, and they are legal characters
-            in a POSIX filename -- ``Q3 P&L; final.txt`` is a real file a user
-            can create and select. Pass False at a boundary that only ever
-            hands the path to ``open()``/``stat()``, never to a shell.
-            Traversal, NUL and ``~`` expansion are checked either way.
+        reject_shell_metacharacters: Also reject ``| ; && || ` $( ${`` in the
+            path. These are COMMAND-INJECTION guards, and they are legal
+            characters in a POSIX filename -- ``Q3 P&L; final.txt`` is a real
+            file a user can create and select. Off by default since
+            TASK-38227: dev refused such names in every importer, although no
+            caller hands the path to a shell (every spawn in the package is
+            list-argv, and the one Windows ``cmd /c`` fallback went through
+            ``os.startfile`` in TASK-39040). Pass True only at a boundary
+            that does hand the path to a shell. Traversal, NUL and ``~``
+            expansion are checked either way.
 
     Returns:
         Path: The validated path
@@ -582,9 +586,9 @@ def validate_path_simple(
             "\x00",  # Null byte
         ]
         if reject_shell_metacharacters:
-            # Only meaningful where the path reaches a shell. They are legal
-            # filename characters, so applying them to a plain open()/stat()
-            # boundary rejects files the user legitimately owns.
+            # Opt-in only (TASK-38227). Only meaningful where the path reaches
+            # a shell. They are legal filename characters, so applying them to
+            # a plain open()/stat() boundary rejects files the user owns.
             dangerous_patterns += [
                 "|",  # Pipe (command injection)
                 ";",  # Command separator
