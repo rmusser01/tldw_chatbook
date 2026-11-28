@@ -1937,3 +1937,43 @@ Before the tool's own code, then, the call's thread makes 32 to 34 storage admis
 - steps 3 and 4 read one store twice, back to back, and each read admits the MCP family's sources again (the config file and the local, permission, target and context stores); one admitted scope around both would let the second read use the first's leases, which is what a nested execution already does;
 - the two reads ask for a resolved path 6 to 7 times per storage admission (`storage_admission._resolved`; `_execution_selection_for` asks twice on every admission);
 - whether the native layer's short metadata calls should keep the interpreter lock instead of giving it up about ten times per checked stat. A local switch for that experiment exists in the journey's recorder; it has not been measured on a quiet machine, and a call that blocks on a slow disk would then hold the screen too.
+
+**2026-11-28: Windows ran every step of a turn on efficiency cores; the app now asks not to be power-throttled.**
+
+**What was found.** The test machine has an Intel i5-14500: six performance cores with two threads each (logical processors 0 to 11) and eight efficiency cores (12 to 19), under Windows 10 Home 22H2 (build 19045), on the High performance plan with Windows' default settings for mixed cores (heterogeneous policy 4, thread scheduling "Automatic", short-running threads "Automatic"). On a quiet machine (1 to 10% load):
+
+- The journey's two turns took 4.68 / 4.87 / 4.81 s (README) and 5.99 / 5.65 / 5.62 s (approved edit) in three back-to-back runs. The edit turn is over the 5 s limit.
+- The three SQLite-connect commits of 2026-11-27 changed nothing measurable: 4.53 to 4.51 s and 5.72 to 5.69 s, means of three interleaved pairs.
+- Restricted to the performance cores by an affinity mask the same runs took 2.20 / 2.05 / 2.06 s and 2.59 / 2.35 / 2.46 s; restricted to the efficiency cores, 4.68 and 5.20 s. So left alone the turn ran at efficiency-core speed.
+- Asked directly: the journey recorded the logical processor at each of its 250 marks of the two turns, and all 250 were on processors 12 to 19.
+- Two plain compute threads passing the interpreter lock back and forth, started from the same shell, ran on performance cores for over 99% of their slices. So Windows does not slow down everything started from that shell; what makes this app's process eligible was not determined.
+
+**Which request helps**, each made by the process that runs the app, one or two runs each, same quiet machine:
+
+| Request | README | Edit | Marks on performance cores |
+|---|---|---|---|
+| none | 4.44 / 4.34 s | 5.79 / 4.91 s | 0 of 250 |
+| Above Normal priority | 4.49 s | 5.28 s | 0 of 250 |
+| power throttling switched off for the process | 2.21 s | 2.61 s | 228 of 250 |
+| prefer the performance cores' CPU sets | 2.13 / 2.11 s | 2.58 / 2.60 s | 249 of 250 |
+
+**Decision.** The app makes the third request when it loads: `SetProcessInformation(ProcessPowerThrottling)` with the execution-speed control bit set and its state bit clear, the documented way for a program to say that a person is waiting for its work (`Utils/text_selection_crash_guard.py::opt_out_of_windows_power_throttling`, called first in `ThreadWorkerContextGuard.on_load`, beside the Windows timer-sleep install that already lives there for the same reason: no `app.py` line, no new boot-path module). It was chosen over CPU sets because it names no cores: Windows still schedules, on any processor, and a machine with one kind of core is asked nothing it could get wrong. It changes no priority and pins nothing. A refusal, an older Windows without the call and every other platform leave the process as it was; the call never raises. Like the idle heap re-freeze and the screen pre-import it is on by default and off under pytest (`PYTEST_CURRENT_TEST`), and `TLDW_POWER_THROTTLING_OPT_OUT` (`1` or `0`) decides either way when set.
+
+**Measured with the product code** (the journey turns the request on with its own switch, as it does the app's other two start-up policies; `TLDW_TEST_THROTTLED=1` leaves it off), three interleaved pairs, 5 to 6% load:
+
+| | README | Approved edit |
+|---|---|---|
+| request off | 4.41 / 4.49 / 4.67 s | 5.39 / 5.56 / 5.39 s |
+| product | 2.29 / 2.21 / 2.32 s | 2.73 / 2.59 / 2.55 s |
+
+Per action, means of the three (request off to product): Send to run created 1.56 to 0.79 s and 1.31 to 0.65 s; preparing requests 0.65 to 0.31 s and 1.06 to 0.38 s; approval asked to shown 0.59 to 0.21 s and 0.57 to 0.25 s; click to tool started 0.29 to 0.07 s and 0.48 to 0.16 s; file tools 0.65 to 0.43 s and 1.09 to 0.56 s. In the product runs 243 of 250 marks were on performance cores.
+
+**What this does not cover.**
+
+- The work before the app's `Load` event (importing the package and building the app object) still runs as Windows schedules it.
+- A tool worker is a child process and does not inherit the request. Whether making it there too shortens the file-tool rows (0.43 and 0.56 s) has not been measured.
+- Whether a terminal that has the keyboard already keeps the app out of throttling is not known: the journey's process has no window. Running the journey from a terminal in front, with `TLDW_TEST_THROTTLED=1`, would show it.
+- Every TASK-40608 timing before this date was taken without the request, so on efficiency cores whenever the machine was otherwise quiet. Those figures compare with each other, not with these.
+- Not measured on Windows 11, on a CPU with one kind of core, or on battery.
+
+**Tests.** `Tests/App/test_windows_power_throttling_opt_out.py`, written before the code: the request's information class and bytes written out by hand, the default in and out of pytest, the switch, another platform, three kinds of refusal, a loading app making the request, and the real call being accepted on Windows. Ten deliberate breaks of the code (`asks to be throttled`, wrong class, no control bit, on under pytest, off by default, `0` meaning on, any platform, a refusal raising, the app never asking, wrong size) each fail the test meant for them.

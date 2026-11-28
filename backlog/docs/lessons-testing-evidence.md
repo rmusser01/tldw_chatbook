@@ -26741,3 +26741,15 @@ and keep the first run and repeat beside the instrumented comparison.
 **Incident.** I counted garbage-collector passes per turn in a run that also recorded 685,000 function events, one tuple each. Both turns showed exactly 691 young passes. The same journey with only the collector watcher on showed 306 and 308: more than half of the passes in the first run were caused by the recorder's own allocations.
 
 **Rule.** Measure the collector in a run that records nothing else. When two unrelated turns give the same count, suspect the instrument before the program.
+
+### A setting given to the wrong process shows nothing: find the process that runs the code first (TASK-40608, 2026-11-28)
+
+**Incident.** To learn why a Console turn ran at efficiency-core speed I gave the journey's process three scheduling requests in turn (High priority, power throttling off, performance-core CPU sets). None changed anything, and on 2026-11-23 I had already recorded that High priority "did not help". All four results were wrong tests: `private_profile_test` runs the test body in a child of the pytest process the runner starts, and a child inherits an affinity mask but not a priority class above Normal, not a power-throttling state and not CPU sets. The affinity run was the only one that had reached the app. Made inside the app's own process, two of the three requests halved the turn.
+
+**Rule.** Before testing a process-wide setting, find out which process runs the code under test, and confirm the setting from inside that process (here: the logical processor at each journey mark). A setting that "does nothing" has first to be shown to have arrived.
+
+### On a CPU with two kinds of core, know which kind ran the program before reading a timing (TASK-40608, 2026-11-28)
+
+**Incident.** A week of TASK-40608 timings on an i5-14500 under Windows 10 were compared as if the machine were one speed. Windows power-throttled the journey's process, and on that CPU throttled work runs on the efficiency cores: all 250 marks of two turns were on processors 12 to 19, and the same turns took 2.1 and 2.5 s once restricted to processors 0 to 11, against 4.4 and 5.5 s. The largest single factor in the turn's time was outside every profile I had taken, because a profile says where the time goes inside the program and not how fast the processor under it is.
+
+**Rule.** On a mixed-core machine record the logical processor with the timing (`GetCurrentProcessorNumber` at each mark is enough), and try the run restricted to the fast cores once (an affinity mask is inherited by children). Do that before the first profile, not after the last.
