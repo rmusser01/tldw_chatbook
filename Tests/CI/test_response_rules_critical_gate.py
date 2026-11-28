@@ -212,6 +212,9 @@ INHERITED = {
         "Tests/DB/test_sync_log_retention.py",  # TASK-39049
         "Tests/Backup_Recovery/test_console_sync_maintenance.py",  # TASK-39043
         "Tests/Chat/test_automatic_wake_recovery.py",  # TASK-39043
+        # PR #3345: the two trace files retain their guarded tail placement.
+        "Tests/Chat/test_console_trace_slot_drop.py",
+        "Tests/Chat/test_console_child_preset_fallback_trace.py",
         "--storage-lease-guard",  # TASK-38986
         "--timeout=180",
         "--tb=short",
