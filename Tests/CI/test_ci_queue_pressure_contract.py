@@ -507,6 +507,10 @@ DREAMS_BOUNDARY_TARGETS = (
     # automatic wake recovery suite (bootstrap_profile, ~13 s serial).
     "Tests/Backup_Recovery/test_console_sync_maintenance.py",
     "Tests/Chat/test_automatic_wake_recovery.py",
+    # PR #3345: the two round-27 trace files keep their storage guard and
+    # bootstrap-profile placement, after the sandboxed suites.
+    "Tests/Chat/test_console_trace_slot_drop.py",
+    "Tests/Chat/test_console_child_preset_fallback_trace.py",
 )
 #: TASK-34929: the Dreams tracking tests, gated whole in their own job.
 DREAMS_TRACKING_TARGET = "Tests/Dreams/test_track_service.py"
@@ -972,11 +976,6 @@ RECOVERED_SUITES_TARGETS = (
     "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[helper_body]",
     "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[metadata_body]",
     "Tests/Performance/test_console_managed_received_acceptance.py",
-    # Round 27 (2026-11-26): TASK-42550's slot-drop file (bootstrap_profile).
-    "Tests/Chat/test_console_trace_slot_drop.py",
-    # Round 27: TASK-42556's child preset fallback file (bootstrap_profile),
-    # on no lane before.
-    "Tests/Chat/test_console_child_preset_fallback_trace.py",
     # TASK-41061 review: the hook engine's two regression nodes, on no lane.
     "Tests/Agents/test_hooks_v2_execution.py::test_cancelled_close_leaves_no_thread_waiting_for_native_custody",
     "Tests/Agents/test_hooks_v2_execution.py::test_mcp_hook_permission_stays_current_to_other_jobs_while_it_refreshes",

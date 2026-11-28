@@ -1537,6 +1537,11 @@ jobs:
       # speech engine choice, Welcome copy) open the bootstrap block. Timed
       # 2026-11-24 with this step's flags, serial at load 10-14 on 18 CPUs:
       # 4.7, 4.6, 4.2, 13.6, 4.8, 47.7 and 33.2 s (113 s together).
+      # PR #3345: move the two Round 27 trace files here after the bootstrap
+      # suites. Recovered Suites hit 30 minutes at 99%. The slot-drop file
+      # took 163 s there, and this job's slowest of eight recent passes
+      # was 23m20s of 35 min. Both steps keep the storage guard and 180 s
+      # case limit. Coverage and the number of runners stay the same.
       - name: Run Dreams and Guardian boundary contracts
         if: ${{ !cancelled() }}
         run: |
@@ -1585,6 +1590,8 @@ jobs:
             Tests/DB/test_sync_log_retention.py \
             Tests/Backup_Recovery/test_console_sync_maintenance.py \
             Tests/Chat/test_automatic_wake_recovery.py \
+            Tests/Chat/test_console_trace_slot_drop.py \
+            Tests/Chat/test_console_child_preset_fallback_trace.py \
             --storage-lease-guard \
             --timeout=180 \
             --tb=short
@@ -2143,12 +2150,6 @@ jobs:
       # Round 21: TASK-33620.15.61's four sandboxed Console MCP catalog files
       # (30 tests, about 18 s in this step, 22 s in CI) join the sandboxed block
       # after the Skills recovery controls file.
-      # Round 27: TASK-42550's slot-drop file (bootstrap_profile, 35 tests;
-      # 216.9 s alone under this step's flags at load 34-50; at 24 tests it
-      # was 148 s of a 51.7-min local run of the whole step), after the
-      # managed received-acceptance file.
-      # Round 27: TASK-42556's child preset fallback file (bootstrap_profile,
-      # on no lane before) follows the slot-drop file; timing in the task's notes.
       # Round 27: TASK-42552's four Console files, on no lane before. The
       # request-provenance census (sandboxed, reads no config) ends the
       # sandboxed block; the continuation-merge, named-agent and redirect-cut
@@ -2266,8 +2267,6 @@ jobs:
             "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[helper_body]" \
             "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[metadata_body]" \
             Tests/Performance/test_console_managed_received_acceptance.py \
-            Tests/Chat/test_console_trace_slot_drop.py \
-            Tests/Chat/test_console_child_preset_fallback_trace.py \
             Tests/Agents/test_hooks_v2_execution.py::test_cancelled_close_leaves_no_thread_waiting_for_native_custody \
             Tests/Agents/test_hooks_v2_execution.py::test_mcp_hook_permission_stays_current_to_other_jobs_while_it_refreshes \
             --deselect="Tests/Chat/test_console_automatic_library_preparation.py::test_closed_loop_pending_submit_is_emergency_detachment" \

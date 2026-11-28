@@ -46,6 +46,10 @@
 # shards until none passes it. At 42 shards the floor is 12.37, so about 26
 # more pytest min of entries (0.63 a shard) fit before no re-deal reaches 13.0
 # and the shard count needs another decision.
+# PR #3345: UI34 hit 20 minutes at 95% after the cardless compaction file
+# used 403 s. Exchange that whole file with the 10-12 s Prompts route
+# selector in UI19, whose recent successful jobs ran in 504-672 s.
+# All 3099 selectors, 42 shards, and runtime limits stay in place.
 
 # Ordered complete selectors and retained provenance follow.
 # TASK-35834 runs thirteen: 16 model-defaults functions replace the whole-file entry.
@@ -3503,7 +3507,7 @@ Tests/UI/test_library_review_round_t21116.py::test_viewer_substate_escape_refres
 # TASK-41502 (2026-11-18): the Prompts type filter is prune-safe. The Prompts
 # boot and route nodes TASK-41127 left red, and the pin.
 Tests/UI/test_screen_navigation.py::test_boot_with_prompts_default_tab_lands_on_library_with_prompts_row_selected
-Tests/UI/test_screen_navigation.py::test_prompts_route_lands_on_library_with_prompts_row_selected
+Tests/UI/test_console_compaction_hold_cardless_sends.py
 Tests/UI/test_library_prompts_canvas.py::test_type_filter_survives_its_canvas_being_replaced_mid_recompose
 # TASK-41503 (2026-11-18): Collections keeps a pane toggle sent before the
 # first measure, and a hard delete refused as stale reloads the capture.
@@ -3537,7 +3541,7 @@ Tests/UI/test_settings_console_thinking.py
 # (222.9 s at load 25-36 after review r16co-rev1's wait for a pressable Cancel).
 Tests/UI/test_console_staged_context.py
 Tests/UI/test_polling_static_update_idempotence.py
-Tests/UI/test_console_compaction_hold_cardless_sends.py
+Tests/UI/test_screen_navigation.py::test_prompts_route_lands_on_library_with_prompts_row_selected
 # TASK-41630..41655 burn-down lanes (2026-11-19, serial times at load 31-40):
 # TASK-41634 / TASK-41648: turn attention (43 tests, 20 s), transcript context
 # projection (9, 20 s) and the workspace tree (63, 19 s), red on dev before.
