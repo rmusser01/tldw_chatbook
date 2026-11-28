@@ -1977,3 +1977,13 @@ Per action, means of the three (request off to product): Send to run created 1.5
 - Not measured on Windows 11, on a CPU with one kind of core, or on battery.
 
 **Tests.** `Tests/App/test_windows_power_throttling_opt_out.py`, written before the code: the request's information class and bytes written out by hand, the default in and out of pytest, the switch, another platform, three kinds of refusal, a loading app making the request, and the real call being accepted on Windows. Ten deliberate breaks of the code (`asks to be throttled`, wrong class, no control bit, on under pytest, off by default, `0` meaning on, any platform, a refusal raising, the app never asking, wrong size) each fail the test meant for them.
+
+**2026-11-28, morning: the owner keeps the request on by default; making it for tool workers was measured and not adopted.**
+
+Asked whether the app's request not to be power-throttled stays on by default, the owner answered yes.
+
+The note above left tool workers uncovered: a worker is a child process and does not inherit the request. The parent can make it for a child (`OpenProcess` with `PROCESS_SET_INFORMATION`, then the same `SetProcessInformation` call), and that was built test-first in the one place a worker is started (`Tools/workspace_tool_executor.py::_spawn_worker`), with sixteen deliberate breaks each failing a test. Timed against the pushed tree in interleaved pairs, with 14 to 22% of the machine in use by another session's tests, it changed nothing that could be measured. The worker exchange of a turn's file tools (request written to reply read) was 181 ms without and 190 ms with it in the README turn, and 241 ms and 212 ms in the edit turn (means of two runs). A worker's own measured time is 0 to 31 ms for a file operation, and the idle worker kept ready starts before it is needed, so there was little for the request to shorten. `git_diff` is the exception at 100 to 117 ms, and that time is `git` itself, a child of the worker that this request would not reach either.
+
+So the change was not committed: it would add a process open per tool call for no measured gain. The patch and its tests are kept outside the tree (`worker-throttle-not-adopted.patch`).
+
+The pushed tree's three runs in that set are the first with the request on a busy machine: with 14 to 27% of the machine in use its turns took 2.40 / 2.47 / 2.54 s (README) and 2.99 / 3.10 / 4.48 s (edit). One run of the worker variant at 38% average load (62% peak) took 6.24 s for the README turn. The 5 s limit is met on a quiet machine with about 2 s to spare; on a busy one it can still be missed.
