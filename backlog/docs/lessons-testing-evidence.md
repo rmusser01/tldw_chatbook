@@ -26723,3 +26723,9 @@ and keep the first run and repeat beside the instrumented comparison.
 **Incident.** For a week this task's notes called the test machine a 12-processor one. It has 20 logical processors (six performance cores with two threads each and eight efficiency cores). Per-process CPU shares had been divided by 12, the loop's pool was described as 16 threads when it has 24, and a game using 40% of the machine was reported as using two thirds of it, in a pull request description, until `Win32_Processor` was read.
 
 **Rule.** Read `os.cpu_count()` and the core layout once, at the start of any performance work on a machine, and write them down with the first measurement.
+
+### What a skipped check does is more than what it checks (TASK-40608, 2026-11-27)
+
+**Incident.** A SQLite connect on Windows re-checks the database's folder and files every time. I asked the owner whether a connect to a database the process already has open might skip that, and recommended yes on the strength of the 2026-11-21 argument for kept handles ("nothing a reopen would check can change"). The owner allowed it only if it did not compromise security. Reading the code that would be skipped showed two things the argument does not cover. It also repairs: it sets SQLite's own `-wal` and `-shm` files private (a probe in a folder others may read showed 0o644 before the second connect and 0o600 after). And an open handle freezes only the name-to-file association, not permissions, owners, links or new files. The skip was not made; it would have been worth about 0.08 s a turn.
+
+**Rule.** Before proposing to skip, window or reuse a check, read all of the code that would no longer run and list what it does, repairs and creations included, not only what it verifies. Write down what the "it cannot change" argument actually covers, and probe the rest. Put that analysis in the question to the owner, and do not recommend an answer by analogy with an earlier decision.
