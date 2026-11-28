@@ -4,7 +4,7 @@ title: "The first admission-sensitive Console P0 profile runs up to 29.7 of 35 m
 status: To Do
 assignee: []
 created_date: 2026-11-28 17:10
-updated_date: 2026-11-28 17:10
+updated_date: 2026-11-28 18:06
 labels:
 - follow-up
 - ci
@@ -19,14 +19,14 @@ dependencies: []
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-TASK-42533 split the admission-sensitive Console P0 job in two (#3782, merged 2026-11-26). Its first 10 PR runs met the target, ending at least 8 minutes under the 35-minute cap. Over all 80 completed PR runs to 2026-11-28 16:25Z, the two profiles are unbalanced:
+TASK-42533 split the admission-sensitive Console P0 job in two (#3782, merged 2026-11-26). Its first 10 PR runs met the target, ending at least 8 minutes under the 35-minute cap. Over all 85 completed PR runs to 2026-11-28 16:25Z, the two profiles are unbalanced:
 
 | Profile | Holds | Median | p90 | Max |
 |---|---|---|---|---|
-| `admission-sensitive` | head | 23.2 min | 26.3 min | 29.7 min |
+| `admission-sensitive` | head | 22.9 min | 26.3 min | 29.7 min |
 | `admission-sensitive 2` | tail | 17.2 min | 19.4 min | 20.2 min |
 
-Three head runs went above 27 minutes: 27.6, 29.7 and 27.1. The projection in TASK-42533 had the two the other way round. Moving about 3 minutes of files from the head to the tail would leave both with room under the cap.
+Three head runs went above 27 minutes: 27.6, 29.7 and 27.1. The head grew after TASK-42533's projection: #3784 (TASK-42525), merged 21 s after the split, appended `Tests/Chat/test_console_failed_call_retry_ownership.py` to the head step, and that file takes about 10-12 min in CI (620 s and 723 s in two runs). Moving about 3 minutes from the head to the tail would leave both with room. That file cannot move whole: the tail's 20.2-minute maximum plus 10-12 minutes would break the 8-minute margin. So the 3 minutes must come from other head files, or the file must be split.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

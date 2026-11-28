@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-24 09:14
-updated_date: 2026-11-28 17:10
+updated_date: 2026-11-28 18:06
 labels:
 - follow-up
 - ci
@@ -45,7 +45,7 @@ Raised by the coordinator's review of TASK-42472 (2026-11-24).
 
 ## Implementation Notes
 
-**Status.** All three criteria are met; AC#1 was read from the PR runs after merge (see **AC#1, measured** at the end). On the slowest runner seen (the four runs cancelled at the cap), the projection below puts the head at up to about 18 min and the tail at up to about 25 min of 35: about 10 minutes under the cap, which meets AC#1's 8 with little to spare. Completed runs project lower (about 16 and 20 min).
+**Status.** All three criteria are met; AC#1 was read from the PR runs after merge (see **AC#1, measured** at the end). Before merge, on the slowest runner seen (the four runs cancelled at the cap), the projection below put the head at up to about 18 min and the tail at up to about 25 min of 35: about 10 minutes under the cap, which meets AC#1's 8 with little to spare. Completed runs project lower (about 16 and 20 min).
 
 **Owner decision.** 2026-11-24: asked about the split, the owner chose "Split, +1 runner (Recommended)".
 
@@ -124,10 +124,10 @@ Raised by the coordinator's review of TASK-42472 (2026-11-24).
 - `backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md`: counts, plus a dated amendment
 - `scripts/ci/self_hosted/README.md`
 
-**AC#1, measured (2026-11-28).** The split merged as #3782 at 2026-11-26 04:27Z. Job times are read from GitHub's jobs API for the derived-artifacts PR runs since then (119 runs; completed jobs only, success or failure; a cancelled job is left out).
+**AC#1, measured (2026-11-28).** The split merged as #3782 at 2026-11-26 04:27Z. Job times are read from GitHub's jobs API for the derived-artifacts PR runs since then (119 runs; five of them answered HTTP 502 at first and were re-read; completed jobs only, success or failure). A cancelled job is left out: none ran to the cap, and the long cancelled ones (29.0, 36.5 and 47.7 min) never got a runner (runner_id 0, no steps).
 - **The first 10 PR runs** (2026-11-26 04:29Z to 08:11Z): "admission-sensitive" was slowest at 26.8 min, 8.2 under the 35-minute cap, so AC#1 holds; "admission-sensitive 2" was slowest at 20.2.
-- **All 80 completed runs of each:**
-  - "admission-sensitive": median 23.2, p90 26.3, max 29.7 min. Three runs went above 27: 27.6, 29.7 and 27.1.
+- **All 85 completed runs of each:**
+  - "admission-sensitive": median 22.9, p90 26.3, max 29.7 min. Three runs went above 27: 27.6, 29.7 and 27.1.
   - "admission-sensitive 2": median 17.2, p90 19.4, max 20.2.
-- **Against the projection:** it was reversed. It put the head at up to about 18 min and the tail at up to about 25, but the head ("admission-sensitive") is the slower one by about 6 min. Moving about 3 min of files from the first profile to the second would balance them; TASK-42652 tracks that.
+- **Against the projection:** the projection was not wrong; the head grew after it. #3784 (TASK-42525) merged at 2026-11-26 04:28:20Z, 21 s after the split and before the first measured run. It moved `Tests/Chat/test_console_failed_call_retry_ownership.py` from the Dreams tracking riders to the end of the head step and grew it by about 2470 lines. That file takes about 10-12 min in CI (620 s and 723 s in runs 45763004776 and 45948611554). Without it, the head matches the projection. Moving about 3 min from the head to the tail would balance them; TASK-42652 tracks that.
 
