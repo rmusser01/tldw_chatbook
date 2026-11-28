@@ -1739,7 +1739,13 @@ jobs:
     name: Dreams tracking tests and unlaned riders
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
-    timeout-minutes: 20
+    # TASK-42719 (owner decision 2026-11-28): 30 min, still one serial job. From
+    # 2026-11-25 to 2026-11-28 the job finished 107 times at a median of 17.1
+    # and a max of 19.9 min, and 7 of 114 hit the old 20-min cap with no test
+    # failing. The same tests took up to 1.6x as long on the slowest hosted
+    # runner as on the fastest (13.1 min a job at best, about 21 at worst), so
+    # a new rider needs the job's recent times from the API first.
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4

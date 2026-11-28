@@ -723,6 +723,12 @@ and a fold would put that risk back on the admission tests.
 One more job: 57 eligible test jobs per PR, 36 concurrent test runners, 37
 counting perf-guard, and about 1.5 runner-minutes of setup more per full run.
 
+2026-11-28 (TASK-42719, owner decision 2026-11-28): `dreams-tracking` keeps its single
+serial job, and its cap rises from 20 to 30 min. From 2026-11-25 to 2026-11-28 it
+finished 107 times at a median of 17.1 and a max of 19.9 min, and 7 of 114 hit the
+old cap with no test failing; the same tests took up to 1.6 times as long on the
+slowest hosted runner as on the fastest. No runner is added.
+
 ## Amendment (2026-11-28, TASK-38716, TASK-42413): a job for the MCP workbench files, and 40 minutes for the recovered suites
 
 Owner decision of 2026-11-28, "Apply my picks": the recommendations of PR 3804
