@@ -369,7 +369,7 @@ def _importers(
     for current in queue:  # appended to while iterating: breadth first
         init = Path(current).name == "__init__.py"
         token = Path(current).parent.name if init else Path(current).stem
-        package = f"{Path(current).parent}/"
+        package = f"{Path(current).parent.as_posix()}/"
         # Only files with the module's name as a word can import it; a package's
         # own files load its __init__.py without naming it.
         named = index.get(token, [])
@@ -495,10 +495,11 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
 
     def tests_corpus() -> dict[str, str]:
         if not corpus:
-            # Sorted, so every machine draws the same sample.
+            # Keyed as git prints paths (forward slashes, on Windows too) and
+            # sorted, so every machine draws the same sample.
             corpus.update(
                 sorted(
-                    (str(f.relative_to(root)), f.read_text(errors="replace"))
+                    (f.relative_to(root).as_posix(), f.read_text(errors="replace"))
                     for f in (root / "Tests").rglob("*.py")
                 )
             )
@@ -583,7 +584,7 @@ def select_changes(changes: list[tuple[str, str]], root: Path) -> dict:
         paths = [n for n in output.split("\0") if n]
         if not paths:
             paths = [
-                str(f.relative_to(root))
+                f.relative_to(root).as_posix()
                 for f in (root / "Tests").rglob("*")
                 if "__pycache__" not in f.parts and f.is_file()
             ]
