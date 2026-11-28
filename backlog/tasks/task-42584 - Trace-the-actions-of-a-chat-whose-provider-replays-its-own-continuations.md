@@ -17,6 +17,7 @@ references:
 - backlog/decisions/337-console-reference-backed-semantic-trace-ledger.md
 dependencies:
 - TASK-42560
+updated_date: '2026-11-28 12:00'
 ---
 
 ## Description
@@ -29,7 +30,7 @@ Found while doing TASK-42560 (round 27, 2026-11-26).
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 With Capture On in a Kimi chat, Edit & resend, Regenerate and Continue are traced as calls of their turn, and the message after each is sent and traced, shown by a test through the real controller with only the provider faked, red before and green after
+- [ ] #1 With Capture On in a Kimi chat, Edit & resend, Regenerate and Continue are traced as calls of their turn, and the message after each is sent and traced, shown by a test through the real controller with only the provider faked, red before and green after. The red-before state is asserted explicitly first: on the pre-change code a Kimi Continue or Regenerate writes no `console_trace_calls` row and the next send is traced (today only implied by `test_continue_and_regenerate_keep_one_row_per_reply[moonshot-*]`, Tests/UI/test_console_moonshot_reasoning_reply.py:890; added 2026-11-28 from TASK-34100.3.4 AC#3). If AC#2 ends with Kimi actions kept Capture Off, a test instead pins that they write no `console_trace_calls` row and that the next send is traced
 - [ ] #2 The rule that admits them names the saved replies the agent request carries, or the reason it cannot is recorded with an owner decision
 - [ ] #3 Any new admission rule is recorded in ADR-337 before the code
 <!-- AC:END -->

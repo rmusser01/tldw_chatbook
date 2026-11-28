@@ -13,6 +13,7 @@ labels:
   - p2
 dependencies: []
 priority: medium
+updated_date: '2026-11-28 12:40'
 ---
 
 ## Description
@@ -24,6 +25,12 @@ The shipped [api_settings.google] model and the first entry of the Google model 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 A new profile that chooses Google gets a default model that answers a live Console send with the shipped template
-- [ ] #2 The Google model list no longer offers models the API refuses for new keys, or marks them
+- [x] #2 Moved to TASK-34100.2.3 (owner ruling 2026-11-28): the Google model list no longer offers models the API refuses for new keys, or marks them. TASK-34100.2.3 carries the marking (ids listed last and marked, never hidden), shipped with the Model-ranking group g17; this task does not deliver it
 - [ ] #3 A test pins the shipped Google default model to the chosen value
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Owner ruling 2026-11-28:** this task keeps only its default-model choice (AC#1 and AC#3: a shipped Google default that answers a live Console send for a new key, pinned by a test). Marking the ids Google refuses for new keys (former AC#2) moved to TASK-34100.2.3. That task lists such ids last and marks them (for example 'may be unavailable to new keys'), never hides them, and ships the mark with the Model-ranking group g17 of the 2026-11-28 burn-down plan. Status unchanged.
+<!-- SECTION:NOTES:END -->

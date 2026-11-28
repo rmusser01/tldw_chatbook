@@ -11,6 +11,7 @@ labels:
   - bug
 dependencies: []
 priority: medium
+updated_date: '2026-11-28 12:10'
 ---
 
 ## Description
@@ -30,3 +31,11 @@ Impact: the Console context-policy cadence work stacked on TASK-33620.15.1 refre
 - [ ] #3 A warm read with no external edit still serves the cache without the locked bootstrap and stats the file at most once per throttle window
 - [ ] #4 test_external_edit_is_picked_up_at_the_shipped_throttle passes with its xfail marker removed
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Setup-wizard evidence, from TASK-34100.45 (closed as a duplicate of this task, 2026-11-28).** Found in TASK-34100.13's review (finding V2, 2026-10-27). config.toml was edited outside the running app, and the first-run wizard, opened 13 s later, still showed the old value. Only the wizard's own first save reloaded the file. Evidence (setup-wizard-ux-qa): `.worktrees/setup-wizard-ux-qa/evidence/g13v5-vr-a120/config-08-external-gate-edit.toml`, `41-rerun-tools.txt` and the app log at 18:22-18:23. TASK-34100.45 read the same cause as this task: the warm hit (`_warm_config_cache_hit`, config.py:4617/:4645) uses up the throttled `_external_edit_detected()`, and the bootstrap's own check (:5023) falls in the same 1 s window and returns the cached config. TASK-34100.13 only stopped the setup steps from writing a stale value back; the stale read itself is this task's.
+
+In the 2026-11-28 burn-down plan, group g20 (config-read correctness) fixes this task together with TASK-34943 and TASK-34100.43.
+<!-- SECTION:NOTES:END -->
