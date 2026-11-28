@@ -27,6 +27,7 @@ This task closes that gap: with a valid key for each provider, setup's authentic
 - [ ] #2 On a fresh isolated profile through the real app, setup with a valid Hugging Face token reports the token verified by whoami-v2, and a listed Hugging Face chat model produces a real first reply in Console
 - [ ] #3 The same profiles read 'Key verified HH:MM' in Settings' Key check row after Test, and never 'Not ready' for those keys
 - [ ] #4 The evidence (captures and the provider replies' first lines, never the keys) is recorded in this task's Implementation Notes, and any failure is filed as its own task
+- [ ] #5 The OpenRouter legs moved here are run in the same session: a streaming and a non-streaming Console reply on the valid key (TASK-34100.5.2 AC#1), and the Model step's OpenRouter listing with a valid key (TASK-34100.7 AC#11's OpenRouter leg)
 <!-- AC:END -->
 
 ## Implementation Notes
