@@ -39,9 +39,16 @@ async def test_warm_speculative_voice_latency_distribution_meets_gate() -> None:
 
 
 def test_completed_pair_locator_inventory_is_complete_and_stable() -> None:
+    # 31 locators, 27 of them forbidden ones the distribution seeds, since
+    # b40d12adb3 (TASK-42517, PR #3781) classified the v86 mix-in attempts'
+    # result_revision_id: an attempt is sealed onto its own assistant message's
+    # revision, so a row naming a promoted revision is that message's sidecar.
+    # That commit left these pins and the gate's 1,000-row split at 30 and 26
+    # (TASK-42659). A new locator moves both counts and the split in
+    # _locator_distribution; re-pin them together.
     inventory = completed_pair_locator_inventory()
 
-    assert inventory["count"] == 30
+    assert inventory["count"] == 31
     assert {"table": "canvas_revisions", "column": "origin_message_id"} in inventory[
         "locators"
     ]
@@ -49,6 +56,7 @@ def test_completed_pair_locator_inventory_is_complete_and_stable() -> None:
     mixin_locators = {
         ("console_prompt_mixin_attempts", "user_message_id"),
         ("console_prompt_mixin_attempts", "assistant_message_id"),
+        ("console_prompt_mixin_attempts", "result_revision_id"),
     }
     assert {
         (row["table"], row["column"])
@@ -63,7 +71,7 @@ def test_completed_pair_locator_inventory_is_complete_and_stable() -> None:
     assert sum(row["baseline_rows"] for row in distribution) == BASELINE_LOCATOR_ROWS
     assert sum(row["large_rows"] for row in distribution) == LARGE_LOCATOR_ROWS
     assert all(row["large_rows"] == row["baseline_rows"] * 100 for row in distribution)
-    assert len(distribution) == 26
+    assert len(distribution) == 27
     assert len(inventory["sha256"]) == 64
     assert len(inventory["locators"]) == inventory["count"]
 
