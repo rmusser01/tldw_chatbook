@@ -57,8 +57,8 @@ FAST_LANE_TARGETS = (
     # keep "Full output", and so does a cancelled or timed-out raw-CLI
     # command whose header also reads `blocked`. No bootstrap profile.
     # TASK-42650 (2026-11-28): the whole file now, not those four nodes. Six
-    # canvas and Mermaid tests in it were red on CI too (release-candidate
-    # core shard 2/6, 2026-11-22): the service's default canvas reader loads
+    # canvas and Mermaid tests in it fail on CI too (a release-candidate core
+    # shard showed one, 2026-11-22): the service's default canvas reader loads
     # config, the per-test profile redirect makes that load refuse
     # (`raw_source_selection_changed`), and the service reads the refusal as
     # Canvas off. They now pass an explicit reader. 137 tests in 5.4 s

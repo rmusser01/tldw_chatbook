@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-27 18:00
-updated_date: 2026-11-28 17:34
+updated_date: 2026-11-28 18:05
 labels:
 - follow-up
 - tests
@@ -53,7 +53,13 @@ No PR lane runs the file whole (the fast PR contract runs four of its nodes). Th
 
 **AC#1, the cause.** `Tests/conftest.py` sets HOME, XDG and `TLDW_CONFIG_PATH` to its bootstrap profile at import, then imports `Chunking`, `RAG_Search.config_profiles` and `model_capabilities`. Their guarded config reads register the `tldw_chatbook.config` source as a raw participant whose recorded selection is the bootstrap config. For a plain test, `isolate_test_environment` then points `TLDW_CONFIG_PATH` at `tmp_path/test_data/config/config.toml`. The default reader, `get_canvas_execution_enabled`, misses the warm cache (keyed by the effective path) and enters `_load_cli_config_bootstrap` (guarded), where `_register_raw_participant` compares the recorded selection with the new one and raises `RecoveryRequired('raw_source_selection_changed')` (traced with a reader probe through the wrapper). `ConsoleMessageActionService._read_canvas_enabled` reads that as Canvas off and latches it. This is the ADR-126 single-profile guard working as designed (TASK-36381 reached the same verdict). The test was wrong, not the fixture.
 
-**AC#1, CI.** CI hits it too. `run.sh` sets HOME, XDG_*, `TLDW_CONFIG_PATH` and `PYTHON_KEYRING_BACKEND`. Conftest overwrites every one that matters before the binding. The CI step's env block sets none of them (only `PYTEST_TIMEOUT`, `PYTHON*` and the setup-python paths). CI log: Release candidate qualification run 44955437105, job 137004879842 ("Core Tests (all but UI) - shard 2/6", hosted Linux, 2026-11-22, head 241b9256c1). It shows `FAILED Tests/Chat/test_console_message_actions.py::test_oversized_mermaid_keeps_discovery_safe_and_refuses_open - AssertionError: assert '8 KiB' in 'Canvas is disabled. Restart Chatbook after re-enabling it.'`, the local failure word for word. The shard runs with `--maxfail=1`, so it stopped there and the other five never ran. An older CI log shows the same refusal raised visibly: UI Fast Lane (7), run 39319900193, 2026-10-19, TASK-34982.
+**AC#1, CI.** CI hits it too. `run.sh` sets HOME, XDG_*, `TLDW_CONFIG_PATH`, `PYTHON_KEYRING_BACKEND`, PYTHONPATH and PATH. Before the binding, conftest overwrites HOME, USERPROFILE, XDG_DATA_HOME, XDG_CONFIG_HOME, `TLDW_CONFIG_PATH` and `PYTHON_KEYRING_BACKEND` (`Tests/conftest.py` lines 73-77 and 96). XDG_CACHE_HOME, XDG_STATE_HOME, PYTHONPATH and PATH survive, and none of them selects the config. The CI step's env block sets none of these variables (only `PYTEST_TIMEOUT`, `PYTHON*` and the setup-python paths).
+
+CI log: Release candidate qualification run 44955437105, a workflow_dispatch on `codex/light-ci-release-fixtures` (not dev), 2026-11-22. Its head is 241b9256c1 and its merge-base with dev is e5626ea043. Job 137004879842 ("Core Tests (all but UI) - shard 2/6", hosted Linux) shows `FAILED Tests/Chat/test_console_message_actions.py::test_oversized_mermaid_keeps_discovery_safe_and_refuses_open - AssertionError: assert '8 KiB' in 'Canvas is disabled. Restart Chatbook after re-enabling it.'`, the local failure word for word.
+- The six were spread over four shards, and every shard stopped at its first failure (`--maxfail=1`) before reaching the others, so only this one shows.
+- The evidence still applies to dev. The branch's extra commits touch `Canvas/config_policy.py` only to add `_retire_console_canvas_attachment`. They leave the reader, `Chat/console_message_actions.py`, `Tests/conftest.py` and the test file alone.
+
+An older CI log shows the same refusal raised visibly: UI Fast Lane (7), run 39319900193, 2026-10-19 (TASK-34982).
 
 **AC#2.** The six tests build the service through `_canvas_on_service()`, which passes `canvas_enabled_reader=lambda: True` (the `Tests/Canvas/test_canvas_kill_switch.py` precedent). They are about fences, identity and dispatch, not config. No product code changed, no config is written, and every assertion is kept. The reader itself stays covered by `Tests/Canvas/test_canvas_settings.py` and the kill-switch suite. Red/green, same command (`run.sh ... pytest -n 4 --timeout=180 Tests/Chat/test_console_message_actions.py`): before, 6 failed and 131 passed; after, 137 passed. Each of the six also passes alone.
 - `Tests/Backup_Recovery/test_inventory.py::test_normal_config_and_pure_resolvers_agree` is not cleared. It calls the guarded `config.get_user_data_dir()` itself, so no reader seam applies. Under a temporary `bootstrap_profile` marker (reverted) it fails differently, with `config_directory_selection_changed`, because it patches `get_cli_setting` to move `data_dir`. It needs a selected config source (`select_config_source`). It stays with TASK-41116's open AC#1 and its CI `--deselect`.
@@ -62,4 +68,4 @@ No PR lane runs the file whole (the fast PR contract runs four of its nodes). Th
 
 **Checks.** `Tests/CI -n 4`: 2080 passed, 2 skipped. Preflight passed. `Tests/lint/ruff_gate.py` passed (RATCHET OK). `ruff --select F` on both changed test files passed.
 
-**Files.** `Tests/Chat/test_console_message_actions.py`, `Tests/CI/test_ci_queue_pressure_contract.py`, `.github/workflows/derived-artifacts.yml`, `backlog/docs/lessons-testing-evidence.md` (new entry).
+**Files.** `Tests/Chat/test_console_message_actions.py`, `Tests/CI/test_ci_queue_pressure_contract.py`, `.github/workflows/derived-artifacts.yml`, `backlog/docs/lessons-testing-evidence.md` (a second incident under TASK-36381's "A broad except can dress `RecoveryRequired` up as an egress block").
