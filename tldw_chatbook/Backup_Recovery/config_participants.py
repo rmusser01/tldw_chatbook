@@ -610,10 +610,10 @@ def check_lock_wait(source, operation):
         and raw._participant_state(state.participant).closed
     ):
         raise bootstrap.RecoveryRequired("storage_locally_paused")
-    # The raw scope's own question, through its window: on Windows a hold found
-    # quiet is not asked again for a second (TASK-40608 D1). A wait for the
-    # config lock asked before every attempt and once more with the lock held.
-    if raw._raw_pause_requested(state.holds):
+    if any(
+        hold is not None and hold.authority.pause_requested(hold.names)
+        for hold in state.holds
+    ):
         raise bootstrap.RecoveryRequired("storage_locally_paused")
 
 

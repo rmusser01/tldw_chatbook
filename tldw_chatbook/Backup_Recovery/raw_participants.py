@@ -757,50 +757,53 @@ def _pin_parent(state, anchor):
         raise
 
 
-#: Windows (TASK-40608 D1): id(hold) -> (weak reference to that hold,
-#: time.monotonic() when its last probe that found no maintenance request
-#: began). The app's maintenance monitor asks the same native question once a
-#: second; an operation does not need to ask it again in between. Kept per
-#: hold: while this was one slot for the last tuple of holds, two operations
-#: that alternate, each with its own holds, both probed every time (49 to 80
-#: probes in one Console turn, counted 2026-11-27). The reference is weak so an
-#: answer never keeps a hold alive, and it is compared with the hold asked
-#: about so a reused address is never taken for it.
-_quiet_pause_probes: dict = {}
-_QUIET_PAUSE_PROBES_MAX = 64
+#: Windows (TASK-40608 D1): (weak references to the holds, time.monotonic()) of
+#: the last probe, kept when it found no maintenance request. One slot on
+#: purpose: only the question asked immediately before may be reused, for a
+#: second and for exactly those holds. An operation with other holds in between
+#: replaces it, and the next call asks natively again.
+#:
+#: Kept per hold instead (tried 2026-11-27, 49-80 probes a Console turn down to
+#: 12), a config read made within a second of a quiet answer no longer saw a
+#: backup's request before the maintenance monitor did, and the scheduler
+#: dispatched due work under a pending native intent
+#: (Tests/Backup_Recovery/test_scheduler_native_pause_intent.py). Widening this
+#: is the owner's decision (ADR-126, 2026-11-27 notes). The references are
+#: weak and compared with the holds asked about, so a reused address is never
+#: taken for a hold that was asked.
+_quiet_pause_probe = None
+
+
+def _no_hold():
+    return None
 
 
 def _raw_pause_requested(holds):
-    """``_raw_holds_pause_requested``, at most once a second per hold on Windows."""
+    """``_raw_holds_pause_requested``; on Windows the same question asked just before stands a second."""
+    global _quiet_pause_probe
     window = storage._EVIDENCE_OBSERVATION_SECONDS
     if not window:
         return _raw_holds_pause_requested(holds)
-    began = time.monotonic()
-    quiet = _quiet_pause_probes
-    for hold in holds:
-        if hold is None:
-            continue
-        entry = quiet.get(id(hold))
-        if entry is None or entry[0]() is not hold or began - entry[1] >= window:
-            break
-    else:
+    now = time.monotonic()
+    quiet = _quiet_pause_probe
+    if (
+        quiet is not None
+        and now - quiet[1] < window
+        and len(quiet[0]) == len(holds)
+        and all(known() is hold for known, hold in zip(quiet[0], holds))
+    ):
         with storage._lock:
             if storage._pause is None:
                 return False
     requested = _raw_holds_pause_requested(holds)
-    if requested:
-        for hold in holds:
-            quiet.pop(id(hold), None)
-        return True
-    if len(quiet) >= _QUIET_PAUSE_PROBES_MAX:
-        quiet.clear()
-    for hold in holds:
-        if hold is not None:
-            try:
-                quiet[id(hold)] = (weakref.ref(hold), began)
-            except TypeError:  # No weak reference: never remembered, asked every time.
-                pass
-    return False
+    try:
+        _quiet_pause_probe = None if requested else (
+            tuple(_no_hold if hold is None else weakref.ref(hold) for hold in holds),
+            now,
+        )
+    except TypeError:  # A hold with no weak reference is never remembered.
+        _quiet_pause_probe = None
+    return requested
 
 
 def _raw_holds_pause_requested(holds):
