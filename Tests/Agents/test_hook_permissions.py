@@ -138,6 +138,180 @@ def test_a_warm_visit_reads_nothing_until_a_file_changes(hook_file, monkeypatch)
     assert len(reads) > count and not edited.ready, "a hook edit was not picked up"
 
 
+def _settle_tool_calls(owner, reads: list[int], event: str = "PostToolUse") -> tuple:
+    """Call ``targets`` until a call reads nothing; return that call's targets."""
+    for _ in range(4):
+        before = len(reads)
+        targets = owner.targets(event, None)
+        if len(reads) == before:
+            return targets
+    raise AssertionError("tool-call target lookups never stopped reading")
+
+
+def test_a_warm_tool_call_reads_nothing_until_a_file_changes(hook_file, monkeypatch):
+    """TASK-40608: an unchanged tool call reuses the last full hook read.
+
+    Every tool call ran the full read (two interprocess locks and two file
+    reads). The targets are now served from the kept read until a store write
+    (a revoke) or a config write (a hook edit) moves a stamp.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads.
+    """
+    owner = _owner()
+    current = _approve(owner)
+    assert current.ready
+    reads = _count_reads(owner, monkeypatch)
+    settled_targets = _settle_tool_calls(owner, reads)
+    assert [target.key for target in settled_targets] == ["id:one"]
+    settled = len(reads)
+    for _ in range(3):
+        assert owner.targets("PostToolUse", None) == settled_targets
+        assert owner.targets("PreToolUse", "fs_read") == ()
+    assert len(reads) == settled, "a warm tool call re-read the hook files"
+
+    key = current.rows[0].entry.key
+    assert not owner.revoke(owner.snapshot(), key).ready
+    count = len(reads)
+    assert owner.targets("PostToolUse", None) == ()
+    assert len(reads) > count, "a revoke was served from the kept read"
+
+    assert _approve(owner).ready
+    _settle_tool_calls(owner, reads)
+    _edit(hook_file, lambda hooks: hooks["hook"][0].update(timeout_s=7))
+    count = len(reads)
+    assert owner.targets("PostToolUse", None) == ()
+    assert len(reads) > count, "a hook edit was served from the kept read"
+
+
+def test_send_never_reuses_a_kept_hook_read(hook_file, monkeypatch):
+    """TASK-40608: only tool-call events reuse; Send reads in full every time.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads.
+    """
+    owner = _owner()
+    assert _approve(owner).ready
+    reads = _count_reads(owner, monkeypatch)
+    _settle_tool_calls(owner, reads)
+    for event in ("UserPromptSubmit", "SessionStart", "Stop"):
+        count = len(reads)
+        owner.targets(event, None)
+        assert len(reads) > count, f"{event} was served from the kept read"
+
+
+def test_a_just_written_hook_file_is_not_kept_for_a_tool_call(hook_file, monkeypatch):
+    """TASK-40608: the settle rule of the visit snapshot holds for tool calls.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads under a long settle window.
+    """
+    owner = _owner()
+    assert _approve(owner).ready
+    reads = _count_reads(owner, monkeypatch, settle_ns=10**15)
+    for _ in range(3):
+        count = len(reads)
+        assert len(owner.targets("PostToolUse", None)) == 1
+        assert len(reads) > count, "a tool call kept a read of a just-written file"
+
+
+def test_a_sealed_hook_is_not_served_to_a_warm_tool_call(hook_file, monkeypatch):
+    """TASK-40608: in-memory sealing invalidates the kept read for tool calls.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads.
+    """
+    owner = _owner()
+    approved = _approve(owner)
+    assert approved.ready
+    reads = _count_reads(owner, monkeypatch)
+    assert len(_settle_tool_calls(owner, reads)) == 1
+
+    owner._seal(approved, [row.entry.key for row in approved.rows if row.entry])
+    count = len(reads)
+    assert owner.targets("PostToolUse", None) == ()
+    assert len(reads) > count, "a sealed hook was served from the kept read"
+
+
+def test_a_hook_sealed_while_the_stamp_is_probed_is_not_served_to_a_tool_call(
+    hook_file, monkeypatch
+):
+    """TASK-40608: sealing is re-read under its lock before a kept read is used.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads and seals mid-probe.
+    """
+    owner = _owner()
+    approved = _approve(owner)
+    reads = _count_reads(owner, monkeypatch)
+    assert len(_settle_tool_calls(owner, reads)) == 1
+    real_stamp = owner._visit_stamp
+    sealed_once: list[int] = []
+
+    def stamp_then_seal(*args):
+        stamp = real_stamp(*args)
+        if not sealed_once:
+            sealed_once.append(1)
+            owner._seal(approved, [row.entry.key for row in approved.rows if row.entry])
+        return stamp
+
+    monkeypatch.setattr(owner, "_visit_stamp", stamp_then_seal)
+    count = len(reads)
+    assert owner.targets("PostToolUse", None) == ()
+    assert len(reads) > count, "a hook sealed mid-probe was served from the kept read"
+
+
+def test_a_maintenance_pause_is_not_served_to_a_warm_tool_call(hook_file, monkeypatch):
+    """TASK-40608: while storage admission is paused, a tool call reads in full.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads and opens a pause.
+    """
+    from tldw_chatbook.Agents.run_hooks import HookLaunchRefused
+    from tldw_chatbook.Backup_Recovery import storage_admission
+
+    owner = _owner()
+    assert _approve(owner).ready
+    reads = _count_reads(owner, monkeypatch)
+    _settle_tool_calls(owner, reads)
+    monkeypatch.setattr(storage_admission, "_pause", object())
+    count = len(reads)
+    try:
+        served = owner.targets("PostToolUse", None)
+    except HookLaunchRefused:
+        served = ()
+    assert len(reads) > count, "a paused admission was served from the kept read"
+    assert served == ()
+
+
+def test_a_stamp_that_cannot_be_taken_runs_the_full_read(hook_file, monkeypatch):
+    """TASK-40608: any doubt about the stamp falls back to the full read.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads and breaks the stamp.
+    """
+    owner = _owner()
+    assert _approve(owner).ready
+    reads = _count_reads(owner, monkeypatch)
+    _settle_tool_calls(owner, reads)
+
+    def broken(*args):
+        raise OSError("stamp unavailable")
+
+    monkeypatch.setattr(owner, "_visit_stamp", broken)
+    for _ in range(2):
+        count = len(reads)
+        assert len(owner.targets("PostToolUse", None)) == 1
+        assert len(reads) > count, "an unreadable stamp was served from the kept read"
+
+
 def test_a_sealed_hook_is_not_served_from_a_warm_visit(hook_file, monkeypatch):
     """TASK-33642: in-memory sealing invalidates the reused visit snapshot too.
 

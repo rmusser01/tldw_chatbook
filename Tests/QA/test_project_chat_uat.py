@@ -77,6 +77,10 @@ def uat_environment(monkeypatch, tmp_path):
     for key in ("TEMP", "TMP", "TMPDIR"):
         monkeypatch.setenv(key, str(private_temp))
     monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
+    # The journey runs the app's own rule: on Windows an owned call keeps its
+    # Console database handle open (TASK-40608). That rule is off under pytest
+    # by default (``Backup_Recovery.held_connections._holding``).
+    monkeypatch.setenv("TLDW_HOLD_DB_CONNECTIONS", "1")
 
 
 async def wait_for(pilot, condition, phase, server, timeout=60):

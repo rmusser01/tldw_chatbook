@@ -42,9 +42,50 @@ DEFAULT_DATA_FALLBACK_DIRECTORY = ".tldw_cli-data"
 DATA_ROOT_LOCK_NAME = ".tldw_cli-data-root.lock"
 
 
+#: Windows (TASK-40608 D1): (conventional root, selected root, time.monotonic())
+#: of the last selection. Each one costs two file opens and one Console turn
+#: asked several thousand times; a root that appears or disappears is seen
+#: within a second. A refusal never rests on it: ``config_participants.selection``
+#: drops it and decides again before it refuses. One immutable tuple, replaced
+#: whole.
+_selected_data_dir = None
+_SELECTED_DATA_DIR_SECONDS = 1.0
+
+
 def selected_default_base_data_dir() -> Path:
     """Observe ADR-127's durable fallback without creating or resolving paths."""
+    global _selected_data_dir
     conventional = default_base_data_dir()
+    if os.name == "nt":
+        import time
+
+        now = time.monotonic()
+        known = _selected_data_dir
+        if (
+            known is not None
+            and known[0] == conventional
+            and now - known[2] < _SELECTED_DATA_DIR_SECONDS
+        ):
+            return known[1]
+        selected = _select_default_base_data_dir(conventional)
+        _selected_data_dir = (conventional, selected, now)
+        return selected
+    return _select_default_base_data_dir(conventional)
+
+
+def forget_selected_default_base_data_dir() -> bool:
+    """Drop the kept default-root selection.
+
+    Returns:
+        True when there was a kept selection, so the caller's next read
+        observes the disk and may decide differently.
+    """
+    global _selected_data_dir
+    known, _selected_data_dir = _selected_data_dir, None
+    return known is not None
+
+
+def _select_default_base_data_dir(conventional: Path) -> Path:
     fallback = conventional.parents[2] / DEFAULT_DATA_FALLBACK_DIRECTORY
 
     def exists(path):
@@ -59,6 +100,102 @@ def selected_default_base_data_dir() -> Path:
     if exists(conventional):
         raise ValueError("ambiguous_default_data_roots")
     return fallback
+
+
+#: Windows (TASK-40608 D1, owner decision O3): (settings, posture, path,
+#: time.monotonic()) of the last positive config posture check. One immutable
+#: tuple, replaced whole, so any thread may read it.
+_posture_held = None
+_POSTURE_HELD_SECONDS = 1.0
+
+
+def posture_holds(config_path: Path, settings, posture: tuple, observe) -> bool:
+    """Whether the config path still has ``posture``.
+
+    Each check stats every component of the config path. Worker threads made
+    one per warm settings read, several thousand per Console turn, and the UI
+    loop one per batch of callbacks (the 0.2 s Console tick alone: 1.3 s of
+    UI-thread time across two turns). On Windows every component costs a file
+    open, so there one positive check covers all threads for a second; a
+    rebuild or a write installs a new settings object, which never matches.
+    Other platforms check every time.
+
+    Args:
+        config_path: The config path the warm hit is for.
+        settings: The installed settings object that hit.
+        posture: The identity stamped when ``settings`` was read.
+        observe: ``config._config_file_posture``.
+    """
+    global _posture_held
+    if os.name != "nt":
+        return observe(config_path) == posture
+    import time
+
+    now = time.monotonic()
+    held = _posture_held
+    if (
+        held is not None
+        and held[0] is settings
+        and held[1] is posture
+        and held[2] == config_path
+        and now - held[3] < _POSTURE_HELD_SECONDS
+    ):
+        return True
+    if observe(config_path) != posture:
+        _posture_held = None
+        return False
+    _posture_held = (settings, posture, config_path, now)
+    return True
+
+
+#: Windows (TASK-40608, owner decisions O1 and O3): (data-directory resolution
+#: memo, time.monotonic() when the look that confirmed it began). One immutable
+#: tuple, replaced whole, so any thread may read it.
+_data_dir_held = None
+_DATA_DIR_HELD_SECONDS = 1.0 if os.name == "nt" else 0.0
+
+
+def data_dir_holds(memo: tuple, paths: tuple, observe) -> bool:
+    """Whether the data-directory resolution ``memo`` still describes ``paths``.
+
+    ``memo[1]`` is the posture of every path component, stamped around the
+    resolution that produced ``memo``. Looking again costs one native open
+    per component on Windows: 32 opens a call and 23 to 58 calls in one
+    Console turn, a fifth of all its native opens (counted 2026-11-27). So
+    there one positive look covers every thread for a second, as for the
+    config path above. A changed setting, environment or config generation
+    makes the caller compare another memo, which never matches. There is no
+    window inside ``storage_admission.fresh_observation()`` or while the
+    storage layer's own window is off. Other platforms look on every call.
+
+    Args:
+        memo: ``config._USER_DATA_DIR_MEMO``: (key, stamps, directory).
+        paths: The components the stamps were taken for.
+        observe: ``config._user_data_dir_stamps``.
+
+    Returns:
+        True while the components have the stamped posture.
+    """
+    global _data_dir_held
+    import sys
+    import time
+
+    window = _DATA_DIR_HELD_SECONDS
+    if window:
+        storage = sys.modules.get("tldw_chatbook.Backup_Recovery.storage_admission")
+        current = getattr(storage, "_observation_window", None)
+        if current is not None and not current():
+            window = 0.0
+    began = time.monotonic()
+    held = _data_dir_held
+    if window and held is not None and held[0] is memo and began - held[1] < window:
+        return True
+    if memo[1] != observe(paths):
+        _data_dir_held = None
+        return False
+    if window:
+        _data_dir_held = (memo, began)
+    return True
 
 
 def user_folder_name(user_name: str) -> str:

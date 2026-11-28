@@ -97,8 +97,10 @@ def run_workspace_worker(
             worker has no bundle and reports the empty default.
     """
     del stderr  # Reserved for fixed diagnostics; no request-derived text is written.
-    started = time.monotonic()
     raw = stdin.read(MAX_REQUEST_BYTES + 1)
+    # Timed from the request's arrival: a parent may start this process ahead
+    # of the call it serves (TASK-40608), and idle time is not exchange time.
+    started = time.monotonic()
     if len(raw) > MAX_REQUEST_BYTES:
         _emit(stdout, _failure("unknown", "invalid_request", started))
         return 2

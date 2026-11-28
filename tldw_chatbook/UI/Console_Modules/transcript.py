@@ -474,16 +474,44 @@ _REFREEZE_PAINTED_ATTRIBUTE = "_console_heap_refreeze_painted"
 def request_console_heap_refreeze(screen: Any, reason: str) -> None:
     """Ask for an idle heap re-freeze once this Console is quiet (TASK-33620.15.3).
 
-    Called when a run settles and when the transcript shows a different
-    conversation: the two moments the Console's long-lived heap changes. The
-    re-freeze itself runs later, only while :func:`_console_heap_busy` is
-    False and no input arrived for the quiet period (ADR-198 amendment).
+    Called when a run settles, when the transcript shows a different
+    conversation and when the Console is shown again
+    (:func:`consume_console_mount_visit`): the moments the Console's
+    long-lived heap changes. The re-freeze itself runs later, only while
+    :func:`_console_heap_busy` is False and no input arrived for the quiet
+    period (ADR-198 amendment).
 
     Args:
         screen: The Console ``ChatScreen``; its timer runs the re-freeze.
-        reason: ``run_settled`` or ``conversation_painted``.
+        reason: ``run_settled``, ``conversation_painted`` or ``console_resumed``.
     """
     heap_refreezer().request(reason, screen, _console_heap_busy)
+
+
+def consume_console_mount_visit(screen: Any) -> bool:
+    """Consume the mount's one-shot resume token; a real return asks for a re-freeze.
+
+    task-15475: on the first visit the resume is the mount's own, and
+    ``on_mount`` already did that visit's work; the token says so once.
+
+    TASK-40608 (owner decision 2026-11-26, ADR-198 amendment): on any later
+    resume, what the screen or dialog that covered this Console built is
+    garbage or newly long-lived, and nothing else asks for the idle heap
+    maintenance on the way back, so the next turn's full collections rescanned
+    all of it. Lives here, not in ``chat_screen.py``, which is at its size
+    budget.
+
+    Args:
+        screen: The Console ``ChatScreen`` being resumed.
+
+    Returns:
+        Whether this resume is the mount's own (its work is already done).
+    """
+    mount_already_refreshed = screen._console_mount_visit_refreshed
+    screen._console_mount_visit_refreshed = False
+    if not mount_already_refreshed:
+        request_console_heap_refreeze(screen, "console_resumed")
+    return mount_already_refreshed
 
 
 def request_transcript_sync(screen: Any) -> None:

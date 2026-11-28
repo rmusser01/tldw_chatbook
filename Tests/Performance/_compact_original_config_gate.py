@@ -714,10 +714,19 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
         from tldw_chatbook import config
         from tldw_chatbook.Backup_Recovery import (
             config_participants,
+            profile_paths,
             raw_participants,
             storage_admission,
         )
         from tldw_chatbook.Widgets import compact_model_bar
+
+        # The gate edits the config file and holds the read that notices the
+        # edit. On Windows one positive posture check covers every thread for
+        # a second (TASK-40608, owner decision O3), so that read came up to a
+        # second late or not at all and the gate was never entered: 11 of
+        # these tests failed there. Select the check on every read, which is
+        # what every other platform does. Nothing else about the read changes.
+        profile_paths._POSTURE_HELD_SECONDS = 0
 
         # These helpers define the exact selected Main/issued-worker route.
         for name in ("_ancestry", "_worker_ancestry", "_edit_before_reader"):

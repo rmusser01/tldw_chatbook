@@ -108,12 +108,10 @@ from textual.binding import Binding
 from textual.timer import Timer
 from textual.css.query import NoMatches, QueryError
 
-# Install the ordered-candidate fast path on `Stylesheet.apply` before any App
-# exists, so every style application in the process takes it. Upstream's apply
-# walks the whole rule list per node to recover source order, which made CSS
-# matching the #1 sampled frame during 399 ms screen-switch stalls (2026-08-29
-# holistic perf review). Idempotent; see the module for the A/B numbers and
-# Tests/Performance/test_textual_css_fastpath.py for the fidelity guard.
+# Install the ordered-candidate CSS fast path on `Stylesheet.apply` before any
+# App exists (2026-08-29 perf review). Idempotent; the module has the A/B
+# numbers and Tests/Performance/test_textual_css_fastpath.py guards fidelity.
+# The message-handler fast path (TASK-40608) is installed in TldwCli.__init__.
 from tldw_chatbook.Utils.textual_css_fastpath import install_stylesheet_fastpath
 
 install_stylesheet_fastpath()
@@ -1078,6 +1076,8 @@ class TldwCli(
         # Track startup timing
         self._startup_start_time = time.perf_counter()
         self._startup_phases = {}
+        from tldw_chatbook.Utils import textual_dispatch_fastpath  # not at import: ADR-097
+        textual_dispatch_fastpath.install_dispatch_fastpath()  # TASK-40608, idempotent
         # Real per-task durations of the phase-3 parallel initializers,
         # stamped on the worker thread by `_timed_init_task` (TASK-21111).
         self._startup_parallel_tasks: dict[str, float] = {}

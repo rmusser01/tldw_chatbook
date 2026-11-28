@@ -1468,9 +1468,14 @@ async def test_strict_registry_scope_preserves_borrowed_and_refuses_denied_close
     from tldw_chatbook.Workspaces.project_index.models import (
         ProjectIndexRetirementUnproven,
     )
+    from tldw_chatbook.Backup_Recovery import held_connections
     from tldw_chatbook.Backup_Recovery.participants import core_cached_connection
     import sqlite3
 
+    # This pins the close proof for a handle the scope must close itself: the
+    # contract on POSIX, and on Windows whenever the handle is not held
+    # (TASK-40608 D1; Tests/DB/test_held_operation_connections.py covers a held one).
+    monkeypatch.setattr(held_connections, "_HOLD_OPERATION_CONNECTIONS", False)
     database = WorkspaceDB(tmp_path / "registry.db")
     try:
         with database.transaction() as borrowed:

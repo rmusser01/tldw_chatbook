@@ -89,6 +89,19 @@ def binding(source):
 
 
 def selection(source, route, target):
+    try:
+        return _selection_now(source, route, target)
+    except bootstrap.RecoveryRequired:
+        # A refusal must come from the disk, never from the default-root
+        # selection ``profile_paths`` keeps for a second on Windows: a root
+        # moved a moment ago made the kept and the fresh selection disagree
+        # here (TASK-40608). Drop it and decide once more.
+        if not profile_paths.forget_selected_default_base_data_dir():
+            raise
+        return _selection_now(source, route, target)
+
+
+def _selection_now(source, route, target):
     bound = binding(source)
     if bound is None:
         raise bootstrap.RecoveryRequired("raw_source_not_supported")

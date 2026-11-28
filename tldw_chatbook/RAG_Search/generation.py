@@ -16,7 +16,10 @@ from tldw_chatbook.Backup_Recovery.activation import (
 )
 from tldw_chatbook.Backup_Recovery.generation_witnesses import _witnesses
 from tldw_chatbook.Backup_Recovery.rag_projection_lifetime import participant
-from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+from tldw_chatbook.Backup_Recovery.storage_admission import (
+    acquire_storage,
+    fresh_observation,
+)
 from tldw_chatbook.Utils.platform_files import fcntl, os
 
 from . import recovery
@@ -366,7 +369,12 @@ def query_scope(target):
     sources = getattr(service, "_projection_sources", None)
     with ExitStack() as stack:
         try:
-            witnesses = stack.enter_context(_scope(store, sources, service))
+            # The query gate observes every input: inside Windows' one-second
+            # evidence window a control record damaged from outside was served
+            # from evidence and the query ran (TASK-40608; pinned by
+            # test_dependency_damage_and_unknown_control_still_refuse).
+            with fresh_observation():
+                witnesses = stack.enter_context(_scope(store, sources, service))
             if witnesses:
                 if service is None or sources is None:
                     raise ValueError("projection_source_owner_required")

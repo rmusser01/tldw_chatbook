@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
+import threading
+from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from urllib.parse import SplitResult, urlsplit, urlunsplit
@@ -75,6 +78,7 @@ DEFAULT_PII_MAX_TEXT_CODEPOINTS = 1_000_000
 DEFAULT_PII_MAX_MATCHES = 10_000
 PII_OMISSION_MARKER = "[PII omitted]"
 _OMITTED_TEXT = "[credential omitted]"
+_CREDENTIAL_KEY_SCOPE = hashlib.blake2b(b"credential-key", digest_size=32).digest()
 _CREDENTIAL_KEYS = frozenset(
     {
         "access_token",
@@ -583,6 +587,71 @@ def apply_frozen_pii_masks(
     return projected
 
 
+#: Sanitized strings by content digest (TASK-40608). Every provider request
+#: re-sanitizes the whole conversation and tool list, twice, and all but the
+#: newest strings are the ones the previous request already sanitized: 0.47
+#: CPU-seconds in a four-request turn, growing with the conversation. An entry
+#: holds no input text: the key is a keyed-scope BLAKE2b-256 digest, the value
+#: is ``None`` for a string the filter left unchanged and otherwise the
+#: filter's own output, which is what traces store.
+#:
+#: Each entry also names the projection function that computed it, and is used
+#: only by a caller holding that same function. The version string alone is
+#: not enough: ``_CREDENTIAL_PROJECTIONS`` is a mutable table, and a result
+#: computed while one version's entry pointed at a weaker filter must never be
+#: served once it points at the real one (a test that replays a pre-upgrade
+#: trace does exactly that; it kept a bare key unmasked before this rule).
+_SANITIZED_TEXT_MAX = 8192
+_SANITIZED_TEXT_MIN_LENGTH = 48
+_sanitized_text: OrderedDict[bytes, tuple[object, str | None]] = OrderedDict()
+#: Strings shorter than ``_SANITIZED_TEXT_MIN_LENGTH``, in a table of their own
+#: (TASK-40608, measured 2026-11-26). They were left out as cheap and never
+#: repeated. A provider request's tool list is thousands of them (schema keys
+#: and one-word values), filtered again for every request: 22,101 short strings
+#: in a six-request turn at about 13 microseconds each, against about 2 to find
+#: a remembered answer. Their own table, because a response stream's one-off
+#: chunks must never push out the long strings above. Same rules for an entry:
+#: a digest key and the filter's output, never the text.
+_SANITIZED_SHORT_TEXT_MAX = 4096
+_sanitized_short_text: OrderedDict[bytes, tuple[object, str | None]] = OrderedDict()
+_sanitized_text_lock = threading.Lock()
+_MISSING = object()
+
+
+def _text_digest(scope: bytes, value: str) -> bytes:
+    return hashlib.blake2b(
+        value.encode("utf-8", "surrogatepass"), digest_size=32, key=scope
+    ).digest()
+
+
+def _remembered(key: bytes, projection: object, *, short: bool = False) -> object:
+    table = _sanitized_short_text if short else _sanitized_text
+    with _sanitized_text_lock:
+        found = table.get(key)
+        if found is None or found[0] is not projection:
+            return _MISSING
+        table.move_to_end(key)
+        return found[1]
+
+
+def _remember(
+    key: bytes, projection: object, result: str | None, *, short: bool = False
+) -> None:
+    table = _sanitized_short_text if short else _sanitized_text
+    with _sanitized_text_lock:
+        table[key] = (projection, result)
+        limit = _SANITIZED_SHORT_TEXT_MAX if short else _SANITIZED_TEXT_MAX
+        while len(table) > limit:
+            table.popitem(last=False)
+
+
+def forget_sanitized_text() -> None:
+    """Drop every remembered result (tests that replace a projection)."""
+    with _sanitized_text_lock:
+        _sanitized_text.clear()
+        _sanitized_short_text.clear()
+
+
 class CredentialSanitizer:
     """Remove recognized credentials without retaining findings or failures."""
 
@@ -591,6 +660,7 @@ class CredentialSanitizer:
         "_max_depth",
         "_max_nodes",
         "_max_text_codepoints",
+        "_memo_scopes",
         "_version",
     )
 
@@ -637,6 +707,18 @@ class CredentialSanitizer:
         ):
             raise ValueError("known_credentials")
         self._known_credentials = filtered_credentials
+        # One digest key per (version, known values, with or without known
+        # values): results are only shared between sanitizers that would
+        # compute the same thing, and the known values are not kept in a key.
+        scope = hashlib.blake2b(digest_size=32)
+        scope.update(version.encode("utf-8"))
+        for credential in filtered_credentials:
+            scope.update(b"\x00")
+            scope.update(credential.encode("utf-8", "surrogatepass"))
+        without_known = hashlib.blake2b(
+            b"text:" + version.encode("utf-8"), digest_size=32
+        ).digest()
+        self._memo_scopes = (without_known, scope.digest())
         self._max_nodes = max_nodes
         self._max_depth = max_depth
         self._max_text_codepoints = max_text_codepoints
@@ -763,6 +845,15 @@ class CredentialSanitizer:
     def _credential_key(key: str) -> bool:
         if "://" in key:
             return False
+        digest = _text_digest(_CREDENTIAL_KEY_SCOPE, key)
+        found = _remembered(digest, None)
+        if found is _MISSING:
+            found = "key" if CredentialSanitizer._is_credential_key(key) else None
+            _remember(digest, None, found)
+        return found is not None
+
+    @staticmethod
+    def _is_credential_key(key: str) -> bool:
         normalized = re.sub(r"[^a-z0-9]+", "_", key.strip().lower()).strip("_")
         components = tuple(part for part in normalized.split("_") if part)
         for credential in _CREDENTIAL_KEYS:
@@ -779,6 +870,28 @@ class CredentialSanitizer:
         return any(credential in key for credential in self._known_credentials)
 
     def _sanitize_text(self, value: str, *, include_known: bool = True) -> str:
+        # Streamed chunks, schema keys and one-word fields have their own table.
+        short = len(value) < _SANITIZED_TEXT_MIN_LENGTH
+        digest = _text_digest(self._memo_scopes[include_known], value)
+        # Read the projection once: the result is remembered for the function
+        # that will compute it, and only that function's results are reused.
+        projection = _CREDENTIAL_PROJECTIONS[self._version]
+        found = _remembered(digest, projection, short=short)
+        if found is _MISSING:
+            result = self._sanitize_text_now(
+                value, include_known=include_known, projection=projection
+            )
+            _remember(
+                digest, projection, None if result == value else result, short=short
+            )
+            return result
+        return value if found is None else found  # type: ignore[return-value]
+
+    def _sanitize_text_now(
+        self, value: str, *, include_known: bool, projection: object = None
+    ) -> str:
+        if projection is None:
+            projection = _CREDENTIAL_PROJECTIONS[self._version]
         if _PRIVATE_KEY_TEXT.search(value):
             return _OMITTED_TEXT
         value = _URL_TEXT.sub(lambda match: self._sanitize_url(match.group()), value)
@@ -787,7 +900,7 @@ class CredentialSanitizer:
                 value = value.replace(credential, _OMITTED_TEXT)
         if _SECRET_TEXT.search(value):
             value = _SECRET_TEXT.sub(_OMITTED_TEXT, value)
-        return _CREDENTIAL_PROJECTIONS[self._version](value).replace(
+        return projection(value).replace(  # type: ignore[operator]
             REDACTION_MARKER, _OMITTED_TEXT
         )
 

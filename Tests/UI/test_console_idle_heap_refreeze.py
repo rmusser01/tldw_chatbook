@@ -224,6 +224,44 @@ async def test_console_refreezes_after_painting_a_conversation_and_after_a_run_s
     assert timeline.index("refreeze:run_settled") > provider
 
 
+async def test_console_asks_for_a_refreeze_when_it_is_shown_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-40608 (ADR-198, 2026-11-26): coming back to the Console is an idle point too.
+
+    Another screen's widgets are garbage once it is gone, and nothing asked for
+    maintenance on the way back, so the next turn's full collections rescanned
+    them. The request is made when the Console is on top again, never while it
+    is covered and not for the mount's own resume.
+
+    Args:
+        monkeypatch: Installs the recording refreezer as the process's.
+    """
+    host, gateway, timeline = build()
+    refreezer, reasons = recording_refreezer(timeline)
+    monkeypatch.setattr(ui_responsiveness, "_HEAP_REFREEZER", refreezer)
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            await until(lambda: "conversation_painted" in reasons)
+            at_first_sight = reasons.count("console_resumed")
+
+            await host.push_screen(Screen())
+            await pilot.pause()
+            await asyncio.sleep(0.3)  # well past the quiet period
+            while_covered = reasons.count("console_resumed")
+            covered = console_transcript._console_heap_busy(console)
+
+            await host.pop_screen()
+            await until(lambda: reasons.count("console_resumed") > while_covered)
+            idle_again = not console_transcript._console_heap_busy(console)
+
+    assert at_first_sight == 0, "the mount's own resume asked for a re-freeze"
+    assert covered and while_covered == 0, "a re-freeze ran under another screen"
+    assert idle_again
+    assert reasons.count("console_resumed") == 1
+
+
 class BusyScreen:
     """Only what the busy check reads, every part idle until a case sets one."""
 

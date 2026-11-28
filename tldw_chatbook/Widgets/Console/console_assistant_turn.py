@@ -115,6 +115,8 @@ class ConsoleToolPreview(Static):
 
     def __init__(self, activity_id: str) -> None:
         self._output = ""
+        # The (output, width) the shown lines were wrapped from.
+        self._wrapped: tuple[str, int] | None = None
         super().__init__(
             "",
             id=f"console-tool-preview-{activity_id}",
@@ -141,6 +143,12 @@ class ConsoleToolPreview(Static):
 
     def _rewrap(self) -> None:
         width = max(1, self.content_size.width)
+        # The lines are a function of the output and the width alone. Every
+        # transcript reconcile sets the output again, and ``update`` asks for
+        # a whole-screen layout even for the lines already shown (TASK-40608).
+        if self._wrapped == (self._output, width):
+            return
+        self._wrapped = (self._output, width)
         lines = Text(self._output).wrap(Console(width=width), width, overflow="fold")
         if len(lines) > 3:
             hint = Text(f"… {len(lines) - 2} more lines — expand")
@@ -295,8 +303,18 @@ class ConsoleActivityHeader(Horizontal):
         self.raw_cli_presentation = raw_cli_presentation
         self.tool_presentation = tool_presentation
         self._sync_classes()
-        self.label_widget.update(self._label_content())
-        self.status_widget.update(self._status_content())
+        # Every transcript reconcile re-applies each activity row, and
+        # ``Static.update`` asks for a whole-screen layout even for the copy
+        # it already shows: 16-19 layout passes of a turn came from the
+        # 0.2 s tick alone (TASK-40608, measured 2026-11-23).
+        label = self._label_content()
+        shown = self.label_widget.content
+        if not isinstance(shown, Content) or shown != label or shown.spans != label.spans:
+            self.label_widget.update(label)
+        status = self._status_content()
+        shown = self.status_widget.content
+        if not isinstance(shown, Content) or shown != status or shown.spans != status.spans:
+            self.status_widget.update(status)
         self._sync_raw_cli_timer()
 
     def _activate(self) -> None:
@@ -401,7 +419,9 @@ class ConsoleActivityDisclosure(Vertical):
             if tool is not None and tool.approval_feedback is not None
             else ""
         )
-        self.feedback_notice.update(feedback)
+        shown = self.feedback_notice.content
+        if not isinstance(shown, str) or shown != feedback:  # As in sync_header.
+            self.feedback_notice.update(feedback)
         self.feedback_notice.display = bool(feedback)
         self.preview.display = bool(
             tool is not None and tool.result_preview is not None and not self.expanded

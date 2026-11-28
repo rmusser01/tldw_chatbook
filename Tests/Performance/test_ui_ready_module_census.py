@@ -190,7 +190,16 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: `Agents.ordinary_tree`, `Agents.workflow_task_scope`,
 #: `Chat.console_ordinary_tree` and `Workspaces.worktree_activity` (dev is at
 #: 1040); measured.
-MAX_TLDW_MODULES_AT_UI_READY = 1040
+#: 1040 -> 1042 (2026-11-22, TASK-40608; owner decision that day, ADR-097
+#: ledger): two new modules are resident at ready.
+#: `Backup_Recovery.held_connections` keeps the Console stores' SQLite
+#: connections open between operations on Windows; `participants` binds it
+#: when a store first takes a connection, which is before ready.
+#: `Utils.textual_dispatch_fastpath` (cached handler lookup for Textual's
+#: message pump) is installed when the app object is created, not at import
+#: (the app-import row had no room: dev reads 687 of 688 there). Measured
+#: 1042 on Windows, 1041 on Linux CI; limit = measured, as the row above.
+MAX_TLDW_MODULES_AT_UI_READY = 1042
 
 #: Modules a thread other than the UI loop imports during boot, so whether
 #: they are resident at ``_ui_ready`` depends on thread timing. They count on

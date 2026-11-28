@@ -27,7 +27,10 @@ from tldw_chatbook.Backup_Recovery.activation import (
 )
 from tldw_chatbook.Backup_Recovery.generation_witnesses import _witnesses
 from tldw_chatbook.Backup_Recovery.native_files import pinned_directory
-from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+from tldw_chatbook.Backup_Recovery.storage_admission import (
+    acquire_storage,
+    fresh_observation,
+)
 from tldw_chatbook.Utils.platform_files import os
 
 if TYPE_CHECKING:
@@ -93,7 +96,7 @@ def unqualified(function):
             operation, owned = _ordinary_operation()
             iterator = function(*args, **kwargs)
             try:
-                with _using(operation):
+                with _using(operation, just_read=True):
                     async for item in iterator:
                         yield item
             finally:
@@ -109,7 +112,7 @@ def unqualified(function):
         async def asynchronous(*args, **kwargs):
             operation, owned = _ordinary_operation()
             try:
-                with _using(operation):
+                with _using(operation, just_read=True):
                     return await function(*args, **kwargs)
             finally:
                 if owned:
@@ -122,7 +125,7 @@ def unqualified(function):
         operation, owned = _ordinary_operation()
         transferred = False
         try:
-            with _using(operation):
+            with _using(operation, just_read=True):
                 result = function(*args, **kwargs)
             if isinstance(result, Iterator) and owned:
                 operation.own(result)
@@ -235,9 +238,27 @@ def _selection(path, auth_source=None, *, resolve=False):
     return endpoint, auth_source, selection, secret
 
 
-def _history(path, lease):
+def _history(path, lease, *, fresh=True):
+    """The paired witnesses for ``path``, read now unless ``fresh`` is false.
+
+    Every caller decides whether a provider may be reached: the reconnect
+    review, recording its approval, and the per-request gate that compares
+    this with what it read when the operation began. Inside the evidence
+    observation window a pairing record removed or rewritten by anything but
+    this process's writers stayed invisible for up to a second, and all three
+    then accepted damaged history (TASK-40608, found 2026-11-22). So each of
+    them reads with no window; the Console's other gates keep it.
+
+    ``fresh=False`` is for one caller: taking the next item of a response
+    stream whose request was already admitted by a fresh read. Nothing more
+    is sent there, and one full derivation per item was most of this gate's
+    cost in a turn.
+    """
     try:
-        return tuple(_witnesses(path, lease))
+        if not fresh:
+            return tuple(_witnesses(path, lease))
+        with fresh_observation():
+            return tuple(_witnesses(path, lease))
     except (OSError, ValueError, TypeError, RuntimeError, KeyError, AttributeError):
         raise ProviderReconnectRequired() from None
 
@@ -447,10 +468,10 @@ class _Operation:
             records.append(matches[0])
         return tuple(records)
 
-    def check(self):
+    def check(self, *, fresh=True, history=True):
         if self.closed or self.path != bootstrap.effective_config_path():
             raise ProviderReconnectRequired()
-        if _history(self.path, self.lease) != self.history:
+        if history and _history(self.path, self.lease, fresh=fresh) != self.history:
             raise ProviderReconnectRequired()
 
     def check_request(self, url, key):
@@ -504,8 +525,22 @@ _current = ContextVar("openai_connection", default=None)
 
 
 @contextmanager
-def _using(operation):
-    operation.check()
+def _using(operation, *, fresh=True, just_read=False):
+    """Make ``operation`` the current one for this task after checking it.
+
+    ``just_read`` is for the three ``unqualified`` wrappers only: their
+    ``_ordinary_operation()`` returned this operation on the line before and
+    read the history there, with no window (it made the operation, or checked
+    the active one). Reading it again here asked the same question of the same
+    moment, and each such read observes every evidence input: half of the
+    fresh reads of a provider request (TASK-40608, counted 2026-11-23, removed
+    2026-11-26). The operation's own state is still checked, and
+    ``check_request`` still reads the history when the request is sent.
+    """
+    if just_read:
+        operation.check(fresh=fresh, history=False)
+    else:
+        operation.check(fresh=fresh)
     token = _current.set((operation, _identity()))
     try:
         yield operation
@@ -541,7 +576,7 @@ class _OpenAIStream(Iterator):
             if self.operation is None:
                 self.operation = _Operation(self.path)
             try:
-                with _using(self.operation):
+                with _using(self.operation, fresh=False):
                     value = next(self.iterator)
                 if self.close_requested.is_set():
                     self.close()

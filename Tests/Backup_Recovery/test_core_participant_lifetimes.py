@@ -536,6 +536,11 @@ def test_pause_cancels_independent_nested_admission_and_keeps_outer_live(
     entered, finish, retired = (threading.Event() for _ in range(3))
     original = storage.admission_authority
     errors = []
+    # The pause must arrive while the nested admission is inside the authority
+    # read, so that read has to run. On Windows a recent read of the same
+    # control records now serves it (TASK-40608, ``storage._control_snapshot``)
+    # and the barrier below was never reached; POSIX reads on every admission.
+    monkeypatch.setattr(storage, "_EVIDENCE_REUSE", False)
 
     def delayed_authority(root):
         if any(

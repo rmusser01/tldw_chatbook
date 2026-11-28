@@ -725,3 +725,58 @@ async def test_a_skipped_tick_under_a_native_pause_request_runs_its_later_steps_
                 tick.release()
                 gateway.validation_release.set()
             await _run_over(console)
+
+
+@pytest.mark.asyncio
+async def test_the_tick_finds_the_workflow_line_without_searching_the_screen(
+    monkeypatch,
+) -> None:
+    """TASK-40608: the poll searched every widget for the line each 0.2 s.
+
+    The screen now knows whether it built one. The old search remains the
+    answer whenever that line is not attached under the screen.
+    """
+    from textual.app import App
+    from textual.containers import Vertical
+    from textual.screen import Screen
+
+    from tldw_chatbook.UI.Console_Modules import config_sync
+
+    class WithLine(Screen):
+        def compose(self):
+            yield Vertical(config_sync.console_workflow_line(self), id="holder")
+
+    class WithoutLine(Screen):
+        def compose(self):
+            yield Vertical(id="holder")
+
+    app = App()
+    async with app.run_test() as pilot:
+        with_line, without_line = WithLine(), WithoutLine()
+        await app.push_screen(with_line)
+        await pilot.pause()
+        line = with_line.query_one("#console-workflow-line")
+        assert line is with_line._console_workflow_line
+
+        searches: list[object] = []
+        query = Screen.query
+
+        def recorded(screen, selector=None):
+            if selector == "#console-workflow-line":  # Textual searches too.
+                searches.append(selector)
+            return query(screen, selector)
+
+        monkeypatch.setattr(Screen, "query", recorded)
+
+        assert config_sync.console_workflow_line_is_mounted(with_line) is True
+        assert searches == []
+
+        await line.remove()
+        assert config_sync.console_workflow_line_is_mounted(with_line) is False
+        assert searches == ["#console-workflow-line"]
+        searches.clear()
+
+        await app.push_screen(without_line)
+        await pilot.pause()
+        assert config_sync.console_workflow_line_is_mounted(without_line) is False
+        assert searches == []

@@ -43,8 +43,10 @@ the warm-up.
 So each third-party package the send path loads is its own step, listed
 after its dependencies; the heaviest left is aiohttp (about 37 ms CPU).
 
-ADR-097's row for this list (``MAX_FIRST_SEND_WARMUP_ADDED_MODULES``) is full
-and the owner declined a raise on 2026-10-31. TASK-33620.15.53 measured a
+ADR-097's row for this list (``MAX_FIRST_SEND_WARMUP_ADDED_MODULES``) was full
+and the owner declined a raise on 2026-10-31; on 2026-11-21 the owner raised
+it for TASK-40608's project-chat block at the end of the list (see ADR-097's
+ledger). Outside that block the rule below still holds. TASK-33620.15.53 measured a
 first send after the warm-up (origin/dev e8eeae7db9) still loading the review
 service on the UI loop (``console_code_review`` with four
 ``Agents.code_review_*`` modules: median 19 ms at load1 ~20, 117 ms at load1
@@ -184,6 +186,109 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.emergency_stop",
     "tldw_chatbook.UI.Console_Modules.emergency_stop_hold",  # TASK-33620.1
     "tldw_chatbook.Chat.console_voice_input",
+    # TASK-40608 (owner decision 2026-11-21, "Warm up after UI ready"): what a
+    # first message in a PROJECT chat with local tools still imported after
+    # every entry above: the remote-binding status read, the personal-context
+    # service, the project-index service and the agent's local tool dispatch.
+    # Measured on the TASK-40608 journey with the routes and the list above
+    # already loaded. Third-party packages first, then the modules in reverse
+    # start order, so each comes after what it loads.
+    #
+    # Not the whole of it. The warm-up's closing re-freeze books everything it
+    # imported as runtime growth, which must stay under ADR-198's compaction
+    # floor (50,000 objects; TASK-33620.15.57's test in
+    # ``Tests/UI/test_console_first_send_preimport.py``). The list above books
+    # 31,654; with every project-chat module it was 53,988. Left for the first
+    # project message to import, about 0.2 s there: the plugin services
+    # (``Plugins.*``), trace capture (``Chat.console_trace_*``), the profile
+    # tool provider and ``anyio``. They cost the most objects per second of
+    # import; the two slow imports (``Personal_Context.recovery`` 0.57 s,
+    # ``Tools.remote_binding_status`` 0.13 s) are light and stay. Measured
+    # 2026-11-27 on dev c0a999302f: 44,271 booked with this block.
+    "cryptography",
+    "tldw_chatbook.Agents.tool_disclosure_diagnostics",
+    "tldw_chatbook.Agents.run_webhooks",
+    "tldw_chatbook.Agents.local_tool_dispatch",
+    "tldw_chatbook.Agents.tool_arg_coercion",
+    "tldw_chatbook.UI.Console_Modules.approval_feedback",
+    "tldw_chatbook.Chat.permission_summary_service",
+    "tldw_chatbook.UI.Console_Modules.approval_controls",
+    "tldw_chatbook.Agents.local_tool_authority",
+    "tldw_chatbook.Chat.console_approval_feedback",
+    "tldw_chatbook.Agents.tool_output",
+    "tldw_chatbook.Chat.refused_stream",
+    "tldw_chatbook.Agents.goal_storage_lifetime",
+    "tldw_chatbook.Chat.stream_stall_watchdog",
+    "tldw_chatbook.Chat.console_streaming_request",
+    "tldw_chatbook.Agents.approval_observation",
+    "tldw_chatbook.Agents.fallback_chain",
+    "tldw_chatbook.Agents.agent_request_execution",
+    "tldw_chatbook.Agents.agent_run_tools",
+    "tldw_chatbook.Agents.agent_native_execution",
+    "tldw_chatbook.Chat.console_tool_activity",
+    "tldw_chatbook.Canvas.authoring",
+    "tldw_chatbook.Agents.fleet_message_tools",
+    "tldw_chatbook.DB.fleet_progress_repository",
+    "tldw_chatbook.Agents.fleet_messages",
+    "tldw_chatbook.Chat.console_agent_preparation",
+    "tldw_chatbook.Agents.native_source_storage",
+    "tldw_chatbook.Agents.archive_recovery_tool_provider",
+    "tldw_chatbook.Personal_Context.proposal_service",
+    "tldw_chatbook.Chat.console_personal_context",
+    "tldw_chatbook.Personal_Context.recovery",
+    "tldw_chatbook.DB.recovery_operations",
+    "tldw_chatbook.UI.Console_Modules.view_workers",
+    "tldw_chatbook.DB.recovery_review_boundary_schema",
+    "tldw_chatbook.DB.recovery_goal_schema",
+    "tldw_chatbook.DB.recovery_core_schema",
+    "tldw_chatbook.Personal_Context.native_compatibility",
+    "tldw_chatbook.Personal_Context.bootstrap",
+    "tldw_chatbook.Personal_Context.paths",
+    "tldw_chatbook.Personal_Context",
+    "tldw_chatbook.Personal_Context.interview_coordinator",
+    "tldw_chatbook.Personal_Context.interview_provider",
+    "tldw_chatbook.Personal_Context.interview_draft_repository",
+    "tldw_chatbook.Personal_Context.interview_diff",
+    "tldw_chatbook.Personal_Context.context_service",
+    "tldw_chatbook.Personal_Context.service",
+    "tldw_chatbook.Personal_Context.settings_provenance",
+    "tldw_chatbook.Personal_Context.repository",
+    "tldw_chatbook.Personal_Context.repository_models",
+    "tldw_chatbook.Personal_Context.repository_keys",
+    "tldw_chatbook.Personal_Context.key_protector",
+    "tldw_chatbook.Personal_Context.runtime_policy",
+    "tldw_chatbook.Personal_Context.lexical_match",
+    "tldw_chatbook.Personal_Context.crypto",
+    "tldw_chatbook.Agents.virtual_cli_provider",
+    "tldw_chatbook.Tools.virtual_cli_impls",
+    "tldw_chatbook.Chat.approval_presentation",
+    "tldw_chatbook.Workspaces.project_index.runtime",
+    "tldw_chatbook.Workspaces.project_index.service",
+    "tldw_chatbook.Workspaces.project_index.scanner",
+    "tldw_chatbook.Tools.project_index_scan_protocol",
+    "tldw_chatbook.Workspaces.project_index.lifetime",
+    "tldw_chatbook.DB.Workspace_Project_Index_DB",
+    "tldw_chatbook.Workspaces.project_index.models",
+    "tldw_chatbook.Workspaces.project_index",
+    "tldw_chatbook.Chat.console_project_index_preparation",
+    "tldw_chatbook.Chat.console_token_rate",
+    "tldw_chatbook.Chat.console_provider_composition",
+    "tldw_chatbook.Chat.console_project_dispatch",
+    "tldw_chatbook.Chat.console_provider_request_preparation",
+    "tldw_chatbook.Agents.first_request_schemas",
+    "tldw_chatbook.Agents.first_request_window",
+    "tldw_chatbook.Chat.console_change_review_read",
+    "tldw_chatbook.Backup_Recovery.dictionary_source_job",
+    "tldw_chatbook.Chat.local_reasoning_metadata",
+    "tldw_chatbook.RAG_Search.simplified.active_config",
+    "tldw_chatbook.Tools.remote_binding_status",
+    "tldw_chatbook.Tools.remote_workspace_transport",
+    "tldw_chatbook.Tools.remote_workspace_executor",
+    "tldw_chatbook.Tools.remote_session_frames",
+    "tldw_chatbook.Tools.remote_worker_bundle",
+    "tldw_chatbook.Tools.remote_binding_locator",
+    "tldw_chatbook.Tools.build_remote_worker_bundle",
+    "tldw_chatbook.Agents.legacy_hook_ownership",
 )
 
 

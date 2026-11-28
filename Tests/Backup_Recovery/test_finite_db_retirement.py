@@ -20,6 +20,20 @@ from tldw_chatbook.Subscriptions.db_offload import run_db_off_loop
 from tldw_chatbook.Workspaces import change_retention
 
 
+@pytest.fixture(autouse=True)
+def per_call_close(monkeypatch):
+    """Pin the per-call close of the handle an owned call opened itself.
+
+    That is the contract on POSIX, and on Windows for other stores, a paused
+    profile and the held-handle cap. Windows otherwise keeps a Console store's
+    handle open between owned calls (TASK-40608 D1), which
+    ``Tests/DB/test_held_operation_connections.py`` covers.
+    """
+    from tldw_chatbook.Backup_Recovery import held_connections
+
+    monkeypatch.setattr(held_connections, "_HOLD_OPERATION_CONNECTIONS", False)
+
+
 def worker_leases(db):
     """Observe native ownership without borrowing the connection."""
     with storage._lock:

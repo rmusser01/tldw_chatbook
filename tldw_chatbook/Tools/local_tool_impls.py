@@ -230,6 +230,11 @@ def resolve_workspace_path(
         ) from exc
 
     verb = _INTENT_VERBS.get(intent, "accessed")
+    if context is None and intent == "write":
+        # A write runs both deny checks below. Each resolved the same deny set
+        # for itself, one right after the other (31 path resolutions apiece;
+        # TASK-40608, counted 2026-11-26): one fresh set now serves this call.
+        context = resolve_sensitive_context()
     if is_sensitive_path(resolved, context=context):
         raise LocalToolError(
             f"Refused: '{path}' is a protected path and cannot be {verb}"
@@ -405,6 +410,19 @@ def read_file(
     )
 
 
+# Windows (TASK-40608, 2026-11-27; the read below refused nearly every real file
+# there). The descriptor is opened ``O_BINARY``: text mode turns CR LF into LF
+# and ends the file at Ctrl-Z, so the bytes read never matched the size. And a
+# path stat is compared with a descriptor stat only on the fields that mean the
+# same in both: CPython reports a path's creation time but a descriptor's last
+# change time in ``st_ctime_ns`` (3.12.10), and gives a path with an executable
+# extension (``.cmd`` and ``.bat`` measured) execute bits a descriptor never
+# has. Path is compared with path and descriptor with descriptor on every
+# field, so a rewrite during the read that restores size and modification time
+# is still refused. POSIX compares every field in every pair, as before. These
+# lines are comments, not docstring: the generated worker bundle keeps
+# docstrings and is at its line budget. Tests:
+# Tests/Tools/test_bounded_read_ordinary_files.py.
 def _read_bounded_bytes(target: Path) -> bytes:
     """Read one unchanged regular file, bounding both metadata and actual bytes.
 
@@ -418,20 +436,26 @@ def _read_bounded_bytes(target: Path) -> bytes:
     if before.st_size > MAX_READ_FILE_BYTES:
         raise LocalToolError(f"'{target.name}' is too large to read")
 
-    def version(info: os.stat_result) -> tuple[int, ...]:
+    def version(info: os.stat_result, same_kind: bool = True) -> tuple[int, ...]:
         return (
             info.st_dev,
             info.st_ino,
-            info.st_mode,
+            info.st_mode if same_kind else stat_module.S_IFMT(info.st_mode),
             info.st_size,
             info.st_mtime_ns,
-            info.st_ctime_ns,
+            info.st_ctime_ns if same_kind else 0,
         )
 
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
     descriptor = os.open(target, flags)
     try:
-        if version(os.fstat(descriptor)) != version(before):
+        opened = os.fstat(descriptor)
+        if version(opened, os.name != "nt") != version(before, os.name != "nt"):
             raise LocalToolError(f"file changed while opening: {target.name}")
         chunks: list[bytes] = []
         total = 0
@@ -445,7 +469,7 @@ def _read_bounded_bytes(target: Path) -> bytes:
             chunks.append(chunk)
         if (
             total != before.st_size
-            or version(os.fstat(descriptor)) != version(before)
+            or version(os.fstat(descriptor)) != version(opened)
             or version(target.stat(follow_symlinks=False)) != version(before)
         ):
             raise LocalToolError(f"file changed while reading: {target.name}")

@@ -134,3 +134,13 @@ authority still refuses, and no ordinary target or model authority reopens.
 ### Current PR3023 integration: initial-review runtime lifetime
 
 Under accepted ADR230, the initial waiting-for-Send review uses the existing runtime InterruptRoundHost decision registry and FIFO. Disposable views hold only exact presentation tokens; detaching or cancelling the waiter grants no dispatch and does not discard a physically issued consent operation. Ready requires the original fresh HookPermissions verification, and launch still performs its existing live configuration/consent checks. Explicit Settings/manual review and custom three-argument callbacks retain their prior contracts. No worker waits for human input; exact native operation outcomes retire before creator Close/dispose. This changes coordination only, not consent authority or event error policy.
+
+### 2026-11-21 note (TASK-40608, owner-approved): a tool call may reuse the last full read
+
+Status: **approved by the owner on 2026-11-21** ("Reuse while unchanged").
+
+Every tool call ran the full authority read (`HookPermissions.targets`): the config lock, the store lock and both file reads, even with no hook configured. Inside a Console turn that was about 0.2 s per tool call and half of the agent thread's work between "tool started" and the worker launch.
+
+`targets()` now reuses the last full read for the two tool-call events only (`PreToolUse`, `PostToolUse`), under the rule the Console visit snapshot already uses (TASK-33642): the stamp taken before that read equals the one taken after it, both files' last change has settled, the read reported no recovery row, and a stamp taken now is still equal. The stamp covers both files' type, identity, size and change times, both lock files and every parent component, the config selection and generation, the environment, the storage admission epoch and holds, and the in-memory sealing, refresh and closed state, which is read again under its lock before a kept read is used. Any difference, a maintenance pause, or a stamp that cannot be taken runs the full read as before.
+
+Unchanged: Send (`authority_read`, and `targets("UserPromptSubmit", ...)`), review (`snapshot`), launch guards, and every other event always run the full read.

@@ -757,6 +757,55 @@ def _pin_parent(state, anchor):
         raise
 
 
+#: Windows (TASK-40608 D1): (weak references to the holds, time.monotonic()) of
+#: the last probe, kept when it found no maintenance request. One slot on
+#: purpose: only the question asked immediately before may be reused, for a
+#: second and for exactly those holds. An operation with other holds in between
+#: replaces it, and the next call asks natively again.
+#:
+#: Kept per hold instead (tried 2026-11-27, 49-80 probes a Console turn down to
+#: 12), a config read made within a second of a quiet answer no longer saw a
+#: backup's request before the maintenance monitor did, and the scheduler
+#: dispatched due work under a pending native intent
+#: (Tests/Backup_Recovery/test_scheduler_native_pause_intent.py). Widening this
+#: is the owner's decision (ADR-126, 2026-11-27 notes). The references are
+#: weak and compared with the holds asked about, so a reused address is never
+#: taken for a hold that was asked.
+_quiet_pause_probe = None
+
+
+def _no_hold():
+    return None
+
+
+def _raw_pause_requested(holds):
+    """``_raw_holds_pause_requested``; on Windows the same question asked just before stands a second."""
+    global _quiet_pause_probe
+    window = storage._EVIDENCE_OBSERVATION_SECONDS
+    if not window:
+        return _raw_holds_pause_requested(holds)
+    now = time.monotonic()
+    quiet = _quiet_pause_probe
+    if (
+        quiet is not None
+        and now - quiet[1] < window
+        and len(quiet[0]) == len(holds)
+        and all(known() is hold for known, hold in zip(quiet[0], holds))
+    ):
+        with storage._lock:
+            if storage._pause is None:
+                return False
+    requested = _raw_holds_pause_requested(holds)
+    try:
+        _quiet_pause_probe = None if requested else (
+            tuple(_no_hold if hold is None else weakref.ref(hold) for hold in holds),
+            now,
+        )
+    except TypeError:  # A hold with no weak reference is never remembered.
+        _quiet_pause_probe = None
+    return requested
+
+
 def _raw_holds_pause_requested(holds):
     """Probe each exact stock hold once; custom queries keep their original route."""
     (
@@ -1157,7 +1206,7 @@ def scope(
             settings_files.preflight(state, route, attempt)
         if route == "theme_export":
             settings_files.check_export_parent(state)
-        if _raw_holds_pause_requested(state.holds):
+        if _raw_pause_requested(state.holds):
             raise bootstrap.RecoveryRequired("storage_locally_paused")
         gate = _participant_state(participant) if participant is not None else None
         with storage._changed:

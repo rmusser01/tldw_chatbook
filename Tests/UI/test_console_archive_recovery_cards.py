@@ -1153,3 +1153,87 @@ async def test_a_stock_select_whose_label_composes_after_app_exit_keeps_its_valu
             assert select.value == "b"
         finally:
             app._exit = False
+
+
+@pytest.mark.asyncio
+async def test_an_idle_recovery_view_stops_searching_the_transcript(monkeypatch):
+    """TASK-40608: the 0.2 s poll syncs this view on every tick of every run.
+
+    With nothing to recover a pass searched the transcript about ten times and
+    reset the hidden card's controls, to change nothing. A settled idle view
+    returns before any of that, and the first input that says "something to
+    show" ends the idle state on the same pass.
+    """
+    from types import SimpleNamespace
+
+    from textual.containers import Vertical
+
+    from tldw_chatbook.UI.Console_Modules.archive_recovery import (
+        ConsoleArchiveRecoveryView,
+    )
+
+    state = SimpleNamespace(presentations=[], receipts=[], snapshot=None)
+    runtime = SimpleNamespace(
+        presentations=lambda session_id: list(state.presentations),
+        coordinator=SimpleNamespace(
+            snapshot=lambda session_id: state.snapshot,
+            receipts=lambda session_id: list(state.receipts),
+        ),
+    )
+    store = _empty_source_store()
+
+    class IdleApp(RecoveryCardApp):
+        def compose(self):
+            self.screen._console_chat_store = store
+            self.screen._console_runtime = lambda: SimpleNamespace(
+                view=self.screen, ensure_archive_recovery=lambda: runtime
+            )
+            self.view = ConsoleArchiveRecoveryView(self.screen)
+            yield RecoveryTranscript(Vertical(id="console-archive-recovery"))
+
+    app = IdleApp(None)
+    async with app.run_test() as pilot:
+        view = app.view
+        await view.sync(prepare=True)  # Turn admission mounts the hidden card.
+        await pilot.pause()
+        await view.sync()
+        card = app.query_one(ArchiveRecoveryConfirmCard)
+        assert card.controls_cleared and not card.display
+        assert view._idle is not None
+
+        transcript = app.query_one(RecoveryTranscript)
+        searches, resets = [], []
+        search = transcript.query
+        reset = card.set_confirmation
+        monkeypatch.setattr(
+            transcript, "query", lambda *a, **k: searches.append(a) or search(*a, **k)
+        )
+        monkeypatch.setattr(
+            card, "set_confirmation", lambda value: resets.append(value) or reset(value)
+        )
+        await view.sync()
+        await view.sync(prepare=True)
+        assert searches == [] and resets == []
+
+        # A control changed behind the view's back is not "as the last pass left it".
+        card.controls_cleared = False
+        await view.sync()
+        assert resets == [None] and searches
+        assert card.controls_cleared and view._idle is not None
+
+        # A pending confirmation is read on the very next pass.
+        searches.clear()
+        resets.clear()
+        state.snapshot = SimpleNamespace(confirmation=confirmation())
+        await view.sync()
+        assert searches and view._idle is None
+        state.snapshot = None
+        await view.sync()
+        assert card.confirmation is None and view._idle is not None
+
+        # So is a chat that is no longer the one the pass settled on.
+        store.create_session(session_id="other")  # Creating a chat activates it.
+        assert store.active_session_id == "other"
+        searches.clear()
+        await view.sync()
+        assert searches

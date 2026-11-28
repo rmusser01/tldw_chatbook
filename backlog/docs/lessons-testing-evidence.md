@@ -226,6 +226,17 @@ One trap cost a round: faulthandler dumps at most 100 threads, newest first. Wit
 - `sample <pid>` for the main thread once a worker has more than 100 threads.
 
 Then list each worker's tests that ran 250 s or more, from per-test start times, before calling anything a hang: a 0% CPU worker is usually a test waiting out pytest-timeout.
+## A stack sampler that keeps frames alive makes the app fail (TASK-40608, 2026-11-21)
+
+**Incident.** The Windows journey was profiled with an in-process sampler thread that calls `sys._current_frames()` every 10 ms. Three sampled runs passed. A fourth failed at startup with `cannot commit transaction - SQL statements in progress` in the Media schema setup and at shutdown with `index_operation_retirement_unproven`; the same tree passed unsampled. The sampler kept each sample's frame dictionary until the next sample, so a returned frame's locals, a SQLite cursor among them, outlived the call by up to 10 ms. A widget census added to the same thread used `gc.get_objects()`, which holds a reference to every object while it runs.
+
+**What to do.** Release the frames inside the sampling loop (`del frames` after reading them) and never call `gc.get_objects()` in a process whose behaviour you are measuring. Treat a sampled run as a profile only: take pass/fail and timings from unsampled runs.
+
+## A test can pass only because a cache has not warmed up yet (TASK-40608, 2026-11-21)
+
+**Incident.** `test_storage_initialization_wait.py` parks a follower acquisition behind a held initializer, and `test_raw_source_coordinator_io.py` requires the paired-witness reader to run. Both were green on Linux with PERF-07/08 evidence reuse on. Turning the same reuse on for Windows made all six cases of the first and both cases of the second fail every time. Reuse needs two derivations and inputs at least one second old; the Linux child process reached the measured call sooner than that, and the slower Windows child did not, so there the acquisition was served from evidence and never entered the code under test. A stack dump of the child (`faulthandler.dump_traceback_later` armed just before the stuck step) showed the follower had already finished.
+
+**What to do.** When a test is about the uncached path, switch the cache off in the test (`storage._EVIDENCE_REUSE = False`) instead of relying on it being cold. When a platform change turns a green test red, check whether the test ever selected the path it names.
 
 ## A slow local failure was filed as a DNS timeout, and two reported stalls did not reproduce (TASK-42027, 2026-11-20)
 
@@ -26586,3 +26597,111 @@ and keep the first run and repeat beside the instrumented comparison.
 - Before blaming a branch for a flake, run the two trees in strictly alternating pairs and count failures per arm, and run enough of them: six pairs still read 5 against 2. Sequential batches confound the tree with whatever the host was doing at the time.
 - Check whether the test can reach the changed code at all: a probe in the changed function settles it faster than more samples.
 - Record the dev rate in the follow-up task, so the next reader does not rediscover it as a regression.
+## Under `-I`, a subprocess runs the checkout its environment names, not yours (TASK-40608, 2026-11-21)
+
+**Incident.** The measurement environment's `.pth` pointed at an older worktree. The test process put the worktree under test first on `sys.path`, so the app ran the right code, but every `python -I -m tldw_chatbook.Tools.workspace_tool_worker` it started ignored that and imported the older checkout. A day of journey runs and worker tests exercised another branch's worker, and a change to the worker would have looked untested or, worse, tested.
+
+**What to do.** Give each worktree its own environment whose `.pth` names that worktree, and assert the worker's `__file__` is under the checkout before trusting a real-subprocess result (`test_real_isolated_subprocess_executes_this_worktree_vertical_slice` does).
+
+## A timing run without bytecode measures the compiler (TASK-40608, 2026-11-21)
+
+**Incident.** The runners passed `-B` to keep worktrees clean. A snapshot worktree had 27 `.pyc` files for 3,024 modules, so every run from it compiled the whole app from source; the work tree had 1,739, many stale. First-turn import cost (278 modules) and every start-up were inflated by an amount that changed with which files had been edited.
+
+**What to do.** Run `python -I -m compileall -q tldw_chatbook` in a worktree before timing it, and again after edits. An installed app has bytecode; a timing without it is not the user's timing.
+
+## A harness that polls on a fixed sleep multiplies what it measures (TASK-40608, 2026-11-21)
+
+**Incident.** The journey waits with `pilot.pause(0.05)`. Each pause posts one callback to every mounted widget and waits for all of them: 24 ms per pass on the Console's 557 widgets, 5.5 ms with the hidden ones removed. The turn is CPU-bound, so the test's own polling took about a third of it and stretched everything else by about (1 + pass cost / 0.05 s). The app's background warm-up is also off under pytest (`TLDW_SCREEN_PREIMPORT`), so the journey's first turn imported 278 modules that a session open for a few seconds has already loaded. Neither cost exists for a user, and both were being optimised as if they did.
+
+**What to do.** Before optimising against a UI journey, run it once with the settle pass skipped and once with the warm-up finished first. The differences are the harness's share; report them beside the result.
+
+## "No regression" is a claim about the files that were run (TASK-40608, 2026-11-22)
+
+**Incident.** A commit that keeps Console database handles open on Windows was reported as "166 test files compared with clean dev, no regression". The 166 were chosen by guessing which files touched the change. Comparing 324 more found 68 tests that passed on dev and failed on the branch: about fifty pinned the per-operation close in files nobody had thought of (`Tests/Chat/test_console_chat_controller.py`, the character display checks, the trace runtime), two exposed a credential-filter memo that served a result computed under a replaced filter, and one was a module-count ratchet. The helpers those tests share are imported by further files that were still not run.
+
+**What to do.** Choose the files by search, not by guess: grep the test tree for every helper, counter and module attribute the change affects (`registered_connection_count`, `worker_leases`, `_retired`, `_EVIDENCE_REUSE`) and for the modules it edits, and run all of them on both trees. Then say how many files were compared and how they were chosen. If a behaviour change breaks tests in files you did not expect, assume there are more and change the default the tests see, not the tests one by one.
+
+## A memo's key must cover everything the computation reads at call time (TASK-40608, 2026-11-22)
+
+**Incident.** The credential filter's result memo was keyed by filter version and known values. The filter function itself is looked up in a module table at call time, and one test replays a pre-upgrade trace by pointing the current version's entry at the older, weaker filter. The memo then served the weaker filter's "unchanged" after the table was restored, and a bare `sk_live_` key reached a capture unmasked. The memo's own tests passed; a test in another file caught it.
+
+**What to do.** List what the computation reads when it runs, not what its inputs were when the object was built. Anything looked up late (a registry entry, a module global a test can replace) goes into the entry and is compared by identity on a hit.
+
+## A single-threaded microbenchmark does not price a call inside a busy turn (TASK-40608, 2026-11-22)
+
+**Incident.** A test pinned the NTFS volume query on the file being examined, and the branch had stopped running it below a checked parent. Timed alone, the query cost 7 us against 2,500 us for one checked `stat`, so it was restored on every native open and committed as free. The Console journey was not re-run. It went from about 11 s per turn to 55-68 s: a turn has several busy threads, and each of the two calls gives up the interpreter lock, on every folder of every path. The regression sat in a commit for half a day and was found only when the journey was timed for another reason.
+
+**What to do.** Time a change to a hot path in the journey that made the path hot, before committing it; a microbenchmark only says the call is cheap when nothing else wants the interpreter. Count calls as well as microseconds: this one was "7 us" a few thousand times per turn, each with a lock hand-off.
+
+## A process the profiler is not attached to is not in the profile (TASK-40608, 2026-11-26)
+
+**Incident.** Every profile of the Console turn (a CPU sampler, an exact call tracer, a loop census) watched the app's own process. Each local file tool runs in a fresh `python -I -m tldw_chatbook.Tools.workspace_tool_worker` that serves one request and exits, and the app only waits for it. That wait was the "file tools" row of every per-action table for days, read as storage checks in the parent. The worker reports its own elapsed time (`elapsed_ms`: 93-125 ms for a file read), and replaying one saved request in a lone worker showed about 10 ms of work behind 106 module imports: `validate_path` fetched loguru's logger at its first line and recorded a metric, in a process whose closure is meant to be stdlib-only. The gate for that closure (`Tests/Tools/test_worker_import_closure.py`) checked what importing the worker loads, never what serving a request loads.
+
+**What to do.** List the processes a journey starts before profiling it, and time each from its own clock. For a one-shot helper, save a real request and replay it alone (`tools/replay_worker.py` in the TASK-40608 notes): once for the time, once with an import hook naming who imports what. A closure gate must cover a served request, not only the import.
+
+## A sampler credits waiting threads' CPU to the call that gave up the interpreter lock (TASK-40608, 2026-11-26)
+
+**Incident.** The CPU-weighted sampler credits each stack with the CPU its thread used since the previous sample. A worker that has just made a ctypes call or `os.path.realpath` is parked there waiting to get the interpreter lock back, so that is where it is seen, and the CPU it spent in pure Python before the call is credited to the call. `_Native.info` showed 42 us a call in the profile and measures 5 us alone; `realpath` showed 0.33-0.37 s a turn and is 659-1,030 calls of about 0.13-0.24 ms. In the other direction the credential filter showed 0.06 s and cost about 0.3 s (22,101 short strings a turn at 13 us each), and `GetSecurityInfo`, the one native call that really was slow (59 us against 3.5 us for the direct kernel query), did not stand out at all.
+
+**What to do.** Size a primitive as exact call count times its cost measured alone, then confirm in the journey; use the sampler to find where threads are, not what a native call costs. Pure-Python code called tens of thousands of times a turn is under-reported by the same amount.
+
+## Garbage collection is inside every bucket of a profile (TASK-40608, 2026-11-26)
+
+**Incident.** A collection stops every thread, and a sampler or tracer charges the pause to whatever was running. A `gc.callbacks` timer in the journey put the cost at 0.48 s of one turn and 0.64 s of the next (about 450 young passes, 40 middle passes and 4 full passes each), after two weeks of profiles that never showed it. The full passes were so long because the app's idle heap maintenance (ADR-198) is switched off under pytest, like its background warm-up, so the journey rescanned everything built since start-up; and the maintenance had no trigger for returning to the Console from another screen.
+
+**What to do.** Time collections with `gc.callbacks` (start and stop, by generation) before reading any other profile of a turn, and check which of the app's own idle mechanisms the test harness disables: each one is a cost a user does not pay, or a trigger the product is missing.
+
+## A generated file goes stale silently unless its check is in the comparison (TASK-40608, 2026-11-26)
+
+**Incident.** `tldw_chatbook/Tools/remote_worker_bundle.py` is generated from the tool worker's module closure and committed; `Tests/Tools/test_remote_worker_bundle.py` rebuilds it and compares, and `Tests/Architecture/test_module_size_ratchet.py` holds it to a line budget it was exactly at. Two changes to bundled modules (the spare-worker timing in `workspace_tool_worker.py`, a deny-set change in `local_tool_impls.py`) left the committed bundle stale for days: neither test file was in the regression lists, which were built by searching for the helpers each change touched. A third change then added 24 lines to a bundled module and failed the ratchet on the first rebuild.
+
+**What to do.** When a change touches a module, search for what is generated from it (`BUNDLE_MODULES`, census files, CSS bundles) and run that artifact's own check before anything else; `./scripts/preflight.sh` covers four such artifacts but not this one. Keep the artifact's tests in every regression list for the area. A change to a bundled module has to be line-neutral or smaller.
+
+## A hot pure-Python loop is as invisible to a sampler as a short callback (TASK-40608, 2026-11-26)
+
+**Incident.** `Utils/windows_files.py::_component` decides whether one path component is an ordinary filename by scanning its characters. Every native open and stat splits its path first, so one approved-edit turn split 7,656 paths and checked 108,960 components at 2.4 us each: 0.23 s of a turn that was 0.1 s over its limit. No sampled profile of the two weeks before showed it: a sampler only sees a thread where it gives up the interpreter lock, so the time went to the native call that followed. It was found by counting calls through `sys.monitoring` (no wrapping, so the code-identity pins held), then timing the function alone. Remembering accepted names in a bounded set took a path split from 22.8 us to 4.8 us.
+
+**What to do.** When a turn is CPU-bound and the profile is flat, count calls of the small pure functions under the native layer (validators, normalisers, key builders) and multiply by an isolated timing. A function called 100,000 times a turn matters at 1 us. Check that the count belongs to the turn: the trace's "turn" label ran on after the reply, so split it by phase.
+
+## A test pilot's pause after a click is work inside what you are timing (TASK-40608, 2026-11-26)
+
+**Incident.** `Pilot.click` pauses before each of its three mouse events and once more after the last. Each pause posts a callback to every widget of the screen (549 in the Console), waits for all of them, sleeps until the process is idle and forces a repaint. The pauses before the click fall in the journey's reading time, which it subtracts; the one after the click falls inside the turn being timed. An exact count put 2,743 such callbacks in one approved-edit turn (five clicks), and the message-pump steps of the turn fell from 4,341 to 1,686 when the journey skipped that one pause for its timed clicks. The polling version of the same cost had been removed three days earlier; this one hid behind `pilot.click`.
+
+**What to do.** Read the pilot's source for every helper a timed journey calls, not only the ones the test calls by name, and count the helper's callbacks inside the timed span before trusting the span.
+
+## An instrument that can raise turns a measurement run into a dead app (TASK-40608, 2026-11-26)
+
+**Incident.** A measuring wrapper around `Compositor.reflow` read `compositor.map`, which Textual 8.2.8 calls `_full_map`. The `AttributeError` surfaced inside the screen's layout pass, Textual recorded it and shut the app down, and the journey's wait loop went on polling the dead app at full speed for its whole 58-minute deadline. It looked like a hang with one core busy. Two runs were lost before a stack dump showed an idle main thread and the app's stored exception named the line.
+
+**What to do.** A wrapper installed for measurement must not be able to raise into the code it measures. And a wait loop must say why it is waiting on a finished app: the journey now writes the app's exception to `artifacts/*/app_exception.txt` the first time it sees one (`TLDW_TEST_STUCK_DUMP=<seconds>` dumps every thread's stack and exits).
+
+
+## A census guard only helps if it is in the files you run (TASK-40608, 2026-11-26)
+
+**Incident.** A helper added to `Backup_Recovery/native_files.py` in the morning (`_open_at_pin`, one `os.open`) needed a reviewed row in `backlog/docs/backup-recovery-owner-inventory.md`; `Tests/Architecture/test_backup_owner_inventory.py` fails without it. The regression lists for the day were built by searching for the helpers each change touched, and held 7 of the 81 files under `Tests/Architecture`. The missing row was found only at night, when the other 74 were run because a commit was being prepared. The same day a regenerated diagnostic inventory was owed for nine log statements whose logger expression had changed, and only `./scripts/preflight.sh` said so.
+
+**What to do.** Run all of `Tests/Architecture` and `./scripts/preflight.sh` after every change set, not only before a commit: they are the checks that know about files a search for the changed names will not find.
+
+## A fixture that works around a refusal hides the refusal (TASK-40608, 2026-11-27)
+
+**Incident.** The journey that measured TASK-40608 (`Tests/QA/test_task40608.py`, local) created its README and source file through a helper, `seed_readable`, that wrote LF-only bytes and then set all four NTFS times equal. It did that because the file tool's read refused anything else on Windows (text-mode `os.open`, and a creation time compared with a change time). The tracked journey, which writes its README the ordinary way, failed on both trees with `fs_read failed: ERROR: file changed while reading: README.md`; for five days that was recorded as "fails on clean `dev` too" and nothing more. Every time reported for the journey, including the first set under five seconds, was measured on files no user has, while the product could not read an ordinary file. The read is fixed in `Tools/local_tool_impls.py::_read_bounded_bytes` (ADR-101, 2026-11-27 note).
+
+**What to do.** "Fails on both trees" is a statement about a regression, not about the product: read the failure text of every journey-level test before filing it as inherited, and say what it means for a user. Diff the measuring journey against the tracked one and put every difference in the report; a helper that prepares a fixture so that the product accepts it is a finding, not a fixture.
+
+## A failed CI step hides the steps after it, and its log says which platform (TASK-40608, 2026-11-27)
+
+**Incident.** After the rebase a local Windows run counted 688 modules at `import tldw_chatbook.app` against a limit of fewer than 688. From that one count I told the owner the failure was Windows-only and wrote "it would have passed on POSIX" into a commit message. Perf Guard had failed the same test on Linux half an hour earlier (`assert 688 < 688`); the commit was amended. The same job stops at its first failing step, so four later steps (voice gates, keystroke census, the Console storage-unit ratchet, the compact-setup gates) had not run on the branch at all, and most of that job's 16 files had not been run locally since the rebase either.
+
+**What to do.** Before naming the platform of a failure, read the failed run's log (`gh run view <id> --log-failed`). When a job fails early, run the rest of its file list locally (the `pytest` lines of its workflow file, `.github/workflows/perf-guard.yml` here) instead of waiting for the next push to show the next failure.
+
+## A coroutine's start-to-return time is not its thread's time (TASK-40608, 2026-11-27)
+
+**Incident.** Timing named functions from start to return, `ChatScreen._sync_native_console_chat_ui` showed 0.64 s in ten calls between Send and the agent run, one of them 0.30 s, and I wrote in a progress note that it held the UI thread for up to 0.2 s at a time. It is a coroutine with four deliberate yields and several awaited reads; its start-to-return time is mostly other code running. The thread cycle counter around every event-loop callback put its own share at 0.01 to 0.05 s, and the UI thread's real largest item elsewhere (screen updates, 0.20 to 0.26 s).
+
+**What to do.** For anything `async`, read the time from a per-callback CPU ledger (one entry per resumption), never from start to return. Before naming a function as "holding the loop", open it and look for `await`.
+
+## A reuse rule that never took effect is not a tested rule (TASK-40608, 2026-11-27)
+
+**Incident.** On 2026-11-21 I let a raw operation reuse a quiet "is maintenance waiting?" answer for a second, and the decision record said so. The answer was kept in one module-level slot, keyed by the holds of the last caller, and a Console turn interleaves operations with different holds, so the rule almost never applied: 49 to 80 native probes a turn. Six days later I counted the probes, saw the slot being replaced, kept the answer per hold instead and pushed it. That was the first time the written rule was really in force, and it broke something `dev` guarantees: a config read made within a second of a quiet answer no longer noticed a backup's pause request, and the scheduler dispatched due work under it (`Tests/Backup_Recovery/test_scheduler_native_pause_intent.py`: passes on clean `dev`, failed two runs of two). For six days every comparison with `dev` had "verified" a window that was not operating. And I pushed before the comparison had finished (171 of 229 files); the failing file was in the rest. The per-hold answer was withdrawn the same day.
+
+**What to do.** After adding a reuse rule, count the calls of the thing it is meant to save, in the real journey, the same day: if the count has not dropped to what the rule implies, the rule is not in force and nothing has been verified about it. When a later change makes such a rule take effect, treat it as new behaviour: find the tests that pin the behaviour it replaces (here: every test with a real pause request) and run them before pushing, whatever else is still running.

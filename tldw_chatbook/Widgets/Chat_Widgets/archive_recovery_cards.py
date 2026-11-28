@@ -248,6 +248,9 @@ class ArchiveRecoveryConfirmCard(Vertical):
         super().__init__(classes="archive-recovery-card archive-recovery-confirmation")
         self.confirmation = confirmation
         self._consumed = False
+        #: True once ``set_confirmation(None)`` has reset every control, until
+        #: the next call. The recovery view's idle check reads it.
+        self.controls_cleared = False
         self.display = confirmation is not None
 
     def compose(self) -> ComposeResult:
@@ -276,6 +279,7 @@ class ArchiveRecoveryConfirmCard(Vertical):
     def set_confirmation(self, card: RecoveryConfirmation | None) -> bool:
         """Adopt the latest payload; report whether fixed controls were updated."""
         previous = self.confirmation
+        self.controls_cleared = False
         self.confirmation = card
         self.display = card is not None
         new_request = card is not None and (
@@ -303,6 +307,7 @@ class ArchiveRecoveryConfirmCard(Vertical):
             button.binding = (card.session_id, card.request_id) if card else None
         if card is None:
             self.query_one("#recovery-confirm", Button).disabled = True
+            self.controls_cleared = True
             return True
         scope = self.query_one("#recovery-scope", Select)
         if new_request or scope.value is Select.NULL:

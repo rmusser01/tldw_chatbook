@@ -64,7 +64,12 @@ def project_index_registry_connections(database):
                 if current is not None and current is not previous:
                     owned = current
     finally:
-        if owned is not None:
+        from tldw_chatbook.Backup_Recovery.held_connections import is_held_connection
+
+        # TASK-40608 D1: on Windows the owned call keeps this handle open in
+        # its worker's cache. That is not an unproven close: a pause, quit or
+        # owner close retires held handles, and backup still waits for them.
+        if owned is not None and not is_held_connection(owned):
             retired = core_cached_connection(database, owned) is None
             try:
                 sqlite3.Connection.in_transaction.__get__(owned)

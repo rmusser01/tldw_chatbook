@@ -2015,7 +2015,7 @@ def _posture_unchanged(active_config_path: Path, cached: dict, posture: tuple) -
 
     loop = asyncio._get_running_loop()
     if loop is None:
-        return _config_file_posture(active_config_path) == posture
+        return profile_paths.posture_holds(active_config_path, cached, posture, _config_file_posture)
     if _POSTURE_STRETCH is None:
         _POSTURE_STRETCH = _threading.local()
     stretch = _POSTURE_STRETCH
@@ -2028,7 +2028,7 @@ def _posture_unchanged(active_config_path: Path, cached: dict, posture: tuple) -
         and seen[3] == active_config_path
     ):
         return True
-    if _config_file_posture(active_config_path) != posture:
+    if not profile_paths.posture_holds(active_config_path, cached, posture, _config_file_posture):
         return False
     stretch.seen = (loop, cached, posture, active_config_path)
     loop.call_soon(_end_posture_stretch, stretch)
@@ -8454,7 +8454,7 @@ def get_user_data_dir() -> Path:
         memo is not None
         and memo[0][0] is key[0]
         and memo[0][1:] == key[1:]
-        and memo[1] == _user_data_dir_stamps(stamped)
+        and profile_paths.data_dir_holds(memo, stamped, _user_data_dir_stamps)
     ):
         return memo[2]
     before = _user_data_dir_stamps(stamped)

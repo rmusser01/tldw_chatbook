@@ -47,7 +47,6 @@ class SqliteRetirementIncomplete(RuntimeError):
 # contextvars, which would leak an owner into another thread's handle).
 _OPERATION_OWNERS = threading.local()
 
-
 @contextmanager
 def operation_owned_connection(
     database: object, *, read_only: bool = False
@@ -70,11 +69,20 @@ def operation_owned_connection(
         yield
         return
     owners.add(id(database))
+    # TASK-40608 D1: on Windows a Console store's handle stays open after the
+    # call; its owner must know a call is running there before retiring it.
+    from tldw_chatbook.Backup_Recovery.participants import (
+        owned_call_entered,
+        owned_call_left,
+    )
+
+    counted = owned_call_entered(database)
     try:
         with _operation_owned_connection(database, read_only=read_only):
             yield
     finally:
         owners.discard(id(database))
+        owned_call_left(counted)
 
 
 @contextmanager
@@ -131,7 +139,12 @@ def _operation_owned_connection(
     finally:
         current = getattr(local, "conn", None)
         if current is not None and (not borrowed or current is not previous):
-            close()  # A ChaChaNotes close never waits on readers (TASK-41115).
+            from tldw_chatbook.Backup_Recovery.participants import (
+                hold_operation_connection,
+            )
+
+            if not hold_operation_connection(database, current):
+                close()  # A ChaChaNotes close never waits on readers (TASK-41115).
 
 
 async def run_owned_db_call[**_CallParameters, _CallResult](

@@ -1,5 +1,5 @@
 # tldw_chatbook.* modules resident at _ui_ready (warm second boot).
-# 1038 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
+# 1042 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
 tldw_chatbook
 tldw_chatbook.ACP_Interop
 tldw_chatbook.ACP_Interop.runtime_process
@@ -66,6 +66,7 @@ tldw_chatbook.Backup_Recovery.dictionary_file_participants
 tldw_chatbook.Backup_Recovery.file_inventory
 tldw_chatbook.Backup_Recovery.generated_media_lifetime
 tldw_chatbook.Backup_Recovery.generation_witnesses
+tldw_chatbook.Backup_Recovery.held_connections
 tldw_chatbook.Backup_Recovery.isolated_restore
 tldw_chatbook.Backup_Recovery.journal
 tldw_chatbook.Backup_Recovery.limits
@@ -87,7 +88,6 @@ tldw_chatbook.Backup_Recovery.recovered_media_schema
 tldw_chatbook.Backup_Recovery.recovery_files
 tldw_chatbook.Backup_Recovery.runtime_maintenance
 tldw_chatbook.Backup_Recovery.runtime_producer_lifetime
-tldw_chatbook.Backup_Recovery.service_storage
 tldw_chatbook.Backup_Recovery.settings_file_participants
 tldw_chatbook.Backup_Recovery.storage_admission
 tldw_chatbook.Backup_Recovery.visual_identity_participants
@@ -140,6 +140,7 @@ tldw_chatbook.Chat.citation_trace_builder
 tldw_chatbook.Chat.citation_trace_identity
 tldw_chatbook.Chat.citation_trace_models
 tldw_chatbook.Chat.citation_trace_repository
+tldw_chatbook.Chat.console_action_capture
 tldw_chatbook.Chat.console_agent_bridge
 tldw_chatbook.Chat.console_appearance
 tldw_chatbook.Chat.console_attention_preparation
@@ -293,6 +294,7 @@ tldw_chatbook.DB.Workspace_DB
 tldw_chatbook.DB.assistant_generation_state
 tldw_chatbook.DB.base_db
 tldw_chatbook.DB.canvas_payload_validation
+tldw_chatbook.DB.character_conversation_search
 tldw_chatbook.DB.keyword_store
 tldw_chatbook.DB.library_search_engine
 tldw_chatbook.DB.private_sqlite
@@ -874,11 +876,13 @@ tldw_chatbook.Utils.switch_interval
 tldw_chatbook.Utils.terminal_utils
 tldw_chatbook.Utils.text_selection_crash_guard
 tldw_chatbook.Utils.textual_css_fastpath
+tldw_chatbook.Utils.textual_dispatch_fastpath
 tldw_chatbook.Utils.tiktoken_runtime
 tldw_chatbook.Utils.timestamps
 tldw_chatbook.Utils.tls_trust
 tldw_chatbook.Utils.token_counter
 tldw_chatbook.Utils.ui_responsiveness
+tldw_chatbook.Utils.windows_files
 tldw_chatbook.Video_Generation
 tldw_chatbook.Video_Generation.config
 tldw_chatbook.Video_Generation.video_formats

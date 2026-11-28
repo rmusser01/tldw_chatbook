@@ -134,6 +134,9 @@ def default_hook_permissions_path() -> Path:
 #: old (storage_admission's _EVIDENCE_SETTLE_NS): a same-size edit inside one
 #: coarse timestamp tick leaves an identical stamp.
 _VISIT_SETTLE_NS = 1_000_000_000
+#: Events fired around one tool call; only these may reuse a kept full read
+#: (TASK-40608). ``UserPromptSubmit`` is Send and always reads in full.
+_TOOL_CALL_EVENTS = frozenset({"PreToolUse", "PostToolUse"})
 
 
 def _file_stamp(path: Path) -> tuple[int, int, int, int, int, int] | None:
@@ -605,6 +608,25 @@ class HookPermissions:
         Returns:
             The current review state.
         """
+        reused = self._reused_read()
+        if reused is not None:
+            return reused[0]
+        before = self._stamp_before_read()
+        snapshot = self.snapshot()
+        self._keep_read_for_reuse(snapshot, before)
+        return snapshot
+
+    def _reused_read(
+        self,
+    ) -> tuple[HookReviewSnapshot, tuple[HookTarget, ...]] | None:
+        """The last kept full read and its targets while nothing it read moved.
+
+        Returns:
+            The published snapshot with the targets published atomically with
+            it, or ``None`` when a full read is needed: nothing is kept, a
+            maintenance pause is on (the full read reports it), a stamp cannot
+            be taken, or any stamp differs from the one kept with that read.
+        """
         from tldw_chatbook.Backup_Recovery import storage_admission
 
         with self._cache_lock:
@@ -612,22 +634,29 @@ class HookPermissions:
             published = self._published
         # A maintenance pause refuses the full read; show what it reports.
         paused = storage_admission._pause is not None
-        if reusable is not None and reusable[0] is published and not paused:
-            try:
-                stamp = self._visit_stamp(
-                    published.config.config_path, published.store_path
-                )
-            except OSError:
-                stamp = None
-            if stamp is not None and stamp == reusable[1]:
-                # Re-read under the lock sealing takes: a hook sealed while
-                # the probes ran is never served as approved.
-                with self._cache_lock:
-                    if (
-                        self._visit_reuse is reusable
-                        and self._memory_state() == stamp[-1]
-                    ):
-                        return published
+        if reusable is None or reusable[0] is not published or paused:
+            return None
+        try:
+            stamp = self._visit_stamp(
+                published.config.config_path, published.store_path
+            )
+        except OSError:
+            return None
+        if stamp != reusable[1]:
+            return None
+        # Re-read under the lock sealing takes: a hook sealed while the
+        # probes ran is never served as approved.
+        with self._cache_lock:
+            if (
+                self._visit_reuse is reusable
+                and self._published is published
+                and self._memory_state() == stamp[-1]
+            ):
+                return published, self._published_targets
+        return None
+
+    def _stamp_before_read(self) -> tuple | None:
+        """The stamp to compare with the one taken after a full read."""
         try:
             # Validated as locked_hooks_config_snapshot validates it, before any
             # metadata probe touches the environment-selected path.
@@ -637,10 +666,19 @@ class HookPermissions:
                 probe_existing=False,
                 reject_shell_metacharacters=False,
             )
-            before = self._visit_stamp(selected, default_hook_permissions_path())
+            return self._visit_stamp(selected, default_hook_permissions_path())
         except (OSError, ValueError, RecoveryRequired):
-            before = None
-        snapshot = self.snapshot()
+            return None
+
+    def _keep_read_for_reuse(
+        self, snapshot: HookReviewSnapshot, before: tuple | None
+    ) -> None:
+        """Keep a full read for reuse only when nothing moved while it ran.
+
+        Args:
+            snapshot: What the full read returned.
+            before: ``_stamp_before_read()`` taken before that read.
+        """
         try:
             after = self._visit_stamp(snapshot.config.config_path, snapshot.store_path)
         except OSError:
@@ -657,7 +695,6 @@ class HookPermissions:
         )
         with self._cache_lock:
             self._visit_reuse = (snapshot, after) if keep else None
-        return snapshot
 
     def snapshot(self) -> HookReviewSnapshot:
         """Reconcile the current saved section and return review state."""
@@ -1192,12 +1229,27 @@ class HookPermissions:
         )
 
     def targets(self, event: str, tool_name: str | None) -> tuple[HookTarget, ...]:
-        """Read authority off-thread; never drop a pending guard silently."""
+        """Read authority off-thread; never drop a pending guard silently.
+
+        TASK-40608 (owner decision 2026-11-21): every tool call ran the full
+        read, two interprocess file locks and two file reads, even with no
+        hook configured: about 0.2 s per tool call inside a turn. A tool call
+        now reuses the last full read under the visit snapshot's rule (stamps
+        equal before and after that read, both files settled, and still equal
+        now); anything else, including a failed stamp, runs the full read.
+        Send (``authority_read``) and review (``snapshot``) always run it.
+        """
         try:
+            reused = self._reused_read() if event in _TOOL_CALL_EVENTS else None
+            if reused is not None:
+                return self._select(reused[0], reused[1], event, tool_name)
+            before = self._stamp_before_read()
             with self._current() as (snapshot, _state, _precondition):
                 with self._cache_lock:
                     targets = self._published_targets
-                return self._select(snapshot, targets, event, tool_name)
+                selected = self._select(snapshot, targets, event, tool_name)
+            self._keep_read_for_reuse(snapshot, before)
+            return selected
         except HookLaunchRefused:
             raise
         except (OSError, ValueError, RecoveryRequired):

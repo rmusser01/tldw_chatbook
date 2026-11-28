@@ -12,6 +12,20 @@ from Tests.Backup_Recovery.test_participant_lifetimes import (
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
+@pytest.fixture(autouse=True)
+def per_call_close(monkeypatch):
+    """Pin the per-call close of the handle an owned call opened itself.
+
+    That is the contract on POSIX, and on Windows for other stores, a paused
+    profile and the held-handle cap. Windows otherwise keeps a Console store's
+    handle open between owned calls (TASK-40608 D1), which
+    ``Tests/DB/test_held_operation_connections.py`` covers.
+    """
+    from tldw_chatbook.Backup_Recovery import held_connections
+
+    monkeypatch.setattr(held_connections, "_HOLD_OPERATION_CONNECTIONS", False)
+
+
 @pytest.mark.asyncio
 async def test_character_browser_retires_metadata_worker_connection(
     tmp_path, local_root

@@ -1,0 +1,357 @@
+"""TASK-40608 D1: Windows reuses admission evidence inside a bounded window.
+
+ADR-126's 2026-11-21 amendment (owner decisions O1 and O3) turns the PERF-07/08
+evidence reuse on for Windows. Every stamp there is a native handle open per
+path component, so a positive re-observation of confirmed evidence is kept for
+``_EVIDENCE_OBSERVATION_SECONDS`` instead of being repeated on every call:
+
+* with the window at 0, reuse and the full derivation agree after every
+  mutation, as on POSIX (the oracle below runs the mutations Windows supports);
+* inside the window a warm acquisition touches no file at all;
+* a change another process makes is seen once the window ends;
+* an in-process admission write and a local pause end the window at once.
+"""
+
+from __future__ import annotations
+
+import os
+import time
+
+import pytest
+
+from Tests.Backup_Recovery.test_admission_evidence_reuse import (
+    MUTATIONS,
+    REFUSED_BY_THE_DERIVATION,
+    _count_derivations,
+    _verdict,
+)
+from Tests.Backup_Recovery.test_bootstrap import local_scope  # noqa: F401
+from tldw_chatbook.Backup_Recovery import storage_admission as storage
+from tldw_chatbook.Backup_Recovery.control_records import bind_profile
+
+pytestmark = pytest.mark.skipif(os.name != "nt", reason="the window exists on Windows only")
+
+#: The catalog entries that need no POSIX mode bits or symbolic links.
+WINDOWS_MUTATIONS = (
+    "control-no-change",
+    "pending-record-from-subprocess",
+    "unrelated-pending-from-subprocess",
+    "registry-replaced-from-subprocess",
+    "registry-intent-file",
+    "profile-record-edited-in-place",
+    "enrollment-marker-replaced",
+    "config-selector-edited",
+    "data-dir-renamed-and-recreated",
+    "bootstrap-root-removed",
+)
+
+
+@pytest.fixture
+def settled(monkeypatch):
+    """Evidence recorded milliseconds ago is reusable (the worst case)."""
+    monkeypatch.setattr(storage, "_EVIDENCE_SETTLE_NS", 0)
+    monkeypatch.setattr(storage, "_EVIDENCE_REUSE", True)
+
+
+def test_the_window_is_on_for_windows_only():
+    assert storage._EVIDENCE_OBSERVATION_SECONDS == 1.0
+
+
+@pytest.mark.parametrize("bound", [True, False], ids=["bound", "unbound"])
+@pytest.mark.parametrize("mutation", WINDOWS_MUTATIONS)
+def test_with_the_window_off_reuse_matches_the_full_derivation(
+    local_scope, settled, monkeypatch, tmp_path, mutation, bound  # noqa: F811
+):
+    monkeypatch.setattr(storage, "_EVIDENCE_OBSERVATION_SECONDS", 0.0)
+    root, config, data, _ = local_scope
+    if mutation == "profile-record-edited-in-place" and not bound:
+        pytest.skip("an unbound selection has no profile record to edit")
+    if bound:
+        bind_profile(root, config, ("profile",), root / "admission")
+    target = data / "store.db"
+    startup = storage.acquire_storage()
+    try:
+        for _ in range(3):  # record evidence, confirm it, then serve from it
+            assert _verdict(target)[0] == "allowed"
+        MUTATIONS[mutation](root, config, data, tmp_path)
+        reused = _verdict(target)
+        monkeypatch.setattr(storage, "_EVIDENCE_REUSE", False)
+        derived = _verdict(target)
+    finally:
+        startup.close()
+
+    assert reused == derived, f"{mutation}: reuse gave {reused}, derivation {derived}"
+    if mutation in REFUSED_BY_THE_DERIVATION:
+        assert derived[0] == "refused", f"{mutation} was expected to refuse: {derived}"
+
+
+@pytest.mark.parametrize("bound", [True, False], ids=["bound", "unbound"])
+def test_a_warm_acquisition_neither_derives_nor_observes(
+    local_scope, settled, monkeypatch, bound  # noqa: F811
+):
+    root, config, data, _ = local_scope
+    if bound:
+        bind_profile(root, config, ("profile",), root / "admission")
+    target = data / "store.db"
+    startup = storage.acquire_storage()
+    try:
+        for _ in range(3):
+            assert _verdict(target)[0] == "allowed"
+        calls = _count_derivations(monkeypatch)
+        observed = []
+        observe = storage._Evidence.observe
+
+        def counted(self):
+            observed.append(self)
+            return observe(self)
+
+        monkeypatch.setattr(storage._Evidence, "observe", counted)
+        warm = [_verdict(target) for _ in range(5)]
+    finally:
+        startup.close()
+
+    assert all(verdict[0] == "allowed" for verdict in warm)
+    assert calls == {"permission": 0, "scope": 0}, calls
+    assert observed == [], "a warm acquisition inside the window re-read stamps"
+
+
+def test_a_change_from_outside_is_refused_once_the_window_ends(
+    local_scope, settled, monkeypatch, tmp_path  # noqa: F811
+):
+    root, config, data, _ = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    target = data / "store.db"
+    startup = storage.acquire_storage()
+    try:
+        for _ in range(3):
+            assert _verdict(target)[0] == "allowed"
+        # No in-process hook sees this write: only the stamps can.
+        MUTATIONS["registry-intent-file"](root, config, data, tmp_path)
+        inside = _verdict(target)
+        monkeypatch.setattr(storage, "_EVIDENCE_OBSERVATION_SECONDS", 0.05)
+        time.sleep(0.1)
+        after = _verdict(target)
+    finally:
+        startup.close()
+
+    assert inside[0] == "allowed", "the bounded window is the approved trade (O3)"
+    assert after[0] == "refused", after
+
+
+def test_a_fresh_observation_sees_a_change_from_outside_at_once(
+    local_scope, settled, tmp_path  # noqa: F811
+):
+    """The OpenAI reconnect gates do not use the window.
+
+    ``LLM_Calls.recovery_review._history`` reads inside ``fresh_observation``:
+    with the window, a review, its approval and a request were accepted
+    against an activation record deleted a moment earlier
+    (``Tests/Backup_Recovery/test_activation_openai_reconnect.py``).
+    """
+    root, config, data, _ = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    target = data / "store.db"
+    startup = storage.acquire_storage()
+    try:
+        for _ in range(3):
+            assert _verdict(target)[0] == "allowed"
+        MUTATIONS["registry-intent-file"](root, config, data, tmp_path)
+        assert storage._observation_window() == 1.0
+        with storage.fresh_observation():
+            assert storage._observation_window() == 0.0
+            with storage.fresh_observation():
+                fresh = _verdict(target)
+            assert storage._observation_window() == 0.0
+        assert storage._observation_window() == 1.0
+    finally:
+        startup.close()
+
+    assert fresh[0] == "refused", fresh
+
+
+def test_only_the_next_item_of_an_admitted_stream_uses_the_window(monkeypatch):
+    """A provider request is admitted by a read with no window; its items are not.
+
+    One full derivation per streamed item was 1.3 of this gate's 2.2 CPU
+    seconds in a two-turn Console journey (2026-11-23), and a real answer has
+    hundreds of items.
+    """
+    from tldw_chatbook.LLM_Calls import recovery_review
+
+    windows = []
+    monkeypatch.setattr(
+        recovery_review,
+        "_witnesses",
+        lambda path, lease: windows.append(storage._observation_window()) or (),
+    )
+    assert recovery_review._history("config", None) == ()
+    assert recovery_review._history("config", None, fresh=False) == ()
+    assert windows == [0.0, 1.0]
+
+    class Operation:
+        def __init__(self):
+            self.checks = []
+
+        def check(self, *, fresh=True):
+            self.checks.append(fresh)
+
+        def close(self):
+            self.checks.append("closed")
+
+    operation = Operation()
+    with recovery_review._using(operation):
+        pass
+    items = (item for item in ("first", "second"))
+    stream = recovery_review._OpenAIStream(items, "config", operation)
+    assert list(stream) == ["first", "second"]
+    # Request admission, two items, and the read that finds the stream exhausted.
+    assert operation.checks == [True, False, False, False, "closed"]
+
+
+def _counted_reconnect_history(monkeypatch):
+    """Stand-ins for a provider wrapper's storage; counts the history reads."""
+    from tldw_chatbook.LLM_Calls import recovery_review
+
+    state = {"reads": 0, "history": ()}
+
+    class Lease:
+        def close(self):
+            pass
+
+    def history(path, lease, *, fresh=True):
+        state["reads"] += 1
+        return state["history"]
+
+    monkeypatch.setattr(recovery_review, "acquire_storage", lambda path: Lease())
+    monkeypatch.setattr(recovery_review, "_history", history)
+    return recovery_review, state
+
+
+def test_a_provider_call_reads_the_reconnect_history_once_on_entry(monkeypatch):
+    """Entering a wrapped provider call read the history twice in a row.
+
+    ``_ordinary_operation`` read it, and ``_using`` read it again on the next
+    line: 6 of the 12 fresh reads of a Console turn, each observing every
+    evidence input (2026-11-26).
+    """
+    import asyncio
+
+    recovery_review, state = _counted_reconnect_history(monkeypatch)
+
+    inner = recovery_review.unqualified(lambda: "sent")
+    assert inner() == "sent"
+    assert state["reads"] == 1
+
+    state["reads"] = 0
+    outer = recovery_review.unqualified(lambda: inner())
+    assert outer() == "sent"
+    # The outer call makes the operation; the nested one checks the active one.
+    assert state["reads"] == 2
+
+    @recovery_review.unqualified
+    async def asynchronous():
+        return "sent"
+
+    @recovery_review.unqualified
+    async def stream():
+        yield "item"
+
+    async def items():
+        return [item async for item in stream()]
+
+    state["reads"] = 0
+    assert asyncio.run(asynchronous()) == "sent"
+    assert state["reads"] == 1
+    state["reads"] = 0
+    assert asyncio.run(items()) == ["item"]
+    assert state["reads"] == 1
+
+
+def test_a_history_change_after_entry_is_still_refused(monkeypatch):
+    recovery_review, state = _counted_reconnect_history(monkeypatch)
+    seen = []
+
+    def provider_call():
+        operation = recovery_review._current.get()[0]
+        operation.check()  # unchanged since entry
+        seen.append("unchanged")
+        state["history"] = ({"generation": "restored-meanwhile"},)
+        with pytest.raises(recovery_review.ProviderReconnectRequired):
+            operation.check()
+        with pytest.raises(recovery_review.ProviderReconnectRequired):
+            operation.check_request("https://example.invalid/chat/completions", "key")
+        seen.append("refused")
+        return "done"
+
+    assert recovery_review.unqualified(provider_call)() == "done"
+    assert seen == ["unchanged", "refused"]
+
+    # A nested call under the changed history is refused where it enters.
+    state["history"] = ()
+    nested = recovery_review.unqualified(lambda: "sent")
+
+    def changes_then_calls():
+        state["history"] = ({"generation": "restored-meanwhile"},)
+        return nested()
+
+    with pytest.raises(recovery_review.ProviderReconnectRequired):
+        recovery_review.unqualified(changes_then_calls)()
+
+
+def test_entering_with_a_closed_operation_is_refused_without_reading(monkeypatch):
+    recovery_review, state = _counted_reconnect_history(monkeypatch)
+    operation = recovery_review._Operation(recovery_review.bootstrap.effective_config_path())
+    state["reads"] = 0
+    operation.close()
+    with pytest.raises(recovery_review.ProviderReconnectRequired):
+        with recovery_review._using(operation, just_read=True):
+            pass
+    assert state["reads"] == 0
+
+
+def test_an_in_process_admission_write_ends_the_window_at_once(
+    local_scope, settled, monkeypatch  # noqa: F811
+):
+    from tldw_chatbook.Backup_Recovery import bootstrap
+
+    root, config, data, _ = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    target = data / "store.db"
+    startup = storage.acquire_storage()
+    try:
+        for _ in range(3):
+            assert _verdict(target)[0] == "allowed"
+        bootstrap.advance_admission_epoch()
+        calls = _count_derivations(monkeypatch)
+        assert _verdict(target)[0] == "allowed"
+    finally:
+        startup.close()
+
+    assert calls["scope"] >= 1, "an epoch change must run the derivation again"
+
+
+def test_a_local_pause_forgets_every_observation(local_scope, settled):  # noqa: F811
+    root, config, data, _ = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    target = data / "store.db"
+    startup = storage.acquire_storage()
+    try:
+        for _ in range(3):
+            assert _verdict(target)[0] == "allowed"
+        with storage._lock:
+            hold = storage._holds[(os.getpid(), str(root))]
+            entries = [*hold.evidence.values(), *hold.path_evidence.values()]
+            assert entries and any(entry.verified_at for entry in entries)
+        pause = storage._begin_local_pause()
+        try:
+            with storage._lock:
+                assert all(entry.verified_at == 0.0 for entry in entries)
+                assert storage._writable_volumes == {}
+        finally:
+            # The startup lease stays in place, as in the running app.
+            with storage._changed:
+                storage._pause = None
+                storage._changed.notify_all()
+            del pause
+    finally:
+        startup.close()

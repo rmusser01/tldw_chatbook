@@ -25,6 +25,8 @@ import os as _os
 import platform
 import stat as _stat
 import struct
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -51,10 +53,14 @@ _WRITE_THROUGH = 2
 _REPARSE = 0x400
 _DIRECTORY = 0x10
 _SHARE_ALL = 7
+_SHARE_READ_WRITE = 3  # no FILE_SHARE_DELETE: the folder chain cannot move
 _FILE_RENAME_REPLACE_IF_EXISTS = 0x00000001
 _FILE_RENAME_POSIX_SEMANTICS = 0x00000002
 _FILE_RENAME_INFORMATION_EX = 65
 _EPOCH_100NS = 116444736000000000
+#: The largest security descriptor whose decoding is retained (see
+#: _Native.security): also the buffer its ordinary read hands the kernel.
+_SECURITY_DESCRIPTOR_BYTES = 4096
 
 
 class _UnicodeString(C.Structure):
@@ -126,8 +132,21 @@ class _Overlapped(C.Structure):
     ]
 
 
+#: Names ``_component`` has accepted. Whether a name is one ordinary filename
+#: depends on its characters alone, and the app asks about the same few dozen
+#: names all day: one approved-edit turn split 7,656 paths and checked 108,960
+#: components, 2.4 us each by the character scans below, 0.23 s of the turn
+#: (TASK-40608, counted 2026-11-26). An accepted name now costs one set lookup.
+#: Refused names are never remembered. Emptied when full: refilling costs one
+#: scan a name.
+_ACCEPTED_COMPONENTS: set[str] = set()
+_ACCEPTED_COMPONENTS_LIMIT = 4096
+
+
 def _component(name: str) -> str:
     """Require one unambiguous ordinary filename; reject NT namespaces and ADS."""
+    if type(name) is str and name in _ACCEPTED_COMPONENTS:
+        return name
     # Kept explicit for Python 3.11/3.12, which lack ntpath.isreserved.
     if (
         not isinstance(name, str)
@@ -143,6 +162,10 @@ def _component(name: str) -> str:
         len(base) == 4 and base[:3] in {"COM", "LPT"} and base[3] in "123456789¹²³"
     ):
         raise ValueError("reserved_windows_component")
+    if type(name) is str:
+        if len(_ACCEPTED_COMPONENTS) >= _ACCEPTED_COMPONENTS_LIMIT:
+            _ACCEPTED_COMPONENTS.clear()
+        _ACCEPTED_COMPONENTS.add(name)
     return name
 
 
@@ -343,6 +366,12 @@ class _Native:
             ),
             (self.advapi, "GetAce", [_P, _U32, C.POINTER(_P)], _I32),
             (
+                self.advapi,
+                "GetKernelObjectSecurity",
+                [_HANDLE, _U32, _P, _U32, C.POINTER(_U32)],
+                _I32,
+            ),
+            (
                 self.nt,
                 "NtCreateFile",
                 [
@@ -462,6 +491,32 @@ class _Native:
 
     def security(self, handle, is_directory, *, with_descriptor=False):
         """Read fresh security; reuse only decoding of byte-identical descriptors."""
+        if not with_descriptor:
+            # TASK-40608 (measured 2026-11-26): the ordinary read asks the
+            # kernel for this object's owner and access list in one call, into
+            # this call's own buffer. GetSecurityInfo below answers the same
+            # question through the access control library, which also examines
+            # the parent folder to mark inherited entries and adds the group:
+            # 59 us a call against 3.5 us, about 4,400 times a Console turn.
+            # Where the two differ it is in that mark (INHERITED_ACE) and the
+            # group, and _acl_mode reads neither, so the owner and mode are the
+            # same (Tests/Utils/test_windows_security_decode.py compares both
+            # reads on real objects, this module's private folders included).
+            # A descriptor that does not fit, one that is not self-relative, or
+            # any refusal takes the original route, which also raises the
+            # original error. The admission read keeps the library's bytes.
+            buffer = C.create_string_buffer(_SECURITY_DESCRIPTOR_BYTES)
+            if self.advapi.GetKernelObjectSecurity(
+                handle, 5, buffer, _SECURITY_DESCRIPTOR_BYTES, C.byref(_U32())
+            ):
+                size = self.advapi.GetSecurityDescriptorLength(buffer)
+                if (
+                    20 <= size <= _SECURITY_DESCRIPTOR_BYTES
+                    and struct.unpack_from("<H", buffer, 2)[0] & 0x8000
+                ):
+                    return self._decoded_security(
+                        C.string_at(buffer, size), is_directory, self.user_sid
+                    )
         owner, dacl, descriptor = _P(), _P(), _P()
         result = self.advapi.GetSecurityInfo(
             handle, 1, 5, C.byref(owner), None, C.byref(dacl), None, C.byref(descriptor)
@@ -535,6 +590,9 @@ class _Native:
         metadata=False,
         extra_access=0,
         _metadata_record=None,
+        share=_SHARE_ALL,
+        walk=False,
+        _info=None,
     ):
         access = _READ_CONTROL | _READ_ATTRIBUTES | _SYNCHRONIZE | extra_access
         if directory:
@@ -580,7 +638,7 @@ class _Native:
                 C.byref(status),
                 None,
                 0x80,
-                _SHARE_ALL,
+                share,
                 disposition,
                 options,
                 None,
@@ -592,12 +650,25 @@ class _Native:
             self.ntcheck(created)
         try:
             info = self.info(handle)
+            if _info is not None:
+                # The caller stats this handle next: hand over what was just
+                # read instead of asking for it again (see _walk_stat).
+                _info.append(info)
             if _metadata_record is not None:
                 _metadata_record.identity = (
                     info.volume,
                     (info.index_high << 32) | info.index_low,
                 )
-            self.ntfs(handle)
+            if parent is None or not walk:
+                self.ntfs(handle)
+            # ``walk``: a folder opened below a parent handle only to open
+            # names below it. It is on that parent's volume, because the only
+            # way off it is a reparse point, which info() refused above, and
+            # the name the caller asked about is queried itself when it is
+            # opened. Querying every folder of every chain as well cost a
+            # Console turn tens of seconds: each query is two more calls that
+            # give up the interpreter lock (journey README 55-68 s with it,
+            # about 20 s without; TASK-40608, 2026-11-22).
             return handle.value
         except BaseException:
             if _metadata_record is None:
@@ -642,6 +713,369 @@ class _Native:
             self.kernel.CloseHandle(value)
 
 
+# --- Pinned directory roots (TASK-40608 D1) ----------------------------------
+# On Windows a directory handle opened without FILE_SHARE_DELETE stops that
+# directory and every ancestor from being renamed, replaced or deleted while it
+# is held. Files and child folders inside stay fully usable (measured on
+# Windows 10, 2026-11-20). A walk below a pinned root therefore starts from its
+# handle instead of reopening every folder from the drive root: the chain it
+# skips cannot change while the pin is held. Pins are an optimization only; a
+# failed or released pin falls back to the full walk.
+
+
+class _Pin:
+    __slots__ = ("handle", "borrowers", "released")
+
+    def __init__(self, handle):
+        self.handle = handle
+        self.borrowers = 0
+        self.released = False
+
+
+_pin_lock = threading.Lock()
+_pin_roots: tuple[str, ...] = ()
+_pins: dict[tuple[str, ...], _Pin] = {}
+# A pinned folder is stat'ed through its own handle on every call, so it is
+# always fresh. Its strict ancestors keep their identity while the pin is held,
+# and their stat results (every field, including size and times) are reused
+# for up to this long: an owner or permission change on an ancestor is seen
+# within this window (owner decision O3, 2026-11-20).
+_PINNED_STAT_SECONDS = 1.0
+_pinned_stats: dict[tuple[str, ...], tuple[float, object]] = {}
+# Bumped whenever pins are released, so an ancestor stat computed before a
+# release is never stored after it.
+_pin_generation = 0
+# The folders above each held pin, from the drive root down, kept open while
+# the pins are held (see _keep_ancestors). A walk to any path starts at the
+# deepest of these (or at a pin) instead of opening every folder from the
+# drive root again. Closed with the pins.
+_ancestors: dict[tuple[str, ...], _Pin] = {}
+
+
+def _pin_key(drive, parts):
+    # Exact component spelling. NTFS matches names with its own upcase table
+    # (or exactly, in case-sensitive folders), which str.casefold() does not
+    # reproduce: "Strasse" would match a pinned "Straße". Another spelling of
+    # a pinned folder (ASCII case, 8.3 name) simply misses the pin and takes
+    # the full walk.
+    return (drive.upper(), *parts)
+
+
+def _split_local(path):
+    absolute = ntpath.abspath(_os.fspath(path))
+    drive, tail = ntpath.splitdrive(absolute)
+    if len(drive) != 2 or drive[1] != ":" or not drive[0].isalpha() or not tail.startswith("\\"):
+        raise ValueError("local_absolute_drive_path_required")
+    return drive, [_component(part) for part in tail.split("\\") if part]
+
+
+def _close_pin_locked(pin):
+    pin.released = True
+    if pin.borrowers == 0 and pin.handle is not None:
+        _native().kernel.CloseHandle(pin.handle)
+        pin.handle = None
+
+
+def _pin_one(path):
+    drive, parts = _split_local(path)
+    if not parts:
+        return None
+    native = _native()
+    with _parent(path) as (parent, leaf):
+        handle = native.open_handle(leaf, parent=parent, directory=True, share=_SHARE_READ_WRITE)
+    try:
+        if not native.info(handle).attributes & _DIRECTORY:
+            raise NotADirectoryError(errno.ENOTDIR, "pinned_root_not_directory", _os.fspath(path))
+    except BaseException:
+        native.kernel.CloseHandle(handle)
+        raise
+    return _pin_key(drive, parts), _Pin(handle)
+
+
+def set_pinned_roots(paths) -> None:
+    """Pin exactly these folders (Windows only), releasing any previous pins.
+
+    Args:
+        paths: Absolute local folder paths, for example the profile data and
+            config folders. An empty sequence releases every pin.
+    """
+    global _pin_roots
+    release_pinned_roots()
+    with _pin_lock:
+        _pin_roots = tuple(_os.fspath(path) for path in paths)
+    restore_pinned_roots()
+
+
+def release_pinned_roots() -> None:
+    """Close every pin (a backup or restore may replace these folders)."""
+    global _pin_generation
+    with _pin_lock:
+        for pin in _pins.values():
+            _close_pin_locked(pin)
+        _pins.clear()
+        # The folders above a pin are only known to stay put while it is held.
+        for ancestor in _ancestors.values():
+            _close_pin_locked(ancestor)
+        _ancestors.clear()
+        _pinned_stats.clear()
+        _pin_generation += 1
+
+
+def _covers_strictly_locked(key):
+    return any(
+        len(pin_key) > len(key)
+        and pin_key[: len(key)] == key
+        and not pin.released
+        and pin.handle is not None
+        for pin_key, pin in _pins.items()
+    )
+
+
+def _pinned_stat(path, compute):
+    """Stat a pinned folder, or reuse a recent stat of an ancestor of one.
+
+    A pinned folder is stat'ed through its pin handle on every call (no open,
+    always fresh). A strict ancestor of a pinned folder reuses its last full
+    walk for up to ``_PINNED_STAT_SECONDS``.
+
+    Returns None when ``path`` is neither, so the caller runs its ordinary walk.
+    """
+    if not _pins:
+        return None
+    try:
+        drive, parts = _split_local(path)
+    except ValueError:
+        return None
+    key = _pin_key(drive, parts)
+    now = time.monotonic()
+    with _pin_lock:
+        exact = _pins.get(key)
+        if exact is not None and not exact.released and exact.handle is not None:
+            exact.borrowers += 1
+        else:
+            exact = None
+            if not _covers_strictly_locked(key):
+                return None
+            cached = _pinned_stats.get(key)
+            if cached is not None and now - cached[0] < _PINNED_STAT_SECONDS:
+                return cached[1]
+            generation = _pin_generation
+    if exact is not None:
+        try:
+            return compute(exact.handle)
+        finally:
+            _return_pin(exact)
+    result = compute(None)
+    with _pin_lock:
+        if generation == _pin_generation and _covers_strictly_locked(key):
+            _pinned_stats[key] = (now, result)
+    return result
+
+
+def restore_pinned_roots() -> None:
+    """Take the configured pins again; a folder that cannot be pinned is skipped."""
+    with _pin_lock:
+        roots = _pin_roots
+    for root in roots:
+        try:
+            pinned = _pin_one(root)
+        except (OSError, ValueError):
+            continue
+        if pinned is None:
+            continue
+        key, pin = pinned
+        with _pin_lock:
+            if root not in _pin_roots or key in _pins:
+                _close_pin_locked(pin)
+                continue
+            _pins[key] = pin
+        _keep_ancestors(key)
+
+
+def _keep_ancestors(key) -> None:
+    """Keep the folders above the held pin ``key`` open for later walks.
+
+    TASK-40608 (measured 2026-11-26): one Console turn opened the drive root
+    2,093 times and each folder between it and the profile 420-1,530 times,
+    10,600 of its 22,900 native opens, because every checked stat of a path
+    beside or above a pin walked there from the drive root again.
+
+    While a pin is held, no folder above it can be renamed, replaced or
+    deleted (the reason a walk may start at the pin). The same holds for a
+    handle to any of those folders, provided it is that folder: so the chain
+    is walked here once, after the pin is held, and kept only when the walk
+    ends at the pinned folder itself. A folder has one parent, so each handle
+    of a walk that reaches the pin is the pin's ancestor at that depth, and
+    none of them can become a reparse point while it has this child. Every
+    name below a kept handle is still opened and checked on every call.
+
+    Never raises: without kept ancestors a walk opens the chain as before.
+    """
+    native = _native()
+    with _pin_lock:
+        pin = _pins.get(key)
+        if pin is None or pin.released or pin.handle is None:
+            return
+        pin.borrowers += 1
+        generation = _pin_generation
+    opened = []
+    try:
+        handle = native.open_handle("\\??\\" + key[0] + "\\", directory=True)
+        opened.append(handle)
+        for part in key[1:-1]:
+            handle = native.open_handle(part, parent=handle, directory=True, walk=True)
+            opened.append(handle)
+        leaf = native.open_handle(key[-1], parent=handle, directory=True)
+        try:
+            found, held = native.info(leaf), native.info(pin.handle)
+        finally:
+            native.kernel.CloseHandle(leaf)
+        if (found.volume, found.index_high, found.index_low) != (
+            held.volume,
+            held.index_high,
+            held.index_low,
+        ):
+            return  # this spelling no longer leads to the pinned folder
+        with _pin_lock:
+            if generation != _pin_generation or pin.released:
+                return
+            for depth, ancestor in enumerate(opened):
+                ancestor_key = key[: depth + 1]
+                if ancestor_key not in _ancestors:
+                    _ancestors[ancestor_key] = _Pin(ancestor)
+                    opened[depth] = None
+    except (OSError, ValueError):
+        return
+    finally:
+        for ancestor in opened:
+            if ancestor is not None:
+                native.kernel.CloseHandle(ancestor)
+        _return_pin(pin)
+
+
+def pinned_roots() -> tuple[str, ...]:
+    """Return the currently held pin keys, for diagnostics and tests."""
+    with _pin_lock:
+        return tuple("\\".join(key) for key, pin in _pins.items() if not pin.released)
+
+
+def _borrow_pin(drive, parts):
+    """Return ``(pin, depth)`` for the deepest held pin or kept ancestor of one.
+
+    Depth 0 is the drive root, which is only ever a kept ancestor.
+    """
+    if not _pins:
+        return None
+    with _pin_lock:
+        for depth in range(len(parts), -1, -1):
+            key = _pin_key(drive, parts[:depth])
+            for pin in (_pins.get(key), _ancestors.get(key)):
+                if pin is not None and not pin.released and pin.handle is not None:
+                    pin.borrowers += 1
+                    return pin, depth
+    return None
+
+
+def pinned_start(path):
+    """Find the deepest held pin that is ``path`` or one of its ancestors.
+
+    Args:
+        path: An absolute local folder path.
+
+    Returns:
+        ``(pin path, components below the drive root, release generation)``,
+        or None when no held pin covers ``path``. The components use the pin's
+        exact spelling; another spelling of the same folder is not covered.
+    """
+    if not _pins:
+        return None
+    try:
+        drive, parts = _split_local(path)
+    except ValueError:
+        return None
+    with _pin_lock:
+        for depth in range(len(parts), 0, -1):
+            pin = _pins.get(_pin_key(drive, parts[:depth]))
+            if pin is not None and not pin.released and pin.handle is not None:
+                covered = tuple(parts[:depth])
+                return drive + "\\" + "\\".join(covered), covered, _pin_generation
+    return None
+
+
+def is_pinned_root(path) -> bool:
+    """Whether ``path`` is itself a folder this process currently holds pinned."""
+    if not _pins:
+        return False
+    try:
+        drive, parts = _split_local(path)
+    except ValueError:
+        return False
+    with _pin_lock:
+        pin = _pins.get(_pin_key(drive, parts))
+        return pin is not None and not pin.released and pin.handle is not None
+
+
+def _reopen_exact_pin(path):
+    """Open a pinned folder itself through its pin; None when ``path`` is no pin.
+
+    The pin handle names the folder by file ID, so no folder above it is
+    opened. ``OpenFileById`` makes a new file object: sharing the pin's own
+    one (``DuplicateHandle``) would share its directory enumeration state.
+    """
+    try:
+        drive, parts = _split_local(path)
+    except ValueError:
+        return None
+    key = _pin_key(drive, parts)
+    with _pin_lock:
+        pin = _pins.get(key)
+        if pin is None or pin.released or pin.handle is None:
+            return None
+        pin.borrowers += 1
+    try:
+        native = _native()
+        before = native.info(pin.handle)
+        descriptor = _FileIdDescriptor(
+            C.sizeof(_FileIdDescriptor),
+            0,
+            (C.c_uint64 * 2)((before.index_high << 32) | before.index_low, 0),
+        )
+        value = native.kernel.OpenFileById(
+            pin.handle,
+            C.byref(descriptor),
+            _READ_CONTROL | _READ_ATTRIBUTES | _SYNCHRONIZE | 1 | 0x20,
+            _SHARE_ALL,
+            None,
+            0x02000000 | 0x00200000 | 0x80000000,
+        )
+        if value in {None, C.c_void_p(-1).value}:
+            return None  # the caller walks the path as before
+        try:
+            after = native.info(value)
+            if (
+                (before.volume, before.index_high, before.index_low)
+                != (after.volume, after.index_high, after.index_low)
+                or not after.attributes & _DIRECTORY
+            ):
+                raise OSError(errno.ESTALE, "windows_reopen_identity_changed")
+        except BaseException:
+            native.kernel.CloseHandle(value)
+            raise
+        return value
+    except OSError:
+        return None
+    finally:
+        _return_pin(pin)
+
+
+def _return_pin(pin):
+    with _pin_lock:
+        pin.borrowers -= 1
+        if pin.released and pin.borrowers == 0 and pin.handle is not None:
+            _native().kernel.CloseHandle(pin.handle)
+            pin.handle = None
+
+
 @functools.lru_cache(maxsize=1)
 def _native():
     return _Native()
@@ -665,15 +1099,26 @@ def _parent(path, dir_fd=None):
     ):
         raise ValueError("local_absolute_drive_path_required")
     parts = [_component(part) for part in tail.split("\\") if part]
-    handle = native.open_handle("\\??\\" + drive + "\\", directory=True)
+    # Start below the deepest pinned root, or kept folder above one, that
+    # covers this parent chain. The drive root itself is always opened here:
+    # its caller duplicates the handle, and a kept handle must not be shared.
+    borrowed = _borrow_pin(drive, parts[:-1]) if parts else None
+    if borrowed is None:
+        handle, start, owned = native.open_handle("\\??\\" + drive + "\\", directory=True), 0, True
+    else:
+        handle, start, owned = borrowed[0].handle, borrowed[1], False
     try:
-        for part in parts[:-1]:
-            successor = native.open_handle(part, parent=handle, directory=True)
-            native.kernel.CloseHandle(handle)
-            handle = successor
+        for part in parts[start:-1]:
+            successor = native.open_handle(part, parent=handle, directory=True, walk=True)
+            if owned:
+                native.kernel.CloseHandle(handle)
+            handle, owned = successor, True
         yield handle, parts[-1] if parts else None
     finally:
-        native.kernel.CloseHandle(handle)
+        if owned:
+            native.kernel.CloseHandle(handle)
+        if borrowed is not None:
+            _return_pin(borrowed[0])
 
 
 class _AdmissionMetadataHandle:
@@ -738,6 +1183,22 @@ class WindowsOS:
 
     def open(self, path, flags, mode=0o777, *, dir_fd=None):
         native = _native()
+        if (
+            dir_fd is None
+            and _pins
+            and flags & self.O_DIRECTORY
+            and not flags & (3 | _os.O_CREAT | _os.O_TRUNC)
+        ):
+            # A read-only open of a pinned folder itself needs no walk.
+            handle = _reopen_exact_pin(path)
+            if handle is not None:
+                try:
+                    return native.crt.open_osfhandle(
+                        handle, (flags & _os.O_APPEND) | _os.O_BINARY
+                    )
+                except BaseException:
+                    native.kernel.CloseHandle(handle)
+                    raise
         with _parent(path, dir_fd) as (parent, leaf):
             if leaf is None:
                 if not flags & self.O_DIRECTORY or flags & (_os.O_CREAT | _os.O_TRUNC):
@@ -776,6 +1237,18 @@ class WindowsOS:
     def stat(self, path, *, dir_fd=None, follow_symlinks=True):
         if isinstance(path, int):
             return self.fstat(path)
+        if dir_fd is None and _pins:
+            pinned = _pinned_stat(
+                path,
+                lambda handle: self._stat_handle(handle)
+                if handle is not None
+                else self._walk_stat(path, follow_symlinks=follow_symlinks),
+            )
+            if pinned is not None:
+                return pinned
+        return self._walk_stat(path, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
+
+    def _walk_stat(self, path, *, dir_fd=None, follow_symlinks=True):
         native = _native()
         with _parent(path, dir_fd) as (parent, leaf):
             if leaf is None:
@@ -783,9 +1256,14 @@ class WindowsOS:
                     parent, _READ_CONTROL | _READ_ATTRIBUTES | _SYNCHRONIZE
                 ) as handle:
                     return self._stat_handle(handle)
-            handle = native.open_handle(leaf, parent=parent, metadata=True)
+            # TASK-40608 (measured 2026-11-26): the open reads the handle's
+            # information to refuse reparse points and non-disk objects, and
+            # the stat read it again microseconds later, 3,500 times a Console
+            # turn. One read serves both.
+            opened = []
+            handle = native.open_handle(leaf, parent=parent, metadata=True, _info=opened)
         try:
-            return self._stat_handle(handle)
+            return self._stat_handle(handle, _info=opened[0] if opened else None)
         finally:
             native.kernel.CloseHandle(handle)
 
@@ -827,6 +1305,7 @@ class WindowsOS:
             return {}
         native = _native()
         parents = {node.parent for node in nodes if node.parent != node}
+        targets = set(selected)
         handles, identities, observations = {}, {}, {}
         opened, failed = [], []
 
@@ -846,6 +1325,8 @@ class WindowsOS:
                     metadata=True,
                     directory=node in parents,
                     _metadata_record=record,
+                    # A folder that is only on the way to a selected path.
+                    walk=node in parents and node not in targets,
                 )
             return record
 
@@ -915,9 +1396,9 @@ class WindowsOS:
             if failed:
                 raise _AdmissionMetadataCloseError(failed)
 
-    def _stat_handle(self, handle, *, with_descriptor=False):
+    def _stat_handle(self, handle, *, with_descriptor=False, _info=None):
         native = _native()
-        info = native.info(handle)
+        info = native.info(handle) if _info is None else _info
         if with_descriptor:
             uid, mode, descriptor = native.security(
                 handle, bool(info.attributes & _DIRECTORY), with_descriptor=True
@@ -1250,6 +1731,37 @@ class WindowsLocks:
             if error in {32, 33, 158}:
                 raise BlockingIOError(errno.EAGAIN, "windows_lock_busy")
             raise C.WinError(error)
+
+
+def volume_read_only(path) -> bool:
+    """Whether the local NTFS volume holding ``path`` is mounted read-only.
+
+    Read-only is a property of the volume, and this layer refuses reparse
+    points, so the drive root answers for every path on the drive.
+
+    Args:
+        path: An absolute local drive path; it does not have to exist.
+
+    Returns:
+        True when the volume has ``FILE_READ_ONLY_VOLUME`` set.
+
+    Raises:
+        OSError: If the drive root cannot be opened or is not local NTFS.
+        ValueError: If ``path`` is not an absolute local drive path.
+    """
+    drive, _ = _split_local(path)
+    native = _native()
+    handle = native.open_handle("\\??\\" + drive + "\\", directory=True)
+    try:
+        filesystem, flags = C.create_unicode_buffer(32), _U32()
+        native.check(
+            native.kernel.GetVolumeInformationByHandleW(
+                handle, None, 0, None, None, C.byref(flags), filesystem, len(filesystem)
+            )
+        )
+        return bool(flags.value & 0x80000)  # FILE_READ_ONLY_VOLUME
+    finally:
+        native.kernel.CloseHandle(handle)
 
 
 def native_identity(fd: int) -> dict[str, str | int]:

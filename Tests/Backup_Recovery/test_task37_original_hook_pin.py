@@ -271,26 +271,23 @@ def _original_hook_pin_work(owner, config):
         assert observed.receipt["complete"], observed.receipt
 
 
+# TASK-40608 (owner decision O1, "check storage once"): there was a second
+# case here, "windows-default", for Windows with reuse enabled. It pinned that
+# ``storage._ordinary_hold`` never returns a hold on Windows, which was true
+# only because that function refused the platform outright. Windows now
+# serves evidence like POSIX, where this witness has never run with reuse
+# enabled (a serving hold publishes the pin's evidence, and every count below
+# is for the path that cannot). The ineligible path is what this test is
+# about, and it runs on every platform.
 @pytest.mark.parametrize(
     "reuse_enabled",
-    [
-        pytest.param(
-            True,
-            id="windows-default",
-            marks=pytest.mark.skipif(
-                os.name != "nt", reason="Actual Windows eligibility"
-            ),
-        ),
-        pytest.param(False, id="reuse-disabled"),
-    ],
+    [pytest.param(False, id="reuse-disabled")],
 )
 def test_warm_hook_snapshot_skips_unpublishable_pin_evidence(
     configured_source, monkeypatch, request, reuse_enabled
 ):
-    if not reuse_enabled:
-        monkeypatch.setattr(storage, "_EVIDENCE_REUSE", False)
-    else:
-        assert storage._EVIDENCE_REUSE is True
+    assert not reuse_enabled
+    monkeypatch.setattr(storage, "_EVIDENCE_REUSE", False)
     monkeypatch.setattr(hook_permissions, "config", configured_source)
     owner = hook_permissions.HookPermissions()
     try:
