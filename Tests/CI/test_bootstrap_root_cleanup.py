@@ -17,8 +17,40 @@ from pathlib import Path
 import pytest
 
 _REPO = Path(__file__).resolve().parents[2]
+# Every child may make only a few processes: a fork that runs away (a hook that
+# forked before setting its once-flag filled the process table, TASK-42651)
+# then fails at once with EAGAIN (BlockingIOError) instead.
+_CAP_FORKS = """
+import resource
+_hard = resource.getrlimit(resource.RLIMIT_NPROC)[1]
+resource.setrlimit(resource.RLIMIT_NPROC, (min(_hard, {nproc}), _hard))
+"""
+
+
+def _user_task_count() -> int:
+    """What RLIMIT_NPROC counts for this real uid: threads on Linux, else processes."""
+    uid = str(os.getuid())
+    if not Path("/proc/self/task").is_dir():
+        listing = subprocess.run(
+            ["ps", "-axo", "ruid="], capture_output=True, text=True, check=True
+        ).stdout
+        return sum(line.strip() == uid for line in listing.splitlines())
+    count = 0
+    for entry in os.scandir("/proc"):
+        if not entry.name.isdigit():
+            continue
+        try:
+            status = Path(entry.path, "status").read_text()
+            if status.split("\nUid:\t")[1].split("\t")[0] == uid:
+                count += int(status.split("\nThreads:\t")[1].split("\n")[0])
+        except (OSError, IndexError, ValueError):
+            continue  # gone, or a zombie without those lines
+    return count
+
+
 _CHILD = """
 import os, pathlib, signal, sys
+{cap}
 sys.path.insert(0, {repo!r})
 from Tests.real_profile_guard import remove_sandbox_at_exit
 root = pathlib.Path({root!r})
@@ -194,7 +226,14 @@ def test_owned_root_is_removed(
 ) -> None:
     root = tmp_path / "tldw_test_config_probe"
     (root / "home").mkdir(parents=True)
-    child = _CHILD.format(repo=str(_REPO), root=str(root), before=before, then=then)
+    cap = (
+        ""
+        if sys.platform == "win32"
+        else _CAP_FORKS.format(nproc=_user_task_count() + 16)
+    )
+    child = _CHILD.format(
+        repo=str(_REPO), root=str(root), cap=cap, before=before, then=then
+    )
     finished = subprocess.run(
         [sys.executable, "-c", child], capture_output=True, text=True, timeout=120
     )
