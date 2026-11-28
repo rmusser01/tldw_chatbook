@@ -943,6 +943,18 @@ jobs:
     # Same runner, install line, cap and --timeout=300 as
     # pr-fast-lane-admission-3, and its own pytest process and bootstrap
     # profile, as there. One more runner per PR (ADR-103 note, 2026-11-18).
+    #
+    # TASK-42779 (owner decision 2026-11-28, "Move the file"): the native
+    # workflow planning file (27 tests, 315 s of the lane's 1,583 s at the
+    # median hosted runner) runs in console-p0-gate's admission-sensitive 2
+    # profile now. From 2026-11-26 the lane finished 97 times at a median 25.4,
+    # p90 32.2, max 34.9 of its 35 min, and its median went from 24.9 to 27.7
+    # when PR #3777 grew the right-rail file (37 to 70 tests, 2026-11-27).
+    # Timing the 82 measured runner speeds of other branches against that
+    # list gave median 27.7 / p90 32.4 / slowest 38.6 (1 job over the cap);
+    # without the file, median 22.5 / p90 26.2 / slowest 31.2, 3.8 min under.
+    # Re-measure over 20 runs before adding a file here: the next one goes to
+    # a lane with room (backlog/docs/ci-lane-headroom-2026-11-28.md).
     name: PR Fast Lane (admission-sensitive 4)
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -974,7 +986,6 @@ jobs:
             Tests/Agents/test_run_log_stats_slice_runtime_tools.py \
             Tests/Agents/test_run_log_survivor_lifetime.py \
             Tests/Chat/test_fleet_budget_boundary_probes.py \
-            Tests/Chat/test_workflow_planning_native.py \
             Tests/Chat/test_console_agent_storage_sources.py \
             Tests/Chat/test_console_first_send_survivor_native.py \
             Tests/Chat/test_console_spawn_subagent_trace_capture.py \
@@ -1432,10 +1443,20 @@ jobs:
       # serially with this step's flags at load 30-34.
       # TASK-42513 (round 26, 2026-11-24): the trace GC file's stale-mark node
       # left this step; it runs inside its whole file in dreams-tracking.
+      # TASK-42779 (owner decision 2026-11-28, "Move the file"): the native
+      # workflow planning file (bootstrap_profile; TASK-41314: 27 tests, 8.6 min
+      # serially), first, moved whole from pr-fast-lane-admission-4, which it took
+      # to a slowest runner draw of 38.6 of 35 min. This profile ran median 17.2 /
+      # p90 19.4 / slowest 20.2 over 89 jobs (2026-11-26 to 28); timing 91 measured
+      # runner speeds against its list with the file gives median 22.3 / p90 25.2 /
+      # slowest 26.3, 8.7 min under.
+      # Same flags and bootstrap profile as every file here; no sandboxed target
+      # may follow it.
       - name: Run the admission-sensitive 2 Console P0 regression tests
         if: ${{ !cancelled() && matrix.profile == 'admission-sensitive 2' }}
         run: |
           pytest \
+            Tests/Chat/test_workflow_planning_native.py \
             Tests/Chat/test_console_project_instruction_traces.py \
             Tests/Chat/test_console_trace_model_retries.py \
             Tests/Chat/test_console_trace_failed_tool_run.py \

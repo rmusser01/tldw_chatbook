@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-28 11:00
-updated_date: 2026-11-28 11:00
+updated_date: 2026-11-28 12:00
 labels:
 - follow-up
 - ci
@@ -32,10 +32,10 @@ An open pull request would make lane 4 worse: PR 3717 appends a 16-test, 2.6-min
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The owner's decision on the remedy for lane 4 (a move, a cap change or a split) is recorded in the task notes
+- [x] #1 The owner's decision on the remedy for lane 4 (a move, a cap change or a split) is recorded in the task notes
 - [ ] #2 Over at least 20 pull-request runs after the change, lane 4's slowest job ends at least 4 minutes under its cap (the floor of TASK-34986), or 8 if the owner keeps TASK-35575's margin for it; the window and the figures are recorded in the notes
-- [ ] #3 Every target that ran in lane 4 before still runs in a required PR lane with the same flags; no test leaves the required check to achieve it
-- [ ] #4 The job's timing comment in the workflow states the measured median and slowest on its current list and the window they came from, and the contract tests that pin the lane reflect the change
+- [x] #3 Every target that ran in lane 4 before still runs in a required PR lane with the same flags; no test leaves the required check to achieve it
+- [x] #4 The job's timing comment in the workflow states the measured median and slowest on its current list and the window they came from, and the contract tests that pin the lane reflect the change
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -51,9 +51,17 @@ An open pull request would make lane 4 worse: PR 3717 appends a 16-test, 2.6-min
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-2026-11-28, measured. Plan steps 1 to 4 are done. Step 5 waits for the owner. The pull request that carries this note changes no workflow, so its own CI is the light tier.
+2026-11-28, measured. Plan steps 1 to 4 are done.
 
-**Awaiting the owner (AC #1).** Which option below. The recommendation is option 3, the one-file move. Raising a limit and adding a runner are both the owner's decision, so neither is applied; the move needs neither, but it changes the Console P0 profile map and ADR-103, so it is put to the owner too.
+**Owner decision (AC #1), 2026-11-28, in the app: "Move the file"**, the answer to "Which fix for lane 4?" with the one-file move (option 3) recommended and cap 40 (option 1) the alternative offered. Applied in the last commit of the pull request that carries this note, which changes `.github/`, so that pull request's CI is the full run from there. `Tests/Chat/test_workflow_planning_native.py` leaves `pr-fast-lane-admission-4` and runs first in Console P0 `admission-sensitive 2`, with the same flags (`--timeout=300 --tb=short`) and bootstrap profile; no cap, runner or job changes, so ADR-103's counts stand. What changed:
+- `.github/workflows/derived-artifacts.yml`: the target out of lane 4 and first in the Console P0 step, each with a dated note of the measurements (AC #4).
+- `Tests/CI/test_ci_queue_pressure_contract.py`: `ADMISSION_4_TARGETS` without the file, and `test_workflow_planning_file_runs_once_first_in_console_p0_admission_2` (the file runs in exactly one pytest step of the workflow, that one, first, and not in lane 4's pin).
+- `Tests/CI/test_response_rules_critical_gate.py`: the step's `INHERITED` token list gains the file in its place.
+- `backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md`: a dated note under the 2026-11-18 amendment.
+
+Verification here (Windows 10, Python 3.12.10, the private-profile runner; Linux evidence is this pull request's own full CI run): the six contract files that pin these jobs pass (1,056 passed: `test_ci_queue_pressure_contract` and `test_response_rules_critical_gate` 282, `test_console_p0_regression_gate`, `test_derived_artifacts_workflow`, `test_ui_lane_shard_count_statements` and `test_self_hosted_runner_routing` 774). The whole `Tests/CI` folder reads 2,008 passed, 16 skipped and 61 failed, all 61 in the two groups this machine is recorded to fail on untouched dev (53 in `test_tiered_ci.py`, the Windows path separators PR 3802 fixes, and 8 in `test_canvas_mermaid_asset_checker.py`, stale CRLF copies of `-text` files). Negative controls, each undone afterwards: putting the file back in lane 4 as well turns three nodes red (`test_fourth_admission_target_set_is_exact`, `test_console_p0_gate_runs_four_serial_minimal_python_312_profiles` and the new test); removing it from the Console P0 step turns four (the new test, `test_rule_critical_targets_execute_without_altering_inherited_processes` and its two missing-or-commented-target cases); moving it to the end of that step turns two (the new test and the inherited token order).
+
+**AC #2 stays open.** It needs 20 pull-request runs after this lands. The model gives lane 4 median 22.5, p90 26.2, slowest 31.2 (3.8 under, the 4-minute floor of TASK-34986, not the 8 minutes of TASK-35575) and Console P0 `admission-sensitive 2` median 22.3, p90 25.2, slowest 26.3 (8.7 under). **PR 3345 makes the same move** (the same first target, with its own comment text and its own pins): whichever of the two lands second must be rebased by hand, and the conflicts to expect are in the comments and the `Tests/CI` pins around the move. The options below are as measured, before the change.
 
 **Checked first.** No task on any ref (23,332 distinct task and draft blobs, 581 refs) is about lane 3's or lane 4's cap: TASK-34916, TASK-35575, TASK-34986 and TASK-40724 are Done, and TASK-38716's note only lists the lanes (PR 3804). TASK-42533 is the Console P0 profile's. Of 237 remote refs with the workflow file, three edit lane 4's block against their merge base with `origin/dev`: `codex/shared-console-mobile-pr` (PR 3345, a draft pushed today) takes `Tests/Chat/test_workflow_planning_native.py` out of it and into Console P0 `admission-sensitive 2`; `fix/task-33621.6-retry-capture-regression` (PR 3717, ready, conflicting, 385 commits behind dev, last pushed 2026-11-25) appends `Tests/UI/test_console_trace_recovery_after_provider_error.py` (16 tests, "about 2.6 min serially", per its own comment); and `codex/light-ci-managed-received-diagnostic-20261118` changes the `if` line. Lane 3's block is edited by seven refs, none of them the cap: `runs-on` or `if` lines, comments, or two nodes on `codex/native-phased-workflows-20261105` (no open PR). Dev's history shows the cap at 35 since the lane was made.
 
@@ -91,7 +99,7 @@ Lane 4 on today's list (647 tests, 21 files, reference job 140732676095: 1,583 s
 
 **Recommendation: option 3, and option 5's destination for PR 3717.** One file is a fifth of the lane, so moving it fixes the cause without a limit or a runner, and the owner chose cap raises (recovered suites, Dreams riders) and splits (Console P0) on other lanes for the reasons PR 3804 gives. If the owner wants lane 4 back at 8 minutes under, option 4 is the answer, and it should come with a dated note of the headroom (AC #4). If neither the move nor a runner is wanted, option 1 is the stop-gap. Lanes 1 to 3 need nothing now: no cap hit in any, fitted tails of 0.04% to 0.1%. The next file added to a PR admission lane should go to a lane with room, not to lanes 1 to 4.
 
-**Not applied, and why.** Options 1, 2 and 4 each need the owner (a limit or a runner); option 3 changes the Console P0 profile map and an ADR, and a change under `.github/` starts the full CI run, so it waits for the choice. No patch is prepared. Whichever of PR 3345 and the change lands second must be rebased by hand.
+**Not chosen.** Options 1, 2 and 4 (a limit or a runner) stay costed above for the case where 20 runs show lane 4 still too close: the next step is option 4, the split, because it is the only one that restores TASK-35575's 8 minutes. PR 3717's file (option 5) still belongs in a lane with room, and `admission-sensitive 2` now has 8.7 minutes left, which is one more file of about 150 to 250 s, not two.
 
 **How it was measured.** As in TASK-38716's note: job records and annotations from the GitHub API; per-file times from the job logs (a progress line is stamped when its newline arrives, so a file's time is the gap to the line before it); runner speed from the files a log shares with the reference at 1 s or more and with the same test count in both, dropping files whose ratio is outside 0.4 to 2.5 times the log's median (a pull request changed them); each job's minutes on today's list are its own setup and collection plus its speed times the reference's file seconds. The same-test-count rule matters here: without it the right-rail file, doubled in size, makes the slowest draw read 34.9 instead of 38.6. The tools, the per-log speed tables and these tables are in the session notes folder (`ci-near-cap-tools/`, `ci-near-cap-data/`).
 <!-- SECTION:NOTES:END -->
