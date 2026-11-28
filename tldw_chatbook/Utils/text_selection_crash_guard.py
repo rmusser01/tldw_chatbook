@@ -8,7 +8,8 @@ and ``DetachedFocusGuard`` (TASK-34000.26: a removed widget under focus must
 not swallow the next key).
 The aggregate also selects a resize-capable native Windows driver (TASK-40260),
 and on Windows ``ThreadWorkerContextGuard`` keeps Textual's timer sleeps off the
-default executor (TASK-38462, ``install_windows_timer_sleep``).
+default executor (TASK-38462, ``install_windows_timer_sleep``) and asks Windows
+not to power-throttle the app (TASK-40608, ``opt_out_of_windows_power_throttling``).
 It tracks clipboard write intent so older asynchronous copies cannot publish
 over a later user copy (TASK-37300).
 They share a module so a new App-level guard costs neither another ``app.py``
@@ -66,6 +67,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import contextvars
+import os
 import queue
 import sys
 import threading
@@ -92,6 +94,7 @@ __all__ = [
     "UserInputTap",
     "install_windows_timer_sleep",
     "match_selection_begin_container_crash",
+    "opt_out_of_windows_power_throttling",
 ]
 
 
@@ -339,6 +342,84 @@ def install_windows_timer_sleep() -> None:
     textual_timer.sleep = _windows_timer_sleep
 
 
+#: Turns :func:`opt_out_of_windows_power_throttling` on (``1``) or off (``0``).
+POWER_THROTTLING_ENVIRONMENT_VARIABLE = "TLDW_POWER_THROTTLING_OPT_OUT"
+#: ``ProcessPowerThrottling`` in ``PROCESS_INFORMATION_CLASS``.
+_PROCESS_POWER_THROTTLING = 4
+#: ``PROCESS_POWER_THROTTLING_STATE``: version 1; the control mask names the
+#: policy this call decides (0x1, execution speed); the state mask is clear,
+#: which switches that policy off for the process.
+_NOT_THROTTLED = (1, 0x1, 0)
+
+
+def _is_windows() -> bool:
+    return sys.platform == "win32"
+
+
+def _set_process_information(information_class: int, payload: bytes) -> bool:
+    """``SetProcessInformation`` for this process; True when Windows accepted it."""
+    import ctypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetCurrentProcess.restype = ctypes.c_void_p
+    kernel.SetProcessInformation.argtypes = (
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint32,
+    )
+    kernel.SetProcessInformation.restype = ctypes.c_int
+    return bool(
+        kernel.SetProcessInformation(
+            kernel.GetCurrentProcess(), information_class, payload, len(payload)
+        )
+    )
+
+
+def opt_out_of_windows_power_throttling() -> bool:
+    """Ask Windows not to slow this process down as background work (TASK-40608).
+
+    Windows 10 and later power-throttle a process they take for background
+    work, and on a CPU with performance and efficiency cores that means the
+    efficiency cores. Measured on 2026-11-28 (i5-14500, Windows 10 22H2, quiet
+    machine): every one of the 250 marks of two Console turns was made on an
+    efficiency core, and the turns took 4.4 and 5.8 s. With this request made
+    by the app's own process 228 of 250 were on performance cores and the turns
+    took 2.2 and 2.6 s. Above Normal priority changed nothing.
+
+    The request is the documented one for work a person is waiting for:
+    ``SetProcessInformation(ProcessPowerThrottling)`` with the execution-speed
+    control bit set and its state bit clear. It pins the process to nothing and
+    raises no priority: the scheduler still chooses the cores. A child process
+    does not inherit it.
+
+    On by default; off under pytest (``PYTEST_CURRENT_TEST``, the gate of the
+    idle heap re-freeze and the screen pre-import: how a test runner's process
+    is scheduled is the runner's business);
+    ``TLDW_POWER_THROTTLING_OPT_OUT`` decides either way when set.
+
+    Returns:
+        True when Windows accepted the request. False on another platform,
+        when switched off, and when Windows refused or lacks the call; the
+        process is then scheduled as before. Never raises.
+    """
+    switch = os.environ.get(POWER_THROTTLING_ENVIRONMENT_VARIABLE)
+    wanted = (
+        "PYTEST_CURRENT_TEST" not in os.environ
+        if switch is None
+        else switch.strip().lower() not in ("", "0", "false", "no")
+    )
+    if not wanted or not _is_windows():
+        return False
+    try:
+        return _set_process_information(
+            _PROCESS_POWER_THROTTLING,
+            b"".join(part.to_bytes(4, "little") for part in _NOT_THROTTLED),
+        )
+    except Exception:  # noqa: BLE001 - a scheduling request must never stop the app
+        return False
+
+
 class ThreadWorkerContextGuard:
     """App mixin: stop thread workers pinning departed screens (TASK-33264).
 
@@ -358,7 +439,8 @@ class ThreadWorkerContextGuard:
     is unaffected: it already submits a ``Context.run`` partial carrying the
     caller's copied context. ``Load`` is the first event an App dispatches on
     its running loop, before any screen can start a worker -- or a timer, so
-    it also installs the Windows timer sleep that keeps timers off this pool.
+    it also installs the Windows timer sleep that keeps timers off this pool,
+    and first of all asks Windows not to power-throttle the process.
     """
 
     def on_load(self) -> None:
@@ -369,6 +451,7 @@ class ThreadWorkerContextGuard:
         a host's, a test fixture's or an earlier app's pool would otherwise
         keep its threads (Qodo, #2897).
         """
+        opt_out_of_windows_power_throttling()
         install_windows_timer_sleep()
         loop = asyncio.get_running_loop()
         previous = getattr(loop, "_default_executor", None)
