@@ -69,6 +69,11 @@ Everything else runs light:
 Docs and backlog changes run preflight and smoke only. The nightly and release
 runs are the broad gates.
 
+The plan does not depend on the machine that computes it. The selector keys the
+tree by git's forward-slash paths and reads it as UTF-8, so
+`select_changes(changed_paths(<base sha>, <head sha>), Path.cwd())` on a Windows
+checkout returns the plan CI's Linux job prints (TASK-42689).
+
 A malformed range fails preflight. Empty diffs select broad. Missing selected
 tests, missing outputs, skipped expected jobs and cancellations cannot turn the
 required aggregate green. No required workflow uses path filters. Required
