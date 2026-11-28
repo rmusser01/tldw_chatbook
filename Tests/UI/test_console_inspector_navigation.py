@@ -1560,7 +1560,9 @@ async def test_empty_owner_is_settled_absence_with_one_outer_fallback():
 
 
 @pytest.mark.asyncio
-async def test_persistent_malformed_owner_drains_recovery_with_outer_fallback():
+async def test_persistent_malformed_owner_drains_recovery_with_outer_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+):
     async with make_console_pilot(size=(160, 45)) as pilot:
         rail = await _open_inspector(pilot)
         sources = rail.query_one(
@@ -1585,6 +1587,24 @@ async def test_persistent_malformed_owner_drains_recovery_with_outer_fallback():
             section_id="persistent-malformed-owner",
         )
         await owner.mount(malformed, before=header)
+        # Pilot polls can outpace the rail's two refreshes per recovery pass.
+        # Count the original incident from removal, including any pass that
+        # runs before the final structural await returns.
+        native_passes = 0
+        reconcile = rail._reconcile_focus_recovery_state
+
+        def count_native_pass() -> None:
+            nonlocal native_passes
+            history = rail._section_focus_history.get(sources.section_id)
+            if sources.section_id in rail._pending_focus_recoveries or (
+                not source_action.is_attached
+                and history is not None
+                and history[0] is source_action
+            ):
+                native_passes += 1
+            reconcile()
+
+        monkeypatch.setattr(rail, "_reconcile_focus_recovery_state", count_native_pass)
         await sources.remove()
         await header.remove()
         rail.request_outer_reconcile()
@@ -1597,9 +1617,10 @@ async def test_persistent_malformed_owner_drains_recovery_with_outer_fallback():
                 and not rail._outer_reconcile_scheduled
             ),
             description="persistent malformed owner recovery drained",
-            attempts=10,
+            timeout=5.0,
         )
 
+        assert 0 < native_passes <= 10
         assert tuple(owner.children) == (malformed,)
         assert sources.section_id not in rail._section_focus_history
 
