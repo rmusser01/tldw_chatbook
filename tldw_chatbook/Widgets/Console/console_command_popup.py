@@ -2,8 +2,8 @@
 
 Screen-owned overlay: the owning screen feeds it suggestions, routes
 Up/Down/Enter/Tab/Escape to it while open, and it never takes focus. It
-positions itself (``overlay: screen`` + ``styles.offset``) so its bottom
-edge sits just above the composer with an anchored-overlay technique.
+positions itself (``overlay: screen`` + ``absolute_offset``) so its bottom
+edge sits just above the composer, re-anchored after every screen layout.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from loguru import logger
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.css.query import NoMatches
+from textual.geometry import Offset
 from textual.widget import Widget
 from textual.widgets import OptionList
 from textual.widgets.option_list import Option
@@ -46,9 +47,6 @@ class ConsoleCommandPopup(Widget):
         super().__init__(**kwargs)
         self._suggestions: list[CommandSuggestion] = []
         self._desired_height = 0
-        # Last offset.y applied to the placement; region == flow_base + this,
-        # so the two together always re-derive the flow base (see reposition).
-        self._anchor_offset_y = 0
         # Hidden by default in code (not just TCSS) so the widget is correct
         # even where the bundled stylesheet is not loaded (bare test apps).
         self.display = False
@@ -70,6 +68,22 @@ class ConsoleCommandPopup(Widget):
         option_list = OptionList(id="console-command-popup-options")
         option_list.can_focus = False
         yield option_list
+
+    def on_mount(self) -> None:
+        # TASK-42629: the composer cluster reflows after a keystroke (the
+        # console-sync worker, guidance dismissal, a chip strip appearing), and
+        # a paint hold can defer the first layout past any fixed re-anchor. The
+        # layout signal follows every one of them.
+        self.screen.screen_layout_refresh_signal.subscribe(
+            self, self._on_screen_layout_refresh
+        )
+
+    def on_unmount(self) -> None:
+        self.screen.screen_layout_refresh_signal.unsubscribe(self)
+
+    def _on_screen_layout_refresh(self, _screen: object) -> None:
+        if self.is_open:
+            self.reposition()
 
     @property
     def is_open(self) -> bool:
@@ -107,14 +121,6 @@ class ConsoleCommandPopup(Widget):
         )
         option_list.highlighted = 0
         self.display = True
-        # The shell's post-keystroke machinery (console-sync worker, guidance
-        # dismissal) can reflow the composer a beat AFTER even the
-        # post-refresh anchor runs (verified: both immediate and
-        # call_after_refresh repositions can observe the pre-shift composer).
-        # The trailing timer re-anchor covers that settle; every subsequent
-        # keystroke re-anchors anyway. Idempotent and cheap.
-        self.call_after_refresh(self.reposition)
-        self.set_timer(0.1, self.reposition)
 
     def hide(self) -> None:
         """Hide the popup and drop its rows."""
@@ -140,10 +146,9 @@ class ConsoleCommandPopup(Widget):
     def reposition(self) -> None:
         """Anchor the popup's bottom edge just above the composer.
 
-        ``composer.region`` is Screen-relative and the flow base is derived
-        from this widget's own placement (see the comment at the offset
-        math), so the anchor holds regardless of which container the popup
-        is mounted in.
+        ``composer.region`` and ``absolute_offset`` are both screen
+        coordinates, so the anchor holds whichever container the popup is
+        mounted in and whatever its flow slot is.
         """
         if self.parent is None:
             return
@@ -181,29 +186,17 @@ class ConsoleCommandPopup(Widget):
                 continue
             if strip.display and strip.region.height > 0:
                 bottom_y = min(bottom_y, strip.region.y)
-        origin = self.parent.content_region
-        x = anchor.x - origin.x
-        y = max(bottom_y - self._desired_height, 0)
-        # `overlay: screen` paints at (flow slot + offset), and the flow
-        # slot sits wherever the parent's in-flow stack ends -- NOT the
-        # parent's content origin the way `position: absolute` did. The
-        # slot position is not directly readable (a fixed-height parent's
-        # content_size reports its box, not its children's extent), so
-        # re-derive it from the current placement: region.y is always
-        # flow_base + the last offset.y this method applied. That also
-        # tracks any reflow that moved the slot between keystrokes.
-        if self.region.height > 0:
-            flow_base_y = self.region.y - self._anchor_offset_y
-            # May be negative: the popup paints ABOVE its flow slot at the
-            # bottom of the shell. `y` already carries the screen-top clamp.
-            offset_y = y - flow_base_y
-        else:
-            # Not laid out yet (first-ever show, display just flipping on):
-            # anchor at the origin for this frame; the after-refresh
-            # re-anchor in show_suggestions lands with a valid region.
-            offset_y = max(y, 0)
-        self._anchor_offset_y = offset_y
-        self.styles.offset = (max(x, 0), offset_y)
+        # TASK-42629: the old flow-slot math (region.y less the last offset
+        # applied) was right only after a layout had applied that offset;
+        # under a paint hold or a late reflow the popup sat over or off the
+        # top of the screen until the next keystroke.
+        # ponytail: Textual reads Offset(0, 0) as "no absolute offset", so a
+        # popup that would sit at the screen's very top-left corner falls back
+        # to its flow slot; that needs a composer within 8 rows of the top.
+        target = Offset(max(anchor.x, 0), max(bottom_y - self._desired_height, 0))
+        if self.absolute_offset != target:
+            self.absolute_offset = target
+            self.refresh(layout=True)
         self.remove_class(*(name for name in self.classes if name.startswith("w-")))
         # ds-runtime: Suggestion count and the measured input anchor determine popup geometry.
         self.set_styles(width=max(anchor.width, MIN_WIDTH))

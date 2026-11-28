@@ -221,19 +221,32 @@ async def _open_picker(host, pilot, button_id: str) -> LibraryNoteFolderTargetDi
     # lands before the canvas recomposes its placement actions, so a click
     # made right after "the note to open" found no button on a loaded
     # runner. Wait for the control itself, on screen and enabled.
+    library = host.screen
+
     def clickable() -> bool:
-        found = host.screen.query(button_id)
+        found = library.query(button_id)
         if not found:
             return False
         button = found.first()
-        return not button.disabled and button.region.area > 0
+        # TASK-42629: the press handlers re-read the selected tree row and
+        # return without a word when it is gone, so an enabled button alone
+        # does not mean a click opens the picker.
+        return (
+            not button.disabled
+            and button.region.area > 0
+            and library._selected_library_notes_tree_row() is not None
+        )
 
     await _wait(pilot, clickable, f"{button_id} on screen and enabled")
     await pilot.click(button_id)
     await _wait(
         pilot,
         lambda: isinstance(host.screen, LibraryNoteFolderTargetDialog),
-        f"{button_id} to open the folder picker",
+        lambda: (
+            f"{button_id} to open the folder picker (top "
+            f"{type(host.screen).__name__}, selected row "
+            f"{library._selected_library_notes_tree_row()!r}): {_painted(host)}"
+        ),
     )
     picker = host.screen
     await _wait(
@@ -260,8 +273,10 @@ async def _choose(
     await _wait(
         pilot,
         lambda: _picker_rows(host) == rows and total in _painted(host),
-        lambda: f"the list narrowed to {rows} ({total}): {_picker_rows(host)} "
-        f"{_painted(host)}",
+        lambda: (
+            f"the list narrowed to {rows} ({total}): {_picker_rows(host)} "
+            f"{_painted(host)}"
+        ),
     )
     await pilot.press("down", "enter")
     await _wait(pilot, lambda: host.screen is screen, "the picker to choose")
@@ -292,8 +307,10 @@ async def test_move_note_picker_offers_nested_folders_on_a_fresh_visit_and_narro
         await pilot.press("enter")
         await _wait(
             pilot,
-            lambda: screen._library_note_session.snapshot is not None
-            and screen._library_note_session.snapshot.note_id == note_id,
+            lambda: (
+                screen._library_note_session.snapshot is not None
+                and screen._library_note_session.snapshot.note_id == note_id
+            ),
             "the note to open",
         )
         before = _memberships(tmp_path)
@@ -301,10 +318,10 @@ async def test_move_note_picker_offers_nested_folders_on_a_fresh_visit_and_narro
         await _open_picker(host, pilot, "#library-notes-placement-move")
         await _wait(
             pilot,
-            lambda: _picker_rows(host) == ALL_FOLDERS
-            and "5 folders" in _painted(host),
-            lambda: f"every folder with its total: {_picker_rows(host)} "
-            f"{_painted(host)}",
+            lambda: _picker_rows(host) == ALL_FOLDERS and "5 folders" in _painted(host),
+            lambda: (
+                f"every folder with its total: {_picker_rows(host)} {_painted(host)}"
+            ),
         )
         painted = _painted(host)
         assert 'Move "Ideas inbox" to…' in painted, painted
@@ -326,8 +343,7 @@ async def test_move_note_picker_offers_nested_folders_on_a_fresh_visit_and_narro
         await _open_picker(host, pilot, "#library-notes-placement-add")
         await _wait(
             pilot,
-            lambda: _picker_rows(host) == ALL_FOLDERS
-            and "5 folders" in _painted(host),
+            lambda: _picker_rows(host) == ALL_FOLDERS and "5 folders" in _painted(host),
             lambda: f"Add to folder's rows: {_picker_rows(host)} {_painted(host)}",
         )
         assert 'Add "Ideas inbox" to folder…' in _painted(host), _painted(host)
@@ -386,8 +402,10 @@ async def test_moving_a_folder_into_a_collapsed_folder_shows_the_destinations_no
         # A folder cannot move into itself or beneath itself.
         await _wait(
             pilot,
-            lambda: _picker_rows(host) == ["Top level", "Study", "Study / Japanese"]
-            and "2 folders" in _painted(host),
+            lambda: (
+                _picker_rows(host) == ["Top level", "Study", "Study / Japanese"]
+                and "2 folders" in _painted(host)
+            ),
             lambda: f"Projects' subtree left out: {_picker_rows(host)}",
         )
         assert 'Move folder "Projects" to…' in _painted(host)
@@ -423,8 +441,10 @@ async def test_moving_a_folder_into_a_collapsed_folder_shows_the_destinations_no
         await _wait(
             pilot,
             destination_lists_its_notes,
-            lambda: "Study's own notes under ▾ Study after the move: "
-            f"{_painted_list(host, screen)}",
+            lambda: (
+                "Study's own notes under ▾ Study after the move: "
+                f"{_painted_list(host, screen)}"
+            ),
         )
         painted = _painted_list(host, screen)
         study = painted.index("▾ Study")

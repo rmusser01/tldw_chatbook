@@ -32,8 +32,10 @@ async def _mounted_console(host, pilot):
 
     console = await _base_mounted_console(host, pilot)
     assert await _until(
-        lambda: console._console_attach_reconciled
-        and not console._console_attach_reconcile_running,
+        lambda: (
+            console._console_attach_reconciled
+            and not console._console_attach_reconcile_running
+        ),
         15,
     )
     return console
@@ -52,6 +54,34 @@ def _image() -> PendingAttachment:
     )
 
 
+async def _synced_strip(console, composer, expected: str) -> Static:
+    """Sync the control bar; wait until the Send strip reads `expected`, laid out.
+
+    TASK-42629: the direct sync defers to the coalesced control-bar replay
+    (it returned False in every probe run), so one pause read an empty strip
+    whenever the replay landed later, as it did on loaded runners. The strip
+    can pass through a narrower, cut render first, so wait until the final
+    copy is the painted one.
+    """
+    from textual.geometry import Region
+
+    console._sync_console_control_bar()
+    strip = composer.query_one("#console-send-disabled-reason", Static)
+
+    def painted() -> str:
+        region = Region(0, 0, strip.region.width, strip.region.height)
+        return "".join(line.text for line in strip.render_lines(region)).strip()
+
+    settled = await _until(
+        lambda: strip.content.plain == expected and painted() == expected, 10
+    )
+    assert settled, (
+        f"Send strip never painted {expected!r}: {strip.content.plain!r}, "
+        f"painted {painted()!r}"
+    )
+    return strip
+
+
 @pytest.mark.asyncio
 async def test_a_staged_image_the_model_cannot_take_names_the_image_not_setup():
     _app, host = _ready_host()
@@ -62,8 +92,9 @@ async def test_a_staged_image_the_model_cannot_take_names_the_image_not_setup():
         session_id = store.ensure_session().id
         composer.load_draft("what colour is this leaf?")
         assert store.add_pending_attachment(session_id, _image())
-        console._sync_console_control_bar()
-        await pilot.pause()
+        strip = await _synced_strip(
+            console, composer, "Send blocked — this model can't accept images"
+        )
 
         # A model IS selected: readiness is ready; only the image blocks.
         assert console._console_setup_blocked_reason() == ""
@@ -72,7 +103,6 @@ async def test_a_staged_image_the_model_cannot_take_names_the_image_not_setup():
             f"Console send blocked: {MODEL} can't accept images."
         )
 
-        strip = composer.query_one("#console-send-disabled-reason", Static)
         assert strip.content.plain == "Send blocked — this model can't accept images"
         assert "choose a model" not in strip.content.plain
         assert "run_setup_wizard" not in strip.content.markup
@@ -102,11 +132,11 @@ async def test_long_model_image_strip_keeps_the_limitation_visible(
         composer.load_draft("what colour is this leaf?")
         image = _image()
         assert store.add_pending_attachment(session_id, image)
-        console._sync_console_control_bar()
-        await pilot.pause()
+        strip = await _synced_strip(
+            console, composer, "Send blocked — this model can't accept images"
+        )
         assert console._console_setup_blocked_reason() == ""
         assert long_model in console._console_attachment_blocked_reason()
-        strip = composer.query_one("#console-send-disabled-reason", Static)
         send = composer.query_one("#console-send-message", Button)
         assert strip.content.plain == "Send blocked — this model can't accept images"
         painted = "".join(
@@ -178,9 +208,9 @@ async def test_long_model_image_strip_keeps_the_limitation_visible(
                 assert composer._send_reason_width_cap() == 0
         record_property("pr3330_geometry", json.dumps(measurements))
         for measured in measurements:
-            assert (
-                measured["draft_displayed"] and measured["draft_in_row"]
-            ), measurements
+            assert measured["draft_displayed"] and measured["draft_in_row"], (
+                measurements
+            )
 
 
 # --- Review of TASK-33621.11: the code rides beside the sentence -----------
@@ -188,6 +218,7 @@ async def test_long_model_image_strip_keeps_the_limitation_visible(
 import copy  # noqa: E402
 
 from Tests.UI.app_factory import attach_chachanotes_db  # noqa: E402
+from Tests.UI.test_console_hook_review_send_freeze import _until  # noqa: E402
 from Tests.UI.test_console_native_chat_flow import (  # noqa: E402
     _configure_native_ready_console,
 )
@@ -357,15 +388,17 @@ async def test_a_full_context_strip_names_its_fix_and_never_links_setup(monkeypa
         session_id = store.ensure_session().id
         store.replace_session_settings(
             session_id,
-            ConsoleSessionSettings(provider="openai", model="gpt-4o", max_tokens=128_000),
+            ConsoleSessionSettings(
+                provider="openai", model="gpt-4o", max_tokens=128_000
+            ),
         )
         await console._sync_native_console_chat_ui()
         composer.load_draft("hello")
-        console._sync_console_control_bar()
-        await pilot.pause()
+        strip = await _synced_strip(
+            console, composer, "Send blocked — fix model limits to continue ›"
+        )
 
         assert console._console_composer_send_blocker().code == "model_limits"
-        strip = composer.query_one("#console-send-disabled-reason", Static)
         assert strip.content.plain == "Send blocked — fix model limits to continue ›"
         assert "run_setup_wizard" not in strip.content.markup
         assert "@click=fix_model_limits" in strip.content.markup
@@ -388,7 +421,6 @@ async def test_clicking_the_full_context_strip_opens_chat_settings_on_max_tokens
     opens the setup wizard (spied here: the harness has no such action).
     Same real readiness as above.
     """
-    from Tests.UI.test_console_hook_review_send_freeze import _until
     from tldw_chatbook.Widgets.Console.console_settings_modal import (
         ConsoleSettingsModal,
     )
@@ -409,13 +441,15 @@ async def test_clicking_the_full_context_strip_opens_chat_settings_on_max_tokens
         session_id = store.ensure_session().id
         store.replace_session_settings(
             session_id,
-            ConsoleSessionSettings(provider="openai", model="gpt-4o", max_tokens=128_000),
+            ConsoleSessionSettings(
+                provider="openai", model="gpt-4o", max_tokens=128_000
+            ),
         )
         await console._sync_native_console_chat_ui()
         composer.load_draft("hello")
-        console._sync_console_control_bar()
-        await pilot.pause()
-        strip = composer.query_one("#console-send-disabled-reason", Static)
+        strip = await _synced_strip(
+            console, composer, "Send blocked — fix model limits to continue ›"
+        )
         assert strip.content.plain.startswith(
             "Send blocked — fix model limits to continue"
         )
@@ -423,8 +457,10 @@ async def test_clicking_the_full_context_strip_opens_chat_settings_on_max_tokens
         # Inside the text, past the strip's one-cell padding.
         await pilot.click(strip, offset=(4, 0))
         opened = await _until(
-            lambda: isinstance(host.screen, ConsoleSettingsModal)
-            and getattr(host.focused, "id", None) == "console-settings-max-tokens",
+            lambda: (
+                isinstance(host.screen, ConsoleSettingsModal)
+                and getattr(host.focused, "id", None) == "console-settings-max-tokens"
+            ),
             10,
         )
         focused_id = getattr(host.focused, "id", None)

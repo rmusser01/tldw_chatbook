@@ -1360,6 +1360,9 @@ MINIMUM_FILES = 2805
 # 30 s entry budget; the times are in the task's notes). The floor is the
 # measured entry count.
 MINIMUM_FILES = 2811
+# 2026-11-27, TASK-42629: adds the command popup's paint-hold anchor node. The floor
+# is the measured entry count.
+MINIMUM_FILES = 2812
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 
