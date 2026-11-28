@@ -600,7 +600,7 @@ def _assert_detached_normalization_source(source: str, module: str) -> None:
         },
         "sqlite_validation": {
             "normalize_detached_candidate": "0958fde34420ac25689ef1b9162c3dc1e3e3401ad71b2b3a4de924c8a0d3093b",
-            "_validate_candidate": "f72cdee393c0bcc6645c3612f4cc9916024a870246ef6afb413d8b2d27bdc989",
+            "_validate_candidate": "a4db37e155ba718126a96ff3be935cae6384f83de7455430632413d12a02767f",
             "_write_normalized_candidate": "29ee683bec2883fa9d4bb1b962819308b9630efb6c0c5b880373bda3a6bd3ed6",
         },
         "private_sqlite": {
