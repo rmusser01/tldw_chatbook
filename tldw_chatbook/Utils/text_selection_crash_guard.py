@@ -64,8 +64,11 @@ eating unknown errors. The pinned reproduction test breaks alongside it.
 from __future__ import annotations
 
 import asyncio
+import collections
 import contextvars
+import queue
 import sys
+import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from types import FrameType
@@ -169,8 +172,100 @@ class TextSelectionCrashGuard:
             )
 
 
+class _MostRecentIdleFirst:
+    """A thread pool's work queue: items oldest first, idle threads newest first.
+
+    ``queue.SimpleQueue`` wakes whichever idle thread its lock picks, so work
+    done one piece after another moves from thread to thread (three threads
+    took turns in a pool of six idle ones; a Console turn used a dozen), and
+    whatever a thread keeps for itself is built once per thread: above all a
+    SQLite connection to each store (TASK-40608: one Console turn opened 21
+    connections that way). Here the thread that went idle last takes the next
+    item, so that work stays on the threads already warm. A burst still
+    spreads over as many threads as it needs, and items are still served in
+    the order they were put.
+
+    Nothing here holds a lock: every step is one atomic operation of a deque
+    or a list. ``ThreadPoolExecutor`` calls ``put`` from a weak-reference
+    callback, which may run at any point of another ``put`` or ``get`` on the
+    same thread, where a lock already held would never be released.
+    """
+
+    def __init__(self) -> None:
+        self._items: collections.deque[Any] = collections.deque()
+        #: One held lock per sleeping thread; the one that went idle last is last.
+        self._idle: list[Any] = []
+
+    def put(self, item: Any) -> None:
+        """Queue ``item`` and wake the thread that went idle last, if one sleeps."""
+        self._items.append(item)
+        self._wake()
+
+    def _wake(self) -> None:
+        try:
+            self._idle.pop().release()
+        except IndexError:
+            pass
+
+    def get(self, block: bool = True) -> Any:
+        """Take the oldest item; with ``block``, sleep until one is put.
+
+        Raises:
+            queue.Empty: Nothing is queued and ``block`` is false.
+        """
+        try:
+            return self._items.popleft()
+        except IndexError:
+            if not block:
+                raise queue.Empty from None
+        gate = threading.Lock()
+        gate.acquire()
+        while True:
+            self._idle.append(gate)
+            try:
+                # A put between the look above and going idle saw no sleeper.
+                item = self._items.popleft()
+            except IndexError:
+                gate.acquire()  # Sleep until a put releases this gate.
+                try:
+                    return self._items.popleft()
+                except IndexError:
+                    continue  # Another thread took it first: go idle again.
+            try:
+                self._idle.remove(gate)
+            except ValueError:
+                # A put chose this thread for its item meanwhile: pass that on.
+                self._wake()
+            return item
+
+    def get_nowait(self) -> Any:
+        """``get`` without sleeping."""
+        return self.get(block=False)
+
+    def qsize(self) -> int:
+        """Items queued and not yet taken."""
+        return len(self._items)
+
+    def empty(self) -> bool:
+        """Whether nothing is queued."""
+        return not self._items
+
+
 class FreshContextExecutor(ThreadPoolExecutor):
-    """A ThreadPoolExecutor whose jobs never share a ``contextvars`` context."""
+    """A ThreadPoolExecutor whose jobs never share a ``contextvars`` context.
+
+    Its most recently idle thread takes the next job (``_MostRecentIdleFirst``).
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        # ponytail: ``_work_queue`` is CPython's private name (3.12 to 3.14: a
+        # ``queue.SimpleQueue`` that ``submit``, the workers and ``shutdown``
+        # share). Any other shape keeps the stock queue, and
+        # Tests/App/test_thread_pool_reuses_warm_threads.py then fails, so an
+        # upgrade cannot drop this unnoticed.
+        if type(self._work_queue) is queue.SimpleQueue and not self._threads:
+            self._work_queue = _MostRecentIdleFirst()
 
     def submit(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Future:
         """Schedule ``fn(*args, **kwargs)`` in a new, empty ``contextvars`` context.
