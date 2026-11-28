@@ -166,3 +166,5 @@ Destinations for option 2, from the same method: `admission-sensitive 2` with th
 **How it was measured.** As in TASK-42779's note (same-test-count files, speeds against a complete log of today's list, each cancellation's annotation read).
 
 **2026-11-28, later: TASK-42779's choice changes option 2's destination.** The owner chose lane 4's one-file move (TASK-42779, option 3): `Tests/Chat/test_workflow_planning_native.py` (315 s) now runs first in `admission-sensitive 2`, which takes that profile from median 17.2 / slowest 20.2 to a modelled median 22.3 / slowest 26.3 (8.7 under). This task's three wrapped-collaborator files (235 s) would take it to 31.0 (4.0 under) if they went there too, so option 2's destination should now be the `restore` profile (about 24, a job-level estimate) or a job of its own. AC #1 stays open and unticked.
+
+2026-11-28, later: PR 3805, which added the note above, was combined into PR 3804 at the owner's request ("Combine them"); the open decision is unchanged.

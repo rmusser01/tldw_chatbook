@@ -77,4 +77,6 @@ AC #3 asks that the job's typical time have 5 minutes of margin: the median has 
 **Recommendation: option 2.** The two hits finished their tests, so it is a slow runner draw and not a hang, the lane is not required, and a cap is the smallest change. AC #2 stays open and should be done first if the owner would rather keep the cap and shorten a hang.
 
 **How it was measured.** Job records, annotations and step times from the GitHub API; pytest's own summary and slowest-25 tables from the logs. The tools and per-job tables are in the session notes folder (`ci-near-cap-tools/`, `ci-near-cap-data/`).
+
+2026-11-28, later: PR 3805, which added the note above, was combined into PR 3804 at the owner's request ("Combine them"); the open decision is unchanged.
 <!-- SECTION:NOTES:END -->

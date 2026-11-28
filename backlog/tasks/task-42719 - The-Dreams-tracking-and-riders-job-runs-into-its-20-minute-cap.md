@@ -108,4 +108,6 @@ Steps 1 to 5 are done except the 20-run measurement (AC #4), which needs 20 full
 **Measuring AC #4 after this lands.** List the `pull_request` runs of `derived-artifacts.yml` (`gh api repos/<owner>/<repo>/actions/workflows/derived-artifacts.yml/runs?event=pull_request`), read each run's jobs (`runs/<id>/attempts/<n>/jobs`) and take this job's `started_at` and `completed_at`. Confirm a cancellation from the job's annotation (`check-runs/<job id>/annotations`): a run cancelled by hand also ends near a cap. The criterion holds when 20 full runs show no cancellation at the cap and the slowest took 26 minutes or less.
 
 Files: `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md`, `backlog/docs/lessons-testing-evidence.md` and this task.
+
+**2026-11-28, later: combined.** The owner asked for PRs 3803, 3804 and 3805 to be combined before merging ("Combine them"). PR 3804 now carries this task's two commits, so PR 3803 is superseded by it; AC #4's 20 full runs are counted from when PR 3804 lands.
 <!-- SECTION:NOTES:END -->
