@@ -1,9 +1,6 @@
 {
   "files": {
     "PROTOCOL.md": "34d8bb484021db0be57b07175ef0b42187afe0336ecbf02f8cdb9ba757670682",
-    "__pycache__/fixture_environment.cpython-312.pyc": "69244af5b2df6ea7972408eea6fd32a32202d8682a679c5182b8175b8508a309",
-    "__pycache__/postsave-current31-config-guard-r4.cpython-312.pyc": "58effa93d333a785afac17bad5191724613faf5fd693a8726c083e7bfe291585",
-    "__pycache__/pr3023-matched-profile-preparation-r1.cpython-312.pyc": "4635d59cdd2d3ec05b3195c27573922326375fbc60097033ac32d8440956eec9",
     "active_segments.py": "f02fbbfc103dab6e14849b4325be7a5126ec062d76c81de9e72ea2732ced01d1",
     "expected-send.json": "b48934c4954914363fe894ae351c9f4ca70d0533b5291d533a08634ca2f24daf",
     "fixture_environment.py": "19da2f2d27b5ae6e9933a6bb587d8564af596e75ccca318e85ce63dced3a4975",

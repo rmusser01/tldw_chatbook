@@ -11,7 +11,7 @@ permissions:
 jobs:
   compare:
     name: One profiled first send on a macOS runner
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 40
     env:
       PYTHONDONTWRITEBYTECODE: '1'
@@ -34,7 +34,7 @@ jobs:
           mkdir -p "$FIRSTSEND_ARTIFACTS"
           printf 'FIRSTSEND_ARTIFACTS=%s\n' "$FIRSTSEND_ARTIFACTS" >> "$GITHUB_ENV"
           cp -R harness "$RUNNER_TEMP/firstsend-kit"
-          test "$(git rev-parse HEAD^)" = cf788f548edd2ba3eb865776bf8568b27219a447
+          test "$(git rev-parse HEAD^^)" = cf788f548edd2ba3eb865776bf8568b27219a447
           git switch -c codex/console-postsave-current31 cf788f548edd2ba3eb865776bf8568b27219a447
           test -z "$(git status --porcelain)"
           printf 'FIRSTSEND_SOURCE=%s\n' "$(pwd -P)" >> "$GITHUB_ENV"
