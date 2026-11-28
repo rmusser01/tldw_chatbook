@@ -6617,17 +6617,9 @@ class ChatScreen(BaseAppScreen):
     async def _create_console_chat_in_workspace(self, workspace_id: str) -> None:
         """Activate a workspace, then create the new chat inside it.
 
-        TASK-25712: "New chat" on a non-active workspace composes the two
-        existing operations -- activation, then session creation, which
-        targets the active workspace -- rather than threading a workspace
-        parameter through session creation.
-
-        Review, PR #2255: the activation wrapper deliberately discards
-        ``_switch_console_workspace``'s failure result (its other callers
-        are fire-and-forget), so success is verified against the registry
-        afterwards. A missing workspace or a failed switch must NOT create
-        the chat in the previously active workspace -- the user asked for
-        it somewhere specific.
+        Verify the registry activation and pass its identity explicitly.
+        The previous Console session can still own the projected context
+        while the workspace switch repaints.
         """
         registry_service = getattr(
             self.app_instance, "workspace_registry_service", None
@@ -6656,7 +6648,9 @@ class ChatScreen(BaseAppScreen):
                     severity="warning",
                 )
                 return
-        await self._session._create_native_console_session_from_active_context()
+        await self._session._create_native_console_session_from_active_context(
+            workspace_id=workspace_id,
+        )
 
     def on_workspace_action_chosen(self, event: "WorkspaceActionChosen") -> None:
         """Run the chosen workspace command against the captured row.
@@ -6990,6 +6984,7 @@ class ChatScreen(BaseAppScreen):
     _pending_console_provider_return: object | None = None  # provider_return.py
 
     _console_attach_reconciled: bool = False
+    _pending_research_console_workspace: tuple[str, bool] | None = None
     _console_attach_visit_generation: int = 0
     _console_attach_reconcile_running: bool = False
     _console_resume_after_reconcile: bool = False
@@ -15399,6 +15394,10 @@ class ChatScreen(BaseAppScreen):
                 self._console_attach_reconciled = True
                 self._console_attach_reconcile_retry_count = 0
                 self._console_attach_reconcile_retry_exhausted = False
+                if self._pending_research_console_workspace is not None:
+                    from ..Console_Modules.research_workspace_handoff import consume_workspace_handoff
+
+                    self.call_after_refresh(consume_workspace_handoff, self)
         except Exception as exc:  # noqa: BLE001 -- a repaint never kills the app
             if not _console_screen_is_torn_down(self):
                 failure = exc
@@ -20961,27 +20960,20 @@ class ChatScreen(BaseAppScreen):
         self,
         rail_state: Optional[ConsoleRailState] = None,
     ) -> bool:
-        """Refresh Console-owned control labels from current selection state.
-
-        Args:
-            rail_state: Pre-computed rail state (TASK-251: the 0.2s tick
-                computes this once in ``_sync_native_console_chat_ui`` and
-                passes it in here, instead of this method redundantly
-                recomputing it -- which itself rebuilds workspace-context
-                and inspector state). Other callers may omit it; it is
-                computed on demand when not given.
-
-        Returns:
-            True after rendering; False when entry was deferred and a fresh
-            coalesced replay owns the unfinished refresh.
-        """
-        from ..Console_Modules.config_sync import run_console_presentation_sync
+        """Refresh controls with optional rail state. False hands off to replay."""
+        last_native_run = getattr(self, "_last_native_composer_run_owner", None)
+        if (
+            last_native_run is not None
+            and last_native_run == config_sync.terminal_projection_owner(self)
+        ):
+            # The full replay settles the native transcript before Send.
+            return config_sync.replay_whole_console_sync(self)
 
         def sync() -> None:
             with _workspace_build_scope(self), self._console_derivation_scope():
                 self._sync_console_control_bar_under_config(rail_state)
 
-        result = run_console_presentation_sync(self, sync)
+        result = config_sync.run_console_presentation_sync(self, sync)
         if result is False:
             inspector_data._sync_console_pending_display(self)
         return result
@@ -21472,12 +21464,15 @@ class ChatScreen(BaseAppScreen):
         send_blocked = False
         dispatch_recovery_blocked = False
         controller = self._console_chat_controller
+        native_run_owner = None
         queue_presentation = None
         if controller is not None:
             run_state = getattr(controller, "run_state", None)
             run_active = bool(getattr(run_state, "is_stop_allowed", False))
             send_blocked = not bool(getattr(run_state, "is_send_allowed", True))
             active_id = controller.store.active_session_id or ""
+            if run_active and active_id:
+                native_run_owner = (controller.store, active_id)
             run_active = run_active or controller._chat_start.is_accepted(active_id)
             if active_id:
                 queue_presentation = self._prompt_queue.presentation_for(
@@ -21594,6 +21589,7 @@ class ChatScreen(BaseAppScreen):
             # makes the composer name the wake instead.
             wake_turn_active=self._fleet._console_wake_turn_active(active_session_id),
         )
+        self._last_native_composer_run_owner = native_run_owner
         run_controls.sync_stop_affordances(self)
         run_controls.sync_dictation_presentation(self, composer)
         # sync_action_state resets the attach button's tooltip to generic copy
@@ -22851,6 +22847,7 @@ class ChatScreen(BaseAppScreen):
           leave running/installed across a suspend.
         """
         self._console_attach_visit_generation += 1
+        self._pending_research_console_workspace = None
         _end_canvas_poll_handoffs(self)
         note_suspend_style_inputs(self)  # TASK-38950
         self._console_discovery_rearm_pending = True

@@ -260,6 +260,8 @@ idx_quiz_questions_quiz_id	pre-convention	plan never captured without stats
 idx_quizzes_last_modified	pre-convention	plan never captured without stats
 idx_quizzes_name	pre-convention	plan never captured without stats
 idx_quizzes_workspace_id	pre-convention	plan never captured without stats
+idx_research_copy_destination	plan-pinned	Tests/Research_Workspace/test_copy_receipts.py
+idx_research_copy_source	plan-pinned	Tests/Research_Workspace/test_copy_receipts.py
 idx_research_quick_note_receipts_owner	pre-convention	plan never captured without stats
 idx_research_quick_note_receipts_reconcile	pre-convention	plan never captured without stats
 idx_research_source_operations_incomplete	pre-convention	plan never captured without stats

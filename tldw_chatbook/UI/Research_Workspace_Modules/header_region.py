@@ -70,6 +70,15 @@ class ResearchHeaderRegion(Vertical):
             markup=False,
         )
         yield ResearchWorkspaceMenu(id="research-workspace-menu")
+        yield Static("", id="research-workspace-banner", markup=False)
+
+    def on_mount(self) -> None:
+        self.sync_banner(None)
+
+    def sync_banner(self, banner: str | None) -> None:
+        widget = self.query_one("#research-workspace-banner", Static)
+        widget.update(banner or "")
+        widget.display = bool(banner)
 
     def sync_data_source(self, data_source: WorkspaceDataSource) -> None:
         """Paint the explicit selected authority without changing it implicitly."""

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from loguru import logger
 
 from Packaging.speculative_voice_history_gate import (
     BASELINE_LOCATOR_ROWS,
@@ -41,7 +42,7 @@ async def test_warm_speculative_voice_latency_distribution_meets_gate() -> None:
 def test_completed_pair_locator_inventory_is_complete_and_stable() -> None:
     inventory = completed_pair_locator_inventory()
 
-    assert inventory["count"] == 30
+    assert inventory["count"] == 31
     assert {"table": "canvas_revisions", "column": "origin_message_id"} in inventory[
         "locators"
     ]
@@ -49,6 +50,7 @@ def test_completed_pair_locator_inventory_is_complete_and_stable() -> None:
     mixin_locators = {
         ("console_prompt_mixin_attempts", "user_message_id"),
         ("console_prompt_mixin_attempts", "assistant_message_id"),
+        ("console_prompt_mixin_attempts", "result_revision_id"),
     }
     assert {
         (row["table"], row["column"])
@@ -63,23 +65,20 @@ def test_completed_pair_locator_inventory_is_complete_and_stable() -> None:
     assert sum(row["baseline_rows"] for row in distribution) == BASELINE_LOCATOR_ROWS
     assert sum(row["large_rows"] for row in distribution) == LARGE_LOCATOR_ROWS
     assert all(row["large_rows"] == row["baseline_rows"] * 100 for row in distribution)
-    assert len(distribution) == 26
+    assert len(distribution) == 27
     assert len(inventory["sha256"]) == 64
     assert len(inventory["locators"]) == inventory["count"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "TASK-36510: eight message-locator columns have no leading index, "
-        "so the promotion scans them"
-    ),
-)
 def test_completed_pair_history_gate_meets_large_history_thresholds(
     tmp_path: Path,
 ) -> None:
-    report = run_completed_pair_history_gate(tmp_path)
+    # Keep synchronous diagnostic output out of the lock-held measurements.
+    logger.disable("tldw_chatbook")
+    try:
+        report = run_completed_pair_history_gate(tmp_path)
+    finally:
+        logger.enable("tldw_chatbook")
 
     assert report["row_counts"] == {
         "baseline": BASELINE_LOCATOR_ROWS,
@@ -90,11 +89,11 @@ def test_completed_pair_history_gate_meets_large_history_thresholds(
     assert report["measurement_order"] == "ABBA"
     assert report["scan_count"] == 0
     assert report["sqlite"]["pragmas_match"] is True
-    assert report["inventory"]["count"] == 30
+    assert report["inventory"]["count"] == 31
     assert all(
         locator["large_rows"] == locator["baseline_rows"] * 100
         for locator in report["distribution"]
     )
-    assert report["fresh_commit"]["passed"] is True
-    assert report["uncertain_retry"]["passed"] is True
+    assert report["fresh_commit"]["passed"] is True, report["fresh_commit"]
+    assert report["uncertain_retry"]["passed"] is True, report["uncertain_retry"]
     assert report["passed"] is True

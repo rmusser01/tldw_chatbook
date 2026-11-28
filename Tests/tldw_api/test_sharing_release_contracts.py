@@ -437,3 +437,39 @@ async def test_source_filter_keeps_server_supported_free_text_state():
             7, offset=0, limit=200, q=" " * 512, state="future-server-state"
         )
     assert requests[0].url.params["state"] == "future-server-state"
+
+
+@pytest.mark.asyncio
+async def test_protected_public_share_import_keeps_client_authentication():
+    requests = []
+    passphrase = "workspace fixture"
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "resource_type": "workspace",
+                "resource_id": "ws-2",
+                "access_level": "view_chat",
+                "owner_user_id": 1,
+            },
+        )
+
+    async with http_client(handler) as client:
+        protected = await client.import_public_share(
+            "fixture-token", password=passphrase
+        )
+        public = await client.import_public_share("fixture-token")
+
+    assert [request.method for request in requests] == ["POST", "POST"]
+    assert {request.url.path for request in requests} == {
+        "/api/v1/sharing/public/fixture-token/import"
+    }
+    assert [request.headers["X-API-KEY"] for request in requests] == [
+        "test-credential",
+        "test-credential",
+    ]
+    assert json.loads(requests[0].content) == {"password": passphrase}
+    assert requests[1].content == b""
+    assert protected.resource_id == public.resource_id == "ws-2"

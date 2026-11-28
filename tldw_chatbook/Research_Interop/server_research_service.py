@@ -38,10 +38,12 @@ class ServerResearchService:
         *,
         client_provider: Any | None = None,
         policy_enforcer: Any | None = None,
+        workspace_runs: Any | None = None,
     ) -> None:
         self.client = client
         self.client_provider = client_provider
         self.policy_enforcer = policy_enforcer
+        self.workspace_runs = workspace_runs
 
     @classmethod
     def from_config(
@@ -145,6 +147,18 @@ class ServerResearchService:
         from ..tldw_api import ResearchRunCreateRequest
 
         self._enforce("research.runs.launch.server")
+        if chat_handoff and "research_workspace" in chat_handoff:
+            from ..Research_Workspace.deep_research_context import ResearchLaunchContext
+
+            context = ResearchLaunchContext.from_payload(chat_handoff["research_workspace"])
+            if (
+                self.workspace_runs is None
+                or context.query != query
+                or context.origin.workspace_id != self.workspace_runs.workspace_id
+                or context.origin.principal_id != self.workspace_runs.principal_id
+            ):
+                raise ValueError("A Workspace launch requires its bound Server Research service")
+            return self._dump(await self.workspace_runs.launch(context.server_payload()))
         request = ResearchRunCreateRequest(
             query=query,
             source_policy=source_policy,
@@ -176,6 +190,8 @@ class ServerResearchService:
 
     async def get_run(self, session_id: str) -> dict[str, Any]:
         self._enforce("research.runs.detail.server")
+        if self.workspace_runs is not None:
+            return self._dump(await self.workspace_runs.detail(session_id))
         return self._dump(await self._require_client().get_research_run(session_id))
 
     async def observe_run_events(
@@ -222,6 +238,8 @@ class ServerResearchService:
 
     async def get_bundle(self, session_id: str) -> dict[str, Any]:
         self._enforce("research.runs.detail.server")
+        if self.workspace_runs is not None:
+            return await self.workspace_runs.bundle(session_id)
         return await self._require_client().get_research_bundle(session_id)
 
     async def get_artifact(self, session_id: str, artifact_name: str) -> dict[str, Any]:

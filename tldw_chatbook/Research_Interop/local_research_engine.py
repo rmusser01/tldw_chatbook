@@ -1449,6 +1449,7 @@ class LocalResearchEngine:
             self.completion_handoff is not None
             and isinstance(chat_handoff, dict)
             and chat_handoff
+            and "research_workspace" not in chat_handoff
             and completed.get("status") == "completed"
         ):
             try:

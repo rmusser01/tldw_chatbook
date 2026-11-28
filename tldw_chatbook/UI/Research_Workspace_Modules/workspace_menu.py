@@ -8,17 +8,38 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.message import Message
-from textual.widgets import Button, Static
+from textual.widgets import Button, Select, Static
 
+from ...Research_Workspace.contracts import QualifiedWorkspaceRef
 from ..Navigation.main_navigation import NavigateToScreen
 
 
 class ResearchWorkspaceMenu(Horizontal):
-    """Foundation workspace menu containing only a real owner link."""
+    """Select within the visible authority's catalog or open its manager."""
+
+    class WorkspaceChosen(Message):
+        def __init__(self, ref: QualifiedWorkspaceRef) -> None:
+            super().__init__()
+            self.ref = ref
+
+    class ActionsRequested(Message):
+        """Open the selected workspace's action menu."""
+
+    class HelpRequested(Message):
+        """Open the contextual Research help menu."""
 
     def compose(self) -> ComposeResult:
         yield Static(
             "No research workspace selected.", id="research-workspace-selection"
+        )
+        yield Select(
+            [], id="research-workspace-picker", prompt="Workspace", compact=True
+        )
+        yield Button(
+            "Actions",
+            id="research-workspace-actions",
+            tooltip="Workspace actions",
+            compact=True,
         )
         yield Button(
             "Manage Workspaces...",
@@ -26,11 +47,46 @@ class ResearchWorkspaceMenu(Horizontal):
             tooltip="Open Settings workspace management.",
             compact=True,
         )
+        yield Button(
+            "Help",
+            id="research-workspace-help",
+            compact=True,
+            tooltip="Research Workspace Help",
+        )
+
+    def on_mount(self) -> None:
+        self.sync_choices((), None)
+
+    def sync_choices(self, workspaces, ref: QualifiedWorkspaceRef | None) -> None:
+        picker = self.query_one("#research-workspace-picker", Select)
+        choices = [(row.name, row.ref) for row in workspaces]
+        with picker.prevent(Select.Changed):
+            picker.set_options(choices)
+            picker.value = (
+                ref if any(row.ref == ref for row in workspaces) else Select.NULL
+            )
+        picker.display = len(choices) > 1
+        self.query_one(
+            "#research-workspace-selection", Static
+        ).display = not picker.display
+
+    @on(Select.Changed, "#research-workspace-picker")
+    def choose(self, event: Select.Changed) -> None:
+        if isinstance(event.value, QualifiedWorkspaceRef):
+            self.post_message(self.WorkspaceChosen(event.value))
 
     @on(Button.Pressed, "#research-manage-workspaces")
     def open_workspace_owner(self, event: Button.Pressed) -> None:
         event.stop()
         self.post_message(NavigateToScreen("settings", {"category": "workspaces"}))
+
+    @on(Button.Pressed, "#research-workspace-actions")
+    def open_actions(self) -> None:
+        self.post_message(self.ActionsRequested())
+
+    @on(Button.Pressed, "#research-workspace-help")
+    def open_help(self) -> None:
+        self.post_message(self.HelpRequested())
 
 
 ResearchPaneName = Literal["sources", "chat", "studio"]

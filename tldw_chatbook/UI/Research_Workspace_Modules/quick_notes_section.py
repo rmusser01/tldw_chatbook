@@ -105,6 +105,7 @@ class ResearchQuickNotesSection(Vertical):
         self._get_available = False
         self._save_available = False
         self._delete_available = False
+        self._capture_message_available = False
         self._operation_id = f"research-note-{uuid4().hex}"
 
     def compose(self) -> ComposeResult:
@@ -142,10 +143,7 @@ class ResearchQuickNotesSection(Vertical):
                 "Capture message",
                 id="research-quick-note-capture-message",
                 disabled=True,
-                tooltip=(
-                    "Message capture becomes available when grounded Chat exposes "
-                    "a canonical message owner."
-                ),
+                tooltip="Select a saved message in Grounded Chat to capture it.",
             )
         yield Static(
             "No captured provenance",
@@ -205,6 +203,8 @@ class ResearchQuickNotesSection(Vertical):
 
         if ref == self.editor_ref:
             return
+        if self.editor_ref != ref:
+            self._capture_message_available = False
         self.editor_ref = ref
         self._selected_note_id = ""
         self._page_offset = 0
@@ -252,20 +252,30 @@ class ResearchQuickNotesSection(Vertical):
         )
         self._apply_capability_states()
 
-    def sync_note(self, note: ResearchQuickNote) -> None:
+    def sync_note(self, note: ResearchQuickNote, *, preserve_draft: bool = False) -> None:
+        """Apply the canonical note, optionally keeping edits made during its save."""
         self.editor_ref = note.ref
         self._note_id = note.note_id
         self._selected_note_id = note.note_id
         self._version = note.version
-        self._message_ids = note.message_ids
-        self._source_ids = note.source_ids
-        self._set_fields(note.title, note.content, note.tags)
-        self._baseline = self._snapshot()
-        self._undo = None
-        self._sync_editor_state(f"Saved · version {note.version}")
+        if preserve_draft:
+            self._baseline = _EditorSnapshot(
+                note.title, note.content, note.tags, note.message_ids, note.source_ids
+            )
+        else:
+            self._message_ids = note.message_ids
+            self._source_ids = note.source_ids
+            self._set_fields(note.title, note.content, note.tags)
+            self._baseline = self._snapshot()
+            self._undo = None
+        self._sync_editor_state(
+            "Unsaved changes" if self.is_dirty else f"Saved · version {note.version}"
+        )
 
-    def new_draft(self) -> None:
+    def new_draft(self, draft: ResearchNoteSaveRequest | None = None) -> None:
         self._reset_editor()
+        if draft is not None:
+            self._set_fields(draft.title, draft.content, draft.tags)
         self._sync_editor_state("New note · Unsaved")
         self.query_one("#research-quick-note-title", Input).focus()
 
@@ -352,10 +362,29 @@ class ResearchQuickNotesSection(Vertical):
         self.query_one("#research-quick-note-delete", Button).disabled = (
             not self._delete_available or self._note_id is None
         )
+        self.query_one("#research-quick-note-capture-message", Button).disabled = (
+            not self._save_available or not self._capture_message_available
+        )
+
+    def sync_message_capture(
+        self, ref: QualifiedWorkspaceRef | None, available: bool
+    ) -> None:
+        self._capture_message_available = bool(
+            ref and ref == self.editor_ref and available
+        )
+        self._apply_capability_states()
 
     def set_source_provenance(self, source_ids: tuple[str, ...]) -> None:
         self._source_ids = tuple(dict.fromkeys(source_ids))[:100]
         self._sync_dirty_status()
+
+    @property
+    def can_save_note(self) -> bool:
+        return self._save_available
+
+    @property
+    def can_append_note(self) -> bool:
+        return self._save_available and self._note_id is not None
 
     def set_message_provenance(self, message_ids: tuple[str, ...]) -> None:
         self._message_ids = tuple(dict.fromkeys(message_ids))[:20]

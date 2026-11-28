@@ -91,7 +91,7 @@ class FakeResearchScopeService:
             "sources.json": {"count": 2, "run_id": run_id, "mode": mode},
         }
 
-    async def get_artifact(self, run_id, artifact_name, *, mode):
+    async def get_artifact(self, *, mode, run_id, artifact_name):
         self.calls.append(("get_artifact", mode, run_id, artifact_name))
         return SimpleNamespace(
             run_id=run_id,
@@ -361,6 +361,7 @@ def test_research_window_engine_start_skips_without_local_service():
     window._start_local_engine("local-run")
 
 
+@pytest.mark.bootstrap_profile
 def test_research_window_engine_start_builds_engine_from_app_service(monkeypatch):
     from tldw_chatbook.Research_Interop.local_research_service import (
         LocalResearchService,
@@ -438,6 +439,7 @@ def test_window_academic_toggle_default_comes_from_config(monkeypatch):
     assert window.academic_enabled is True
 
 
+@pytest.mark.bootstrap_profile
 def test_window_engine_start_passes_paper_fn_only_when_toggle_on(monkeypatch):
     from tldw_chatbook.Research_Interop.local_research_service import (
         LocalResearchService,
@@ -716,7 +718,7 @@ async def test_load_bundle_auto_loads_the_report(monkeypatch):
             ],
         }
 
-    async def get_artifact(run_id, artifact_name, *, mode):
+    async def get_artifact(*, mode, run_id, artifact_name):
         return {
             "artifact_name": artifact_name,
             "content_type": "text/markdown",
@@ -891,6 +893,7 @@ def test_parse_provider_tokens_validates_and_dedupes():
     assert _parse_provider_tokens("pubmed, <script>x") == []
 
 
+@pytest.mark.bootstrap_profile
 def test_window_engine_start_passes_configured_pipeline_params(monkeypatch):
     """task-17371: the window's own launch path shipped with NO search_params,
     so every window-launched run died in the pipeline's validation

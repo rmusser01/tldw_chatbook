@@ -436,7 +436,14 @@ class WorkspaceSourceUpdateRequest(_WorkspaceSourceModel):
         return _bounded_required_text(value, info.field_name, maximum)
 
 
-class WorkspaceSourceResponse(_WorkspaceSourceModel):
+class _WorkspaceSourceReviewResponse(_WorkspaceSourceModel):
+    review_state: Literal["unset", "needs_review", "reviewed"] | None = None
+    review_state_updated_at: str | None = Field(None, max_length=128)
+    reviewed_at: str | None = Field(None, max_length=128)
+    reviewed_by_user_id: str | None = Field(None, max_length=128)
+
+
+class WorkspaceSourceResponse(_WorkspaceSourceReviewResponse):
     """Minimal workspace source response."""
 
     id: str = Field(..., max_length=MAX_WORKSPACE_SOURCE_ID_CHARS)
@@ -532,10 +539,11 @@ class WorkspaceSourceJobStatus(_WorkspaceSourceModel):
     error_message: Optional[str] = Field(None, max_length=1000)
 
 
-class WorkspaceSourceStatusResponse(_WorkspaceSourceModel):
+class WorkspaceSourceStatusResponse(_WorkspaceSourceReviewResponse):
     id: str = Field(..., max_length=MAX_WORKSPACE_SOURCE_ID_CHARS)
     workspace_id: str = Field(..., max_length=MAX_WORKSPACE_SOURCE_ID_CHARS)
     media_id: Optional[StrictInt] = Field(None, ge=0)
+    catalog_item_version: StrictInt | None = Field(None, ge=1)
     title: str = Field(..., max_length=MAX_WORKSPACE_SOURCE_TITLE_CHARS)
     source_type: str = Field(..., max_length=128)
     url: Optional[str] = Field(None, max_length=4096)
@@ -710,6 +718,7 @@ class WorkspaceArtifactCreateRequest(BaseModel):
     title: str
     status: str = "pending"
     content: Optional[str] = None
+    producer_metadata: Optional[dict[str, Any]] = None
 
 
 class WorkspaceArtifactUpdateRequest(BaseModel):
@@ -721,6 +730,8 @@ class WorkspaceArtifactUpdateRequest(BaseModel):
     total_tokens: Optional[int] = None
     total_cost_usd: Optional[float] = None
     completed_at: Optional[str] = None
+    producer_metadata: Optional[dict[str, Any]] = None
+    review_state: Literal["draft", "accepted"] | None = None
     version: int
 
 

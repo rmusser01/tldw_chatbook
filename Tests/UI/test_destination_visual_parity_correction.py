@@ -28,6 +28,7 @@ from Tests.UI.test_destination_shells import (
     _active_destination_screen,
     _wait_for_selector,
     _wait_for_visible_text,
+    _wait_for_wc_snapshot,
 )
 from Tests.UI.test_home_screen import HomeHarness, _active_home_screen
 from Tests.UI.test_library_shell import (
@@ -685,7 +686,13 @@ async def test_library_empty_state_reports_empty_with_next_action():
     host = DestinationHarness(app, "library")
     async with host.run_test(size=(140, 42)) as pilot:
         library = _active_destination_screen(host)
-        await _wait_for_selector(library, pilot, "#library-canvas-landing")
+        # The landing canvas mounts before the source snapshot updates its counts.
+        await _wait_for_visible_text(
+            library,
+            pilot,
+            "Notes (0) · Media (0) · Conversations (0)",
+            timeout=15.0,
+        )
 
         visible_text = " ".join(
             [
@@ -3073,7 +3080,9 @@ async def test_tab_order_reaches_visible_primary_action(route, targets):
         screen = host.screen_stack[-1]
         workbench = TOP_LEVEL_WORKBENCH_SELECTORS[route]
         await _wait_for_selector(screen, pilot, workbench)
-        if route == "schedules":
+        if route == "watchlists_collections":
+            await _wait_for_wc_snapshot(screen, pilot, timeout=6.0)
+        elif route == "schedules":
             for _ in range(20):
                 follow_button = screen.query_one("#schedules-follow-in-console", Button)
                 if not follow_button.disabled:

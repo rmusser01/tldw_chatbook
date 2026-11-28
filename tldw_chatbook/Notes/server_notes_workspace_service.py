@@ -254,6 +254,11 @@ class ServerNotesWorkspaceService:
     def normalize_workspace_artifact(
         self, artifact: Mapping[str, Any]
     ) -> dict[str, Any]:
+        producer = artifact.get("producer_metadata")
+        version = artifact.get("version")
+        if isinstance(producer, Mapping) and ({"research_generation", "research_copy"} & producer.keys()):
+            if type(version) is not int or version < 1:
+                raise ValueError("The Server artifact has no confirmed revision")
         return {
             "id": artifact.get("id"),
             "workspace_id": artifact.get("workspace_id"),
@@ -261,7 +266,9 @@ class ServerNotesWorkspaceService:
             "title": artifact.get("title") or "",
             "status": artifact.get("status") or "pending",
             "content": artifact.get("content"),
-            "version": int(artifact.get("version") or 1),
+            "version": int(version or 1),
+            **({"producer_metadata": dict(producer)} if isinstance(producer, Mapping) else {}),
+            **{key: artifact[key] for key in ("review_state", "artifact_version_id") if key in artifact},
         }
 
     def build_server_note_create_payload(
@@ -435,6 +442,7 @@ class ServerNotesWorkspaceService:
         title: str,
         status: str = "pending",
         content: Optional[str] = None,
+        producer_metadata: Optional[dict[str, Any]] = None,
     ) -> WorkspaceArtifactCreateRequest:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import WorkspaceArtifactCreateRequest
@@ -445,6 +453,7 @@ class ServerNotesWorkspaceService:
             title=title,
             status=status,
             content=content,
+            producer_metadata=producer_metadata,
         )
 
     def build_workspace_artifact_update_payload(
@@ -457,6 +466,8 @@ class ServerNotesWorkspaceService:
         total_tokens: Any = _UNSET,
         total_cost_usd: Any = _UNSET,
         completed_at: Any = _UNSET,
+        producer_metadata: Any = _UNSET,
+        review_state: Any = _UNSET,
     ) -> WorkspaceArtifactUpdateRequest:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import WorkspaceArtifactUpdateRequest
@@ -470,6 +481,8 @@ class ServerNotesWorkspaceService:
                 total_tokens=total_tokens,
                 total_cost_usd=total_cost_usd,
                 completed_at=completed_at,
+                producer_metadata=producer_metadata,
+                review_state=review_state,
             ),
         )
 
@@ -996,6 +1009,8 @@ class ServerNotesWorkspaceService:
         version: Optional[int] = None,
         status: Any = _UNSET,
         content: Any = _UNSET,
+        producer_metadata: Any = _UNSET,
+        review_state: Any = _UNSET,
     ) -> dict[str, Any]:
         self._enforce_policy(self._workspace_action_id("update"))
         client = self._require_client()
@@ -1006,6 +1021,7 @@ class ServerNotesWorkspaceService:
                 title=self._require_value(title, "title"),
                 status="pending" if status in {_UNSET, None} else status,
                 content=None if content is _UNSET else content,
+                producer_metadata=None if producer_metadata is _UNSET else producer_metadata,
             )
             response = await client.create_workspace_artifact(workspace_id, request)
         else:
@@ -1014,6 +1030,8 @@ class ServerNotesWorkspaceService:
                 status=status,
                 content=content,
                 version=version,
+                producer_metadata=producer_metadata,
+                review_state=review_state,
             )
             response = await client.update_workspace_artifact(
                 workspace_id, artifact_id, request

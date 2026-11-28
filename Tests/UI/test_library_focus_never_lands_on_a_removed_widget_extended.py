@@ -22,6 +22,9 @@ from Tests.UI.library_quit_guard_support import (
     _settings_without_splash,
     _until,
 )
+from Tests.UI.test_library_focus_never_lands_on_a_removed_widget import (
+    _help_opens_with_detached_notes_focus,
+)
 from Tests.UI.test_library_shell import _wait_for_selector
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
 
@@ -85,14 +88,7 @@ async def test_a_focus_that_went_dead_by_any_route_still_delivers_the_next_key_a
         async with app.run_test(size=WIDE) as pilot:
             screen = await _library(app, pilot)
             await _open_notes(screen, pilot)
-            filter_widget = screen.query_one("#library-notes-filter")
-
-            removal = filter_widget.remove()
-            Screen.set_focus(screen, filter_widget)
-            await removal
-            assert screen.focused is filter_widget and not filter_widget.is_attached
-
-            await _help_opens(app, pilot)
+            await _help_opens_with_detached_notes_focus(app, pilot, screen, monkeypatch)
             await pilot.press("tab")
             await pilot.pause()
             assert _live(screen.focused)

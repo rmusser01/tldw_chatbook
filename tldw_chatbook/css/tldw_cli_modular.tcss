@@ -4737,6 +4737,10 @@ App.-wide-viewport MCPRecoveryReviewDialog #confirmation-dialog {
   width: $ds-percent-85;
   max-width: $ds-size-120;
 }
+App.-wide-viewport .research-wide-dialog {
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
+}
 
 
 .deny-reason{min-height:$ds-size-1;margin:$ds-space-0;padding:$ds-space-0;border:none;}
@@ -19101,7 +19105,9 @@ ResearchScreen #research-window.window {
     text-style: bold;
 }
 
-#research-mode-strip Button.research-mode-chip {
+#research-mode-strip Button.research-mode-chip,
+#research-authority-summary .research-data-source-button,
+#research-pane-mode-strip .research-pane-mode-button {
     width: auto;
     min-width: $ds-size-0;
     height: $ds-size-1;
@@ -19164,17 +19170,6 @@ ResearchScreen #research-window.window {
     margin: $ds-space-0;
 }
 
-#research-authority-summary .research-data-source-button {
-    width: auto;
-    min-width: $ds-size-0;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    padding: $ds-space-0 $ds-space-1;
-    border: none;
-    background: $surface-darken-1;
-    color: $text-muted;
-}
-
 #research-authority-summary .research-data-source-button:focus {
     border: none;
     outline: none;
@@ -19194,7 +19189,7 @@ ResearchScreen #research-window.window {
 
 #research-authority-recovery {
     width: $ds-width-full;
-    height: $ds-size-1;
+    height: auto;
     min-height: $ds-size-1;
     padding: $ds-space-0 $ds-space-1;
     background: $warning 15%;
@@ -19209,13 +19204,24 @@ ResearchScreen #research-window.window {
     background: $panel;
 }
 
-#research-workspace-selection {
+#research-workspace-selection,
+#research-workspace-picker {
     width: $ds-width-fill;
     height: $ds-size-1;
     color: $text-muted;
 }
 
-#research-manage-workspaces {
+#research-workspace-banner {
+    height: auto;
+    max-height: $ds-size-2;
+    padding: $ds-space-0 $ds-space-1;
+    background: $ds-surface-panel;
+    color: $ds-text-muted;
+}
+
+#research-manage-workspaces,
+#research-workspace-actions,
+#research-workspace-help {
     width: auto;
     min-width: $ds-size-0;
     height: $ds-size-1;
@@ -19226,7 +19232,9 @@ ResearchScreen #research-window.window {
     color: $text;
 }
 
-#research-manage-workspaces:focus {
+#research-manage-workspaces:focus,
+#research-workspace-actions:focus,
+#research-workspace-help:focus {
     border: none;
     outline: none;
     background: $primary;
@@ -19241,17 +19249,6 @@ ResearchScreen #research-window.window {
     padding: $ds-space-0 $ds-space-1;
     background: $surface-darken-1;
     align-horizontal: center;
-}
-
-#research-pane-mode-strip .research-pane-mode-button {
-    width: auto;
-    min-width: $ds-size-0;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    padding: $ds-space-0 $ds-space-1;
-    border: none;
-    background: $surface-darken-1;
-    color: $text-muted;
 }
 
 #research-pane-mode-strip .research-pane-mode-button.is-active {
@@ -19321,10 +19318,190 @@ ResearchScreen #research-window.window {
     min-width: $ds-research-chat-pane-floor;
 }
 
+#research-chat-scroll {
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+}
+
+#research-chat-controls,
+.research-chat-row {
+    width: $ds-width-full;
+    height: $ds-height-auto;
+}
+
+Select.research-chat-field,
+Input.research-chat-field {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    height: $ds-control-height;
+}
+
+Button.research-chat-action {
+    width: $ds-width-auto;
+    min-width: $ds-size-0;
+}
+
+#research-chat-status,
+#research-chat-route,
+#research-chat-sources {
+    height: $ds-height-auto;
+    color: $ds-text-muted;
+}
+
+#research-chat-transcript {
+    height: $ds-size-12;
+    background: $ds-surface-sunken;
+}
+
+.research-chat-message {
+    height: $ds-height-auto;
+    padding: $ds-space-0 $ds-space-inline;
+}
+
+.research-chat-message-heading {
+    text-style: bold;
+    height: $ds-height-auto;
+}
+
+.research-chat-message-content,
+#research-chat-stream {
+    height: $ds-height-auto;
+}
+
+#research-chat-composer {
+    height: $ds-textarea-min-height;
+}
+
+ResearchCitationDetail,
+ResearchChatMessageEditor {
+    align: center middle;
+    background: $background 70%;
+}
+
+#research-chat-citations-dialog,
+#research-chat-edit-dialog {
+    height: $ds-height-auto;
+    max-height: $ds-percent-90;
+    padding: $ds-space-inset;
+    border: round $accent;
+    background: $ds-surface-panel;
+}
+
+#research-chat-edit-body {
+    height: $ds-textarea-min-height;
+}
+
+#research-chat-edit-status {
+    height: $ds-height-auto;
+    color: $ds-text-muted;
+}
+
 #research-studio-pane {
     width: $ds-fr-2;
     min-width: $ds-size-42;
     max-width: $ds-size-50;
+}
+
+.research-studio-card, .research-studio-history {
+    height: auto;
+    margin-top: $ds-space-1;
+}
+
+Static.research-studio-caption, .research-studio-history .research-pane-title,
+#research-studio-history-detail, #research-studio-history SelectCurrent > #label,
+#research-studio-history SelectCurrent > .arrow,
+#research-studio-route, #research-studio-status {
+    height: auto;
+    color: $ds-text-muted;
+}
+
+ResearchStudioOptions, ResearchStudioActions, ResearchStudioEdit, ResearchMoreOutputs {
+    align: center middle;
+    background: $background $ds-opacity-dim;
+}
+
+#research-studio-dialog, #research-studio-actions-dialog, #research-studio-edit-dialog,
+#research-more-outputs-dialog {
+    height: $ds-percent-90;
+    min-height: $ds-size-12;
+    padding: $ds-space-1;
+    border: round $accent;
+    background: $panel;
+}
+
+.research-studio-action-scroll, #research-studio-edit-body, #research-more-output-list {
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+}
+
+#research-studio-native-table {
+    height: auto;
+    max-height: $ds-size-12;
+}
+
+ResearchWorkspaceActions, ResearchCopyTargetDialog, ResearchCopyPreview,
+ResearchCopyProgress, ResearchCopyReceiptView, ResearchSharingDialog,
+ResearchWorkspaceName, ResearchWorkspacePicker, ResearchWorkspaceTemplates,
+ResearchWorkspaceSplit, ResearchWorkspaceSearchModal, ResearchHelpMenu, ResearchHelpDetail {
+    align: center middle;
+    background: $background $ds-opacity-dim;
+}
+
+
+.research-transfer-dialog,
+.research-wide-dialog {
+    width: $ds-percent-90;
+    max-width: $ds-size-76;
+}
+
+.research-transfer-dialog {
+    height: auto;
+    max-height: $ds-percent-90;
+    padding: $ds-space-1;
+    border: round $accent;
+    background: $panel;
+}
+
+.research-transfer-scroll-dialog {
+    height: $ds-percent-90;
+}
+
+.research-transfer-scroll {
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+}
+
+ResearchWorkspaceSearch,
+#research-global-search-panel,
+#research-global-search-actions {
+    height: auto;
+}
+
+#research-global-search-field,
+#research-global-search-results {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    border: none;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+.research-share-page {
+    height: auto;
+}
+
+#research-sharing-status {
+    max-height: $ds-size-3;
+}
+
+
+.research-transfer-dialog .research-pane-title,
+.research-transfer-dialog SelectCurrent > .arrow,
+#research-studio-dialog .research-pane-title,
+#research-studio-dialog SelectCurrent > .arrow,
+#research-studio-actions-dialog .research-pane-title,
+#research-more-outputs-dialog .research-pane-title {
+    height: $ds-height-auto;
 }
 
 ResearchPaneHandle {
@@ -19351,10 +19528,11 @@ ResearchPaneHandle .research-pane-handle-button {
 
 ResearchPaneHandle .research-pane-handle-button:focus {
     border: none;
-    outline: heavy $accent;
+
+    outline: none;
     background: $primary;
     color: $text;
-    text-style: bold;
+    text-style: bold underline;
 }
 
 #research-workspace-grid.layout-medium #research-sources-pane,
@@ -19377,7 +19555,7 @@ ResearchPaneHandle .research-pane-handle-button:focus {
 
 #research-workspace-status {
     width: $ds-width-full;
-    height: $ds-size-1;
+    height: auto;
     min-height: $ds-size-1;
     padding: $ds-space-0 $ds-space-1;
     background: $panel;
@@ -19442,11 +19620,14 @@ ResearchSourcesRegion Button:focus {
     text-style: bold underline;
 }
 
-#research-workspace-shell ResearchSourcesRegion Button:disabled {
+#research-workspace-shell ResearchSourcesRegion Button:disabled,
+#research-workspace-actions-dialog Button:disabled,
+#research-help-dialog Button:disabled,
+#research-more-outputs-dialog .research-more-action:disabled {
     opacity: 100%;
     text-opacity: 100%;
-    background: $surface-darken-1;
-    color: $text-muted;
+    background: $ds-surface-sunken;
+    color: $ds-text-disabled-readable;
     text-style: none;
 }
 

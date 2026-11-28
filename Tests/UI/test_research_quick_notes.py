@@ -23,6 +23,8 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDBError
 from tldw_chatbook.Workspaces.registry_service import WorkspaceRegistryServiceError
 
 
+pytestmark = pytest.mark.bootstrap_profile
+
 LOCAL_REF = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "notes-local")
 SERVER_REF = QualifiedWorkspaceRef(
     WorkspaceDataSource.SERVER,
@@ -96,7 +98,7 @@ async def test_studio_mounts_compose_once_quick_notes_parity_controls() -> None:
         assert section.query_one(
             "#research-quick-note-capture-message", Button
         ).disabled
-        assert "grounded Chat" in str(
+        assert "Grounded Chat" in str(
             section.query_one("#research-quick-note-capture-message", Button).tooltip
         )
 

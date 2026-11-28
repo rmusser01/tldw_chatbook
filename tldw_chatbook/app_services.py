@@ -235,6 +235,7 @@ if TYPE_CHECKING:
     )
     from .Web_Scraping_Interop.web_scraping_scope_service import WebScrapingScopeService
     from .Workspaces.change_review_consent import ChangeReviewConsentService
+    from .UI.Navigation.pending_handoff_store import PendingHandoffStore
     from .Workspaces.registry_service import LocalWorkspaceRegistryService
     from .Writing_Interop.local_writing_service import LocalWritingService
     from .Writing_Interop.server_writing_service import ServerWritingService
@@ -941,5 +942,49 @@ def read_workspace_registry(
 ) -> LocalWorkspaceRegistryService | None:
     try:
         return app.workspace_registry_service if app is not None else None
+    except AttributeError:
+        return None
+
+
+class ResearchApplicationServices(Protocol):
+    @property
+    def research_scope_service(self) -> ResearchScopeService | None: ...
+
+    @property
+    def sharing_scope_service(self) -> SharingScopeService | None: ...
+
+    @property
+    def server_context_provider(self) -> RuntimeServerContextProvider | None: ...
+
+    @property
+    def pending_handoffs(self) -> PendingHandoffStore | None: ...
+
+
+def read_research_scope(app: ResearchApplicationServices) -> ResearchScopeService | None:
+    try:
+        return app.research_scope_service
+    except AttributeError:
+        return None
+
+
+def read_sharing_scope(app: ResearchApplicationServices) -> SharingScopeService | None:
+    try:
+        return app.sharing_scope_service
+    except AttributeError:
+        return None
+
+
+def read_server_context_provider(
+    app: ResearchApplicationServices,
+) -> RuntimeServerContextProvider | None:
+    try:
+        return app.server_context_provider
+    except AttributeError:
+        return None
+
+
+def read_pending_handoffs(app: ResearchApplicationServices) -> PendingHandoffStore | None:
+    try:
+        return app.pending_handoffs
     except AttributeError:
         return None

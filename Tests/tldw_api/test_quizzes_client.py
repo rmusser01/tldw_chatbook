@@ -346,3 +346,26 @@ async def test_quiz_routes_wire_and_return_typed_models(monkeypatch):
     assert deleted_quiz["status"] == "deleted"
     assert deleted_question["status"] == "deleted"
     assert listed_quizzes[0].name == "Renal Review"
+
+
+@pytest.mark.asyncio
+async def test_workspace_quiz_list_uses_exact_scope_and_pagination(monkeypatch):
+    client = TLDWAPIClient("https://server.example")
+    request = AsyncMock(
+        return_value={
+            "items": [{"id": 7, "name": "Study", "workspace_id": "ws-2"}],
+            "count": 1,
+        }
+    )
+    monkeypatch.setattr(client, "_request", request)
+
+    quizzes = await client.list_quizzes(
+        workspace_id="ws-2", q="Study", limit=8, offset=3
+    )
+
+    request.assert_awaited_once_with(
+        "GET",
+        "/api/v1/quizzes",
+        params={"workspace_id": "ws-2", "q": "Study", "limit": 8, "offset": 3},
+    )
+    assert [(quiz.id, quiz.workspace_id) for quiz in quizzes] == [(7, "ws-2")]

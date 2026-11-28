@@ -62,7 +62,7 @@ class ResearchController:
     async def get_artifact(self, source: str, run_id: str, artifact_name: str) -> Any:
         service = self._require_scope_service()
         return await self._maybe_await(
-            service.get_artifact(run_id, artifact_name, mode=source)
+            service.get_artifact(mode=source, run_id=run_id, artifact_name=artifact_name)
         )
 
     async def patch_and_approve_checkpoint(

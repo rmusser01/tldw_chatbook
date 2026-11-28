@@ -1,7 +1,7 @@
 ---
 id: TASK-37330
 title: Restore Research Runs artifact loading through the real scope contract
-status: To Do
+status: Done
 created_date: 2026-10-29 00:56
 labels:
 - research
@@ -11,6 +11,9 @@ priority: medium
 references:
 - tldw_chatbook/UI/Research_Modules/research_controller.py
 - tldw_chatbook/Research_Interop/research_scope_service.py
+assignee:
+- '@codex'
+updated_date: 2026-11-24 16:36
 ---
 
 ## Description
@@ -27,16 +30,28 @@ Allow Research Runs to display its persisted artifacts through the real scope se
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Loading a real Local run's bundle through the mounted Runs action displays its actual default report artifact without a calling-convention error or source change.
-- [ ] #2 Choosing a specific persisted artifact displays the correct selected run/artifact content through the real scope boundary.
-- [ ] #3 Targeted contract and mounted tests expose incompatible controller-service calls; permissive doubles cannot mask a mismatch with the real scope API.
-- [ ] #4 Missing/unavailable artifact behavior and service executor ownership retain their established outcomes; no server fallback or storage/durability change is introduced.
+- [x] #1 Loading a real Local run's bundle through the mounted Runs action displays its actual default report artifact without a calling-convention error or source change.
+- [x] #2 Choosing a specific persisted artifact displays the correct selected run/artifact content through the real scope boundary.
+- [x] #3 Targeted contract and mounted tests expose incompatible controller-service calls; permissive doubles cannot mask a mismatch with the real scope API.
+- [x] #4 Missing/unavailable artifact behavior and service executor ownership retain their established outcomes; no server fallback or storage/durability change is introduced.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md
+Reason: Restore the controller call to the existing Runs scope contract. The scope and executor continue to own artifact reads.
+
+1. Drive the mounted Load Bundle and Load Artifact buttons against persisted Local runs, covering the report by default, an explicitly chosen asset, and an absent asset.
+2. Correct the controller call to use the scope method’s keyword-only arguments. Align both scope doubles with that signature.
+3. Remove the artificial payload setup in the mounted refresh regressions and verify the Runs scope, controls, and publication cases.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Corrected the Runs controller to pass mode, run_id, and artifact_name as keywords and made both scope doubles enforce the same signature. The mounted real SQLite regression failed on the old call, then opened the default report and selected asset through the buttons and confirmed missing and unavailable outcomes and the existing executor. The mounted refresh tests now load through the actual window. All 8 mounted and 68 Runs UI and scope cases passed after marking config-dependent engine launch tests for the isolated bootstrap profile. ADR-322 continues to govern the boundary.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

@@ -125,6 +125,14 @@ class ServerQuizService:
             q=q, limit=limit, offset=offset
         )
 
+    async def list_workspace_quizzes(
+        self, workspace_id: str, *, q: str | None = None, limit: int = 100, offset: int = 0
+    ) -> Any:
+        self._enforce(self._quiz_action_id("list"))
+        return await self._require_client().list_quizzes(
+            q=q, limit=limit, offset=offset, workspace_id=workspace_id
+        )
+
     async def get_quiz(self, quiz_id: str | int) -> Any:
         self._enforce(self._quiz_action_id("detail"))
         return await self._require_client().get_quiz(self._coerce_quiz_id(quiz_id))

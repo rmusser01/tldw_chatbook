@@ -108,7 +108,7 @@ ADR-126 (`126-complete-local-backup-and-recovery.md`, rev 4 with amendments), AD
 
 ## Archive chronology schema integration (ADR166)
 
-Core recovery retains the frozen predecessor catalogs and appends exact schema85 successors after the preserved schema81/82/83/84 lineages and installed shared Subscriptions layouts. Canvas payload validation remains limited to those exact catalogs. Restricted backup migration admits only the fixed chat84→85 chronology step and its declared column/index/trigger effects. Workspace backup validation retains frozen schema8/9 catalogs and admits the fixed9→10 chronology step before exact successor qualification. The existing schema8 migration refusal remains unchanged. Existing source, quiescence, payload and native-handle guards remain binding.
+Core recovery retains the frozen predecessor catalogs and appends exact schema85 successors after the preserved schema81/82/83/84 lineages and installed shared Subscriptions layouts. Canvas payload validation remains limited to those exact catalogs. Restricted backup migration admits only the fixed chat84→85 chronology step and its declared column/index/trigger effects. Workspace backup validation retains the frozen schema 8–10 catalogs and recognizes the exact catalog for Studio membership metadata in schema 11 and Research Copy receipts in schema 12. Restricted restore can migrate staged copies through the installed 9→10, 10→11, and 11→12 steps. Capture accepts schema 8. Restore migration starts at schema 9. Existing source, quiescence, payload and native-handle guards remain binding.
 
 
 Portable detached relocation (ADR-256) records outer publication intent only after

@@ -868,3 +868,16 @@ async def test_study_pack_routes_wire_and_return_typed_models(monkeypatch):
     assert isinstance(regenerated, StudyPackJobAcceptedResponse)
     assert status.study_pack is not None
     assert status.study_pack.id == 9
+
+
+@pytest.mark.asyncio
+async def test_workspace_deck_detail_uses_exact_native_id(monkeypatch):
+    client = TLDWAPIClient("https://server.example")
+    request = AsyncMock(return_value=_deck_payload(id=92, workspace_id="ws-2"))
+    monkeypatch.setattr(client, "_request", request)
+
+    deck = await client.get_flashcard_deck(92)
+
+    request.assert_awaited_once_with("GET", "/api/v1/flashcards/decks/92")
+    assert isinstance(deck, FlashcardDeckResponse)
+    assert (deck.id, deck.workspace_id) == (92, "ws-2")

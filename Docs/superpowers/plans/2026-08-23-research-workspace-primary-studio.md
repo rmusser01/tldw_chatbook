@@ -53,9 +53,9 @@ pytest.
 ADR required: no new ADR
 
 ADR path:
-`backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md`
+`backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md`
 
-Reason: ADR-078 already assigns each canonical owner and forbids a duplicate
+Reason: ADR-322 assigns each canonical owner and forbids a duplicate
 output store. Workspace membership provenance is relationship metadata, not a
 new content owner.
 
@@ -66,7 +66,7 @@ new content owner.
 | Summary, Report, Compare | Local | `LocalChatbookService`, `chatbook_id` | `artifact_revision` | bounded `WorkspaceMembership.metadata["research_generation"]`; citation ownership stays in Chatbook | `item_type="chatbook"`, `role="output"` | Artifacts handoff targeting `local:chatbook:<id>` | update Chatbook for replace; create Chatbook for new version; delete through Chatbook then unlink membership |
 | Flashcards | Local | `LocalStudyService`, deck `id` plus card IDs | deck/card `version` | bounded output membership metadata; card citations use card `metadata` where supported | `item_type="study_deck"`, `role="output"` | Study handoff to deck section and exact deck ID | update/rebuild only through Study owner; new deck for new version; delete through Study then unlink |
 | Quiz | Local | `LocalQuizService`, quiz `id` plus question IDs | quiz/question `version` | bounded output membership metadata; question citations use `source_citations` | `item_type="study_quiz"`, `role="output"` | Study handoff to Quiz section and exact quiz ID | update only through Quiz owner; new quiz for new version; delete through Quiz then unlink |
-| Summary, Report, Compare | Server | `NotesScopeService.save_workspace_artifact`, `artifact_id`; wire `artifact_type` is respectively `summary`, `report`, or `compare_sources` | workspace artifact `version` | server artifact content envelope plus payload-free local receipt fields | server workspace artifact row is the association | server artifact detail from Research/Artifacts | update with exact version; create a new artifact ID for new version; server delete |
+| Summary, Report, Compare | Server | `NotesScopeService.save_workspace_artifact`, `artifact_id`; wire `artifact_type` is respectively `summary`, `report`, or `compare_sources` | workspace artifact `version` | server artifact content envelope plus payload-free local receipt fields | server workspace artifact row is the association | server artifact detail from Research/Artifacts | update with exact version; create a new artifact ID for new version; deletion requires a versioned server route |
 | Flashcards | Server | `StudyScopeService`, deck/card IDs with `scope_type="workspace"` | returned deck/card versions | server owner fields plus bounded local receipt | server deck `workspace_id` | Study server/workspace handoff | only methods/capabilities exposed by Study owner |
 | Quiz | Server | `QuizScopeService`, quiz/question IDs with `scope_type="workspace"` | returned quiz/question versions | server owner fields plus bounded local receipt | server quiz `workspace_id` | Study Quiz server/workspace handoff | only methods/capabilities exposed by Quiz owner |
 
@@ -149,20 +149,20 @@ generated content or source excerpts.
 
 **Files:**
 
-- Create: `tldw_chatbook/DB/migrations/workspaces_v3_to_v4_output_metadata.sql`
+- Create: `tldw_chatbook/DB/migrations/workspaces_v10_to_v11_output_metadata.sql`
 - Modify: `tldw_chatbook/DB/Workspace_DB.py`
 - Modify: `tldw_chatbook/Workspaces/models.py`
 - Modify: `tldw_chatbook/Workspaces/registry_service.py`
-- Test: `Tests/DB/test_workspace_db_v4_migration.py`
+- Test: `Tests/DB/test_workspace_db_v11_migration.py`
 - Test: `Tests/Workspaces/test_workspace_registry_output_metadata.py`
 
-1. Add RED migration tests from WorkspaceDB v3 and fresh schema, plus registry
+1. Add RED migration tests from WorkspaceDB v10 and fresh schema, plus registry
    tests for idempotent link/update, secret/body rejection, 32 KiB JSON cap,
    output-role-only metadata, and unlink preserving the canonical owner.
 2. Add nullable `metadata_json TEXT` and `updated_at TEXT` to
-   `workspace_memberships` in WorkspaceDB v4. Do not add content, source text,
+   `workspace_memberships` in WorkspaceDB v11. Do not add content, source text,
    or a second output row. Keep the inline runner and
-   `workspaces_v3_to_v4_output_metadata.sql` aligned.
+   `workspaces_v10_to_v11_output_metadata.sql` aligned.
 3. Extend `WorkspaceMembership` with a scrubbed bounded `metadata` mapping and
    `updated_at`. Preserve compatibility for existing source memberships with
    empty metadata.
@@ -176,7 +176,7 @@ generated content or source excerpts.
 6. Run:
 
    ```bash
-   .venv/bin/python -m pytest -q Tests/DB/test_workspace_db_v4_migration.py Tests/Workspaces/test_workspace_registry_output_metadata.py
+   .venv/bin/python -m pytest -q Tests/DB/test_workspace_db_v11_migration.py Tests/Workspaces/test_workspace_registry_output_metadata.py
    ```
 
 7. Commit:
@@ -224,8 +224,9 @@ generated content or source excerpts.
    failure. If cleanup fails, preserve and surface the owner ID for recovery;
    never hide an orphan behind a success receipt.
 6. Add typed handoffs `RESEARCH_CHATBOOK_TARGET`,
-   `RESEARCH_STUDY_DECK_TARGET`, and `RESEARCH_QUIZ_TARGET`; destination screens
-   claim/acknowledge the exact target instead of relying on list ordering.
+   `RESEARCH_STUDY_DECK_TARGET`, and `RESEARCH_QUIZ_TARGET`. Reuse the existing
+   Artifacts channel for Local Chatbooks. Task 5 connects exact claim and
+   acknowledgement to the destination controls.
 7. Replace updates the exact owner with optimistic version where supported;
    new version creates a new owner and sets `supersedes_owner_ref` in bounded
    membership metadata. Deletion calls the owner first, then unlinks.
@@ -259,9 +260,12 @@ generated content or source excerpts.
    `NotesScopeService.save_workspace_artifact(workspace_id=..., artifact_id=...,
    artifact_type=..., title=..., status="complete", content=...)`. Generate
    artifact IDs client-side as UUIDs so retries reuse the same owner ID.
-3. Persist Flashcards through `StudyScopeService.create_deck(...,
-   workspace_id=...)` and owner card methods; persist Quiz through
-   `QuizScopeService.create_quiz(..., workspace_id=...)` and question methods.
+3. Verify the canonical Study and Quiz creation contracts before advertising
+   either card. The current server creates the parent and children separately
+   and assigns parent IDs. A lost create response has no supported generation
+   operation lookup, and deck creation has no provenance field. Keep Server
+   Flashcards and Quiz unavailable in Studio until there is a scoped,
+   retry-safe creation contract. Local Study generation remains available.
 4. Treat the server response as the only proof of persistence. A downloaded
    file, local preview, or local receipt never flips `saved=True`.
 5. Use exact owner versions for replace/delete. If the server contract lacks a

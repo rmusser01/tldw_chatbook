@@ -19,7 +19,7 @@ The shell destination id is `research`, but its **primary route is `research_wor
 | Quick notes | `Research_Workspace/quick_notes.py` | save requests with app-minted operation ids, receipt validation at the authority boundary, provenance-as-keywords encoding, conflict errors |
 | Presentation | `Research_Workspace/overlay_store.py`, `paste_staging.py`, `layout_state.py`, `source_urls.py` | per-user overlay JSON (folders/annotations/pane prefs); private paste staging (2 MiB/artifact, 100 artifacts); pane layout; http/https-only URL admission |
 | Runs engine | `Research_Interop/` | `LocalResearchService` (SQLite sessions/runs/events/artifacts/checkpoints; lease + fencing per ADR-070), `LocalResearchEngine` (phases planning→collecting→synthesizing→packaging; reuses the deep-search pipeline), `ResearchScopeService` (LOCAL\|SERVER routing on a single-worker executor to preserve read-check-write ordering), budget ledger, chat handoff |
-| Persistence | `DB/Workspace_DB.py` (schema v8; `research_source_operations` + quick-note receipts), `DB/ChaChaNotes_DB.py` (`research_quick_note_owner_proofs`, local-only) | see below |
+| Persistence | `DB/Workspace_DB.py` (schema v12; source, Quick Note, and Copy receipts plus output membership metadata), `DB/ChaChaNotes_DB.py` (`research_quick_note_owner_proofs`, local-only) | see below |
 | Wiring | `app_service_wiring.py`, `app.py`, `app_ingest_queue.py` | research service wiring; screen late-binding of both ports; held ingest dispatch/retry/reconcile helpers |
 
 ## Source admission (dataflow)
@@ -35,13 +35,199 @@ The shell destination id is `research`, but its **primary route is `research_wor
 
 Startup reconciliation fans out three workers: held-job linking/dispatch, association/readiness resume, and a paste-staging sweep. Quick-note reconciliation claims receipts with lease tokens and reconciles against ChaChaNotes rows plus owner proofs (proof mismatches block permanently). Failures are isolated and logged by exception class only.
 
+## Grounded Chat
+
+`ResearchChatRegion` drives workspace-scoped conversations with the `research-chat`
+topic. `LocalResearchChat` uses `ChatConversationService` and
+`ChatPersistenceService` for messages, membership, usage, and citation traces.
+The Local retrieval pipelines receive an allowlist of captured selected Media
+IDs. The provider gateway receives only accepted evidence, and remote excerpt
+egress requires a matching fingerprint from `ResearchEgressConsentService`.
+
+`ServerResearchChat` uses the workspace startup route, selected-Media RAG, and
+server chat completion with an explicit workspace scope. It appends user and
+assistant messages and citation context through the canonical APIs. The
+device overlay keeps the draft, selected conversation ID, consent fingerprints,
+and bounded append receipts so context persistence can be retried without
+duplicate messages. Its layout compare retries after a Chat-only write when the
+committed pane and source organization fields still match.
+
 ## Quick notes (write path)
 
 Local saves hold a note-write lock, reconcile receipts first, then write through the notes scope with provenance encoded as base64 keywords. The receipt machine walks `pending → owner_committed → projection_committed` (+ `blocked`), each transition revision-checked and CHECK-floored. Owner proofs (64-hex) live in a **deliberately local-only** ChaChaNotes table with no sync/FTS/export triggers; legacy `research-receipt-proof:` keywords are filtered from visible tags forever. Stale optimistic updates raise a conflict error surfaced as a modal; a dirty editor on owner switch flushes first, with a recovery modal (retry/discard/cancel — cancel keeps the draft and blocks the switch).
 
+On Ctrl+Q, the app's quit walk attempts the same Quick Note save. If there are
+unsaved edits after the attempt, or an editor action is still pending, the
+shared confirmation dialog focuses **Keep editing** and requires explicit
+approval to discard the draft. Edits typed while the save is in flight remain
+in the editor with the saved note's current version.
+
+Local Quick Note deletion runs the canonical Notes write in a finite worker,
+including during receipt recovery. It waits for the owner result before
+cleaning up workspace memberships.
+
+## Primary Studio
+
+`ResearchStudioRegion` projects availability for Summary, Flashcards, Quiz,
+Report, and Compare Sources from the selected workspace's capture of ready
+Media sources and its processing route. Compare Sources requires two eligible
+sources. `ResearchStudioGenerator` rechecks the captured sources and outbound
+processing consent before using excerpts. Studio retains the captured route and
+generation settings across a retry.
+
+Local Summary, Report, and Compare Sources save to Chatbooks. Flashcards and
+Quiz save to the canonical Study deck/cards and Quiz/questions stores. A
+workspace output membership carries bounded provenance and refers to the owner
+ID. WorkspaceDB v11 adds the membership metadata column. The saved-output
+selector keys each item by its owner kind and ID. It can still inspect an output
+after a source version changes and can remove a missing owner's Local link.
+
+Server text generation uses the selected server's chat completion route with
+chat persistence disabled. The canonical workspace artifact stores the output,
+its captured source versions, and citation markers. Editing and replacement
+check the owner version and return the content to draft. Markdown export
+requires explicit review acceptance and uses the exact accepted artifact version
+returned by the server. Server Flashcards and Quiz use the
+`research-study.v1` workspace contract. One transaction commits the native
+Study deck or quiz, its entries, and bounded provenance keyed by the captured
+operation. A retry can recover the same owner after a lost response. Older
+servers leave these output cards unavailable. Native Study owns content edits
+and deletion. Studio can create a separate new version.
+
+Studio blocks workspace and authority changes while generation is active. Stop
+ends generation, and Retry uses the original operation. Study handoffs select
+the exact saved deck or quiz by ID even beyond the first list page. Server
+Study also checks the active server profile, account, and workspace before
+consuming the handoff. The Artifacts handoff reuses the Library's canonical
+Chatbook selection.
+
+### More outputs
+
+The action registry projects readiness for the exact workspace, processing
+route, and captured source versions. More outputs groups Study and analysis
+controls without adding a second command for a primary card. Unsupported
+owners show their recovery and the three Planned labels are static text.
+
+Server Mind Map and Timeline save bounded Mermaid and chronological Markdown
+as `mindmap` and `timeline` workspace artifacts. Studio checks source versions
+again after generation and retains the resolved citation references. The same
+review and exact-version export flow applies to both diagrams.
+
+Executive Brief, Evidence-Bound Hypotheses, and Research Proposal Pack use
+cited templates with required sections. Their identity stays in provenance
+while Local Chatbooks and Server `report` artifacts own the content.
+
+Server Data Tables owns Data Table, Literature Matrix, and Corpus Gap Finder.
+The selected provider and model must pass the native Workspace admission.
+That endpoint checks selected Media revisions and lets a retry recover the
+same table reservation and Jobs receipt. Stop asks the native owner to cancel
+the job. Once the owner confirms cancellation, Studio clears Retry and asks
+for a new generation. The deployment currently needs
+server-managed credentials and disabled usage quotas on this route. Studio
+opens the published revision and exports CSV, JSON, or XLSX through Data Tables.
+
+Server Slides uses the native structured Slides route and visual-style catalog
+for one versioned Media item. Studio checks the source before and after
+generation and exports the native Markdown, JSON, and Reveal.js ZIP. If a
+launch response is lost, Studio asks the user to check Server Slides because
+the generation endpoint has no replay receipt.
+
+Audio Summary uses a cited script and the exact selected speech provider,
+model, and voice. Local saves in TTS history and links the history ID. Server
+saves through the Speech job owner and links its output artifact. Preview
+voice synthesizes a fixed sample through the selected authority. Stop waiting
+detaches Studio from a Server speech job and retry reconnects to a known job.
+
+Native table, presentation, and speech content is reopened through a saved
+Workspace reference. Studio deletes supported Server Slides and Speech items
+through their owners, then uses a version-checked update to retire the
+Workspace reference. If the reference update fails, the missing-link action
+can retry it. Data Tables deletion remains with its native Server owner.
+
+## Workspace menu and search
+
+Workspace creation, rename, archive, and restore call the selected owner.
+Local duplication starts a workspace with the same description and destructive
+Local management opens Settings. Templates create a workspace and put their
+starter note into the existing Quick Notes editor as a draft.
+
+The v5 device overlay stores the optional banner, pin, and last explicit
+workspace visit alongside the existing pane preferences. Catalog data remains
+authoritative for archive state. Search uses `/` and reads paginated names,
+attached sources, notes, and native output titles in the selected catalog.
+Prefixes `workspace:`, `source:`, `note:`, and `output:` narrow the owner
+queries. Search results retain qualified owner IDs for reopening.
+
+Export BibTeX reads verified Media metadata, uses stable keys per canonical
+source, labels incomplete entries, and rechecks Local transfer policy before
+writing the selected file. Collections opens its Library destination.
+
+Local bundle import reviews the declared text entries before any writes.
+It restores notes and artifacts through Notes and Chatbooks and associates
+them with the imported workspace. Importing the same bundle again recovers
+the same workspace and entry records.
+
+Research Help is available from the header and the global F1 binding. Its
+status view reads the selected workspace's intake and Copy receipts and the
+mounted Chat and Studio state. It includes recent Runs when the native run
+confirms its Workspace origin. Open in Console selects the exact Local
+workspace, and Create agent task opens a blank Console chat there. Other
+links open the existing owner destinations, including Settings for Local
+workspace management. Server menu entries describe recovery when duplication,
+version-checked deletion, or workspace bundles are unavailable.
+
+## Copy, export, and sharing
+
+The workspace Actions menu opens Copy for the selected Local or Server
+workspace. The preview freezes the source, destination, owner revisions,
+treatments, size estimate, and conflict choices. A repeat Server-to-Local Copy
+can find the previous destination in its qualified receipt and refresh the
+current version through its canonical owner. Replacing an eligible Local
+artifact requires a second confirmation. The owner checks that version before
+writing. Copy currently has canonical transfer adapters for text artifacts in
+both directions and Server notes into Local Notes. The preview reports other
+owner types as blocked when their import contract is unavailable. Explicit
+omissions produce a new preview for review before Copy can start. Copied text
+appears in Studio history and Workspace output search with its Copy provenance.
+
+WorkspaceDB records each item checkpoint and the Server migration receipt.
+Stopping finishes the current checkpoint so a later attempt can recover
+acknowledged owners. Copy history can reopen completed and terminal receipts
+alongside retryable operations. Local Export uses the same outbound policy and writes
+reviewed text plus a Markdown manifest into a ZIP at the chosen path. Copy and
+export omit device-only content. Reference and metadata entries contribute no
+document content to the export.
+
+Server sharing uses the captured profile, account, and workspace. Share offers
+team and organization access, clone permission, password and limit settings for
+links, active access editing and revocation, and recipient preview, verification,
+import, and clone. A private receipt retains the clone key and canonical Server
+operation ID for the selected account. The dialog reads status from the owner
+after reopening, including for an operation admitted before a share was revoked.
+Copy to Server and Share opens the separate Share dialog after
+the Server migration is finalized and Copy reports completion.
+
 ## Runs lifecycle
 
 The Runs screen creates a run through the scope service; the local engine executes in an exclusive worker group per run, persisting progress/events/artifacts and a budget ledger, honoring pause/cancel **between phases**, and on completion optionally inserting an assistant message via the chat handoff (which never raises — failure degrades to a notification). Outputs land in the research DB and as chat messages — not as Library media or workspace quick notes. The server side declares session CRUD and filtered run lists unsupported; see the gotcha below about run deletion.
+
+Studio can launch Deep Research from the current selected sources or a saved
+text output. The launch retains the origin, selected source versions, normalized
+question, and initiating references. Local Runs stores that context on the
+native run. Server uses `research-workspace-runs.v1`, which commits the origin,
+native run, and first phase intent together. Device overlay v4 retains recent
+launches for navigation. Workspace launches leave Chat completion delivery unset.
+
+The Runs detail can return to the verified Workspace. Chatbook compares the
+native backend, run ID, launch identity, profile and account, and the saved
+bundle before showing the Report preview. The preview writes a draft through
+the same Studio owner after confirmation. Reopening a saved import resolves the
+original owner. **Create new version** saves a separate Report with lineage to
+the original. Older Server versions leave the launch control unavailable.
+
+**Load Bundle** selects the stored report first when one exists. Both that
+read and **Load Artifact** use the scope's keyword-only `mode`, `run_id`, and
+`artifact_name` contract. The scope dispatches Local reads to its executor.
 
 `ResearchWindow` owns the Runs selection, detail, action target, and loaded
 bundle/artifact/event payload. Its native two-second interval refreshes only a

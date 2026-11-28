@@ -24,8 +24,8 @@ that coordinator.
   generation provenance, legacy exchange capture, or trajectory diagnostics.
   These values do not change the provider-neutral message envelope.
 
-The structural test records 43 live SQL sink identities and 66 boundary call
-identities: 67 model-visible, 14 visibility/ownership-only, and 28
+The structural test records 43 live SQL sink identities and 70 boundary call
+identities: 70 model-visible, 15 visibility/ownership-only, and 28
 presentation-only identities in total. These are route-layer identities, not 109
 distinct user actions; a public action appears once at its boundary and again at
 the SQL sink it reaches.
@@ -349,6 +349,10 @@ FTS and Sync-log triggers are derived indexes/logs, not canonical semantic owner
 - `tldw_chatbook/Sync_Interop/chat_sync_source.py::CharactersRAGDBChatSyncSource.delete_chat_message::call:db:soft_delete_message` — visibility/ownership-only
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.update_message_feedback::call:db:update_message` — presentation-only
 - `tldw_chatbook/Research_Interop/chat_handoff.py::insert_research_completion_message::call:db:add_message` — model-visible
+- `tldw_chatbook/Research_Workspace/local_chat.py::LocalResearchChat._persist_answer::call:persistence:create_message` — model-visible
+- `tldw_chatbook/Research_Workspace/local_chat.py::LocalResearchChat.branch.branch::call:persistence:create_message` — model-visible
+- `tldw_chatbook/Research_Workspace/local_chat.py::LocalResearchChat.delete.delete::call:persistence:delete_message_subtree` — visibility/ownership-only
+- `tldw_chatbook/Research_Workspace/local_chat.py::LocalResearchChat.edit.edit::call:persistence:update_message_content` — model-visible
 - `tldw_chatbook/Sync_Interop/domain_adapters/chat.py::ChatSyncAdapter.apply::call:db:append_chat_message` — model-visible
 - `tldw_chatbook/Sync_Interop/domain_adapters/chat.py::ChatSyncAdapter.apply::call:db:delete_chat_message` — model-visible
 - `tldw_chatbook/Sync_Interop/envelope_applier.py::_ContinuationValidatingChatStore.append_chat_message::call:db:append_chat_message` — model-visible

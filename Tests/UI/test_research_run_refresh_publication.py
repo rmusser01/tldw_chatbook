@@ -2,12 +2,13 @@
 
 import asyncio
 import json
+import threading
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
 from textual.timer import Timer
-from textual.widgets import ListView, Select, Static
+from textual.widgets import Button, Input, ListView, Select, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
@@ -161,22 +162,64 @@ async def _source(pilot, window, source):
 
 
 async def _payload(window, run_id):
-    # The existing controller artifact loader passes positional arguments to
-    # the scope's keyword-only API. Keep that separate defect out of this
-    # ownership control: prepare the view from actual scope/SQLite payloads.
-    scope = window.controller.scope_service
-    window.current_bundle = await window.controller.get_bundle("local", run_id)
-    window.current_artifact = await scope.get_artifact(
-        run_id=run_id, artifact_name="report.md", mode="local"
-    )
-    window._render_bundle_detail()
-    window._render_artifact_detail()
+    await window.load_selected_run_bundle()
     await window.watch_selected_run_events()
     assert window.current_bundle["run"]["id"] == run_id
     assert window.current_artifact["content"] == (
         "A owned report" if run_id == "run-a" else "B owned report"
     )
     return window.current_bundle, window.current_artifact, window.event_log_entries
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_runs_loads_default_and_explicit_artifacts_from_sqlite(
+    request, tmp_path, monkeypatch
+):
+    async with _mounted(tmp_path, status="completed") as (pilot, window, _, local):
+        local.save_artifact(
+            "run-a",
+            artifact_name="evidence.txt",
+            content_type="text/plain",
+            content="Evidence from A only",
+        )
+        reads = []
+        get_artifact = local.get_artifact
+
+        def record_read(run_id, artifact_name):
+            reads.append((run_id, artifact_name, threading.get_ident()))
+            return get_artifact(run_id, artifact_name)
+
+        monkeypatch.setattr(local, "get_artifact", record_read)
+        await _select(pilot, window, "run-a")
+        artifact_name = window.query_one("#research-artifact-name", Input)
+        artifact_detail = "#research-artifact-detail"
+
+        window.query_one("#research-load-bundle", Button).press()
+        await _until(lambda: "A owned report" in _text(window, artifact_detail))
+        assert artifact_name.value == "report.md"
+        assert window.current_bundle["run"]["id"] == "run-a"
+
+        artifact_name.value = "evidence.txt"
+        window.query_one("#research-load-artifact", Button).press()
+        await _until(lambda: "Evidence from A only" in _text(window, artifact_detail))
+        assert window.current_artifact["run_id"] == "run-a"
+        assert window.current_artifact["artifact_name"] == "evidence.txt"
+
+        artifact_name.value = "missing.txt"
+        window.query_one("#research-load-artifact", Button).press()
+        await _until(lambda: _text(window, artifact_detail) == "No artifact loaded.")
+        assert window.current_artifact is None
+
+        with pytest.raises(ValueError, match="Server research backend is unavailable"):
+            await window.controller.get_artifact("server", "run-a", "report.md")
+        assert window.current_source == "local"
+        assert [(run_id, name) for run_id, name, _ in reads] == [
+            ("run-a", "report.md"),
+            ("run-a", "evidence.txt"),
+            ("run-a", "missing.txt"),
+        ]
+        assert all(thread_id != threading.get_ident() for _, _, thread_id in reads)
 
 
 @pytest.mark.asyncio

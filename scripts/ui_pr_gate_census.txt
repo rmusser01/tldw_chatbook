@@ -4026,3 +4026,5 @@ Tests/UI/test_console_poll_reconciliation.py::test_in_place_runtime_disable_reac
 Tests/UI/test_console_poll_reconciliation.py::test_full_request_during_poll_await_replays_with_current_owner[original-demand]
 Tests/UI/test_console_poll_reconciliation.py::test_full_request_during_poll_await_replays_with_current_owner[preparing-display]
 Tests/UI/test_console_poll_reconciliation.py::test_poll_terminal_transition_settles_while_background_turn_remains_active
+# TASK-21511: Runs reads the default and selected artifact through SQLite.
+Tests/UI/test_research_run_refresh_publication.py::test_runs_loads_default_and_explicit_artifacts_from_sqlite

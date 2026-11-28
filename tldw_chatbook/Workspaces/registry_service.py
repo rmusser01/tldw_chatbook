@@ -53,6 +53,7 @@ from .models import (
     WorkspaceRuntimeBinding,
     WorkspaceSyncStatus,
     WorkspaceTransferPolicy,
+    _WorkspaceOutputMembershipAccess,
     registry_now_iso,
 )
 from .change_review_consent import (
@@ -255,6 +256,13 @@ def _filesystem_binding_missing(locator: str) -> bool:
 
 class WorkspaceRegistryServiceError(Exception):
     """Base exception for workspace registry failures."""
+
+
+class WorkspaceMembershipConflict(WorkspaceRegistryServiceError):
+    """The output membership changed after the caller captured it."""
+
+    def __init__(self) -> None:
+        super().__init__("The workspace output link changed. Refresh and try again.")
 
 
 class WorkspaceArchiveConflict(WorkspaceRegistryServiceError):
@@ -645,7 +653,7 @@ def _validated_remote_exclusion_relative(binding: Any, path: str) -> PurePosixPa
     return candidate
 
 
-class LocalWorkspaceRegistryService:
+class LocalWorkspaceRegistryService(_WorkspaceOutputMembershipAccess):
     """SQLite-backed local workspace registry."""
 
     def __init__(
@@ -3850,6 +3858,8 @@ def _membership_from_row(row: sqlite3.Row) -> WorkspaceMembership:
         transfer_policy=WorkspaceTransferPolicy(row["transfer_policy"]),
         title=row["title"],
         created_at=row["created_at"],
+        metadata=json.loads(row["metadata_json"]) if row["metadata_json"] is not None else {},
+        updated_at=row["updated_at"],
     )
 
 

@@ -501,6 +501,16 @@ class AudioServicesScopeService:
         )
         return self._with_record_id(normalized_mode, "audio", result, "speech")
 
+    async def preview_audio_speech(self, *, mode: AudioServicesBackend | str, request_data: Any) -> dict[str, Any]:
+        """Return the selected authority's synchronous speech sample."""
+        backend = self._normalize_mode(mode)
+        _, result = await self._call(
+            mode=backend, action_id="audio.speech.launch.local",
+            method_name="preview_audio_speech" if backend is AudioServicesBackend.LOCAL else "create_audio_speech",
+            kwargs={"request_data": request_data},
+        )
+        return result
+
     async def list_audio_speech_job_artifacts(
         self,
         *,
@@ -590,12 +600,17 @@ class AudioServicesScopeService:
         *,
         mode: AudioServicesBackend | str | None = None,
         history_id: int,
+        include_content: bool = True,
     ) -> dict[str, Any]:
+        requested_mode = self._normalize_mode(mode)
+        kwargs = {"history_id": history_id}
+        if requested_mode is AudioServicesBackend.LOCAL and not include_content:
+            kwargs["include_content"] = False
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="audio.history.detail.local",
             method_name="get_tts_history_entry",
-            kwargs={"history_id": history_id},
+            kwargs=kwargs,
         )
         return self._with_record_id(
             normalized_mode, "audio_history", result, history_id

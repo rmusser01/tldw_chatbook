@@ -270,7 +270,11 @@ class SharingScopeService:
         )
 
     async def import_public_link(
-        self, token: str, *, mode: SharingBackend | str | None = None
+        self,
+        token: str,
+        *,
+        mode: SharingBackend | str | None = None,
+        password: str | None = None,
     ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
@@ -278,6 +282,7 @@ class SharingScopeService:
             action="launch",
             method_name="import_public_link",
             args=(token,),
+            kwargs={"password": password} if password is not None else None,
         )
 
     async def observe_link_events(

@@ -445,6 +445,13 @@ CONSOLE_GATEWAY_CALLSITE_CENSUS = (
         "None",
     ),
     GatewayCallsiteRecord(
+        "tldw_chatbook/Research_Workspace/local_chat.py",
+        "_provider_stream",
+        "stream_chat",
+        ConsoleRouteCaptureDisposition.EXCLUDED,
+        (),
+    ),
+    GatewayCallsiteRecord(
         "tldw_chatbook/UI/Persona_Modules/personas_preview_controller.py",
         "_consume",
         "stream_chat",

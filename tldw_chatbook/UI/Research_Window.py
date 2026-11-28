@@ -10,6 +10,7 @@ from textual import on
 from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.widgets import (
     Button,
     Checkbox,
@@ -154,6 +155,9 @@ def _academic_lane_default() -> bool:
 
 class ResearchWindow(Vertical):
     """Research Sessions container for local/server run browsing."""
+
+    class SelectionChanged(Message):
+        """The accepted native Runs selection or its status changed."""
 
     def __init__(self, app_instance: Any | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -669,6 +673,8 @@ class ResearchWindow(Vertical):
                     pass
             await self.load_selected_run_artifact(default_name)
         self._set_status(f"Loaded research bundle for {run_id}.")
+        if self.is_attached:
+            self.post_message(self.SelectionChanged())
         return self.current_bundle
 
     async def load_selected_run_artifact(self, artifact_name: str | None = None) -> Any:
@@ -791,6 +797,7 @@ class ResearchWindow(Vertical):
             self.query_one("#research-run-detail", Static).update(detail)
         except Exception:
             pass
+        self.post_message(self.SelectionChanged())
 
     def _apply_stream_event(self, event: dict[str, Any]) -> None:
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
@@ -843,12 +850,13 @@ class ResearchWindow(Vertical):
         (server observation already has its own streaming surface)."""
         if self.current_source != "local" or self.selected_run is None:
             return
-        if self._record_field(self.selected_run, "status") in {
-            "completed",
-            "failed",
-            "cancelled",
-            "draft",
-        }:
+        status = self._record_field(self.selected_run, "status")
+        if status in {"completed", "failed", "cancelled"}:
+            return
+        if status == "draft" and not any(
+            worker.group == f"research-engine-{self._selected_run_id()}" and not worker.is_finished
+            for worker in self.workers
+        ):
             return
         try:
             source = self.current_source
@@ -991,7 +999,24 @@ class ResearchWindow(Vertical):
 
     @on(Button.Pressed, "#research-refresh-runs")
     async def _on_refresh_pressed(self, _event: Button.Pressed) -> None:
-        await self.load_runs(self.current_source)
+        from .Navigation.research_run_handoffs import active_server_identity
+
+        source = self.current_source
+        revision = self._selection_revision
+        run_id = self._record_get(self.selected_run, "id")
+        identity = active_server_identity(self.app_instance) if source == "server" else None
+        await self.load_runs(source)
+        if not run_id or self.current_source != source or self._selection_revision != revision:
+            return
+        try:
+            run = await self.controller.get_run(source, run_id)
+        except Exception:
+            return
+        if (
+            run is not None and self.current_source == source and self._selection_revision == revision
+            and (source != "server" or active_server_identity(self.app_instance) == identity)
+        ):
+            self._set_selected_run(run, reset_payload_state=False)
 
     @on(Button.Pressed, "#research-create-run")
     async def _on_create_pressed(self, _event: Button.Pressed) -> None:

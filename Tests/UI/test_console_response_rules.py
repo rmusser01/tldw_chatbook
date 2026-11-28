@@ -1049,6 +1049,10 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
     from tldw_chatbook import config
     from tldw_chatbook.config import save_setting_to_cli_config
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.UI.Console_Modules.view_workers import (
+        capture_console_view_workers,
+        drain_console_view_workers,
+    )
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
     from tldw_chatbook.Widgets import compact_model_bar
 
@@ -1241,6 +1245,9 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
                     f"timer_count={len(console._timers)}"
                 )
             assert console._last_console_workspace_width_band is not None
+            # Direct disposal bypasses app shutdown's fence and view-worker drain.
+            console._console_chat_tearing_down = True
+            await drain_console_view_workers(capture_console_view_workers(pilot.app))
             await console._console_runtime().dispose()
     finally:
         coordinator.cancel()

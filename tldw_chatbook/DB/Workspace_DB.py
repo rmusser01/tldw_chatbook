@@ -27,7 +27,7 @@ class WorkspaceDB(SQLiteStoreKernel, BaseDB):
     paint, cProfile in task-2902's notes).
     """
 
-    _CURRENT_SCHEMA_VERSION = 10
+    _CURRENT_SCHEMA_VERSION = 12
     _MIGRATE_V8_TO_V9_STATEMENTS = (
         "CREATE TABLE workspace_binding_authority (binding_id TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK (typeof(revision) = 'integer' AND revision > 0))",
         'CREATE TRIGGER workspace_binding_authority_insert AFTER INSERT ON workspace_runtime_bindings BEGIN INSERT INTO workspace_binding_authority(binding_id,revision) VALUES(NEW.binding_id,1) ON CONFLICT(binding_id) DO UPDATE SET revision=revision+1; END',
@@ -598,6 +598,13 @@ COMMIT;
             }.issubset(
                 row[1] for row in conn.execute("PRAGMA table_info(workspace_records)")
             )
+            needs_v11 = version < 11 or not {"metadata_json", "updated_at"}.issubset(
+                row[1]
+                for row in conn.execute("PRAGMA table_info(workspace_memberships)")
+            )
+            needs_v12 = version < 12 or conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('research_copy_operations', 'research_copy_items')"
+            ).fetchone()[0] != 2
             rows: list[tuple[str, str]] = []
             if needs_v2:
                 # Reads only here; all v2 writes happen below inside self.transaction().
@@ -627,6 +634,10 @@ COMMIT;
                 self._migrate_v8_to_v9()
             if needs_v10:
                 self._migrate_v9_to_v10()
+            if needs_v11:
+                self._migrate_v10_to_v11()
+            if needs_v12:
+                self._migrate_v11_to_v12()
             return
 
         # Reserve every existing non-archived name up front (stripped, casefolded)
@@ -692,6 +703,10 @@ COMMIT;
             self._migrate_v8_to_v9()
         if needs_v10:
             self._migrate_v9_to_v10()
+        if needs_v11:
+            self._migrate_v10_to_v11()
+        if needs_v12:
+            self._migrate_v11_to_v12()
 
     def _migrate_v2_to_v3(self) -> None:
         """Add durable Research source-operation intent and stage receipts."""
@@ -798,6 +813,38 @@ COMMIT;
                 if statement.strip():
                     conn.execute(statement)
             conn.execute("INSERT INTO schema_version (version) VALUES (10)")
+
+    def _migrate_v10_to_v11(self) -> None:
+        """Add generation provenance to output links without copying owner content."""
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "workspaces_v10_to_v11_output_metadata.sql"
+        )
+        metadata_sql, timestamp_sql = (
+            statement
+            for statement in migration_path.read_text(encoding="utf-8").split(";")
+            if statement.strip()
+        )
+        with self.transaction(immediate=True) as conn:
+            columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(workspace_memberships)")
+            }
+            if "metadata_json" not in columns:
+                conn.execute(metadata_sql)
+            if "updated_at" not in columns:
+                conn.execute(timestamp_sql)
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (11)")
+
+    def _migrate_v11_to_v12(self) -> None:
+        """Add durable, payload-free cross-authority Copy receipts."""
+        migration_path = Path(__file__).parent / "migrations" / "workspaces_v11_to_v12_copy_receipts.sql"
+        with self.transaction(immediate=True) as conn:
+            for statement in migration_path.read_text(encoding="utf-8").split(";"):
+                if statement.strip():
+                    conn.execute(statement)
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (12)")
 
     def get_schema_version(self) -> int:
         """Return the initialized schema version."""

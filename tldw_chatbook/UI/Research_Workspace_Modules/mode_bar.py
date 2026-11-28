@@ -43,6 +43,12 @@ class ResearchModeStrip(DestinationModeStrip):
                 tooltip=tooltip,
                 compact=True,
             )
+        if self.active_route == "research":
+            button = Button(
+                "Return to Workspace", id="research-return-to-workspace", compact=True
+            )
+            button.display = False
+            yield button
 
     @on(Button.Pressed, ".research-mode-chip")
     def navigate_mode(self, event: Button.Pressed) -> None:

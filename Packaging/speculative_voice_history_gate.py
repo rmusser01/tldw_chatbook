@@ -34,7 +34,6 @@ P95_DELTA_THRESHOLD_MS = 10.0
 _TARGET_CONVERSATION_ID = "voice-history-target-conversation"
 _TARGET_ROOT_MESSAGE_ID = "voice-history-target-root"
 _CLIENT_ID = "voice-history-gate"
-_CHECKPOINT_TABLE = "console_dispatch_checkpoints"
 
 
 def _canonical_sha256(value: object) -> str:
@@ -81,12 +80,10 @@ def completed_pair_locator_inventory() -> dict[str, Any]:
 
 
 def _locator_distribution() -> list[dict[str, Any]]:
-    # Columns of one table share a physical row, so they share a count. Giving
-    # the two checkpoint columns 44 observations and the other 24 locators 38
-    # yields exactly 1,000 locator observations. A new locator changes the sum:
-    # re-split it here and re-pin the count in its test.
+    # Give the 27 locators 37 observations each and Canvas's sole locator
+    # one more. Columns in the same table share physical rows and their counts.
     baseline = {
-        locator: 44 if locator[0] == _CHECKPOINT_TABLE else 38
+        locator: 38 if locator[0] == "canvas_revisions" else 37
         for locator in _forbidden_locators()
     }
     if sum(baseline.values()) != BASELINE_LOCATOR_ROWS:
@@ -262,7 +259,8 @@ def _seed_unrelated_history(
                 connection.execute(str(sql))
         connection.execute("COMMIT")
         connection.execute("PRAGMA ignore_check_constraints = OFF")
-        connection.execute("ANALYZE")
+        # Keep the query plans representative of a fresh profile with no
+        # statistics. A skip-scan could hide a missing leading-column index.
         return sum(next(iter(columns.values())) for columns in by_table.values())
     except BaseException:
         if connection.in_transaction:

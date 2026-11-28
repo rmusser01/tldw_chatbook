@@ -1,5 +1,15 @@
 # Lessons: verifying against the real thing
 
+## Use canonical Media detail to prove Research readiness (TASK-21509, 2026-11-24)
+
+The mounted Grounded Chat test initially blocked a selected Library item with
+completed chunks. The Local Media detail row projected `chunking_status`, and
+its normalized `has_chunks` was false because the query returned no count. The
+older fixture supplied `has_chunks=True`. Once readiness used the committed
+status, real SQLite FTS retrieved the selected item, excluded a second matching
+item, and persisted the citation. Exercise the same Media detail projection
+the screen uses when testing readiness for a real Library item.
+
 ## Re-mark a perf finding's route on current dev before designing: other merges fix findings and revive dead paths (TASK-33620.15.52, 2026-11-19)
 
 **Incident.** TASK-33620.15.52 was filed on 2026-11-05 from origin/dev 29592ecc9b: during run start the tool-surface preview and the Inspector counts each read the MCP kill switch on the UI loop. One marked launch of origin/dev a6df4d8d48 two weeks later (zero-wrap `sys.monitoring` markers on `MCPPermissionStore.get_kill_switch` with its thread and callers) saw no read on the loop in 3 sends at load1 28-54, nor in 9 more at load1 94-101. Two merges from other programmes had moved both reads: de8880504c (TASK-34601.1) put the preview's read on the preparation worker, and 6125fbc5b8 lets the Inspector reuse the run's own read. The same launches also revived a path called dead. #3442's review (2026-11-06) found no live send reaching the catalog fingerprint's worker read or the pending-catalog proof, and the owner ordered both removed once a test pinned that. On a6df4d8d48, every second and later send reached both, in a new chat and in a temporary chat: the ordinary-tree integration (064d5cb014, 2026-11-09) captures the turn's MCP definitions before run start, so an ordinary send can reuse again. A pinning test written from the review's finding would have been red, and a removal written without one would have dropped a live reuse path.

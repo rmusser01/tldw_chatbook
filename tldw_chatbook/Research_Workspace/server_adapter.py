@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import uuid4
 
 from tldw_chatbook.Media.media_reading_scope_service import MediaReadingBackend
@@ -38,6 +38,7 @@ from .contracts import (
     ResearchSourcePage,
     ResearchSourceSummary,
     ResearchWorkspaceSummary,
+    RetrievalMode,
     SourceSelectionResult,
     SourceReadiness,
     SourceIdentityMismatchError,
@@ -61,6 +62,9 @@ from .quick_notes import (
     encode_note_keywords,
     split_note_keywords,
 )
+
+if TYPE_CHECKING:
+    from .studio_models import StudioSpeechChoice
 
 
 _AUDITED_SERVICE_METHODS = {
@@ -149,6 +153,8 @@ class ServerResearchWorkspaceAdapter:
         association_scheduler: Any | None = None,
         operation_id_factory: Callable[[], str] | None = None,
         now_factory: Callable[[], str] | None = None,
+        chat_overlay: Any | None = None,
+        chat_policy_enforcer: Any | None = None,
     ) -> None:
         self._service = service
         self._context_provider = server_context_provider
@@ -160,6 +166,29 @@ class ServerResearchWorkspaceAdapter:
             lambda: f"source-operation-{uuid4().hex}"
         )
         self._now_factory = now_factory or _utc_now
+        self._chat = None
+        self._chat_turns = None
+        self._studio = None
+        if chat_overlay is not None and callable(
+            getattr(server_context_provider, "build_client", None)
+        ):
+            from .chat_service import ResearchChatService
+            from .server_chat import ServerResearchChat
+            from .server_studio import ServerStudioAdapter
+            from .studio_generation import ResearchStudioGenerator
+            from .studio_service import ResearchStudioService
+
+            self._chat = ServerResearchChat(
+                self._chat_client, chat_overlay, policy_enforcer=chat_policy_enforcer
+            )
+            self._chat_turns = ResearchChatService(self._answer_chat_turn)
+            self._studio = ResearchStudioService(
+                ResearchStudioGenerator(
+                    self.capture_chat_sources, self._read_studio_evidence,
+                    self._chat.stream_studio, self._studio_approvals,
+                ),
+                ServerStudioAdapter(self._chat_client, policy_enforcer=chat_policy_enforcer),
+            )
 
     async def list_workspaces(
         self, *, include_archived: bool = False
@@ -316,6 +345,310 @@ class ServerResearchWorkspaceAdapter:
         lifecycle.update(self._project_source_capabilities(ref, projection, context))
         lifecycle.update(self._note_capabilities(context))
         return lifecycle
+
+    def _chat_client(self, ref: QualifiedWorkspaceRef):
+        context = self._context_for_ref(ref)
+        require_capability(self._capabilities_for_context(context), "get")
+        return self._context_provider.build_client()
+
+    def copy_client(self, ref: QualifiedWorkspaceRef):
+        """Resolve the authenticated client for an exact Copy authority."""
+        return self._chat_client(ref)
+
+    async def deep_research_available(self, ref: QualifiedWorkspaceRef) -> bool:
+        from ..tldw_api.workspace_research_runs import WorkspaceResearchRunsClient
+
+        context = self._context_for_ref(ref)
+        client = WorkspaceResearchRunsClient(self._chat_client(ref), ref.workspace_id, ref.principal_id)
+        return await self._server_call(client.supported(), context=context)
+
+    def new_copy_workspace(self) -> QualifiedWorkspaceRef:
+        """Mint a destination without publishing a workspace to the server."""
+        from uuid import uuid4
+
+        context, profile, principal = self._active_identity()
+        require_capability(self._capabilities_for_context(context), "create")
+        if not principal:
+            raise ValueError("Sign in to the selected server before copying")
+        return QualifiedWorkspaceRef(WorkspaceDataSource.SERVER, str(uuid4()), profile, principal)
+
+    def _require_chat(self, ref: QualifiedWorkspaceRef):
+        self._context_for_ref(ref)
+        if self._chat is None:
+            raise ValueError("Server Research Chat is unavailable")
+        return self._chat
+
+    async def chat_capability(self, ref: QualifiedWorkspaceRef) -> ResearchCapability:
+        context = self._context_for_ref(ref)
+        unavailable = self._context_health_unavailable(
+            context, revision=self._capability_revision(context)
+        )
+        if unavailable is not None:
+            return unavailable
+        if self._chat is not None:
+            capability = await self._server_call(
+                self._chat_client(ref).get_research_chat_capability(), context=context
+            )
+            if capability.get("status") in {"ready", "degraded"} and capability.get(
+                "mode"
+            ) in {"allow", "warn"}:
+                return ResearchCapability(
+                    True,
+                    "available",
+                    "Chat is available on the selected server.",
+                    "server",
+                )
+        return ResearchCapability(
+            False,
+            "server_chat_unavailable",
+            "Chat is unavailable on the selected server.",
+            "server",
+            recovery_action="Check the server's model and Research Workspace configuration.",
+        )
+
+    async def list_chat_sessions(
+        self, ref: QualifiedWorkspaceRef, *, limit: int = 20, offset: int = 0
+    ):
+        context = self._context_for_ref(ref)
+        return await self._server_call(
+            self._require_chat(ref).list_sessions(ref, limit=limit, offset=offset),
+            context=context,
+        )
+
+    async def create_chat_session(self, ref: QualifiedWorkspaceRef, request):
+        context = self._context_for_ref(ref)
+        return await self._server_call(
+            self._require_chat(ref).create_session(ref, request), context=context
+        )
+
+    async def load_chat_messages(
+        self, ref: QualifiedWorkspaceRef, conversation_id: str
+    ):
+        context = self._context_for_ref(ref)
+        return await self._server_call(
+            self._require_chat(ref).load_messages(ref, conversation_id), context=context
+        )
+
+    async def edit_chat_message(self, ref, conversation_id, selected, body):
+        context = self._context_for_ref(ref)
+        await self._server_call(
+            self._require_chat(ref).edit(ref, conversation_id, selected, body),
+            context=context,
+        )
+
+    async def delete_chat_message(self, ref, conversation_id, selected):
+        context = self._context_for_ref(ref)
+        await self._server_call(
+            self._require_chat(ref).delete(ref, conversation_id, selected),
+            context=context,
+        )
+
+    async def resolve_chat_route(
+        self, ref: QualifiedWorkspaceRef, provider: str, model: str
+    ):
+        require_capability({"chat": await self.chat_capability(ref)}, "chat")
+        return self._require_chat(ref).resolve_route(ref, provider, model)
+
+    async def capture_chat_sources(self, ref: QualifiedWorkspaceRef):
+        from .chat_service import capture_selected_sources
+
+        return await capture_selected_sources(self, ref)
+
+    async def send_chat_turn(self, request, on_chunk, cancel_event):
+        self._require_chat(request.workspace)
+        return await self._chat_turns.send(request, on_chunk, cancel_event)
+
+    async def _answer_chat_turn(self, request, on_chunk, cancel_event):
+        context = self._context_for_ref(request.workspace)
+        return await self._server_call(
+            self._require_chat(request.workspace).answer(
+                request, on_chunk, cancel_event, self.capture_chat_sources
+            ),
+            context=context,
+        )
+
+    async def stop_chat_turn(self, ref: QualifiedWorkspaceRef, turn_id: str) -> bool:
+        return self._chat_turns is not None and self._chat_turns.stop(ref, turn_id)
+
+    def _require_studio(self, ref: QualifiedWorkspaceRef):
+        self._context_for_ref(ref)
+        if self._studio is None:
+            raise ValueError("Server Studio is unavailable")
+        return self._studio
+
+    async def studio_capabilities(self, ref: QualifiedWorkspaceRef):
+        studio = self._require_studio(ref)
+        context = self._context_for_ref(ref)
+        lifecycle = self._capabilities_for_context(context)
+        chat = await self.chat_capability(ref)
+        writable = lifecycle["update"].available
+        study_supported = writable and chat.available and await self._server_call(
+            studio.owner.study_available(ref), context=context
+        )
+        return studio.owner.capabilities(
+            chat, writable=writable, study_supported=study_supported
+        )
+
+    async def native_studio_capabilities(self, ref, route, sources):
+        context = self._context_for_ref(ref)
+        if not self._capabilities_for_context(context)["update"].available:
+            return {}
+        return await self._server_call(
+            self._require_studio(ref).owner.native_capabilities(
+                ref, route, sources, self._capability_revision(context)
+            ),
+            context=context,
+        )
+
+    async def studio_slide_styles(self, ref):
+        context = self._context_for_ref(ref)
+        return await self._server_call(self._require_studio(ref).owner.slide_styles(ref), context=context)
+
+    async def studio_speech_choices(self, ref):
+        context = self._context_for_ref(ref)
+        return await self._server_call(self._require_studio(ref).owner.speech_choices(ref), context=context)
+
+    async def preview_studio_voice(
+        self, ref: QualifiedWorkspaceRef, choice: StudioSpeechChoice, speed: float,
+    ) -> bytes:
+        context = self._context_for_ref(ref)
+        return await self._server_call(
+            self._require_studio(ref).owner.preview_voice(ref, choice, speed), context=context,
+        )
+
+    async def _studio_approvals(self, ref: QualifiedWorkspaceRef) -> tuple[str, ...]:
+        self._context_for_ref(ref)
+        return ()
+
+    async def _read_studio_evidence(self, request):
+        from .studio_generation import StudioEvidence
+
+        if request.generation.focus:
+            return await self._require_chat(request.workspace).focused_studio_evidence(request)
+        if request.effective_retrieval is not RetrievalMode.FTS:
+            raise ValueError("Enter a retrieval focus to use Vector or Hybrid")
+        rows = []
+        for source in request.retrieval_sources[:request.generation.retrieval.top_k]:
+            preview = await self.preview_source(request.workspace, source.source_id, max_chars=6000, snippet_limit=0)
+            if preview.ref != request.workspace or preview.catalog_item_id != source.catalog_item_id:
+                raise ValueError("A Server source changed while loading its excerpt")
+            if preview.text:
+                rows.append(StudioEvidence(source, f"Server Media {source.catalog_item_id}", preview.text))
+        return tuple(rows)
+
+    async def list_outputs(self, ref: QualifiedWorkspaceRef, *, limit: int = 20, offset: int = 0):
+        context = self._context_for_ref(ref)
+        return await self._server_call(
+            self._require_studio(ref).owner.list_outputs(
+                ref, limit=limit, offset=offset
+            ),
+            context=context,
+        )
+
+    async def list_output_records(
+        self, ref: QualifiedWorkspaceRef, *, limit: int = 20, offset: int = 0
+    ):
+        context = self._context_for_ref(ref)
+        return await self._server_call(
+            self._require_studio(ref).owner.list_output_records(
+                ref, limit=limit, offset=offset
+            ),
+            context=context,
+        )
+
+    async def resolve_output(self, output_ref):
+        context = self._context_for_ref(output_ref.workspace)
+        return await self._server_call(
+            self._require_studio(output_ref.workspace).owner.resolve_output(output_ref),
+            context=context,
+        )
+
+    async def get_imported_report(self, request):
+        context = self._context_for_ref(request.workspace)
+        owner = self._require_studio(request.workspace).owner
+        return await self._server_call(owner.get_imported_report(request), context=context)
+
+    async def save_imported_report(self, request, report, *, supersedes=None):
+        if request.research_run_ref is None:
+            raise ValueError("Choose a verified Research run to import")
+        context = self._context_for_ref(request.workspace)
+        require_capability(self._capabilities_for_context(context), "update")
+        owner = self._require_studio(request.workspace).owner
+        return await self._server_call(owner.save(request, report, supersedes=supersedes), context=context)
+
+    async def edit_output(self, output_ref, body: str) -> None:
+        context = self._context_for_ref(output_ref.workspace)
+        require_capability(self._capabilities_for_context(context), "update")
+        await self._server_call(
+            self._require_studio(output_ref.workspace).owner.edit_output(
+                output_ref, body
+            ),
+            context=context,
+        )
+
+    async def accept_output(self, output_ref) -> None:
+        context = self._context_for_ref(output_ref.workspace)
+        require_capability(self._capabilities_for_context(context), "update")
+        await self._server_call(
+            self._require_studio(output_ref.workspace).owner.accept_output(output_ref),
+            context=context,
+        )
+
+    async def delete_output(self, output_ref) -> None:
+        context = self._context_for_ref(output_ref.workspace)
+        require_capability(self._capabilities_for_context(context), "update")
+        await self._server_call(
+            self._require_studio(output_ref.workspace).owner.delete_output(output_ref),
+            context=context,
+        )
+
+    async def unlink_output(self, output_ref) -> None:
+        context = self._context_for_ref(output_ref.workspace)
+        require_capability(self._capabilities_for_context(context), "update")
+        await self._server_call(
+            self._require_studio(output_ref.workspace).owner.unlink_output(output_ref),
+            context=context,
+        )
+
+    async def export_output(self, output_ref, format: str) -> bytes:
+        context = self._context_for_ref(output_ref.workspace)
+        require_capability(self._capabilities_for_context(context), "update")
+        return await self._server_call(self._require_studio(output_ref.workspace).owner.export_output(output_ref, format), context=context)
+
+    async def generate_output(self, request, on_chunk, cancel_event, *, replace_output=None, supersedes=None):
+        from .studio_mapping import SERVER_NATIVE_OWNERS, STUDIO_OUTPUT_MAPPINGS
+
+        context = self._context_for_ref(request.workspace)
+        studio = self._require_studio(request.workspace)
+        mapping = STUDIO_OUTPUT_MAPPINGS[request.workspace.data_source, request.output_kind]
+        if mapping.owner_kind in SERVER_NATIVE_OWNERS and studio.has_attempt(request):
+            require_capability(self._capabilities_for_context(context), "update")
+            return await self._server_call(
+                studio.generate(request, on_chunk, cancel_event, replace_output=replace_output, supersedes=supersedes),
+                context=context,
+            )
+        caps = await self.studio_capabilities(request.workspace)
+        if mapping.owner_kind in SERVER_NATIVE_OWNERS:
+            require_capability(caps, "save_workspace_artifact")
+            route = await self.resolve_chat_route(
+                request.workspace, request.processing_route.provider, request.processing_route.model
+            )
+            if route != request.processing_route:
+                raise ValueError("The selected Server route changed before generation")
+            caps.update(await self.native_studio_capabilities(request.workspace, route, request.source_snapshot))
+        require_capability(caps, mapping.create_capability)
+        return await self._server_call(
+            studio.generate(request, on_chunk, cancel_event, replace_output=replace_output, supersedes=supersedes),
+            context=context,
+        )
+
+    async def cancel_output(self, ref: QualifiedWorkspaceRef, operation_id: str) -> bool:
+        return self._require_studio(ref).cancel(ref, operation_id)
+
+    async def retry_output(self, ref: QualifiedWorkspaceRef, operation_id: str):
+        context = self._context_for_ref(ref)
+        require_capability(self._capabilities_for_context(context), "update")
+        return await self._server_call(self._require_studio(ref).retry(ref, operation_id), context=context)
 
     async def list_notes(
         self, ref: QualifiedWorkspaceRef, page: ResearchNotePageRequest
@@ -693,6 +1026,20 @@ class ServerResearchWorkspaceAdapter:
                 if isinstance(snippet, Mapping)
             ),
         )
+
+    async def bibliography_metadata(self, source: ResearchSourceSummary) -> Mapping[str, object]:
+        ref = source.ref
+        context = self._context_for_ref(ref)
+        client = self._chat_client(ref)
+        media_id = int(self._canonical_media_id(source.catalog_item_id))
+        detail = await self._server_call(
+            client.get_media_item(media_id, include_content=False, include_versions=False), context=context
+        )
+        self._context_for_ref(ref)
+        if detail.media_id != media_id or self._chat_client(ref) is not client:
+            raise ValueError("The Server Media owner returned a different bibliography source")
+        metadata = detail.processing.safe_metadata or {}
+        return {"url": detail.source.url, **{key: metadata[key] for key in ("author", "published_at", "year") if key in metadata}}
 
     async def get_readiness(
         self,

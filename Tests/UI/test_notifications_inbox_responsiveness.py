@@ -183,18 +183,25 @@ async def test_each_admitted_inbox_mutation_refreshes_after_its_native_commit(
 
         async def activate(row):
             pane = screen.query_one("#watchlists-notifications-pane", NotificationsPane)
-            old_button = pane.query_one(selector, Button)
             pane.select_notification_by_id(str(row["id"]))
-            # TASK-33283: selection rebuilds the pane; use its replacement control.
-            await until(
-                lambda: bool(screen.query(selector))
-                and not screen.query_one(selector, Button).disabled
-                and screen.selected_notification is not None
-                and screen.selected_notification["id"] == row["id"]
-                and screen.query_one(selector, Button) is not old_button
-            )
-            await pilot.pause()
-            screen.query_one(selector, Button).press()
+
+            def press_live_action():
+                # Refresh and selection can both rebuild the pane. Resolve
+                # and press its current button in the same event-loop turn.
+                if (
+                    pane._recompose_required
+                    or pane.recompose_in_flight
+                    or (pane.selected_notification or {}).get("id") != row["id"]
+                    or (screen.selected_notification or {}).get("id") != row["id"]
+                ):
+                    return False
+                button = next(pane.query(selector).results(Button), None)
+                if button is None or button.disabled or not button.is_parent_active:
+                    return False
+                button.press()
+                return True
+
+            await until(press_live_action)
 
         def workers_settled():
             return not any(

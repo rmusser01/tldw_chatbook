@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -53,6 +54,10 @@ from tldw_chatbook.UI.Screens.research_workspace_screen import (
 )
 
 
+# The mounted screen's shared footer reads the process-bound config.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 class _RecordingOperationStore:
     def __init__(self, trace: list[tuple[object, ...]]) -> None:
         self.trace = trace
@@ -98,6 +103,41 @@ class _MountedScreenApp(App[None]):
 
     async def on_mount(self) -> None:
         await self.push_screen(self._screen)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("detach", ["pane", "recovery"])
+async def test_source_refresh_ignores_results_after_pane_detaches(monkeypatch, detach) -> None:
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class LocalPort:
+        async def list_workspaces(self, *, include_archived=False):
+            return (ResearchWorkspaceSummary(ref, "Workspace"),)
+
+    async def delayed_receipts(owner_ref):
+        assert owner_ref == ref
+        started.set()
+        await release.wait()
+        return ()
+
+    controller = ResearchWorkspaceController({WorkspaceDataSource.LOCAL: LocalPort()})
+    screen = ResearchWorkspaceScreen(SimpleNamespace(), controller=controller)
+    monkeypatch.setattr(screen, "_recent_operations", delayed_receipts)
+    app = _MountedScreenApp(screen)
+
+    async with app.run_test(size=(120, 30)):
+        await asyncio.wait_for(started.wait(), 3)
+        worker = next(
+            worker for worker in screen.workers
+            if worker.group == "research-workspace-sources"
+        )
+        region = screen.query_one(ResearchSourcesRegion)
+        target = region if detach == "pane" else region.query_one("#research-source-recovery")
+        await target.remove()
+        release.set()
+        await asyncio.wait_for(worker.wait(), 3)
 
 
 @pytest.mark.asyncio

@@ -28,6 +28,8 @@ class OpenAISpeechRequest(BaseModel):
     stream: bool = True
     target_sample_rate: int | None = Field(default=None, ge=1)
     return_download_link: bool = False
+    backend: str | None = None
+    allow_fallback: bool | None = None
     lang_code: str | None = None
     normalization_options: NormalizationOptions | None = Field(
         default_factory=NormalizationOptions
@@ -35,6 +37,12 @@ class OpenAISpeechRequest(BaseModel):
     voice_reference: str | None = None
     reference_duration_min: float | None = Field(default=None, ge=3.0, le=60.0)
     extra_params: dict[str, Any] | None = None
+
+    def job_payload(self) -> dict[str, Any]:
+        """Keep legacy defaults and send only set fields for an explicit backend."""
+        return self.model_dump(
+            exclude_none=True, exclude_unset=self.backend is not None, mode="json"
+        )
 
 
 class TTSHealthResponse(BaseModel):
@@ -56,6 +64,7 @@ class TTSProvidersResponse(BaseModel):
     providers: dict[str, Any]
     voices: dict[str, Any]
     timestamp: str | None = None
+    supports_explicit_backend: bool = False
 
 
 class TTSVoicesResponse(RootModel[dict[str, Any]]):

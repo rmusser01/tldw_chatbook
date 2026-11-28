@@ -6,6 +6,9 @@ from typing import Any, Mapping
 
 
 def _require_mapping(record: Any) -> Mapping[str, Any]:
+    dump = getattr(record, "model_dump", None)
+    if callable(dump):
+        record = dump()
     if not isinstance(record, Mapping):
         raise TypeError(f"Expected mapping-like quiz record, got {type(record)!r}")
     return record

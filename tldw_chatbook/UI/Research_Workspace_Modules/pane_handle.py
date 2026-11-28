@@ -43,7 +43,7 @@ class ResearchPaneHandle(Vertical):
     def compose(self) -> ComposeResult:
         for action in ("collapse", "reveal"):
             label, accessible_name = _HANDLE_COPY[self.pane][action]
-            yield Button(
+            button = Button(
                 label,
                 id=f"research-{self.pane}-{action}",
                 classes=f"research-pane-handle-button research-pane-{action}",
@@ -51,6 +51,9 @@ class ResearchPaneHandle(Vertical):
                 tooltip=accessible_name,
                 compact=True,
             )
+            # Textual's stylesheet parser rejects zero line padding.
+            button.styles.line_pad = 0
+            yield button
 
     def on_mount(self) -> None:
         self.sync_expanded(True)

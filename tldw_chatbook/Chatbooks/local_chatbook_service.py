@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Set
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -70,6 +70,10 @@ def _registry_lock(path: Path) -> threading.RLock:
 
 def _content_sources(values):
     return (values["self"].registry_path,)
+
+
+class ChatbookRevisionConflict(ValueError):
+    """The captured artifact revision is stale."""
 
 
 class LocalChatbookService:
@@ -429,8 +433,10 @@ class LocalChatbookService:
         return records[: int(limit)]
 
     @content_call(_content_sources)
-    def artifact_read_snapshot(self) -> ChatbookArtifactSnapshot:
-        """Read the registry once for a synchronous Library worker request.
+    def artifact_read_snapshot(
+        self, *, chatbook_ids: Set[str] | None = None
+    ) -> ChatbookArtifactSnapshot:
+        """Read the registry once, optionally for a set of exact Chatbook IDs.
 
         The detached snapshot never writes or reopens the registry. Window,
         rank, and selected-record reads share its request-owned content.
@@ -440,7 +446,12 @@ class LocalChatbookService:
         with self._registry_lock:
             registry = self._load_registry()
         return ChatbookArtifactSnapshot(
-            [self._record_copy(record) for record in registry["records"]]
+            [
+                self._record_copy(record)
+                for record in registry["records"]
+                if chatbook_ids is None
+                or str(record.get("id", record.get("chatbook_id"))) in chatbook_ids
+            ]
         )
 
     @content_call(_content_sources)
@@ -459,6 +470,7 @@ class LocalChatbookService:
         categories: list[Any] | None = None,
         metadata: dict[str, Any] | None = None,
         provenance_owner_request: CitationArtifactOwnerRequest | None = None,
+        copy_operation_key: str | None = None,
         **extra: Any,
     ) -> dict[str, Any]:
         with self._registry_lock:
@@ -482,6 +494,21 @@ class LocalChatbookService:
                 record["metadata"].update(
                     {key: value for key, value in extra.items() if value is not None}
                 )
+            if copy_operation_key is not None:
+                if (
+                    not re.fullmatch(r"[a-f0-9]{64}", copy_operation_key)
+                    or provenance_owner_request is not None
+                ):
+                    raise ValueError("Copy requires a canonical artifact operation key")
+                previous = next(
+                    (row for row in registry["records"] if row.get("research_copy_key") == copy_operation_key), None
+                )
+                if previous is not None:
+                    fields = ("name", "description", "file_path", "tags", "categories", "metadata")
+                    if any(previous.get(field) != record[field] for field in fields):
+                        raise ChatbookRevisionConflict("The saved Copy artifact changed")
+                    return self._record_copy(previous)
+                record["research_copy_key"] = copy_operation_key
             coordinator = self._citation_ownership_coordinator
             if (
                 provenance_owner_request is not None
@@ -511,11 +538,14 @@ class LocalChatbookService:
         chatbook_id: int | str,
         *,
         provenance_owner_request: CitationArtifactOwnerRequest | None = None,
+        expected_revision: int | None = None,
         **fields: Any,
     ) -> dict[str, Any]:
         with self._registry_lock:
             registry = self._load_registry()
             record = self._find_record(registry, chatbook_id)
+            self._check_revision(record, expected_revision)
+            research_artifact = record["metadata"].get("artifact_source") == "research"
             coordinator = self._citation_ownership_coordinator
             previous_binding = self._record_owner_binding(record)
             if previous_binding is not None:
@@ -545,7 +575,7 @@ class LocalChatbookService:
                 and coordinator.writes_enabled
                 and coordinator.artifact_binding_verification_available
             )
-            if previous_binding is not None or can_link:
+            if previous_binding is not None or can_link or research_artifact:
                 next_revision = int(record.get("artifact_revision") or 0) + 1
                 record["artifact_revision"] = next_revision
                 record.pop("provenance_owner", None)
@@ -569,11 +599,14 @@ class LocalChatbookService:
         return self._record_copy(record)
 
     @content_call(_content_sources)
-    async def delete_chatbook(self, chatbook_id: int | str) -> bool:
+    async def delete_chatbook(
+        self, chatbook_id: int | str, *, expected_revision: int | None = None,
+    ) -> bool:
         with self._registry_lock:
             registry = self._load_registry()
             wanted = str(chatbook_id)
             record = self._find_record(registry, chatbook_id)
+            self._check_revision(record, expected_revision)
             binding = self._record_owner_binding(record)
             coordinator = self._citation_ownership_coordinator
             if binding is not None:
@@ -618,6 +651,13 @@ class LocalChatbookService:
             registry,
             coordinator.prepare_unlink_operation(binding),
         )
+
+    @staticmethod
+    def _check_revision(record: dict[str, Any], expected_revision: int | None) -> None:
+        if expected_revision is not None and (
+            type(expected_revision) is not int or record.get("artifact_revision") != expected_revision
+        ):
+            raise ChatbookRevisionConflict("The artifact changed. Reload it and try again.")
 
     @staticmethod
     def _prepare_optional_link(

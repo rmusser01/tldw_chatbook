@@ -7,9 +7,14 @@ import re
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, Input, Select, Static
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.library_quit_guard_support import _settings_without_splash, _until
+from Tests.UI.test_research_chat_region import build_research_app, open_chat
+from Tests.app_module_patches import patch_app_global
 from tldw_chatbook.app import TldwCli
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 class _ProductionWorkspaceHarness(ConsolidatedCSSApp):
@@ -39,6 +44,71 @@ def _painted_text(svg: str) -> str:
 
 
 @pytest.mark.asyncio
+async def test_mounted_chat_controls_remain_reachable_through_all_supported_widths(
+    tmp_path, monkeypatch
+):
+    app, _, _ = build_research_app(tmp_path, monkeypatch)
+    with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
+        async with app.run_test(size=(160, 40)) as pilot:
+            screen, composer = await open_chat(app, pilot)
+            composer.load_text("Persistent geometry draft")
+            controls = screen.query_one("#research-chat-mode", Select)
+            controls.value = "rag"
+            send = screen.query_one("#research-chat-send", Button)
+            send.press()
+            status = screen.query_one("#research-chat-status", Static)
+            await _until(
+                pilot,
+                lambda: "selected ready source" in str(status.render()),
+                "grounded blocker",
+            )
+            for width, height in (
+                (160, 40),
+                (120, 30),
+                (100, 30),
+                (84, 24),
+                (80, 24),
+                (60, 20),
+            ):
+                await pilot.resize_terminal(width, height)
+                composer.focus()
+                await pilot.pause()
+                composer.scroll_visible(animate=False, top=True, immediate=True)
+                await pilot.pause()
+                assert app.focused is composer
+                assert composer.text == "Persistent geometry draft"
+                assert controls.value == "rag"
+                pane = screen.query_one("#research-chat-scroll")
+                painted = _painted_text(app.export_screenshot(simplify=True))
+                assert "geometry draft" in painted, (
+                    f"{width}x{height}: composer {composer.region}, pane {pane.region}, "
+                    f"scroll {pane.scroll_y}/{pane.max_scroll_y}\n{painted[-3000:]}"
+                )
+                assert "selected ready" in painted
+
+            screen.query_one("#research-chat-model", Input).value = "model"
+            screen.query_one("#research-chat-provider", Input).value = "fixture"
+            controls.value = "auto"
+            send.press()
+            await _until(
+                pilot, lambda: "Answer saved" in str(status.render()), "saved answer"
+            )
+            citation = screen.query_one("#research-chat-citations", Button)
+            await _until(pilot, lambda: not citation.disabled, "saved message selected")
+            citation.focus()
+            await pilot.press("enter")
+            await _until(
+                pilot,
+                lambda: (
+                    app.screen is not screen
+                    and bool(list(app.screen.query("#research-chat-citations-close")))
+                ),
+                "citation modal",
+            )
+            assert "No citations" in _painted_text(app.export_screenshot(simplify=True))
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("size", "visible_panes"),
     [
@@ -64,6 +134,7 @@ async def test_production_hierarchy_paints_contained_workspace_frames(
         assert "Workspace data:" in painted
         assert "Processing:" in painted
         assert "Foundation ready" in painted
+        assert "Restart after local storage is available." in painted
         for pane_id in visible_panes:
             pane = screen.query_one(f"#research-{pane_id}-pane")
             assert pane.display
@@ -219,6 +290,17 @@ async def test_wide_chat_uses_grid_except_two_fixed_reveal_handles() -> None:
     async with app.run_test(size=(160, 40)) as pilot:
         await pilot.pause()
         screen = app.screen_stack[-1]
+
+        def painted_handle(widget_id):
+            bounds = screen.query_one(f"#{widget_id}", Button).region
+            strips = screen._compositor.render_strips()
+            return [strips[y].crop(bounds.x, bounds.right).text for y in range(bounds.y, bounds.bottom)]
+
+        assert "<---" in painted_handle("research-sources-collapse")
+        assert "--->" in painted_handle("research-studio-collapse")
+        screen.query_one("#research-sources-collapse", Button).focus()
+        await pilot.pause()
+        assert "<---" in painted_handle("research-sources-collapse")
         screen.query_one("#research-sources-collapse", Button).press()
         screen.query_one("#research-studio-collapse", Button).press()
         await pilot.pause()
@@ -234,6 +316,79 @@ async def test_wide_chat_uses_grid_except_two_fixed_reveal_handles() -> None:
         assert sources_handle.region.width == 4
         assert studio_handle.region.width == 4
         assert chat.region.width == grid.content_region.width - 8
+        assert "--->" in painted_handle("research-sources-reveal")
+        assert "<---" in painted_handle("research-studio-reveal")
+        screen.query_one("#research-sources-reveal", Button).focus()
+        await pilot.pause()
+        assert "--->" in painted_handle("research-sources-reveal")
+
+
+@pytest.mark.asyncio
+async def test_control_inventory_and_keyboard_reach_across_terminal_sizes():
+    from Tests.UI.test_task_25822_disabled_button_contrast import _contrast, _painted
+    from tldw_chatbook.Research_Workspace.action_registry import RESEARCH_ACTIONS
+    from tldw_chatbook.Research_Workspace.contracts import (
+        QualifiedWorkspaceRef, ResearchCapability, WorkspaceDataSource,
+    )
+    from tldw_chatbook.UI.Research_Workspace_Modules.copy_dialog import ResearchWorkspaceActions
+    from tldw_chatbook.UI.Research_Workspace_Modules.help_menu import ResearchHelpMenu
+    from tldw_chatbook.UI.Research_Workspace_Modules.more_outputs_dialog import ResearchMoreOutputs
+
+    server = QualifiedWorkspaceRef(WorkspaceDataSource.SERVER, "study", "lab", "account")
+    ready = ResearchCapability(True, "available", "Ready.", "Server")
+    workspace = ResearchWorkspaceActions(
+        server, authority=WorkspaceDataSource.SERVER, catalog_ready=True,
+        capabilities={key: ready for key in ("create", "update", "archive")},
+        can_copy=True, can_share=True, presentation_available=True, pinned=False,
+    )
+    help_menu = ResearchHelpMenu(QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "study"))
+    outputs = ResearchMoreOutputs(server, dict.fromkeys(RESEARCH_ACTIONS, ready))
+    expected = (
+        (workspace, "research-action-", {
+            "new", "archived", "templates", "settings-workspaces", "rename", "duplicate", "archive", "delete-server",
+            "recent", "pinned", "pin", "banner", "split", "console", "collections", "bibtex",
+            "import", "export", "copy-local", "share", "receipts", "close",
+        }),
+        (help_menu, "research-help-", {
+            "tour", "keyboard", "status", "console", "agent-task", "acp-history", "sandbox",
+            "mcp", "provider", "library", "artifacts", "study", "settings-workspaces", "speech", "runs", "close",
+        }),
+        (outputs, "research-more-", {
+            "mind-map", "timeline", "data-table", "slides", "audio-summary", "executive-brief",
+            "literature-matrix", "corpus-gap-finder", "evidence-bound-hypotheses", "research-proposal-pack", "close",
+        }),
+    )
+    app = _ProductionWorkspaceHarness()
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause()
+        for modal, prefix, actions in expected:
+            await app.push_screen(modal)
+            buttons = list(modal.query(Button))
+            actual = [button.id.removeprefix(prefix) for button in buttons]
+            assert len(actual) == len(actions) and set(actual) == actions
+            for width, height in ((160, 40), (120, 30), (100, 30), (84, 24), (80, 24), (60, 20)):
+                await pilot.resize_terminal(width, height)
+                enabled = [button for button in buttons if not button.disabled]
+                visited = set()
+                for _ in modal.focus_chain:
+                    await pilot.press("tab")
+                    button = app.focused
+                    if not isinstance(button, Button):
+                        assert button.name
+                        continue
+                    assert button in enabled and str(button.label).strip()
+                    assert 0 <= button.region.y < button.region.bottom <= height, ((width, height), button.id)
+                    visited.add(button)
+                assert visited == set(enabled), ((width, height), prefix)
+            if modal is workspace:
+                duplicate = modal.query_one("#research-action-duplicate", Button)
+                duplicate.scroll_visible(animate=False, top=True, immediate=True, force=True)
+                await pilot.pause()
+                assert duplicate.disabled and _contrast(*_painted(app, duplicate)) >= 3
+                assert "Server Workspaces has no verified duplicate." in _painted_text(
+                    app.export_screenshot(simplify=True)
+                )
+            await pilot.press("escape")
 
 
 @pytest.mark.asyncio

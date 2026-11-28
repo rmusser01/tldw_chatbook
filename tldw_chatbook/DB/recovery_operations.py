@@ -195,13 +195,78 @@ _WORKSPACES_ARCHIVE_V9_TO_V10_SQL = (
 )
 
 
+def _workspace_migration(filename: str, successor: int) -> tuple[str, ...]:
+    """Load installed Workspace DDL and stamp it within recovery's transaction."""
+    migration = Path(__file__).with_name("migrations") / filename
+    sql = migration.read_text(encoding="utf-8")
+    return (
+        *(statement.strip() for statement in sql.split(";") if statement.strip()),
+        f"INSERT INTO schema_version (version) VALUES ({successor})",
+    )
+
+
+_WORKSPACES_OUTPUT_V10_TO_V11_SQL = _workspace_migration(
+    "workspaces_v10_to_v11_output_metadata.sql", 11
+)
+_WORKSPACES_COPY_V11_TO_V12_SQL = _workspace_migration(
+    "workspaces_v11_to_v12_copy_receipts.sql", 12
+)
+_WORKSPACES_V10_SCHEMA = dict(_WORKSPACES_SCHEMA)[10]
+_WORKSPACES_OUTPUT_COLUMNS = ", ".join(
+    sql.removeprefix("ALTER TABLE workspace_memberships ADD COLUMN ")
+    for sql in _WORKSPACES_OUTPUT_V10_TO_V11_SQL[:-1]
+)
+# SQLite records ALTER-added columns before the first table-level constraint.
+_WORKSPACES_MEMBERSHIP_CONSTRAINT = ",\n                    FOREIGN KEY(workspace_id)"
+_WORKSPACES_V11_SCHEMA = tuple(
+    sql.replace(
+        _WORKSPACES_MEMBERSHIP_CONSTRAINT,
+        ", " + _WORKSPACES_OUTPUT_COLUMNS + _WORKSPACES_MEMBERSHIP_CONSTRAINT,
+        1,
+    )
+    if sql.startswith("CREATE TABLE workspace_memberships (")
+    else sql
+    for sql in _WORKSPACES_V10_SCHEMA
+)
+
+
+def _workspace_schema_order(sql: str) -> tuple[str, str]:
+    _, object_type, name, _ = sql.replace(
+        "CREATE UNIQUE INDEX ", "CREATE INDEX ", 1
+    ).split(maxsplit=3)
+    return object_type, name
+
+
+_WORKSPACES_V12_SCHEMA = tuple(
+    sorted(
+        (
+            *_WORKSPACES_V11_SCHEMA,
+            *(
+                sql.replace(" IF NOT EXISTS", "", 1)
+                for sql in _WORKSPACES_COPY_V11_TO_V12_SQL[:-1]
+            ),
+        ),
+        key=_workspace_schema_order,
+    )
+)
+_WORKSPACES_SCHEMA = (
+    (12, _WORKSPACES_V12_SCHEMA),
+    (11, _WORKSPACES_V11_SCHEMA),
+    *_WORKSPACES_SCHEMA,
+)
+
+
 class _WorkspacesAdapter(_SQLiteDeclaration):
     def schema_policy(self) -> SchemaPolicy:
         return SchemaPolicy(
             self.owner_id,
             self.versions,
             self.schemas,
-            ((9, 10, _WORKSPACES_ARCHIVE_V9_TO_V10_SQL),),
+            (
+                (9, 10, _WORKSPACES_ARCHIVE_V9_TO_V10_SQL),
+                (10, 11, _WORKSPACES_OUTPUT_V10_TO_V11_SQL),
+                (11, 12, _WORKSPACES_COPY_V11_TO_V12_SQL),
+            ),
         )
 
     def validate(self, candidate: Path) -> tuple[str, ...]:
@@ -1388,7 +1453,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "db.workspaces",
             "workspaces_db_path",
             "tldw_chatbook_workspaces.db",
-            (10, 9, 8),
+            (12, 11, 10, 9, 8),
             _WORKSPACES_SCHEMA,
             (),
         ),

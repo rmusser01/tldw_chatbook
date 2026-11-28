@@ -195,6 +195,8 @@ class ResearchWorkspaceController:
                     catalog_generation=catalog_generation,
                 )
             else:
+                if any(row.ref.data_source is not data_source for row in workspaces):
+                    raise ValueError("Workspace catalog returned a different authority")
                 state = ResearchWorkspaceCatalogState(
                     data_source=data_source,
                     workspaces=tuple(workspaces),
@@ -203,6 +205,7 @@ class ResearchWorkspaceController:
                 )
         if self.is_current_catalog_state(state):
             self._catalog_states[data_source] = state
+            self._canonical_workspaces.update((row.ref, row) for row in state.workspaces)
         return state
 
     def is_current_catalog_state(self, state: ResearchWorkspaceCatalogState) -> bool:
@@ -225,6 +228,15 @@ class ResearchWorkspaceController:
         self.visible_workspace = self._canonical_workspaces.get(ref)
         self._clear_visible_source_state()
         return self._context_revision
+
+    def clear_workspace_selection(self) -> None:
+        """Clear a canonical selection after its authority reports an empty catalog."""
+        if self._selected_ref is not None:
+            self._selected_ref = None
+            self._capability_revision = ""
+            self._context_revision += 1
+            self.visible_workspace = None
+            self._clear_visible_source_state()
 
     def set_capability_revision(self, capability_revision: str) -> int:
         normalized = capability_revision.strip()

@@ -269,6 +269,7 @@ def test_the_scan_reaches_the_quit_flow_it_guards() -> None:
         "tldw_chatbook/UI/Screens/library_screen.py:LibraryScreen.prepare_for_quit",
         "tldw_chatbook/UI/Library_Modules/library_pending_work.py:confirm_library_quit",
         "tldw_chatbook/UI/Library_Modules/library_pending_work.py:prepare_library_quit",
+        "tldw_chatbook/UI/Screens/research_workspace_screen.py:ResearchWorkspaceScreen.confirm_quit",
         # TASK-33007 (capture finding 22): Settings' staged-change prompt.
         "tldw_chatbook/UI/Settings_Modules/settings_quit_guard.py:confirm_settings_quit",
         # Ruling C-N1: the stand-in that asks about a kept Settings draft.

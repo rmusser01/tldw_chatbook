@@ -683,7 +683,10 @@ async def test_run_poll_repaints_send_when_a_completed_turn_releases_its_queue(
 
 
 @pytest.mark.asyncio
-async def test_run_poll_settles_streaming_header_before_ready_composer(monkeypatch):
+@pytest.mark.parametrize("change_prompt", [False, True], ids=["terminal", "settings-reset"])
+async def test_run_poll_settles_streaming_header_before_ready_composer(
+    monkeypatch, change_prompt
+):
     """The composer and the final assistant row settle in the same order."""
     from textual.widgets import Static
 
@@ -698,6 +701,7 @@ async def test_run_poll_settles_streaming_header_before_ready_composer(monkeypat
     )
 
     _install_clock(monkeypatch)
+    _isolate_checked_renders(monkeypatch)
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
@@ -746,6 +750,14 @@ async def test_run_poll_settles_streaming_header_before_ready_composer(monkeypat
 
             async def defer_once(projection):
                 if not obsolete.is_set():
+                    if change_prompt:
+                        console._session._apply_console_session_system_prompt(
+                            "Use plain answers."
+                        )
+                        assert controller.run_state.status is ConsoleRunStatus.IDLE
+                    # Deliver a standalone control refresh while the transcript
+                    # still shows the streaming row from the previous poll.
+                    console._run_coalesced_control_bar_sync()
                     obsolete.set()
                     return False
                 return await prepare(projection)
@@ -763,6 +775,21 @@ async def test_run_poll_settles_streaming_header_before_ready_composer(monkeypat
             # The coalesced replay reads the now-current projection.
             await until(lambda: bool(ready_headers))
             assert ready_headers[0] == "Assistant"
+
+            # A separate video run shares the Stop control. Its completion
+            # may refresh the controls directly after the native row settled.
+            await until(lambda: not console._console_sync_in_progress)
+            await _fresh_display(console)
+            videos = console._video._console_videogen_inflight_sessions()
+            videos.add(session_id)
+            assert console._sync_console_control_bar()
+            assert composer.run_active
+            store.append_message(
+                session_id, role=ConsoleMessageRole.SYSTEM, content="Video finished."
+            )
+            videos.remove(session_id)
+            assert console._sync_console_control_bar()
+            assert not composer.run_active
 
 
 def test_a_stopping_poll_hands_a_request_it_was_left_to_the_running_sync():

@@ -15,9 +15,11 @@ import httpx
 from loguru import logger
 from textual import on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.events import Resize
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static, TextArea
 
 from ...Library.library_ingest_jobs import IngestJobState
 from ...DB.ChaChaNotes_DB import CharactersRAGDBError
@@ -75,7 +77,13 @@ from ..Research_Workspace_Modules import (
     ResearchNoteSwitchRecoveryModal,
 )
 from ..Research_Workspace_Modules.pane_handle import ResearchSidePane
-from ...Widgets.confirmation_dialog import ConfirmationDialog
+from ..Research_Workspace_Modules.workspace_menu import ResearchWorkspaceMenu
+from ..Research_Workspace_Modules.workspace_search import ResearchWorkspaceSearch, ResearchWorkspaceSearchModal
+from ...Widgets.confirmation_dialog import (
+    ConfirmationDialog,
+    await_quit_prompt,
+    confirm_quit_discarding_edits,
+)
 from ...Third_Party.textual_fspicker import FileSave
 from ...Utils.path_validation import validate_path_simple
 
@@ -87,7 +95,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
     """Sources, Grounded Chat, and Studio shell with in-place responsive layout."""
 
     CSS_PATH = None
-    BINDINGS = []
+    BINDINGS = [Binding("slash", "search_workspaces", "Search workspaces", show=False)]
 
     def __init__(
         self,
@@ -98,6 +106,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         operation_store: Any | None = None,
         association_scheduler: Any | None = None,
         paste_staging_store: Any | None = None,
+        copy_workspace: Any | None = None,
         operation_id_factory: Callable[[], str] | None = None,
         now_factory: Callable[[], str] | None = None,
         **kwargs: Any,
@@ -108,6 +117,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         self.operation_store = operation_store
         self.association_scheduler = association_scheduler
         self.paste_staging_store = paste_staging_store
+        self.copy_workspace = copy_workspace
         self._operation_id_factory = operation_id_factory or (
             lambda: f"research-source-operation-{uuid4().hex}"
         )
@@ -138,12 +148,14 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         self._overlay_save_requested = False
         self._overlay_save_running = False
         self._overlay_committed_revisions: dict[QualifiedWorkspaceRef, int] = {}
+        self._overlay_committed_layouts: dict[QualifiedWorkspaceRef, tuple] = {}
         self._overlay_conflict_open = False
         self._overlay_fork_draft: tuple[object, ...] | None = None
         self._quick_note_query = ""
         self._quick_note_offset = 0
         self._quick_note_lock = asyncio.Lock()
         self._quick_note_switch_running = False
+        self._workspace_action_open = False
 
     def save_state(self) -> dict[str, object]:
         """Save Phase-1 authority, workspace intent, and responsive view state."""
@@ -226,6 +238,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
     def compose_content(self) -> ComposeResult:
         with Vertical(id="research-workspace-shell"):
             yield ResearchHeaderRegion(id="research-workspace-header")
+            yield ResearchWorkspaceSearch(self.controller, id="research-inline-search")
             yield ResearchPaneModeStrip(id="research-pane-mode-strip")
             with Horizontal(id="research-workspace-grid"):
                 yield ResearchSourcesRegion(
@@ -233,10 +246,15 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 )
                 yield ResearchPaneHandle("sources", id="research-sources-handle")
                 yield ResearchChatRegion(
-                    id="research-chat-pane", classes="research-workspace-pane"
+                    controller=self.controller,
+                    overlay_store=self.overlay_store,
+                    id="research-chat-pane",
+                    classes="research-workspace-pane",
                 )
                 yield ResearchPaneHandle("studio", id="research-studio-handle")
                 yield ResearchStudioRegion(
+                    controller=self.controller,
+                    overlay_store=self.overlay_store,
                     id="research-studio-pane", classes="research-workspace-pane"
                 )
             yield Static(
@@ -247,15 +265,77 @@ class ResearchWorkspaceScreen(BaseAppScreen):
 
     def on_mount(self) -> None:
         """Derive initial layout after every compose-once child is mounted."""
+        from ..Research_Workspace_Modules.deep_research_actions import start_research_return
+
         self._apply_pane_layout(max(1, self.size.width))
         self.query_one(
             "#research-workspace-header", ResearchHeaderRegion
         ).sync_data_source(self.controller.selected_data_source)
-        self._start_catalog_refresh()
+        if not start_research_return(self):
+            self._start_catalog_refresh()
 
     def on_resize(self, event: Resize) -> None:
         """Patch effective visibility and focus from the pure width reducer."""
         self._apply_pane_layout(max(1, event.size.width), relocate_hidden_focus=True)
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action == "search_workspaces":
+            return not self._workspace_action_open and not isinstance(self.focused, (Input, TextArea))
+        return super().check_action(action, parameters)
+
+    def action_search_workspaces(self) -> None:
+        search = self.query_one("#research-inline-search", ResearchWorkspaceSearch)
+        if search.display:
+            search.focus_search()
+        else:
+            self.run_worker(self._search_workspaces_in_modal(), group="research-global-search", exclusive=True, exit_on_error=False)
+
+    async def _search_workspaces_in_modal(self) -> None:
+        result = await self.app.push_screen_wait(ResearchWorkspaceSearchModal(self.controller))
+        if result is not None:
+            await self._open_workspace_search_result(result)
+
+    @on(ResearchWorkspaceSearch.ResultChosen)
+    def open_workspace_search_result(self, message: ResearchWorkspaceSearch.ResultChosen) -> None:
+        message.stop()
+        self.run_worker(self._open_workspace_search_result(message), group="research-global-search", exclusive=True, exit_on_error=False)
+
+    async def _open_workspace_search_result(self, message: ResearchWorkspaceSearch.ResultChosen) -> None:
+        hit = message.hit
+        if (
+            not self.is_attached or self.controller.context_revision != message.context_revision
+            or self.controller.selected_data_source is not hit.workspace.data_source
+        ):
+            return
+        studio = self.query_one(ResearchStudioRegion) if hit.kind in {"note", "output"} else None
+        if hit.workspace != self.controller.selected_ref:
+            state = await self.controller.refresh_workspace_catalog()
+            if not self.is_attached or not self.controller.is_current_catalog_state(state):
+                return
+            if all(row.ref != hit.workspace for row in state.workspaces):
+                self.notify("This workspace is unavailable. Search again to refresh the results.", severity="warning")
+                return
+            await self._apply_catalog_state(state, preferred_ref=hit.workspace)
+        if not self.is_attached or self.controller.selected_ref != hit.workspace:
+            return
+        capture = self.controller.capture_request()
+        await self.remember_workspace_visit(hit.workspace)
+        if not self.is_attached or not self.controller.is_current_request(capture):
+            return
+        if hit.kind == "source":
+            self.select_pane_mode(ResearchPaneModeStrip.Selected("sources"))
+            self._source_page_offset = hit.owner_offset
+            await self._refresh_source_workbench()
+            if self.is_attached and self.controller.is_current_request(capture):
+                await self._show_source_inspector(hit.item_id, load_preview=False)
+        elif hit.kind == "note" and studio is not None:
+            self.select_pane_mode(ResearchPaneModeStrip.Selected("studio"))
+            await self._load_quick_note_after_flush(hit.workspace, hit.item_id)
+            if studio.is_attached and self.controller.is_current_request(capture):
+                studio.jump_to_quick_notes()
+        elif hit.kind == "output" and hit.output is not None and studio is not None:
+            self.select_pane_mode(ResearchPaneModeStrip.Selected("studio"))
+            await studio.open_output_reference(hit.output)
 
     @on(ResearchPaneHandle.Toggled)
     def toggle_side_pane(self, message: ResearchPaneHandle.Toggled) -> None:
@@ -304,10 +384,15 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         for button in buttons:
             button.disabled = True
         try:
+            chat = self.query_one(ResearchChatRegion)
+            studio = self.query_one(ResearchStudioRegion)
+            if not studio.allow_leave() or not await chat.flush_pending_chat():
+                return
             async with self._quick_note_lock:
                 if not await self._flush_quick_note_before_owner_switch():
                     return
-                self._apply_data_source_switch(data_source)
+                if studio.allow_leave() and await chat.flush_pending_chat():
+                    self._apply_data_source_switch(data_source)
         finally:
             self._quick_note_switch_running = False
             for button in buttons:
@@ -317,6 +402,8 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         """Apply one already-authorized switch without reading another owner."""
 
         self.controller.select_data_source(data_source)
+        self.query_one(ResearchChatRegion).set_workspace(None)
+        self.query_one(ResearchStudioRegion).set_workspace(None)
         self._source_page_offset = 0
         self._quick_note_offset = 0
         self._quick_note_query = ""
@@ -329,6 +416,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         self._apply_pane_layout(max(1, self.size.width), relocate_hidden_focus=True)
         header = self.query_one("#research-workspace-header", ResearchHeaderRegion)
         header.sync_data_source(data_source)
+        self.query_one(ResearchWorkspaceMenu).sync_choices((), None)
         self.query_one("#research-workspace-selection", Static).update(
             f"Loading {data_source.value.title()} research workspaces..."
         )
@@ -396,6 +484,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             grid.set_class(layout.mode == mode, f"layout-{mode}")
         shell = self.query_one("#research-workspace-shell")
         shell.set_class(height_compact, "height-compact")
+        self.query_one("#research-inline-search", ResearchWorkspaceSearch).display = layout.mode == "wide"
 
         for pane in ("sources", "chat", "studio"):
             self.query_one(f"#research-{pane}-pane").display = (
@@ -471,16 +560,129 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             exit_on_error=False,
         )
 
-    async def _refresh_workspace_catalog(self) -> None:
+    async def _refresh_workspace_catalog(
+        self,
+        preferred_ref: QualifiedWorkspaceRef | None = None,
+    ) -> None:
         state = await self.controller.refresh_workspace_catalog()
         if not self.controller.is_current_catalog_state(state):
             return
-        await self._apply_catalog_state(state)
+        await self._apply_catalog_state(state, preferred_ref=preferred_ref)
 
-    async def _apply_catalog_state(self, state: ResearchWorkspaceCatalogState) -> None:
-        if not self.controller.is_current_catalog_state(state):
+    @on(ResearchWorkspaceMenu.WorkspaceChosen)
+    def choose_research_workspace(
+        self, message: ResearchWorkspaceMenu.WorkspaceChosen
+    ) -> None:
+        state = self.controller.catalog_state
+        current = self.controller.selected_ref
+        if (
+            not state
+            or message.ref == current
+            or not any(row.ref == message.ref for row in state.workspaces)
+        ):
             return
-        intended_ref = self.controller.selected_ref
+        self.query_one(ResearchWorkspaceMenu).sync_choices(state.workspaces, current)
+        if self._quick_note_switch_running:
+            return
+        self._quick_note_switch_running = True
+
+        async def switch() -> None:
+            try:
+                if await self.query_one(ResearchChatRegion).flush_pending_chat():
+                    await self._refresh_workspace_catalog(message.ref)
+                    await self.remember_workspace_visit(message.ref)
+            finally:
+                self._quick_note_switch_running = False
+
+        self.run_worker(
+            switch(), group="research-quick-note-owner-switch", exit_on_error=False
+        )
+
+    @on(ResearchWorkspaceMenu.ActionsRequested)
+    def open_workspace_actions(self) -> None:
+        if self._workspace_action_open:
+            return
+        self._workspace_action_open = True
+        self.query_one("#research-workspace-actions", Button).disabled = True
+        self.run_worker(
+            self._show_workspace_actions(), group="research-workspace-actions", exit_on_error=False,
+        )
+
+    async def _show_workspace_actions(self) -> None:
+        from ..Research_Workspace_Modules.workspace_transfer_actions import show_workspace_actions
+
+        button = self.query_one("#research-workspace-actions", Button)
+        try:
+            capture = self.controller.capture_request() if self.controller.selected_ref else None
+            await show_workspace_actions(self, capture)
+        finally:
+            self._workspace_action_open = False
+            if button.is_attached:
+                button.disabled = False
+
+    @on(ResearchWorkspaceMenu.HelpRequested)
+    def action_show_workbench_help(self) -> None:
+        if self._workspace_action_open:
+            return
+        bindings = self.active_bindings
+        self._workspace_action_open = True
+        self.query_one("#research-workspace-help", Button).disabled = True
+        self.run_worker(self._show_research_help(bindings), group="research-workspace-help", exit_on_error=False)
+
+    async def _show_research_help(self, bindings) -> None:
+        from ..Research_Workspace_Modules.help_menu import show_research_help
+
+        button = self.query_one("#research-workspace-help", Button)
+        try:
+            await show_research_help(self, bindings)
+        finally:
+            self._workspace_action_open = False
+            if button.is_attached:
+                button.disabled = False
+
+    async def _open_research_sharing(self, ref: QualifiedWorkspaceRef, *, draft=None) -> None:
+        from ...Sharing_Interop.clone_receipts import SharingCloneReceipts
+        from ...Sharing_Interop.server_sharing_service import ServerSharingService
+        from ...Sharing_Interop.sharing_scope_service import SharingScopeService
+        from ..Research_Workspace_Modules.sharing_dialog import ResearchSharingDialog
+
+        adapter = self.controller.port_for_data_source(WorkspaceDataSource.SERVER)
+        if adapter is None:
+            raise ValueError("Configure a Server profile to use workspace sharing.")
+        client = adapter.copy_client(ref)
+        capture = self.controller.capture_request()
+
+        def current():
+            return (
+                self.is_mounted and self.controller.is_current_request(capture)
+                and adapter.copy_client(ref) is client
+            )
+
+        policy = self.app_instance.service_policy_enforcer
+        scope = SharingScopeService(
+            server_service=ServerSharingService(client, policy_enforcer=policy),
+            policy_enforcer=policy,
+        )
+        receipts = (
+            SharingCloneReceipts(self.overlay_store.path.parent, ref.server_profile_id, ref.principal_id)
+            if self.overlay_store is not None else None
+        )
+        await self.app.push_screen_wait(
+            ResearchSharingDialog(
+                ref, scope, current=current, draft=draft, server_base_url=client.base_url,
+                clone_receipts=receipts,
+            )
+        )
+
+    async def _apply_catalog_state(
+        self,
+        state: ResearchWorkspaceCatalogState,
+        *,
+        preferred_ref: QualifiedWorkspaceRef | None = None,
+    ) -> None:
+        if not self.is_attached or not self.controller.is_current_catalog_state(state):
+            return
+        intended_ref = preferred_ref or self.controller.selected_ref
         target_ref = None
         if state.recovery is None and state.workspaces:
             target_ref = next(
@@ -492,52 +694,68 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 state.workspaces[0].ref,
             )
         section = self.query_one(ResearchQuickNotesSection)
+        chat = self.query_one(ResearchChatRegion)
+        studio = self.query_one(ResearchStudioRegion)
+        header = self.query_one("#research-workspace-header", ResearchHeaderRegion)
+        selection = self.query_one("#research-workspace-selection", Static)
+        menu = self.query_one(ResearchWorkspaceMenu)
+        status = self.query_one("#research-workspace-status", Static)
+        sources = self.query_one(ResearchSourcesRegion)
+        if target_ref != studio.ref and not studio.allow_leave():
+            return
+        if target_ref != chat.ref and not await chat.flush_pending_chat():
+            return
         if target_ref != section.editor_ref:
             async with self._quick_note_lock:
                 if not await self._flush_quick_note_before_owner_switch():
                     return
             if not self.controller.is_current_catalog_state(state):
                 return
-        header = self.query_one("#research-workspace-header", ResearchHeaderRegion)
+            if target_ref != chat.ref and not await chat.flush_pending_chat():
+                return
+        if target_ref != studio.ref and not studio.allow_leave():
+            return
+        if not self.is_attached or not self.controller.is_current_catalog_state(state):
+            return
         header.sync_catalog_state(state)
-        selection = self.query_one("#research-workspace-selection", Static)
-        status = self.query_one("#research-workspace-status", Static)
+        if target_ref is None or target_ref != self._overlay_ref:
+            header.sync_banner(None)
+        menu.sync_choices(state.workspaces, target_ref)
         if state.recovery is not None:
+            chat.set_workspace(None)
+            studio.set_workspace(None)
             selection.update(
                 f"{state.data_source.value.title()} workspace catalog unavailable."
             )
             status.update(
                 f"Foundation ready · {state.data_source.value.title()} selected · "
-                "Recovery required · No operation active"
+                "Recovery required"
             )
             self._set_overlay_ref(None)
-            self.query_one(
-                "#research-sources-pane", ResearchSourcesRegion
-            ).clear_workspace(
+            sources.clear_workspace(
                 authority=state.data_source.value.title(),
                 reason=state.recovery.user_message,
             )
-            notes = self.query_one(ResearchQuickNotesSection)
-            notes.sync_workspace(None)
-            notes.show_recovery(state.recovery.user_message)
+            section.sync_workspace(None)
+            section.show_recovery(state.recovery.user_message)
             return
         if not state.workspaces:
+            self.controller.clear_workspace_selection()
+            chat.set_workspace(None)
+            studio.set_workspace(None)
             selection.update(
                 f"No {state.data_source.value.title()} research workspaces."
             )
             status.update(
                 f"Foundation ready · {state.data_source.value.title()} catalog ready · "
-                "0 workspaces · Foundation only"
+                "0 workspaces"
             )
             self._set_overlay_ref(None)
-            self.query_one(
-                "#research-sources-pane", ResearchSourcesRegion
-            ).clear_workspace(
+            sources.clear_workspace(
                 authority=state.data_source.value.title(),
             )
-            notes = self.query_one(ResearchQuickNotesSection)
-            notes.sync_workspace(None)
-            notes.show_recovery("Create a Research workspace to use Quick Notes.")
+            section.sync_workspace(None)
+            section.show_recovery("Create a Research workspace to use Quick Notes.")
             return
 
         workspace = next(
@@ -549,6 +767,8 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             state.workspaces[0],
         )
         self.controller.select_workspace(workspace.ref)
+        chat.set_workspace(workspace.ref)
+        studio.set_workspace(workspace.ref)
         self._source_page_offset = 0
         self._quick_note_offset = 0
         self._quick_note_query = ""
@@ -559,7 +779,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         )
         status.update(
             f"Foundation ready · {state.data_source.value.title()} catalog ready · "
-            f"{len(state.workspaces)} workspace(s) · Foundation only"
+            f"{len(state.workspaces)} workspace(s)"
         )
         if self._pane_preferences_ref != workspace.ref:
             self.pane_preferences = ResearchPanePreferences()
@@ -569,7 +789,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         overlay_generation = self._overlay_generation
         overlay_capture = self.controller.capture_request()
         self._set_overlay_ref(workspace.ref)
-        self.query_one(ResearchQuickNotesSection).sync_workspace(workspace.ref)
+        section.sync_workspace(workspace.ref)
         self._start_sources_refresh()
         self._start_quick_notes_refresh()
         if self.overlay_store is None:
@@ -592,12 +812,32 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         ):
             return
         self._overlay_revision = overlay.revision
+        header.sync_banner(overlay.workspace_presentation.banner)
+        self._overlay_committed_layouts[workspace.ref] = (
+            overlay.preferences,
+            overlay.source_folders,
+            overlay.source_annotations,
+        )
         self.pane_preferences = overlay.preferences
         self._source_folders = overlay.source_folders
         self._source_annotations = overlay.source_annotations
         self._pane_preferences_ref = workspace.ref
         self._apply_pane_layout(max(1, self.size.width), relocate_hidden_focus=True)
         self._start_sources_refresh()
+
+    async def remember_workspace_visit(self, ref: QualifiedWorkspaceRef) -> None:
+        """Record an explicit workspace visit in the private device overlay."""
+        if self.overlay_store is None or self.controller.selected_ref != ref:
+            return
+        try:
+            await asyncio.to_thread(
+                self.overlay_store.set_workspace_presentation,
+                ref,
+                last_opened_at=self._now_factory(),
+            )
+        except (OSError, ValueError, OverlayConflictError):
+            if self.is_mounted and self.controller.selected_ref == ref:
+                self.notify("Recent workspace preference could not be saved.", severity="warning")
 
     def _start_quick_notes_refresh(
         self, *, expected_ref: QualifiedWorkspaceRef | None = None
@@ -689,7 +929,9 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             else "Choose a note and Load, or create a new one."
         )
 
-    async def _flush_quick_note_before_owner_switch(self) -> bool:
+    async def _flush_quick_note_before_owner_switch(
+        self, *, quitting: bool = False
+    ) -> bool:
         """Save one non-empty dirty editor to its exact captured owner."""
 
         section = self.query_one(ResearchQuickNotesSection)
@@ -709,9 +951,11 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 raise
             except Exception as exc:
                 logger.warning(
-                    "Research Quick Note owner-switch flush failed: {}",
+                    "Research Quick Note flush failed: {}",
                     type(exc).__name__,
                 )
+                if quitting:
+                    return False
                 action = await self._wait_for_quick_note_switch_resolution()
                 if action == "retry":
                     continue
@@ -722,20 +966,60 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 return False
             else:
                 if section.editor_ref == saved.ref == self.controller.selected_ref:
-                    section.sync_note(saved)
-                return True
+                    preserve_draft = False
+                    if quitting:
+                        try:
+                            preserve_draft = section.capture_save_request() != (ref, request)
+                        except (TypeError, ValueError):
+                            preserve_draft = True
+                    section.sync_note(saved, preserve_draft=preserve_draft)
+                return not quitting or not section.has_nonempty_dirty_draft
 
-    async def flush_pending_work(self) -> bool:
-        """Participate in the app's awaited, fail-closed navigation protocol."""
+    async def flush_pending_work(self, *, quitting: bool = False) -> bool:
+        """Flush before navigation or hand recovery over to the quit prompt."""
 
+        chat = self.query_one(ResearchChatRegion)
+        studio = self.query_one(ResearchStudioRegion)
+        if not studio.allow_leave():
+            return False
+        if not quitting and not await chat.flush_pending_chat():
+            return False
         async with self._quick_note_lock:
-            return await self._flush_quick_note_before_owner_switch()
+            if not await self._flush_quick_note_before_owner_switch(quitting=quitting):
+                return False
+            return studio.allow_leave() and (quitting or await chat.flush_pending_chat())
+
+    async def confirm_quit(self) -> bool:
+        """Persist the Quick Note draft or ask before discarding it."""
+        if not self.query_one(ResearchStudioRegion).allow_leave():
+            return False
+        chat = self.query_one(ResearchChatRegion)
+        if not await chat.flush_pending_chat():
+            if chat.is_busy:
+                return False
+            if not await confirm_quit_discarding_edits(
+                self, "The Research Chat draft could not be saved."
+            ):
+                return False
+        if self._quick_note_lock.locked():
+            # A note action can be waiting for an answer in another modal.
+            message = "A Quick Note action is still pending. Quitting may lose changes."
+        elif await self.flush_pending_work(quitting=True):
+            return True
+        else:
+            message = "The Quick Note has unsaved changes. Keep editing to retry the save."
+        return await confirm_quit_discarding_edits(self, message)
 
     async def _wait_for_quick_note_switch_resolution(self) -> str | None:
         """Await the recovery modal through a worker, including app navigation."""
 
         worker = self.run_worker(
-            self.app.push_screen_wait(ResearchNoteSwitchRecoveryModal()),
+            await_quit_prompt(
+                self.app,
+                ResearchNoteSwitchRecoveryModal(),
+                no_answer=None,
+                vanished_notice=None,
+            ),
             group="research-quick-note-switch-recovery",
             exclusive=False,
             exit_on_error=False,
@@ -1127,50 +1411,72 @@ class ResearchWorkspaceScreen(BaseAppScreen):
     def _show_source_action_recovery(self, message: str) -> None:
         """Publish one sanitized recovery message in the pane and notification log."""
 
-        if self.is_mounted:
+        if self.is_attached and self.app.is_running:
             self.query_one("#research-source-recovery", Static).update(message)
             self.notify(message, severity="warning")
 
     async def _refresh_source_workbench(self) -> None:
+        if not self.is_attached or not self.app.is_running:
+            return
+        if self.controller.selected_ref is None:
+            return
         capture = self.controller.capture_request()
-        region = self.query_one("#research-sources-pane", ResearchSourcesRegion)
-        region.query_one("#research-source-recovery", Static).update(
-            f"Loading {capture.ref.data_source.value.title()} sources..."
-        )
+        try:
+            region = self.query_one("#research-sources-pane", ResearchSourcesRegion)
+            recovery = region.query_one("#research-source-recovery", Static)
+            chat = self.query_one(ResearchChatRegion)
+            studio = self.query_one(ResearchStudioRegion)
+        except NoMatches:
+            return
+
+        def current() -> bool:
+            return (
+                region.is_attached
+                and recovery.is_attached
+                and self.app.is_running
+                and self in self.app.screen_stack
+                and self.controller.is_current_request(capture)
+            )
+
+        if not current():
+            return
+        recovery.update(f"Loading {capture.ref.data_source.value.title()} sources...")
         try:
             operations = await self._recent_operations(capture.ref)
         except (OSError, ValueError, RuntimeError):
             operations = ()
-            if self.controller.is_current_request(capture):
+            if current():
                 self.notify(
                     "Recent source receipts could not be loaded; owner sources can still refresh.",
                     severity="warning",
                 )
-        if not self.controller.is_current_request(capture):
+        if not current():
             return
         region.sync_receipts(operations, incomplete=len(operations) == 20)
         try:
             capabilities_current = await self.controller.refresh_selected_capabilities()
+            if not capabilities_current or not current():
+                return
             sources_current = await self.controller.refresh_selected_sources(
                 limit=25, offset=self._source_page_offset
             )
             page = self.controller.visible_source_page
-            if not capabilities_current or not sources_current or page is None:
+            if not sources_current or page is None or not current():
                 return
             readiness_current = await self.controller.refresh_selected_readiness(
                 source_ids=tuple(source.source_id for source in page.items)
             )
-            if not readiness_current or not self.controller.is_current_request(capture):
+            if not readiness_current:
                 return
         except CapabilityUnavailableError as exc:
-            if self.controller.is_current_request(capture):
+            if current():
                 region.clear_source_projection(
                     authority=capture.ref.data_source.value.title(),
                     reason=f"{exc.capability.user_message} {exc.capability.recovery_action}".strip(),
                 )
             return
         except Exception:
-            if self.controller.is_current_request(capture):
+            if current():
                 region.clear_source_projection(
                     authority=capture.ref.data_source.value.title(),
                     reason=(
@@ -1179,7 +1485,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                     ),
                 )
             return
-        if not self.controller.is_current_request(capture):
+        if not current():
             return
         region.sync_workspace(
             page,
@@ -1190,6 +1496,303 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             focused_folder_id=self._focused_folder_id,
             receipts_incomplete=len(operations) == 20,
         )
+        chat.sync_sources(page, self.controller.visible_readiness)
+        studio.refresh_studio()
+
+    @on(ResearchStudioRegion.OwnerAction)
+    def studio_output_action(self, message: ResearchStudioRegion.OwnerAction) -> None:
+        if message.row.output.workspace != self.controller.selected_ref:
+            return
+        self.run_worker(
+            self._perform_studio_owner_action(message),
+            group="research-studio-owner-action",
+            exit_on_error=False,
+        )
+
+    @on(ResearchStudioRegion.LaunchResearch)
+    def launch_deep_research(self, message: ResearchStudioRegion.LaunchResearch) -> None:
+        from ..Research_Workspace_Modules.deep_research_actions import show_research_launch
+
+        if self.controller.selected_ref is None or self._workspace_action_open:
+            return
+        self._workspace_action_open = True
+
+        async def launch() -> None:
+            try:
+                await show_research_launch(self, message.row)
+            finally:
+                self._workspace_action_open = False
+
+        self.run_worker(launch(), group="research-launch", exit_on_error=False)
+
+    async def _perform_studio_owner_action(
+        self, message: ResearchStudioRegion.OwnerAction
+    ) -> None:
+        from ..Research_Workspace_Modules.studio_history import history_key
+
+        studio = self.query_one(ResearchStudioRegion)
+        action, row = message.action, message.row
+        output = row.output
+        ref = output.workspace
+        port = self.controller.port_for_data_source(ref.data_source)
+        current = lambda: self.is_mounted and self.controller.selected_ref == ref
+        if not current() or port is None:
+            return
+        try:
+            if action == "reopen":
+                if await self.flush_pending_work() and current():
+                    self._open_studio_owner(output)
+            elif action == "discuss":
+                chat = self.query_one(ResearchChatRegion)
+                await chat.add_output_to_draft(ref, row.title, row.content)
+                if current():
+                    self.active_pane = "chat"
+                    self._apply_pane_layout(
+                        max(1, self.size.width), relocate_hidden_focus=True
+                    )
+                    chat.query_one("#research-chat-composer", TextArea).focus()
+            elif action in {"note", "append"}:
+                async with self._quick_note_lock:
+                    if await self._flush_quick_note_before_owner_switch() and current():
+                        section = self.query_one(ResearchQuickNotesSection)
+                        if action == "note":
+                            section.new_draft()
+                            section.query_one(
+                                "#research-quick-note-title", Input
+                            ).value = row.title
+                        elif section.capture_save_request()[1].note_id is None:
+                            studio._status(
+                                "Open an existing Quick Note before appending to it."
+                            )
+                            return
+                        editor = section.query_one(
+                            "#research-quick-note-body", TextArea
+                        )
+                        separator = "\n\n" if editor.text else ""
+                        editor.load_text(f"{editor.text}{separator}{row.content}")
+                        _, draft = section.capture_save_request()
+                        section.set_source_provenance(
+                            (
+                                *draft.source_ids,
+                                *(
+                                    source.source_id
+                                    for source in output.source_snapshot
+                                ),
+                            )
+                        )
+                        await self._save_quick_note(*section.capture_save_request())
+            elif action in {"delete", "unlink"}:
+                delete = action == "delete"
+                confirm = ConfirmationDialog(
+                    title="Delete Studio output?"
+                    if delete
+                    else "Remove missing output link?",
+                    message=row.title,
+                    confirm_label="Delete" if delete else "Remove",
+                    cancel_label="Cancel",
+                )
+                if await self.app.push_screen_wait(confirm) is True and current():
+                    if delete:
+                        await port.delete_output(output)
+                    else:
+                        await port.unlink_output(output)
+                    if current():
+                        studio.forget_output(output)
+                        studio._status(
+                            "Output deleted."
+                            if delete
+                            else "Missing output link removed."
+                        )
+                        studio.refresh_studio()
+            elif action in {
+                "export", "export-csv", "export-json", "export-xlsx", "export-revealjs", "export-markdown", "export-audio",
+            }:
+                format = row.record["format"] if action == "export-audio" else {
+                    "export": "markdown",
+                }.get(action, action.removeprefix("export-"))
+                suffix = {"markdown": "md", "revealjs": "zip"}.get(format, format)
+                format_label = {"markdown": "Markdown", "revealjs": "Reveal.js ZIP"}.get(format, format.upper())
+                picked = await self.app.push_screen_wait(
+                    FileSave(
+                        location=str(Path.home()),
+                        title=f"Download Studio output as {format_label}",
+                        default_file=f"{output.output_kind.value}.{suffix}",
+                    )
+                )
+                if picked is not None and current():
+                    data = await port.export_output(output, format)
+                    if current():
+                        target = validate_path_simple(picked, require_exists=False)
+                        await asyncio.to_thread(Path(target).write_bytes, data)
+                        studio._status(f"{format_label} downloaded.")
+            elif action == "edit":
+                from ..Research_Workspace_Modules.studio_dialogs import (
+                    ResearchStudioEdit,
+                )
+
+                body = await self.app.push_screen_wait(ResearchStudioEdit(row))
+                if body is not None and current():
+                    await port.edit_output(output, body)
+                    if current():
+                        studio._status("Output updated.")
+                        studio.refresh_studio(preferred=history_key(output))
+            elif action == "accept":
+                confirm = ConfirmationDialog(
+                    title="Accept the reviewed Server artifact?",
+                    message=f"Accept the displayed version of {row.title} for Server export.",
+                    confirm_label="Accept version",
+                    cancel_label="Cancel",
+                )
+                if await self.app.push_screen_wait(confirm) is True and current():
+                    await port.accept_output(output)
+                    if current():
+                        studio._status(
+                            "The Server accepted the artifact version for export."
+                        )
+                        studio.refresh_studio(preferred=history_key(output))
+        except Exception as exc:
+            if current():
+                studio._show_error(exc)
+
+    def _open_studio_owner(self, output) -> None:
+        from ...Constants import TAB_ARTIFACTS, TAB_RESEARCH_WORKSPACE
+        from ..Navigation.main_navigation import NavigateToScreen
+        from ..Navigation.pending_handoff_store import HandoffChannel
+        from ..Navigation.research_output_handoffs import (
+            output_handoff,
+            study_target_authority_current,
+        )
+        from .study_scope_models import StudyScopeContext, StudyScopeType
+
+        channel, value = output_handoff(output)
+        app = self.app_instance
+        if (
+            channel is not HandoffChannel.RESEARCH_CHATBOOK_TARGET
+            and not study_target_authority_current(app, output.workspace)
+        ):
+            recovery = (
+                "Switch Study to Local to open this saved output."
+                if output.workspace.data_source is WorkspaceDataSource.LOCAL
+                else "Open Server Study with this output's server profile and account."
+            )
+            self.notify(recovery, severity="warning")
+            return
+        if not app._stage_handoff(
+            channel, value, recovery="The saved Studio output could not be opened."
+        ):
+            return
+        if channel is HandoffChannel.RESEARCH_CHATBOOK_TARGET:
+            app.post_message(NavigateToScreen(TAB_ARTIFACTS))
+        else:
+            section = (
+                "quizzes"
+                if channel is HandoffChannel.RESEARCH_QUIZ_TARGET
+                else "flashcards"
+            )
+            scope = StudyScopeContext()
+            if output.workspace.data_source is WorkspaceDataSource.SERVER:
+                scope = StudyScopeContext(
+                    scope_type=StudyScopeType.WORKSPACE,
+                    workspace_id=output.workspace.workspace_id,
+                    return_hint=TAB_RESEARCH_WORKSPACE,
+                )
+            app.open_study_screen(scope, initial_section=section)
+
+    @on(ResearchChatRegion.OverlayUpdated)
+    def research_chat_overlay_updated(
+        self, message: ResearchChatRegion.OverlayUpdated
+    ) -> None:
+        overlay = message.overlay
+        if (
+            overlay.ref == self._overlay_ref
+            and overlay.preferences == self.pane_preferences
+            and overlay.source_folders == self._source_folders
+            and overlay.source_annotations == self._source_annotations
+        ):
+            self._overlay_revision = max(self._overlay_revision, overlay.revision)
+            self._overlay_committed_layouts[overlay.ref] = (
+                overlay.preferences,
+                overlay.source_folders,
+                overlay.source_annotations,
+            )
+            self._overlay_committed_revisions[overlay.ref] = max(
+                overlay.revision, self._overlay_committed_revisions.get(overlay.ref, 0)
+            )
+
+    @on(ResearchChatRegion.CaptureRequested)
+    def research_chat_capture(
+        self, message: ResearchChatRegion.CaptureRequested
+    ) -> None:
+        if message.ref == self.controller.selected_ref:
+            self._run_quick_note_action(
+                self._capture_research_chat_message(message),
+                group="research-quick-note-chat",
+            )
+
+    @on(ResearchChatRegion.MessageSelectionChanged)
+    def research_message_selection_changed(
+        self, message: ResearchChatRegion.MessageSelectionChanged
+    ) -> None:
+        self.query_one(ResearchQuickNotesSection).sync_message_capture(
+            message.ref, message.available
+        )
+
+    @on(Button.Pressed, "#research-quick-note-capture-message")
+    def capture_selected_chat_message(self) -> None:
+        self.query_one(ResearchChatRegion).capture()
+
+    async def _capture_research_chat_message(
+        self, message: ResearchChatRegion.CaptureRequested
+    ) -> None:
+        from ..Research_Workspace_Modules.chat_message import (
+            context_rows,
+            research_message_context,
+        )
+
+        section = self.query_one(ResearchQuickNotesSection)
+        title_field = section.query_one("#research-quick-note-title", Input)
+        body = section.query_one("#research-quick-note-body", TextArea)
+        if (
+            message.ref != section.editor_ref
+            or not await self._flush_quick_note_before_owner_switch()
+        ):
+            return
+        if not section.is_attached or message.ref != section.editor_ref:
+            return
+        row = message.row
+        title = (
+            "Research answer"
+            if (row.get("role") or row.get("sender")) == "assistant"
+            else "Research question"
+        )
+        context = research_message_context(row)
+        citations = context_rows(context.get("citations"))
+        source_associations = {
+            source.get("catalog_item_id"): source.get("source_id")
+            for source in context_rows(context.get("sources"))
+        }
+        source_ids = tuple(
+            dict.fromkeys(
+                str(source_id)
+                for citation in citations
+                if (
+                    source_id := citation.get("source_id")
+                    or source_associations.get(citation.get("media_id"))
+                )
+            )
+        )
+        self.active_pane = "studio"
+        self.pane_preferences = ResearchPanePreferences(
+            sources_open=self.pane_preferences.sources_open,
+            studio_open=True,
+            preferred_companion="studio",
+        )
+        self._apply_pane_layout(max(1, self.size.width), relocate_hidden_focus=True)
+        section.new_draft()
+        title_field.value = title
+        body.load_text(str(row.get("content") or ""))
+        section.set_message_provenance((str(row["id"]),))
+        section.set_source_provenance(source_ids)
 
     async def _recent_operations(
         self, ref: QualifiedWorkspaceRef
@@ -1671,15 +2274,39 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             self._overlay_revision,
             self._overlay_committed_revisions.get(ref, 0),
         )
-        try:
-            saved = await asyncio.to_thread(
-                store.save,
+        committed_layout = self._overlay_committed_layouts.get(
+            ref,
+            (ResearchPanePreferences(), (), ()),
+        )
+
+        def save_layout(revision: int):
+            return store.save(
                 ref,
                 preferences,
-                expected_revision=expected_revision,
+                expected_revision=revision,
                 source_folders=source_folders,
                 source_annotations=source_annotations,
             )
+
+        def save_with_chat_recovery():
+            try:
+                return save_layout(expected_revision)
+            except OverlayConflictError:
+                latest = store.load(ref)
+                if (
+                    latest is None
+                    or (
+                        latest.preferences,
+                        latest.source_folders,
+                        latest.source_annotations,
+                    )
+                    != committed_layout
+                ):
+                    raise
+                return save_layout(latest.revision)
+
+        try:
+            saved = await asyncio.to_thread(save_with_chat_recovery)
         except OverlayConflictError:
             self._open_overlay_conflict_recovery(ref)
             return
@@ -1692,6 +2319,11 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         self._overlay_committed_revisions[ref] = max(
             saved.revision,
             self._overlay_committed_revisions.get(ref, 0),
+        )
+        self._overlay_committed_layouts[ref] = (
+            saved.preferences,
+            saved.source_folders,
+            saved.source_annotations,
         )
         if (
             ref == self._overlay_ref
@@ -1749,6 +2381,11 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             return
         self._overlay_revision = overlay.revision
         self._overlay_committed_revisions[ref] = overlay.revision
+        self._overlay_committed_layouts[ref] = (
+            overlay.preferences,
+            overlay.source_folders,
+            overlay.source_annotations,
+        )
         self.pane_preferences = overlay.preferences
         self._source_folders = overlay.source_folders
         self._source_annotations = overlay.source_annotations

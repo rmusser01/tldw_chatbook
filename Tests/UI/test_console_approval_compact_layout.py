@@ -19,7 +19,7 @@ from Tests.UI.app_factory import (
     drain_active_service_patches,
     drain_created_dirs,
 )
-from Tests.UI.pump_probe import console_attach_ended
+from Tests.UI.pump_probe import console_attach_ended, until
 from Tests.UI.test_console_mcp_approval import _wait_for_production_console_ready
 from Tests.UI.test_console_native_chat_flow import (
     _ASYNC_SETTLE_TIMEOUT,
@@ -184,14 +184,31 @@ async def _verify_every_approval_action_is_painted_and_focusable(
             console._set_console_rail_preference(
                 left_open=False, right_open=inspect_open
             )
+            round_id = f"geometry-{size[0]}-{size[1]}-{inspect_open}-{theme}-{captured_variant}"
             _pending_card(
                 console,
-                f"geometry-{size[0]}-{size[1]}-{inspect_open}-{theme}-{captured_variant}",
+                round_id,
                 captured=captured,
                 captured_variant=captured_variant,
             )
-            await pilot.pause(0.3)
+            await pilot.pause()
             card = console.query_one(ChatApprovalCard)
+            summary_widget = card.query_one("#approval-request-summary")
+            # The round can be mounted before its first layout is published.
+            assert await until(
+                lambda: (
+                    card.display
+                    and card._batch_round_id == round_id
+                    and summary_widget.region.width > 0
+                    and summary_widget.region.height > 0
+                ),
+                _ASYNC_SETTLE_TIMEOUT,
+            ), (
+                round_id,
+                card._batch_round_id,
+                card.content_region,
+                summary_widget.region,
+            )
             select = card.query_one(".approval-row-decision", Select)
             if captured:
                 header_widget = card.query_one(".approval-row-header", Static)
@@ -237,10 +254,7 @@ async def _verify_every_approval_action_is_painted_and_focusable(
                 )
                 assert card._presentation_revision == 7
             assert not select.display
-            assert (
-                card.query_one("#approval-request-summary").region
-                in card.content_region
-            )
+            assert summary_widget.region in card.content_region
             buttons = [button for button in card.query(Button) if button.display]
             assert len(buttons) == (4 if captured else 3)
             for button in buttons:

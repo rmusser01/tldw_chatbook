@@ -1,0 +1,99 @@
+import pytest
+from textual.widgets import Button, Static
+
+from Tests.UI.library_quit_guard_support import _settings_without_splash, _until
+from Tests.UI.test_research_chat_region import build_research_app, open_chat
+from Tests.app_module_patches import patch_app_global
+
+pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
+
+
+async def test_research_help_opens_real_bindings_and_qualified_status_at_narrow_width(
+    tmp_path, monkeypatch
+):
+    app, _, _ = build_research_app(tmp_path, monkeypatch)
+    with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
+        async with app.run_test(size=(60, 20)) as pilot:
+            screen, _ = await open_chat(app, pilot)
+            help_button = screen.query_one("#research-workspace-help", Button)
+            help_button.focus()
+            await pilot.press("f1")
+            await _until(
+                pilot,
+                lambda: bool(list(app.screen.query("#research-help-keyboard"))),
+                "Help commands",
+            )
+            assert not list(app.screen.query("#research-help-telemetry"))
+            app.screen.query_one("#research-help-keyboard", Button).press()
+            await _until(
+                pilot,
+                lambda: bool(list(app.screen.query("#research-help-detail-body"))),
+                "keyboard help",
+            )
+            shortcuts = str(
+                app.screen.query_one("#research-help-detail-body", Static).render()
+            )
+            assert (
+                "/" in shortcuts
+                and "Search workspaces" in shortcuts
+                and "F1" in shortcuts
+            )
+            await pilot.press("escape")
+            await _until(pilot, lambda: app.screen is screen, "returned from help")
+            await _until(pilot, lambda: not help_button.disabled, "Help ready")
+            help_button.press()
+            await _until(
+                pilot,
+                lambda: bool(list(app.screen.query("#research-help-status"))),
+                "status in Help",
+            )
+            app.screen.query_one("#research-help-status", Button).press()
+            await _until(
+                pilot,
+                lambda: bool(list(app.screen.query("#research-help-detail-body"))),
+                "workspace status",
+            )
+            status = str(
+                app.screen.query_one("#research-help-detail-body", Static).render()
+            )
+            assert (
+                "Local" in status
+                and "Study group" in status
+                and "No active operations" in status
+            )
+
+
+@pytest.mark.parametrize("action", ["console", "agent-task"])
+async def test_help_opens_console_in_the_selected_local_workspace(tmp_path, monkeypatch, action):
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    app, _, provider = build_research_app(tmp_path, monkeypatch)
+    provider.cached_context_window = lambda settings: None
+    app.workspace_registry_service.create_workspace(workspace_id="other", name="Other")
+    app.workspace_registry_service.set_active_workspace("other")
+    created = []
+    create_native_chat = ChatScreen._create_console_chat_in_workspace
+
+    async def record_native_chat(screen, workspace_id):
+        await create_native_chat(screen, workspace_id)
+        session = screen._ensure_console_chat_store().sessions()[-1]
+        created.append(session.workspace_id)
+
+    monkeypatch.setattr(ChatScreen, "_create_console_chat_in_workspace", record_native_chat)
+    with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
+        async with app.run_test(size=(110, 32)) as pilot:
+            screen, _ = await open_chat(app, pilot)
+            assert screen.controller.selected_ref.workspace_id == "study"
+            screen.query_one("#research-workspace-help", Button).press()
+            selector = f"#research-help-{action}"
+            await _until(pilot, lambda: bool(app.screen.query(selector)), "Console owner link")
+            app.screen.query_one(selector, Button).press()
+            await _until(pilot, lambda: isinstance(app.screen, ChatScreen), "Console destination")
+            await _until(
+                pilot,
+                lambda: app.workspace_registry_service.get_workspace("study").active,
+                "Console opened the selected Workspace",
+            )
+            if action == "agent-task":
+                await _until(pilot, lambda: bool(created), "Console created an agent task", timeout=8)
+                assert created == ["study"]

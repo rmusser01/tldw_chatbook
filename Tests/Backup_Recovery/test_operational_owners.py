@@ -202,6 +202,16 @@ def seed_operational(name, source, store):
             budget={"tokens": 13},
         )
     elif name == "workspaces":
+        from tldw_chatbook.Research_Workspace.contracts import QualifiedWorkspaceRef
+        from tldw_chatbook.Research_Workspace.copy_models import (
+            CopyOwnerRef,
+            ResearchCopyConfirmation,
+            ResearchCopyItem,
+            ResearchCopyManifest,
+        )
+        from tldw_chatbook.Research_Workspace.copy_receipts import (
+            ResearchCopyReceiptStore,
+        )
         from tldw_chatbook.Workspaces.registry_service import (
             LocalWorkspaceRegistryService,
         )
@@ -214,6 +224,35 @@ def seed_operational(name, source, store):
         root.mkdir()
         (root / "untouched.txt").write_bytes(b"External authority is never used")
         service.add_folder_binding("historical-workspace", root, allow_write=True)
+        local = QualifiedWorkspaceRef("local", "historical-workspace")
+        server = QualifiedWorkspaceRef("server", "target", "server-profile", "account")
+        item = ResearchCopyItem(
+            CopyOwnerRef(local, "artifact", "report", version=2),
+            "copy_content",
+        )
+        manifest = ResearchCopyManifest(local, server, (item,), "2026-11-25T00:00:00Z")
+        ResearchCopyReceiptStore(store).create_from_manifest(
+            manifest, ResearchCopyConfirmation(manifest.manifest_hash, confirmed=True)
+        )
+        link = service.link_membership(
+            local.workspace_id, item_type="chatbook", item_id="report", role="output"
+        )
+        metadata = {
+            "research_generation": {
+                "operation_id": "saved-generation",
+                "output_kind": "report",
+                "source_snapshot": [
+                    {"source_id": "source", "catalog_item_id": "42", "source_type": "media"}
+                ],
+                "settings_fingerprint": "a" * 64,
+                "processing_route_fingerprint": "b" * 64,
+                "provider": "fixture",
+                "model": "model",
+                "status": "complete",
+            }
+        }
+        service.upsert_membership_metadata(replace(link, metadata=metadata))
+
     elif name == "subscriptions":
         store.add_subscription(
             "Inert subscription",
@@ -339,6 +378,18 @@ assert not blocked_attempts()
             adapter.relocate(
                 candidate, {"/historical/external": tmp_path / "not-created"}
             )
+    if name == "workspaces":
+        from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
+
+        assert validate_candidate(adapter, candidate, Event(), migrate=True) == ()
+        with closing(sqlite3.connect(candidate)) as connection:
+            assert connection.execute(
+                "SELECT status FROM research_copy_operations"
+            ).fetchall() == [("confirmed",)]
+            assert connection.execute(
+                "SELECT json_extract(metadata_json, '$.research_generation.operation_id') "
+                "FROM workspace_memberships WHERE role='output'"
+            ).fetchall() == [("saved-generation",)]
     assert adapter.activation_required
     assert source.read_bytes() == before
     assert dump(candidate) == expected
@@ -1407,32 +1458,43 @@ def test_excluded_notes_device_authority_still_refuses_unsafe_entries(tmp_path, 
     assert outside.read_bytes() == b"keep"
 
 
-def test_genuine_v9_workspace_backup_migrates_archive_chronology(tmp_path, monkeypatch):
+@pytest.mark.parametrize("previous_version", (9, 10, 11))
+def test_workspace_recovery_migrations_preserve_existing_membership(
+    tmp_path, monkeypatch, previous_version
+):
     import sqlite3
     from threading import Event
 
     from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 
-    path = tmp_path / "workspaces-v9.sqlite"
+    path = tmp_path / f"workspaces-v{previous_version}.sqlite"
     with monkeypatch.context() as historical:
-        historical.setattr(WorkspaceDB, "_migrate_v9_to_v10", lambda self: None)
+        for version in range(previous_version, WorkspaceDB._CURRENT_SCHEMA_VERSION):
+            historical.setattr(
+                WorkspaceDB, f"_migrate_v{version}_to_v{version + 1}", lambda self: None
+            )
         db = WorkspaceDB(path)
         try:
-            assert db.get_schema_version() == 9
+            assert db.get_schema_version() == previous_version
             with db.transaction() as connection:
-                assert "archived_at" not in {
-                    row[1]
-                    for row in connection.execute(
-                        "PRAGMA table_info(workspace_records)"
-                    )
-                }
                 connection.execute(
                     "INSERT INTO workspace_records "
                     "(workspace_id,name,authority,sync_status,archived,created_at,updated_at,assistant_defaults_explicit_none) "
                     "VALUES ('retained','Retained','local-only','not-configured',1,?,?,1)",
                     ("2026-09-20T12:00:00+00:00", "2026-09-20T12:00:00+00:00"),
                 )
+                connection.execute(
+                    "INSERT INTO workspace_memberships "
+                    "(membership_id,workspace_id,item_type,item_id,role,transfer_policy,created_at) "
+                    "VALUES ('link','retained','chatbook','1','output','copy',?)",
+                    ("2026-09-20T12:00:00+00:00",),
+                )
+                if previous_version == 11:
+                    connection.execute(
+                        "UPDATE workspace_memberships SET metadata_json=?, updated_at=?",
+                        ('{"research_generation":{}}', "2026-09-20T12:00:00+00:00"),
+                    )
         finally:
             db.close()
     adapter = operational_adapter("workspaces")
@@ -1441,11 +1503,21 @@ def test_genuine_v9_workspace_backup_migrates_archive_chronology(tmp_path, monke
     with sqlite3.connect(path) as connection:
         assert connection.execute(
             "SELECT MAX(version) FROM schema_version"
-        ).fetchone() == (10,)
+        ).fetchone() == (12,)
         assert connection.execute(
             "SELECT archived,archived_at,archive_revision,assistant_defaults_explicit_none "
             "FROM workspace_records WHERE workspace_id='retained'"
         ).fetchone() == (1, None, 0, 1)
+        assert connection.execute(
+            "SELECT item_id, metadata_json, updated_at FROM workspace_memberships"
+        ).fetchall() == [
+            ("1", '{"research_generation":{}}', "2026-09-20T12:00:00+00:00")
+            if previous_version == 11
+            else ("1", None, None)
+        ]
+        assert connection.execute(
+            "SELECT COUNT(*) FROM research_copy_items"
+        ).fetchone() == (0,)
     assert adapter.validate(path) == ()
 
 
@@ -1459,8 +1531,10 @@ def test_frozen_v8_workspace_backup_keeps_existing_recovery_boundary(
 
     path = tmp_path / "workspaces-v8.sqlite"
     with monkeypatch.context() as historical:
-        historical.setattr(WorkspaceDB, "_migrate_v8_to_v9", lambda self: None)
-        historical.setattr(WorkspaceDB, "_migrate_v9_to_v10", lambda self: None)
+        for version in range(8, WorkspaceDB._CURRENT_SCHEMA_VERSION):
+            historical.setattr(
+                WorkspaceDB, f"_migrate_v{version}_to_v{version + 1}", lambda self: None
+            )
         db = WorkspaceDB(path)
         assert db.get_schema_version() == 8
         db.close()
@@ -1474,6 +1548,6 @@ def test_frozen_v8_workspace_backup_keeps_existing_recovery_boundary(
     )
     assert path.read_bytes() == before
     upgraded = WorkspaceDB(path)
-    assert upgraded.get_schema_version() == 10
+    assert upgraded.get_schema_version() == 12
     upgraded.close()
     assert adapter.validate(path) == ()

@@ -2698,54 +2698,10 @@ class TldwCli(
         return service
 
     def _create_research_workspace_screen(self, screen_class: type):
-        """Late-bind the foundation to the currently active owner services."""
+        """Late-bind Research to the currently active owner services."""
+        from .app_research_workspace import create_research_workspace_screen
 
-        from .Research_Workspace import (
-            LocalResearchWorkspaceAdapter,
-            ResearchPresentationOverlayStore,
-            ResearchWorkspaceController,
-            ServerResearchWorkspaceAdapter,
-            WorkspaceDataSource,
-        )
-
-        ports = {}
-        local_service = getattr(self, "workspace_registry_service", None)
-        media_scope_service = getattr(self, "media_reading_scope_service", None)
-        operation_store = getattr(self, "research_source_operation_store", None)
-        association_scheduler = getattr(
-            self, "research_source_association_scheduler", None
-        )
-        if local_service is not None:
-            ports[WorkspaceDataSource.LOCAL] = LocalResearchWorkspaceAdapter(
-                local_service,
-                media_scope_service=media_scope_service,
-                operation_store=operation_store,
-                association_scheduler=association_scheduler,
-                notes_scope_service=getattr(self, "notes_scope_service", None),
-                notes_user_id=getattr(self, "notes_user_id", ""),
-            )
-        server_service = getattr(self, "server_notes_workspace_service", None)
-        server_context_provider = getattr(self, "server_context_provider", None)
-        if server_service is not None and server_context_provider is not None:
-            ports[WorkspaceDataSource.SERVER] = ServerResearchWorkspaceAdapter(
-                server_service,
-                server_context_provider,
-                media_scope_service=media_scope_service,
-                operation_store=operation_store,
-                association_scheduler=association_scheduler,
-            )
-        controller = ResearchWorkspaceController(ports)
-        overlay_store = ResearchPresentationOverlayStore(
-            get_user_data_dir() / "research_workspace_overlay.json"
-        )
-        return screen_class(
-            self,
-            controller=controller,
-            overlay_store=overlay_store,
-            operation_store=operation_store,
-            association_scheduler=association_scheduler,
-            paste_staging_store=getattr(self, "research_paste_staging_store", None),
-        )
+        return create_research_workspace_screen(self, screen_class, get_user_data_dir())
 
     async def _reconcile_research_quick_notes_startup(self) -> None:
         """Resume one bounded global Local Quick Note receipt page."""
@@ -4293,7 +4249,7 @@ class TldwCli(
         # feature CSS exactly like an in-app navigation does.
         self._ensure_screen_owned_css(resolved_tab)
 
-        new_screen = screen_class(self)
+        new_screen = self._create_navigation_screen(resolved_screen_name, screen_class)
         # TASK-31520: retain the initial screen exactly like a navigated-to
         # one. Without this, a reusable initial tab (chat is the default!)
         # built here was never installed, so the first navigation away
@@ -5181,7 +5137,7 @@ class TldwCli(
         name is just a dict lookup, but there's no reason to schedule the
         redundant work. ``SCREEN_PREIMPORT_PRIORITY_ROUTE_IDS`` (chat/
         library/settings, the audit's three multi-thousand-line modules) go
-        first; the rest of the registry follows in stable sorted order.
+        first; remaining prewarm-enabled routes follow in stable sorted order.
 
         Route ids that are ALSO a key in the alias table are skipped: at real
         navigation time, ``_lookup_route()`` resolves the alias to a
@@ -5201,7 +5157,7 @@ class TldwCli(
         seen_modules: set[str] = set()
 
         def _consider(route: ScreenRoute | None) -> None:
-            if route is None or route.screen_name in shadowed_route_ids:
+            if route is None or not route.preimport or route.screen_name in shadowed_route_ids:
                 return
             if route.module_path in seen_modules:
                 return

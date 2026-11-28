@@ -115,7 +115,7 @@ async def _wait_until(condition, *, pause, timeout_seconds: float = 5.0) -> None
 
 
 def test_screen_preimport_route_order_prioritizes_and_dedupes():
-    """chat/library/settings come first; every reachable module appears once.
+    """chat/library/settings come first; each prewarmed module appears once.
 
     "Reachable" excludes alias-shadowed route ids (see
     `test_screen_preimport_route_order_excludes_alias_shadowed_routes` below)
@@ -142,11 +142,24 @@ def test_screen_preimport_route_order_prioritizes_and_dedupes():
     reachable_module_paths = {
         route.module_path
         for route in registered_screen_routes()
-        if route.screen_name not in shadowed_ids
+        if route.screen_name not in shadowed_ids and route.preimport
     }
     assert set(module_paths) == reachable_module_paths, (
-        "every reachable registered module must still be covered exactly once"
+        "every reachable prewarmed module must still be covered exactly once"
     )
+
+
+def test_research_workspace_is_deferred_from_the_speculative_pass(monkeypatch):
+    """The dedicated startup target remains available for a Research user."""
+    app = _build_test_app()
+    routes = {route.screen_name: route for route in registered_screen_routes()}
+    workspace = routes["research_workspace"]
+
+    assert workspace not in app._screen_preimport_route_order()
+    assert routes["research"] in app._screen_preimport_route_order()
+    monkeypatch.setattr(app, "_resolve_initial_shell_route", lambda: "research_workspace")
+    assert app._initial_screen_preimport_route() == workspace
+    assert workspace.load_screen_class().__name__ == "ResearchWorkspaceScreen"
 
 
 # --- AC #1: a pre-imported route's next load is effectively free -------------

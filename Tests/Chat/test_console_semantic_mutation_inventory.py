@@ -174,6 +174,9 @@ BOUNDARY_CALL_ROUTE_CLASSIFICATION: dict[str, str] = {
             "tldw_chatbook/Chatbooks/chatbook_importer.py::ChatbookImporter._import_conversations_with_database::call:db:add_message_with_semantic_sidecars",
             "tldw_chatbook/Sync_Interop/chat_sync_source.py::CharactersRAGDBChatSyncSource.append_chat_message::call:db:add_message",
             "tldw_chatbook/Research_Interop/chat_handoff.py::insert_research_completion_message::call:db:add_message",
+            "tldw_chatbook/Research_Workspace/local_chat.py::LocalResearchChat._persist_answer::call:persistence:create_message",
+            "tldw_chatbook/Research_Workspace/local_chat.py::LocalResearchChat.branch.branch::call:persistence:create_message",
+            "tldw_chatbook/Research_Workspace/local_chat.py::LocalResearchChat.edit.edit::call:persistence:update_message_content",
             "tldw_chatbook/Sync_Interop/domain_adapters/chat.py::ChatSyncAdapter.apply::call:db:append_chat_message",
             "tldw_chatbook/Sync_Interop/domain_adapters/chat.py::ChatSyncAdapter.apply::call:db:delete_chat_message",
             "tldw_chatbook/Sync_Interop/envelope_applier.py::_ContinuationValidatingChatStore.append_chat_message::call:db:append_chat_message",
@@ -189,6 +192,7 @@ BOUNDARY_CALL_ROUTE_CLASSIFICATION: dict[str, str] = {
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.delete_message_subtree::call:db:soft_delete_message_subtree",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.restore_message_subtree::call:db:restore_message_subtree",
             "tldw_chatbook/Chat/console_subtree_delete.py::write_subtree_delete::call:persistence:delete_message_subtree",
+            "tldw_chatbook/Research_Workspace/local_chat.py::LocalResearchChat.delete.delete::call:persistence:delete_message_subtree",
             # TASK-40313: a refused turn tombstones the reply row its save wrote.
             "tldw_chatbook/Chat/console_prompt_mixin_service.py::ConsolePromptMixinService._discard_refused_reply::call:persistence:delete_message_subtree",
             "tldw_chatbook/Sync_Interop/chat_sync_source.py::CharactersRAGDBChatSyncSource.delete_chat_message::call:db:soft_delete_message",
@@ -3816,7 +3820,7 @@ def test_inventory_document_exists_and_names_the_contract() -> None:
     assert "ADR-337" in inventory
     assert "Hard deletion" in inventory
     assert "Generated and dynamic SQL" in inventory
-    assert "43 live SQL sink identities and 66 boundary call" in inventory
+    assert "43 live SQL sink identities and 70 boundary call" in inventory
     all_classifications = (
         *DIRECT_SQL_ROUTE_CLASSIFICATION.values(),
         *BOUNDARY_CALL_ROUTE_CLASSIFICATION.values(),
@@ -3825,11 +3829,11 @@ def test_inventory_document_exists_and_names_the_contract() -> None:
         classification: all_classifications.count(classification)
         for classification in CLASSIFICATIONS
     } == {
-        "model-visible": 67,
-        "visibility/ownership-only": 14,
+        "model-visible": 70,
+        "visibility/ownership-only": 15,
         "presentation-only": 28,
     }
-    assert "67 model-visible, 14 visibility/ownership-only, and 28" in inventory
+    assert "70 model-visible, 15 visibility/ownership-only, and 28" in inventory
     for phrase in (
         "generation settlement",
         "Edit and regeneration replacement",

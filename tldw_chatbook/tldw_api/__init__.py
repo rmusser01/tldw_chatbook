@@ -39,6 +39,10 @@ from typing import Any
 
 __all__ = [
     "TLDWAPIClient",
+    "ResearchChatCompletionRequest",
+    "ResearchChatRagContext",
+    "ResearchChatRagSearch",
+    "ResearchChatStartup",
     "MCPUnifiedClient",
     "TLDWAPIError",
     "APIConnectionError",
@@ -82,6 +86,12 @@ __all__ = [
     "WorkspaceArtifactCreateRequest",
     "WorkspaceArtifactResponse",
     "WorkspaceArtifactUpdateRequest",
+    "WorkspaceMigrationClient",
+    "WorkspaceMigrationCreateRequest",
+    "WorkspaceMigrationChunkDeclaration",
+    "WorkspaceMigrationChunkUploadRequest",
+    "WorkspaceMigrationChunkReceiptResponse",
+    "WorkspaceMigrationResponse",
     "WorkspaceCreateRequest",
     "WorkspaceListResponse",
     "WorkspaceNoteCreateRequest",
@@ -1033,6 +1043,10 @@ __all__ = [
 # in `__all__` (and so are not covered by `from tldw_chatbook.tldw_api
 # import *`), matching the previous file's behavior exactly.
 _SUBMODULE_BY_NAME = {
+    "ResearchChatCompletionRequest": "chat_completion_schemas",
+    "ResearchChatRagContext": "chat_completion_schemas",
+    "ResearchChatRagSearch": "chat_completion_schemas",
+    "ResearchChatStartup": "chat_completion_schemas",
     "ABTestArm": "evaluations_schemas",
     "ABTestQuery": "evaluations_schemas",
     "ABTestRetrieval": "evaluations_schemas",
@@ -2312,6 +2326,12 @@ _SUBMODULE_BY_NAME = {
     "WorkspaceArtifactCreateRequest": "notes_workspace_schemas",
     "WorkspaceArtifactResponse": "notes_workspace_schemas",
     "WorkspaceArtifactUpdateRequest": "notes_workspace_schemas",
+    "WorkspaceMigrationClient": "workspace_migration_client",
+    "WorkspaceMigrationCreateRequest": "workspace_migration_schemas",
+    "WorkspaceMigrationChunkDeclaration": "workspace_migration_schemas",
+    "WorkspaceMigrationChunkUploadRequest": "workspace_migration_schemas",
+    "WorkspaceMigrationChunkReceiptResponse": "workspace_migration_schemas",
+    "WorkspaceMigrationResponse": "workspace_migration_schemas",
     "WorkspaceCreateRequest": "notes_workspace_schemas",
     "WorkspaceListResponse": "notes_workspace_schemas",
     "WorkspaceNoteCreateRequest": "notes_workspace_schemas",

@@ -59,9 +59,9 @@ owners, SharingScopeService, ResearchScopeService, private overlay, pytest.
 ADR required: no new ADR
 
 ADR path:
-`backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md`
+`backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md`
 
-Reason: ADR-078 already defines Copy-only transfer, receipt ownership,
+Reason: ADR-322 already defines Copy-only transfer, receipt ownership,
 server-only sharing, overlay exclusion, and Deep Research ownership/return.
 
 ## Task 1: Define Copy manifest, item treatment, conflict, and receipt contracts
@@ -112,11 +112,9 @@ server-only sharing, overlay exclusion, and Deep Research ownership/return.
 4. Implement `ResearchCopyPreflightBuilder.build(...)` using explicit adapter
    capabilities. It returns per-item treatment, conflict, version, size,
    redaction, unsupported reason, and recovery; it does not mutate owners.
-5. Extend `ResearchWorkspacePort` with forward-typed
-   `preflight_copy(source, destination, item_refs)`, `execute_copy(manifest,
-   confirmation)`, `get_copy_receipt(transfer_id)`, and
-   `resume_copy(transfer_id)` methods. The selected source/destination adapters
-   are captured in the manifest; neither is re-resolved from current UI state.
+5. Provide `preflight_copy`, `execute_copy`, `get_copy_receipt`, and
+   `resume_copy` through the workspace Copy coordinator. It captures both
+   authority adapters and qualifies them through the frozen manifest.
 6. Define item types initially supported by real owner adapters: media/source,
    note, textual output/Chatbook, Study deck/cards, and Quiz/questions.
    Conversations and any owner without a complete import contract are
@@ -141,49 +139,51 @@ server-only sharing, overlay exclusion, and Deep Research ownership/return.
 
 **Files:**
 
-- Create: `tldw_chatbook/DB/migrations/workspaces_v4_to_v5_copy_receipts.sql`
+- Create: `tldw_chatbook/DB/migrations/workspaces_v11_to_v12_copy_receipts.sql`
 - Modify: `tldw_chatbook/DB/Workspace_DB.py`
 - Create: `tldw_chatbook/Research_Workspace/copy_receipts.py`
-- Test: `Tests/DB/test_workspace_db_v5_migration.py`
+- Test: `Tests/DB/test_workspace_db_v12_migration.py`
 - Test: `Tests/Research_Workspace/test_copy_receipts.py`
 
-1. Add RED tests for v4 migration/fresh schema, exact qualified keys,
+1. Add RED tests for v11 migration and fresh v12 schema, exact qualified keys,
    operation/item uniqueness, optimistic revision, state transition graph,
    per-stage crash recovery, partial completion, bounded errors, and content/
    secret rejection.
-2. Add WorkspaceDB v5 tables without a foreign key to local workspace rows:
-   keep the inline migration runner and
-   `workspaces_v4_to_v5_copy_receipts.sql` aligned.
+2. Add WorkspaceDB v12 tables without a foreign key to local workspace rows.
+   Run `workspaces_v11_to_v12_copy_receipts.sql` and stamp the schema in one
+   transaction.
 
    ```text
    research_copy_operations(
-     transfer_id PK, manifest_hash, source_data_source, source_server_profile_id,
+     transfer_id PK, manifest_hash, manifest_json, source_data_source, source_server_profile_id,
      source_principal_id, source_workspace_id, destination_data_source,
      destination_server_profile_id, destination_principal_id,
-     destination_workspace_id, server_migration_id, status, summary_json,
+     destination_workspace_id, replacement_confirmed, server_migration_id,
+     server_migration_finalized, status, lease_token, lease_expires_at,
      revision, created_at, updated_at
    )
    research_copy_items(
-     transfer_id, item_key, item_type, source_owner_id, source_owner_version,
-     source_hash, treatment, conflict_choice, destination_owner_kind,
-     destination_owner_id, destination_owner_version, stage, status,
-     retryable, error_code, error_message, receipt_json, updated_at,
+     transfer_id, item_key, ordinal, stage, destination_owner_id,
+     destination_owner_version, destination_snapshot_hash, failure,
+     retryable, rolled_back,
      PK(transfer_id, item_key)
    )
    ```
 
-3. `summary_json` and `receipt_json` are bounded, secret/body-free diagnostics.
-   They may contain hashes, byte counts, owner IDs/versions, omitted-field
-   names, and timestamps; never source/generated content.
+3. `manifest_json` stores the validated source references and proposed target
+   decisions. Item rows record the destination owner and its revision after
+   a canonical write. The store retains bounded identifiers, versions and
+   failure codes without source or generated content.
 4. Implement `ResearchCopyReceiptStore.create_from_manifest`,
    `record_item_stage`, `record_server_migration`, `finish`, `get`, and
-   `list_recoverable`. Enforce monotonic stages and compare expected revision.
+   `list_recoverable`. Enforce monotonic stages, compare expected revision,
+   and require an unexpired worker lease for state changes.
 5. Restart reconstruction comes only from this store plus destination owner and
    server migration status. It never infers success from a visible UI row.
 6. Run:
 
    ```bash
-   .venv/bin/python -m pytest -q Tests/DB/test_workspace_db_v5_migration.py Tests/Research_Workspace/test_copy_receipts.py
+   .venv/bin/python -m pytest -q Tests/DB/test_workspace_db_v12_migration.py Tests/Research_Workspace/test_copy_receipts.py
    ```
 
 7. Commit:
@@ -198,7 +198,7 @@ server-only sharing, overlay exclusion, and Deep Research ownership/return.
 
 - Create: `tldw_chatbook/tldw_api/workspace_migration_schemas.py`
 - Modify: `tldw_chatbook/tldw_api/__init__.py`
-- Modify: `tldw_chatbook/tldw_api/client.py`
+- Create: `tldw_chatbook/tldw_api/workspace_migration_client.py`
 - Create: `tldw_chatbook/Research_Workspace/server_migration_receipts.py`
 - Test: `Tests/tldw_api/test_workspace_migration_client.py`
 - Test: `Tests/Research_Workspace/test_server_migration_receipts.py`
@@ -215,11 +215,14 @@ server-only sharing, overlay exclusion, and Deep Research ownership/return.
    `WorkspaceMigrationCreateRequest`, chunk declaration/upload/receipt,
    finalize request, and response fields. Use `source_product="tldw-chatbook"`.
 3. Add the six client methods using `_request`, segment validation, existing
-   auth/error normalization, and exact response validation. Do not create a
-   second HTTP client.
+   auth/error normalization, and exact response validation. The migration
+   adapter uses the authenticated root HTTP client.
 4. Implement `ServerMigrationReceiptService.begin`, `ack_item`, `status`, and
    `finalize`. The server migration session is an audit/recovery owner; actual
-   content is written through canonical destination APIs in Task 4.
+   content is written through canonical destination APIs in Task 4. The
+   migration create route also upserts the destination name and Study policy.
+   New sessions require a newly minted Server workspace ID. Existing sessions
+   are recovered by ID without repeating the workspace upsert.
 5. Map one acknowledged Copy item to one declared/accepted chunk whose SHA,
    byte count, and metadata identify the manifest item but contain no payload.
    Finalize only after every non-omitted declared item has a server receipt.
@@ -278,6 +281,14 @@ server-only sharing, overlay exclusion, and Deep Research ownership/return.
      membership;
    - Study/Quiz -> Local Study/Quiz owners then output membership.
 
+   The first executable adapters cover primary text artifacts in both
+   directions and Server notes to Local Notes. The current Server workspace
+   note, Study, and Quiz create routes assign their own IDs without an
+   operation lookup. These writes require a retry-safe owner contract.
+   Media still needs a verified full-file handoff through the ingest
+   coordinator. The preflight identifies these items as blocked until the
+   corresponding adapters are available.
+
 5. Use the ingestion coordinator from TASK-21508 so canonical media creation
    and workspace association keep their independent receipts. Securely remove
    any temporary download after Local canonical ingest accepts it; failure
@@ -288,7 +299,9 @@ server-only sharing, overlay exclusion, and Deep Research ownership/return.
    skip acknowledged items before resuming.
 7. `Reference existing` is available only when the destination owner proves an
    exact canonical match. `Replace` requires destination version plus the
-   second confirmation token. No operation deletes the source.
+   second confirmation token. Replacement preserves generated-output
+   provenance by limiting this path to compatible Local artifacts without
+   Studio generation metadata.
 8. Finish fully acknowledged Local-to-Server Copy by finalizing and re-reading
    the server migration, then finishing the local receipt. Server-to-Local
    finishes from verified Local owners plus the local receipt.

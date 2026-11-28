@@ -3974,25 +3974,25 @@ class ConsoleSessionController:
         )
 
     async def _create_native_console_session_from_active_context(
-        self, *, ephemeral: bool = False
+        self, *, ephemeral: bool = False, workspace_id: str | None = None
     ) -> None:
         """Create and focus a native Console session in the active workspace context.
 
         Args:
             ephemeral: Create the session temporary (never saved locally).
+            workspace_id: Explicit workspace selected by an owner handoff or workspace action.
         """
         # TASK-339: new_session activates the fresh session inline; snapshot
         # first so the deferred draft swap attributes settle-window typing
         # to the new tab instead of clobbering it.
         self._capture_console_draft_switch_snapshot()
         self._refresh_console_library_policy_defaults()
-        # Task 9 (workspace assistant defaults): a plain new tab in an
-        # explicit workspace starts as the workspace default persona's
-        # session. Settings/default-persona selection lives in the helper
-        # below so published-default provenance is testable without a live
-        # screen.
+        # A new tab uses the target workspace's default assistant. Explicit
+        # handoffs can select it while the active Console view repaints.
         target_workspace_id = (
             self._ensure_console_chat_store().workspace_context.active_workspace_id
+            if workspace_id is None
+            else workspace_id
         )
         settings, assistant_kwargs = self._new_session_startup_settings(
             target_workspace_id

@@ -106,18 +106,38 @@ def test_round_trip_persists_only_presentation_preferences_and_qualified_identit
         "updated_at",
         "source_folders",
         "source_annotations",
+        "chat_draft",
+        "chat_conversation_id",
+        "chat_egress_consents",
+        "chat_append_receipts",
+        "deep_research_launches",
+        "workspace_presentation",
     }
     serialized = json.dumps(payload).lower()
     for forbidden in ("forced_closed", "source_body", "chat_body", "path", "token"):
         assert forbidden not in serialized
 
 
-def test_v1_overlay_migrates_to_v2_without_inventing_source_organization(
+@pytest.mark.parametrize("schema_version", [1, 2, 3, 4])
+def test_older_overlay_migrates_without_inventing_source_or_chat_state(
     tmp_path,
+    schema_version,
 ) -> None:
     path = tmp_path / "research" / "overlay.json"
     ref = server_ref("workspace-server-1")
-    write_payload(path, {"schema_version": 1, "records": [raw_record(ref)]})
+    record = raw_record(ref)
+    if schema_version >= 2:
+        record.update(source_folders=[], source_annotations=[])
+    if schema_version >= 3:
+        record.update(
+            chat_draft="",
+            chat_conversation_id="",
+            chat_egress_consents=[],
+            chat_append_receipts=[],
+        )
+    if schema_version == 4:
+        record["deep_research_launches"] = {}
+    write_payload(path, {"schema_version": schema_version, "records": [record]})
 
     store = ResearchPresentationOverlayStore(path)
     loaded = store.load(ref)
@@ -133,9 +153,57 @@ def test_v1_overlay_migrates_to_v2_without_inventing_source_organization(
         timestamp=LATER,
     )
     migrated = json.loads(path.read_text(encoding="utf-8"))
-    assert migrated["schema_version"] == 2
+    assert migrated["schema_version"] == 5
     assert migrated["records"][0]["source_folders"] == []
     assert migrated["records"][0]["source_annotations"] == []
+    assert migrated["records"][0]["workspace_presentation"] == {
+        "banner": None,
+        "pinned": None,
+        "last_opened_at": None,
+    }
+    assert migrated["records"][0]["chat_draft"] == ""
+    assert migrated["records"][0]["chat_conversation_id"] == ""
+    assert migrated["records"][0]["chat_egress_consents"] == []
+    assert migrated["records"][0]["chat_append_receipts"] == []
+    assert migrated["records"][0]["deep_research_launches"] == {}
+
+
+def test_workspace_presentation_is_private_preserved_across_layout_save_and_clear(
+    tmp_path,
+) -> None:
+    from tldw_chatbook.Research_Workspace.overlay_store import (
+        ResearchWorkspacePresentation,
+    )
+
+    ref = server_ref("project")
+    other = server_ref("different")
+    store = ResearchPresentationOverlayStore(tmp_path / "research" / "overlay.json")
+    initial = store.save(
+        ref,
+        ResearchPanePreferences(),
+        expected_revision=0,
+        chat_draft="Working draft",
+        timestamp=NOW,
+    )
+    updated = store.set_workspace_presentation(
+        ref, pinned=True, banner="Peer review", last_opened_at=LATER
+    )
+    assert initial.preferences == updated.preferences
+    assert updated.workspace_presentation == ResearchWorkspacePresentation(
+        "Peer review", True, LATER
+    )
+    assert updated.chat_draft == "Working draft" and store.load(other) is None
+    stored = store.save(
+        ref,
+        ResearchPanePreferences(sources_open=False),
+        expected_revision=updated.revision,
+        timestamp=LATER,
+    )
+    assert stored.workspace_presentation == updated.workspace_presentation
+    cleared = store.set_workspace_presentation(ref, banner=None, pinned=False)
+    assert cleared.workspace_presentation == ResearchWorkspacePresentation(
+        None, False, LATER
+    )
 
 
 def test_v2_source_organization_is_qualified_bounded_and_private(tmp_path) -> None:

@@ -5,9 +5,11 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 class _WorkspaceHarness(ConsolidatedCSSApp):
@@ -17,6 +19,111 @@ class _WorkspaceHarness(ConsolidatedCSSApp):
         )
 
         await self.push_screen(ResearchWorkspaceScreen(SimpleNamespace()))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure", "expected_workspace", "retryable"),
+    (
+        ("archived origin", "Restored workspace", False),
+        ("missing run", "Run origin", False),
+        ("unsupported run owner", "Run origin", False),
+        ("connection error", "Run origin", True),
+    ),
+)
+async def test_rejected_run_returns_render_catalog_and_retain_only_transient_claims(
+    tmp_path, failure, expected_workspace, retryable
+) -> None:
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Research_Workspace.contracts import QualifiedWorkspaceRef
+    from tldw_chatbook.Research_Workspace.controller import ResearchWorkspaceController
+    from tldw_chatbook.Research_Workspace.deep_research_context import (
+        ResearchWorkspaceRunRef,
+    )
+    from tldw_chatbook.Research_Workspace.local_adapter import (
+        LocalResearchWorkspaceAdapter,
+    )
+    from tldw_chatbook.Research_Workspace.overlay_store import (
+        ResearchPresentationOverlayStore,
+    )
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+        HandoffChannel,
+        PendingHandoffStore,
+    )
+    from tldw_chatbook.UI.Screens.research_workspace_screen import (
+        ResearchWorkspaceScreen,
+    )
+    from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+    from tldw_chatbook.tldw_api.exceptions import APIConnectionError, APIResponseError
+
+    db = WorkspaceDB(tmp_path / "workspaces.sqlite")
+    registry = LocalWorkspaceRegistryService(db)
+    origin = QualifiedWorkspaceRef("local", "run-origin")
+    restored = QualifiedWorkspaceRef("local", "restored-workspace")
+    registry.create_workspace(workspace_id=origin.workspace_id, name="Run origin")
+    registry.create_workspace(
+        workspace_id=restored.workspace_id, name="Restored workspace"
+    )
+    registry.create_workspace(
+        workspace_id="another-workspace", name="Another workspace"
+    )
+    if failure == "archived origin":
+        registry.archive_workspace(origin.workspace_id)
+
+    async def get_run(run_id, *, mode):
+        assert (run_id, mode) == ("run-id", "local")
+        if failure == "connection error":
+            raise APIConnectionError("Run store temporarily unavailable")
+        if failure == "unsupported run owner":
+            raise APIResponseError(501, "Run owner not implemented")
+        return None
+
+    class CountingCatalog(LocalResearchWorkspaceAdapter):
+        reads = 0
+
+        async def list_workspaces(self, *, include_archived=False):
+            self.reads += 1
+            return await super().list_workspaces(include_archived=include_archived)
+
+    port = CountingCatalog(registry)
+    store = PendingHandoffStore()
+    channel = HandoffChannel.RESEARCH_WORKSPACE_RETURN
+    target = ResearchWorkspaceRunRef(origin, "launch-id", "run-id")
+    store.stage(channel, target)
+    screen = ResearchWorkspaceScreen(
+        SimpleNamespace(
+            pending_handoffs=store,
+            research_scope_service=SimpleNamespace(get_run=get_run),
+        ),
+        controller=ResearchWorkspaceController({origin.data_source: port}),
+        overlay_store=ResearchPresentationOverlayStore(tmp_path / "overlay.json"),
+    )
+    screen.restore_state(
+        {"research_workspace_ref": {"workspace_id": restored.workspace_id}}
+    )
+
+    class Harness(ConsolidatedCSSApp):
+        async def on_mount(self) -> None:
+            await self.push_screen(screen)
+
+    try:
+        app = Harness()
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            selection = screen.query_one("#research-workspace-selection", Static)
+            assert expected_workspace in str(selection.render())
+            assert screen.controller.selected_ref == (
+                restored if failure == "archived origin" else origin
+            )
+            assert store.has_pending(channel) is retryable
+            assert port.reads == 1
+            if failure == "archived origin":
+                assert any(
+                    "origin workspace is unavailable" in notice.message
+                    for notice in app._notifications
+                )
+    finally:
+        db.close()
 
 
 @pytest.mark.asyncio
@@ -53,7 +160,9 @@ async def test_workspace_composes_once_with_honest_regions_and_exact_handles() -
             assert button.name == accessible_name
 
         labels = {str(button.label) for button in screen.query(Button)}
-        assert not labels.intersection({"Generate", "Send"})
+        assert "Generate" not in labels
+        assert screen.query_one("#research-chat-send", Button).disabled
+        assert not screen.query_one("#research-chat-controls").display
         assert "Add" in labels  # Quick URL intake is now a real implemented action.
 
 

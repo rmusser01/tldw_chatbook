@@ -1,12 +1,15 @@
 ---
 id: TASK-34978
 title: Research workspace deletes a note on the UI loop
-status: To Do
+status: Done
 created_date: 2026-10-12 04:58
 labels:
 - research-workspace
 - performance
 priority: medium
+assignee:
+- '@codex'
+updated_date: 2026-11-24 16:33
 ---
 
 ## Description
@@ -17,15 +20,27 @@ Deleting a note from the Research workspace runs the database write on the app's
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Deleting a note from the Research workspace does not block the UI while another connection holds the database write lock
-- [ ] #2 The delete still completes, or reports its failure, once the lock is released or the wait times out
-- [ ] #3 A test holds the write lock on another connection during the delete and shows the event loop keeps running
+- [x] #1 Deleting a note from the Research workspace does not block the UI while another connection holds the database write lock
+- [x] #2 The delete still completes, or reports its failure, once the lock is released or the wait times out
+- [x] #3 A test holds the write lock on another connection during the delete and shows the event loop keeps running
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md
+Reason: Keep the existing canonical Notes delete and durable membership receipt. Match the local worker boundary already used by Library.
+
+1. Reproduce the event-loop stall in the Local Research SQLite round trip by holding a second connection at BEGIN IMMEDIATE.
+2. Isolate the existing canonical delete in a finite worker for both direct deletion and receipt reconciliation. Preserve the optimistic version and cleanup order.
+3. Verify event-loop progress, SQLite tombstone and membership cleanup, and existing owner conflict and receipt cases.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+The Local Research adapter dispatches the canonical Notes delete through a finite worker for both direct deletes and receipt recovery. Version checks, error propagation, and membership cleanup stay in the existing owners. RED held a real SQLite writer lock until the event-loop-side delete timed out. GREEN observed the loop while SQLite waited, then verified the tombstone and removal of both workspace memberships. All 119 targeted Research Quick Notes and Notes cases passed. The aggregate descriptor warning also reproduced with the original synchronous delete and the new regression deselected. ADR-322 applies.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

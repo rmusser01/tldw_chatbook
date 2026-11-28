@@ -48,7 +48,7 @@ def report_resume_failures(
         no redaction of its own.
     """
 
-    for operation_id, outcome in zip(operation_ids, outcomes):
+    for operation_id, outcome in zip(operation_ids, outcomes, strict=False):
         if isinstance(outcome, BaseException):
             logger.warning(
                 "Research source {} resume failed for {}: {}",
@@ -101,6 +101,37 @@ def _server_recovery_action(lifecycle: str) -> str:
     return "Refresh status"
 
 
+def versioned_media_sources(sources, *, maximum: int) -> list[dict]:
+    if not 1 <= len(sources) <= maximum:
+        raise ValueError(f"Select between 1 and {maximum} ready Server Media sources")
+    captured = []
+    for source in sources:
+        media_id = source.catalog_item_id
+        if (
+            not media_id.isascii()
+            or not media_id.isdecimal()
+            or len(media_id) > 19
+            or not 0 < int(media_id) < 2**63
+            or not source.association_version
+            or not source.catalog_item_version
+            or RetrievalMode.FTS not in source.ready_modes
+        ):
+            raise ValueError(
+                "Select Server Media with ready text and refresh its source versions"
+            )
+        captured.append(
+            {
+                "source_id": source.source_id,
+                "catalog_item_id": int(media_id),
+                "association_version": source.association_version,
+                "catalog_item_version": source.catalog_item_version,
+            }
+        )
+    if len({row["catalog_item_id"] for row in captured}) != len(captured):
+        raise ValueError("Select distinct Media items")
+    return captured
+
+
 def normalize_server_readiness(
     *, ref: QualifiedWorkspaceRef, status: Mapping[str, Any]
 ) -> SourceReadiness:
@@ -143,6 +174,7 @@ def normalize_server_readiness(
         retry_eligible=retry_eligible,
         next_action=_server_recovery_action(lifecycle),
         detail=_safe_detail(status.get("status_reason")),
+        catalog_item_version=status.get("catalog_item_version"),
     )
 
 
@@ -162,7 +194,12 @@ def normalize_local_readiness(
         or detail.get("content")
         or detail.get("transcription")
     )
-    fts_ready = bool(detail.get("has_chunks")) and text_ready
+    # The Local Media detail includes the committed chunking state even when
+    # it does not project per-item chunk counts. Media FTS searches the text
+    # row rather than requiring the chunks to be hydrated into this read.
+    fts_ready = text_ready and (
+        bool(detail.get("has_chunks")) or status == "completed"
+    )
     vector_ready = vector_status is True or str(vector_status).lower() in {
         "complete",
         "completed",

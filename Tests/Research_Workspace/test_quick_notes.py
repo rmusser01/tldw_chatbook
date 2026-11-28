@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 import hashlib
+import sqlite3
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -41,6 +43,8 @@ from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 from tldw_chatbook.Workspaces.registry_service import WorkspaceRegistryServiceError
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 
+
+pytestmark = pytest.mark.bootstrap_profile
 
 LOCAL_REF = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-local")
 VALID_OPERATION_TOKEN = "research-note-123e4567e89b42d3a456426614174000"
@@ -789,13 +793,12 @@ async def test_local_delete_retry_cleans_membership_when_owner_returns_false() -
 
 @pytest.mark.asyncio
 async def test_local_note_round_trip_uses_real_sqlite_owners_and_cleans_membership(
-    tmp_path,
+    tmp_path, monkeypatch,
 ) -> None:
     notes_dir = tmp_path / "notes"
     notes_dir.mkdir()
-    notes_db = CharactersRAGDB(
-        str(notes_dir / "canonical-notes.sqlite"), client_id="research-app"
-    )
+    notes_path = notes_dir / "canonical-notes.sqlite"
+    notes_db = CharactersRAGDB(notes_path, client_id="research-app")
     interop = NotesInteropService(
         base_db_directory=notes_dir,
         api_client_id="research-client",
@@ -865,7 +868,46 @@ async def test_local_note_round_trip_uses_real_sqlite_owners_and_cleans_membersh
             for item in registry.get_item_memberships("note", created.note_id)
         ] == [LOCAL_REF.workspace_id, "workspace-second"]
 
-        assert await adapter.delete_note(LOCAL_REF, created.note_id, updated.version)
+        loop = asyncio.get_running_loop()
+        write_attempted = asyncio.Event()
+        delete_note = interop.soft_delete_note
+
+        def observe_delete(user_id, note_id, expected_version):
+            # Install the trace on the connection the delete actually uses.
+            connection = interop.notes_db(user_id).get_connection()
+            connection.execute("PRAGMA busy_timeout = 3000")
+
+            def on_statement(sql):
+                if sql == "BEGIN IMMEDIATE":
+                    loop.call_soon_threadsafe(write_attempted.set)
+
+            connection.set_trace_callback(on_statement)
+            try:
+                return delete_note(user_id, note_id, expected_version)
+            finally:
+                connection.set_trace_callback(None)
+
+        monkeypatch.setattr(interop, "soft_delete_note", observe_delete)
+        with closing(sqlite3.connect(notes_path)) as holder:
+            holder.execute("BEGIN IMMEDIATE")
+            delete_task = asyncio.create_task(
+                adapter.delete_note(LOCAL_REF, created.note_id, updated.version)
+            )
+            try:
+                await asyncio.wait_for(write_attempted.wait(), timeout=5)
+                assert not delete_task.done(), (
+                    "the event loop stalled until SQLite timed out"
+                )
+                assert holder.in_transaction
+            finally:
+                holder.rollback()
+                await asyncio.gather(delete_task, return_exceptions=True)
+
+        assert delete_task.result() is True
+        assert notes_db.get_note_version_states([created.note_id])[created.note_id] == {
+            "version": updated.version + 1,
+            "deleted": True,
+        }
         assert registry.get_item_memberships("note", created.note_id) == ()
         assert (
             await notes_scope.get_note_detail(

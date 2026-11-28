@@ -31,16 +31,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = REPO_ROOT / "tldw_chatbook"
 
-#: Screens that defined ``flush_pending_work`` without ``confirm_quit`` on
-#: 2026-10-03 (TASK-34000.1). Each still drops its pending work on Ctrl+Q,
-#: and each has its own task. Two of them prompt from their flush through
-#: ``push_screen_wait``, which a quit hook may not do (TASK-33622.10, use
-#: ``await_quit_prompt``). The third pushes nothing at all.
+#: Remaining screens that define ``flush_pending_work`` without ``confirm_quit``
+#: (TASK-34000.1). Each has a task to protect its pending work on Ctrl+Q.
 _KNOWN_GAPS: dict[str, str] = {
-    "tldw_chatbook/UI/Screens/research_workspace_screen.py:ResearchWorkspaceScreen": (
-        "TASK-34000.44: quick-note draft; its flush asks through "
-        "push_screen_wait (ResearchNoteSwitchRecoveryModal, in a worker)"
-    ),
     "tldw_chatbook/UI/Screens/stts_screen.py:STTSScreen": (
         "TASK-34000.45: Studio preference draft; its flush asks through "
         "push_screen_wait (StudioTTSLeaveModal)"

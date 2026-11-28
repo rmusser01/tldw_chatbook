@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
@@ -63,10 +64,10 @@ def _quiet_when_swapped_out(action):
     """
 
     @functools.wraps(action)
-    async def guarded(self, *args: Any, **kwargs: Any) -> None:
+    async def guarded(self, *args: Any, **kwargs: Any) -> Any:
         swaps = getattr(self.window, "view_swaps", 0)
         try:
-            await action(self, *args, **kwargs)
+            return await action(self, *args, **kwargs)
         except (NoMatches, MountError) as error:
             if not self.window.is_attached:
                 return  # the app is quitting, or the window is gone
@@ -602,28 +603,42 @@ class StudyFlashcardsController:
         return False
 
     @_quiet_when_swapped_out
-    async def initialize_view(self) -> None:
+    async def initialize_view(
+        self,
+        *,
+        research_owner_id: str = "",
+        research_current: Callable[[], bool] | None = None,
+    ) -> bool:
         service = self._scope_service()
         if service is None:
             self.reset_review_panel("Study flashcards backend is unavailable.")
-            return
+            return False
         if not await self._wait_for_flashcards_widgets():
             logger.warning(
                 "Study flashcards UI did not finish mounting before initialization"
             )
             self.reset_review_panel("Study flashcards UI is still loading.")
-            return
+            return False
         if not self._scope_is_available():
             self.handle_scope_changed()
-            return
-        await self.refresh_decks()
+            return False
+        await self.refresh_decks(
+            preferred_selection=research_owner_id or None,
+            exact_selection=bool(research_owner_id),
+            research_current=research_current,
+        )
+        if research_current is not None and not research_current():
+            return False
         await self.refresh_cards()
+        return bool(research_owner_id and self._selected_deck_id() == research_owner_id)
 
     async def refresh_decks(
         self,
         *,
         preserve_selection: bool = True,
         preferred_selection: Optional[str] = None,
+        exact_selection: bool = False,
+        research_current: Callable[[], bool] | None = None,
     ) -> None:
         service = self._scope_service()
         if service is None:
@@ -637,8 +652,37 @@ class StudyFlashcardsController:
         mode = self._current_mode()
         try:
             decks = await service.list_decks(mode=mode, **self._scope_arguments())
+            requested = preferred_selection if exact_selection else selected_before
+            if research_current is not None and not research_current():
+                return
+            lookup = getattr(service, "get_local_deck", None)
+            if (
+                requested
+                and mode == "server"
+                and exact_selection
+                and not any(str(record.get("backing_id")) == requested for record in decks)
+            ):
+                target = await service.get_workspace_deck(
+                    deck_id=requested, workspace_id=self._workspace_id()
+                )
+                if target:
+                    decks = [*decks, target]
+            if (
+                requested
+                and mode == "local"
+                and callable(lookup)
+                and not any(str(deck.get("backing_id")) == requested for deck in decks)
+            ):
+                target = await lookup(requested)
+                if target and str(target.get("backing_id")) == requested:
+                    decks = [*decks, target]
         except ValueError:
             self.handle_scope_changed()
+            return
+        if exact_selection and (
+            mode != self._current_mode()
+            or (research_current is not None and not research_current())
+        ):
             return
         self.current_decks = list(decks)
 
@@ -657,7 +701,7 @@ class StudyFlashcardsController:
         available_values = {option[1] for option in options}
         if preferred_selection in available_values:
             deck_select.value = str(preferred_selection)
-        elif selected_before in available_values:
+        elif not exact_selection and selected_before in available_values:
             deck_select.value = selected_before
         else:
             deck_select.clear()

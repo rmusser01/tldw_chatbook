@@ -806,7 +806,6 @@ from .quizzes_schemas import (
     QuizAttemptResponse,
     QuizAttemptSubmitRequest,
     QuizCreateRequest,
-    QuizListResponse,
     QuizQuestionCreateRequest,
     QuizQuestionListResponse,
     QuizQuestionResponse,
@@ -869,6 +868,8 @@ from .chat_documents_schemas import (
     PromptConfigResponse,
     SavePromptConfigRequest,
 )
+from .chat_completion_client import ChatCompletionClientMixin
+from .study_read_client import StudyReadClientMixin
 from .character_persona_schemas import (
     ArchetypePreviewResponse,
     ArchetypeSummary,
@@ -876,7 +877,6 @@ from .character_persona_schemas import (
     CharacterChatSessionCreate,
     CharacterChatSessionUpdate,
     CharacterCreateRequest,
-    CharacterMessageCreate,
     CharacterMessageListResponse,
     CharacterMessageResponse,
     CharacterMessageUpdate,
@@ -1119,7 +1119,7 @@ def _reject_unsafe_endpoint(endpoint: str) -> str:
         raise APIRequestError(str(exc)) from exc
 
 
-class TLDWAPIClient:
+class TLDWAPIClient(ChatCompletionClientMixin, StudyReadClientMixin):
     # Ceiling on how long a *connection* may take to establish.
     #
     # `timeout` is the budget for a whole operation, and some are legitimately
@@ -1508,6 +1508,8 @@ class TLDWAPIClient:
         endpoint: str,
         params: Optional[Dict[str, Any]] = None,
         headers: Optional[Dict[str, str]] = None,
+        *,
+        json_data: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         client = await self._get_client()
         endpoint = _reject_unsafe_endpoint(endpoint)
@@ -1539,6 +1541,7 @@ class TLDWAPIClient:
                 endpoint,
                 params=params,
                 headers=headers,
+                **({"json": json_data} if json_data is not None else {}),
             ) as response:
                 await self._raise_if_redirected(response, endpoint)
                 if response.status_code >= 400:
@@ -2668,7 +2671,7 @@ class TLDWAPIClient:
         return await self._request(
             "POST",
             f"/api/v1/workspaces/{workspace_id}/artifacts",
-            json_data=request_data.model_dump(mode="json"),
+            json_data=request_data.model_dump(mode="json", exclude={"producer_metadata"} if request_data.producer_metadata is None else None),
         )
 
     async def update_workspace_artifact(
@@ -5407,7 +5410,7 @@ class TLDWAPIClient:
         response = await self._request(
             "POST",
             "/api/v1/audio/speech/jobs",
-            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            json_data=request_data.job_payload(),
         )
         return AudioSpeechJobCreateResponse.model_validate(response)
 
@@ -9027,8 +9030,17 @@ class TLDWAPIClient:
         )
         return VerifyPasswordResponse.model_validate(response)
 
-    async def import_public_share(self, token: str) -> PublicShareImportResponse:
-        response = await self._request("POST", f"/api/v1/sharing/public/{token}/import")
+    async def import_public_share(
+        self, token: str, *, password: str | None = None
+    ) -> PublicShareImportResponse:
+        request = (
+            VerifyPasswordRequest(password=password) if password is not None else None
+        )
+        response = await self._request(
+            "POST",
+            f"/api/v1/sharing/public/{token}/import",
+            json_data=request.model_dump(mode="json") if request is not None else None,
+        )
         return PublicShareImportResponse.model_validate(response)
 
     async def list_sharing_audit_events(
@@ -11433,29 +11445,6 @@ class TLDWAPIClient:
         )
         return QuizResponse.model_validate(response)
 
-    async def list_quizzes(
-        self,
-        *,
-        q: Optional[str] = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> list[QuizResponse]:
-        response = await self._request(
-            "GET",
-            "/api/v1/quizzes",
-            params={
-                key: value
-                for key, value in {
-                    "q": q,
-                    "limit": limit,
-                    "offset": offset,
-                }.items()
-                if value is not None
-            },
-        )
-        payload = QuizListResponse.model_validate(response)
-        return payload.items
-
     async def get_quiz(self, quiz_id: int | str) -> QuizResponse:
         response = await self._request("GET", f"/api/v1/quizzes/{quiz_id}")
         return QuizResponse.model_validate(response)
@@ -12685,29 +12674,6 @@ class TLDWAPIClient:
         return await self._request(
             "POST", f"/api/v1/chats/{chat_id}/restore", params=params or None
         )
-
-    async def create_character_message(
-        self,
-        chat_id: str,
-        request_data: CharacterMessageCreate | Dict[str, Any],
-        scope_type: Optional[Literal["global", "workspace"]] = None,
-        workspace_id: Optional[str] = None,
-    ) -> CharacterMessageResponse:
-        scope_params = self._normalize_conversation_scope_params(
-            scope_type=scope_type, workspace_id=workspace_id
-        )
-        params = (
-            scope_params.model_dump(exclude_none=True, mode="json")
-            if scope_params is not None
-            else None
-        )
-        response = await self._request(
-            "POST",
-            f"/api/v1/chats/{chat_id}/messages",
-            json_data=self._dump_request_payload(request_data, exclude_none=True),
-            params=params,
-        )
-        return CharacterMessageResponse.model_validate(response)
 
     async def list_character_messages(
         self,

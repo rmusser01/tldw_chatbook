@@ -168,9 +168,14 @@ class ServerSharingService:
             await self._require_client().verify_public_share_password(token, request)
         )
 
-    async def import_public_link(self, token: str) -> dict[str, Any]:
+    async def import_public_link(
+        self, token: str, *, password: str | None = None
+    ) -> dict[str, Any]:
         self._enforce("sharing.links.launch.server")
-        return self._dump(await self._require_client().import_public_share(token))
+        client = self._require_client()
+        if password is None:
+            return self._dump(await client.import_public_share(token))
+        return self._dump(await client.import_public_share(token, password=password))
 
     async def observe_link_events(
         self,
