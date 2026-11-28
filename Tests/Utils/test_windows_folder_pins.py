@@ -909,3 +909,145 @@ async def test_unmount_releases_the_pins_even_when_shutdown_raises(
         await lifecycle_mixin.on_unmount(app)
     assert windows_files.pinned_roots() == ()
     assert windows_files._pin_roots == ()
+
+
+@pytest.fixture
+def files_walk(trusted_walk, verified_walk):
+    """``private_paths._open_verified_parent`` with its memo cleared; the folders it checked."""
+    private_paths, verify, unsafe = verified_walk
+    _, checked, _ = trusted_walk
+    private_paths._pinned_ancestors.clear()
+
+    def walk(target):
+        del checked[:]
+        folder, leaf = private_paths._open_verified_parent(target, missing_leaf_allowed=False)
+        private_paths.os.close(folder)
+        assert leaf == target.name
+        return list(dict.fromkeys(checked))  # each folder checked, in order
+
+    yield private_paths, walk, verify, unsafe
+    private_paths._pinned_ancestors.clear()
+
+
+def test_the_files_walk_starts_at_a_pin_after_one_full_walk(windows_files, profile, files_walk):
+    # TASK-40608: a SQLite connect walks to its database's folder for the
+    # files it prepares, from the drive root, to a folder just below a pin.
+    _, walk, _, _ = files_walk
+    windows_files.set_pinned_roots([profile])
+    target = profile / "data" / "notes.db"
+    chain = [_inode(windows_files, folder) for folder in reversed(target.parents)]
+
+    assert walk(target) == chain  # every folder from the drive root
+    assert walk(target) == chain[-2:]  # the pin and the folder below it
+
+
+def test_the_files_walk_is_full_after_the_window_and_after_a_release(
+    windows_files, profile, files_walk, monkeypatch
+):
+    private_paths, walk, _, _ = files_walk
+    windows_files.set_pinned_roots([profile])
+    target = profile / "data" / "notes.db"
+    depth = len(target.parent.parts)
+
+    assert len(walk(target)) == depth
+    assert len(walk(target)) == 2
+    monkeypatch.setattr(private_paths, "_PINNED_ANCESTORS_SECONDS", 0.0)
+    assert len(walk(target)) == depth
+    monkeypatch.setattr(private_paths, "_PINNED_ANCESTORS_SECONDS", 3600.0)
+    assert len(walk(target)) == 2  # the full walk made after the window ended was recorded
+
+    windows_files.release_pinned_roots()
+    assert len(walk(target)) == depth  # no pin: every folder, nothing recorded
+    assert len(walk(target)) == depth
+    windows_files.restore_pinned_roots()
+    assert len(walk(target)) == depth  # a new pin generation starts in full
+    assert len(walk(target)) == 2
+
+
+def test_the_files_walk_refuses_an_unsafe_folder_at_or_below_the_pin_on_every_walk(
+    windows_files, profile, files_walk, monkeypatch
+):
+    private_paths, walk, _, unsafe = files_walk
+    monkeypatch.setattr(private_paths, "_PINNED_ANCESTORS_SECONDS", 3600.0)
+    windows_files.set_pinned_roots([profile])
+    target = profile / "data" / "notes.db"
+    walk(target)
+    for folder in (target.parent, profile):
+        unsafe.add(_inode(windows_files, folder))
+        with pytest.raises(private_paths.PrivatePathError):
+            walk(target)
+        unsafe.clear()
+    assert len(walk(target)) == 2
+
+
+def test_the_files_walk_refuses_an_unsafe_folder_above_the_pin_when_the_window_ends(
+    windows_files, profile, files_walk, tmp_path, monkeypatch
+):
+    # Owner decision O3, as for the other checked walks.
+    private_paths, walk, _, unsafe = files_walk
+    monkeypatch.setattr(private_paths, "_PINNED_ANCESTORS_SECONDS", 3600.0)
+    windows_files.set_pinned_roots([profile])
+    target = profile / "data" / "notes.db"
+    walk(target)
+    unsafe.add(_inode(windows_files, tmp_path))
+    assert len(walk(target)) == 2
+    monkeypatch.setattr(private_paths, "_PINNED_ANCESTORS_SECONDS", 0.0)
+    with pytest.raises(private_paths.PrivatePathError):
+        walk(target)
+
+
+def test_a_full_directory_verification_stands_for_the_files_walk(
+    windows_files, profile, files_walk, monkeypatch
+):
+    # A SQLite connect verifies the folder and then walks to it for its files:
+    # once the window had run out, both went from the drive root.
+    private_paths, walk, verify, _ = files_walk
+    monkeypatch.setattr(private_paths, "_PINNED_ANCESTORS_SECONDS", 3600.0)
+    windows_files.set_pinned_roots([profile])
+    target = profile / "data" / "notes.db"
+
+    assert len(verify(target.parent)) == len(target.parent.parts)
+    assert len(walk(target)) == 2
+
+
+def test_a_files_walk_does_not_stand_for_the_directory_verification(
+    windows_files, profile, files_walk, monkeypatch
+):
+    """The verification checks more on each folder, so it walks them itself."""
+    private_paths, walk, verify, _ = files_walk
+    monkeypatch.setattr(private_paths, "_PINNED_ANCESTORS_SECONDS", 3600.0)
+    windows_files.set_pinned_roots([profile])
+    target = profile / "data" / "notes.db"
+    depth = len(target.parent.parts)
+
+    assert len(walk(target)) == depth
+    assert len(verify(target.parent)) == depth
+
+
+def test_a_verification_that_began_beside_the_pin_does_not_stand_for_the_files_walk(
+    windows_files, profile, files_walk, monkeypatch
+):
+    """It checked nothing above the folder holding the pin."""
+    private_paths, walk, verify, _ = files_walk
+    monkeypatch.setattr(private_paths, "_PINNED_ANCESTORS_SECONDS", 3600.0)
+    windows_files.set_pinned_roots([profile])
+    target = profile / "data" / "notes.db"
+
+    verify(target.parent)
+    private_paths._pinned_ancestors.clear()
+    assert len(verify(target.parent)) == 3  # began at the folder holding the pin
+    assert len(walk(target)) == len(target.parent.parts)
+
+
+def test_a_refused_directory_verification_does_not_stand_for_the_files_walk(
+    windows_files, profile, files_walk, tmp_path, monkeypatch
+):
+    private_paths, walk, verify, unsafe = files_walk
+    monkeypatch.setattr(private_paths, "_PINNED_ANCESTORS_SECONDS", 3600.0)
+    windows_files.set_pinned_roots([profile])
+    target = profile / "data" / "notes.db"
+    unsafe.add(_inode(windows_files, tmp_path))
+    with pytest.raises(private_paths.PrivatePathError):
+        verify(target.parent)
+    unsafe.clear()
+    assert len(walk(target)) == len(target.parent.parts)

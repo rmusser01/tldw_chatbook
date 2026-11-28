@@ -887,7 +887,7 @@ def _prepare_posix_artifact_generation(
     _pin_job: _SQLiteSourcePinJob | None = None,
 ) -> bool:
     if _pin_job is None:
-        parent_fd, leaf = private_paths._open_verified_parent(
+        parent_fd, leaf = private_paths._artifact_parent(
             selected,
             missing_leaf_allowed=create_if_missing,
         )
@@ -1161,7 +1161,7 @@ def _prepare_posix_artifact_generation(
                 os.close(writable_fd)
             if file_fd >= 0:
                 os.close(file_fd)
-            os.close(parent_fd)
+            private_paths._release_artifact_parent(parent_fd)
 
 
 def _prepare_posix_artifact(
@@ -1879,17 +1879,17 @@ def _connect_registered_sqlite(
             )
             if private_paths._WINDOWS_PLATFORM:
                 deadline.remaining(5.0)
-                _prepare_artifact(
-                    selected, writable=request.writable,
-                    create_if_missing=request.create_if_missing,
-                    enforce_private_mode=not request.preserve_source_mode,
-                )
-                for suffix in _SIDECAR_SUFFIXES:
-                    _prepare_artifact(
-                        Path(f"{selected}{suffix}"), writable=request.writable,
-                        create_if_missing=False, optional=True,
-                        enforce_private_mode=not request.preserve_source_mode,
-                    )
+                # One checked walk to the folder serves the database and its
+                # three sidecar names (TASK-40608); each file is still checked.
+                with private_paths._one_artifact_parent(selected):
+                    for suffix in ("", *_SIDECAR_SUFFIXES):
+                        _prepare_artifact(
+                            Path(f"{selected}{suffix}") if suffix else selected,
+                            writable=request.writable,
+                            create_if_missing=request.create_if_missing and not suffix,
+                            optional=bool(suffix),
+                            enforce_private_mode=not request.preserve_source_mode,
+                        )
             else:
                 prepare_in_helper(request, reservation=envelope, deadline=deadline)
             deadline.remaining(5.0)

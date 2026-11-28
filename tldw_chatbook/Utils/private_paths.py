@@ -1045,6 +1045,86 @@ _open_verified_parent, _prepared_parent_walk = _bind_parent_walk(_PARENT_WALK_SO
 del _bind_parent_walk
 
 
+#: The folder walk one SQLite connect shares between its files, per thread:
+#: [folder, its descriptor or None, the walk's ``missing_leaf_allowed``].
+_artifact_parent_local = threading.local()
+
+
+def _ordinary_walk() -> bool:
+    """Whether no voice, visual or raw-source operation owns this thread's walks."""
+    return (
+        _runtime_operation() is None
+        and _voice_operation() is None
+        and _visual_native_scope()[1] is None
+    )
+
+
+@contextlib.contextmanager
+def _one_artifact_parent(selected: Path) -> Iterator[None]:
+    """Let the files of one SQLite database share one checked walk to their folder.
+
+    ``DB.private_sqlite`` prepares a database file and then its three sidecar
+    names, and each preparation walked to the same folder again: four checked
+    walks a few milliseconds apart, 124 of the 156 such walks in one Console
+    turn (TASK-40608, counted 2026-11-27). Inside this block the first
+    preparation walks as before and the later ones take its descriptor of the
+    folder from ``_artifact_parent``. Every file is still opened and checked
+    through that descriptor, never by name, so a folder put in its place under
+    the same name is not followed. What is no longer repeated is the check of
+    the folder chain itself, three times within one connect.
+
+    A voice, visual or raw-source operation counts its own descriptors, so
+    there every file keeps its own walk.
+
+    Args:
+        selected: The database file; its folder is the one shared.
+    """
+    if getattr(_artifact_parent_local, "shared", None) is not None:
+        yield  # A block is already open on this thread and owns the walk.
+        return
+    shared = _artifact_parent_local.shared = [selected.parent, None, False]
+    try:
+        yield
+    finally:
+        _artifact_parent_local.shared = None
+        if shared[1] is not None:
+            os.close(shared[1])
+
+
+def _artifact_parent(selected: Path, *, missing_leaf_allowed: bool) -> tuple[int, str]:
+    """``_open_verified_parent`` for one SQLite file, walking once per open block.
+
+    Outside ``_one_artifact_parent``, for a file in another folder, for a
+    stricter question than the block's walk answered, and inside a voice,
+    visual or raw-source operation, this is ``_open_verified_parent`` itself.
+
+    Returns:
+        The folder's descriptor and the file's name in it. Release the
+        descriptor with ``_release_artifact_parent``, never ``os.close``.
+    """
+    shared = getattr(_artifact_parent_local, "shared", None)
+    if (
+        shared is None
+        or selected.parent != shared[0]
+        or (shared[1] is not None and missing_leaf_allowed and not shared[2])
+        or not _ordinary_walk()
+    ):
+        return _open_verified_parent(selected, missing_leaf_allowed=missing_leaf_allowed)
+    if shared[1] is None:
+        shared[1], _leaf = _open_verified_parent(
+            selected, missing_leaf_allowed=missing_leaf_allowed
+        )
+        shared[2] = missing_leaf_allowed
+    return shared[1], selected.name
+
+
+def _release_artifact_parent(descriptor: int) -> None:
+    """Close a descriptor from ``_artifact_parent`` unless its block still shares it."""
+    shared = getattr(_artifact_parent_local, "shared", None)
+    if shared is None or shared[1] != descriptor:
+        os.close(descriptor)
+
+
 def _close_runtime_stream(operation, stream):
     """Retire a source stream only after an explicitly successful close."""
     raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
@@ -2896,9 +2976,14 @@ def verify_trusted_directory(
                     close(next_fd)
 
         if pinned is not None and not skipped and symlink_hops == 0:
-            # This walk checked every folder above the pin.
+            # This walk checked every folder above the pin, and checked more on
+            # each than ``_walk_verified_parent`` does, so it stands for that
+            # walk's folders above the pin as well (never the other way round).
+            # A SQLite connect makes this walk and then the files' walk: once
+            # the window had run out it went from the drive root twice.
             with _pinned_ancestors_lock:
                 _pinned_directory_walks[pinned[0]] = (pinned[2], started)
+                _pinned_ancestors[pinned[0]] = (pinned[2], started)
         return PrivatePathResult(
             selected,
             PrivatePathStatus.TRUSTED_DIRECTORY,
