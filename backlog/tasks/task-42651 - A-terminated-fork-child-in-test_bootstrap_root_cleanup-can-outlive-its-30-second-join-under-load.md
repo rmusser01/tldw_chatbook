@@ -135,7 +135,7 @@ The handler runs in every test session, and the test's own comment notes that Ch
 - On Linux, run by the coordinator in `ubuntu:24.04` as non-root uid 1001 (Python 3.12.3, hard `RLIMIT_NPROC` unlimited), with ea2ec487df installed through pip:
   - `Tests/CI/test_bootstrap_root_cleanup.py`: 11 passed serially under `ulimit -u 400`.
   - `Tests/test_real_profile_guard.py` at `-n 4`: 4 failed, 61 passed, 2 skipped. The failures are the three `test_an_xdist_workers_session_end_refusal_fails_the_run` params and `test_the_incidents_own_dir_fd_writer_cannot_replace_the_profile_file`.
-  - The same 4 fail the same way on dev 2df861ec7d in that container, so this change did not cause them. That file runs in no CI lane, and a follow-up was proposed.
+  - The same 4 fail the same way on dev 2df861ec7d in that container, so this change did not cause them. That file runs in no CI lane. The failures are filed as TASK-42654: the container's default umask of 0002 makes the tests' sandbox directories 0775, and the child sessions refuse to start (`shared_writable_parent`).
 
 **Files.** `Tests/real_profile_guard.py`, `Tests/CI/test_bootstrap_root_cleanup.py`, `backlog/docs/lessons-testing-evidence.md` (new entry).
 <!-- SECTION:NOTES:END -->
