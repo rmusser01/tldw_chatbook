@@ -18,6 +18,18 @@ from tldw_chatbook.Chat.console_message_actions import (
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 
 
+def _canvas_on_service() -> ConsoleMessageActionService:
+    """A service whose Canvas switch is on without reading config (TASK-42650).
+
+    The default reader loads config. In a plain test the per-test profile
+    redirect makes that load refuse (`raw_source_selection_changed`: the config
+    source was bound to the collection-time profile), and the service reads the
+    refusal as Canvas off, on CI as locally. These tests are about fences and
+    dispatch, so they say the switch is on.
+    """
+    return ConsoleMessageActionService(canvas_enabled_reader=lambda: True)
+
+
 def test_mermaid_wrapper_never_creates_script_markup():
     from tldw_chatbook.Canvas.authoring import wrap_mermaid_document
 
@@ -38,7 +50,7 @@ def test_mermaid_wrapper_rejects_empty_over_budget_and_invalid_unicode(source):
 
 
 def test_mermaid_fences_keep_html_ordinals_and_use_distinct_replay_identity():
-    service = ConsoleMessageActionService()
+    service = _canvas_on_service()
     message = ConsoleChatMessage(
         id="mixed", role=ConsoleMessageRole.ASSISTANT,
         persisted_message_id="persisted-mixed",
@@ -75,7 +87,7 @@ def test_oversized_mermaid_keeps_discovery_safe_and_refuses_open():
         content="```mermaid\n" + "é" * 4097 + "\n```",
     )
     assert len(assistant_canvas_html_blocks(message)) == 1
-    result = ConsoleMessageActionService().dispatch("canvas-open-mermaid-0", message)
+    result = _canvas_on_service().dispatch("canvas-open-mermaid-0", message)
     assert result.status == "blocked"
     assert "8 KiB" in result.visible_copy
     assert "é" not in repr(result)
@@ -87,7 +99,7 @@ def test_mermaid_compile_repair_does_not_advertise_v1_diagram_execution():
 
     message = ConsoleChatMessage(id="diagram", role=ConsoleMessageRole.ASSISTANT,
         content="```mermaid\nflowchart TD\nA --> B\n```")
-    reference = ConsoleMessageActionService().dispatch("canvas-open-mermaid-0", message).canvas_block_ref
+    reference = _canvas_on_service().dispatch("canvas-open-mermaid-0", message).canvas_block_ref
     error = CanvasCompileError((CanvasCompatibilityIssue(
         code="profile-unavailable", message="Unavailable"),))
     result = message_actions.canvas_compile_repair_result("canvas-open-mermaid-0", message, reference, error)
@@ -97,7 +109,7 @@ def test_mermaid_compile_repair_does_not_advertise_v1_diagram_execution():
 
 
 def test_canvas_html_actions_use_parsed_fences_and_stable_block_identity():
-    service = ConsoleMessageActionService()
+    service = _canvas_on_service()
     message = ConsoleChatMessage(
         id="assistant-canvas",
         role=ConsoleMessageRole.ASSISTANT,
@@ -138,7 +150,7 @@ def test_canvas_html_actions_use_parsed_fences_and_stable_block_identity():
 
 
 def test_canvas_candidate_defers_compatibility_validation_until_open():
-    service = ConsoleMessageActionService()
+    service = _canvas_on_service()
     message = ConsoleChatMessage(
         id="assistant-incompatible",
         role=ConsoleMessageRole.ASSISTANT,
@@ -158,7 +170,7 @@ def test_canvas_candidate_defers_compatibility_validation_until_open():
 def test_canvas_action_discovery_and_dispatch_do_not_compile_candidates(
     monkeypatch,
 ):
-    service = ConsoleMessageActionService()
+    service = _canvas_on_service()
     message = ConsoleChatMessage(
         id="assistant-many-candidates",
         role=ConsoleMessageRole.ASSISTANT,
