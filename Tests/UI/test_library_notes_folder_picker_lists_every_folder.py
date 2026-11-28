@@ -217,7 +217,13 @@ async def _leave_text_fields(screen, pilot) -> None:
     raise AssertionError(f"no non-text control took focus ({screen.focused!r})")
 
 
-async def _open_picker(host, pilot, button_id: str) -> LibraryNoteFolderTargetDialog:
+async def _open_picker(
+    host,
+    pilot,
+    button_id: str,
+    *,
+    expected_position: tuple[Button, int] | None = None,
+) -> LibraryNoteFolderTargetDialog:
     # Pilot captures coordinates before yielding; a nonzero region may be stale.
     library = host.screen
     try:
@@ -236,6 +242,13 @@ async def _open_picker(host, pilot, button_id: str) -> LibraryNoteFolderTargetDi
                     and not button.disabled
                     and not button.loading
                     and button.region.area > 0
+                    and (
+                        expected_position is None
+                        or (
+                            button is expected_position[0]
+                            and button.region.x == expected_position[1]
+                        )
+                    )
                     and library._selected_library_notes_tree_row() is not None
                     and button.region.offset in host.screen.size.region
                     and (host.mouse_captured is None or host.mouse_captured is button)
@@ -357,7 +370,12 @@ async def test_move_note_picker_offers_nested_folders_on_a_fresh_visit_and_narro
             button.styles.offset = (2, 0)
             assert button.region == previous_region
             try:
-                await _open_picker(host, pilot, "#library-notes-placement-move")
+                await _open_picker(
+                    host,
+                    pilot,
+                    "#library-notes-placement-move",
+                    expected_position=(button, previous_region.x + 2),
+                )
                 # Read the originating press before the modal can retire the button.
                 assert list(presses.values()) == [(button, previous_region.x + 2)]
             finally:

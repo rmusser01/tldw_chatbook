@@ -296,13 +296,22 @@ async def test_rename_modal_rejects_a_changed_profile_before_dispatch(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("active", [True, False], ids=["active", "inactive"])
-@pytest.mark.parametrize("entry_point", ["rail", "tab"])
+@pytest.mark.parametrize(
+    ("entry_point", "active", "rebuild_rail"),
+    [
+        pytest.param("rail", True, False, id="rail-active"),
+        pytest.param("rail", False, False, id="rail-inactive"),
+        pytest.param("tab", True, False, id="tab-active"),
+        pytest.param("tab", False, False, id="tab-inactive"),
+        pytest.param("tab", False, True, id="tab-inactive-during-rail-rebuild"),
+    ],
+)
 async def test_rail_rename_publishes_saved_title_to_open_tab_before_confirmation(
     activation_library,  # noqa: F811
     monkeypatch,
     active: bool,
     entry_point: str,
+    rebuild_rail: bool,
 ) -> None:
     """A durable rename cannot leave the bound runtime or switcher stale.
 
@@ -311,13 +320,17 @@ async def test_rail_rename_publishes_saved_title_to_open_tab_before_confirmation
         monkeypatch: Route the owner's modal push to the mounted harness.
         active: Whether the renamed conversation is the currently selected tab.
         entry_point: Mounted rail menu or bound tab/F2 modal callback.
+        rebuild_rail: Recompose Conversations during the Workspaces receipt.
     """
     owner, _, db = activation_library
     _configure_native_ready_console(owner)
     owner.local_chat_conversation_service = ChatConversationService(db)
     db.add_conversation({"id": "rename-other", "title": "Other chat"})
     host = ConsoleHarness(owner)
-    async with host.run_test(size=(120, 50)) as pilot:
+    async with (
+        host.run_test(size=(120, 50)) as pilot,
+        asyncio.TaskGroup() as rebuilds,
+    ):
         monkeypatch.setattr(owner, "push_screen", host.push_screen)
         chat = host.screen
         await _until(lambda: chat.query("#console-native-composer"))
@@ -363,6 +376,40 @@ async def test_rail_rename_publishes_saved_title_to_open_tab_before_confirmation
             notes.append(str(message))
 
         owner.notify = observe_notification
+        if rebuild_rail:
+            conversations = chat.query_one("#console-workspace-context")
+            workspaces = chat.query_one("#console-workspaces-context")
+            real_mount = conversations.mount_all
+            real_receipt = workspaces.wait_for_publication
+            mount_held, release = asyncio.Event(), asyncio.Event()
+            recompose = None
+
+            def hold_mount(nodes, *args, **kwargs):
+                if asyncio.current_task() is not recompose or mount_held.is_set():
+                    return real_mount(nodes, *args, **kwargs)
+
+                async def mount_after_release():
+                    mount_held.set()
+                    await release.wait()
+                    return await real_mount(nodes, *args, **kwargs)
+
+                return mount_after_release()
+
+            async def await_workspaces_during_rebuild():
+                nonlocal recompose
+                if recompose is not None:
+                    return await real_receipt()
+                recompose = rebuilds.create_task(conversations.recompose())
+                try:
+                    await _until(mount_held.is_set)
+                    return await real_receipt()
+                finally:
+                    asyncio.get_running_loop().call_soon(release.set)
+
+            monkeypatch.setattr(conversations, "mount_all", hold_mount)
+            monkeypatch.setattr(
+                workspaces, "wait_for_publication", await_workspaces_during_rebuild
+            )
         if entry_point == "rail":
             await pilot.pause()
             opener = next(
@@ -405,6 +452,8 @@ async def test_rail_rename_publishes_saved_title_to_open_tab_before_confirmation
         assert store.active_session_id == selected
         assert any(note.startswith("Renamed to") for note in notes)
         assert len(confirmed) == 1
+        if rebuild_rail:
+            assert mount_held.is_set()
         assert confirmed[0][0] == "Renamed Alpha"
         assert "Renamed Alpha" in confirmed[0][1]
         assert confirmed[0][2], [

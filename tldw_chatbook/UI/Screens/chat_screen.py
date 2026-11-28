@@ -12844,14 +12844,23 @@ class ChatScreen(BaseAppScreen):
         Returns:
             False if a title-bearing tray is no longer mounted.
         """
-        for selector in ("#console-workspace-context", "#console-workspaces-context"):
-            try:
-                tray = self.query_one(selector, ConsoleWorkspaceContextTray)
-            except (NoMatches, QueryError):
-                return False
-            if not await tray.wait_for_publication():
-                return False
-        return True
+        try:
+            trays = tuple(
+                self.query_one(selector, ConsoleWorkspaceContextTray)
+                for selector in (
+                    "#console-workspace-context",
+                    "#console-workspaces-context",
+                )
+            )
+        except (NoMatches, QueryError):
+            return False
+        while True:
+            for tray in trays:
+                if not await tray.wait_for_publication():
+                    return False
+            # One tray may rebuild while the other receipt is pending.
+            if all(tray.has_current_publication() for tray in trays):
+                return True
 
     async def _sync_console_legacy_workspace_context_aliases(self) -> None:
         """Expose transitional legacy new-conversation control while grouped browser is active."""

@@ -1276,24 +1276,24 @@ class ConsoleWorkspaceContextTray(
             if not screen.call_after_refresh(complete_refresh):
                 return False
             await refreshed
-            composed = self._composed_publication_state
-            reads = self._composed_state_reads
-            rendered_state_matches = (
-                composed is not None
-                and reads is not None
-                and all(
-                    getattr(composed, name) == getattr(self._state, name)
-                    for name in reads
-                )
-            )
-            if (
-                self.is_mounted
-                and self.is_attached
-                and rendered_state_matches
-                and self._can_skip_recompose(self.state)
-            ):
+            if self.has_current_publication():
                 return True
         return False
+
+    def has_current_publication(self) -> bool:
+        """Check that this tray's current state is still present in the DOM."""
+        composed = self._composed_publication_state
+        reads = self._composed_state_reads
+        return (
+            self.is_mounted
+            and self.is_attached
+            and composed is not None
+            and reads is not None
+            and all(
+                getattr(composed, name) == getattr(self._state, name) for name in reads
+            )
+            and self._can_skip_recompose(self.state)
+        )
 
     async def recompose(self) -> None:
         """Rebuild, then say so: the screen re-applies its out-of-band controls."""
