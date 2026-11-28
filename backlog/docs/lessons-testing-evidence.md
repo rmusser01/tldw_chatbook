@@ -25640,6 +25640,17 @@ Run on its own at load average 34, the resize loop ended 9.3 s after mount. In a
 - Judge a local run by its duration as well as its result. A `--timeout` overrun can still be reported as passed.
 - Install diagnostic patches at `pytest_runtest_call`, not at session start, in modules that capture function identities at import.
 
+## A duration window is not a cap check, and a "max since" mixes the lists a lane ran (TASK-42779, TASK-42533, 2026-11-28)
+
+**Incident.** A lane table that counts a job as "cancelled at the cap" when its duration lands within a minute of the cap listed 44 cancellations at 20 minutes for the UI shards, and one each for the architecture-review and Architecture guard jobs. The annotations of those 46 show that 44 were one run (46106568580, 2026-11-28 04:57Z): "The run was canceled by @rmusser01", 20.1 minutes after it started, with no runner assigned to the 42 shard jobs. Only shards 4 and 34 read "exceeded the maximum execution time of 20m0s", so 2 of 3,641 shard jobs hit the cap, not 44. Two more traps in the same data:
+- The Console P0 admission-sensitive profile showed a max of 34.2 of 35 minutes since 2026-11-26. That job (03:36Z) ran the unsplit list (531 tests, 44 files) before the split merged (PR 3782, 04:27Z). The 72 jobs on the list that runs today peak at 29.7.
+- The opposite error: admission-sensitive 4 had no dev-based cap hit, but PR 3777 (2026-11-27 17:26Z) grew `test_console_right_rail.py` from 37 to 70 tests, 176 s to 365 s, and the lane's median from 24.9 to 27.7 minutes (59 jobs on the old list, 15 on the new). Its slowest runner in the window (Azure `westus`, 34.9 on the old list) needs 38.6 on today's.
+
+**What to do.**
+- Read each cancellation's annotation before counting it ("exceeded the maximum execution time" against "canceled by <actor>"), and group cancellations by run: a whole run ending in the same minute is a person or a concurrency group, not a lane.
+- Put each job on its list before quoting a max or a rate: pytest's `collected N items` line, and `git log -S"<profile name>"` on the workflow for when a lane was split. Quote the figures for the list that runs today.
+- When one log's runner speed is read from another log's per-file seconds, compare only files with the same test count in both, besides the ratio filter. The right-rail file, doubled in size, read as a faster runner and made the slowest draw look 3.7 minutes better than it was.
+
 ## A discovery walk that asserts on the first unresolved item hides the next one (TASK-38985, 2026-11-06)
 
 **Incident.** The Library modal inventory was red on dev with one message, "unresolved modal constructor … `_review_restored_skill_trust` (SkillRecoveryReviewModal(…))", and the task was filed as one missing contract row. With that row added, all six nodes still failed, now on `LibraryFileNotesWorkspace._review_pairing` (NotesRecoveryDialog), which the same commit (b5251e9a6e, TASK-32628) had added. With that one fixed, they failed on a third, `_show_history` (FileNotesHistoryDialog, task-34381), and then on an edge that had gone stale meanwhile (a picker changed from FileOpen to SelectDirectory). `_discover_library_modal_edges` asserts inside its walk, so the first gap aborts it and no later gap is ever reported. The second modal was also not a safe-dismissal modal, which is a production change rather than a table row. A probe that registered each unresolved name and re-ran the walk listed the rest in one pass.
