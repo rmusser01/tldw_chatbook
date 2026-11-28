@@ -459,10 +459,11 @@ def remove_sandbox_at_exit(root: Path) -> None:
     that landed earlier tripped the inherited handler and was dropped
     (CPython clears pending signals in a fork child). A held signal is
     delivered at the unblock, by the default in the child and to this handler
-    in the parent. The child unblocks even if its reset raises, except when the
-    exception (a ``KeyboardInterrupt`` from a pending ``SIGINT``) fires at the
-    hook's own entry check, before any of its code runs, which Python cannot
-    guard against; the child then keeps the signals blocked, exec included.
+    in the parent. The child unblocks even if its reset raises, except when a
+    ``KeyboardInterrupt`` from a pending ``SIGINT`` fires at one of these hooks'
+    own bytecode checks outside the reset, which Python cannot guard against;
+    then the signals stay blocked, in the child (exec included) or on the
+    parent's forking thread.
 
     Args:
         root: The sandbox root this process created and owns.

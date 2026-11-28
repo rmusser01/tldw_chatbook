@@ -17,16 +17,38 @@ from pathlib import Path
 import pytest
 
 _REPO = Path(__file__).resolve().parents[2]
-# Every child may make only a few processes: a fork that runs away (a hook that
-# forked before setting its once-flag filled the process table, TASK-42651)
-# then fails at once with EAGAIN (BlockingIOError) instead.
+# A child may make at most about _FORK_HEADROOM more processes than the user had
+# when the test counted: a fork that runs away (a hook that forked before
+# setting its once-flag filled the process table, TASK-42651) then fails at
+# once with EAGAIN (BlockingIOError) instead.
 # Others' new processes (Linux: threads) before the child forks; 16 risked EAGAIN.
 _FORK_HEADROOM = 64
+# Linux reports an unlimited hard limit as RLIM_INFINITY (-1): min() would keep it.
 _CAP_FORKS = """
 import resource
 _hard = resource.getrlimit(resource.RLIMIT_NPROC)[1]
-resource.setrlimit(resource.RLIMIT_NPROC, (min(_hard, {nproc}), _hard))
+_soft = {nproc} if _hard == resource.RLIM_INFINITY else min(_hard, {nproc})
+resource.setrlimit(resource.RLIMIT_NPROC, (_soft, _hard))
 """
+
+
+def _fork_cap() -> str:
+    """The cap a child script starts with, or "" where it cannot be set safely.
+
+    None on Windows (no fork). None in a Linux child PID namespace (a container
+    that shares the host's user namespace): its /proc lists only its own tasks
+    while the kernel counts all of the uid's, so a cap from that count would
+    fail every fork. Runs there have no runaway guard.
+    """
+    if sys.platform == "win32":
+        return ""
+    try:
+        status = Path("/proc/self/status").read_text()
+        if len(status.split("\nNSpid:")[1].split("\n")[0].split()) > 1:
+            return ""
+    except (OSError, IndexError):
+        pass  # no /proc (macOS), or a kernel without NSpid
+    return _CAP_FORKS.format(nproc=_user_task_count() + _FORK_HEADROOM)
 
 
 def _user_task_count() -> int:
@@ -137,7 +159,13 @@ if pid == 0:
     os._exit(0)
 os.waitpid(pid, 0)
 """
-# A handler someone else installed is neither reset nor blocked across a fork.
+# A handler someone else installed is neither reset nor blocked across a fork:
+# the first read runs inside the window (a hook registered before the guard's).
+_IGNORE_SIGTERM = """
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+os.register_at_fork(after_in_child=lambda: print(
+    signal.SIGTERM in signal.pthread_sigmask(signal.SIG_BLOCK, []), flush=True))
+"""
 _FORK_AND_REPORT_SIGTERM = """
 pid = os.fork()
 if pid == 0:
@@ -198,10 +226,10 @@ _POSIX = pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
             marks=_POSIX,
         ),
         pytest.param(
-            "signal.signal(signal.SIGTERM, signal.SIG_IGN)",
+            _IGNORE_SIGTERM,
             _FORK_AND_REPORT_SIGTERM,
             0,
-            "True False",
+            "False\nTrue False",
             id="fork-child-keeps-a-foreign-sigterm-handler",
             marks=_POSIX,
         ),
@@ -228,13 +256,8 @@ def test_owned_root_is_removed(
 ) -> None:
     root = tmp_path / "tldw_test_config_probe"
     (root / "home").mkdir(parents=True)
-    cap = (
-        ""
-        if sys.platform == "win32"
-        else _CAP_FORKS.format(nproc=_user_task_count() + _FORK_HEADROOM)
-    )
     child = _CHILD.format(
-        repo=str(_REPO), root=str(root), cap=cap, before=before, then=then
+        repo=str(_REPO), root=str(root), cap=_fork_cap(), before=before, then=then
     )
     finished = subprocess.run(
         [sys.executable, "-c", child], capture_output=True, text=True, timeout=120
