@@ -26705,3 +26705,21 @@ and keep the first run and repeat beside the instrumented comparison.
 **Incident.** On 2026-11-21 I let a raw operation reuse a quiet "is maintenance waiting?" answer for a second, and the decision record said so. The answer was kept in one module-level slot, keyed by the holds of the last caller, and a Console turn interleaves operations with different holds, so the rule almost never applied: 49 to 80 native probes a turn. Six days later I counted the probes, saw the slot being replaced, kept the answer per hold instead and pushed it. That was the first time the written rule was really in force, and it broke something `dev` guarantees: a config read made within a second of a quiet answer no longer noticed a backup's pause request, and the scheduler dispatched due work under it (`Tests/Backup_Recovery/test_scheduler_native_pause_intent.py`: passes on clean `dev`, failed two runs of two). For six days every comparison with `dev` had "verified" a window that was not operating. And I pushed before the comparison had finished (171 of 229 files); the failing file was in the rest. The per-hold answer was withdrawn the same day.
 
 **What to do.** After adding a reuse rule, count the calls of the thing it is meant to save, in the real journey, the same day: if the count has not dropped to what the rule implies, the rule is not in force and nothing has been verified about it. When a later change makes such a rule take effect, treat it as new behaviour: find the tests that pin the behaviour it replaces (here: every test with a real pause request) and run them before pushing, whatever else is still running.
+
+### A thread's name is not the thread (TASK-40608, 2026-11-27)
+
+**Incident.** Counting SQLite connects by thread, the log showed `asyncio_0` connecting to the conversation database in one turn and again in the next, with its kept-open handle closed in between as "stale". For about an hour that read as a bug in the keep-open rule of 2026-11-21: one pool thread closing another's live handle. A two-thread probe with real stores showed the rule holding. The two `asyncio_0` were different threads: the per-turn model-call loop has its own default pool, whose first thread is also named `asyncio_0`, and it ends with the turn.
+
+**Rule.** When a measurement groups by thread, record the thread's identity (`threading.get_ident()` plus its start), not its name: asyncio names every loop's pool threads the same way. And before calling something a bug from a log, reproduce it in isolation; the probe took five minutes and the misreading had already shaped two paragraphs of a report.
+
+### A broken wake-up hangs the interpreter at exit, where no test timeout reaches (TASK-40608, 2026-11-27)
+
+**Incident.** The negative controls for the new pool queue ran each deliberate breakage through the test file in turn. The breakage that drops a wake-up failed its two tests as intended, and then the run stopped for nine minutes: a pool thread was still asleep with its wake-up lost, and Python joins pool threads at exit. `pytest-timeout` had nothing to time, because the session was over.
+
+**Rule.** Run mutation controls for anything that parks threads under a process time limit (`regress.ps1 -FileTimeout`), not only a per-test one, and give a test's own sleeper threads `daemon=True` so that a failing test cannot hold the process.
+
+### Count the processors before dividing by them (TASK-40608, 2026-11-27)
+
+**Incident.** For a week this task's notes called the test machine a 12-processor one. It has 20 logical processors (six performance cores with two threads each and eight efficiency cores). Per-process CPU shares had been divided by 12, the loop's pool was described as 16 threads when it has 24, and a game using 40% of the machine was reported as using two thirds of it, in a pull request description, until `Win32_Processor` was read.
+
+**Rule.** Read `os.cpu_count()` and the core layout once, at the start of any performance work on a machine, and write them down with the first measurement.
