@@ -666,6 +666,7 @@ def _sync_library_canvas(
     allow_screen_fallback: bool = True,
     notes_focus_identity: LibraryNotesFocusIdentity | None = None,
     deferred_guard: Callable[[], bool] | None = None,
+    sync_notes_work: bool = True,
     sync_prompt_work: bool = True,
     projection_owned: bool = False,
 ) -> bool:
@@ -715,6 +716,8 @@ def _sync_library_canvas(
             entry focus is detached, when automatic reconciliation owns sync.
         deferred_guard: Ownership predicate checked by deferred retained-owner
             DOM work before and after each await.
+        sync_notes_work: Whether to update the Notes Work pane as well as
+            Items. Source switches leave the retained editor mounted.
         sync_prompt_work: Whether a Prompt Items projection should also sync
             the independent retained Work pane. Browse-only settlements pass
             ``False`` so live editor widgets, cursor, and undo state survive.
@@ -849,7 +852,7 @@ def _sync_library_canvas(
                     onboarding_all_empty=screen._library_onboarding_all_empty,
                 )
             work_panes = screen.query("#library-note-work-pane")
-            if work_panes:
+            if sync_notes_work and work_panes:
                 note_work = work_panes.first(LibraryNoteWorkPane)
                 note_work_kwargs = screen._library_note_work_pane_kwargs()
                 note_work_surface_changed = (
@@ -972,6 +975,7 @@ def _sync_library_canvas(
         # build and restore an identity for a canvas that is not on screen.
         if (
             kind == "notes"
+            and sync_notes_work
             and not note_work_surface_changed
             and not notes_editor_owned
             and sync_kwargs.get("mode") == getattr(canvas, "mode", None)
@@ -1010,22 +1014,14 @@ def _sync_library_canvas(
                     _explicit()
 
             follow_up = _restore_then_explicit
-        elif kind == "notes" and notes_editor_owned:
-            # task-32106: the editor-owned skip above protects the WORK pane,
-            # but the Items pane beside it is a separate canvas and still
-            # recomposes -- and its scroll offset went back to the top with
-            # it, mid-sentence (measured at 100x30: a 6-row offset read 0
-            # after one sync). Re-apply the offset only. Restoring FOCUS is
-            # exactly what the skip exists to prevent, so this path never
-            # touches it.
+        elif kind == "notes" and (notes_editor_owned or not sync_notes_work):
+            # The separate Items recompose resets scroll (6 to 0 at 100x30
+            # in task-32106). Restore that offset while the editor or
+            # source switch keeps ownership of focus.
             #
-            # Queuing a post-recompose follow-up here is only safe because
-            # ``notes_editor_owned`` is measured on ``#library-note-work-
-            # pane``, a SIBLING of ``#library-notes-canvas`` in the reader
-            # shell -- so the list canvas's own ``editor_has_focus()`` is
-            # False and it does recompose. Move the editor inside the list
-            # canvas and ``sync_state``'s early return applies to it too,
-            # and this callback would fire at some later recompose instead
+            # The editor lives in the sibling Work pane, so the Items sync
+            # will recompose. Moving the editor into Items could skip its
+            # recompose and leave this callback queued for a later one
             # (PR #2571 review, finding 8).
             listing = screen._library_notes_scroll_owner("navigator")
             list_offset = (

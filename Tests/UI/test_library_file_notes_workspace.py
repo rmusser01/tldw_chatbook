@@ -1394,9 +1394,9 @@ async def test_notes_authority_round_trip_retains_both_workspaces(
         )
 
         assert await workspace.flush_pending_work()
-        task_return = screen.query_one("#library-notes-task-return", Button)
-        assert task_return.display
-        await pilot.click("#library-notes-task-return")
+        database_source = screen.query_one("#library-notes-source-database", Button)
+        assert database_source.display
+        await pilot.click(database_source)
         await _wait_until(
             pilot,
             lambda: screen._notes_state.source == "database",
@@ -1695,7 +1695,7 @@ async def test_folder_files_low_height_rail_scrolls_to_last_action(
 @pytest.mark.parametrize(
     ("return_path", "size"),
     (
-        ("task-return", (160, 45)),
+        ("source-button", (160, 45)),
         ("source-button", (100, 35)),
         ("escape", (160, 45)),
     ),
@@ -1706,7 +1706,7 @@ async def test_notes_authority_switch_restores_visible_focus_and_typing_owner(
     return_path: str,
     size: tuple[int, int],
 ) -> None:
-    """Every Files exit evacuates hidden focus and restores both editors."""
+    """Files exits restore the visible focus owner and the retained editors."""
     root = tmp_path / "notes"
     root.mkdir()
     (root / "file.md").write_text("folder body", encoding="utf-8")
@@ -1765,7 +1765,7 @@ async def test_notes_authority_switch_restores_visible_focus_and_typing_owner(
         screen.set_focus(database_editor)
         await pilot.pause()
 
-        screen.query_one("#library-notes-source-files", Button).press()
+        await pilot.click("#library-notes-source-files")
         await _wait_until(
             pilot,
             lambda: workspace.initialized and workspace.is_mounted,
@@ -1782,20 +1782,24 @@ async def test_notes_authority_switch_restores_visible_focus_and_typing_owner(
         screen.set_focus(folder_editor)
         await pilot.pause()
 
-        if return_path == "task-return":
-            assert screen.query_one("#library-notes-task-return", Button).display
-            await pilot.click("#library-notes-task-return")
-        elif return_path == "source-button":
+        folder_return_focus = folder_editor
+        if return_path == "source-button":
             database_source = screen.query_one("#library-notes-source-database", Button)
             assert database_source.display
-            await pilot.click("#library-notes-source-database")
+            await pilot.click(database_source)
         else:
+            await pilot.press("escape")
+            await pilot.pause()
+            folder_return_focus = workspace.query_one("#file-notes-tree", Tree)
+            assert screen._notes_state.source == "files"
+            assert screen.focused is folder_return_focus
             await pilot.press("escape")
         await _wait_until(
             pilot,
             lambda: screen._notes_state.source == "database",
             f"{return_path} did not return to Database Notes",
         )
+        assert screen.query_one("#library-note-body", TextArea) is database_editor
         await _wait_until(
             pilot,
             lambda: screen.focused is database_editor,
@@ -1818,13 +1822,17 @@ async def test_notes_authority_switch_restores_visible_focus_and_typing_owner(
         )
         await _wait_until(
             pilot,
-            lambda: screen.focused is folder_editor,
-            "Folder Files did not restore its retained editor focus",
+            lambda: screen.focused is folder_return_focus,
+            "Folder Files did not restore its retained focus",
         )
-        assert screen.focused is folder_editor
+        assert screen.focused is folder_return_focus
         assert screen.focused.visible
         assert workspace.display
         assert not screen.query_one(".library-notes-route").display
+        assert workspace.query_one("#file-notes-editor", TextArea) is folder_editor
+        if return_path == "escape":
+            folder_editor.focus()
+            await pilot.pause()
         database_before_folder_type = database_editor.text
         await pilot.press("y")
         assert folder_editor.text == f"{folder_before_database_type}y"
@@ -2912,7 +2920,7 @@ async def test_notes_authority_round_trip_resets_only_transient_work_session(
             message="Folder work session did not activate",
         )
 
-        await pilot.click("#library-notes-task-return")
+        await pilot.click("#library-notes-source-database")
         await _wait_for_condition(
             pilot,
             lambda: screen._notes_state.source == "database",
@@ -4311,7 +4319,7 @@ async def test_initial_root_scan_projects_checking_authority_while_actions_are_g
 
 
 @pytest.mark.asyncio
-async def test_wide_files_task_return_restores_database_browse_receipt() -> None:
+async def test_wide_files_source_switch_restores_database_browse_receipt() -> None:
     """Files returns to the prior Database row and both independent scroll owners."""
     notes = [
         {
@@ -4333,10 +4341,15 @@ async def test_wide_files_task_return_restores_database_browse_receipt() -> None
     async with LibraryHarness(app, screen=screen).run_test(size=(170, 24)) as pilot:
         await _wait_for_library_shell(screen, pilot)
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
-        await _wait_until(
+        await _wait_for_condition(
             pilot,
-            lambda: len(screen.query(".library-notes-row")) >= 20,
-            "Database Notes did not render the browse rows.",
+            lambda: (
+                len(screen.query(".library-notes-row")) >= 20
+                and screen.query_one("#library-notes-list").max_scroll_y >= 7
+                and screen.query_one("#library-rail").max_scroll_y >= 2
+                and not screen._library_pending_list_entry_focus
+            ),
+            message="Database Notes browse rows and scroll owners did not settle.",
         )
         # This used to press #library-notes-sort ("title") for a
         # deterministic row order. Since task-32172 the Sort value IS the
@@ -4351,18 +4364,31 @@ async def test_wide_files_task_return_restores_database_browse_receipt() -> None
         notes_list.scroll_to(y=7, animate=False, force=True, immediate=True)
         rail.scroll_to(y=2, animate=False, force=True, immediate=True)
         screen._mark_library_notes_user_interaction()
-        row.focus(scroll_visible=False)
+        screen.set_focus(row, scroll_visible=False)
         await pilot.pause()
         before_list_scroll = int(notes_list.scroll_y)
         before_rail_scroll = int(rail.scroll_y)
+        assert screen.focused is row
+        assert before_list_scroll == 7
+        assert before_rail_scroll == 2
         await pilot.resize_terminal(100, 30)
-        await _wait_until(
+
+        def compact_browse_ready() -> bool:
+            listing = screen.query_one("#library-notes-list")
+            return (
+                screen._notes_state.compact
+                and getattr(screen.focused, "note_id", None) == note_id
+                and listing.max_scroll_y > 0
+                and listing.scroll_y == min(before_list_scroll, listing.max_scroll_y)
+            )
+
+        await _wait_for_condition(
             pilot,
-            lambda: screen._notes_state.compact,
-            "Notes did not enter the compact presentation.",
+            compact_browse_ready,
+            message="Database browse focus and scroll did not settle after resizing.",
         )
 
-        screen.query_one("#library-notes-source-files", Button).press()
+        await pilot.click("#library-notes-source-files")
         await _wait_until(
             pilot,
             lambda: workspace.is_mounted,
@@ -4370,14 +4396,17 @@ async def test_wide_files_task_return_restores_database_browse_receipt() -> None
         )
         browse_receipt = screen._notes_state.browse_return_receipt
         assert browse_receipt is not None
-        assert screen._notes_state.browse_return_receipt is browse_receipt
+        assert browse_receipt.selected_note_id == note_id
+        assert browse_receipt.scroll_offset == (0, before_list_scroll)
+        assert browse_receipt.rail_scroll_offset == (0, before_rail_scroll)
         await pilot.resize_terminal(170, 24)
         await _wait_until(
             pilot,
             lambda: not screen._notes_state.compact,
             "Notes did not return to the wide presentation.",
         )
-        screen.query_one("#library-notes-task-return", Button).press()
+        assert screen._notes_state.browse_return_receipt is browse_receipt
+        await pilot.click("#library-notes-source-database")
         await _wait_until(
             pilot,
             lambda: (

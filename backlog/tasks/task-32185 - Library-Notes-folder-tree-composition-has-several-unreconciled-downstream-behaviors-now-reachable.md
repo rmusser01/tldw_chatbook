@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-09-09 18:16'
-updated_date: '2026-11-12 19:38'
+updated_date: '2026-11-24 07:16'
 labels:
   - library
   - notes
@@ -29,7 +29,7 @@ Reproduction: each named test fails at the specific assertion cited in its AC on
 - [x] #1 Filtering Database Notes to zero matches shows the #library-notes-empty state (test_library_shell.py::test_library_shell_notes_filtered_empty_keeps_clear_and_source_truth); typing a filter value and pressing Enter (with matches) shows #library-notes-filter-clear (test_library_notes_reader.py::test_database_notes_capability_inventory_and_modes)
 - [x] #2 Filtering narrows the rendered tree rows to matches only, excluding non-matching notes (test_library_shell.py::test_library_shell_filtered_delete_refreshes_list_without_ghost)
 - [ ] #3 Saving an in-canvas edit refreshes that note's displayed relative age in the tree (test_library_shell.py::test_library_shell_note_save_then_back_refreshes_list_title_and_age)
-- [ ] #4 #library-notes-task-return shows correctly across the Files<->Database round trip and compact/wide transitions (test_library_file_notes_workspace.py::test_notes_authority_round_trip_retains_both_workspaces and 3 related tests in the same file)
+- [x] #4 Switching between Library notes and Folder files through the visible source strip or the two-step Escape preserves each workspace's editor, focus, scroll and browse state across compact and wide layouts, and resets only the transient work session.
 - [x] #5 Bulk/select mode's #library-note-bulk-status banner displays when expected (test_library_notes_reader.py::test_bulk_mode_keeps_last_note_as_labelled_read_only_preview)
 - [x] #6 Pressing Back while a note's detail/keywords load is still gated/pending discards the pending load and returns to list (screen._notes_state.view == "list", _library_note_session.snapshot is None) -- currently the view stays on "editor" with a live snapshot (test_library_shell.py::test_library_note_coordinator_pending_detail_keeps_back_action and ::test_library_note_coordinator_pending_load_keeps_back_and_discards_late_reply)
 - [x] #7 A pre-existing Database note emptied to blank content still saves through the real DB (test_library_shell.py::test_library_shell_pre_existing_note_emptied_out_still_saves_in_real_db passes)
@@ -44,6 +44,15 @@ Reproduction: each named test fails at the specific assertion cited in its AC on
 1. Re-run every named node and group them by CAUSE, not by AC number.
 2. Fix the one product gap with a RED->GREEN test on the real route; repair the
    stale fixtures at their source; hand off what another wave-3 group owns.
+
+AC #4 follow-up
+ADR required: no
+ADR path: existing [ADR-086](../decisions/086-library-adaptive-reader-shell.md) and [ADR-296](../decisions/296-file-notes-disk-authority.md)
+Reason: Preserve the existing retained pane layout and both Notes authorities.
+
+1. Reproduce the six mounted failures against dev and trace the compact editor through the source switch.
+2. Exercise the visible Notes source strip and the two-step Escape path from TASK-32136 and TASK-32552. Keep the editor identity, draft, typing, browse receipt, scroll and transient session assertions.
+3. Revoke outgoing Database Notes navigation and update its list without rebuilding the retained editor. Verify the six journeys and the related Notes route and focus guards.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -157,4 +166,10 @@ Files: `tldw_chatbook/UI/Library_Modules/canvas_sync.py`,
 `Tests/UI/test_library_notes_reader.py`,
 `Docs/User_Guide/library/notes.md`.
 **2026-11-12 (round-13 closeout).** At the round-13 stack top 8b633d0101, AC#9's node `test_library_notes_list_focuses_first_row_and_arrow_keys_move_it` is red again ("entering the list must focus its first row"; focus stays on `#library-browse-library-grip`). TASK-40293 owns that regression (the entry-focus predicate since de4d38b59a), with the Media nodes that share it. AC#3's node is also TASK-32503's.
+
+**AC #4 follow-up.** Reproduced the six original failures on dev `44e7a47e4f`. The tests now use the visible source controls from TASK-32136 and the two-step Escape from TASK-32552. After those updates, five cases still failed because leaving Database Notes cleared focus and then rebuilt the retained editor. Revoking that navigation now refreshes Items alone after the existing save barrier.
+
+The browse case also exposed a toolbar rebuild after both resize restores had run. Its restore now runs on the actual Items recompose and honors newer focus and scroll intent. The mounted journey verifies the same note and both non-zero offsets after the File Notes round trip. The compact range clamped the Notes offset from 7 to 6, and the return to wide restored 7 while retaining rail offset 2.
+
+The final selection passed all 60 focused UI and Notes cases and 306 architecture, wiring, size, and recompose checks. Both Ruff gates, formatting for the edited Python ranges, and the Backlog and UI census guards passed. Existing [ADR-086](../decisions/086-library-adaptive-reader-shell.md) and [ADR-296](../decisions/296-file-notes-disk-authority.md) govern this repair. AC #3 and AC #10 remain open.
 <!-- SECTION:NOTES:END -->
