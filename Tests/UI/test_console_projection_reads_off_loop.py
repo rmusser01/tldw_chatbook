@@ -215,8 +215,22 @@ async def test_run_start_rereads_an_expired_display_so_the_first_projection_pays
             assert projection.pending, (
                 "run start left the expired display for the first tick to find"
             )
-            await until(lambda: not projection.pending, timeout=30)
+            first_read = projection._admission
+            assert first_read is not None
+            # A busy stock reader settles without publishing. In that case,
+            # let its existing retry publish for the same owner within this
+            # deadline. Other refusals still fail the freshness assertion.
+            await until(
+                lambda: (
+                    not projection.pending
+                    and (not first_read.busy or projection.at == clock.now)
+                ),
+                timeout=30,
+            )
             assert projection.at == clock.now
+            assert spend._same_readiness_key(
+                first_read.key, projection.key, ignore_settings=True
+            )
 
             _isolate_checked_renders(monkeypatch)
             result, ops = _project(console)

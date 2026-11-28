@@ -10679,6 +10679,9 @@ class LibraryScreen(BaseAppScreen):
                     if self.focused is control:
                         return
             if row_class == "library-media-row":
+                if self._library_media_browse_controller.loading:
+                    self._retry_library_list_entry_focus_while_armed()
+                    return
                 control = self._library_media_empty_list_fallback_target()
                 if control is not None:
                     if _library_entry_target_replaced(control):
