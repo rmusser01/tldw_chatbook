@@ -459,7 +459,10 @@ def remove_sandbox_at_exit(root: Path) -> None:
     that landed earlier tripped the inherited handler and was dropped
     (CPython clears pending signals in a fork child). A held signal is
     delivered at the unblock, by the default in the child and to this handler
-    in the parent.
+    in the parent. The child unblocks even if its reset raises, except when the
+    exception (a ``KeyboardInterrupt`` from a pending ``SIGINT``) fires at the
+    hook's own entry check, before any of its code runs, which Python cannot
+    guard against; the child then keeps the signals blocked, exec included.
 
     Args:
         root: The sandbox root this process created and owns.
@@ -488,25 +491,35 @@ def remove_sandbox_at_exit(root: Path) -> None:
                 pass
 
     # The mask is per thread: the hooks run on the forking thread, which is the
-    # child's only thread. Only signals this call blocked are unblocked.
+    # child's only thread. Only signals a ``before`` blocked are unblocked. Each
+    # thread keeps a stack, because a hook can fork again: the parent closes
+    # its innermost window, a child (in every window at once) closes them all.
     fork = threading.local()
+
+    def windows() -> list[set[signal.Signals]]:
+        return vars(fork).setdefault("windows", [])
 
     def block_across_fork() -> None:
         ours = {sig for sig in handled if signal.getsignal(sig) is remove_then_die}
-        fork.blocked = ours - signal.pthread_sigmask(signal.SIG_BLOCK, ours)
+        windows().append(ours - signal.pthread_sigmask(signal.SIG_BLOCK, ours))
 
-    def unblock_after_fork() -> None:
-        signal.pthread_sigmask(signal.SIG_UNBLOCK, getattr(fork, "blocked", ()))
+    def unblock_in_parent() -> None:
+        stack = windows()
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, stack.pop() if stack else ())
 
     def default_in_fork_child() -> None:
-        for sig in handled:
-            if signal.getsignal(sig) is remove_then_die:
-                signal.signal(sig, signal.SIG_DFL)
-        unblock_after_fork()
+        try:
+            for sig in handled:
+                if signal.getsignal(sig) is remove_then_die:
+                    signal.signal(sig, signal.SIG_DFL)
+        finally:
+            stack = windows()
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, set().union(*stack))
+            stack.clear()
 
     if hasattr(os, "register_at_fork"):
         os.register_at_fork(
             before=block_across_fork,
-            after_in_parent=unblock_after_fork,
+            after_in_parent=unblock_in_parent,
             after_in_child=default_in_fork_child,
         )

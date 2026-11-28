@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-28 16:53
-updated_date: 2026-11-28 17:44
+updated_date: 2026-11-28 18:55
 labels:
 - follow-up
 - flake
@@ -57,7 +57,7 @@ The handler runs in every test session, and the test's own comment notes that Ch
   - The handler's `remove()`: ruled out. It is a no-op in a child.
   - The window around fork: real, but not this test's race, because `ready` orders the SIGTERM after the child is running Python. Fixed under AC#4 below.
 
-**Real sessions.** The root conftest installs the handler in a process that owns its root and is not an xdist worker: a serial session or the xdist controller. `Tests/UI/conftest.py` does the same for runs rooted at `Tests/UI`. So in every `-p no:xdist` run (the UI lane, the recovered and admission-sensitive suites, local serial runs), the fork children that tests make inherit it. xdist workers do not install it. Chunking's `ebook_chapters` (`_run_finditer_process`: a fork context, then `terminate()` and `join(1)`) is one such caller. The fix covers every fork child, because it acts where the handler is inherited. It does not cover spawn children between fork and exec (TASK-42470), which run no at-fork hook. The app's own `install_termination_handlers` has the same inheritance and is not changed here (follow-up).
+**Real sessions.** The root conftest installs the handler in a process that owns its root and is not an xdist worker: a serial session or the xdist controller. `Tests/UI/conftest.py` does the same for runs rooted at `Tests/UI`. So in every `-p no:xdist` run (the UI lane, the recovered and admission-sensitive suites, local serial runs), the fork children that tests make inherit it. xdist workers do not install it. Chunking's `ebook_chapters` (`_run_finditer_process`: a fork context, then `terminate()` and `join(1)`) is one such caller. The fix covers every fork child, because it acts where the handler is inherited. It does not cover spawn children between fork and exec (TASK-42470), which run no at-fork hook. The app's own `install_termination_handlers` has the same inheritance and is not changed here (TASK-42653).
 
 **Fix (AC#2).** `remove_sandbox_at_exit` registers `os.register_at_fork(after_in_child=...)`, which sets SIGTERM and SIGHUP back to `SIG_DFL` in a fork child while they are still `remove_then_die`. The kernel then kills the child at once. The owner keeps its handler, and a handler someone else installed is left alone. The test still asserts `child=-15 kept=True`. Its child also prints whether its SIGTERM disposition is the default (`default=True`), which pins the fix deterministically. Red on the unfixed guard: `default=False` (the child still ended -15 in that run); green with the fix (5 passed).
 
@@ -94,7 +94,24 @@ The handler runs in every test session, and the test's own comment notes that Ch
   - A parent forking in a loop and sent SIGTERM from outside: 100 of 100 ended -15 with the root removed.
 - **Soak of the original node on the final tree:** 2000 of 2000 at `-n 8` (load 10-15) and 1000 of 1000 at `-n 16` (load 15-18).
 
-**Checks (final tree).** `Tests/CI` at `-n 4`: 2083 passed, 2 skipped (load 11-18). `Tests/test_real_profile_guard.py` at `-n 4`: 65 passed, 2 skipped. `./scripts/preflight.sh` passed. `ruff check` and `ruff format --check` on both files passed. `Tests/lint/ruff_gate.py`: RATCHET OK.
+**Review fixes (three Minor items).**
+- **An exception in the child's reset.** The reset runs in `try`, and the unblock in `finally`. Before this, an exception left the child's SIGTERM and SIGHUP blocked for good, and the mask survives exec. New param `fork-child-unblocks-when-its-reset-raises`: an earlier hook makes `signal.signal` raise inside the reset. Red on 3073335c5c's guard (`True` blocked), green now.
+  - Not covered: a `KeyboardInterrupt` from a pending SIGINT that fires at the hook's own entry check, before any of its code runs. Python cannot guard against that, and the docstring says so.
+  - A bounded probe (one fork, reaped) with the review's `_thread.interrupt_main` hook fires at that entry line on both trees: the child stays blocked and outlives a SIGTERM for 2 s. When `threading`'s own at-fork hook runs between the two, it takes the interrupt instead, and the child unblocks and ends -15.
+- **Nested forks.** Each thread keeps a stack of windows, because a hook can fork again. `before` pushes what it blocked. `after_in_parent` pops the innermost window, or nothing if the stack is empty, and unblocks it. `after_in_child` unblocks the union of the whole stack and clears it, because a child is in every open window at once and no outer `after_in_parent` runs in it.
+  - The brief said to pop in both hooks; popping in the child left a child forked inside an outer window blocked.
+  - New param `fork-inside-a-fork-window` (a `before` hook that forks once) expects `inner False` and `parent False`.
+  - Red on 3073335c5c's single slot: `inner True`, `parent True`. Red on the pop-in-the-child variant: `inner True`. Green now.
+- **A handler someone else installed.** New param `fork-child-keeps-a-foreign-sigterm-handler` (`SIG_IGN` set before the guard) expects `True False` (still `SIG_IGN`, not blocked). Red under a temporary unconditional reset (`False False`) and, before the crash, under a temporary unconditional block (`True True`). Both mutations were reverted.
+- **Machine crash, caused by this task (2026-11-28, about 18:16 UTC).** The first draft of `fork-inside-a-fork-window` set its once-flag after `os.fork()`. `os.fork()` runs every `before` hook again, this one included, so the hook recursed, and as the recursion unwound each level forked again. The per-user process table filled (about 10,800 processes) and the machine was rebooted. The flag is now set before the fork, with a comment saying why. Each new fork test was first run under `ulimit -u <current + 60>`.
+- **Authorised serial run** (`-p no:xdist`, so the guard's hooks are installed in the pytest process) of `Tests/Tools/test_remote_session_serve.py`, `Tests/Chunking/test_security.py` and `Tests/Terminal/test_posix_backend.py`:
+  - dev 2df861ec7d (a detached scratch worktree, removed afterwards): first run 8 failed, 87 passed, 1 skipped; second run 7 failed, 88 passed, 1 skipped.
+  - Tip: 7 failed, 88 passed, 1 skipped in both runs.
+  - The 7 are `test_security.py` cases failing with the known local `RecoveryRequired: raw_source_selection_changed`, on both trees.
+  - Dev's extra failure in its first run was `test_app_crash_master_close_hangs_up_ordinary_child_but_not_detached_limit` (crash report not written within 8 s, load about 9). Alone it passed 3 of 3 on dev and 3 of 3 on the tip, so it is not a difference between the trees.
+- **Soak**, capped by the new process rules: the original node 400 of 400 at `-n 4` (load 9-10, 816-834 processes).
+
+**Checks (final tree).** `Tests/CI` at `-n 4`: 2086 passed, 2 skipped (load 12-14). `Tests/CI/test_bootstrap_root_cleanup.py` and `Tests/test_real_profile_guard.py` at `-n 4`: 76 passed, 2 skipped. `./scripts/preflight.sh` passed. `ruff check` and `ruff format --check` on both files passed. `Tests/lint/ruff_gate.py`: RATCHET OK.
 
 **Files.** `Tests/real_profile_guard.py`, `Tests/CI/test_bootstrap_root_cleanup.py`, `backlog/docs/lessons-testing-evidence.md` (new entry).
 <!-- SECTION:NOTES:END -->

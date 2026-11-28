@@ -69,6 +69,49 @@ _REAP_THE_CHILD = (
     'print(f"child={os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1])} '
     'kept={root.exists()}")'
 )
+# A fork inside another fork's window: the inner child leaves every window
+# unblocked, the parent only the inner one, then the outer one.
+_FORK_INSIDE_A_FORK = """
+def blocked():
+    return signal.SIGTERM in signal.pthread_sigmask(signal.SIG_BLOCK, [])
+nested = []
+def fork_inside():
+    # Flag first: the os.fork() below runs every before hook again, this one
+    # too (setting it after the fork made each level fork again: a fork bomb).
+    if nested:
+        return
+    nested.append(True)
+    inner = os.fork()
+    if inner == 0:
+        print("inner", blocked(), flush=True)
+        os._exit(0)
+    os.waitpid(inner, 0)
+os.register_at_fork(before=fork_inside)
+"""
+# An exception inside the child's reset still unblocks (TASK-42651 review).
+_BREAK_THE_CHILDS_RESET = """
+real_signal = signal.signal
+def broken(*_args):
+    raise KeyboardInterrupt("raised inside the guard's reset")
+os.register_at_fork(after_in_child=lambda: setattr(signal, "signal", broken))
+"""
+_FORK_AND_REPORT_THE_MASK = """
+os.register_at_fork(after_in_child=lambda: setattr(signal, "signal", real_signal))
+pid = os.fork()
+if pid == 0:
+    print(signal.SIGTERM in signal.pthread_sigmask(signal.SIG_BLOCK, []), flush=True)
+    os._exit(0)
+os.waitpid(pid, 0)
+"""
+# A handler someone else installed is neither reset nor blocked across a fork.
+_FORK_AND_REPORT_SIGTERM = """
+pid = os.fork()
+if pid == 0:
+    blocked = signal.SIGTERM in signal.pthread_sigmask(signal.SIG_BLOCK, [])
+    print(signal.getsignal(signal.SIGTERM) is signal.SIG_IGN, blocked, flush=True)
+    os._exit(0)
+os.waitpid(pid, 0)
+"""
 _POSIX = pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
 
 
@@ -118,6 +161,30 @@ _POSIX = pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
             -signal.SIGTERM,
             "held",
             id="parent-sigterm-as-it-forks",
+            marks=_POSIX,
+        ),
+        pytest.param(
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)",
+            _FORK_AND_REPORT_SIGTERM,
+            0,
+            "True False",
+            id="fork-child-keeps-a-foreign-sigterm-handler",
+            marks=_POSIX,
+        ),
+        pytest.param(
+            _FORK_INSIDE_A_FORK,
+            _FORK + 'os.waitpid(pid, 0)\nprint("parent", blocked())',
+            0,
+            "inner False\nparent False",
+            id="fork-inside-a-fork-window",
+            marks=_POSIX,
+        ),
+        pytest.param(
+            _BREAK_THE_CHILDS_RESET,
+            _FORK_AND_REPORT_THE_MASK,
+            0,
+            "False",
+            id="fork-child-unblocks-when-its-reset-raises",
             marks=_POSIX,
         ),
     ],
