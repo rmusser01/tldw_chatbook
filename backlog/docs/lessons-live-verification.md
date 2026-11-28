@@ -23,6 +23,66 @@ A review of the first fix then found its remedy ("remove the filter= attribute")
 
 **What to do.** For an answer walkthrough with a reused fixture, confirm a paraphrase query returns the source with a vector score. If Backfill skips a fixture whose vector is missing, rebuild the fixture's index before interpreting the provider result.
 
+## A successful ffplay exit can precede the last observed content (TASK-41176, 2026-11-15)
+
+**Incident.** Article-listening qualification used low-volume seeded PCM WAVs and
+independent default-render WASAPI loopback correlation. Six matched natural runs
+returned exit 0 but lacked 30-73 ms of final content; a later unpadded run varied.
+The same 2.5 s content with 250 ms trailing silence recovered its content end to
+about 2 ms in paired controls. Pure full/truncated-WAV controls ruled out a
+deliberate generator fade or basic detector cutoff. No physical/listener evidence
+was claimed. The initial Windows Python 3.12 monotonic clock also reported zero
+stop latency because GetTickCount64 had 15.625 ms resolution; a QPC follow-up
+measured roughly 5 ms process return.
+
+**What to do.** Qualify final content independently of return code and last stats
+sample, retain failing and unmatched cases, and separate endpoint loopback from
+acoustic evidence. Check the actual stopwatch implementation/resolution before
+interpreting small lifecycle durations. A padded control supports drain research;
+it does not qualify a production workaround or another OS. Evidence:
+`Docs/Testing/watchlist-article-audio-qualification.md`.
+
+**Windows fixed-tail follow-up.** Repeated qualification later exposed two harness
+traps. Eight-second helper preparation deadlines censored playback, and a Stop
+clock measured from launch could fire before audio began. Separate bounded
+preparation from independently observed playing. Synchronous live matching took
+up to 62.5 ms; a requested 10 ms recorder buffer was actually 22 ms and reported
+discontinuity. A 100 ms buffer with unchanged 10 ms emitted reads improved the
+focused control but the repeated run still contained unmatched/drifting captures
+and a noisy/discontinuous case. Record actual buffer size, warnings, backlog,
+matcher rejection and partial receipts. Passing edge correlations alone do not
+certify a capture with gaps. Two same-file bookmark resumes passed, but the
+three-round workaround remained unqualified; do not relax the oracle or discard
+the other rows to claim success.
+
+**Packet timeline control, 2026-11-16.** The native 500 ms control delayed a
+ready packet and recorded 3,871 SoundCard idle-estimate frames inside the
+matched excerpt. The source and WASAPI device positions agreed exactly while
+the reconstructed wrapper stream was 80.646 ms longer. An undelayed control
+showed the opposite failure with 10,560 missing frames and a native
+discontinuity. Keep native packet positions, timestamps, and flags in
+measurement tooling. An empty poll contributes no waveform samples. Validate
+capture continuity separately from waveform edge correlation.
+
+**Quiet-baseline follow-up, 2026-11-23.** Two corrected packet matrices rejected
+all 18 base runs because background audio remained above the original quiet
+limit, including after an initial pause. Read-only session metering identified
+continuing output. After the user muted that session, all 21 cases passed with
+zero baseline RMS and unchanged thresholds. Verify the captured endpoint's
+baseline rather than treating a pause action as proof of silence.
+
+**Linux continuation, 2026-11-23.** The Windows sink/monitor-ID equality check
+rejected a valid Pulse monitor. Native sink/source relationships and stream
+read indexes established frame custody. Later player-route controls exposed
+another trap: PipeWire reported a new input with `PA_INVALID_INDEX`, then
+assigned the expected sink. The watcher mislabeled that unassigned creation
+state as a move. Parallel native event and sink-input traces identified the
+transition. Coalesced changes still do not certify the full initial route;
+retain unknown transport grades and explicitly unattributed waveform
+observations. A consumer read index includes buffered PCM and cannot serve
+as proof that its samples were produced after a route notification. The
+21-row Linux run retained all unknowns and skipped dependent resumes.
+
 ## On Windows, bind the interpreter rather than the venv launcher; separate startup from fixture work (TASK-34569, 2026-11-08)
 
 **Incident.** A private Console approval probe treated the PID returned by the venv launcher as the Python interpreter PID. The interpreter was an actual child of that launcher. A guarded bootstrap with a held, authenticated interpreter handle and a nonce/PID acknowledgment reached normal closure. In the first App attempt with that ownership, workspace binding began with about 16 seconds left on a shared startup deadline and was censored there. Under a separate fixture phase, a later binding completed in about 27 seconds and exposed a real config identity refusal. Another launch hit its original startup deadline before the mounted-context marker, even though it had logged "on_mount completed in". That log is emitted before the end of the App's mount body.

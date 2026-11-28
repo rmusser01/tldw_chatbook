@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-23",
+  "source_revision": "ee3cc6ffee36afb51b5497f5483dfc289ce9a893",
+  "scope": "targeted qualification-tool tests; no full repository sweep",
+  "windows_default_attempt": {
+    "tests": 68,
+    "duration_s": 125.731,
+    "timeout_errors": 5,
+    "assertion_failures": 0,
+    "subprocess_deadline_s": 15,
+    "affected_cases": [
+      "CliTests.test_invalid_padding_and_repeat_refuse_before_creating_output: --repeat 0",
+      "CliTests.test_invalid_padding_and_repeat_refuse_before_creating_output: --repeat 4",
+      "CliTests.test_invalid_padding_and_repeat_refuse_before_creating_output: --capture-buffer-frames 481",
+      "CliTests.test_no_capture_only_checks_fixtures_and_never_launches_player",
+      "CliTests.test_padded_repeat_options_in_no_capture_receipt"
+    ],
+    "cause": "undetermined; no baseline comparison"
+  },
+  "windows_controlled_rerun": {
+    "result": "pass",
+    "tests": 68,
+    "duration_s": 41.240,
+    "environment": {"OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1"},
+    "source_changed_since_default_attempt": false,
+    "subprocess_deadline_changed": false
+  },
+  "linux_default_run": {
+    "result": "pass",
+    "tests": 68,
+    "duration_s": 24.147,
+    "transferred_file_hashes_verified": true
+  },
+  "static_checks": {
+    "ruff_check": "pass",
+    "ruff_format_check": "pass",
+    "python_files": 6
+  },
+  "independent_review": {
+    "round_1": "four Important findings addressed; scoped re-review approved",
+    "round_2": "startup classification and unattributed diagnostics addressed; scoped re-review approved",
+    "open_critical_or_important": 0,
+    "deferred_minor": "bounded whole-capture copy when reading final quiet suffix"
+  },
+  "cleanup": {
+    "all_linux_matrix_players_and_captures_reaped": true,
+    "all_linux_controls_players_and_captures_reaped": true,
+    "numerical_bundle_sha256": "bbf5d5b54ef7391d46a6c67d8ea643385f6a8b4d6e6f8953e3a9b96f83fc577c",
+    "download_and_member_hashes_verified": true,
+    "remote_temporary_environment_removed": true
+  }
+}

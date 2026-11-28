@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-23",
+  "windows_release_gate": "pass",
+  "portable_gate": "unqualified",
+  "supported_controlled_article_platforms": [
+    "Windows"
+  ],
+  "unsupported_controlled_article_platforms": [
+    "Linux",
+    "Darwin"
+  ],
+  "scope": "Recorded ffplay executable/default-render route/PCM16 stereo 48kHz/250ms tail profile only",
+  "executable": {
+    "sha256": "f6536c4caf9bac0fee1e8ffaafa5b13b6ad3e386a9a9f0b6613360e8c6d59919",
+    "version": "7.1-essentials_build-www.gyan.dev"
+  },
+  "evidence": [
+    {
+      "path": "windows-wasapi-packet-21-session-muted.json",
+      "sha256": "49359f1674b87c15a6e1637bbacf050d246e857c8f08a02253a0d3e23f597336"
+    },
+    {
+      "path": "windows-listener-confirmation.json",
+      "sha256": "acd9af389fb5d993d2db1d727c7212052f16848dd41917cda342381047ec480b"
+    },
+    {
+      "path": "windows-startup-stop-qualified.json",
+      "sha256": "b7b988a44e41e5ae7b86cb9608a8bc79a9dab51583c323662bb12eda1a45de7a"
+    }
+  ],
+  "preserved_startup_attempts": [
+    "windows-startup-stop-noisy.json",
+    "windows-startup-stop-quiet-partial.json"
+  ],
+  "physical_acoustic_instrumentation": "unqualified",
+  "application_output_integration": "not_started"
+}

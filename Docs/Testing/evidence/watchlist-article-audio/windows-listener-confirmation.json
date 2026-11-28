@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-23",
+  "platform": "Windows",
+  "method": "human_listener_after_owned_ffplay_sequence",
+  "listener_confirmation": "pass",
+  "audible_playback": "pass",
+  "clean_stop": "pass",
+  "resumed_clip_finished": "pass",
+  "user_response": "Yes—audible, clean Stop, final clip finished",
+  "observed_sequence": "windows-listener-round-2.json",
+  "sequence_case_count": 7,
+  "sequence_native_endpoint_result": "pass",
+  "previous_sequence": {
+    "receipt": "windows-listener-round-1.json",
+    "listener_confirmation": "unqualified",
+    "reason": "listener_missed_playback",
+    "one_automated_baseline": "unqualified"
+  },
+  "instrumented_acoustic_measurement": "not_performed",
+  "scope": "tested Windows default-render route only",
+  "cross_platform_gate": "unqualified"
+}
