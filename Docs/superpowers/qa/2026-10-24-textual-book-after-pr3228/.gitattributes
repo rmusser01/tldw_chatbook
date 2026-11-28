@@ -1,4 +1,0 @@
-# Preserve original audit-receipt bytes and their recorded hashes.
-*.json -text whitespace=cr-at-eol
-sources/*.txt -text -diff
-receipts/*.gz -text -diff

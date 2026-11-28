@@ -1,1 +1,0 @@
-"""Technology and sci-fi themed splash screen effects."""

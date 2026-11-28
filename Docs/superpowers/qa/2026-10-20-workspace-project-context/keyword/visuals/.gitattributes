@@ -1,2 +1,0 @@
-# Preserve raw Textual SVG exports with their original hashes.
-*.svg whitespace=-blank-at-eol

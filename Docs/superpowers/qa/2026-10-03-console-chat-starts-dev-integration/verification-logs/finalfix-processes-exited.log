@@ -1,2 +1,0 @@
-Process snapshot argv: ['ps', '-axo', 'pid,args'] returncode: 0
-Exact finalfix pytest basetemp matches: 0

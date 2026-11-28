@@ -1,4 +1,0 @@
-# Review the whole repository; large PRs require bounded review batches.
-reviews:
-  path_filters:
-    - "**"

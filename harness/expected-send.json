@@ -1,0 +1,165 @@
+{
+  "headers": [
+    [
+      "deepseek",
+      "deepseek-flash",
+      "{\"api_mode\":\"chat_completions\",\"max_tokens\":4096,\"maxp\":0.95,\"minp\":0.05,\"streaming\":true,\"temp\":0.6,\"topk\":50,\"topp\":0.95}",
+      "{\"reasoning_effort\":\"none\"}"
+    ]
+  ],
+  "tool_schemas": {
+    "expected": [
+      {
+        "ordinal": 0,
+        "sha256": "81b4483f328fca16349ba26a9a5eea5a45becc1d7606f9d07c3e536159b5f983"
+      },
+      {
+        "ordinal": 1,
+        "sha256": "dd889c2651cb3a98abd5a306167c6b16a73c32d163dc0eb82c7c96303950d9c1"
+      },
+      {
+        "ordinal": 2,
+        "sha256": "ddda7d847256fdb97e94e0b9a41a5020232c38da5be4927c1df57144afe5e152"
+      },
+      {
+        "ordinal": 3,
+        "sha256": "b6c5a59f40b886796b127114fdca30696060cd7f528cbdb3398d589d6472473e"
+      },
+      {
+        "ordinal": 4,
+        "sha256": "1ed3fed05c035193fd264df2488e8050866e44dfceea5b8fe031c8cfa0c3a73e"
+      },
+      {
+        "ordinal": 5,
+        "sha256": "bff81632c0d8a73754bcf83d20d2689a5d9c44c988eaede2edaec6519b652bf8"
+      },
+      {
+        "ordinal": 6,
+        "sha256": "7fb3c1e7fbac0208c3bfe756e4c7d0acb4146b890737ee7713cc081362dd4643"
+      },
+      {
+        "ordinal": 7,
+        "sha256": "dd9636acb3de51c0fdd23094ddcefd65c456eb117c88d443e65ebf2c058e56ff"
+      },
+      {
+        "ordinal": 8,
+        "sha256": "83769e01b27162ea6743278ab0d1b7c18cfb95261b2efb323e272779c2cdbc56"
+      },
+      {
+        "ordinal": 9,
+        "sha256": "18ebdfba013ce6bfa676743ed34f0e2366d6fcf4ca228ef2035d697aaa1cf597"
+      },
+      {
+        "ordinal": 10,
+        "sha256": "90d745942df19f7ae6ed05979a1d40248c180b8d12e4d287cc354d83a45a25ce"
+      },
+      {
+        "ordinal": 11,
+        "sha256": "bc1232c9f8cf97de972c2e91952ba82599d536877998bfbaf9fa7afdf214f473"
+      },
+      {
+        "ordinal": 12,
+        "sha256": "0e61810f149833f30ede2da7d691911a1967b8daaef9783b276fbb3aecd98311"
+      },
+      {
+        "ordinal": 13,
+        "sha256": "8123de69053e2baca3dbf2e4b83707c59270d7e8368bc95fc99779fe12ad3fe8"
+      },
+      {
+        "ordinal": 14,
+        "sha256": "8f0971bb686f0f1c3ef8928ef4a3bc449f6e8f08a9097b41e998fddc1a1de6af"
+      },
+      {
+        "ordinal": 15,
+        "sha256": "bc7368b5c6d8e898bf2eecfbf9bbdd0e64649885de7017d27f3374708681389d"
+      },
+      {
+        "ordinal": 16,
+        "sha256": "a387fba53e7a9efd9b27b31afec3a8fe5dce4002b084be9a7ed28b726e63ccd4"
+      },
+      {
+        "ordinal": 17,
+        "sha256": "8c266eb7a48ba88631ea12c779387cd5ecefa6d0ee345e753cf415a536947036"
+      },
+      {
+        "ordinal": 18,
+        "sha256": "b4f6b43fa04cd2c757860c52e5213a7195006fae15323cb2c01e4bb716a4fbc1"
+      },
+      {
+        "ordinal": 19,
+        "sha256": "0b58c34adae0c43710cc4c78b6aebdb1882ca59890db45b022a5f5ec03c418f3"
+      },
+      {
+        "ordinal": 20,
+        "sha256": "9266cbd41324fd7338a6ade4e9465114a97b8580a9b6b230f2b5ebd51f2e8b84"
+      },
+      {
+        "ordinal": 21,
+        "sha256": "545b9e53cc1d80422c3e8284ffeef174a2b433ea11373a21ec5c4f0bc7129bfa"
+      },
+      {
+        "ordinal": 22,
+        "sha256": "9cfa7385d2750f0fada67a5f6f6d9ae1681008cd32ca45f411b5a51e123e3a90"
+      },
+      {
+        "ordinal": 23,
+        "sha256": "37ca382ea1574b40364b0d4646710a708d868ce68364067cba0210ab315af89e"
+      },
+      {
+        "ordinal": 24,
+        "sha256": "a9985c8c24f3dcd48547c174e529436ac4933d9084717ace0dcdd3a527b7bd3c"
+      },
+      {
+        "ordinal": 25,
+        "sha256": "a4220b5f754ed32f81612b332b3c888f88efb9c3e71264371676a97d8928d084"
+      },
+      {
+        "ordinal": 26,
+        "sha256": "ca71153cc3d7b3d50b067f873332256772f7d94b8a010bd9121fbca6942baa60"
+      }
+    ]
+  },
+  "settings": {
+    "general": {
+      "users_name": "matched-verification"
+    },
+    "paths": {
+      "data_dir": "<owned-profile>/data"
+    },
+    "first_run": {
+      "setup_completed": true
+    },
+    "chat_defaults": {
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "rag_auto_retrieve_on_send": false
+    },
+    "api_settings": {
+      "deepseek": {
+        "api_key_env_var": "DEEPSEEK_API_KEY",
+        "model": "deepseek-flash",
+        "streaming": true,
+        "reasoning_effort": "none",
+        "api_retries": 0,
+        "max_tokens": 4096,
+        "temperature": 0.7
+      }
+    },
+    "providers": {
+      "DeepSeek": [
+        "deepseek-flash"
+      ]
+    },
+    "console": {
+      "agent_runtime": true,
+      "native_tool_calls": true,
+      "local_tools_enabled": false
+    },
+    "model_catalog": {
+      "auto_refresh_enabled": false
+    },
+    "splash_screen": {
+      "enabled": false
+    }
+  }
+}

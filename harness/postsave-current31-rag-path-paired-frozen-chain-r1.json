@@ -1,0 +1,24 @@
+{
+  "baseline_head": "cf788f548edd2ba3eb865776bf8568b27219a447",
+  "candidate_head": "cf788f548edd2ba3eb865776bf8568b27219a447",
+  "frozen_helpers": {
+    "active_segments.py": "f02fbbfc103dab6e14849b4325be7a5126ec062d76c81de9e72ea2732ced01d1",
+    "expected-send.json": "b48934c4954914363fe894ae351c9f4ca70d0533b5291d533a08634ca2f24daf",
+    "fixture_environment.py": "19da2f2d27b5ae6e9933a6bb587d8564af596e75ccca318e85ce63dced3a4975",
+    "postsave-current31-config-guard-r4.py": "c8d5d50f1b881920ee8724b69c05877d24fe25283528ba540b34868a7d52b622",
+    "postsave-current31-config-reference-r4.json": "6bbd6f3df77f7303691cbd28ca1b13a6144938504c5da5ad2e05a04d2f7ec1a9",
+    "postsave-current31-rag-path-host-watch-r1.py": "cfba1e207715423b584bb70a8e1f41a4f6b5581cba7ab1c5287efa83a9b2cef3",
+    "postsave-current31-rag-path-python-prelaunch-r1.json": "338821c916effc6e50f321877eadb524a5bb76efe483e179b5fd6b75d104a837",
+    "postsave-current31-rag-path-qualify-pairs-r1.py": "ce34a608da793aa05f106de6b16d66799d6fc40dcb036f268395ce584ba96130",
+    "postsave-current31-rag-path-quiet-host-r1.py": "8db935b76dc7e8f035f3723b85ad80eb954f2f1a6fcc4c242ca7b7cb2b65497f",
+    "postsave-observer.py": "50cb67cd8f9ea728609955eb00800edaef1f43311acfb26eb2ad61ccdf452b26",
+    "pr3023-cdp-driver-preparation-r3.py": "26f307e0c408d860cb5215851b0b86703969eb8287068f6b682c0eed8aa4979e",
+    "pr3023-current-live-http-r2/sitecustomize.py": "242ec678487832bd991c7080406473c5dfefdab00dcab1cb0d7dbbc9fa11fc1f",
+    "pr3023-current-live-launch-r2.py": "b30cc93e757927ec33151ec0cefcc81e36a8ddef5ef287fec8f0dd87d2327b94",
+    "pr3023-matched-profile-preparation-r1.py": "860a4465bd70981bfb090e8a0b6b7bc0bcb0007e517b5673545c191d1a8c6fd0",
+    "pr3023-postsave-current31-rag-path-firstsend-live-audit-r1.py": "2ed2ee749526f70ec7c0b5c8fc43e5ab0492e50b303b941ddafc0cdfa9e3a1f4",
+    "pr3023-postsave-current31-rag-path-firstsend-live-launch-r1.py": "2642482f0429a00796f10256075cb158a5725bf0c2c8c8eedec614ee00e26f5d",
+    "pr3023-postsave-current31-rag-path-firstsend-measure-r1.py": "1f19bece7e5aa7ad8c8e20656a4bb5db7a3b0778520c2cc5a7ed2e1f8a76418b"
+  },
+  "packet": "paired-postsave-current31-rag-path-firstsend-r1"
+}

@@ -1,3 +1,0 @@
-PASS: default is imports-only; immutable image ID, offline and resource/read-only bounds enforced
-PASS: timeout stops only the exact fresh task-owned container name
-PASS: output path traversal is rejected before any Docker operation

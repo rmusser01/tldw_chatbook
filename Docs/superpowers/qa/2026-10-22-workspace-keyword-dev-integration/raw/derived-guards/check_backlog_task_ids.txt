@@ -1,3 +1,0 @@
-No duplicate task IDs across 5610 task files in backlog/tasks, backlog/archive/tasks (filenames + frontmatter); all task paths are Windows-compatible.
-
-STDERR

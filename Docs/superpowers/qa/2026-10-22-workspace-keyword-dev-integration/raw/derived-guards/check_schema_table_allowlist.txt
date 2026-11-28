@@ -1,3 +1,0 @@
-chachanotes: 125 declared tables, all present in VALID_TABLES['chachanotes'].
-
-STDERR

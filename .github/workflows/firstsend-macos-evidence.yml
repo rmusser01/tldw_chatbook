@@ -1,0 +1,62 @@
+name: Current dev first-send macOS diagnostic
+
+on:
+  push:
+    branches:
+      - codex/firstsend-current-dev-evidence
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    name: One profiled first send on a macOS runner
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 12
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+
+      - name: Stage harness and exact source pair
+        run: |
+          set -euo pipefail
+          FIRSTSEND_ARTIFACTS="$RUNNER_TEMP/firstsend-artifacts"
+          mkdir -p "$FIRSTSEND_ARTIFACTS"
+          printf 'FIRSTSEND_ARTIFACTS=%s\n' "$FIRSTSEND_ARTIFACTS" >> "$GITHUB_ENV"
+          cp -R harness "$RUNNER_TEMP/firstsend-kit"
+          test "$(git rev-parse HEAD^)" = cf788f548edd2ba3eb865776bf8568b27219a447
+          git switch -c codex/console-postsave-current31 cf788f548edd2ba3eb865776bf8568b27219a447
+          test -z "$(git status --porcelain)"
+          printf 'FIRSTSEND_SOURCE=%s\n' "$(pwd -P)" >> "$GITHUB_ENV"
+
+      - name: Install the app and browser dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install . textual-serve==1.1.3 playwright==1.58.0 requests==2.32.5 prometheus_client==0.26.0
+          python -m playwright install chromium
+          python -m pip freeze --exclude tldw-chatbook > "$FIRSTSEND_ARTIFACTS/installed-dependencies.txt"
+          test -z "$(git status --porcelain)"
+          python "$RUNNER_TEMP/firstsend-kit/postsave-current31-config-guard-r4.py"
+          python "$RUNNER_TEMP/firstsend-kit/pr3023-matched-profile-preparation-r1.py" --self-check
+
+      - name: Run and qualify one diagnostic first send
+        run: python "$RUNNER_TEMP/firstsend-kit/run-ci.py"
+
+      - name: Preserve qualified or rejected evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: firstsend-macos-evidence
+          path: ${{ runner.temp }}/firstsend-artifacts
+          if-no-files-found: warn
+          retention-days: 30

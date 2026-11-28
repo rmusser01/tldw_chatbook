@@ -1,1 +1,0 @@
-pytest_plugins = ['Tests.conftest', 'Tests.UI.conftest']

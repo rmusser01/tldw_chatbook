@@ -1,2 +1,0 @@
-Would reformat: tldw_chatbook\UI\Screens\settings_screen.py
-1 file would be reformatted

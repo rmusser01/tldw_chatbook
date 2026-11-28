@@ -1,3 +1,0 @@
-OK: 549 Tests/UI entries in the PR gate (floor 549); every listed path exists.
-
-STDERR

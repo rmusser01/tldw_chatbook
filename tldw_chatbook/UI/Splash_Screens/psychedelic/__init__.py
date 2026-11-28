@@ -1,1 +1,0 @@
-"""Psychedelic and trippy splash screen effects."""
