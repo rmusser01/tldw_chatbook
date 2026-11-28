@@ -354,10 +354,13 @@ async def test_original_console_mcp_context_reaches_child_model(
                 assert tree in case.runtime._ordinary_turns
                 assert tree.sealed and tree.unproven_only() and not tree.settled
                 assert tree.scratch_lease is not None
-                assert tree.activity.holds_conflicting_claim(tree.owner, tree.footprint)
                 with tree.activity._lock:
                     claim = tree.activity._claims.get(tree.claim.id)
                     assert claim is not None and claim.custody is tree.claim
+                    assert tree.footprint._conflicts(claim.footprint)
+                    assert any(
+                        member.owner is tree.owner for member in claim.members.values()
+                    )
                 with manager._condition:
                     record = manager._matching_record_locked(snapshot)
                     assert record is not None and record.snapshot is snapshot

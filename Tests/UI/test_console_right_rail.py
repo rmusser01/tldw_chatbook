@@ -28,6 +28,7 @@ from dataclasses import replace
 import asyncio
 import importlib
 import threading
+from time import monotonic
 from types import SimpleNamespace
 
 import pytest
@@ -1204,7 +1205,7 @@ async def test_authority_focus_f1_discloses_all_five_complete_facts() -> None:
 
 
 @pytest.mark.asyncio
-async def test_authority_focus_f1_preserves_literal_rich_markup() -> None:
+async def test_authority_focus_f1_preserves_literal_rich_markup(monkeypatch: pytest.MonkeyPatch) -> None:
     async with make_console_pilot() as pilot:
         await click_inspect_rail_open(pilot)
 
@@ -1212,15 +1213,18 @@ async def test_authority_focus_f1_preserves_literal_rich_markup() -> None:
         summary = screen.query_one(
             "#console-send-authority-summary", ConsoleSendAuthoritySummary
         )
-        summary.sync_state(
-            ConsoleInspectorState(
-                rows=(
-                    ConsoleDisplayRow("Workspace", "[bold]literal[/bold]"),
-                    ConsoleDisplayRow("Selected conversation", "Chat"),
-                    ConsoleDisplayRow("Provider", "ready", status="ready"),
-                )
+        state = ConsoleInspectorState(
+            rows=(
+                ConsoleDisplayRow("Workspace", "[bold]literal[/bold]"),
+                ConsoleDisplayRow("Selected conversation", "Chat"),
+                ConsoleDisplayRow("Provider", "ready", status="ready"),
             )
         )
+        # The real control refresh also publishes the authority summary.
+        monkeypatch.setattr(
+            screen, "_build_console_inspector_state", lambda _launch: state
+        )
+        summary.sync_state(state)
         summary.focus()
         await pilot.pause()
         await screen.action_show_workbench_help()
@@ -1340,7 +1344,9 @@ async def test_more_disappearance_does_not_steal_newer_context_focus() -> None:
 
 
 @pytest.mark.asyncio
-async def test_conditional_demotion_does_not_steal_newer_context_focus() -> None:
+async def test_conditional_demotion_does_not_steal_newer_context_focus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async with make_console_pilot() as pilot:
         await click_inspect_rail_open(pilot)
 
@@ -1352,6 +1358,7 @@ async def test_conditional_demotion_does_not_steal_newer_context_focus() -> None
         # Stage availability at the source so native refreshes keep the
         # promoted action alive through the focus request.
         screen.app_instance.console_chatbook_artifact_available = True
+        deadline = monotonic() + 5.0
         before_recompose = inspector.recompose_count
         inspector.sync_state(
             screen._build_console_inspector_state(screen._pending_console_launch_context)
@@ -1377,6 +1384,16 @@ async def test_conditional_demotion_does_not_steal_newer_context_focus() -> None
         await pilot.pause()
         assert pilot.app.focused is artifact_action
 
+        recovered = False
+        recover_focus = inspector._recover_conditional_focus
+
+        def observe_recovery(owner: str, focused_id: str | None) -> None:
+            nonlocal recovered
+            recover_focus(owner, focused_id)
+            if owner == "Artifacts" and focused_id == CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID:
+                recovered = True
+
+        monkeypatch.setattr(inspector, "_recover_conditional_focus", observe_recovery)
         screen.app_instance.console_chatbook_artifact_available = False
         inspector.sync_state(
             screen._build_console_inspector_state(screen._pending_console_launch_context)
@@ -1385,6 +1402,12 @@ async def test_conditional_demotion_does_not_steal_newer_context_focus() -> None
         for _ in range(4):
             await pilot.pause()
 
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: recovered,
+            description="conditional focus recovery after Artifacts demotion",
+            timeout=max(0.0, deadline - monotonic()),
+        )
         demoted_action = inspector.query_one(
             f"#{CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID}", Button
         )

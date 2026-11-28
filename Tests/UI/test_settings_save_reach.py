@@ -713,6 +713,10 @@ async def test_a_blank_chats_settings_draft_survives_its_own_credential_save(
             )
             assert retry_target is not None
             assert not reopened(), "the old retry opened over a newer A-to-B-to-A selection"
+            # A scheduled consume from this visit can arrive after the
+            # first worker relinquishes its claim.
+            consume()
+            assert not console._conversation_settings_return_restore_in_progress
             assert attempts == [False, False]
             assert store.active_session_id == chat_id
             assert console._suspended_conversation_settings is retained_draft
@@ -1085,3 +1089,89 @@ async def test_an_invalid_context_edit_still_counts_after_the_round_trip(
         assert returned._unsaved_field_labels() == ("Context and memory",)
         await _gesture(pilot, "escape")
         assert app.screen is returned  # Esc asks instead of discarding
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("return_to_origin", [False, True], ids=["other-chat", "away-and-back"])
+async def test_settings_return_does_not_adopt_a_selection_from_its_initial_sync(request, monkeypatch, return_to_origin):
+    """A newer selection during a mounted return owns the chat and its focus."""
+    from textual.worker import NoActiveWorker, get_current_worker
+
+    from Tests.UI.test_console_native_chat_flow import (
+        _configure_native_ready_console,
+        _conversation_settings_return_snapshot,
+        _stage_console_settings_return,
+    )
+    from Tests.UI.test_destination_shells import _wait_for_selector
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    issued_sync_finished = asyncio.Event()
+    allow_return = asyncio.Event()
+    async with host.run_test(size=_SIZE) as pilot:
+        console = host.screen
+        await _wait_for_selector(console, pilot, "#console-native-composer", timeout=_MOUNT_TIMEOUT)
+        await _wait_until(pilot, lambda: not console.console_pending_startup_work(), "Console startup to settle")
+        store = console._ensure_console_chat_store()
+        origin = store.ensure_session()
+        prior = store.create_session(title="Chat before return")
+        other = store.create_session(title="New selection", activate=False)
+        assert store.active_session_id == prior.id
+
+        snapshot = _conversation_settings_return_snapshot()
+        console._suspended_conversation_settings = snapshot
+        console._suspended_conversation_settings_token = 1
+        target = _stage_console_settings_return(
+            app,
+            session_id=origin.id,
+            settings_revision=store.session_settings_revision(origin.id),
+            snapshot=snapshot,
+        )
+        synchronize = console._sync_native_console_chat_ui
+
+        async def hold_issued_sync(*args, **kwargs):
+            result = await synchronize(*args, **kwargs)
+            try:
+                return_worker = get_current_worker().group == "conversation-settings-return"
+            except NoActiveWorker:
+                return_worker = False
+            if return_worker and not issued_sync_finished.is_set():
+                assert store.active_session_id == origin.id
+                issued_sync_finished.set()
+                await allow_return.wait()
+            return result
+
+        monkeypatch.setattr(console, "_sync_native_console_chat_ui", hold_issued_sync)
+        console.apply_navigation_context(target.to_context())
+        try:
+            await _wait_until(pilot, issued_sync_finished.is_set, "issued return synchronization")
+            selected_epoch = store.active_session_epoch()
+            store.switch_session(other.id)
+            if return_to_origin:
+                store.switch_session(origin.id)
+            latest_session = origin if return_to_origin else other
+            latest_epoch = store.active_session_epoch()
+            assert latest_epoch > selected_epoch
+        finally:
+            allow_return.set()
+
+        await _wait_until(
+            pilot,
+            lambda: not console._conversation_settings_return_restore_in_progress,
+            "superseded return to release its claim",
+        )
+        assert host.screen is console
+        console._consume_pending_conversation_settings_return()
+        assert not console._conversation_settings_return_restore_in_progress
+        assert (store.active_session_id, store.active_session_epoch()) == (
+            latest_session.id,
+            latest_epoch,
+        )
+        assert console._suspended_conversation_settings is snapshot
+        assert console._pending_conversation_settings_return_target == target
+        assert app.pending_handoffs.exact_revision_status(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN, target.return_revision
+        ) == "pending"

@@ -1389,8 +1389,6 @@ ADMISSION_4_TARGETS = (
     "Tests/Agents/test_run_log_stats_slice_runtime_tools.py",
     "Tests/Agents/test_run_log_survivor_lifetime.py",
     "Tests/Chat/test_fleet_budget_boundary_probes.py",
-    # TASK-41314: native workflow planning custody (27 tests, 8.6 min serially).
-    "Tests/Chat/test_workflow_planning_native.py",
     # TASK-41315 / TASK-41316: a Console agent turn's original storage and MCP
     # sources, and the first-send survivor (6.0 min serially for the two).
     "Tests/Chat/test_console_agent_storage_sources.py",
@@ -2115,7 +2113,9 @@ def test_console_p0_gate_runs_four_serial_minimal_python_312_profiles() -> None:
         )
     }
     assert not fast_targets & set(_pytest_targets(admission["run"]))
-    assert not fast_targets & set(_pytest_targets(admission_2["run"]))
+    admission_2_targets = _pytest_targets(admission_2["run"])
+    assert not fast_targets & set(admission_2_targets)
+    assert admission_2_targets[0] == "Tests/Chat/test_workflow_planning_native.py"
     assert not set(_pytest_targets(admission["run"])) & set(
         _pytest_targets(admission_2["run"])
     )

@@ -983,7 +983,6 @@ jobs:
             Tests/Agents/test_run_log_stats_slice_runtime_tools.py \
             Tests/Agents/test_run_log_survivor_lifetime.py \
             Tests/Chat/test_fleet_budget_boundary_probes.py \
-            Tests/Chat/test_workflow_planning_native.py \
             Tests/Chat/test_console_agent_storage_sources.py \
             Tests/Chat/test_console_first_send_survivor_native.py \
             Tests/Chat/test_console_spawn_subagent_trace_capture.py \
@@ -1443,10 +1442,14 @@ jobs:
       # serially with this step's flags at load 30-34.
       # TASK-42513 (round 26, 2026-11-24): the trace GC file's stale-mark node
       # left this step; it runs inside its whole file in dreams-tracking.
+      # PR #3345: native workflow planning took about 8m42s in Admission 4,
+      # which hit its 35-minute cap. This profile took 13m34s on the same
+      # head. Move the whole file with its existing 300-second case limit.
       - name: Run the admission-sensitive 2 Console P0 regression tests
         if: ${{ !cancelled() && matrix.profile == 'admission-sensitive 2' }}
         run: |
           pytest \
+            Tests/Chat/test_workflow_planning_native.py \
             Tests/Chat/test_console_project_instruction_traces.py \
             Tests/Chat/test_console_trace_model_retries.py \
             Tests/Chat/test_console_trace_failed_tool_run.py \

@@ -60,7 +60,6 @@ from ..Navigation.pending_handoff_store import (
 from ..Navigation.conversation_settings_navigation import (
     ConsoleSettingsReturnTarget,
     ConversationSettingsReturnIntent,
-    ConversationSettingsReturnOutcome,
     ProviderSettingsNavigationTarget,
 )
 from ..Navigation.screen_state_store import ConsolePromptTargetProjection
@@ -3395,6 +3394,7 @@ class ChatScreen(BaseAppScreen):
         modal_contract = _conversation_settings_modal_module()
         snapshot = getattr(self, "_suspended_conversation_settings", None)
         store = self._ensure_console_chat_store()
+        selection_epoch = store.active_session_epoch()
 
         def may_push() -> bool:
             """Revalidate exact source, token, snapshot, and session ownership."""
@@ -3405,6 +3405,7 @@ class ChatScreen(BaseAppScreen):
                 or getattr(self, "_suspended_conversation_settings_token", None)
                 != request_token
                 or store.active_session_id != session_id
+                or store.active_session_epoch() != selection_epoch
                 or not self._owns_console_screen_stack()
             ):
                 return False
@@ -3646,13 +3647,21 @@ class ChatScreen(BaseAppScreen):
             from ..Console_Modules.provider_return import consume_provider_return
 
             consume_provider_return(self)  # TASK-33008.1: a recovery's return.
-        if (
-            self._conversation_settings_return_restore_in_progress
-            or self._pending_conversation_settings_return_target is None
-            or not self.is_mounted
-            or not self._owns_console_screen_stack()
-        ):
+        if self._conversation_settings_return_restore_in_progress:
             return
+        target = self._pending_conversation_settings_return_target
+        if target is None or not self.is_mounted or not self._owns_console_screen_stack():
+            return
+        fenced = self._conversation_settings_return_selection_fence
+        if (
+            fenced is not None
+            and fenced[0] is target
+            and fenced[1].same_visit(self._current_console_attach_visit())
+        ):
+            # A queued mount/resume callback cannot retake this same draft
+            # after a newer chat selection during its first restoration.
+            return
+        self._conversation_settings_return_selection_fence = None
         self._conversation_settings_return_restore_in_progress = True
         self.run_worker(
             self._restore_claimed_conversation_settings_return(),
@@ -3771,7 +3780,9 @@ class ChatScreen(BaseAppScreen):
                 return
             store = self._ensure_console_chat_store()
             prior_active_session_id = store.active_session_id
-            if store.active_session_id != target.session_id:
+            session_epoch = store.active_session_epoch()
+            visit = self._current_console_attach_visit()
+            if prior_active_session_id != target.session_id:
                 try:
                     store.switch_session(target.session_id)
                 except KeyError:
@@ -3784,7 +3795,7 @@ class ChatScreen(BaseAppScreen):
                     )
                     return
                 switched_session = True
-                selected_active_session_epoch = store.active_session_epoch()
+                selected_active_session_epoch = session_epoch = store.active_session_epoch()
                 self._session._bind_composer_to_active_session(focus=False)
                 await self._sync_native_console_chat_ui()
             reopen = partial(
@@ -3795,9 +3806,8 @@ class ChatScreen(BaseAppScreen):
                 _on_transfer_committed=commit_transfer,
             )
             revision = store.session_settings_revision(target.session_id)
-            session_epoch = store.active_session_epoch()
             origin = store.capture_console_settings_origin(target.session_id)
-            visit = self._current_console_attach_visit()
+
             def retry_owner_current() -> bool:
                 return (
                     claim is not None
@@ -3813,10 +3823,20 @@ class ChatScreen(BaseAppScreen):
                     and settings_revision_held(self._session, store, target.session_id, revision)
                 )
 
-            restored = await reopen()
+            restored = False
+            if not switched_session or (
+                store.active_session_epoch() == session_epoch
+                and visit.can_complete(self._current_console_attach_visit())
+            ):
+                restored = await reopen()
             if not restored and retry_owner_current():
                 restored = await reopen(_retry_owner_current=retry_owner_current)
             if not restored:
+                if (
+                    self._pending_conversation_settings_return_target is target
+                    and store.active_session_epoch() != session_epoch
+                ):
+                    self._conversation_settings_return_selection_fence = (target, visit)
                 handoffs.release(claim)
                 await restore_prior_session_if_still_owned()
                 return
@@ -3919,48 +3939,14 @@ class ChatScreen(BaseAppScreen):
         snapshot: "ConsoleSettingsDraftSnapshot",
     ) -> None:
         """Mount fixed return copy beside, not inside, canonical readiness."""
+        from ..Console_Modules.provider_return import mount_conversation_settings_return_status
 
-        modal = self.app.screen_stack[-1]
-        if not isinstance(
-            modal,
+        await mount_conversation_settings_return_status(
+            self,
+            target,
+            snapshot,
             _conversation_settings_modal_module().ConsoleSettingsModal,
-        ):
-            return
-        outcome_copy = {
-            ConversationSettingsReturnOutcome.CREDENTIAL_SAVED: (
-                "Credential saved — checking readiness"
-            ),
-            ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED: (
-                "Provider settings saved — checking readiness"
-            ),
-            ConversationSettingsReturnOutcome.WITHOUT_SAVING: (
-                "Returned without saving — readiness unchanged"
-            ),
-        }[target.outcome]
-        readiness = get_provider_readiness(
-            snapshot.settings.provider,
-            self._provider_readiness_app_config(),
-            background_credentials=True,
-        )
-        recovery_copy = ""
-        if (
-            not readiness.ready
-            and readiness.env_var
-            and not os.environ.get(readiness.env_var)
-        ):
-            recovery_copy = (
-                f"Export {readiness.env_var}, then relaunch Chatbook before sending."
-            )
-        status = Static(
-            "\n".join(line for line in (outcome_copy, recovery_copy) if line),
-            id="console-settings-return-status",
-            classes="console-settings-modal-row",
-            markup=False,
-        )
-        readiness_widget = modal.query_one("#console-settings-readiness", Static)
-        await modal.query_one("#console-settings-modal").mount(
-            status,
-            before=readiness_widget,
+            get_provider_readiness,
         )
 
     def _global_chat_display_name(self) -> str:
@@ -6996,6 +6982,9 @@ class ChatScreen(BaseAppScreen):
         None
     )
     _conversation_settings_return_restore_in_progress: bool = False
+    _conversation_settings_return_selection_fence: (
+        tuple[ConsoleSettingsReturnTarget, ConsoleAttachVisit] | None
+    ) = None
     _pending_console_provider_return: object | None = None  # provider_return.py
 
     _console_attach_reconciled: bool = False
@@ -16217,6 +16206,7 @@ class ChatScreen(BaseAppScreen):
         )
         self._pending_conversation_settings_return_claim = None
         self._conversation_settings_return_restore_in_progress = False
+        self._conversation_settings_return_selection_fence = None
         runtime = self._console_runtime()
         if isinstance(raw_launch_revision, int) and not isinstance(
             raw_launch_revision, bool
