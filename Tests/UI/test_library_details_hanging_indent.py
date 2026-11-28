@@ -81,6 +81,9 @@ def test_a_row_that_fits_its_width_keeps_the_renderable_it_was_given() -> None:
 # Only the mounted case is async -- a module-level ``pytestmark`` would warn
 # once per sync test in this file (review round 1, F8).
 @pytest.mark.asyncio
+# TASK-42627: `test_library_shell._build_test_app` needs the bootstrap profile,
+# as every test in that file has; without it the app refuses to start.
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(235, 52), (60, 24)], ids=("wide", "narrow"))
 async def test_a_wrapped_details_row_paints_its_continuations_indented(size) -> None:
     """Through the product path: mounted, painted, at both supported widths."""

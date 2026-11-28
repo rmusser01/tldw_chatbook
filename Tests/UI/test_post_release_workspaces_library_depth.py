@@ -786,12 +786,13 @@ async def test_create_workspace_preserves_rail_scroll(request) -> None:
         await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
         await pilot.pause(0.3)
 
-        rail = screen.query_one("#library-rail")
-        assert rail.max_scroll_y > 0, "harness rail did not overflow; shrink the size"
-        rail.scroll_to(y=rail.max_scroll_y, animate=False, force=True)
+        old_rail = screen.query_one("#library-rail")
+        assert old_rail.max_scroll_y > 0, (
+            "harness rail did not overflow; shrink the size"
+        )
+        old_rail.scroll_to(y=old_rail.max_scroll_y, animate=False, force=True)
         await pilot.pause(0.2)
-        scrolled_to = float(rail.scroll_y)
-        assert scrolled_to > 0
+        assert float(old_rail.scroll_y) > 0
 
         screen.query_one("#library-create-local-workspace", Button).press()
         await pilot.pause()
@@ -799,11 +800,25 @@ async def test_create_workspace_preserves_rail_scroll(request) -> None:
         assert modal is not screen
         await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
         modal.query_one("#workspace-create-confirm", Button).press()
-        await pilot.pause(0.6)
 
-        rail = screen.query_one("#library-rail")
-        assert float(rail.scroll_y) > 0, (
-            "rail scroll reset to top after the create-workspace recompose"
+        # TASK-42627: wait for the recompose's new rail, then for the restore
+        # one layout after it. A fixed 0.6 s pause failed on slow runners when
+        # the recompose ended just before it, with the restore milliseconds out.
+        deadline = time.monotonic() + 5
+        while True:
+            # Empty between the old rail's removal and the new one's mount.
+            rail = next(iter(screen.query("#library-rail")), old_rail)
+            if rail is not old_rail and float(rail.scroll_y) > 0:
+                break
+            assert time.monotonic() < deadline, (
+                "rail scroll reset to top after the create-workspace recompose"
+                if rail is not old_rail
+                else "the create-workspace recompose never replaced the rail"
+            )
+            await pilot.pause(0.05)
+        await pilot.pause(0.3)
+        assert float(screen.query_one("#library-rail").scroll_y) > 0, (
+            "rail scroll reset to top after the restore"
         )
 
 
