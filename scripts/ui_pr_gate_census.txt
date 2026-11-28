@@ -3606,6 +3606,7 @@ Tests/UI/test_console_response_rules.py::test_actual_stop_after_generation_cance
 Tests/UI/test_personas_workbench.py::TestWorkbenchShell::test_workbench_panes_and_library_controls_fit_at_width
 Tests/UI/test_personas_workbench.py::TestWorkbenchShell::test_workbench_panes_fit_at_every_width_from_80_to_220
 Tests/UI/test_personas_workbench.py::TestWorkbenchShell::test_compact_cut_off_is_the_widest_width_the_minimums_cannot_fill
+Tests/UI/test_personas_workbench.py::test_floating_buddy_close_refreshes_active_personas_inspector
 Tests/UI/test_personas_generation_wiring.py::test_blank_after_generate_whole_character_closes_the_concept_row
 # Round 21 ports (2026-11-22; TASK-42382 notes): on no lane before. The
 # Console [New] workspace file (3 @private_profile_test tests) serially with
