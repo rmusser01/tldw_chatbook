@@ -1297,7 +1297,34 @@ _BUDGETS: dict[str, int] = {
     # TASK-42382 review, 2026-11-22: 8961 -> 8958 (-3), the reconcile
     # docstring no longer claims only a cross-screen change writes the
     # registry alone.
-    "tldw_chatbook/UI/Console_Modules/workspace.py": 8958,
+    # TASK-36571.1, 2026-11-05: same waiver (owner rule: a fix over a size
+    # ratchet raises the row by the branch's growth with a dated comment).
+    # A poll tick reuses its predecessor's unchanged build once, and the
+    # projection reads the workspace label alone: 8961 -> 9050 (+89).
+    # A poll tick reuses its predecessor's unchanged build once (keyed on the
+    # run markers it shows), the projection reads the workspace label alone,
+    # and an unchanged folder-availability re-read no longer pushes a
+    # rebuild: 8961 -> 9100 (+139).
+    # A run tick reuses its predecessor's unchanged build once (keyed on the
+    # run markers it shows), the workspace state builder is reused while the
+    # registry view's reads are unmoved, the projection reads the workspace
+    # label alone, and an unchanged folder-availability re-read no longer
+    # pushes a rebuild: 8961 -> 9147 (+186).
+    # pushes a rebuild: 8961 -> 9149 (+188).
+    # pushes a rebuild: 8961 -> 9160 (+199).
+    # TASK-36571.1 review fix, 2026-11-06: same waiver (owner rule: a fix
+    # over a size ratchet raises the row by the branch's growth with a dated
+    # comment). The label and open-flag reads ask for the TTL-gated re-reads
+    # (folder availability, saved rows, sub-agent counts) the idle builds
+    # they replaced asked for, and two stale docstrings are corrected:
+    # 9160 -> 9231 (+71).
+    # TASK-36571.1, 2026-11-12: re-measured after rebasing onto dev
+    # 4b90eb860b (owner rule: exact; dev measures 8953): 9231 -> 9223.
+    # 2026-11-19: re-measured after rebasing onto dev a6df4d8d48 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 9223 -> 9231.
+    # 2026-11-19: re-measured after rebasing onto dev a6df4d8d48 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 9231 -> 9230.
+    # 2026-11-20: re-measured after rebasing onto dev d85e90bc9e (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 9230 -> 9233.
+    # 2026-11-22: re-measured after rebasing onto dev 2f7790873a (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 8958 -> 9230.
+    "tldw_chatbook/UI/Console_Modules/workspace.py": 9230,
     # 2026-10-31, PR #3293: explicit user size-limit waiver; final review entry
     # credential/readiness repair, exact integrated measurement (8181 -> 8183).
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.

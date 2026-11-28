@@ -124,9 +124,10 @@ async def test_original_rail_controls_build_only_the_consumed_inspectors():
                 assert screen._sync_console_rail_and_controls() is True
         finally:
             sys.setprofile(previous)
-        # Agent section needs its rail state; the controls consume one inspector
-        # directly and supply it to their rail projection. No leading throwaway.
-        assert len(builds) == 2, builds
+        # The controls consume one inspector directly and supply it to their
+        # rail projection. The Agent section reads its open flag without a
+        # rail state (TASK-36571.1). No leading throwaway.
+        assert len(builds) == 1, builds
         inspector = screen.query_one(
             "#console-run-inspector-state", ConsoleRunInspector
         )

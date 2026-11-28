@@ -1007,7 +1007,29 @@ MINIMUM_FILES = 2490
 # file and the Library Auto outcome file's six cases at the tail. The floor
 # is the measured entry count.
 MINIMUM_FILES = 2785
+# TASK-36571.1 (2026-11-05): append the run tick's workspace-build pins (the
+# projection's and control bar's label reads, the Agent section's flag read,
+# the poll tick's one reuse and its push and unit guards) as node entries at
+# the tail; the file runs about 60 s serially. The floor is the entry count.
+MINIMUM_FILES = 2792
 MINIMUM_FILES = 2785
+# TASK-36571.1 (2026-11-05): the run-status reuse pin and the unchanged
+# folder-availability re-read pin join them. The floor is the entry count.
+MINIMUM_FILES = 2787
+# folder-availability re-read pin join them, then the full-sync reuse, the
+# workspace state builder reuse and the view key pins. The floor is the
+# entry count.
+MINIMUM_FILES = 2790
+# workspace state builder reuse, the view key and the cached label read
+# pins. The floor is the entry count.
+MINIMUM_FILES = 2791
+# workspace state builder reuse, the view key, the cached label read and the
+# stale re-read renewal pins. The floor is the entry count.
+MINIMUM_FILES = 2793
+# TASK-36571.1 review fix (2026-11-06): the idle syncs' re-read pins, the run
+# tick's no-re-read guard, the sub-agent renewal pin and the builder memo's
+# conversation and identity pins join them. The floor is the entry count.
+MINIMUM_FILES = 2798
 
 # TASK-34601.1 (2026-11-11): feedback handoff, Stop and actual image-reader
 # shutdown and held-read input join the gate without moving earlier shards.
@@ -1363,6 +1385,18 @@ MINIMUM_FILES = 2811
 # 2026-11-27, TASK-42629: adds the command popup's paint-hold anchor node. The floor
 # is the measured entry count.
 MINIMUM_FILES = 2812
+# 2026-11-26: re-counted after rebasing onto dev 434eb71f95. The floor is the measured entry count.
+MINIMUM_FILES = 2819
+# 2026-11-22: re-counted after rebasing onto dev fe8c87e3e2. The floor is the measured entry count.
+MINIMUM_FILES = 2821
+MINIMUM_FILES = 2824
+# 2026-11-22: re-counted after rebasing onto dev fe8c87e3e2. The floor is the measured entry count.
+# 2026-11-23: re-counted after rebasing onto dev af4b13ea75. The floor is the measured entry count.
+MINIMUM_FILES = 2825
+# 2026-11-21: re-counted after rebasing onto dev f864f00762. The floor is the measured entry count.
+MINIMUM_FILES = 2827
+# 2026-11-22: re-counted after rebasing onto dev ddd3c02052. The floor is the measured entry count.
+MINIMUM_FILES = 2832
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 
