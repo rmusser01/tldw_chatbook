@@ -20,8 +20,12 @@ is the Console default; the plain-provider path is what character chats and
 from __future__ import annotations
 
 import pytest
+import pytest_asyncio
 
-from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.Chat.conftest import (
+    console_test_database_owners,
+    open_console_test_agent_runs,
+)
 from Tests.Chat.test_console_send_diagnostics import sinks  # noqa: F401
 from Tests.Chat.test_console_trace_current_turn_transforms import (  # noqa: F401
     make_database,
@@ -51,8 +55,8 @@ SESSION = "session-1"
 _LONG = "detail " * 200
 
 
-@pytest.fixture(params=["agent", "plain"])
-def harness(trace_harness, tmp_path, request, monkeypatch):  # noqa: F811
+@pytest_asyncio.fixture(params=["agent", "plain"])
+async def harness(trace_harness, tmp_path, request, monkeypatch):  # noqa: F811
     """``trace_harness`` on the agent path (default) or the plain path.
 
     The shared factory builds the controller around a checkpoint-observing
@@ -74,23 +78,25 @@ def harness(trace_harness, tmp_path, request, monkeypatch):  # noqa: F811
     )
     trace_harness.rechecks = rechecks
     controller = trace_harness.controller
-    if request.param == "agent":
-        runs = owned_agent_runs_db(
-            tmp_path / "agent_runs.sqlite", client_id="task33621"
+    async with console_test_database_owners() as own_database:
+        if request.param == "agent":
+            runs, owner = open_console_test_agent_runs(
+                tmp_path / "agent_runs.sqlite", client_id="task33621"
+            )
+            own_database(runs, controller, execution_owner=owner)
+            controller.update_agent_runtime(
+                enabled=True,
+                bridge=ConsoleAgentBridge(
+                    agent_runs_db=runs,
+                    store=trace_harness.store,
+                    provider_gateway=trace_harness.gateway,
+                ),
+            )
+        controller._compaction_service = ConsoleCompactionService(
+            controller._context_repository, trace_harness.gateway
         )
-        controller.update_agent_runtime(
-            enabled=True,
-            bridge=ConsoleAgentBridge(
-                agent_runs_db=runs,
-                store=trace_harness.store,
-                provider_gateway=trace_harness.gateway,
-            ),
-        )
-    controller._compaction_service = ConsoleCompactionService(
-        controller._context_repository, trace_harness.gateway
-    )
-    trace_harness.path = request.param
-    return trace_harness
+        trace_harness.path = request.param
+        yield trace_harness
 
 
 async def _send(harness, text: str, *, session: str = SESSION):

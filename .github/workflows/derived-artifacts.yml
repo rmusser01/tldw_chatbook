@@ -344,6 +344,10 @@ jobs:
       # review's round 1, 4 from the Stop-claim fix and its reviews; about
       # 1 min serial in this job's install set); later tasks appended theirs.
       - name: Run fast PR contract
+        # Record the active case and thread stacks if the hosted process stalls.
+        # The watchdog only reports. Pytest keeps its existing signal deadline.
+        env:
+          PYTEST_ADDOPTS: "-o verbosity_test_cases=1 -o faulthandler_timeout=90"
         run: |
           pytest \
             Tests/CI \

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from contextlib import asynccontextmanager, closing
+from contextlib import AsyncExitStack, asynccontextmanager, closing, nullcontext
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -11,6 +11,10 @@ import httpx
 import pytest
 
 from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.Chat.conftest import (
+    console_test_database_owners,
+    open_console_test_agent_runs,
+)
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
@@ -60,12 +64,22 @@ async def _project_console(
     failures=1,
     hosted=False,
     structured_thinking=False,
+    retire_agent_runs=False,
 ):
-    """Use real new-session/workspace defaults; replace only provider HTTP."""
+    """Use real new-session/workspace defaults; replace only provider HTTP.
+
+    Guarded callers opt in to retiring the explicit execution owner here.
+    Other callers can deliberately leave a pending dispatch for their own
+    shutdown controls.
+    """
     with (
         closing(CharactersRAGDB(tmp_path / "chat.sqlite", "project-trace")) as db,
-        closing(
-            owned_agent_runs_db(tmp_path / "runs.sqlite", client_id="project-trace")
+        (
+            nullcontext()
+            if retire_agent_runs
+            else closing(
+                owned_agent_runs_db(tmp_path / "runs.sqlite", client_id="project-trace")
+            )
         ) as runs,
         closing(
             WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="project-trace")
@@ -184,7 +198,10 @@ async def _project_console(
                 else ConsoleEgressClass.ON_DEVICE,
             ),
         )
-        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        async with (
+            httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client,
+            AsyncExitStack() as cleanup,
+        ):
             if hosted:
                 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 
@@ -196,6 +213,7 @@ async def _project_console(
                 trace_call_boundary_factory=boundary,
                 **hosted_kwargs,
             )
+            cleanup.push_async_callback(gateway.aclose)
 
             async def resolve(_selection):
                 return resolution
@@ -209,18 +227,33 @@ async def _project_console(
                 workspace_id="project-trace",
                 settings=ConsoleSessionSettings(provider=provider, model=model),
             )
-            bridge = ConsoleAgentBridge(
-                agent_runs_db=runs, store=store, provider_gateway=gateway
-            )
             scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
-            controller = ConsoleChatController(
-                store=store,
-                provider_gateway=gateway,
-                agent_runtime_enabled=True,
-                agent_bridge=bridge,
-                confirm_project_instruction_dispatch=lambda _notice: "proceed",
-                scratch_spaces=scratch_spaces,
-            )
+            cleanup.callback(scratch_spaces.dispose)
+            if retire_agent_runs:
+                own_database = await cleanup.enter_async_context(
+                    console_test_database_owners()
+                )
+                runs, owner = open_console_test_agent_runs(
+                    tmp_path / "runs.sqlite", client_id="project-trace"
+                )
+            try:
+                bridge = ConsoleAgentBridge(
+                    agent_runs_db=runs, store=store, provider_gateway=gateway
+                )
+                controller = ConsoleChatController(
+                    store=store,
+                    provider_gateway=gateway,
+                    agent_runtime_enabled=True,
+                    agent_bridge=bridge,
+                    confirm_project_instruction_dispatch=lambda _notice: "proceed",
+                    scratch_spaces=scratch_spaces,
+                )
+            except BaseException:
+                if retire_agent_runs:
+                    own_database(runs, execution_owner=owner)
+                raise
+            if retire_agent_runs:
+                own_database(runs, controller, execution_owner=owner)
             controller.app = SimpleNamespace(workspace_registry_service=registry)
             if nested_tools:
                 from Tests.Chat.test_console_project_instruction_persistence_boundary import (
@@ -258,25 +291,21 @@ async def _project_console(
                     session.id
                 ).policy_revision,
             )
-            try:
-                yield SimpleNamespace(
-                    db=db,
-                    store=store,
-                    controller=controller,
-                    session=session,
-                    factory=factory,
-                    http_payloads=http_payloads,
-                    attempts=attempts,
-                    reservation_errors=reservation_errors,
-                    project_file=root / source_name,
-                    restart_factory=restart_factory,
-                    gateway=gateway,
-                    runs=runs,
-                    registry=registry,
-                )
-            finally:
-                scratch_spaces.dispose()  # TASK-42112: the controller is never shut down
-                await gateway.aclose()
+            yield SimpleNamespace(
+                db=db,
+                store=store,
+                controller=controller,
+                session=session,
+                factory=factory,
+                http_payloads=http_payloads,
+                attempts=attempts,
+                reservation_errors=reservation_errors,
+                project_file=root / source_name,
+                restart_factory=restart_factory,
+                gateway=gateway,
+                runs=runs,
+                registry=registry,
+            )
 
 
 @pytest.mark.parametrize("source_name", ["AGENTS.md", "AGENTS.override.md"])

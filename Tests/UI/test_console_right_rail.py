@@ -2137,6 +2137,77 @@ async def test_fleet_auto_open_scrolls_the_agents_section_into_view(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "land_during_replay", [False, True], ids=["resize", "environment-during-resize"]
+)
+async def test_fleet_reveal_rechecks_the_committed_viewport(
+    frozen_reveal_clock, land_during_replay
+):
+    """Keep the fleet visible across a committed resize and an overlapping landing."""
+    async with make_console_pilot(size=(180, 50)) as pilot:
+        screen = pilot.app.screen
+        section = screen.query_one("#console-agent-section-subagents")
+        original = section.scroll_visible
+        resize_queued = False
+        resize_task = None
+        scrolls = 0
+        landing_delivered = False
+
+        def resize():
+            nonlocal resize_task
+            resize_task = asyncio.create_task(pilot.resize_terminal(180, 48))
+
+        def scroll(*args, **kwargs):
+            nonlocal resize_queued, scrolls
+            on_complete = kwargs.get("on_complete")
+            if on_complete is not None:
+                scrolls += 1
+                if land_during_replay and scrolls == 2:
+
+                    def complete_with_landing():
+                        nonlocal landing_delivered
+                        if not landing_delivered:
+                            landing_delivered = True
+                            _land(screen)
+                        on_complete()
+
+                    kwargs["on_complete"] = complete_with_landing
+            result = original(*args, **kwargs)
+            if not resize_queued and kwargs.get("on_complete"):
+                resize_queued = True
+                section.call_next(resize)
+            return result
+
+        section.scroll_visible = scroll
+        try:
+            await _start_fleet_with_staged_tray(
+                pilot, screen, tray_rows=12, open_rail=True
+            )
+            await _wait_reveal(
+                pilot,
+                lambda: (
+                    pilot.app.size.height == 48
+                    and _right_rail_open(pilot)
+                    and _fleet_section_inside_rail_body(screen)
+                ),
+                description=lambda: (
+                    f"Agents in the committed viewport: {_fleet_geometry(screen)}"
+                ),
+                stable_polls=3,
+            )
+            assert resize_task is not None
+            assert screen._last_console_rail_state.preferred_right_open is False
+            if land_during_replay:
+                assert landing_delivered
+                await _settle_landing(pilot, screen)
+                assert _fleet_section_inside_rail_body(screen), _fleet_geometry(screen)
+                assert scrolls == 1 + frozen_reveal_clock.FLEET_REVEAL_REPLAY_LIMIT
+        finally:
+            if resize_task is not None:
+                await resize_task
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(("size", "tray_rows"), [((150, 40), 6), ((180, 48), 12)])
 async def test_fleet_reveal_survives_the_first_environment_landing(
     size, tray_rows, frozen_reveal_clock

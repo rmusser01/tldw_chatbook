@@ -1107,6 +1107,7 @@ async def test_navigation_focuses_first_enabled_visible_control_in_nonoverflow_t
 async def test_run_boundary_focus_never_leaks_to_sibling_group_control(
     target_mode: str,
     expected_selector: str,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     async with make_console_pilot(size=(160, 45)) as pilot:
         rail = await _open_inspector(pilot)
@@ -1139,20 +1140,23 @@ async def test_run_boundary_focus_never_leaks_to_sibling_group_control(
             CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
             CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
         }
-        inspector.sync_state(
-            replace(
-                inspector.state,
-                rows=(
-                    ConsoleDisplayRow("Tools", "ready"),
-                    ConsoleDisplayRow("Approvals", "none"),
-                ),
-                actions=actions,
-                dictionary_rows=(),
-                dictionary_actions=(),
-                world_book_rows=(),
-                world_book_actions=(),
-            )
+        state = replace(
+            inspector.state,
+            rows=(
+                ConsoleDisplayRow("Tools", "ready"),
+                ConsoleDisplayRow("Approvals", "none"),
+            ),
+            actions=actions,
+            dictionary_rows=(),
+            dictionary_actions=(),
+            world_book_rows=(),
+            world_book_actions=(),
         )
+        # A native control-bar refresh must keep this test's action state.
+        monkeypatch.setattr(
+            pilot.app.screen, "_build_console_inspector_state", lambda _launch: state
+        )
+        inspector.sync_state(state)
         await _wait_for_right_rail_condition(
             pilot,
             lambda: (

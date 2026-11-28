@@ -148,6 +148,7 @@ from types import SimpleNamespace
 from time import monotonic as _run_log_clock
 
 from loguru import logger
+from textual.geometry import Size
 from textual.message_pump import NoActiveAppError
 
 from ...Agents.agent_models import (
@@ -292,10 +293,19 @@ class _FleetReveal:
     #: The body's inner scroll areas and their offsets at the opening.
     inner: tuple[tuple[Any, float], ...]
     offset: float
+    viewport: Size
     deadline: float
     replays_left: int
     #: Whether a scroll by this reveal spends a replay (the opening's does not).
     spends: bool = False
+
+
+@dataclass
+class _FleetResizeReplay:
+    """The viewport replay and newest Environment landing received during it."""
+
+    reveal: _FleetReveal
+    landing: tuple[ConsoleInspectorSection, ConsoleInspectorSection] | None = None
 
 
 def _automatic_work_pause_notice(reason: str, *, results_saved: bool = True) -> str:
@@ -1110,6 +1120,7 @@ class ConsoleAgentController:
         self._fleet_reveal_owed: tuple[ConsoleInspectorSection, Any] | None = None
         #: The reveal that ran, while a landing may still redo it.
         self._fleet_replay: _FleetReveal | None = None
+        self._fleet_resize_replay: _FleetResizeReplay | None = None
         #: Bumped by every stand-down; a reveal in flight checks it.
         self._fleet_reveal_token = 0
         #: `_console_agent_full_log_available`'s probe cache -- the resolved
@@ -2601,6 +2612,7 @@ class ConsoleAgentController:
         self._fleet_reveal_token += 1
         self._fleet_reveal_owed = None
         self._fleet_replay = None
+        self._fleet_resize_replay = None
 
     def reveal_fleet_after_rail_auto_open(self, rail_state: ConsoleRailState) -> None:
         """Scroll the fleet section into view when the Inspector opens itself.
@@ -2621,6 +2633,7 @@ class ConsoleAgentController:
             return
         section, body = owed
         self._fleet_reveal_token += 1
+        self._fleet_resize_replay = None
         self._schedule_fleet_reveal(
             _FleetReveal(
                 section=section,
@@ -2629,6 +2642,7 @@ class ConsoleAgentController:
                 gestures=body.user_gestures,
                 inner=body.inner_scroll_state(),
                 offset=body.scroll_y,
+                viewport=body.content_region.size,
                 deadline=_fleet_reveal_clock() + FLEET_REVEAL_REPLAY_SECONDS,
                 replays_left=FLEET_REVEAL_REPLAY_LIMIT,
             )
@@ -2655,6 +2669,47 @@ class ConsoleAgentController:
             tasks_section: The landed Tasks section. Both queued any rebuild
                 with ``call_next``, so the reveal waits behind them.
         """
+        resize = self._fleet_resize_replay
+        if resize is not None:
+            resize.landing = environment_section, tasks_section
+            return
+        replay = self._take_fleet_replay()
+        if replay is not None:
+            environment_section.call_next(
+                tasks_section.call_next,
+                self._schedule_fleet_reveal,
+                replace(replay, spends=True),
+            )
+
+    def replay_fleet_reveal_after_resize(self, body: Any) -> None:
+        """Recover a clipped reveal when its Inspector viewport shrinks."""
+        replay = self._fleet_replay
+        if (
+            replay is None
+            or replay.body is not body
+            or not replay.section.is_attached
+            or body not in replay.section.ancestors
+        ):
+            return
+        window = body.content_region
+        section = replay.section.region
+        if (
+            not window
+            or not section
+            or (
+                window.width >= replay.viewport.width
+                and window.height >= replay.viewport.height
+            )
+            or window.contains_region(section.crop_size(window.size))
+        ):
+            return
+        replay = self._take_fleet_replay()
+        if replay is not None:
+            resize = _FleetResizeReplay(replace(replay, spends=True))
+            self._fleet_resize_replay = resize
+            body.call_next(self._schedule_fleet_reveal, resize.reveal)
+
+    def _take_fleet_replay(self) -> _FleetReveal | None:
         replay, self._fleet_replay = self._fleet_replay, None
         rail_state = self._screen._last_console_rail_state
         if (
@@ -2666,12 +2721,8 @@ class ConsoleAgentController:
             or rail_state.preferred_right_open
             or not self._fleet_reveal_current(replay)
         ):
-            return
-        environment_section.call_next(
-            tasks_section.call_next,
-            self._schedule_fleet_reveal,
-            replace(replay, spends=True),
-        )
+            return None
+        return replay
 
     def _fleet_reveal_current(self, reveal: _FleetReveal) -> bool:
         """Whether ``reveal`` may still scroll.
@@ -2703,20 +2754,42 @@ class ConsoleAgentController:
         # and the frozen test clock would never reach the cap.
         hold_cap = time.monotonic() + FLEET_REVEAL_PAINT_HOLD_CAP_SECONDS
 
-        def arm(replays_left: int) -> None:
+        def finish_resize() -> (
+            tuple[ConsoleInspectorSection, ConsoleInspectorSection] | None
+        ):
+            resize = self._fleet_resize_replay
+            if resize is not None and resize.reveal is reveal:
+                self._fleet_resize_replay = None
+                return resize.landing
+            return None
+
+        def arm(replays_left: int, viewport: Size, offset: float) -> None:
             # Once per reveal: `scroll_to_widget` hands `on_complete` to every
             # scrolling ancestor, and a late duplicate re-armed a replay a
             # landing had already used. Nor after a cancel: the opening's
             # late `on_complete` must not re-arm a stood-down reveal.
             nonlocal armed
-            if not armed and reveal.token == self._fleet_reveal_token:
-                armed = True
-                self._fleet_replay = replace(
-                    reveal, offset=body.scroll_y, replays_left=replays_left
-                )
+            if armed:
+                return
+            armed = True
+            landing = finish_resize()
+            armed_reveal = replace(
+                reveal, offset=offset, viewport=viewport, replays_left=replays_left
+            )
+            if self._fleet_reveal_current(armed_reveal):
+                self._fleet_replay = armed_reveal
+                if landing is not None:
+                    # Keep the original section rebuild barriers and shared budget.
+                    self.replay_fleet_reveal(*landing)
+                else:
+                    # The resize may have landed before Textual completed the scroll.
+                    self.replay_fleet_reveal_after_resize(body)
 
         def run(attempts: int) -> None:
-            if not self._fleet_reveal_current(reveal):
+            if not self._fleet_reveal_current(reveal) or (
+                reveal.spends and _fleet_reveal_clock() > reveal.deadline
+            ):
+                finish_resize()
                 return
             # Wait for the layout. With no region yet it has not reached the
             # section: the normal case when a landing arrived while the rail
@@ -2736,21 +2809,26 @@ class ConsoleAgentController:
                     section.call_after_refresh(run, attempts - 1)
                 return
             if not section.region:
+                finish_resize()
                 return  # never laid out (the rail closed again): nothing to show
             # A section taller than the body is in view once its top part
             # fills the window: that is all `scroll_visible` would show.
             window = body.content_region
             if window.contains_region(section.region.crop_size(window.size)):
-                arm(reveal.replays_left)  # in view: nothing to scroll or spend
+                arm(reveal.replays_left, window.size, body.scroll_y)
                 return
             spent = reveal.replays_left - (1 if reveal.spends else 0)
             # Minimal scroll, not `top=True`: the rail's first layouts still
             # move the rows above (a scrollbar narrows it, the tray's cap
             # re-fits), and a header pinned to the top was pushed out.
-            # `immediate`, so `arm` reads the offset the scroll left.
+            # Bind completion to our own immediate offset, before other events.
+            offset = body.scroll_y
             section.scroll_visible(
-                animate=False, immediate=True, on_complete=lambda: arm(spent)
+                animate=False,
+                immediate=True,
+                on_complete=lambda: arm(spent, window.size, offset),
             )
+            offset = body.scroll_y
 
         # ponytail: a fixed 20-refresh bound; a reveal that never lays out
         # just stops.

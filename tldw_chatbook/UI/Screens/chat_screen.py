@@ -15049,8 +15049,7 @@ class ChatScreen(BaseAppScreen):
                 # reads `self._pending_console_launch_context` at CALL time
                 # (matching `ConsoleDictationController`'s late-binding
                 # constructor rule -- see `dictation.py`'s module docstring),
-                # which is the same value `pending_launch` above was just
-                # resolved from and nothing mutates in between.
+                # both reads use the same pending launch context.
                 right_rail = ConsoleInspectorRail(
                     staged_context_state=staged_context_state,
                     retrieval_scope_state=retrieval_scope_state,
@@ -15100,6 +15099,7 @@ class ChatScreen(BaseAppScreen):
                     environment_open=rail_state.environment_open,
                     tasks_open=rail_state.tasks_open,
                     agent_fleet_section_state=agent_fleet_section_state,
+                    on_viewport_resize=self._agent.replay_fleet_reveal_after_resize,
                 )
                 right_rail.can_focus = True
                 right_rail.remove_class(

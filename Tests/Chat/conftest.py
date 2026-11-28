@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import warnings
+from contextlib import asynccontextmanager
 
 import pytest
 import pytest_asyncio
@@ -24,8 +25,8 @@ from Tests.console_provider_doubles import (
 )
 
 
-@pytest_asyncio.fixture
-async def owned_console_databases():
+@asynccontextmanager
+async def console_test_database_owners():
     """Retire explicitly registered test owners after supported shutdown.
 
     Yields:
@@ -69,6 +70,26 @@ async def owned_console_databases():
                 errors.append(error)
         if errors:
             raise BaseExceptionGroup("Console test-owner retirement failed", errors)
+
+
+@pytest_asyncio.fixture
+async def owned_console_databases():
+    async with console_test_database_owners() as register:
+        yield register
+
+
+def open_console_test_agent_runs(path, *, client_id):
+    """Return a real store and its separate native execution owner."""
+    from tldw_chatbook.Chat.console_execution_owner import ConsoleExecutionOwner
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    owner = ConsoleExecutionOwner.acquire(path)
+    try:
+        runs = AgentRunsDB(path, client_id=client_id, execution_owner=owner)
+    except BaseException:
+        owner.close()
+        raise
+    return runs, owner
 
 
 #: The one shutdown failure ``shut_down_console_controllers`` tolerates.
