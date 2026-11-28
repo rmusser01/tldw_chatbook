@@ -75,13 +75,16 @@ async def _synced_strip(console, composer, expected: str) -> Static:
         return "".join(line.text for line in strip.render_lines(region)).strip()
 
     # Share the painted-readiness budget with the checked render.
+    budget = asyncio.timeout(10)
     try:
-        async with asyncio.timeout(10):
+        async with budget:
             await _sync_console_control_bar_now(console)
             settled = await _until(
                 lambda: strip.content.plain == expected and painted() == expected, 10
             )
     except TimeoutError:
+        if not budget.expired():
+            raise
         settled = False
     assert settled, (
         f"Send strip never painted {expected!r}: {strip.content.plain!r}, "

@@ -3051,7 +3051,6 @@ Tests/UI/test_console_command_popup.py::test_escape_closes_popup_and_keeps_draft
 Tests/UI/test_console_command_popup.py::test_skill_entries_and_skills_arg_mode
 Tests/UI/test_console_command_popup.py::test_popup_does_not_reclaim_workspace_grid_rows
 Tests/UI/test_console_command_popup.py::test_popup_anchors_above_composer_with_real_css
-Tests/UI/test_console_command_popup.py::test_a_paint_hold_across_the_first_show_still_anchors_the_popup
 Tests/UI/test_console_command_popup.py::test_popup_anchor_clears_chips_above_composer_by_default
 Tests/UI/test_console_command_popup.py::test_popup_anchor_clears_composer_with_chips_below
 Tests/UI/test_console_command_popup.py::test_popup_orders_most_used_command_first
@@ -4359,6 +4358,7 @@ Tests/UI/test_console_poll_reconciliation.py::test_in_place_runtime_disable_reac
 Tests/UI/test_console_poll_reconciliation.py::test_full_request_during_poll_await_replays_with_current_owner[original-demand]
 Tests/UI/test_console_poll_reconciliation.py::test_full_request_during_poll_await_replays_with_current_owner[preparing-display]
 Tests/UI/test_console_poll_reconciliation.py::test_poll_terminal_transition_settles_while_background_turn_remains_active
+Tests/UI/test_console_command_popup.py::test_a_paint_hold_across_the_first_show_still_anchors_the_popup
 # TASK-40308 (2026-11-13): restored plugins recover from the Plugins screen with
 # the backup's passphrase and per-folder rebinds, and a lost passphrase falls
 # back to a reset that sets them aside and reattaches kept saved data.
