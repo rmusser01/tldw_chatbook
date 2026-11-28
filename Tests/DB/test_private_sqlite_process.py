@@ -948,7 +948,8 @@ from tldw_chatbook.DB.private_sqlite_process import HelperAdmission,HelperLease,
 from tldw_chatbook.DB.private_sqlite_protocol import PrepareRequest
 real_popen = subprocess.Popen
 def delayed_launch(args, **kwargs):
-    kwargs.update(stdin=0,stdout=1,pass_fds=({gate_read},))
+    # pass_fds needs close_fds=True; the macOS launcher passes False (TASK-33620.15.55).
+    kwargs.update(stdin=0,stdout=1,pass_fds=({gate_read},),close_fds=True)
     real_popen([sys.executable,'-I','-S','-c',{gate_program!r},args[-1]],**kwargs)
     os._exit(0)
 subprocess.Popen = delayed_launch
